@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   man-db \
   unzip \
   gnupg2 \
-  ca-certificates \
   iptables \
   ipset \
   iproute2 \
@@ -23,8 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   nano \
   vim \
   wget \
+  curl \
   gh \
+  locales \ 
+  locales-all \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN locale-gen en_US.UTF-8
 
 # Setup claude user 
 RUN groupadd --gid 1001 claude \
@@ -44,7 +48,7 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/claude/.claude && \
+RUN mkdir -p /home/claude/.claude /workspace && \
   chown -R claude:claude /workspace /home/claude/.claude
 
 WORKDIR /workspace
@@ -67,16 +71,17 @@ ENV SHELL=/bin/zsh
 ENV EDITOR=nano
 ENV VISUAL=nano
 
-# Install Oh My Zsh with plugins using zsh-in-docker (includes Oh My Zsh installation)
+# Use zsh-in-docker to configure plugins and theme
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
-ARG ZSH_THEME=agnoster
+ARG ZSH_THEME=default
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
   -t ${ZSH_THEME} \
   -p git \
   -p fzf \
   -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
   -a "source /usr/share/doc/fzf/examples/completion.zsh" \
-  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history"
+  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
+  -x
 
 # Install Claude Code and ast-grep globally via npm
 ARG CLAUDE_CODE_VERSION=latest
