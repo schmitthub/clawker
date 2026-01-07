@@ -5,22 +5,26 @@ Docker containers for running [Claude Code](https://claude.ai/code) in isolated 
 ## Features
 
 - **Multi-language support**: Node.js/TypeScript, Python, Go, and Rust
-- **Alpine Linux base**: Minimal image sizes for efficient storage and transfer
+- **Debian Bookworm base**: Modern, stable Linux distribution with comprehensive tooling
 - **Multi-architecture**: Supports linux/amd64 and linux/arm64 (Apple Silicon, AWS Graviton)
+- **Network isolation**: Optional firewall for controlled outbound access
+- **Enhanced shell**: zsh with Oh My Zsh for improved developer experience
 - **Portable customizations**: Mount your Claude Code skills, rules, and configurations
 - **Automated builds**: GitHub Actions workflow for continuous deployment
 
 ## Available Images
 
-All images are built on Alpine Linux for minimal size and include Claude Code pre-installed.
+All images are built on Debian Bookworm and include Claude Code pre-installed.
 
-| Image Tag | Description | Typical Size | Included Tools |
-|-----------|-------------|--------------|----------------|
-| `base` | Base image with Claude Code | ~150-200MB | Node.js, npm, git, bash, curl, wget |
-| `nodejs` | Node.js/TypeScript development | ~160-210MB | Base + yarn, pnpm |
-| `python` | Python development | ~250-300MB | Base + Python 3, pip, poetry, uv |
-| `go` | Go development | ~400-450MB | Base + Go toolchain, gopls, delve |
-| `rust` | Rust development | ~500-600MB | Base + Rust, cargo, rust-analyzer, clippy |
+| Image Tag | Description | Included Tools |
+|-----------|-------------|----------------|
+| `base` | Base image with Claude Code | Node.js, npm, Claude Code, git, zsh, Oh My Zsh, git-delta, fzf, gh |
+| `node` | Node.js/TypeScript development | Base + yarn, pnpm |
+| `python` | Python development | Base + Python 3, pip, poetry, uv |
+| `go` | Go development | Base + Go toolchain |
+| `rust` | Rust development | Base + Rust, cargo, rust-analyzer, clippy |
+
+**Note**: Image tag is `node` (not `nodejs`) to match the Dockerfile build target.
 
 ## Quick Start
 
@@ -30,7 +34,7 @@ Replace `YOUR_USERNAME` with your DockerHub username:
 
 ```bash
 # Node.js/TypeScript development
-docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:nodejs
+docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:node
 
 # Python development
 docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:python
@@ -49,8 +53,8 @@ Mount your local Claude Code configuration directory:
 ```bash
 docker run \
   -v $(pwd):/workspace \
-  -v ~/.claude:/root/.claude \
-  -it YOUR_USERNAME/claude-container:nodejs
+  -v ~/.claude:/home/claude/.claude \
+  -it YOUR_USERNAME/claude-container:node
 ```
 
 This allows you to use your:
@@ -71,23 +75,39 @@ This allows you to use your:
 
 ### Build Commands
 
+All images are built from a single multi-stage Dockerfile at `claude-container/Dockerfile`:
+
 ```bash
 # Build all images
 make build-all
 
 # Build specific images
 make build-base
-make build-nodejs
+make build-node
 make build-python
 make build-go
 make build-rust
+```
+
+Manual build examples:
+
+```bash
+# Build base image
+docker build -t $DOCKER_USERNAME/claude-container:base \
+  --target base \
+  -f claude-container/Dockerfile .
+
+# Build Node.js image
+docker build -t $DOCKER_USERNAME/claude-container:node \
+  --target node \
+  -f claude-container/Dockerfile .
 ```
 
 ### Test Interactively
 
 ```bash
 # Test any image interactively
-make test-nodejs
+make test-node
 make test-python
 make test-go
 make test-rust
@@ -100,11 +120,15 @@ make test-rust
 make push-all
 
 # Push specific images
-make push-nodejs
+make push-node
 make push-python
+make push-go
+make push-rust
 ```
 
 ## GitHub Actions Setup
+
+⚠️ **Note**: The GitHub Actions workflow is currently being refactored to implement selective builds based on changed files.
 
 To enable automated builds and deployment to DockerHub:
 
@@ -138,10 +162,10 @@ The workflow automatically runs on:
 
 ```bash
 # Run in your Node.js project directory
-docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:nodejs
+docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:node
 
 # Inside container:
-claude-code chat
+claude
 npm install
 npm test
 ```
@@ -153,7 +177,7 @@ npm test
 docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:python
 
 # Inside container:
-claude-code chat
+claude
 pip install -r requirements.txt
 pytest
 ```
@@ -165,7 +189,7 @@ pytest
 docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:go
 
 # Inside container:
-claude-code chat
+claude
 go mod download
 go test ./...
 ```
@@ -177,7 +201,7 @@ go test ./...
 docker run -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:rust
 
 # Inside container:
-claude-code chat
+claude
 cargo build
 cargo test
 ```
@@ -186,10 +210,44 @@ cargo test
 
 ### Custom Entry Point
 
-Run a specific command instead of interactive bash:
+The container includes a smart entry point (`docker-entrypoint.sh`) that automatically wraps commands with `claude`:
 
 ```bash
-docker run -v $(pwd):/workspace YOUR_USERNAME/claude-container:nodejs npm test
+# Run a command directly - automatically wrapped with claude
+docker run -v $(pwd):/workspace YOUR_USERNAME/claude-container:node npm test
+
+# The entry point converts this to: claude npm test
+```
+
+### Network Isolation (Firewall)
+
+For enhanced security, the containers include an optional firewall script that restricts outbound network access:
+
+```bash
+# Run with firewall enabled
+docker run --cap-add=NET_ADMIN \
+  -v $(pwd):/workspace \
+  -it YOUR_USERNAME/claude-container:node \
+  bash -c "sudo /usr/local/bin/init-firewall.sh && claude"
+```
+
+**Allowed domains**:
+- GitHub (github.com, api.github.com, objects.githubusercontent.com)
+- npm registry (registry.npmjs.org)
+- Anthropic API (api.anthropic.com)
+- Statsig (api.statsig.com)
+- VS Code Marketplace (marketplace.visualstudio.com)
+
+**Blocked**: All other outbound connections
+
+**Testing the firewall**:
+```bash
+# Should be blocked
+curl example.com
+
+# Should work
+curl https://api.github.com
+curl https://registry.npmjs.org
 ```
 
 ### Environment Variables
@@ -201,7 +259,7 @@ docker run \
   -v $(pwd):/workspace \
   -e NODE_ENV=production \
   -e API_KEY=your-key \
-  -it YOUR_USERNAME/claude-container:nodejs
+  -it YOUR_USERNAME/claude-container:node
 ```
 
 ### Docker Compose
@@ -211,11 +269,11 @@ Create a `docker-compose.yml`:
 ```yaml
 version: '3.8'
 services:
-  claude-nodejs:
-    image: YOUR_USERNAME/claude-container:nodejs
+  claude-node:
+    image: YOUR_USERNAME/claude-container:node
     volumes:
       - .:/workspace
-      - ~/.claude:/root/.claude
+      - ~/.claude:/home/claude/.claude
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -223,7 +281,7 @@ services:
 
 Run with:
 ```bash
-docker-compose run claude-nodejs
+docker-compose run claude-node
 ```
 
 ## Multi-Architecture Support
@@ -238,20 +296,28 @@ Docker automatically pulls the correct architecture for your system.
 
 ```
 claude-container/
-├── dockerfiles/           # Dockerfile definitions
-│   ├── base.Dockerfile   # Base image with Claude Code
-│   ├── nodejs.Dockerfile # Node.js variant
-│   ├── python.Dockerfile # Python variant
-│   ├── go.Dockerfile     # Go variant
-│   └── rust.Dockerfile   # Rust variant
+├── claude-container/
+│   ├── Dockerfile            # Multi-stage Dockerfile with all build targets
+│   ├── docker-entrypoint.sh  # Smart entry point wrapper
+│   └── init-firewall.sh      # Network isolation script
 ├── .github/
 │   └── workflows/
-│       └── docker-build.yml  # CI/CD pipeline
-├── Makefile              # Build automation
-├── .dockerignore         # Docker build exclusions
-├── CLAUDE.md             # Claude Code guidance
-└── README.md             # This file
+│       └── build-test.yml    # CI/CD pipeline (in progress)
+├── genMatrix.js              # Build matrix generator (needs rewrite)
+├── Makefile                  # Build automation
+├── .dockerignore             # Docker build exclusions
+├── CLAUDE.md                 # Claude Code guidance
+└── README.md                 # This file
 ```
+
+## Technical Details
+
+- **Base OS**: Debian Bookworm (bookworm)
+- **User**: `claude` (uid: 1001, gid: 1001)
+- **Working Directory**: `/workspace`
+- **Shell**: zsh with Oh My Zsh (agnoster theme)
+- **Entry Point**: `/usr/local/bin/docker-entrypoint.sh`
+- **Default Command**: `claude` (interactive mode)
 
 ## Troubleshooting
 
@@ -261,24 +327,38 @@ If you encounter permission issues with mounted volumes:
 
 ```bash
 # Linux: Run with your user ID
-docker run -u $(id -u):$(id -g) -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:nodejs
+docker run -u $(id -u):$(id -g) -v $(pwd):/workspace -it YOUR_USERNAME/claude-container:node
 ```
 
-### Image Size Concerns
+Note: The container runs as user `claude` (uid 1001, gid 1001) by default. If your host user has a different UID, you may need to adjust permissions or use the `-u` flag.
 
-Images are optimized for size using:
-- Alpine Linux base
-- Multi-stage builds where applicable
-- Package cache cleanup
-- Minimal dependency installation
+### Wrong Mount Path
 
-If size is critical, use the `base` image and install only what you need.
+If your Claude Code configs aren't loading, ensure you're mounting to the correct path:
+
+```bash
+# Correct path
+-v ~/.claude:/home/claude/.claude
+
+# Incorrect paths (don't use these)
+-v ~/.claude:/root/.claude
+-v ~/.claude:/claude/.claude
+```
+
+### Firewall Not Working
+
+If the firewall doesn't block traffic:
+
+1. Ensure you're using `--cap-add=NET_ADMIN`
+2. Run the firewall script as root before starting Claude
+3. Verify iptables rules: `sudo iptables -L -n -v`
 
 ### Build Failures
 
 Check Docker resources:
 - Ensure you have enough disk space
 - For Rust builds, allocate at least 4GB RAM to Docker
+- Debian images are larger than Alpine - ensure sufficient storage
 
 ## Contributing
 
@@ -296,4 +376,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - [Claude Code Documentation](https://claude.ai/code)
 - [Docker Documentation](https://docs.docker.com/)
-- [Alpine Linux](https://alpinelinux.org/)
+- [Debian](https://www.debian.org/)

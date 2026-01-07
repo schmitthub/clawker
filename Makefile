@@ -6,6 +6,7 @@
 IMAGE_NAME ?= claude-container
 VERSION ?= latest
 PLATFORMS ?= linux/amd64,linux/arm64
+DOCKERFILE_PATH ?= ./claude-container/Dockerfile
 
 # Check if DOCKER_USERNAME is set
 ifndef DOCKER_USERNAME
@@ -14,7 +15,7 @@ endif
 
 # Image tags
 BASE_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):base
-NODEJS_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):nodejs
+NODEJS_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):node
 PYTHON_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):python
 GO_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):go
 RUST_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):rust
@@ -27,21 +28,21 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  build-base      Build base image with Claude Code"
-	@echo "  build-nodejs    Build Node.js image"
+	@echo "  build-node      Build Node.js image"
 	@echo "  build-python    Build Python image"
 	@echo "  build-go        Build Go image"
 	@echo "  build-rust      Build Rust image"
 	@echo "  build-all       Build all images"
 	@echo ""
 	@echo "  push-base       Push base image to DockerHub"
-	@echo "  push-nodejs     Push Node.js image to DockerHub"
+	@echo "  push-node     Push Node.js image to DockerHub"
 	@echo "  push-python     Push Python image to DockerHub"
 	@echo "  push-go         Push Go image to DockerHub"
 	@echo "  push-rust       Push Rust image to DockerHub"
 	@echo "  push-all        Push all images to DockerHub"
 	@echo ""
 	@echo "  test-base       Run base container interactively"
-	@echo "  test-nodejs     Run Node.js container interactively"
+	@echo "  test-node     Run Node.js container interactively"
 	@echo "  test-python     Run Python container interactively"
 	@echo "  test-go         Run Go container interactively"
 	@echo "  test-rust       Run Rust container interactively"
@@ -51,34 +52,36 @@ help:
 # Build targets
 build-base:
 	@echo "Building base image..."
-	docker build -t $(BASE_TAG) -f dockerfiles/base.Dockerfile .
+	docker build -t $(BASE_TAG) \
+		--target base \
+		-f $(DOCKERFILE_PATH) . 
 	docker tag $(BASE_TAG) $(IMAGE_NAME):base
 
-build-nodejs: build-base
+build-node: build-base
 	@echo "Building Node.js image..."
 	docker build -t $(NODEJS_TAG) \
-		--build-arg BASE_IMAGE=$(IMAGE_NAME):base \
-		-f dockerfiles/nodejs.Dockerfile .
+		--target node \
+		-f $(DOCKERFILE_PATH) .
 
 build-python: build-base
 	@echo "Building Python image..."
 	docker build -t $(PYTHON_TAG) \
-		--build-arg BASE_IMAGE=$(IMAGE_NAME):base \
-		-f dockerfiles/python.Dockerfile .
+		--target python \
+		-f $(DOCKERFILE_PATH) .
 
 build-go: build-base
 	@echo "Building Go image..."
 	docker build -t $(GO_TAG) \
-		--build-arg BASE_IMAGE=$(IMAGE_NAME):base \
-		-f dockerfiles/go.Dockerfile .
+		--target go \
+		-f $(DOCKERFILE_PATH) .
 
 build-rust: build-base
 	@echo "Building Rust image..."
 	docker build -t $(RUST_TAG) \
-		--build-arg BASE_IMAGE=$(IMAGE_NAME):base \
-		-f dockerfiles/rust.Dockerfile .
+		--target rust \
+		-f $(DOCKERFILE_PATH) .
 
-build-all: build-base build-nodejs build-python build-go build-rust
+build-all: build-base build-node build-python build-go build-rust
 	@echo "All images built successfully!"
 
 # Push targets
@@ -105,21 +108,21 @@ push-rust:
 push-all: push-base push-nodejs push-python push-go push-rust
 	@echo "All images pushed successfully!"
 
-# Test targets - run containers interactively
+# Test targets - exec command to test containers
 test-base:
-	docker run --rm -it -v $(PWD):/workspace $(BASE_TAG)
+	docker run --rm -it -v $(PWD):/workspace $(BASE_TAG) /bin/zsh
 
-test-nodejs:
-	docker run --rm -it -v $(PWD):/workspace $(NODEJS_TAG)
+test-node:
+	docker run --rm -it -v $(PWD):/workspace $(NODEJS_TAG) /bin/zsh
 
 test-python:
-	docker run --rm -it -v $(PWD):/workspace $(PYTHON_TAG)
+	docker run --rm -it -v $(PWD):/workspace $(PYTHON_TAG) /bin/zsh
 
 test-go:
-	docker run --rm -it -v $(PWD):/workspace $(GO_TAG)
+	docker run --rm -it -v $(PWD):/workspace $(GO_TAG) /bin/zsh
 
 test-rust:
-	docker run --rm -it -v $(PWD):/workspace $(RUST_TAG)
+	docker run --rm -it -v $(PWD):/workspace $(RUST_TAG) /bin/zsh
 
 # Clean target
 clean:
