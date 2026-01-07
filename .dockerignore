@@ -1,0 +1,31 @@
+# Git
+.git/
+.gitignore
+
+# GitHub
+.github/
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+.dockerignore
+Dockerfile*
+
+# Build
+Makefile
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
