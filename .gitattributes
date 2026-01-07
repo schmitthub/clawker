@@ -1,0 +1,4 @@
+* text=auto eol=lf
+/*/**/Dockerfile       linguist-generated
+/Dockerfile*.template  linguist-language=Dockerfile
+
