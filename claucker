@@ -264,7 +264,7 @@ build_docker_command() {
 
     # Interactive mode: use -it only if we have a TTY
     if [[ ${#COMMAND_ARGS[@]} -eq 0 ]]; then
-        # Interactive mode
+        # No command: interactive mode
         if [[ -t 0 ]] && [[ -t 1 ]]; then
             DOCKER_CMD+=("-it")
             debug "  Interactive mode with TTY"
@@ -273,9 +273,24 @@ build_docker_command() {
             debug "  Interactive mode without TTY"
         fi
     else
-        # Command mode
-        DOCKER_CMD+=("-i")
-        debug "  Command mode"
+        # Has command: check if we have a TTY and if command looks like a shell
+        if [[ -t 0 ]] && [[ -t 1 ]]; then
+            # We have a TTY, check if command might need it
+            local first_cmd="${COMMAND_ARGS[0]}"
+            if [[ "$first_cmd" =~ (bash|zsh|sh|fish|ksh|tcsh)$ ]] || [[ "$first_cmd" == "claude" ]]; then
+                # Shell or interactive command: use -it
+                DOCKER_CMD+=("-it")
+                debug "  Command mode with TTY (interactive command detected)"
+            else
+                # Regular command: use -i
+                DOCKER_CMD+=("-i")
+                debug "  Command mode without TTY"
+            fi
+        else
+            # No TTY available
+            DOCKER_CMD+=("-i")
+            debug "  Command mode (no TTY available)"
+        fi
     fi
 
     # Container name
