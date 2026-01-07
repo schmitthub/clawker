@@ -2,9 +2,9 @@ ARG BASE_IMAGE=claude-container:base
 FROM ${BASE_IMAGE}
 
 # Install Go
-RUN apk add --no-cache \
-    go \
-    && rm -rf /var/cache/apk/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    golang \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set Go environment variables
 ENV GOPATH=/go
@@ -19,4 +19,4 @@ RUN go install golang.org/x/tools/gopls@latest && \
     go clean -cache -modcache
 
 # Default command
-CMD ["/bin/bash"]
+CMD ["/bin/zsh", "-c", "claude"]
