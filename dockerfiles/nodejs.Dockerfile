@@ -7,5 +7,5 @@ RUN npm install -g yarn pnpm && npm cache clean --force
 # Set development environment
 ENV NODE_ENV=development
 
-# Default command
-CMD ["/bin/bash"]
+# Use claude as the default command, but allow easy override
+CMD ["/bin/zsh", "-c", "claude"]

@@ -1,14 +1,19 @@
 ARG BASE_IMAGE=claude-container:base
 FROM ${BASE_IMAGE}
 
+USER root
 # Install Python and build dependencies
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    python3-dev \
-    gcc \
-    musl-dev \
-    && rm -rf /var/cache/apk/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  python3 \
+  python3-pip \
+  python3-venv \
+  build-essential \
+  libssl-dev \
+  libffi-dev \
+  libxml2-dev \
+  libxslt1-dev \
+  zlib1g-dev \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
 RUN pip3 install --no-cache-dir poetry --break-system-packages
@@ -22,5 +27,7 @@ ENV PYTHONUNBUFFERED=1
 # Create symlink for python command
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 
+USER node
+
 # Default command
-CMD ["/bin/bash"]
+CMD ["/bin/zsh", "-c", "claude"]
