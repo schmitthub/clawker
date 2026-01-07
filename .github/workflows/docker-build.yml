@@ -1,6 +1,9 @@
 name: Build and Push Docker Images
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -10,9 +13,48 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
+  detect-changes:
+    name: Detect Changed Dockerfiles
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.filter.outputs.base }}
+      nodejs: ${{ steps.filter.outputs.nodejs }}
+      python: ${{ steps.filter.outputs.python }}
+      go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for changed files
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            base:
+              - 'dockerfiles/base.Dockerfile'
+            nodejs:
+              - 'dockerfiles/nodejs.Dockerfile'
+            python:
+              - 'dockerfiles/python.Dockerfile'
+            go:
+              - 'dockerfiles/go.Dockerfile'
+            rust:
+              - 'dockerfiles/rust.Dockerfile'
+
   build-base:
     name: Build Base Image
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.base == 'true'
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,6 +64,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
 
       - name: Login to DockerHub
         if: github.event_name != 'pull_request'
@@ -30,7 +74,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata for DockerHub
+        if: steps.should-build.outputs.build == 'true' && github.event_name != 'pull_request'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -40,48 +85,98 @@ jobs:
             type=raw,value=base-{{sha}}
             type=raw,value=base-latest,enable={{is_default_branch}}
 
-      - name: Build and push base image
+      - name: Build and push base image to DockerHub
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v5
         with:
           context: .
           file: dockerfiles/base.Dockerfile
           platforms: ${{ env.PLATFORMS }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push base image to local registry
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: dockerfiles/base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: localhost:5000/claude-container:base
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-language-images:
     name: Build ${{ matrix.language }} Image
     runs-on: ubuntu-latest
-    needs: build-base
+    needs: [detect-changes, build-base]
+    if: |
+      always() &&
+      (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     strategy:
       matrix:
         language: [nodejs, python, go, rust]
+      fail-fast: false
     steps:
+      - name: Check if build is needed
+        id: should-build
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || \
+             [[ "${{ needs.detect-changes.outputs.base }}" == "true" ]] || \
+             [[ "${{ matrix.language }}" == "nodejs" && "${{ needs.detect-changes.outputs.nodejs }}" == "true" ]] || \
+             [[ "${{ matrix.language }}" == "python" && "${{ needs.detect-changes.outputs.python }}" == "true" ]] || \
+             [[ "${{ matrix.language }}" == "go" && "${{ needs.detect-changes.outputs.go }}" == "true" ]] || \
+             [[ "${{ matrix.language }}" == "rust" && "${{ needs.detect-changes.outputs.rust }}" == "true" ]]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
+        if: steps.should-build.outputs.build == 'true'
         uses: actions/checkout@v4
 
       - name: Set up QEMU
+        if: steps.should-build.outputs.build == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.should-build.outputs.build == 'true'
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
 
       - name: Login to DockerHub
-        if: github.event_name != 'pull_request'
+        if: steps.should-build.outputs.build == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Pull base image
-        if: github.event_name != 'pull_request'
+      - name: Pull base image from DockerHub (for push to main)
+        if: steps.should-build.outputs.build == 'true' && github.event_name != 'pull_request'
         run: |
           docker pull ${{ secrets.DOCKERHUB_USERNAME }}/claude-container:base
 
-      - name: Extract metadata
+      - name: Pull base image from DockerHub (for PR when base not changed)
+        if: steps.should-build.outputs.build == 'true' && github.event_name == 'pull_request' && needs.detect-changes.outputs.base != 'true'
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/claude-container:base
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/claude-container:base localhost:5000/claude-container:base
+          docker push localhost:5000/claude-container:base
+
+      - name: Extract metadata for DockerHub
+        if: steps.should-build.outputs.build == 'true' && github.event_name != 'pull_request'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -91,7 +186,8 @@ jobs:
             type=raw,value=${{ matrix.language }}-{{sha}}
             type=raw,value=${{ matrix.language }}-latest,enable={{is_default_branch}}
 
-      - name: Build and push ${{ matrix.language }} image
+      - name: Build and push ${{ matrix.language }} image to DockerHub
+        if: steps.should-build.outputs.build == 'true' && github.event_name != 'pull_request'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -99,8 +195,21 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           build-args: |
             BASE_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/claude-container:base
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ${{ matrix.language }} image for PR validation
+        if: steps.should-build.outputs.build == 'true' && github.event_name == 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: dockerfiles/${{ matrix.language }}.Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            BASE_IMAGE=localhost:5000/claude-container:base
+          push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
