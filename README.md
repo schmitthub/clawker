@@ -28,7 +28,108 @@ All images are built on Debian Bookworm and include Claude Code pre-installed.
 
 ## Quick Start
 
+## Installing claucker (Recommended)
+
+`claucker` is a convenience wrapper script that simplifies running Claude Code containers.
+
+### Quick Install
+
+**Using curl:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/claude-container/main/claucker -o claucker && chmod +x claucker
+```
+
+**Using wget:**
+
+```bash
+wget -O claucker https://raw.githubusercontent.com/schmitthub/claude-container/main/claucker && chmod +x claucker
+```
+
+**Manual installation:**
+
+1. Download the script from the repository
+2. Make it executable: `chmod +x claucker`
+3. Optionally, add to PATH or create a symlink:
+
+   ```bash
+   # Add to PATH
+   export PATH=$PATH:/path/to/claucker/directory
+
+   # Or create symlink
+   sudo ln -s /path/to/claucker /usr/local/bin/claucker
+   ```
+
+### Prerequisites
+
+Set your DockerHub username (or the username where images are hosted):
+
+```bash
+export DOCKER_USERNAME=your-dockerhub-username
+```
+
+Or create a `.env` file in the same directory as claucker:
+
+```bash
+echo "DOCKER_USERNAME=your-dockerhub-username" > .env
+```
+
+### Usage Examples
+
+**Basic usage (interactive base image):**
+
+```bash
+./claucker
+```
+
+**Node.js development with user configs:**
+
+```bash
+./claucker --type node --user-claude
+```
+
+**Python tests with firewall:**
+
+```bash
+./claucker -t python -f pytest tests/
+```
+
+**Run command with environment variables:**
+
+```bash
+./claucker -t node -- --env NODE_ENV=production -- npm start
+```
+
+**All available options:**
+
+```bash
+./claucker --help
+```
+
+### claucker Options
+
+- `-t, --type TYPE` - Container type: base, node, python, go, rust (default: base)
+- `-p, --project PATH` - Project directory to mount (default: current directory)
+- `-u, --user-claude` - Mount ~/.claude to container
+- `-s, --system-claude PATH` - Mount custom system config directory
+- `-f, --firewall` - Enable network isolation
+- `-n, --name NAME` - Container name
+- `--no-rm` - Don't auto-remove container
+- `-v, --verbose` - Show docker command before running
+- `-d, --debug` - Enable debug output (implies verbose)
+- `-h, --help` - Show help message
+
+### Why Use claucker?
+
+- **Simpler syntax**: `claucker -t node` vs `docker run -v $(pwd):/workspace -it USER/claude-container:node`
+- **Smart defaults**: Automatically mounts current directory, handles image naming
+- **Built-in features**: Firewall integration, config mounting, verbose mode, debug mode
+- **Cross-platform**: Works on macOS and Linux without GNU getopt
+- **Security**: Validates .env file permissions, prevents command injection
+
 ### Pull and Run
+
+**Note**: If you installed claucker, you can use `claucker -t TYPE` instead of the full docker run commands below.
 
 Replace `YOUR_USERNAME` with your DockerHub username:
 
@@ -58,6 +159,7 @@ docker run \
 ```
 
 This allows you to use your:
+
 - Custom skills
 - Project-specific rules
 - Global configurations
@@ -69,6 +171,7 @@ This allows you to use your:
 
 1. Docker installed and running
 2. Set your DockerHub username:
+
    ```bash
    export DOCKER_USERNAME=your-dockerhub-username
    ```
@@ -152,11 +255,14 @@ In your GitHub repository:
 ### 3. Trigger Builds
 
 The workflow automatically runs on:
+
 - Push to `main` branch
 - Pull requests
 - Manual trigger via "Actions" tab
 
 ## Usage Examples
+
+**Note**: These examples show direct Docker commands. If you're using claucker, see the [Installing claucker](#installing-claucker-recommended) section for simpler syntax.
 
 ### Node.js Project
 
@@ -232,6 +338,7 @@ docker run --cap-add=NET_ADMIN \
 ```
 
 **Allowed domains**:
+
 - GitHub (github.com, api.github.com, objects.githubusercontent.com)
 - npm registry (registry.npmjs.org)
 - Anthropic API (api.anthropic.com)
@@ -241,6 +348,7 @@ docker run --cap-add=NET_ADMIN \
 **Blocked**: All other outbound connections
 
 **Testing the firewall**:
+
 ```bash
 # Should be blocked
 curl example.com
@@ -280,6 +388,7 @@ services:
 ```
 
 Run with:
+
 ```bash
 docker-compose run claude-node
 ```
@@ -287,6 +396,7 @@ docker-compose run claude-node
 ## Multi-Architecture Support
 
 All images support:
+
 - `linux/amd64` (Intel/AMD x86_64)
 - `linux/arm64` (Apple Silicon M1/M2/M3, AWS Graviton)
 
@@ -356,6 +466,7 @@ If the firewall doesn't block traffic:
 ### Build Failures
 
 Check Docker resources:
+
 - Ensure you have enough disk space
 - For Rust builds, allocate at least 4GB RAM to Docker
 - Debian images are larger than Alpine - ensure sufficient storage
