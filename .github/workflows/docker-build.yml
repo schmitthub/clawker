@@ -16,8 +16,6 @@ jobs:
   detect-changes:
     name: Detect Changed Dockerfiles
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
     outputs:
       base: ${{ steps.filter.outputs.base }}
       nodejs: ${{ steps.filter.outputs.nodejs }}
