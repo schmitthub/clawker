@@ -116,14 +116,16 @@ echo "DOCKER_USERNAME=your-dockerhub-username" > .env
 - `-n, --name NAME` - Container name
 - `--no-rm` - Don't auto-remove container
 - `-v, --verbose` - Show docker command before running
+- `-d, --debug` - Enable debug output (implies verbose)
 - `-h, --help` - Show help message
 
 ### Why Use claucker?
 
 - **Simpler syntax**: `claucker -t node` vs `docker run -v $(pwd):/workspace -it USER/claude-container:node`
 - **Smart defaults**: Automatically mounts current directory, handles image naming
-- **Built-in features**: Firewall integration, config mounting, verbose mode
+- **Built-in features**: Firewall integration, config mounting, verbose mode, debug mode
 - **Cross-platform**: Works on macOS and Linux without GNU getopt
+- **Security**: Validates .env file permissions, prevents command injection
 
 ### Pull and Run
 

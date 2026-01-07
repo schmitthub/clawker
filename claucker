@@ -22,6 +22,7 @@ ENABLE_FIREWALL=false
 ENABLE_RM=true
 CONTAINER_NAME=""
 VERBOSE=false
+DEBUG=false
 
 # Arrays for docker args and command args
 DOCKER_ARGS=()
@@ -48,6 +49,12 @@ success() {
     echo -e "${GREEN}$*${NC}"
 }
 
+debug() {
+    if [[ "$DEBUG" == "true" ]]; then
+        echo -e "[DEBUG] $*" >&2
+    fi
+}
+
 # ============================================================================
 # Help Message
 # ============================================================================
@@ -72,6 +79,7 @@ OPTIONS:
     -r, --rm                Auto-remove container on exit (default: true)
     --no-rm                 Don't auto-remove container
     -v, --verbose           Show docker command before running
+    -d, --debug             Enable debug output
     -h, --help              Show this help message
     --version               Show version information
 
@@ -138,6 +146,19 @@ load_environment() {
     # Source .env file if it exists in script directory
     local env_file="$SCRIPT_DIR/.env"
     if [[ -f "$env_file" ]]; then
+        debug "Loading environment from $env_file"
+        # Check for insecure permissions (world-writable)
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS
+            local perms=$(stat -f "%p" "$env_file" 2>/dev/null | tail -c 4)
+        else
+            # Linux
+            local perms=$(stat -c "%a" "$env_file" 2>/dev/null)
+        fi
+        if [[ $perms =~ [2367]$ ]]; then
+            warning ".env file has insecure permissions: $perms"
+            warning "Consider: chmod 600 $env_file"
+        fi
         # shellcheck disable=SC1090
         set -a
         source "$env_file"
@@ -160,6 +181,7 @@ load_environment() {
 
 validate_type() {
     local type=$1
+    debug "Validating container type: $type"
     case "$type" in
         base|node|python|go|rust)
             return 0
@@ -181,8 +203,8 @@ validate_directory() {
         return 1
     fi
 
-    # Convert to absolute path
-    cd "$path" && pwd
+    # Convert to absolute path using subshell to avoid side effects
+    (cd "$path" && pwd)
 }
 
 check_docker_running() {
@@ -213,7 +235,7 @@ check_image_exists() {
     warning "Image '$image' not found locally"
     echo "Attempting to pull from DockerHub..." >&2
 
-    if docker pull "$image" 2>&1; then
+    if docker pull "$image" >&2; then
         success "Successfully pulled $image"
         return 0
     else
@@ -231,18 +253,29 @@ check_image_exists() {
 DOCKER_CMD=()
 
 build_docker_command() {
+    debug "Building docker command"
     DOCKER_CMD=("docker" "run")
 
     # Auto-remove flag
     if [[ "$ENABLE_RM" == "true" ]]; then
         DOCKER_CMD+=("--rm")
+        debug "  Auto-remove enabled"
     fi
 
-    # Interactive mode: use -it for interactive, -i for commands
+    # Interactive mode: use -it only if we have a TTY
     if [[ ${#COMMAND_ARGS[@]} -eq 0 ]]; then
-        DOCKER_CMD+=("-it")
+        # Interactive mode
+        if [[ -t 0 ]] && [[ -t 1 ]]; then
+            DOCKER_CMD+=("-it")
+            debug "  Interactive mode with TTY"
+        else
+            DOCKER_CMD+=("-i")
+            debug "  Interactive mode without TTY"
+        fi
     else
+        # Command mode
         DOCKER_CMD+=("-i")
+        debug "  Command mode"
     fi
 
     # Container name
@@ -252,12 +285,14 @@ build_docker_command() {
 
     # Mount project directory to /workspace
     DOCKER_CMD+=("-v" "${PROJECT_PATH}:/workspace")
+    debug "  Mounting project: $PROJECT_PATH"
 
     # Mount user Claude config if requested
     if [[ "$ENABLE_USER_CLAUDE" == "true" ]]; then
         local user_claude="$HOME/.claude"
         if [[ -d "$user_claude" ]]; then
             DOCKER_CMD+=("-v" "${user_claude}:/home/claude/.claude")
+            debug "  Mounting user claude config: $user_claude"
         else
             warning "~/.claude directory not found, skipping user-claude mount"
         fi
@@ -267,6 +302,7 @@ build_docker_command() {
     if [[ -n "$SYSTEM_CLAUDE_PATH" ]]; then
         if [[ -d "$SYSTEM_CLAUDE_PATH" ]]; then
             DOCKER_CMD+=("-v" "${SYSTEM_CLAUDE_PATH}:/home/claude/.system-claude")
+            debug "  Mounting system claude config: $SYSTEM_CLAUDE_PATH"
         else
             error "System Claude directory does not exist: $SYSTEM_CLAUDE_PATH"
             exit 1
@@ -276,31 +312,40 @@ build_docker_command() {
     # Enable firewall if requested
     if [[ "$ENABLE_FIREWALL" == "true" ]]; then
         DOCKER_CMD+=("--cap-add=NET_ADMIN")
+        debug "  Firewall enabled (NET_ADMIN capability added)"
     fi
 
     # Add custom docker arguments from pass-through
     if [[ ${#DOCKER_ARGS[@]} -gt 0 ]]; then
         DOCKER_CMD+=("${DOCKER_ARGS[@]}")
+        debug "  Added ${#DOCKER_ARGS[@]} custom docker argument(s)"
     fi
 
     # Image name
     local image="${DOCKER_USERNAME}/claude-container:${TYPE}"
     DOCKER_CMD+=("$image")
+    debug "  Using image: $image"
 
     # Handle firewall initialization + command wrapping
     if [[ "$ENABLE_FIREWALL" == "true" ]]; then
         if [[ ${#COMMAND_ARGS[@]} -eq 0 ]]; then
             # No command: run interactive shell after firewall init
             DOCKER_CMD+=("bash" "-c" "sudo /usr/local/bin/init-firewall.sh && claude")
+            debug "  Firewall init + interactive claude"
         else
-            # With command: run firewall init then the command
-            local command_string="${COMMAND_ARGS[*]}"
-            DOCKER_CMD+=("bash" "-c" "sudo /usr/local/bin/init-firewall.sh && $command_string")
+            # With command: properly escape each argument to prevent injection
+            local escaped_cmd=""
+            for arg in "${COMMAND_ARGS[@]}"; do
+                escaped_cmd+="$(printf '%q ' "$arg")"
+            done
+            DOCKER_CMD+=("bash" "-c" "sudo /usr/local/bin/init-firewall.sh && $escaped_cmd")
+            debug "  Firewall init + command: ${COMMAND_ARGS[*]}"
         fi
     else
         # No firewall: just add command args directly
         if [[ ${#COMMAND_ARGS[@]} -gt 0 ]]; then
             DOCKER_CMD+=("${COMMAND_ARGS[@]}")
+            debug "  Command: ${COMMAND_ARGS[*]}"
         fi
     fi
 }
@@ -378,6 +423,11 @@ parse_arguments() {
                 VERBOSE=true
                 shift
                 ;;
+            -d|--debug)
+                DEBUG=true
+                VERBOSE=true  # Debug implies verbose
+                shift
+                ;;
             --)
                 # Everything after -- goes to docker pass-through or command
                 shift
@@ -421,6 +471,7 @@ parse_arguments() {
 trap 'error "Command failed on line $LINENO"' ERR
 
 # Handle interrupts gracefully
+# Exit code 130 = 128 + SIGINT(2), standard for interrupted commands
 trap 'echo ""; echo "Interrupted by user"; exit 130' INT
 
 # ============================================================================
@@ -430,9 +481,11 @@ trap 'echo ""; echo "Interrupted by user"; exit 130' INT
 main() {
     # 1. Parse arguments
     parse_arguments "$@"
+    debug "Parsed arguments: TYPE=$TYPE, PROJECT_PATH=$PROJECT_PATH"
 
     # 2. Load environment and validate DOCKER_USERNAME
     load_environment
+    debug "DOCKER_USERNAME=$DOCKER_USERNAME"
 
     # 3. Run preflight checks
     check_required_tools
@@ -443,6 +496,7 @@ main() {
 
     # 5. Validate and resolve project path
     PROJECT_PATH=$(validate_directory "$PROJECT_PATH" "Project")
+    debug "Resolved project path: $PROJECT_PATH"
 
     # 6. Check if image exists (pull if needed)
     local image="${DOCKER_USERNAME}/claude-container:${TYPE}"
@@ -458,6 +512,7 @@ main() {
     fi
 
     # 9. Execute docker command
+    debug "Executing docker command"
     "${DOCKER_CMD[@]}"
 }
 
