@@ -1,0 +1,19 @@
+architecures:
+  amd64:
+    - alpine3.22
+    - alpine3.23
+    - bookworm
+    - bookworm-slim
+    - trixie
+    - trixie-slim
+  arm64v8:
+    - alpine3.22
+    - alpine3.23
+    - bookworm
+    - bookworm-slim
+    - trixie
+    - trixie-slim
+
+default-variants:
+  debian: bookworm
+  alpine: alpine3.23
