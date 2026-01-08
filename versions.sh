@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+
 # Logging
 DEBUG_MODE=false
 debug_log() {
@@ -107,6 +114,11 @@ ccTagedVersions="$(
 debug_log "ccVersions: $ccVersions"
 debug_log "ccTagedVersions: $ccTagedVersions"
 
+parse_semver() {
+  debug_log "parsing semver: $1"
+  echo "\"$1\"" | jq -c 'include "semver"; parse_semver'
+}
+
 # Initialize empty object for matched versions
 ccJson='{}'
 
@@ -119,45 +131,45 @@ for version in "${versions[@]}"; do
         ! fullVersion="$(jq -r --arg version "$version" '.[$version]' <<<"$ccTagedVersions")" \
         || [ -z "$fullVersion" ] \
       ; then
-        echo >&2 "warning: cannot find full version for $version"
+        echo >&2 -e "${YELLOW}warning: cannot find full version for $version${NC}"
         continue
       fi
 
-      # Parse the fullVersion into semverMatch
-      if ! semverMatch="$(parse_semver "$fullVersion")"; then
-        echo >&2 "warning: invalid fullVersion format '$fullVersion'"
+      # Parse the fullVersion into semverParts
+      if ! semverParts="$(parse_semver "$fullVersion")"; then
+        echo >&2 -e "${YELLOW}warning: invalid fullVersion format '$fullVersion'${NC}"
         continue
       fi
 
-      debug_log "semverMatch for $version ($fullVersion): $semverMatch"
+      debug_log "semverParts for $version ($fullVersion): $semverParts"
       ;;
     *)
       # Validate and parse semver pattern (allows partial versions)
-      if ! semverMatch="$(parse_semver "$version")"; then
-        echo >&2 "warning: invalid version format '$version'"
+      if ! semverParts="$(parse_semver "$version")"; then
+        echo >&2 -e "${YELLOW}warning: invalid version format '$version'${NC}"
         continue
       fi
 
-      debug_log "semverMatch for $version: $semverMatch"
+      debug_log "semverParts for $version: $semverParts"
 
       # Find best matching version from ccVersions array
       if \
         ! fullVersion="$(jq -r -L . --arg target "$version" 'include "semver"; match_semver($target)' <<< "$ccVersions")" \
         || [ -z "$fullVersion" ] \
       ; then
-        echo >&2 "warning: cannot find version matching '$version'"
+        echo >&2 -e "${YELLOW}warning: cannot find version matching '$version'${NC}"
         continue
       fi
       ;;
   esac
 
-  echo "Full version for $version: $fullVersion"
+  echo -e "${GREEN}Full version for $version: $fullVersion${NC}"
 
   # Extract major.minor version (e.g., "2.1.1" -> "2.1")
   # minorVersion="$(echo "$fullVersion" | cut -d'.' -f1-2)"
 
   # Add fullVersion to the appropriate minor version key, sorted from highest to lowest
-  # ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --argjson semverGroup "$semverMatch" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
+  # ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --argjson semverGroup "$semverParts" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
   #   # Ensure the key exists as an array
   #   if .[$minorVersion] == null then
   #     .[$minorVersion] = []
@@ -182,7 +194,7 @@ for version in "${versions[@]}"; do
   # ' <<<"$ccJson")"
 
   # Add fullVersion as its own key in ccJson and sorty from highest semver to lowest
-  ccJson="$(jq -c --arg fullVersion "$fullVersion" --argjson semverGroup "$semverMatch" --arg debianDefault "$debianDefault" --argjson variants "$variants" --arg alpineDefault "$alpineDefault" '
+  ccJson="$(jq -c --arg fullVersion "$fullVersion" --argjson semverGroup "$semverParts" --arg debianDefault "$debianDefault" --argjson variants "$variants" --arg alpineDefault "$alpineDefault" '
     .[$fullVersion] = {
       fullVersion: $fullVersion,
       version: $semverGroup,
