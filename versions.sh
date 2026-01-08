@@ -149,18 +149,18 @@ for version in "${versions[@]}"; do
   echo "Full version for $version: $fullVersion"
 
   # Extract major.minor version (e.g., "2.1.1" -> "2.1")
-  minorVersion="$(echo "$fullVersion" | cut -d'.' -f1,2)"
+  majorVersion="$(echo "$fullVersion" | cut -d'.' -f1)"
 
   # Add fullVersion to the appropriate minor version key, sorted from highest to lowest
-  ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
+  ccJson="$(jq -c --arg majorVersion "$majorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
     # Ensure the key exists as an array
-    if .[$minorVersion] == null then
-      .[$minorVersion] = []
+    if .[$majorVersion] == null then
+      .[$majorVersion] = []
     else
       .
     end |
     # Add the new version as an object and sort descending by semantic version
-    .[$minorVersion] += [
+    .[$majorVersion] += [
       {
         version: $fullVersion,
         "debian-default": $debianDefault,
@@ -168,7 +168,7 @@ for version in "${versions[@]}"; do
         variants: $variants
       }
     ] |
-    .[$minorVersion] |= (
+    .[$majorVersion] |= (
       unique_by(.version) |
       sort_by(.version | split(".") | map(tonumber)) |
       reverse

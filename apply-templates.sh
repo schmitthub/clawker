@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Logging
+DEBUG_MODE=false
+debug_log() {
+    if [[ "$DEBUG_MODE" == "true" ]]; then
+        printf "[DEBUG] %s\n" "$*" >&2
+    fi
+}
+
+# Parse options and collect non-option arguments
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d|--debug)
+      DEBUG_MODE=true
+      echo "Debug mode enabled"
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
 [ -f versions.json ] # run "versions.sh" first
 
 jqt='.jq-template.awk'
@@ -16,6 +40,8 @@ if [ "$#" -eq 0 ]; then
 	eval "set -- $versions"
 fi
 
+debug_log "versions to process: $*"
+
 generated_warning() {
 	cat <<-EOH
 		#
@@ -28,11 +54,15 @@ generated_warning() {
 }
 
 for version; do
+  debug_log "processing version: $version"
+
 	export version
 
 	rm -rf "$version/"
 
-	variants="$(jq -r '.[env.version].variants | map(@sh) | join(" ")' versions.json)"
+	variants="$(jq -r '.["'"$version"'"].[].variants | keys | map(@sh) | join(" ")' versions.json)"
+  debug_log "variants for $version: $variants"
+
 	eval "variants=( $variants )"
 
 	for dir in "${variants[@]}"; do
@@ -41,19 +71,7 @@ for version; do
 		variant="$(basename "$dir")" # "buster", "windowsservercore-1809", etc
 		export variant
 
-		case "$dir" in
-			windows/*)
-				windowsVariant="${variant%%-*}" # "windowsservercore", "nanoserver"
-				windowsRelease="${variant#$windowsVariant-}" # "ltsc2022", "1809", etc
-				windowsVariant="${windowsVariant#windows}" # "servercore", "nanoserver"
-				export windowsVariant windowsRelease
-				template="Dockerfile-windows-$windowsVariant.template"
-				;;
-
-			*)
-				template='Dockerfile-linux.template'
-				;;
-		esac
+		template='Dockerfile.template'
 
 		echo "processing $version/$dir ..."
 
