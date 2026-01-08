@@ -6,7 +6,7 @@
 
 FROM buildpack-deps:bookworm-slim-scm AS build
 
-ENV CLAUDE_CODE_VERSION=2.1.1
+ENV CLAUDE_CODE_VERSION=2.1.2
 
 # TODO figure out which of these are already installed in buildpack-deps
 RUN apt-get update && apt-get install -y --no-install-recommends \

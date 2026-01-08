@@ -1,10 +1,10 @@
 {
-  "2.1.1": {
-    "fullVersion": "2.1.1",
+  "2.1.2": {
+    "fullVersion": "2.1.2",
     "version": {
       "major": 2,
       "minor": 1,
-      "patch": 1,
+      "patch": 2,
       "pre": null,
       "build": null
     },
@@ -37,12 +37,12 @@
       ]
     }
   },
-  "1.0.128": {
-    "fullVersion": "1.0.128",
+  "2.1.1": {
+    "fullVersion": "2.1.1",
     "version": {
-      "major": 1,
-      "minor": null,
-      "patch": null,
+      "major": 2,
+      "minor": 1,
+      "patch": 1,
       "pre": null,
       "build": null
     },

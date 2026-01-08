@@ -4,12 +4,13 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM buildpack-deps:bookworm-slim-scm AS build
+FROM alpine:3.23 AS build
 
-ENV CLAUDE_CODE_VERSION=2.1.1
+ENV CLAUDE_CODE_VERSION=2.1.2
 
-# TODO figure out which of these are already installed in buildpack-deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Alpine pkgs
+RUN apk add --no-cache \
+  bash \
   less \
   git \
   procps \
@@ -18,29 +19,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   zsh \
   man-db \
   unzip \
-  gnupg2 \
+  gnupg \
   iptables \
   ipset \
   iproute2 \
-  dnsutils \
-  aggregate \
+  bind-tools \
   jq \
   nano \
   vim \
   wget \
   curl \
-  gh \
-  locales \
-  locales-all \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+  github-cli \
+  musl-locales \
+  musl-locales-lang \
+  && rm -rf /var/cache/apk/*
+
 
 RUN locale-gen en_US.UTF-8
 
 ARG USERNAME=claude
 
 # Setup claude user
-RUN groupadd --gid 1001 ${USERNAME} \
-  && useradd --uid 1001 --gid ${USERNAME} --shell /bin/zsh --create-home ${USERNAME}
+RUN addgroup -g 1001 ${USERNAME} \
+  && adduser -D -u 1001 -G ${USERNAME} -s /bin/zsh ${USERNAME}
 
 # Create workspace and config directories and set permissions
 RUN mkdir -p /home/${USERNAME}/.claude /workspace && \
