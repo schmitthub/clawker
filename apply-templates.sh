@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Config globals
+
+SCRIPT_DIR="$(dirname "$(readlink -f "$BASH_SOURCE")")"
+TEMPLATES_DIR="$SCRIPT_DIR/build/templates"
+DOCKERFILES_DIR="$SCRIPT_DIR/dockerfiles"
+
 # Logging
 DEBUG_MODE=false
 debug_log() {
@@ -69,29 +75,27 @@ for version; do
 
 	export version
 
+	rm -rf "$DOCKERFILES_DIR/$version/"
 
-
-	rm -rf "dockerfiles/$version/"
-
-	variants="$(jq -r '.["'"$version"'"].[].variants | keys | map(@sh) | join(" ")' versions.json)"
+	variants="$(jq -r '.["'"$version"'"].variants | keys | map(@sh) | join(" ")' versions.json)"
   debug_log "variants for $version: $variants"
 
 	eval "variants=( $variants )"
 
 	for dir in "${variants[@]}"; do
-		mkdir -p "dockerfiles/$version/$dir"
+		mkdir -p "$DOCKERFILES_DIR/$version/$dir"
 
 		variant="$(basename "$dir")" # "buster", "windowsservercore-1809", etc
 		export variant
 
-		template='build/templates/Dockerfile.template'
+		template="$TEMPLATES_DIR/Dockerfile.template"
 
 		echo "processing $version/$dir ..."
 
 		{
 			generated_warning
 			gawk -f "$jqt" "$template"
-		} > "dockerfiles/$version/$dir/Dockerfile"
+		} > "$DOCKERFILES_DIR/$version/$dir/Dockerfile"
 
   # remove this version from existingVersionDirs (it still exists in versions.json)
   for i in "${!existingVersionDirs[@]}"; do
@@ -107,5 +111,5 @@ done
 # TODO: this could be risky need to revisit this logic
 for dir in "${existingVersionDirs[@]}"; do
   debug_log "removing obsolete version dir: $dir"
-  rm -rf "dockerfiles/$dir"
+  rm -rf "$DOCKERFILES_DIR/$dir"
 done

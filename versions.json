@@ -1,160 +1,116 @@
 {
-  "2.1": [
-    {
-      "fullVersion": "2.1.1",
-      "version": {
-        "major": "2",
-        "minor": "1",
-        "patch": "1",
-        "prerelease": null,
-        "build": null
-      },
-      "debian-default": "trixie",
-      "alpine-default": "alpine3.23",
-      "variants": {
-        "trixie": [
-          "amd64",
-          "arm64v8"
-        ],
-        "trixie-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.23": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.22": [
-          "amd64",
-          "arm64v8"
-        ]
-      }
-    }
-  ],
-  "2.0": [
-    {
-      "fullVersion": "2.0.77",
-      "version": {
-        "major": "2",
-        "minor": "0",
-        "patch": null,
-        "prerelease": null,
-        "build": null
-      },
-      "debian-default": "trixie",
-      "alpine-default": "alpine3.23",
-      "variants": {
-        "trixie": [
-          "amd64",
-          "arm64v8"
-        ],
-        "trixie-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.23": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.22": [
-          "amd64",
-          "arm64v8"
-        ]
-      }
-    }
-  ],
-  "1.0": [
-    {
-      "fullVersion": "1.0.128",
-      "version": {
-        "major": "1",
-        "minor": "0",
-        "patch": null,
-        "prerelease": null,
-        "build": null
-      },
-      "debian-default": "trixie",
-      "alpine-default": "alpine3.23",
-      "variants": {
-        "trixie": [
-          "amd64",
-          "arm64v8"
-        ],
-        "trixie-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.23": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.22": [
-          "amd64",
-          "arm64v8"
-        ]
-      }
+  "2.1.1": {
+    "fullVersion": "2.1.1",
+    "version": {
+      "major": "2",
+      "minor": "1",
+      "patch": "1",
+      "prerelease": null,
+      "build": null
     },
-    {
-      "fullVersion": "1.0.9",
-      "version": {
-        "major": "1",
-        "minor": "0",
-        "patch": "9",
-        "prerelease": "rc",
-        "build": null
-      },
-      "debian-default": "trixie",
-      "alpine-default": "alpine3.23",
-      "variants": {
-        "trixie": [
-          "amd64",
-          "arm64v8"
-        ],
-        "trixie-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm": [
-          "amd64",
-          "arm64v8"
-        ],
-        "bookworm-slim": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.23": [
-          "amd64",
-          "arm64v8"
-        ],
-        "alpine3.22": [
-          "amd64",
-          "arm64v8"
-        ]
-      }
+    "debian-default": "trixie",
+    "alpine-default": "alpine3.23",
+    "variants": {
+      "trixie": [
+        "amd64",
+        "arm64v8"
+      ],
+      "trixie-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.23": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.22": [
+        "amd64",
+        "arm64v8"
+      ]
     }
-  ]
+  },
+  "2.0.77": {
+    "fullVersion": "2.0.77",
+    "version": {
+      "major": "2",
+      "minor": "0",
+      "patch": null,
+      "prerelease": null,
+      "build": null
+    },
+    "debian-default": "trixie",
+    "alpine-default": "alpine3.23",
+    "variants": {
+      "trixie": [
+        "amd64",
+        "arm64v8"
+      ],
+      "trixie-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.23": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.22": [
+        "amd64",
+        "arm64v8"
+      ]
+    }
+  },
+  "1.0.128": {
+    "fullVersion": "1.0.128",
+    "version": {
+      "major": "1",
+      "minor": "0",
+      "patch": null,
+      "prerelease": null,
+      "build": null
+    },
+    "debian-default": "trixie",
+    "alpine-default": "alpine3.23",
+    "variants": {
+      "trixie": [
+        "amd64",
+        "arm64v8"
+      ],
+      "trixie-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm-slim": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.23": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.22": [
+        "amd64",
+        "arm64v8"
+      ]
+    }
+  }
 }

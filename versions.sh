@@ -107,14 +107,6 @@ ccTagedVersions="$(
 debug_log "ccVersions: $ccVersions"
 debug_log "ccTagedVersions: $ccTagedVersions"
 
-# Function to parse semver into JSON object with named groups
-parse_semver() {
-  local version_string="$1"
-  jq -e --arg version "$version_string" '
-    $version | capture("^(?<major>0|[1-9][0-9]*)(?:\\.(?<minor>0|[1-9][0-9]*)(?:\\.(?<patch>0|[1-9][0-9]*)(?:-(?<prerelease>[^\\+]+))?(?:\\+(?<build>.*))?)?)?$")
-  ' <<<"null"
-}
-
 # Initialize empty object for matched versions
 ccJson='{}'
 
@@ -150,7 +142,7 @@ for version in "${versions[@]}"; do
 
       # Find best matching version from ccVersions array
       if \
-        ! fullVersion="$(jq -r -f semver.jq --arg target "$version" <<< "$ccVersions")" \
+        ! fullVersion="$(jq -r -L . --arg target "$version" 'include "semver"; match_semver($target)' <<< "$ccVersions")" \
         || [ -z "$fullVersion" ] \
       ; then
         echo >&2 "warning: cannot find version matching '$version'"
@@ -162,31 +154,42 @@ for version in "${versions[@]}"; do
   echo "Full version for $version: $fullVersion"
 
   # Extract major.minor version (e.g., "2.1.1" -> "2.1")
-  minorVersion="$(echo "$fullVersion" | cut -d'.' -f1-2)"
+  # minorVersion="$(echo "$fullVersion" | cut -d'.' -f1-2)"
 
   # Add fullVersion to the appropriate minor version key, sorted from highest to lowest
-  ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --argjson semverGroup "$semverMatch" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
-    # Ensure the key exists as an array
-    if .[$minorVersion] == null then
-      .[$minorVersion] = []
-    else
-      .
-    end |
-    # Add the new version as an object and sort descending by semantic version
-    .[$minorVersion] += [
-      {
-        fullVersion: $fullVersion,
-        version: $semverGroup,
-        "debian-default": $debianDefault,
-        "alpine-default": $alpineDefault,
-        variants: $variants
-      }
-    ] |
-    .[$minorVersion] |= (
-      unique_by(.fullVersion) |
-      sort_by(.fullVersion | split(".") | map(tonumber)) |
-      reverse
-    )
+  # ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --argjson semverGroup "$semverMatch" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
+  #   # Ensure the key exists as an array
+  #   if .[$minorVersion] == null then
+  #     .[$minorVersion] = []
+  #   else
+  #     .
+  #   end |
+  #   # Add the new version as an object and sort descending by semantic version
+  #   .[$minorVersion] += [
+  #     {
+  #       fullVersion: $fullVersion,
+  #       version: $semverGroup,
+  #       "debian-default": $debianDefault,
+  #       "alpine-default": $alpineDefault,
+  #       variants: $variants
+  #     }
+  #   ] |
+  #   .[$minorVersion] |= (
+  #     unique_by(.fullVersion) |
+  #     sort_by(.fullVersion | split(".") | map(tonumber)) |
+  #     reverse
+  #   )
+  # ' <<<"$ccJson")"
+
+  # Add fullVersion as its own key in ccJson and sorty from highest semver to lowest
+  ccJson="$(jq -c --arg fullVersion "$fullVersion" --argjson semverGroup "$semverMatch" --arg debianDefault "$debianDefault" --argjson variants "$variants" --arg alpineDefault "$alpineDefault" '
+    .[$fullVersion] = {
+      fullVersion: $fullVersion,
+      version: $semverGroup,
+      "debian-default": $debianDefault,
+      "alpine-default": $alpineDefault,
+      variants: $variants
+    }
   ' <<<"$ccJson")"
 
 done
