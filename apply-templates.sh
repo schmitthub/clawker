@@ -53,12 +53,25 @@ generated_warning() {
 	EOH
 }
 
+cd "$(dirname "$(readlink -f "$BASH_SOURCE")")"
+
+# collect list of existing top level version directories in ./dockerfiles/$1 for cleanup if that version is no longer in versions.json
+existingVersionDirs=()
+while IFS= read -r -d '' dir; do
+  existingVersionDirs+=( "$(basename "$dir")" )
+done < <(find ./dockerfiles -mindepth 1 -maxdepth 1 -type d -print0)
+
+
+debug_log "existing version dirs: ${existingVersionDirs[*]}"
+
 for version; do
   debug_log "processing version: $version"
 
 	export version
 
-	rm -rf "$version/"
+
+
+	rm -rf "dockerfiles/$version/"
 
 	variants="$(jq -r '.["'"$version"'"].[].variants | keys | map(@sh) | join(" ")' versions.json)"
   debug_log "variants for $version: $variants"
@@ -66,18 +79,32 @@ for version; do
 	eval "variants=( $variants )"
 
 	for dir in "${variants[@]}"; do
-		mkdir -p "$version/$dir"
+		mkdir -p "dockerfiles/$version/$dir"
 
 		variant="$(basename "$dir")" # "buster", "windowsservercore-1809", etc
 		export variant
 
-		template='Dockerfile.template'
+		template='build/templates/Dockerfile.template'
 
 		echo "processing $version/$dir ..."
 
 		{
 			generated_warning
 			gawk -f "$jqt" "$template"
-		} > "$version/$dir/Dockerfile"
+		} > "dockerfiles/$version/$dir/Dockerfile"
+
+  # remove this version from existingVersionDirs (it still exists in versions.json)
+  for i in "${!existingVersionDirs[@]}"; do
+    if [[ "${existingVersionDirs[i]}" == "$version" ]]; then
+      unset 'existingVersionDirs[i]'
+    fi
+  done
+
 	done
+done
+
+# cleanup any existing version directories that are no longer in versions.json
+for dir in "${existingVersionDirs[@]}"; do
+  debug_log "removing obsolete version dir: $dir"
+  rm -rf "dockerfiles/$dir"
 done

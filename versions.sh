@@ -48,10 +48,12 @@ alpineDefault="alpine3.23"
 debug_log "debianDefault: $debianDefault"
 debug_log "alpineDefault: $alpineDefault"
 
+# Define supported variants and their suffixes, leave empty array for no suffixes
 supportedVariants="$(jq -c '.' <<< '{
     "trixie": ["-slim"],
     "bookworm": ["-slim"],
-    "alpine": ["3.23", "3.22"]
+    "alpine3.23": [],
+    "alpine3.22": []
 }')"
 
 debug_log "supportedVariants raw: $supportedVariants"
