@@ -4,7 +4,7 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM buildpack-deps:bookworm-slim-scm AS build
+FROM buildpack-deps:-scm AS build
 
 ENV CLAUDE_CODE_VERSION=2.1.2
 

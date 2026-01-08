@@ -198,8 +198,8 @@ for version in "${versions[@]}"; do
     .[$fullVersion] = {
       fullVersion: $fullVersion,
       version: $semverGroup,
-      "debian-default": $debianDefault,
-      "alpine-default": $alpineDefault,
+      "debianDefault": $debianDefault,
+      "alpineDefault": $alpineDefault,
       variants: $variants
     }
   ' <<<"$ccJson")"

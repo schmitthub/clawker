@@ -4,11 +4,18 @@
 	;
 	def alpine_version:
 		env.variant | ltrimstr("alpine")
+  ;
+  def is_slim:
+    if is_alpine then
+      false
+    else
+      env.variant | endswith("-slim")
+    end
 -}}
 {{ if is_alpine then ( -}}
 FROM alpine:{{ alpine_version }} AS build
 {{ ) else ( -}}
-FROM buildpack-deps:{{ env.variant }}-scm AS build
+FROM buildpack-deps:{{ env.debianDefault }}-scm AS build
 {{ ) end -}}
 
 ENV CLAUDE_CODE_VERSION={{ .fullVersion }}

@@ -8,8 +8,8 @@
       "pre": null,
       "build": null
     },
-    "debian-default": "trixie",
-    "alpine-default": "alpine3.23",
+    "debianDefault": "trixie",
+    "alpineDefault": "alpine3.23",
     "variants": {
       "trixie": [
         "amd64",
@@ -46,8 +46,8 @@
       "pre": null,
       "build": null
     },
-    "debian-default": "trixie",
-    "alpine-default": "alpine3.23",
+    "debianDefault": "trixie",
+    "alpineDefault": "alpine3.23",
     "variants": {
       "trixie": [
         "amd64",
