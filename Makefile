@@ -3,10 +3,8 @@
         test-base test-nodejs test-python test-go test-rust clean
 
 # Variables
-IMAGE_NAME ?= claude-container
-VERSION ?= latest
-PLATFORMS ?= linux/amd64,linux/arm64
-DOCKERFILE_PATH ?= ./claude-container/Dockerfile
+IMAGE_NAME ?= claucker
+DOCKERFILES_PATH ?= ./dockerfiles
 
 # Check if DOCKER_USERNAME is set
 ifndef DOCKER_USERNAME
@@ -54,7 +52,7 @@ build-base:
 	@echo "Building base image..."
 	docker build -t $(BASE_TAG) \
 		--target base \
-		-f $(DOCKERFILE_PATH) . 
+		-f $(DOCKERFILE_PATH) .
 	docker tag $(BASE_TAG) $(IMAGE_NAME):base
 
 build-node: build-base
