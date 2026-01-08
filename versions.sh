@@ -107,6 +107,14 @@ ccTagedVersions="$(
 debug_log "ccVersions: $ccVersions"
 debug_log "ccTagedVersions: $ccTagedVersions"
 
+# Function to parse semver into JSON object with named groups
+parse_semver() {
+  local version_string="$1"
+  jq -e --arg version "$version_string" '
+    $version | capture("^(?<major>0|[1-9][0-9]*)(?:\\.(?<minor>0|[1-9][0-9]*)(?:\\.(?<patch>0|[1-9][0-9]*)(?:-(?<prerelease>[^\\+]+))?(?:\\+(?<build>.*))?)?)?$")
+  ' <<<"null"
+}
+
 # Initialize empty object for matched versions
 ccJson='{}'
 
@@ -122,24 +130,27 @@ for version in "${versions[@]}"; do
         echo >&2 "warning: cannot find full version for $version"
         continue
       fi
+
+      # Parse the fullVersion into semverMatch
+      if ! semverMatch="$(parse_semver "$fullVersion")"; then
+        echo >&2 "warning: invalid fullVersion format '$fullVersion'"
+        continue
+      fi
+
+      debug_log "semverMatch for $version ($fullVersion): $semverMatch"
       ;;
     *)
-      # Validate version pattern
-      if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-        echo >&2 "warning: invalid version format '$version' (must be a valid semantic version: numbers and dots or the tags 'latest', 'stable', 'next')"
-        exit 1
+      # Validate and parse semver pattern (allows partial versions)
+      if ! semverMatch="$(parse_semver "$version")"; then
+        echo >&2 "warning: invalid version format '$version'"
+        continue
       fi
+
+      debug_log "semverMatch for $version: $semverMatch"
 
       # Find best matching version from ccVersions array
       if \
-        ! fullVersion="$(jq -r --arg version "$version" '
-          # Filter to versions that start with the user input
-          map(select(startswith($version))) |
-          # Sort by semantic version (convert to numbers for proper sorting)
-          sort_by(split(".") | map(tonumber)) |
-          # Get the last (highest) version, or empty if no matches
-          last // empty
-        ' <<<"$ccVersions")" \
+        ! fullVersion="$(jq -r -f semver.jq --arg target "$version" <<< "$ccVersions")" \
         || [ -z "$fullVersion" ] \
       ; then
         echo >&2 "warning: cannot find version matching '$version'"
@@ -151,28 +162,29 @@ for version in "${versions[@]}"; do
   echo "Full version for $version: $fullVersion"
 
   # Extract major.minor version (e.g., "2.1.1" -> "2.1")
-  majorVersion="$(echo "$fullVersion" | cut -d'.' -f1)"
+  minorVersion="$(echo "$fullVersion" | cut -d'.' -f1-2)"
 
   # Add fullVersion to the appropriate minor version key, sorted from highest to lowest
-  ccJson="$(jq -c --arg majorVersion "$majorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
+  ccJson="$(jq -c --arg minorVersion "$minorVersion" --arg fullVersion "$fullVersion" --arg debianDefault "$debianDefault" --argjson semverGroup "$semverMatch" --arg alpineDefault "$alpineDefault" --argjson variants "$variants" '
     # Ensure the key exists as an array
-    if .[$majorVersion] == null then
-      .[$majorVersion] = []
+    if .[$minorVersion] == null then
+      .[$minorVersion] = []
     else
       .
     end |
     # Add the new version as an object and sort descending by semantic version
-    .[$majorVersion] += [
+    .[$minorVersion] += [
       {
-        version: $fullVersion,
+        fullVersion: $fullVersion,
+        version: $semverGroup,
         "debian-default": $debianDefault,
         "alpine-default": $alpineDefault,
         variants: $variants
       }
     ] |
-    .[$majorVersion] |= (
-      unique_by(.version) |
-      sort_by(.version | split(".") | map(tonumber)) |
+    .[$minorVersion] |= (
+      unique_by(.fullVersion) |
+      sort_by(.fullVersion | split(".") | map(tonumber)) |
       reverse
     )
   ' <<<"$ccJson")"

@@ -104,6 +104,7 @@ for version; do
 done
 
 # cleanup any existing version directories that are no longer in versions.json
+# TODO: this could be risky need to revisit this logic
 for dir in "${existingVersionDirs[@]}"; do
   debug_log "removing obsolete version dir: $dir"
   rm -rf "dockerfiles/$dir"
