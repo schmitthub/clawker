@@ -20,10 +20,11 @@ import (
 
 // UpOptions contains the options for the up command.
 type UpOptions struct {
-	Mode   string
-	Build  bool
-	Detach bool
-	Clean  bool
+	Mode    string
+	Build   bool
+	NoCache bool
+	Detach  bool
+	Clean   bool
 }
 
 // NewCmdUp creates the up command.
@@ -50,6 +51,7 @@ Workspace modes:
 
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "Workspace mode: bind or snapshot (default from config)")
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
+	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Build image without using Docker cache (implies --build)")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
 	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
 
@@ -121,7 +123,9 @@ func runUp(f *cmdutil.Factory, opts *UpOptions) error {
 
 	// Build or ensure image
 	imageTag := engine.ImageTag(cfg.Project)
-	if err := ensureImage(ctx, eng, cfg, imageTag, f.WorkDir, opts.Build); err != nil {
+	// --no-cache implies --build
+	forceBuild := opts.Build || opts.NoCache
+	if err := ensureImage(ctx, eng, cfg, imageTag, f.WorkDir, forceBuild, opts.NoCache); err != nil {
 		return err
 	}
 
@@ -180,7 +184,7 @@ func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
 	return config.ParseMode(cfg.Workspace.DefaultMode)
 }
 
-func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, imageTag, workDir string, forceBuild bool) error {
+func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, imageTag, workDir string, forceBuild, noCache bool) error {
 	imgMgr := engine.NewImageManager(eng)
 	gen := dockerfile.NewGenerator(cfg, workDir)
 
@@ -199,7 +203,7 @@ func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, im
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil)
+		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil, noCache)
 	}
 
 	// Check if image exists and we don't need to rebuild
@@ -222,7 +226,7 @@ func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, im
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
-	return imgMgr.BuildImage(buildCtx, imageTag, "Dockerfile", nil)
+	return imgMgr.BuildImage(buildCtx, imageTag, "Dockerfile", nil, noCache)
 }
 
 func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string) (workspace.Strategy, error) {

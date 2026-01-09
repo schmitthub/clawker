@@ -12,11 +12,75 @@ type Config struct {
 
 // BuildConfig defines the container build configuration
 type BuildConfig struct {
-	Image      string            `yaml:"image" mapstructure:"image"`
-	Dockerfile string            `yaml:"dockerfile,omitempty" mapstructure:"dockerfile"`
-	Packages   []string          `yaml:"packages,omitempty" mapstructure:"packages"`
-	Context    string            `yaml:"context,omitempty" mapstructure:"context"`
-	BuildArgs  map[string]string `yaml:"build_args,omitempty" mapstructure:"build_args"`
+	Image        string              `yaml:"image" mapstructure:"image"`
+	Dockerfile   string              `yaml:"dockerfile,omitempty" mapstructure:"dockerfile"`
+	Packages     []string            `yaml:"packages,omitempty" mapstructure:"packages"`
+	Context      string              `yaml:"context,omitempty" mapstructure:"context"`
+	BuildArgs    map[string]string   `yaml:"build_args,omitempty" mapstructure:"build_args"`
+	Instructions *DockerInstructions `yaml:"instructions,omitempty" mapstructure:"instructions"`
+	Inject       *InjectConfig       `yaml:"inject,omitempty" mapstructure:"inject"`
+}
+
+
+// DockerInstructions represents type-safe Dockerfile instructions
+type DockerInstructions struct {
+	Copy        []CopyInstruction  `yaml:"copy,omitempty" mapstructure:"copy"`
+	Env         map[string]string  `yaml:"env,omitempty" mapstructure:"env"`
+	Labels      map[string]string  `yaml:"labels,omitempty" mapstructure:"labels"`
+	Expose      []ExposePort       `yaml:"expose,omitempty" mapstructure:"expose"`
+	Args        []ArgDefinition    `yaml:"args,omitempty" mapstructure:"args"`
+	Volumes     []string           `yaml:"volumes,omitempty" mapstructure:"volumes"`
+	Workdir     string             `yaml:"workdir,omitempty" mapstructure:"workdir"`
+	Healthcheck *HealthcheckConfig `yaml:"healthcheck,omitempty" mapstructure:"healthcheck"`
+	Shell       []string           `yaml:"shell,omitempty" mapstructure:"shell"`
+	UserRun     []RunInstruction   `yaml:"user_run,omitempty" mapstructure:"user_run"`
+	RootRun     []RunInstruction   `yaml:"root_run,omitempty" mapstructure:"root_run"`
+}
+
+// CopyInstruction represents a COPY instruction with optional chown/chmod
+type CopyInstruction struct {
+	Src   string `yaml:"src" mapstructure:"src"`
+	Dest  string `yaml:"dest" mapstructure:"dest"`
+	Chown string `yaml:"chown,omitempty" mapstructure:"chown"`
+	Chmod string `yaml:"chmod,omitempty" mapstructure:"chmod"`
+}
+
+// ExposePort represents an EXPOSE instruction
+type ExposePort struct {
+	Port     int    `yaml:"port" mapstructure:"port"`
+	Protocol string `yaml:"protocol,omitempty" mapstructure:"protocol"` // "tcp" or "udp", defaults to tcp
+}
+
+// ArgDefinition represents an ARG instruction
+type ArgDefinition struct {
+	Name    string `yaml:"name" mapstructure:"name"`
+	Default string `yaml:"default,omitempty" mapstructure:"default"`
+}
+
+// HealthcheckConfig represents HEALTHCHECK instruction
+type HealthcheckConfig struct {
+	Cmd         []string `yaml:"cmd" mapstructure:"cmd"`
+	Interval    string   `yaml:"interval,omitempty" mapstructure:"interval"`
+	Timeout     string   `yaml:"timeout,omitempty" mapstructure:"timeout"`
+	StartPeriod string   `yaml:"start_period,omitempty" mapstructure:"start_period"`
+	Retries     int      `yaml:"retries,omitempty" mapstructure:"retries"`
+}
+
+// RunInstruction represents a RUN command with OS-awareness
+type RunInstruction struct {
+	Cmd    string `yaml:"cmd,omitempty" mapstructure:"cmd"`       // Generic command for both OS
+	Alpine string `yaml:"alpine,omitempty" mapstructure:"alpine"` // Alpine-specific command
+	Debian string `yaml:"debian,omitempty" mapstructure:"debian"` // Debian-specific command
+}
+
+// InjectConfig defines injection points for arbitrary Dockerfile instructions
+type InjectConfig struct {
+	AfterFrom          []string `yaml:"after_from,omitempty" mapstructure:"after_from"`
+	AfterPackages      []string `yaml:"after_packages,omitempty" mapstructure:"after_packages"`
+	AfterUserSetup     []string `yaml:"after_user_setup,omitempty" mapstructure:"after_user_setup"`
+	AfterUserSwitch    []string `yaml:"after_user_switch,omitempty" mapstructure:"after_user_switch"`
+	AfterClaudeInstall []string `yaml:"after_claude_install,omitempty" mapstructure:"after_claude_install"`
+	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty" mapstructure:"before_entrypoint"`
 }
 
 // AgentConfig defines Claude agent-specific settings

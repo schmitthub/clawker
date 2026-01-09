@@ -1,25 +1,36 @@
-# Claucker - Claude Container Orchestration
+# Claucker - Claude Code Development Container Orchestration
 
-## IMPORTANT: Required Tools (MUST USE)
+<critical_instructions>
 
-When working on this codebase, you MUST use the following tools:
+## IMPORTANT: Required tool chain when working on this codebase
 
-1. **Serena** - Use for all code exploration, symbol search, and semantic editing
-   - Use `find_symbol`, `get_symbols_overview` for code navigation
-   - Use `replace_symbol_body`, `insert_after_symbol` for edits
-   - Use `search_for_pattern` for regex-based searches
+### I (MUST USE) use the following tooling workflow
+
+1. **Serena** - Always use serena for all code exploration, planning, context management, symbol search, and semantic editing. My workflow after every user request when using serena must be:
+   - **Critical**: Always use `initial_instructions` at the start of any session, this provides instructions on how to use the Serena toolbox.
+   - Always call `check_onboarding_performed` before planning, if onboarding hasn't been performed call `onboarding`, to identify the project structure, software architecture, and essential tasks, e.g. for testing or building before doing anything else.
+   - Always call `list_memories` and `read_memory` for context
+   - Always call `list_dir`, `find_file` to understand the project structure
+   - Always call `search_for_pattern`, `find_symbol` ,`find_referencing_symbols`, `get_symbols_overview` to search and navigating source code instead of using `grep`
+   - Always call `think_about_collected_information` after any planning for pondering the completeness of collected information.
    - Always call `think_about_task_adherence` before making changes
-   - Read project memories with `read_memory` for context
+   - Always call `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` , `rename_symbol` for editing code
+   - Always call `think_about_whether_you_are_done` for determining whether the task is truly completed.
+   - Always call `write_memory`, `edit_memory`, `delete_memory` to keep project memories relevant and up to date
 
-2. **Context7** - Use for up-to-date library documentation
-   - Call `resolve-library-id` first to get the library ID
-   - Then call `get-library-docs` with topic for relevant docs
+2. **Context7** - Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+   - Always call `resolve-library-id` with `libraryName` and `query` first to get the library ID
+   - Then call `query-docs` using `libraryId` and `query` with topic for relevant docs
    - Essential for Docker SDK, Go stdlib, and other dependencies
 
-3. **ast-grep** - Use for structural code search and refactoring
-   - Use `/ast-grep` skill for AST-based pattern matching
-   - Better than regex for finding code structures
-   - Use for large-scale refactoring tasks
+### I (SHOULD USE) use the following tooling workflow
+
+1. **ast-grep** - Always fallback on `ast-grep` when not using `serena` for structural code search and refactoring instead of `grep`
+   - Always `Skill(ast-grep)` instead of `grep` when searching for code structural search, lint, rewriting
+   - Better than regex and `grep` for finding code structures
+   - Use for planning and refactoring tasks
+
+</critical_instructions>
 
 ## Project Overview
 
@@ -67,16 +78,38 @@ make build VERSION=2.1.2 VARIANT=trixie
 ## Key Abstractions
 
 ### WorkspaceStrategy Interface
+
 Two implementations: BindStrategy (live host mount) and SnapshotStrategy (ephemeral volume copy).
 
 ### DockerEngine
+
 Wraps Docker SDK with user-friendly errors including "Next Steps" guidance.
 
 ### PTYHandler
+
 Manages raw terminal mode and bidirectional streaming for interactive Claude sessions.
+
 - In raw mode, Ctrl+C does NOT generate SIGINT - it's passed as a byte to the container
 - Stream methods return immediately when output closes (container exits)
 - Does not wait for stdin goroutine (may be blocked on Read())
+
+### DockerfileGenerator
+
+Generates Dockerfiles from Go templates with `TemplateData` struct containing:
+
+- `Instructions` (`*DockerInstructions`) - Type-safe Dockerfile instructions
+- `Inject` (`*InjectConfig`) - Raw instruction injection at 6 lifecycle points
+- `IsAlpine` - OS detection for conditional package commands
+
+Template injection order: `after_from` → packages → `after_packages` → `root_run` → user setup → `after_user_setup` → COPY → `USER claude` → `after_user_switch` → `user_run` → Claude install → `after_claude_install` → `before_entrypoint` → ENTRYPOINT
+
+### ConfigValidator
+
+Validates `claucker.yaml` with semantic checks beyond YAML parsing:
+
+- Path existence and permissions for `instructions.copy`
+- Port range validation for `instructions.expose`
+- Duration format validation for `healthcheck` intervals
 
 ## Code Style
 
@@ -88,15 +121,28 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 ## Common Tasks
 
 ### Adding a new CLI command
+
 1. Create `cmd/newcmd.go`
 2. Define cobra.Command with Run function
 3. Register in `cmd/root.go` init()
 
 ### Modifying Dockerfile generation
-1. Edit templates in `claucker/templates/`
-2. Update `internal/dockerfile/generator.go`
+
+1. Edit template in `internal/dockerfile/templates/Dockerfile.tmpl`
+2. Update `internal/dockerfile/generator.go` (TemplateData struct)
+3. If adding new config fields, update `internal/config/schema.go`
+4. Add validation in `internal/config/validator.go`
+
+### Adding new build instructions
+
+1. Add type to `internal/config/schema.go` (e.g., `NewInstruction` struct)
+2. Add field to `DockerInstructions` struct
+3. Add template logic in `Dockerfile.tmpl` at appropriate injection point
+4. Add validation in `internal/config/validator.go`
+5. Add tests in `generator_test.go` and `validator_test.go`
 
 ### Testing container operations
+
 Integration tests require Docker daemon. Use `go test -short` to skip.
 
 ## CLI Commands
@@ -110,6 +156,118 @@ Integration tests require Docker daemon. Use `go test -short` to skip.
 | `claucker logs [-f]` | Stream container logs |
 | `claucker config check` | Validate `claucker.yaml` |
 
+## Update README.md
+
+**CRITICAL: Always keep README.md synchronized with code changes.**
+
+After making any of the following changes, you MUST update [README.md](README.md):
+
+### When to Update README
+
+1. **New CLI commands or flags** - Update CLI Commands table and add usage examples
+2. **Configuration changes** - Update the `claucker.yaml` example and field descriptions
+3. **New features** - Add to appropriate section (Quick Start, Workspace Modes, Security, etc.)
+4. **Authentication changes** - Update Authentication section with new env vars or methods
+5. **Behavior changes** - Update affected sections to reflect new behavior
+6. **Security defaults** - Update Security section if defaults change
+
+### README Writing Guidelines
+
+- **User-first language** - Write for new users, not developers
+- **Complete examples** - Show full commands with common flags
+- **Concise descriptions** - One sentence per feature when possible
+- **Practical use cases** - Explain WHEN to use a feature, not just HOW
+- **Tables for reference** - Use tables for commands, flags, and env vars
+- **No implementation details** - Avoid internals like package names or function calls
+
+### README Structure
+
+The README follows this order:
+
+1. Quick Start - Get users running in 5 minutes
+2. Authentication - How to pass API keys
+3. CLI Commands - Reference table + detailed usage
+4. Configuration - Full `claucker.yaml` spec with comments
+5. Workspace Modes - bind vs snapshot explained
+6. Security - Defaults and opt-in dangerous features
+7. Ignore Patterns - `.clauckerignore` behavior
+8. Development - Build instructions for contributors
+
+### Example Update Pattern
+
+```
+Code change: Add --timeout flag to `up` command
+README update:
+  1. Add to CLI Commands table
+  2. Add to "claucker up" flags section:
+     --timeout=30s  Container startup timeout (default: 30s)
+```
+
+**Before completing any PR or task, verify README.md reflects all user-visible changes.**
+
+## Update CLAUDE.md
+
+**CRITICAL: Keep CLAUDE.md current with architectural and implementation changes.**
+
+This file is the technical blueprint for AI agents and developers. Update it whenever implementation details change.
+
+### When to Update CLAUDE.md
+
+1. **New packages or modules** - Update Repository Structure with purpose
+2. **Architectural changes** - Update Key Abstractions section
+3. **New abstractions or interfaces** - Add to Key Abstractions with explanation
+4. **Build/test commands** - Update Build Commands section
+5. **Important behaviors** - Add to Important Gotchas if non-obvious
+6. **Design decisions** - Document reasoning in Design Decisions
+7. **Directory structure changes** - Update Repository Structure tree
+8. **Common task patterns** - Add to Common Tasks section
+
+### CLAUDE.md Writing Guidelines
+
+- **Developer-focused** - Assume reader knows Go and Docker
+- **Implementation details** - Include package names, interfaces, key types
+- **Architectural reasoning** - Explain WHY, not just WHAT
+- **Code patterns** - Show idioms and conventions used in the codebase
+- **Gotchas and pitfalls** - Document non-obvious behaviors that cause bugs
+- **Keep structure updated** - Repository Structure must match actual layout
+
+### CLAUDE.md Structure
+
+Maintain this order:
+
+1. Required Tools - MCP servers and usage patterns
+2. Project Overview - One-line philosophy
+3. Repository Structure - ASCII tree with annotations
+4. Build Commands - Developer workflow commands
+5. Key Abstractions - Core interfaces and their purpose
+6. Code Style - Conventions and idioms
+7. Common Tasks - Step-by-step patterns for typical changes
+8. CLI Commands - Reference (developer view with internals)
+9. Update README.md - Keep user docs in sync
+10. Update CLAUDE.md - Keep dev docs in sync
+11. Configuration - Schema and structure
+12. Design Decisions - Architectural choices and rationale
+13. Important Gotchas - Non-obvious behaviors
+
+### Example Update Pattern
+
+```
+Code change: Add NetworkPolicy type in internal/engine/
+CLAUDE.md update:
+  1. Add to Repository Structure:
+     internal/engine/
+       ├── client.go
+       ├── container.go
+       ├── network.go      # NEW
+  2. Add to Key Abstractions:
+     ### NetworkPolicy
+     Manages iptables rules for firewall. Uses --wait flag to avoid conflicts.
+  3. Add to Important Gotchas if needed:
+     - iptables requires --wait in concurrent environments
+```
+
+**After implementing features, ensure CLAUDE.md guides future AI agents and developers correctly.**
+
 ## Configuration (claucker.yaml)
 
 ```yaml
@@ -119,6 +277,37 @@ project: "my-app"
 build:
   image: "node:20-slim"
   packages: ["git", "ripgrep", "make"]
+
+  # Type-safe Dockerfile instructions (validated)
+  instructions:
+    env: { NODE_ENV: "production" }
+    labels: { maintainer: "dev@example.com" }
+    copy:
+      - { src: "./config.json", dest: "/etc/app/", chown: "claude:claude" }
+    expose:
+      - { port: 3000 }
+    args:
+      - { name: "VERSION", default: "1.0" }
+    volumes: ["/data"]
+    workdir: "/app"
+    healthcheck:
+      cmd: ["curl", "-f", "http://localhost:3000/health"]
+      interval: "30s"
+    shell: ["/bin/bash", "-c"]
+    root_run:  # As root, before user switch
+      - { cmd: "mkdir -p /opt/app" }
+      - { alpine: "apk add sqlite", debian: "apt-get install -y sqlite3" }
+    user_run:  # As claude user
+      - { cmd: "npm install -g typescript" }
+
+  # Raw Dockerfile injection points (unvalidated strings)
+  inject:
+    after_from: []
+    after_packages: ["RUN pip install poetry"]
+    after_user_setup: []
+    after_user_switch: []
+    after_claude_install: []
+    before_entrypoint: []
 
 agent:
   includes: ["./docs/architecture.md"]
@@ -134,12 +323,24 @@ security:
   docker_socket: false
 ```
 
+### Key Config Types (internal/config/schema.go)
+
+| Type | Purpose |
+|------|---------|
+| `DockerInstructions` | Type-safe Dockerfile instructions with validation |
+| `InjectConfig` | Raw instruction injection at 6 lifecycle points |
+| `RunInstruction` | OS-aware commands (`cmd`, `alpine`, `debian` variants) |
+| `CopyInstruction` | COPY with optional `chown`/`chmod` |
+| `HealthcheckConfig` | HEALTHCHECK with interval/timeout/retries |
+
 ## Design Decisions
 
 1. **Firewall enabled by default** - Network isolation for security
 2. **Docker socket disabled by default** - Opt-in for Docker-in-Docker
 3. **Config volume preserved by default** - Use `--clean` to remove all
 4. **Idempotent `up` command** - Attaches to existing container if running
+5. **Type-safe instructions preferred over raw inject** - `build.instructions` is validated and OS-aware; `build.inject` is escape hatch for advanced users
+6. **OS detection from base image** - `RunInstruction` supports `alpine`/`debian` variants; generator detects OS from image name
 
 ## Important Gotchas
 

@@ -7,6 +7,20 @@ ARG TZ=UTC
 ENV TZ="$TZ"
 ENV DEBIAN_FRONTEND=noninteractive
 
+{{/* User-defined ARGs */}}
+{{- if .Instructions}}
+{{- range .Instructions.Args}}
+ARG {{.Name}}{{if .Default}}="{{.Default}}"{{end}}
+{{- end}}
+{{- end}}
+
+{{/* Injection point: after_from */}}
+{{- if .Inject}}
+{{- range .Inject.AfterFrom}}
+{{.}}
+{{- end}}
+{{- end}}
+
 # Install system packages
 {{if .IsAlpine -}}
 RUN apk add --no-cache \
@@ -31,6 +45,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     {{- end}}
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 {{end}}
+
+{{/* Injection point: after_packages */}}
+{{- if .Inject}}
+{{- range .Inject.AfterPackages}}
+{{.}}
+{{- end}}
+{{- end}}
+
+{{/* Root-mode RUN commands (before user setup) */}}
+{{- if .Instructions}}
+{{- range .Instructions.RootRun}}
+{{- if .Cmd}}
+RUN {{.Cmd}}
+{{- else if $.IsAlpine}}
+{{- if .Alpine}}
+RUN {{.Alpine}}
+{{- end}}
+{{- else}}
+{{- if .Debian}}
+RUN {{.Debian}}
+{{- end}}
+{{- end}}
+{{- end}}
+{{- end}}
 
 {{if .EnableFirewall -}}
 # Install firewall packages
@@ -62,9 +100,23 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 {{end}}
 
+{{/* Injection point: after_user_setup */}}
+{{- if .Inject}}
+{{- range .Inject.AfterUserSetup}}
+{{.}}
+{{- end}}
+{{- end}}
+
 # Create workspace and config directories
 RUN mkdir -p {{.WorkspacePath}} /home/${USERNAME}/.claude /commandhistory \
     && chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /commandhistory
+
+{{/* COPY instructions (as root, for proper permissions) */}}
+{{- if .Instructions}}
+{{- range .Instructions.Copy}}
+COPY {{if .Chown}}--chown={{.Chown}} {{end}}{{if .Chmod}}--chmod={{.Chmod}} {{end}}{{.Src}} {{.Dest}}
+{{- end}}
+{{- end}}
 
 # Copy scripts
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -75,21 +127,102 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 {{end}}
 
+{{/* Labels */}}
+{{- if .Instructions}}
+{{- range $key, $value := .Instructions.Labels}}
+LABEL {{$key}}="{{$value}}"
+{{- end}}
+{{- end}}
+
+{{/* EXPOSE ports */}}
+{{- if .Instructions}}
+{{- range .Instructions.Expose}}
+EXPOSE {{.Port}}{{if .Protocol}}/{{.Protocol}}{{end}}
+{{- end}}
+{{- end}}
+
+{{/* VOLUME declarations */}}
+{{- if .Instructions}}
+{{- range .Instructions.Volumes}}
+VOLUME {{.}}
+{{- end}}
+{{- end}}
+
 # Switch to non-root user
 USER ${USERNAME}
+{{- if and .Instructions .Instructions.Workdir}}
+WORKDIR {{.Instructions.Workdir}}
+{{- else}}
 WORKDIR {{.WorkspacePath}}
+{{- end}}
+
+{{/* Injection point: after_user_switch */}}
+{{- if .Inject}}
+{{- range .Inject.AfterUserSwitch}}
+{{.}}
+{{- end}}
+{{- end}}
 
 # Set environment
 ENV HOME=/home/${USERNAME}
 ENV SHELL={{.Shell}}
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
+{{/* User-defined ENV variables from instructions */}}
+{{- if .Instructions}}
+{{- range $key, $value := .Instructions.Env}}
+ENV {{$key}}="{{$value}}"
+{{- end}}
+{{- end}}
+
+{{/* User-mode RUN commands (as claude user) */}}
+{{- if .Instructions}}
+{{- range .Instructions.UserRun}}
+{{- if .Cmd}}
+RUN {{.Cmd}}
+{{- else if $.IsAlpine}}
+{{- if .Alpine}}
+RUN {{.Alpine}}
+{{- end}}
+{{- else}}
+{{- if .Debian}}
+RUN {{.Debian}}
+{{- end}}
+{{- end}}
+{{- end}}
+{{- end}}
+
 # Install Claude Code
 RUN curl -fsSL "https://claude.ai/install.sh" | bash -s -- {{.ClaudeVersion}}
 
-{{range $key, $value := .ExtraEnv -}}
+{{/* Injection point: after_claude_install */}}
+{{- if .Inject}}
+{{- range .Inject.AfterClaudeInstall}}
+{{.}}
+{{- end}}
+{{- end}}
+
+{{/* Extra ENV from agent config (existing functionality) */}}
+{{- range $key, $value := .ExtraEnv}}
 ENV {{$key}}="{{$value}}"
-{{end}}
+{{- end}}
+
+{{/* HEALTHCHECK */}}
+{{- if and .Instructions .Instructions.Healthcheck}}
+HEALTHCHECK {{if .Instructions.Healthcheck.Interval}}--interval={{.Instructions.Healthcheck.Interval}} {{end}}{{if .Instructions.Healthcheck.Timeout}}--timeout={{.Instructions.Healthcheck.Timeout}} {{end}}{{if .Instructions.Healthcheck.Retries}}--retries={{.Instructions.Healthcheck.Retries}} {{end}}{{if .Instructions.Healthcheck.StartPeriod}}--start-period={{.Instructions.Healthcheck.StartPeriod}} {{end}}CMD [{{range $i, $e := .Instructions.Healthcheck.Cmd}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
+{{- end}}
+
+{{/* Shell configuration */}}
+{{- if and .Instructions (gt (len .Instructions.Shell) 0)}}
+SHELL [{{range $i, $e := .Instructions.Shell}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
+{{- end}}
+
+{{/* Injection point: before_entrypoint */}}
+{{- if .Inject}}
+{{- range .Inject.BeforeEntrypoint}}
+{{.}}
+{{- end}}
+{{- end}}
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["claude"]

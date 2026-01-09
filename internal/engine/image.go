@@ -46,11 +46,12 @@ func (im *ImageManager) EnsureImage(imageRef string) error {
 }
 
 // BuildImage builds a Docker image from a build context
-func (im *ImageManager) BuildImage(buildContext io.Reader, tag string, dockerfile string, buildArgs map[string]*string) error {
+func (im *ImageManager) BuildImage(buildContext io.Reader, tag string, dockerfile string, buildArgs map[string]*string, noCache bool) error {
 	options := types.ImageBuildOptions{
 		Tags:       []string{tag},
 		Dockerfile: dockerfile,
 		Remove:     true,
+		NoCache:    noCache,
 		BuildArgs:  buildArgs,
 	}
 

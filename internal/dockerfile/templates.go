@@ -28,4 +28,4 @@ const DefaultUID = 1001
 const DefaultGID = 1001
 
 // DefaultShell is the default shell for the claude user
-const DefaultShell = "/bin/bash"
+const DefaultShell = "/bin/zsh"
