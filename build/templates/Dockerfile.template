@@ -15,7 +15,7 @@
 {{ if is_alpine then ( -}}
 FROM alpine:{{ alpine_version }} AS build
 {{ ) else ( -}}
-FROM buildpack-deps:{{ .debianDefault }}-scm AS build
+FROM buildpack-deps:{{ env.variant }}-scm AS build
 {{ ) end -}}
 
 ARG TZ

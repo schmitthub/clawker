@@ -159,8 +159,8 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 ENV DEVCONTAINER=true
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude
+RUN mkdir -p /workspace /home/node/.claude /home/node/.local/bin && \
+  chown -R node:node /workspace /home/node/.claude /home/node/.local/bin
 
 WORKDIR /workspace
 
@@ -175,7 +175,7 @@ USER node
 
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=$PATH:/usr/local/share/npm-global/bin
+ENV PATH=/home/node/.local/bin:$PATH:/usr/local/share/npm-global/bin
 
 # Set the default shell to zsh rather than sh
 ENV SHELL=/bin/zsh
