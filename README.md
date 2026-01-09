@@ -67,6 +67,7 @@ Claude Code will authenticate automatically without requiring browser login.
 |---------|-------------|
 | `claucker init` | Create `claucker.yaml` and `.clauckerignore` in current directory |
 | `claucker up` | Build image, create container, and attach to Claude Code |
+| `claucker run` | Run a one-shot command in an ephemeral container |
 | `claucker down` | Stop the running container |
 | `claucker sh` | Open a bash shell in the running container |
 | `claucker logs` | View container logs |
@@ -74,8 +75,15 @@ Claude Code will authenticate automatically without requiring browser login.
 
 ### claucker up
 
+Builds the container (if needed) and runs Claude Code. This is an idempotent operation - it reuses existing containers.
+
 ```bash
-claucker up [flags]
+claucker up [-- <claude-args>...]
+
+# Examples:
+claucker up                          # Run Claude interactively
+claucker up -- -p "build a feature"  # Pass args to Claude CLI
+claucker up -- --resume              # Resume previous session
 
 Flags:
   --mode=bind|snapshot  Workspace mode (default: from config)
@@ -83,6 +91,28 @@ Flags:
   --no-cache            Build without Docker cache (implies --build)
   --detach              Run container in background
   --clean               Remove existing container/volumes before starting
+```
+
+### claucker run
+
+Runs a command in a new ephemeral container. Container is removed on exit by default (like `docker run --rm`).
+
+```bash
+claucker run [flags] [-- <command>...]
+
+# Examples:
+claucker run                           # Run Claude, remove on exit
+claucker run -- -p "quick question"    # Claude with args, remove on exit
+claucker run --shell                   # Run shell, remove on exit
+claucker run -- npm test               # Run arbitrary command
+claucker run --keep                    # Keep container after exit
+
+Flags:
+  --mode=bind|snapshot  Workspace mode (default: from config)
+  --build               Force rebuild of container image
+  --no-cache            Build without Docker cache (implies --build)
+  --shell               Run shell instead of Claude
+  --keep                Keep container after exit (default: remove)
 ```
 
 ### claucker down

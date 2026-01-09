@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "deny": [
-      "Read(TODO.md)"
-    ],
     "allow": [
       "WebFetch(domain:github.com)",
       "WebFetch(domain:api.github.com)",
@@ -37,7 +34,11 @@
       "Bash(./bin/claucker config check:*)",
       "Bash(go run:*)",
       "Bash(./bin/claucker up:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(./bin/claucker:*)"
+    ],
+    "deny": [
+      "Read(TODO.md)"
     ]
   }
 }

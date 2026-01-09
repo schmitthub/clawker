@@ -141,16 +141,13 @@ Validates `claucker.yaml` with semantic checks beyond YAML parsing:
 4. Add validation in `internal/config/validator.go`
 5. Add tests in `generator_test.go` and `validator_test.go`
 
-### Testing container operations
-
-Integration tests require Docker daemon. Use `go test -short` to skip.
-
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
 | `claucker init` | Scaffold `claucker.yaml` and `.clauckerignore` |
-| `claucker up [--mode=bind\|snapshot]` | Build image, create volume, run container, attach TTY |
+| `claucker up [-- <claude-args>]` | Build image, create/reuse container, attach TTY; passes args after `--` to claude CLI |
+| `claucker run [-- <command>]` | Run ephemeral container (removed on exit); `--shell` for bash, `--keep` to preserve |
 | `claucker down [--clean]` | Stop containers; `--clean` destroys volumes |
 | `claucker sh` | Open raw bash shell in running container |
 | `claucker logs [-f]` | Stream container logs |

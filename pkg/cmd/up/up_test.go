@@ -10,8 +10,9 @@ func TestNewCmdUp(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdUp(f)
 
-	if cmd.Use != "up" {
-		t.Errorf("expected Use 'up', got '%s'", cmd.Use)
+	expectedUse := "up [-- <claude-args>...]"
+	if cmd.Use != expectedUse {
+		t.Errorf("expected Use '%s', got '%s'", expectedUse, cmd.Use)
 	}
 
 	// Check flags exist

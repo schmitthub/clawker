@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmd/down"
 	initcmd "github.com/schmitthub/claucker/pkg/cmd/init"
 	"github.com/schmitthub/claucker/pkg/cmd/logs"
+	"github.com/schmitthub/claucker/pkg/cmd/run"
 	"github.com/schmitthub/claucker/pkg/cmd/sh"
 	"github.com/schmitthub/claucker/pkg/cmd/up"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
@@ -64,6 +65,7 @@ Workspace modes:
 	// Add subcommands
 	cmd.AddCommand(initcmd.NewCmdInit(f))
 	cmd.AddCommand(up.NewCmdUp(f))
+	cmd.AddCommand(run.NewCmdRun(f))
 	cmd.AddCommand(down.NewCmdDown(f))
 	cmd.AddCommand(sh.NewCmdSh(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))
