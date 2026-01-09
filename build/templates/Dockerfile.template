@@ -15,8 +15,11 @@
 {{ if is_alpine then ( -}}
 FROM alpine:{{ alpine_version }} AS build
 {{ ) else ( -}}
-FROM buildpack-deps:{{ env.debianDefault }}-scm AS build
+FROM buildpack-deps:{{ .debianDefault }}-scm AS build
 {{ ) end -}}
+
+ARG TZ
+ENV TZ="$TZ"
 
 ENV CLAUDE_CODE_VERSION={{ .fullVersion }}
 

@@ -6,6 +6,9 @@
 
 FROM alpine:3.22 AS build
 
+ARG TZ
+ENV TZ="$TZ"
+
 ENV CLAUDE_CODE_VERSION=2.1.2
 
 # Alpine pkgs

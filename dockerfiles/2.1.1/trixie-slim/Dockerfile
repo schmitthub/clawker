@@ -4,7 +4,10 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM buildpack-deps:-scm AS build
+FROM buildpack-deps:trixie-scm AS build
+
+ARG TZ
+ENV TZ="$TZ"
 
 ENV CLAUDE_CODE_VERSION=2.1.1
 

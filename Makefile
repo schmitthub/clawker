@@ -5,6 +5,7 @@
 # Variables
 IMAGE_NAME ?= claucker
 DOCKERFILES_PATH ?= ./dockerfiles
+CLAUDE_VERSIONS ?= stable latest next
 
 # Check if DOCKER_USERNAME is set
 ifndef DOCKER_USERNAME
@@ -46,6 +47,11 @@ help:
 	@echo "  test-rust       Run Rust container interactively"
 	@echo ""
 	@echo "  clean           Remove all locally built images"
+
+# Update 
+update:
+	@echo "Updating Claude versions: $(CLAUDE_VERSIONS)"
+	./update.sh $(CLAUDE_VERSIONS)
 
 # Build targets
 build-base:
