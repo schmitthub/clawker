@@ -55,7 +55,7 @@ if [ -z "$gh_ranges" ]; then
     exit 1
 fi
 
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages' >/dev/null; then
+if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages and .pages and .importer and .actions and .domains' >/dev/null; then
     echo "ERROR: GitHub API response missing required fields"
     exit 1
 fi
@@ -68,7 +68,7 @@ while read -r cidr; do
     fi
     echo "Adding GitHub range $cidr"
     ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages)[]' | aggregate -q)
+done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
 for domain in \
@@ -82,6 +82,8 @@ for domain in \
     "update.code.visualstudio.com" \
     "registry-1.docker.io" \
     "production.cloudflare.docker.com" \
+    "proxy.golang.org" \
+    "sum.golang.org" \
     "docker.io"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
