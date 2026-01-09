@@ -63,4 +63,5 @@ go.work.sum
 # .idea/
 # .vscode/
 
-**/*/claucker
+**/*/claucker.env
+.mcp.json
