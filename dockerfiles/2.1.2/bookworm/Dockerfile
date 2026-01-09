@@ -4,7 +4,7 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM buildpack-deps:trixie-scm AS build
+FROM buildpack-deps:bookworm-scm AS build
 
 ARG TZ
 ENV TZ="$TZ"

@@ -1,0 +1,50 @@
+# Claucker Ignore File
+# Files matching these patterns will not be copied in snapshot mode
+# Syntax follows .gitignore conventions
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+__pycache__/
+
+# Build outputs
+dist/
+build/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+
+# Secrets (never copy these)
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# Large files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Logs
+*.log
+logs/

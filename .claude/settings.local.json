@@ -12,7 +12,16 @@
       "Bash(make build-version:*)",
       "Bash(make build-all:*)",
       "Bash(make clean:*)",
-      "Bash(docker run:*)"
+      "Bash(docker run:*)",
+      "Bash(tree:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(/usr/bin/go mod:*)",
+      "Bash(go version:*)",
+      "Bash(/usr/local/go/bin/go mod:*)",
+      "Bash(/usr/local/go/bin/go build:*)",
+      "Bash(/usr/local/go/bin/go test:*)",
+      "Bash(./bin/claucker:*)",
+      "Bash(/workspace/claucker/bin/claucker config:*)"
     ]
   }
 }

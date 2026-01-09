@@ -1,0 +1,41 @@
+# Claucker Configuration
+# Documentation: https://github.com/claucker/claucker
+
+version: "1"
+project: "{{.ProjectName}}"
+
+build:
+  # Base image for the container
+  image: "node:20-slim"
+  # Optional: path to custom Dockerfile (relative to project root)
+  # dockerfile: "./.devcontainer/Dockerfile"
+  # System packages to install (apt-get on Debian, apk on Alpine)
+  packages:
+    - git
+    - curl
+    - ripgrep
+
+agent:
+  # Files to make available to Claude (prompts, docs, memory)
+  includes:
+    - "./README.md"
+    # - "./.claude/memory.md"
+  # Environment variables for the agent
+  env:
+    # NODE_ENV: "development"
+
+workspace:
+  # Container path where your code is mounted
+  remote_path: "/workspace"
+  # Default mode: "bind" (live sync) or "snapshot" (isolated copy)
+  default_mode: "bind"
+
+security:
+  # Enable network firewall (blocks outbound traffic by default)
+  enable_firewall: true
+  # Mount Docker socket for Docker-in-Docker (security risk if enabled)
+  docker_socket: false
+  # Domains allowed through firewall (only when enable_firewall: true)
+  # allowed_domains:
+  #   - "api.github.com"
+  #   - "registry.npmjs.org"
