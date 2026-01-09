@@ -356,6 +356,8 @@ func attachToContainer(ctx context.Context, eng *engine.Engine, containerMgr *en
 
 	if exitCode != 0 {
 		logger.Debug().Int64("exit_code", exitCode).Msg("container exited with non-zero status")
+		// Must restore terminal before os.Exit since defers don't run
+		pty.Restore()
 		os.Exit(int(exitCode))
 	}
 

@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/schmitthub/claucker/pkg/logger"
 )
 
 // VolumeManager handles volume operations for workspaces

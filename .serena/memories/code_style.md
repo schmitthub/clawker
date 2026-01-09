@@ -1,0 +1,24 @@
+# Code Style & Conventions
+
+## Logging
+- Use `zerolog` for all logging (never `fmt.Print` for debug)
+- Import via `github.com/schmitthub/claucker/pkg/logger`
+
+## Error Handling
+- Errors must include actionable "Next Steps" guidance for users
+- Use `DockerError` type with `FormatUserError()` for Docker-related errors
+
+## Project Layout
+- Standard Go project layout: `cmd/`, `internal/`, `pkg/`
+- Use interfaces for testability (especially Docker client)
+
+## CLI Commands
+- Create in `pkg/cmd/<cmdname>/`
+- Use Cobra's `RunE` pattern
+- Register in root command
+
+## Important Gotchas
+- `os.Exit()` does NOT run deferred functions - always restore terminal state explicitly before calling os.Exit
+- In raw terminal mode, Ctrl+C does NOT generate SIGINT - input goes directly to the container
+- PTY streaming returns immediately when output closes - never wait for stdin goroutine (may be blocked on Read())
+- Docker hijacked connections require proper cleanup of both read and write sides

@@ -1,3 +1,219 @@
-# Claucker: Manage Full Featured Claude Code Development Container Environments 
+# Claucker
 
-Configure and start Docker containers for running [Claude Code](https://claude.ai/code) in isolated development environments. 
+Manage full-featured Claude Code development container environments.
+
+Claucker wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in secure, reproducible Docker containers. Core philosophy: **Safe Autonomy** - your host system is read-only by default.
+
+## Quick Start
+
+### Prerequisites
+
+- Docker installed and running
+- Go 1.21+ (for building from source)
+- An Anthropic API key
+
+### Installation
+
+```bash
+# Build from source
+git clone https://github.com/schmitthub/claucker.git
+cd claucker
+go build -o bin/claucker ./cmd/claucker
+```
+
+### Basic Workflow
+
+```bash
+# 1. Set your API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# 2. Initialize a project
+cd your-project
+claucker init
+
+# 3. Start the container
+claucker up
+
+# 4. Claude Code is now running in the container
+# Press Ctrl+C to exit when done
+
+# 5. Stop the container
+claucker down
+```
+
+## Authentication
+
+Claucker automatically passes Anthropic authentication from your host environment to the container:
+
+| Environment Variable | Purpose |
+|---------------------|---------|
+| `ANTHROPIC_API_KEY` | API key for Claude authentication |
+| `ANTHROPIC_AUTH_TOKEN` | Custom authorization token |
+| `ANTHROPIC_BASE_URL` | Custom API endpoint |
+| `ANTHROPIC_CUSTOM_HEADERS` | Additional HTTP headers |
+
+Simply set `ANTHROPIC_API_KEY` on your host before running `claucker up`:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+claucker up
+```
+
+Claude Code will authenticate automatically without requiring browser login.
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `claucker init` | Create `claucker.yaml` and `.clauckerignore` in current directory |
+| `claucker up` | Build image, create container, and attach to Claude Code |
+| `claucker down` | Stop the running container |
+| `claucker sh` | Open a bash shell in the running container |
+| `claucker logs` | View container logs |
+| `claucker config check` | Validate your `claucker.yaml` |
+
+### claucker up
+
+```bash
+claucker up [flags]
+
+Flags:
+  --mode=bind|snapshot  Workspace mode (default: from config)
+  --build               Force rebuild of container image
+  --detach              Run container in background
+  --clean               Remove existing container/volumes before starting
+```
+
+### claucker down
+
+```bash
+claucker down [flags]
+
+Flags:
+  --clean    Also remove volumes (workspace, config, history)
+```
+
+## Configuration
+
+Claucker uses `claucker.yaml` for project configuration. Run `claucker init` to generate a template.
+
+### Full Example
+
+```yaml
+version: "1"
+project: "my-app"
+
+build:
+  # Base image for the container
+  image: "node:20-slim"
+  # Optional: path to custom Dockerfile
+  # dockerfile: "./.devcontainer/Dockerfile"
+  # System packages to install
+  packages:
+    - git
+    - curl
+    - ripgrep
+
+agent:
+  # Files to include in Claude's context
+  includes:
+    - "./README.md"
+    - "./.claude/memory.md"
+  # Environment variables for Claude
+  env:
+    NODE_ENV: "development"
+
+workspace:
+  # Container path for your code
+  remote_path: "/workspace"
+  # Default mode: "bind" or "snapshot"
+  default_mode: "bind"
+
+security:
+  # Network firewall (blocks outbound by default)
+  enable_firewall: true
+  # Docker socket access (disabled for security)
+  docker_socket: false
+  # Allowed domains when firewall enabled
+  # allowed_domains:
+  #   - "api.github.com"
+  #   - "registry.npmjs.org"
+```
+
+## Workspace Modes
+
+### Bind Mode (default)
+
+Live sync between host and container. Changes in the container immediately reflect on your host filesystem.
+
+```bash
+claucker up --mode=bind
+```
+
+### Snapshot Mode
+
+Creates an isolated copy of your workspace in a Docker volume. Host files remain untouched.
+
+```bash
+claucker up --mode=snapshot
+```
+
+Use snapshot mode when you want Claude to experiment freely without affecting your working directory.
+
+## Security
+
+Claucker prioritizes security by default:
+
+- **Firewall enabled** - Outbound network traffic is blocked by default
+- **Docker socket disabled** - No Docker-in-Docker unless explicitly enabled
+- **Host read-only** - In snapshot mode, your host files are never modified
+- **Sensitive env filtering** - Passwords and secrets from `.env` files are filtered
+
+### Allowing Network Access
+
+To allow specific domains through the firewall:
+
+```yaml
+security:
+  enable_firewall: true
+  allowed_domains:
+    - "api.github.com"
+    - "registry.npmjs.org"
+```
+
+### Enabling Docker-in-Docker
+
+Only enable if you need Claude to run Docker commands:
+
+```yaml
+security:
+  docker_socket: true
+```
+
+## Ignore Patterns
+
+The `.clauckerignore` file controls which files are excluded in snapshot mode. It follows `.gitignore` syntax.
+
+Default exclusions include:
+- `node_modules/`, `vendor/`, `.venv/`
+- Build outputs (`dist/`, `build/`)
+- IDE files (`.idea/`, `.vscode/`)
+- Secrets (`.env`, `*.pem`, `*.key`)
+- Large archives (`*.zip`, `*.tar.gz`)
+
+## Development
+
+```bash
+# Build
+go build -o bin/claucker ./cmd/claucker
+
+# Run tests
+go test ./...
+
+# Run with debug logging
+./bin/claucker --debug up
+```
+
+## License
+
+MIT

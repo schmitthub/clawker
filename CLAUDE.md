@@ -1,5 +1,26 @@
 # Claucker - Claude Container Orchestration
 
+## IMPORTANT: Required Tools (MUST USE)
+
+When working on this codebase, you MUST use the following tools:
+
+1. **Serena** - Use for all code exploration, symbol search, and semantic editing
+   - Use `find_symbol`, `get_symbols_overview` for code navigation
+   - Use `replace_symbol_body`, `insert_after_symbol` for edits
+   - Use `search_for_pattern` for regex-based searches
+   - Always call `think_about_task_adherence` before making changes
+   - Read project memories with `read_memory` for context
+
+2. **Context7** - Use for up-to-date library documentation
+   - Call `resolve-library-id` first to get the library ID
+   - Then call `get-library-docs` with topic for relevant docs
+   - Essential for Docker SDK, Go stdlib, and other dependencies
+
+3. **ast-grep** - Use for structural code search and refactoring
+   - Use `/ast-grep` skill for AST-based pattern matching
+   - Better than regex for finding code structures
+   - Use for large-scale refactoring tasks
+
 ## Project Overview
 
 Claucker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
@@ -53,6 +74,9 @@ Wraps Docker SDK with user-friendly errors including "Next Steps" guidance.
 
 ### PTYHandler
 Manages raw terminal mode and bidirectional streaming for interactive Claude sessions.
+- In raw mode, Ctrl+C does NOT generate SIGINT - it's passed as a byte to the container
+- Stream methods return immediately when output closes (container exits)
+- Does not wait for stdin goroutine (may be blocked on Read())
 
 ## Code Style
 
@@ -116,3 +140,10 @@ security:
 2. **Docker socket disabled by default** - Opt-in for Docker-in-Docker
 3. **Config volume preserved by default** - Use `--clean` to remove all
 4. **Idempotent `up` command** - Attaches to existing container if running
+
+## Important Gotchas
+
+- `os.Exit()` does NOT run deferred functions - always restore terminal state explicitly before calling os.Exit
+- In raw terminal mode, signals (SIGINT from Ctrl+C) are not generated - input goes directly to the process
+- When streaming to containers, don't wait for stdin goroutine on exit - it may be blocked on Read()
+- Docker hijacked connections require proper cleanup of both read and write sides
