@@ -38,13 +38,22 @@ RUN apk add --no-cache \
   && rm -rf /var/cache/apk/*
 
 
-RUN locale-gen en_US.UTF-8
+# Install Docker CLI (not daemon - we use host's Docker via socket mount)
+RUN apk add --no-cache \
+  docker-cli \
+  docker-cli-buildx \
+  docker-cli-compose
+
+# Alpine uses musl-locales, no locale-gen needed
 
 ARG USERNAME=claude
 
 # Setup claude user
 RUN addgroup -g 1001 ${USERNAME} \
   && adduser -D -u 1001 -G ${USERNAME} -s /bin/zsh ${USERNAME}
+
+# Create docker group and add user for socket access
+RUN addgroup -g 999 docker && adduser ${USERNAME} docker
 
 # Create workspace and config directories and set permissions
 RUN mkdir -p /home/${USERNAME}/.claude /workspace && \
@@ -58,11 +67,23 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 
 WORKDIR /workspace
 
+# Install git-delta
 ARG GIT_DELTA_VERSION=0.18.2
-RUN ARCH=$(dpkg --print-architecture) && \
-  wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-  sudo dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-  rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
+RUN ARCH=$(uname -m) && \
+  if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64-unknown-linux-musl"; \
+  elif [ "$ARCH" = "aarch64" ]; then ARCH="aarch64-unknown-linux-musl"; fi && \
+  wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
+  tar -xzf "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
+  mv "delta-${GIT_DELTA_VERSION}-${ARCH}/delta" /usr/local/bin/ && \
+  rm -rf "delta-${GIT_DELTA_VERSION}-${ARCH}" "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz"
+
+# Install hadolint (Dockerfile linter)
+ARG HADOLINT_VERSION=2.12.0
+RUN ARCH=$(uname -m) && \
+  if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64"; \
+  elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
+  wget "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${ARCH}" -O /usr/local/bin/hadolint && \
+  chmod +x /usr/local/bin/hadolint
 
 # Set up non-root user
 USER ${USERNAME}
@@ -80,8 +101,8 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -t ${ZSH_THEME} \
   -p git \
   -p fzf \
-  -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
-  -a "source /usr/share/doc/fzf/examples/completion.zsh" \
+  -a "source /usr/share/fzf/key-bindings.zsh" \
+  -a "source /usr/share/fzf/completion.zsh" \
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 

@@ -15,15 +15,7 @@
         "amd64",
         "arm64v8"
       ],
-      "trixie-slim": [
-        "amd64",
-        "arm64v8"
-      ],
       "bookworm": [
-        "amd64",
-        "arm64v8"
-      ],
-      "bookworm-slim": [
         "amd64",
         "arm64v8"
       ],
@@ -53,15 +45,7 @@
         "amd64",
         "arm64v8"
       ],
-      "trixie-slim": [
-        "amd64",
-        "arm64v8"
-      ],
       "bookworm": [
-        "amd64",
-        "arm64v8"
-      ],
-      "bookworm-slim": [
         "amd64",
         "arm64v8"
       ],

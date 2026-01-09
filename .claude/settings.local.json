@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(devcontainer up:*)"
+      "Bash(devcontainer up:*)",
+      "Bash(grep:*)",
+      "Bash(./apply-templates.sh:*)",
+      "Bash(make help:*)",
+      "Bash(make list-versions:*)",
+      "Bash(make list-variants:*)",
+      "Bash(make apply-templates:*)",
+      "Bash(make build:*)",
+      "Bash(make build-version:*)",
+      "Bash(make build-all:*)",
+      "Bash(make clean:*)"
     ]
   }
 }
