@@ -17,9 +17,9 @@ When working on this codebase, you MUST use the following tools:
    - Essential for Docker SDK, Go stdlib, and other dependencies
 
 3. **ast-grep** - Use for structural code search and refactoring
-   - Use `/ast-grep` skill for AST-based pattern matching
-   - Better than regex for finding code structures
-   - Use for large-scale refactoring tasks
+   - Use `Skill(ast-grep)` instead of `grep` when searching for code structural search, lint, rewriting
+   - Better than regex and `grep` for finding code structures
+   - Use for planning and refactoring tasks
 
 ## Project Overview
 
