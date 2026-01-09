@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
 	"github.com/schmitthub/claucker/pkg/logger"
-	"github.com/docker/docker/api/types/mount"
 )
 
 // SnapshotStrategy implements Strategy for ephemeral volume copy (isolated)

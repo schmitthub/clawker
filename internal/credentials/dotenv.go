@@ -110,7 +110,12 @@ func unquote(s string) string {
 // isSensitiveKey checks if an environment variable key is considered sensitive
 // These are filtered out to avoid accidentally exposing credentials
 func isSensitiveKey(key string) bool {
-	key = strings.ToUpper(key)
+	upper := strings.ToUpper(key)
+
+	// Allow Anthropic-specific keys (needed for Claude Code authentication in containers)
+	if strings.HasPrefix(upper, "ANTHROPIC_") {
+		return false
+	}
 
 	// List of sensitive key patterns
 	sensitivePatterns := []string{
@@ -140,7 +145,7 @@ func isSensitiveKey(key string) bool {
 	}
 
 	for _, pattern := range sensitivePatterns {
-		if strings.Contains(key, pattern) {
+		if strings.Contains(upper, pattern) {
 			return true
 		}
 	}

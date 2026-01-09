@@ -3,10 +3,10 @@ package workspace
 import (
 	"context"
 
+	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
 	"github.com/schmitthub/claucker/pkg/logger"
-	"github.com/docker/docker/api/types/mount"
 )
 
 // BindStrategy implements Strategy for direct host mount (live sync)

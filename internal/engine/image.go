@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/docker/docker/api/types"
+	"github.com/schmitthub/claucker/pkg/logger"
 )
 
 // ImageManager handles Docker image operations

@@ -243,5 +243,11 @@ func DefaultPassthrough() []string {
 		"http_proxy",
 		"https_proxy",
 		"no_proxy",
+
+		// Claude/Anthropic authentication
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_CUSTOM_HEADERS",
 	}
 }

@@ -4,13 +4,13 @@ import (
 	"context"
 	"io"
 
-	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/schmitthub/claucker/pkg/logger"
 )
 
 // Engine wraps the Docker client with Claucker-specific operations

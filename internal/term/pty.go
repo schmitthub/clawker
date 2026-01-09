@@ -6,8 +6,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/docker/docker/api/types"
+	"github.com/schmitthub/claucker/pkg/logger"
 )
 
 // PTYHandler manages the pseudo-terminal connection to a container
@@ -16,9 +16,6 @@ type PTYHandler struct {
 	stdout  *os.File
 	stderr  *os.File
 	rawMode *RawMode
-
-	// done signals when streaming is complete
-	done chan struct{}
 
 	// mu protects concurrent access
 	mu sync.Mutex
@@ -31,7 +28,6 @@ func NewPTYHandler() *PTYHandler {
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
 		rawMode: NewRawModeStdin(),
-		done:    make(chan struct{}),
 	}
 }
 
@@ -70,23 +66,20 @@ func (p *PTYHandler) Restore() error {
 func (p *PTYHandler) Stream(ctx context.Context, hijacked types.HijackedResponse) error {
 	defer hijacked.Close()
 
-	var wg sync.WaitGroup
+	outputDone := make(chan struct{})
 	errCh := make(chan error, 2)
 
 	// Copy container output to stdout
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(p.stdout, hijacked.Reader)
 		if err != nil && err != io.EOF {
 			errCh <- err
 		}
+		close(outputDone)
 	}()
 
 	// Copy stdin to container input
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(hijacked.Conn, p.stdin)
 		if err != nil && err != io.EOF {
 			errCh <- err
@@ -95,18 +88,15 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked types.HijackedResponse
 		hijacked.CloseWrite()
 	}()
 
-	// Wait for context cancellation or completion
-	go func() {
-		wg.Wait()
-		close(p.done)
-	}()
-
+	// Wait for context cancellation, error, or output completion
+	// NOTE: We don't wait for stdin copy because it may be blocked on stdin.Read()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-errCh:
 		return err
-	case <-p.done:
+	case <-outputDone:
+		// Output is complete, container has exited
 		return nil
 	}
 }
@@ -119,8 +109,8 @@ func (p *PTYHandler) StreamWithResize(
 ) error {
 	defer hijacked.Close()
 
-	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
+	outputDone := make(chan struct{})
+	errCh := make(chan error, 2)
 
 	// Initial resize
 	if p.rawMode.IsTerminal() {
@@ -131,20 +121,17 @@ func (p *PTYHandler) StreamWithResize(
 	}
 
 	// Copy container output to stdout
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(p.stdout, hijacked.Reader)
 		if err != nil && err != io.EOF {
 			logger.Debug().Err(err).Msg("error copying container output")
 			errCh <- err
 		}
+		close(outputDone)
 	}()
 
 	// Copy stdin to container input
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(hijacked.Conn, p.stdin)
 		if err != nil && err != io.EOF {
 			logger.Debug().Err(err).Msg("error copying stdin to container")
@@ -153,18 +140,19 @@ func (p *PTYHandler) StreamWithResize(
 		hijacked.CloseWrite()
 	}()
 
-	// Wait for completion
-	go func() {
-		wg.Wait()
-		close(p.done)
-	}()
-
+	// Wait for context cancellation, error, or output completion
+	// NOTE: We don't wait for stdin copy because it may be blocked on stdin.Read()
+	// In raw mode, Ctrl+C doesn't generate SIGINT - it's passed to the container.
+	// When the container exits, output closes but stdin may still be blocked.
+	// Returning immediately when output is done allows proper terminal restoration.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-errCh:
 		return err
-	case <-p.done:
+	case <-outputDone:
+		// Output is complete, container has exited
+		// Don't wait for stdin - it may be blocked on Read()
 		return nil
 	}
 }
@@ -177,9 +165,4 @@ func (p *PTYHandler) GetSize() (width, height int, err error) {
 // IsTerminal returns true if stdin is a terminal
 func (p *PTYHandler) IsTerminal() bool {
 	return p.rawMode.IsTerminal()
-}
-
-// Done returns a channel that's closed when streaming is complete
-func (p *PTYHandler) Done() <-chan struct{} {
-	return p.done
 }

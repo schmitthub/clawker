@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/docker/docker/api/types/mount"
 )
 
 // Strategy defines the interface for workspace mounting strategies
