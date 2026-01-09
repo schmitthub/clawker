@@ -82,6 +82,22 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 - Stream methods return immediately when output closes (container exits)
 - Does not wait for stdin goroutine (may be blocked on Read())
 
+### DockerfileGenerator
+
+Generates Dockerfiles from Go templates with `TemplateData` struct containing:
+- `Instructions` (`*DockerInstructions`) - Type-safe Dockerfile instructions
+- `Inject` (`*InjectConfig`) - Raw instruction injection at 6 lifecycle points
+- `IsAlpine` - OS detection for conditional package commands
+
+Template injection order: `after_from` → packages → `after_packages` → `root_run` → user setup → `after_user_setup` → COPY → `USER claude` → `after_user_switch` → `user_run` → Claude install → `after_claude_install` → `before_entrypoint` → ENTRYPOINT
+
+### ConfigValidator
+
+Validates `claucker.yaml` with semantic checks beyond YAML parsing:
+- Path existence and permissions for `instructions.copy`
+- Port range validation for `instructions.expose`
+- Duration format validation for `healthcheck` intervals
+
 ## Code Style
 
 - Use `zerolog` for all logging (never fmt.Print for debug)
@@ -99,8 +115,18 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 
 ### Modifying Dockerfile generation
 
-1. Edit templates in `claucker/templates/`
-2. Update `internal/dockerfile/generator.go`
+1. Edit template in `internal/dockerfile/templates/Dockerfile.tmpl`
+2. Update `internal/dockerfile/generator.go` (TemplateData struct)
+3. If adding new config fields, update `internal/config/schema.go`
+4. Add validation in `internal/config/validator.go`
+
+### Adding new build instructions
+
+1. Add type to `internal/config/schema.go` (e.g., `NewInstruction` struct)
+2. Add field to `DockerInstructions` struct
+3. Add template logic in `Dockerfile.tmpl` at appropriate injection point
+4. Add validation in `internal/config/validator.go`
+5. Add tests in `generator_test.go` and `validator_test.go`
 
 ### Testing container operations
 
@@ -239,6 +265,37 @@ build:
   image: "node:20-slim"
   packages: ["git", "ripgrep", "make"]
 
+  # Type-safe Dockerfile instructions (validated)
+  instructions:
+    env: { NODE_ENV: "production" }
+    labels: { maintainer: "dev@example.com" }
+    copy:
+      - { src: "./config.json", dest: "/etc/app/", chown: "claude:claude" }
+    expose:
+      - { port: 3000 }
+    args:
+      - { name: "VERSION", default: "1.0" }
+    volumes: ["/data"]
+    workdir: "/app"
+    healthcheck:
+      cmd: ["curl", "-f", "http://localhost:3000/health"]
+      interval: "30s"
+    shell: ["/bin/bash", "-c"]
+    root_run:  # As root, before user switch
+      - { cmd: "mkdir -p /opt/app" }
+      - { alpine: "apk add sqlite", debian: "apt-get install -y sqlite3" }
+    user_run:  # As claude user
+      - { cmd: "npm install -g typescript" }
+
+  # Raw Dockerfile injection points (unvalidated strings)
+  inject:
+    after_from: []
+    after_packages: ["RUN pip install poetry"]
+    after_user_setup: []
+    after_user_switch: []
+    after_claude_install: []
+    before_entrypoint: []
+
 agent:
   includes: ["./docs/architecture.md"]
   env:
@@ -253,12 +310,24 @@ security:
   docker_socket: false
 ```
 
+### Key Config Types (internal/config/schema.go)
+
+| Type | Purpose |
+|------|---------|
+| `DockerInstructions` | Type-safe Dockerfile instructions with validation |
+| `InjectConfig` | Raw instruction injection at 6 lifecycle points |
+| `RunInstruction` | OS-aware commands (`cmd`, `alpine`, `debian` variants) |
+| `CopyInstruction` | COPY with optional `chown`/`chmod` |
+| `HealthcheckConfig` | HEALTHCHECK with interval/timeout/retries |
+
 ## Design Decisions
 
 1. **Firewall enabled by default** - Network isolation for security
 2. **Docker socket disabled by default** - Opt-in for Docker-in-Docker
 3. **Config volume preserved by default** - Use `--clean` to remove all
 4. **Idempotent `up` command** - Attaches to existing container if running
+5. **Type-safe instructions preferred over raw inject** - `build.instructions` is validated and OS-aware; `build.inject` is escape hatch for advanced users
+6. **OS detection from base image** - `RunInstruction` supports `alpine`/`debian` variants; generator detects OS from image name
 
 ## Important Gotchas
 

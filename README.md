@@ -140,6 +140,148 @@ security:
   #   - "registry.npmjs.org"
 ```
 
+## Advanced Build Configuration
+
+Claucker provides two ways to customize the generated Dockerfile: **type-safe instructions** and **raw injection points**.
+
+### Type-Safe Instructions (`build.instructions`)
+
+Structured configuration for common Dockerfile instructions with validation:
+
+```yaml
+build:
+  image: "node:20-slim"
+  packages: [git, curl]
+
+  instructions:
+    # Environment variables
+    env:
+      NODE_ENV: "production"
+      APP_PORT: "3000"
+
+    # Docker labels
+    labels:
+      maintainer: "team@example.com"
+      version: "1.0.0"
+
+    # Copy files into image (runs as root for proper permissions)
+    copy:
+      - src: "./config/app.json"
+        dest: "/etc/app/config.json"
+        chown: "claude:claude"
+        chmod: "644"
+
+    # Expose ports
+    expose:
+      - port: 3000
+      - port: 8080
+        protocol: tcp
+
+    # Build arguments
+    args:
+      - name: BUILD_VERSION
+        default: "latest"
+
+    # Volume mount points
+    volumes:
+      - "/data"
+      - "/var/log/app"
+
+    # Override default workdir
+    workdir: "/app"
+
+    # Health check
+    healthcheck:
+      cmd: ["curl", "-f", "http://localhost:3000/health"]
+      interval: "30s"
+      timeout: "10s"
+      retries: 3
+      start_period: "5s"
+
+    # Custom shell
+    shell: ["/bin/bash", "-c"]
+
+    # Commands to run as root (before user switch)
+    root_run:
+      - cmd: "mkdir -p /opt/myapp"  # Runs on all distros
+      - alpine: "apk add --no-cache sqlite"  # Alpine-specific
+        debian: "apt-get install -y sqlite3"  # Debian-specific
+
+    # Commands to run as claude user
+    user_run:
+      - cmd: "npm install -g typescript"
+```
+
+### OS-Aware Run Commands
+
+The `root_run` and `user_run` instructions support OS-specific commands:
+
+```yaml
+instructions:
+  root_run:
+    # Generic command (runs on both Alpine and Debian)
+    - cmd: "echo 'Hello World'"
+
+    # OS-specific commands
+    - alpine: "apk add --no-cache postgresql-client"
+      debian: "apt-get install -y postgresql-client"
+```
+
+Claucker detects the base image OS and uses the appropriate command.
+
+### Raw Injection Points (`build.inject`)
+
+For advanced customization, inject raw Dockerfile instructions at specific points:
+
+```yaml
+build:
+  image: "python:3.11-slim"
+
+  inject:
+    # After FROM line
+    after_from:
+      - "ARG BUILDPLATFORM"
+
+    # After package installation
+    after_packages:
+      - "RUN pip install poetry"
+
+    # After user/group setup (still as root)
+    after_user_setup:
+      - "COPY --chown=claude:claude ./scripts /opt/scripts"
+
+    # After switching to claude user
+    after_user_switch:
+      - "RUN poetry config virtualenvs.in-project true"
+
+    # After Claude Code installation
+    after_claude_install:
+      - "RUN claude config set theme dark"
+
+    # Just before ENTRYPOINT
+    before_entrypoint:
+      - "HEALTHCHECK CMD curl -f http://localhost/ || exit 1"
+```
+
+**Injection points in order:**
+1. `after_from` - After base image, before packages
+2. `after_packages` - After apt/apk install
+3. `after_user_setup` - After claude user created (still root)
+4. `after_user_switch` - After `USER claude` (as claude)
+5. `after_claude_install` - After Claude Code installed
+6. `before_entrypoint` - Final customization point
+
+### When to Use Each
+
+| Use Case | Approach |
+|----------|----------|
+| Set environment variables | `instructions.env` |
+| Install npm/pip packages | `instructions.user_run` |
+| Install system packages (non-standard) | `instructions.root_run` with OS variants |
+| Copy config files | `instructions.copy` |
+| Complex multi-stage builds | `inject.*` with raw instructions |
+| Platform-specific builds | `inject.after_from` with ARG/FROM |
+
 ## Workspace Modes
 
 ### Bind Mode (default)
