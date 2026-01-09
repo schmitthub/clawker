@@ -1,25 +1,36 @@
-# Claucker - Claude Container Orchestration
+# Claucker - Claude Code Development Container Orchestration
 
-## IMPORTANT: Required Tools (MUST USE)
+<critical_instructions>
 
-When working on this codebase, you MUST use the following tools:
+## IMPORTANT: Required tool chain when working on this codebase
 
-1. **Serena** - Use for all code exploration, symbol search, and semantic editing
-   - Use `find_symbol`, `get_symbols_overview` for code navigation
-   - Use `replace_symbol_body`, `insert_after_symbol` for edits
-   - Use `search_for_pattern` for regex-based searches
+### I (MUST USE) use the following tooling workflow
+
+1. **Serena** - Always use serena for all code exploration, planning, context management, symbol search, and semantic editing. My workflow after every user request must be:
+   - **Critical**: Always use `initial_instructions` at the start of any session, this provides instructions on how to use the Serena toolbox.
+   - Always call `check_onboarding_performed` before planning, if onboarding hasn't been performed call `onboarding`, to identify the project structure, software architecture, and essential tasks, e.g. for testing or building before doing anything else.
+   - Always call `list_memories` and `read_memory` for context
+   - Always call `list_dir`, `find_file` to understand the project structure
+   - Always call `search_for_pattern`, `find_symbol` ,`find_referencing_symbols`, `get_symbols_overview` to search and navigating source code instead of using `grep`
+   - Always call `think_about_collected_information` after any planning for pondering the completeness of collected information.
    - Always call `think_about_task_adherence` before making changes
-   - Read project memories with `read_memory` for context
+   - Always call `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` , `rename_symbol` for editing code
+   - Always call `think_about_whether_you_are_done` for determining whether the task is truly completed.
+   - Always call  `write_memory`, `edit_memory`, `delete_memory` to keep project memories relevant and up to date
 
-2. **Context7** - Use for up-to-date library documentation
+2. **Context7** - Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
    - Call `resolve-library-id` first to get the library ID
    - Then call `get-library-docs` with topic for relevant docs
    - Essential for Docker SDK, Go stdlib, and other dependencies
 
-3. **ast-grep** - Use for structural code search and refactoring
-   - Use `Skill(ast-grep)` instead of `grep` when searching for code structural search, lint, rewriting
+### I (SHOULD USE) use the following tooling workflow
+
+1. **ast-grep** - Always fallback on `ast-grep` when not using `serena` for structural code search and refactoring instead of `grep`
+   - Always `Skill(ast-grep)` instead of `grep` when searching for code structural search, lint, rewriting
    - Better than regex and `grep` for finding code structures
    - Use for planning and refactoring tasks
+
+</critical_instructions>
 
 ## Project Overview
 
@@ -85,6 +96,7 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 ### DockerfileGenerator
 
 Generates Dockerfiles from Go templates with `TemplateData` struct containing:
+
 - `Instructions` (`*DockerInstructions`) - Type-safe Dockerfile instructions
 - `Inject` (`*InjectConfig`) - Raw instruction injection at 6 lifecycle points
 - `IsAlpine` - OS detection for conditional package commands
@@ -94,6 +106,7 @@ Template injection order: `after_from` → packages → `after_packages` → `ro
 ### ConfigValidator
 
 Validates `claucker.yaml` with semantic checks beyond YAML parsing:
+
 - Path existence and permissions for `instructions.copy`
 - Port range validation for `instructions.expose`
 - Duration format validation for `healthcheck` intervals
