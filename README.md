@@ -80,6 +80,7 @@ claucker up [flags]
 Flags:
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
+  --no-cache            Build without Docker cache (implies --build)
   --detach              Run container in background
   --clean               Remove existing container/volumes before starting
 ```

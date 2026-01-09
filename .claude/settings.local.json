@@ -30,7 +30,11 @@
       "mcp__serena__insert_after_symbol",
       "Skill(ast-grep)",
       "Bash(ast-grep run:*)",
-      "Bash(ast-grep scan:*)"
+      "Bash(ast-grep scan:*)",
+      "Bash(./bin/claucker config check:*)",
+      "Bash(go run:*)",
+      "Bash(./bin/claucker up:*)",
+      "Bash(tee:*)"
     ]
   }
 }

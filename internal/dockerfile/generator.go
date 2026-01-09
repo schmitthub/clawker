@@ -172,7 +172,7 @@ func (g *Generator) GetBuildContext() string {
 func (g *Generator) buildContext() GenerateContext {
 	baseImage := g.config.Build.Image
 	if baseImage == "" {
-		baseImage = "node:20-slim"
+		baseImage = "buildpack-deps:bookworm-scm" // TODO: make configurable
 	}
 
 	ctx := GenerateContext{
