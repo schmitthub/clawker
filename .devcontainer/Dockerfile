@@ -28,7 +28,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   gawk \
   locales \
   locales-all \
+  ca-certificates \
+  curl \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (not daemon - we use host's Docker via socket mount)
+RUN install -m 0755 -d /etc/apt/keyrings && \
+  curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
+  chmod a+r /etc/apt/keyrings/docker.asc && \
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin && \
+  apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create docker group with GID 1001 to match typical host docker group
+# and add node user to it for socket access
+RUN groupadd -g 1001 docker && usermod -aG docker node
 
 RUN locale-gen en_US.UTF-8
 

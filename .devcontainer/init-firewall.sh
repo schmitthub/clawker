@@ -2,6 +2,13 @@
 set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
 IFS=$'\n\t'       # Stricter word splitting
 
+# Fix Docker socket permissions for Docker-outside-of-Docker
+# On macOS with Docker Desktop, the socket is owned by root:root and chgrp doesn't work
+# So we make it world-readable/writable (this is safe since we're inside an isolated container)
+if [ -S /var/run/docker.sock ]; then
+    chmod 666 /var/run/docker.sock 2>/dev/null || true
+fi
+
 # 1. Extract Docker DNS info BEFORE any flushing
 DOCKER_DNS_RULES=$(iptables-save -t nat | grep "127\.0\.0\.11" || true)
 
@@ -48,7 +55,7 @@ if [ -z "$gh_ranges" ]; then
     exit 1
 fi
 
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null; then
+if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages' >/dev/null; then
     echo "ERROR: GitHub API response missing required fields"
     exit 1
 fi
@@ -61,7 +68,7 @@ while read -r cidr; do
     fi
     echo "Adding GitHub range $cidr"
     ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot)[]' | aggregate -q)
+done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
 for domain in \
