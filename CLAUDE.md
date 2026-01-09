@@ -67,13 +67,17 @@ make build VERSION=2.1.2 VARIANT=trixie
 ## Key Abstractions
 
 ### WorkspaceStrategy Interface
+
 Two implementations: BindStrategy (live host mount) and SnapshotStrategy (ephemeral volume copy).
 
 ### DockerEngine
+
 Wraps Docker SDK with user-friendly errors including "Next Steps" guidance.
 
 ### PTYHandler
+
 Manages raw terminal mode and bidirectional streaming for interactive Claude sessions.
+
 - In raw mode, Ctrl+C does NOT generate SIGINT - it's passed as a byte to the container
 - Stream methods return immediately when output closes (container exits)
 - Does not wait for stdin goroutine (may be blocked on Read())
@@ -88,15 +92,18 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 ## Common Tasks
 
 ### Adding a new CLI command
+
 1. Create `cmd/newcmd.go`
 2. Define cobra.Command with Run function
 3. Register in `cmd/root.go` init()
 
 ### Modifying Dockerfile generation
+
 1. Edit templates in `claucker/templates/`
 2. Update `internal/dockerfile/generator.go`
 
 ### Testing container operations
+
 Integration tests require Docker daemon. Use `go test -short` to skip.
 
 ## CLI Commands
@@ -109,6 +116,118 @@ Integration tests require Docker daemon. Use `go test -short` to skip.
 | `claucker sh` | Open raw bash shell in running container |
 | `claucker logs [-f]` | Stream container logs |
 | `claucker config check` | Validate `claucker.yaml` |
+
+## Update README.md
+
+**CRITICAL: Always keep README.md synchronized with code changes.**
+
+After making any of the following changes, you MUST update [README.md](README.md):
+
+### When to Update README
+
+1. **New CLI commands or flags** - Update CLI Commands table and add usage examples
+2. **Configuration changes** - Update the `claucker.yaml` example and field descriptions
+3. **New features** - Add to appropriate section (Quick Start, Workspace Modes, Security, etc.)
+4. **Authentication changes** - Update Authentication section with new env vars or methods
+5. **Behavior changes** - Update affected sections to reflect new behavior
+6. **Security defaults** - Update Security section if defaults change
+
+### README Writing Guidelines
+
+- **User-first language** - Write for new users, not developers
+- **Complete examples** - Show full commands with common flags
+- **Concise descriptions** - One sentence per feature when possible
+- **Practical use cases** - Explain WHEN to use a feature, not just HOW
+- **Tables for reference** - Use tables for commands, flags, and env vars
+- **No implementation details** - Avoid internals like package names or function calls
+
+### README Structure
+
+The README follows this order:
+
+1. Quick Start - Get users running in 5 minutes
+2. Authentication - How to pass API keys
+3. CLI Commands - Reference table + detailed usage
+4. Configuration - Full `claucker.yaml` spec with comments
+5. Workspace Modes - bind vs snapshot explained
+6. Security - Defaults and opt-in dangerous features
+7. Ignore Patterns - `.clauckerignore` behavior
+8. Development - Build instructions for contributors
+
+### Example Update Pattern
+
+```
+Code change: Add --timeout flag to `up` command
+README update:
+  1. Add to CLI Commands table
+  2. Add to "claucker up" flags section:
+     --timeout=30s  Container startup timeout (default: 30s)
+```
+
+**Before completing any PR or task, verify README.md reflects all user-visible changes.**
+
+## Update CLAUDE.md
+
+**CRITICAL: Keep CLAUDE.md current with architectural and implementation changes.**
+
+This file is the technical blueprint for AI agents and developers. Update it whenever implementation details change.
+
+### When to Update CLAUDE.md
+
+1. **New packages or modules** - Update Repository Structure with purpose
+2. **Architectural changes** - Update Key Abstractions section
+3. **New abstractions or interfaces** - Add to Key Abstractions with explanation
+4. **Build/test commands** - Update Build Commands section
+5. **Important behaviors** - Add to Important Gotchas if non-obvious
+6. **Design decisions** - Document reasoning in Design Decisions
+7. **Directory structure changes** - Update Repository Structure tree
+8. **Common task patterns** - Add to Common Tasks section
+
+### CLAUDE.md Writing Guidelines
+
+- **Developer-focused** - Assume reader knows Go and Docker
+- **Implementation details** - Include package names, interfaces, key types
+- **Architectural reasoning** - Explain WHY, not just WHAT
+- **Code patterns** - Show idioms and conventions used in the codebase
+- **Gotchas and pitfalls** - Document non-obvious behaviors that cause bugs
+- **Keep structure updated** - Repository Structure must match actual layout
+
+### CLAUDE.md Structure
+
+Maintain this order:
+
+1. Required Tools - MCP servers and usage patterns
+2. Project Overview - One-line philosophy
+3. Repository Structure - ASCII tree with annotations
+4. Build Commands - Developer workflow commands
+5. Key Abstractions - Core interfaces and their purpose
+6. Code Style - Conventions and idioms
+7. Common Tasks - Step-by-step patterns for typical changes
+8. CLI Commands - Reference (developer view with internals)
+9. Update README.md - Keep user docs in sync
+10. Update CLAUDE.md - Keep dev docs in sync
+11. Configuration - Schema and structure
+12. Design Decisions - Architectural choices and rationale
+13. Important Gotchas - Non-obvious behaviors
+
+### Example Update Pattern
+
+```
+Code change: Add NetworkPolicy type in internal/engine/
+CLAUDE.md update:
+  1. Add to Repository Structure:
+     internal/engine/
+       ├── client.go
+       ├── container.go
+       ├── network.go      # NEW
+  2. Add to Key Abstractions:
+     ### NetworkPolicy
+     Manages iptables rules for firewall. Uses --wait flag to avoid conflicts.
+  3. Add to Important Gotchas if needed:
+     - iptables requires --wait in concurrent environments
+```
+
+**After implementing features, ensure CLAUDE.md guides future AI agents and developers correctly.**
 
 ## Configuration (claucker.yaml)
 

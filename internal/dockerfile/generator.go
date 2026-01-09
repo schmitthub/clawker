@@ -28,6 +28,33 @@ type GenerateContext struct {
 	IsAlpine       bool
 	EnableFirewall bool
 	ExtraEnv       map[string]string
+	Instructions   *TemplateInstructions
+	Inject         *TemplateInject
+}
+
+// TemplateInstructions is the template-friendly version of DockerInstructions
+type TemplateInstructions struct {
+	Copy        []config.CopyInstruction
+	Env         map[string]string
+	Labels      map[string]string
+	Expose      []config.ExposePort
+	Args        []config.ArgDefinition
+	Volumes     []string
+	Workdir     string
+	Healthcheck *config.HealthcheckConfig
+	Shell       []string
+	UserRun     []config.RunInstruction
+	RootRun     []config.RunInstruction
+}
+
+// TemplateInject is the template-friendly version of InjectConfig
+type TemplateInject struct {
+	AfterFrom          []string
+	AfterPackages      []string
+	AfterUserSetup     []string
+	AfterUserSwitch    []string
+	AfterClaudeInstall []string
+	BeforeEntrypoint   []string
 }
 
 // Generator creates Dockerfiles dynamically from configuration
@@ -148,7 +175,7 @@ func (g *Generator) buildContext() GenerateContext {
 		baseImage = "node:20-slim"
 	}
 
-	return GenerateContext{
+	ctx := GenerateContext{
 		BaseImage:      baseImage,
 		Packages:       g.config.Build.Packages,
 		Username:       DefaultUsername,
@@ -161,6 +188,39 @@ func (g *Generator) buildContext() GenerateContext {
 		EnableFirewall: g.config.Security.EnableFirewall,
 		ExtraEnv:       g.config.Agent.Env,
 	}
+
+	// Populate Instructions if present
+	if g.config.Build.Instructions != nil {
+		inst := g.config.Build.Instructions
+		ctx.Instructions = &TemplateInstructions{
+			Copy:        inst.Copy,
+			Env:         inst.Env,
+			Labels:      inst.Labels,
+			Expose:      inst.Expose,
+			Args:        inst.Args,
+			Volumes:     inst.Volumes,
+			Workdir:     inst.Workdir,
+			Healthcheck: inst.Healthcheck,
+			Shell:       inst.Shell,
+			UserRun:     inst.UserRun,
+			RootRun:     inst.RootRun,
+		}
+	}
+
+	// Populate Inject if present
+	if g.config.Build.Inject != nil {
+		inj := g.config.Build.Inject
+		ctx.Inject = &TemplateInject{
+			AfterFrom:          inj.AfterFrom,
+			AfterPackages:      inj.AfterPackages,
+			AfterUserSetup:     inj.AfterUserSetup,
+			AfterUserSwitch:    inj.AfterUserSwitch,
+			AfterClaudeInstall: inj.AfterClaudeInstall,
+			BeforeEntrypoint:   inj.BeforeEntrypoint,
+		}
+	}
+
+	return ctx
 }
 
 // addFileToTar adds a file to a tar archive
