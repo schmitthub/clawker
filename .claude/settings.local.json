@@ -1,6 +1,13 @@
 {
   "permissions": {
     "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__serena__get_symbols_overview",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)"
     ]
   }
 }
