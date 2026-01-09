@@ -114,9 +114,9 @@ RUN groupadd --gid 1001 ${USERNAME} \
 
 # Create docker group and add user for socket access
 {{ if is_alpine then ( -}}
-RUN addgroup -g 999 docker && adduser ${USERNAME} docker
+RUN addgroup -g 999 docker 2>/dev/null || addgroup docker 2>/dev/null || true && adduser ${USERNAME} docker
 {{ ) else ( -}}
-RUN groupadd -g 999 docker && usermod -aG docker ${USERNAME}
+RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true && usermod -aG docker ${USERNAME}
 {{ ) end -}}
 
 # Create workspace and config directories and set permissions
@@ -132,16 +132,10 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 WORKDIR /workspace
 
 # Install git-delta
-ARG GIT_DELTA_VERSION=0.18.2
 {{ if is_alpine then ( -}}
-RUN ARCH=$(uname -m) && \
-  if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64-unknown-linux-musl"; \
-  elif [ "$ARCH" = "aarch64" ]; then ARCH="aarch64-unknown-linux-musl"; fi && \
-  wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
-  tar -xzf "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
-  mv "delta-${GIT_DELTA_VERSION}-${ARCH}/delta" /usr/local/bin/ && \
-  rm -rf "delta-${GIT_DELTA_VERSION}-${ARCH}" "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz"
+RUN apk add --no-cache delta
 {{ ) else ( -}}
+ARG GIT_DELTA_VERSION=0.18.2
 RUN ARCH=$(dpkg --print-architecture) && \
   wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \

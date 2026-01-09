@@ -53,7 +53,7 @@ RUN addgroup -g 1001 ${USERNAME} \
   && adduser -D -u 1001 -G ${USERNAME} -s /bin/zsh ${USERNAME}
 
 # Create docker group and add user for socket access
-RUN addgroup -g 999 docker && adduser ${USERNAME} docker
+RUN addgroup -g 999 docker 2>/dev/null || addgroup docker 2>/dev/null || true && adduser ${USERNAME} docker
 
 # Create workspace and config directories and set permissions
 RUN mkdir -p /home/${USERNAME}/.claude /workspace && \
@@ -68,14 +68,7 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 WORKDIR /workspace
 
 # Install git-delta
-ARG GIT_DELTA_VERSION=0.18.2
-RUN ARCH=$(uname -m) && \
-  if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64-unknown-linux-musl"; \
-  elif [ "$ARCH" = "aarch64" ]; then ARCH="aarch64-unknown-linux-musl"; fi && \
-  wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
-  tar -xzf "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz" && \
-  mv "delta-${GIT_DELTA_VERSION}-${ARCH}/delta" /usr/local/bin/ && \
-  rm -rf "delta-${GIT_DELTA_VERSION}-${ARCH}" "delta-${GIT_DELTA_VERSION}-${ARCH}.tar.gz"
+RUN apk add --no-cache delta
 
 # Install hadolint (Dockerfile linter)
 ARG HADOLINT_VERSION=2.12.0

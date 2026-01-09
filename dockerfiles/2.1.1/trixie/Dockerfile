@@ -55,7 +55,7 @@ RUN groupadd --gid 1001 ${USERNAME} \
   && useradd --uid 1001 --gid ${USERNAME} --shell /bin/zsh --create-home ${USERNAME}
 
 # Create docker group and add user for socket access
-RUN groupadd -g 999 docker && usermod -aG docker ${USERNAME}
+RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true && usermod -aG docker ${USERNAME}
 
 # Create workspace and config directories and set permissions
 RUN mkdir -p /home/${USERNAME}/.claude /workspace && \

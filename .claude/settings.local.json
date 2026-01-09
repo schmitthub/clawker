@@ -11,7 +11,8 @@
       "Bash(make build:*)",
       "Bash(make build-version:*)",
       "Bash(make build-all:*)",
-      "Bash(make clean:*)"
+      "Bash(make clean:*)",
+      "Bash(docker run:*)"
     ]
   }
 }
