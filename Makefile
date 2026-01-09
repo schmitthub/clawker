@@ -1,139 +1,116 @@
-.PHONY: help build-base build-nodejs build-python build-go build-rust build-all \
-        push-base push-nodejs push-python push-go push-rust push-all \
-        test-base test-nodejs test-python test-go test-rust clean
+.PHONY: help update apply-templates build build-version build-all \
+        list-versions list-variants clean
 
 # Variables
 IMAGE_NAME ?= claucker
-DOCKERFILES_PATH ?= ./dockerfiles
-CLAUDE_VERSIONS ?= stable latest next
+DOCKERFILES_DIR ?= ./dockerfiles
+DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 
-# Check if DOCKER_USERNAME is set
-ifndef DOCKER_USERNAME
-$(error DOCKER_USERNAME is not set. Please set it with: export DOCKER_USERNAME=your-dockerhub-username)
-endif
-
-# Image tags
-BASE_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):base
-NODEJS_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):node
-PYTHON_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):python
-GO_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):go
-RUST_TAG = $(DOCKER_USERNAME)/$(IMAGE_NAME):rust
+# Default versions to update (stable, latest)
+VERSIONS ?= stable latest 
 
 help:
-	@echo "Claude Container Makefile"
+	@echo "Claucker - Claude Code Docker Images"
 	@echo ""
-	@echo "Prerequisites:"
-	@echo "  export DOCKER_USERNAME=your-dockerhub-username"
+	@echo "Update targets:"
+	@echo "  update              Fetch version info and generate Dockerfiles (default: stable latest)"
+	@echo "  update VERSIONS='2.1.1 2.1.2'  Update specific versions"
+	@echo "  apply-templates     Re-generate Dockerfiles from template (uses versions.json)"
 	@echo ""
-	@echo "Available targets:"
-	@echo "  build-base      Build base image with Claude Code"
-	@echo "  build-node      Build Node.js image"
-	@echo "  build-python    Build Python image"
-	@echo "  build-go        Build Go image"
-	@echo "  build-rust      Build Rust image"
-	@echo "  build-all       Build all images"
+	@echo "Build targets:"
+	@echo "  build VERSION=x.x.x VARIANT=variant  Build a specific version/variant"
+	@echo "  build-version VERSION=x.x.x          Build all variants for a version"
+	@echo "  build-all                            Build all versions and variants"
 	@echo ""
-	@echo "  push-base       Push base image to DockerHub"
-	@echo "  push-node     Push Node.js image to DockerHub"
-	@echo "  push-python     Push Python image to DockerHub"
-	@echo "  push-go         Push Go image to DockerHub"
-	@echo "  push-rust       Push Rust image to DockerHub"
-	@echo "  push-all        Push all images to DockerHub"
+	@echo "Info targets:"
+	@echo "  list-versions       List available versions in versions.json"
+	@echo "  list-variants       List variants for a VERSION"
 	@echo ""
-	@echo "  test-base       Run base container interactively"
-	@echo "  test-node     Run Node.js container interactively"
-	@echo "  test-python     Run Python container interactively"
-	@echo "  test-go         Run Go container interactively"
-	@echo "  test-rust       Run Rust container interactively"
+	@echo "Other targets:"
+	@echo "  clean               Remove generated Dockerfiles"
 	@echo ""
-	@echo "  clean           Remove all locally built images"
+	@echo "Examples:"
+	@echo "  make update"
+	@echo "  make update VERSIONS='2.1.2'"
+	@echo "  make build VERSION=2.1.2 VARIANT=alpine3.23"
+	@echo "  make build-version VERSION=2.1.2"
+	@echo "  make build-all"
 
-# Update 
+# Update versions.json and generate Dockerfiles
 update:
-	@echo "Updating Claude versions: $(CLAUDE_VERSIONS)"
-	./update.sh $(CLAUDE_VERSIONS)
+	@echo "Updating versions: $(VERSIONS)"
+	./versions.sh $(VERSIONS)
+	./apply-templates.sh
 
-# Build targets
-build-base:
-	@echo "Building base image..."
-	docker build -t $(BASE_TAG) \
-		--target base \
-		-f $(DOCKERFILE_PATH) .
-	docker tag $(BASE_TAG) $(IMAGE_NAME):base
+# Re-apply templates without fetching new version info
+apply-templates:
+	@echo "Generating Dockerfiles from template..."
+	./apply-templates.sh
 
-build-node: build-base
-	@echo "Building Node.js image..."
-	docker build -t $(NODEJS_TAG) \
-		--target node \
-		-f $(DOCKERFILE_PATH) .
+# Build a specific version/variant
+build:
+ifndef VERSION
+	$(error VERSION is required. Usage: make build VERSION=x.x.x VARIANT=variant)
+endif
+ifndef VARIANT
+	$(error VARIANT is required. Usage: make build VERSION=x.x.x VARIANT=variant)
+endif
+	@if [ ! -f "$(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile" ]; then \
+		echo "Error: Dockerfile not found at $(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile"; \
+		echo "Run 'make list-variants VERSION=$(VERSION)' to see available variants"; \
+		exit 1; \
+	fi
+	@echo "Building $(IMAGE_NAME):$(VERSION)-$(VARIANT)..."
+	docker build -t $(IMAGE_NAME):$(VERSION)-$(VARIANT) \
+		-f $(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile .
 
-build-python: build-base
-	@echo "Building Python image..."
-	docker build -t $(PYTHON_TAG) \
-		--target python \
-		-f $(DOCKERFILE_PATH) .
+# Build all variants for a specific version
+build-version:
+ifndef VERSION
+	$(error VERSION is required. Usage: make build-version VERSION=x.x.x)
+endif
+	@if [ ! -d "$(DOCKERFILES_DIR)/$(VERSION)" ]; then \
+		echo "Error: Version $(VERSION) not found in $(DOCKERFILES_DIR)"; \
+		echo "Run 'make list-versions' to see available versions"; \
+		exit 1; \
+	fi
+	@echo "Building all variants for version $(VERSION)..."
+	@for variant in $$(ls $(DOCKERFILES_DIR)/$(VERSION)); do \
+		echo "Building $(IMAGE_NAME):$(VERSION)-$$variant..."; \
+		docker build -t $(IMAGE_NAME):$(VERSION)-$$variant \
+			-f $(DOCKERFILES_DIR)/$(VERSION)/$$variant/Dockerfile . || exit 1; \
+	done
+	@echo "All variants for $(VERSION) built successfully!"
 
-build-go: build-base
-	@echo "Building Go image..."
-	docker build -t $(GO_TAG) \
-		--target go \
-		-f $(DOCKERFILE_PATH) .
-
-build-rust: build-base
-	@echo "Building Rust image..."
-	docker build -t $(RUST_TAG) \
-		--target rust \
-		-f $(DOCKERFILE_PATH) .
-
-build-all: build-base build-node build-python build-go build-rust
+# Build all versions and variants
+build-all:
+	@echo "Building all versions and variants..."
+	@for version in $$(ls $(DOCKERFILES_DIR)); do \
+		for variant in $$(ls $(DOCKERFILES_DIR)/$$version); do \
+			echo "Building $(IMAGE_NAME):$$version-$$variant..."; \
+			docker build -t $(IMAGE_NAME):$$version-$$variant \
+				-f $(DOCKERFILES_DIR)/$$version/$$variant/Dockerfile . || exit 1; \
+		done; \
+	done
 	@echo "All images built successfully!"
 
-# Push targets
-push-base:
-	@echo "Pushing base image..."
-	docker push $(BASE_TAG)
+# List available versions
+list-versions:
+	@echo "Available versions:"
+	@jq -r 'keys[]' versions.json 2>/dev/null || ls $(DOCKERFILES_DIR) 2>/dev/null || echo "No versions found. Run 'make update' first."
 
-push-nodejs:
-	@echo "Pushing Node.js image..."
-	docker push $(NODEJS_TAG)
+# List variants for a version
+list-variants:
+ifndef VERSION
+	$(error VERSION is required. Usage: make list-variants VERSION=x.x.x)
+endif
+	@echo "Variants for version $(VERSION):"
+	@jq -r '.["$(VERSION)"].variants | keys[]' versions.json 2>/dev/null || \
+		ls $(DOCKERFILES_DIR)/$(VERSION) 2>/dev/null || \
+		echo "Version $(VERSION) not found."
 
-push-python:
-	@echo "Pushing Python image..."
-	docker push $(PYTHON_TAG)
-
-push-go:
-	@echo "Pushing Go image..."
-	docker push $(GO_TAG)
-
-push-rust:
-	@echo "Pushing Rust image..."
-	docker push $(RUST_TAG)
-
-push-all: push-base push-nodejs push-python push-go push-rust
-	@echo "All images pushed successfully!"
-
-# Test targets - exec command to test containers
-test-base:
-	docker run --rm -it -v $(PWD):/workspace $(BASE_TAG) /bin/zsh
-
-test-node:
-	docker run --rm -it -v $(PWD):/workspace $(NODEJS_TAG) /bin/zsh
-
-test-python:
-	docker run --rm -it -v $(PWD):/workspace $(PYTHON_TAG) /bin/zsh
-
-test-go:
-	docker run --rm -it -v $(PWD):/workspace $(GO_TAG) /bin/zsh
-
-test-rust:
-	docker run --rm -it -v $(PWD):/workspace $(RUST_TAG) /bin/zsh
-
-# Clean target
+# Clean generated Dockerfiles
 clean:
-	@echo "Removing locally built images..."
-	-docker rmi $(BASE_TAG) $(IMAGE_NAME):base
-	-docker rmi $(NODEJS_TAG)
-	-docker rmi $(PYTHON_TAG)
-	-docker rmi $(GO_TAG)
-	-docker rmi $(RUST_TAG)
+	@echo "Removing generated Dockerfiles..."
+	rm -rf $(DOCKERFILES_DIR)/*
 	@echo "Cleanup complete!"

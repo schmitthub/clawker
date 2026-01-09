@@ -37,6 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   locales-all \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Install Docker CLI (not daemon - we use host's Docker via socket mount)
+RUN install -m 0755 -d /etc/apt/keyrings && \
+  curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
+  chmod a+r /etc/apt/keyrings/docker.asc && \
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin && \
+  apt-get clean && rm -rf /var/lib/apt/lists/*
+
 RUN locale-gen en_US.UTF-8
 
 ARG USERNAME=claude
@@ -44,6 +53,9 @@ ARG USERNAME=claude
 # Setup claude user
 RUN groupadd --gid 1001 ${USERNAME} \
   && useradd --uid 1001 --gid ${USERNAME} --shell /bin/zsh --create-home ${USERNAME}
+
+# Create docker group and add user for socket access
+RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true && usermod -aG docker ${USERNAME}
 
 # Create workspace and config directories and set permissions
 RUN mkdir -p /home/${USERNAME}/.claude /workspace && \
@@ -57,11 +69,19 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 
 WORKDIR /workspace
 
+# Install git-delta
 ARG GIT_DELTA_VERSION=0.18.2
 RUN ARCH=$(dpkg --print-architecture) && \
   wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-  sudo dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
+  dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
+
+# Install hadolint (Dockerfile linter)
+ARG HADOLINT_VERSION=2.12.0
+RUN ARCH=$(dpkg --print-architecture) && \
+  if [ "$ARCH" = "amd64" ]; then ARCH="x86_64"; fi && \
+  wget "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${ARCH}" -O /usr/local/bin/hadolint && \
+  chmod +x /usr/local/bin/hadolint
 
 # Set up non-root user
 USER ${USERNAME}

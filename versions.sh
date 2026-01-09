@@ -57,8 +57,8 @@ debug_log "alpineDefault: $alpineDefault"
 
 # Define supported variants and their suffixes, leave empty array for no suffixes
 supportedVariants="$(jq -c '.' <<< '{
-    "trixie": ["-slim"],
-    "bookworm": ["-slim"],
+    "trixie": [],
+    "bookworm": [],
     "alpine3.23": [],
     "alpine3.22": []
 }')"
