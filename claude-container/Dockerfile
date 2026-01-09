@@ -24,13 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   wget \
   curl \
   gh \
-  locales \ 
+  locales \
   locales-all \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN locale-gen en_US.UTF-8
 
-# Setup claude user 
+# Setup claude user
 RUN groupadd --gid 1001 claude \
   && useradd --uid 1001 --gid claude --shell /bin/bash --create-home claude
 
@@ -87,6 +87,9 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @ast-grep/cli && npm cache clean --force
 
+# Native install might be better and avoids node dependency
+# curl -fsSL https://claude.ai/install.sh | bash -s 1.0.58
+
 # Copy and set up firewall script
 COPY ./claude-container/init-firewall.sh /usr/local/bin/
 USER root
@@ -102,9 +105,9 @@ USER ${USERNAME}
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["claude"]
 
-FROM base AS go 
+FROM base AS go
 
-USER root 
+USER root
 # Install Go
 RUN apt-get update && apt-get install -y --no-install-recommends \
     golang \
@@ -156,7 +159,7 @@ USER claude
 
 FROM base AS rust
 
-USER root 
+USER root
 # Install Rust build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
