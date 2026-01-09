@@ -1,5 +1,6 @@
 .PHONY: help update apply-templates build build-version build-all \
-        list-versions list-variants clean
+        list-versions list-variants clean \
+        cli cli-build cli-test cli-lint cli-install cli-clean
 
 # Variables
 IMAGE_NAME ?= claucker
@@ -7,17 +8,36 @@ DOCKERFILES_DIR ?= ./dockerfiles
 DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 
 # Default versions to update (stable, latest)
-VERSIONS ?= stable latest 
+VERSIONS ?= stable latest
+
+# Go CLI variables
+BINARY_NAME := claucker
+CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+CLI_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+GO ?= go
+GOFLAGS := -trimpath
+LDFLAGS := -s -w \
+	-X 'github.com/schmitthub/claucker/internal/claucker.Version=$(CLI_VERSION)' \
+	-X 'github.com/schmitthub/claucker/internal/claucker.Commit=$(CLI_COMMIT)'
+BIN_DIR := bin
+DIST_DIR := dist
 
 help:
-	@echo "Claucker - Claude Code Docker Images"
+	@echo "Claucker - Claude Code Docker Images & CLI"
 	@echo ""
-	@echo "Update targets:"
+	@echo "CLI targets:"
+	@echo "  cli                 Build the claucker CLI binary"
+	@echo "  cli-test            Run CLI tests"
+	@echo "  cli-lint            Run linter on CLI code"
+	@echo "  cli-install         Install CLI to GOPATH/bin"
+	@echo "  cli-clean           Remove CLI build artifacts"
+	@echo ""
+	@echo "Docker image update targets:"
 	@echo "  update              Fetch version info and generate Dockerfiles (default: stable latest)"
 	@echo "  update VERSIONS='2.1.1 2.1.2'  Update specific versions"
 	@echo "  apply-templates     Re-generate Dockerfiles from template (uses versions.json)"
 	@echo ""
-	@echo "Build targets:"
+	@echo "Docker image build targets:"
 	@echo "  build VERSION=x.x.x VARIANT=variant  Build a specific version/variant"
 	@echo "  build-version VERSION=x.x.x          Build all variants for a version"
 	@echo "  build-all                            Build all versions and variants"
@@ -30,6 +50,8 @@ help:
 	@echo "  clean               Remove generated Dockerfiles"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make cli"
+	@echo "  make cli-test"
 	@echo "  make update"
 	@echo "  make update VERSIONS='2.1.2'"
 	@echo "  make build VERSION=2.1.2 VARIANT=alpine3.23"
@@ -114,3 +136,86 @@ clean:
 	@echo "Removing generated Dockerfiles..."
 	rm -rf $(DOCKERFILES_DIR)/*
 	@echo "Cleanup complete!"
+
+# ============================================================================
+# CLI Build Targets
+# ============================================================================
+
+# Build the CLI binary
+cli: cli-build
+
+cli-build:
+	@echo "Building $(BINARY_NAME) $(CLI_VERSION)..."
+	@mkdir -p $(BIN_DIR)
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/claucker
+
+# Build CLI for multiple platforms
+cli-build-all: cli-build-linux cli-build-darwin cli-build-windows
+
+cli-build-linux:
+	@echo "Building CLI for Linux..."
+	@mkdir -p $(DIST_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/claucker
+	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/claucker
+
+cli-build-darwin:
+	@echo "Building CLI for macOS..."
+	@mkdir -p $(DIST_DIR)
+	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/claucker
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/claucker
+
+cli-build-windows:
+	@echo "Building CLI for Windows..."
+	@mkdir -p $(DIST_DIR)
+	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/claucker
+
+# Run CLI tests
+cli-test:
+	@echo "Running CLI tests..."
+	$(GO) test -v ./...
+
+# Run CLI tests with coverage
+cli-test-coverage:
+	@echo "Running CLI tests with coverage..."
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
+# Run short tests (skip integration tests)
+cli-test-short:
+	@echo "Running short CLI tests..."
+	$(GO) test -short -v ./...
+
+# Run linter
+cli-lint:
+	@echo "Running linter..."
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed, skipping..."; \
+	fi
+
+# Format code
+cli-fmt:
+	@echo "Formatting code..."
+	$(GO) fmt ./...
+
+# Tidy dependencies
+cli-tidy:
+	@echo "Tidying dependencies..."
+	$(GO) mod tidy
+
+# Install CLI to GOPATH/bin
+cli-install: cli-build
+	@echo "Installing $(BINARY_NAME)..."
+	cp $(BIN_DIR)/$(BINARY_NAME) $(GOPATH)/bin/$(BINARY_NAME)
+
+# Install CLI to /usr/local/bin (requires sudo)
+cli-install-global: cli-build
+	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
+	sudo cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
+
+# Clean CLI build artifacts
+cli-clean:
+	@echo "Cleaning CLI build artifacts..."
+	rm -rf $(BIN_DIR) $(DIST_DIR)
+	rm -f coverage.out coverage.html

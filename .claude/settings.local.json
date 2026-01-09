@@ -1,27 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(devcontainer up:*)",
-      "Bash(grep:*)",
-      "Bash(./apply-templates.sh:*)",
-      "Bash(make help:*)",
-      "Bash(make list-versions:*)",
-      "Bash(make list-variants:*)",
-      "Bash(make apply-templates:*)",
-      "Bash(make build:*)",
-      "Bash(make build-version:*)",
-      "Bash(make build-all:*)",
-      "Bash(make clean:*)",
-      "Bash(docker run:*)",
-      "Bash(tree:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__serena__get_symbols_overview",
       "Bash(go mod tidy:*)",
-      "Bash(/usr/bin/go mod:*)",
-      "Bash(go version:*)",
-      "Bash(/usr/local/go/bin/go mod:*)",
-      "Bash(/usr/local/go/bin/go build:*)",
-      "Bash(/usr/local/go/bin/go test:*)",
-      "Bash(./bin/claucker:*)",
-      "Bash(/workspace/claucker/bin/claucker config:*)"
+      "Bash(go build:*)",
+      "Bash(go test:*)"
     ]
   }
 }
