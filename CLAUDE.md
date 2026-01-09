@@ -6,7 +6,7 @@
 
 ### I (MUST USE) use the following tooling workflow
 
-1. **Serena** - Always use serena for all code exploration, planning, context management, symbol search, and semantic editing. My workflow after every user request must be:
+1. **Serena** - Always use serena for all code exploration, planning, context management, symbol search, and semantic editing. My workflow after every user request when using serena must be:
    - **Critical**: Always use `initial_instructions` at the start of any session, this provides instructions on how to use the Serena toolbox.
    - Always call `check_onboarding_performed` before planning, if onboarding hasn't been performed call `onboarding`, to identify the project structure, software architecture, and essential tasks, e.g. for testing or building before doing anything else.
    - Always call `list_memories` and `read_memory` for context
@@ -16,11 +16,11 @@
    - Always call `think_about_task_adherence` before making changes
    - Always call `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` , `rename_symbol` for editing code
    - Always call `think_about_whether_you_are_done` for determining whether the task is truly completed.
-   - Always call  `write_memory`, `edit_memory`, `delete_memory` to keep project memories relevant and up to date
+   - Always call `write_memory`, `edit_memory`, `delete_memory` to keep project memories relevant and up to date
 
 2. **Context7** - Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
-   - Call `resolve-library-id` first to get the library ID
-   - Then call `get-library-docs` with topic for relevant docs
+   - Always call `resolve-library-id` with `libraryName` and `query` first to get the library ID
+   - Then call `query-docs` using `libraryId` and `query` with topic for relevant docs
    - Essential for Docker SDK, Go stdlib, and other dependencies
 
 ### I (SHOULD USE) use the following tooling workflow
