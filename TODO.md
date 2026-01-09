@@ -1,5 +1,7 @@
 # TODO.md
 
-[ ] Fix entrypoint and cmds in container template. It looks like claude is started in the background and causing exiting to hang. Also add a shell option in `ex: claucker up --shell`
-[ ] Multi image support
-[ ] Monitoring with docker network and otel / OS see: [monitoring-usage](https://code.claude.com/docs/en/monitoring-usage#available-metrics-and-events)
+[ ] Add a claucker start
+[ ] Add claucker build
+[ ] Multi image suppot
+[ ] Claude code otel options see: [monitoring-usage](https://code.claude.com/docs/en/monitoring-usage#available-metrics-and-events)
+[ ] User level create/run local monitoring docker stack with otel, oss, jaeger, etc using docker compose

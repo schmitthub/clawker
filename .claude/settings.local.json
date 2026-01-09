@@ -1,5 +1,8 @@
 {
   "permissions": {
+    "deny": [
+      "Read(TODO.md)"
+    ],
     "allow": [
       "WebFetch(domain:github.com)",
       "WebFetch(domain:api.github.com)",
