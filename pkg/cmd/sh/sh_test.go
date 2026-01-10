@@ -19,6 +19,7 @@ func TestNewCmdSh(t *testing.T) {
 		name      string
 		shorthand string
 	}{
+		{"agent", ""},
 		{"shell", "s"},
 		{"user", "u"},
 	}

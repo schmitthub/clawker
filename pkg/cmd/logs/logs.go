@@ -16,6 +16,7 @@ import (
 
 // LogsOptions contains the options for the logs command.
 type LogsOptions struct {
+	Agent  string
 	Follow bool
 	Tail   string
 }
@@ -27,17 +28,21 @@ func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "Stream container logs",
-		Long: `Shows logs from the Claude container.
+		Long: `Shows logs from a Claude container.
+
+If multiple containers exist and --agent is not specified, you must specify which agent.
 
 Examples:
-  claucker logs           # Show recent logs
-  claucker logs -f        # Follow log output (like tail -f)
-  claucker logs --tail 50 # Show last 50 lines`,
+  claucker logs                   # Show logs (if single container)
+  claucker logs --agent ralph     # Show logs for specific agent
+  claucker logs -f                # Follow log output (like tail -f)
+  claucker logs --tail 50         # Show last 50 lines`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogs(f, opts)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (required if multiple containers)")
 	cmd.Flags().BoolVarP(&opts.Follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().StringVar(&opts.Tail, "tail", "100", "Number of lines to show from the end (or 'all')")
 
@@ -60,6 +65,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 
 	logger.Debug().
 		Str("project", cfg.Project).
+		Str("agent", opts.Agent).
 		Bool("follow", opts.Follow).
 		Str("tail", opts.Tail).
 		Msg("streaming logs")
@@ -74,28 +80,65 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	}
 	defer eng.Close()
 
-	containerName := engine.ContainerName(cfg.Project)
 	containerMgr := engine.NewContainerManager(eng)
 
 	// Find container
-	existing, err := eng.FindContainerByName(containerName)
-	if err != nil {
-		return fmt.Errorf("failed to find container: %w", err)
-	}
+	var containerID string
+	var containerName string
 
-	if existing == nil {
-		fmt.Printf("Error: Container %s does not exist\n\n", containerName)
-		fmt.Println("Next Steps:")
-		fmt.Println("  1. Run 'claucker up' to start the container")
-		return fmt.Errorf("container not found")
+	if opts.Agent != "" {
+		// Use specific agent
+		containerName = engine.ContainerName(cfg.Project, opts.Agent)
+		existing, err := eng.FindContainerByName(containerName)
+		if err != nil {
+			return fmt.Errorf("failed to find container: %w", err)
+		}
+		if existing == nil {
+			fmt.Printf("Error: Container for agent '%s' not found\n\n", opts.Agent)
+			fmt.Println("Next Steps:")
+			fmt.Println("  1. Run 'claucker ls' to see available containers")
+			fmt.Println("  2. Run 'claucker start --agent " + opts.Agent + "' to create it")
+			return fmt.Errorf("container not found")
+		}
+		containerID = existing.ID
+	} else {
+		// Find containers for project
+		containers, err := eng.ListClauckerContainersByProject(cfg.Project, true)
+		if err != nil {
+			return fmt.Errorf("failed to list containers: %w", err)
+		}
+
+		if len(containers) == 0 {
+			fmt.Printf("Error: No containers found for project '%s'\n\n", cfg.Project)
+			fmt.Println("Next Steps:")
+			fmt.Println("  1. Run 'claucker start' to create a container")
+			return fmt.Errorf("no containers found")
+		}
+
+		if len(containers) > 1 {
+			fmt.Printf("Error: Multiple containers found for project '%s'\n\n", cfg.Project)
+			fmt.Println("Available agents:")
+			for _, c := range containers {
+				fmt.Printf("  - %s (%s)\n", c.Agent, c.Status)
+			}
+			fmt.Println()
+			fmt.Println("Use --agent to specify which container:")
+			fmt.Printf("  claucker logs --agent %s\n", containers[0].Agent)
+			return fmt.Errorf("multiple containers found")
+		}
+
+		containerID = containers[0].ID
+		containerName = containers[0].Name
 	}
 
 	// Get logs
-	reader, err := containerMgr.Logs(existing.ID, opts.Follow, opts.Tail)
+	reader, err := containerMgr.Logs(containerID, opts.Follow, opts.Tail)
 	if err != nil {
 		return fmt.Errorf("failed to get logs: %w", err)
 	}
 	defer reader.Close()
+
+	logger.Debug().Str("container", containerName).Msg("streaming logs")
 
 	// Copy logs to stdout
 	_, err = io.Copy(os.Stdout, reader)

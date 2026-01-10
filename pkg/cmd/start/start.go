@@ -25,6 +25,7 @@ type StartOptions struct {
 	Build  bool
 	Detach bool
 	Clean  bool
+	Agent  string   // Agent name for the container
 	Args   []string // Arguments to pass to claude CLI (after --)
 }
 
@@ -60,6 +61,7 @@ Workspace modes:
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
 	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
 
 	return cmd
 }
@@ -109,21 +111,28 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	}
 	defer eng.Close()
 
-	// Clean if requested
-	if opts.Clean {
-		if err := cleanupResources(ctx, eng, cfg.Project); err != nil {
-			logger.Warn().Err(err).Msg("cleanup encountered errors")
-		}
-	}
-
 	// Determine workspace mode
 	mode, err := determineMode(cfg, opts.Mode)
 	if err != nil {
 		return err
 	}
 
+	// Generate agent name if not provided
+	agentName := opts.Agent
+	if agentName == "" {
+		agentName = engine.GenerateRandomName()
+	}
+
+	// Clean if requested (now that we know the agent name)
+	if opts.Clean {
+		if err := cleanupResources(ctx, eng, cfg.Project, agentName); err != nil {
+			logger.Warn().Err(err).Msg("cleanup encountered errors")
+		}
+	}
+
 	logger.Info().
 		Str("project", cfg.Project).
+		Str("agent", agentName).
 		Str("mode", string(mode)).
 		Msg("starting Claude container")
 
@@ -139,7 +148,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	}
 
 	// Setup workspace strategy
-	wsStrategy, err := setupWorkspace(ctx, eng, cfg, mode, f.WorkDir)
+	wsStrategy, err := setupWorkspace(ctx, eng, cfg, mode, f.WorkDir, agentName)
 	if err != nil {
 		return err
 	}
@@ -157,7 +166,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	}
 
 	// Build container configuration
-	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts.Args, monitoringActive)
+	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, agentName, f.Version, opts.Args, monitoringActive)
 	if err != nil {
 		return err
 	}
@@ -174,18 +183,18 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 
 	if created {
 		logger.Info().
-			Str("container", engine.ContainerName(cfg.Project)).
+			Str("container", containerCfg.Name).
 			Str("mode", string(mode)).
 			Msg("created new container")
 	} else {
 		logger.Info().
-			Str("container", engine.ContainerName(cfg.Project)).
+			Str("container", containerCfg.Name).
 			Msg("using existing container")
 	}
 
 	// Handle detached mode
 	if opts.Detach {
-		fmt.Printf("Container %s is running in detached mode\n", engine.ContainerName(cfg.Project))
+		fmt.Printf("Container %s is running in detached mode\n", containerCfg.Name)
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  claucker logs      # View container logs")
@@ -205,7 +214,7 @@ func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
 	return config.ParseMode(cfg.Workspace.DefaultMode)
 }
 
-func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string) (workspace.Strategy, error) {
+func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string, agentName string) (workspace.Strategy, error) {
 	// Load ignore patterns
 	ignorePatterns, err := engine.LoadIgnorePatterns(filepath.Join(workDir, config.IgnoreFileName))
 	if err != nil {
@@ -217,6 +226,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 		HostPath:       workDir,
 		RemotePath:     cfg.Workspace.RemotePath,
 		ProjectName:    cfg.Project,
+		AgentName:      agentName,
 		IgnorePatterns: ignorePatterns,
 	}
 
@@ -233,7 +243,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, claudeArgs []string, monitoringActive bool) (engine.ContainerConfig, error) {
+func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, claudeArgs []string, monitoringActive bool) (engine.ContainerConfig, error) {
 	// Build environment variables
 	envBuilder := credentials.NewEnvBuilder()
 
@@ -250,7 +260,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	envBuilder.SetFromHostAll(credentials.DefaultPassthrough())
 
 	// Add OTEL environment variables if monitoring is active
-	containerName := engine.ContainerName(cfg.Project)
+	containerName := engine.ContainerName(cfg.Project, agentName)
 	if monitoringActive {
 		envBuilder.SetAll(credentials.OtelEnvVars(containerName))
 	}
@@ -262,7 +272,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	mounts = append(mounts, wsStrategy.GetMounts()...)
 
 	// Add config volume mounts (persistent across sessions)
-	mounts = append(mounts, workspace.GetConfigVolumeMounts(cfg.Project)...)
+	mounts = append(mounts, workspace.GetConfigVolumeMounts(cfg.Project, agentName)...)
 
 	// Add Docker socket if enabled
 	if cfg.Security.DockerSocket {
@@ -277,7 +287,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	capAdd = append(capAdd, cfg.Security.CapAdd...)
 
 	return engine.ContainerConfig{
-		Name:         engine.ContainerName(cfg.Project),
+		Name:         containerName,
 		Image:        imageTag,
 		Mounts:       mounts,
 		Env:          envBuilder.Build(),
@@ -291,6 +301,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
+		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 	}, nil
 }
 
@@ -352,12 +363,12 @@ func attachToContainer(ctx context.Context, eng *engine.Engine, containerMgr *en
 	return nil
 }
 
-func cleanupResources(ctx context.Context, eng *engine.Engine, projectName string) error {
+func cleanupResources(ctx context.Context, eng *engine.Engine, projectName, agentName string) error {
 	containerMgr := engine.NewContainerManager(eng)
 	volumeMgr := engine.NewVolumeManager(eng)
 
 	// Remove container
-	containerName := engine.ContainerName(projectName)
+	containerName := engine.ContainerName(projectName, agentName)
 	existing, err := eng.FindContainerByName(containerName)
 	if err != nil {
 		return err
@@ -371,9 +382,9 @@ func cleanupResources(ctx context.Context, eng *engine.Engine, projectName strin
 
 	// Remove volumes
 	volumes := []string{
-		engine.VolumeName(projectName, "workspace"),
-		engine.VolumeName(projectName, "config"),
-		engine.VolumeName(projectName, "history"),
+		engine.VolumeName(projectName, agentName, "workspace"),
+		engine.VolumeName(projectName, agentName, "config"),
+		engine.VolumeName(projectName, agentName, "history"),
 	}
 
 	if err := volumeMgr.RemoveVolumes(volumes, true); err != nil {

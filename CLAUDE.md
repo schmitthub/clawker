@@ -42,16 +42,30 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 ```
 /workspace/
 ├── claucker/              # Go CLI source code
-│   ├── cmd/               # Cobra commands (init, up, down, sh, logs)
+│   ├── cmd/               # Main entry point
 │   ├── internal/          # Private packages
 │   │   ├── build/         # Shared image building logic
 │   │   ├── config/        # Viper configuration loading
 │   │   ├── engine/        # Docker SDK abstractions
+│   │   │   ├── client.go      # Docker client wrapper, container listing
+│   │   │   ├── container.go   # ContainerManager, ContainerConfig
+│   │   │   ├── labels.go      # Label constants, filtering helpers
+│   │   │   ├── names.go       # Container/volume naming, random names
+│   │   │   └── volume.go      # VolumeManager
 │   │   ├── workspace/     # Bind vs Snapshot strategies
 │   │   ├── dockerfile/    # Dynamic Dockerfile generation
 │   │   ├── term/          # PTY/terminal handling
 │   │   └── credentials/   # .env parsing and injection
-│   └── pkg/logger/        # Zerolog setup
+│   └── pkg/
+│       ├── cmd/           # Cobra commands
+│       │   ├── start/     # claucker start
+│       │   ├── run/       # claucker run
+│       │   ├── stop/      # claucker stop
+│       │   ├── ls/        # claucker ls (list containers)
+│       │   ├── rm/        # claucker rm (remove containers)
+│       │   └── ...        # Other commands
+│       ├── cmdutil/       # Command utilities, Factory
+│       └── logger/        # Zerolog setup
 ├── build/templates/       # Docker image templates
 │   ├── Dockerfile.template
 │   ├── docker-entrypoint.sh
@@ -114,6 +128,36 @@ Validates `claucker.yaml` with semantic checks beyond YAML parsing:
 - Port range validation for `instructions.expose`
 - Duration format validation for `healthcheck` intervals
 
+### Container Naming and Labels
+
+Claucker uses hierarchical naming for multi-container support:
+
+- **Container names**: `claucker/project/agent` (e.g., `claucker/myapp/ralph`)
+- **Volume names**: `claucker/project/agent-purpose` (e.g., `claucker/myapp/ralph-workspace`)
+
+Key functions in `internal/engine/names.go`:
+- `ContainerName(project, agent)` - generates container name
+- `VolumeName(project, agent, purpose)` - generates volume name
+- `ParseContainerName(name)` - extracts project/agent from name
+- `GenerateRandomName()` - Docker-style adjective-noun generator
+
+Docker labels (`internal/engine/labels.go`) enable reliable filtering:
+
+| Label | Purpose |
+|-------|---------|
+| `com.claucker.managed` | Marker for claucker resources |
+| `com.claucker.project` | Project name |
+| `com.claucker.agent` | Agent name |
+| `com.claucker.version` | Claucker version |
+| `com.claucker.image` | Source image tag |
+| `com.claucker.workdir` | Host working directory |
+
+Helper functions:
+- `ContainerLabels(project, agent, version, image, workdir)` - creates container labels
+- `VolumeLabels(project, agent, purpose)` - creates volume labels
+- `ClauckerFilter()` - filter args for all claucker resources
+- `ProjectFilter(project)` - filter args for specific project
+
 ## Code Style
 
 - Use `zerolog` for all logging (never fmt.Print for debug)
@@ -150,11 +194,14 @@ Validates `claucker.yaml` with semantic checks beyond YAML parsing:
 |---------|-------------|
 | `claucker init` | Scaffold `claucker.yaml` and `.clauckerignore` |
 | `claucker build [--no-cache]` | Build container image; `--no-cache` for fresh build |
-| `claucker start [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--build` forces rebuild |
-| `claucker run [-- <command>]` | Run ephemeral container (removed on exit); `--shell` for bash, `--keep` to preserve |
-| `claucker stop [--clean]` | Stop containers; `--clean` destroys volumes |
-| `claucker sh` | Open raw bash shell in running container |
-| `claucker logs [-f]` | Stream container logs |
+| `claucker start [--agent] [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--agent` names the container |
+| `claucker run [--agent] [-- <command>]` | Run ephemeral container (removed on exit); `--agent` names the container |
+| `claucker stop [--agent] [--clean]` | Stop containers; `--agent` for specific, `--clean` destroys volumes |
+| `claucker restart [--agent]` | Restart containers to pick up env changes |
+| `claucker sh [--agent]` | Open raw bash shell in running container |
+| `claucker logs [--agent] [-f]` | Stream container logs |
+| `claucker ls [-a] [-p project]` | List claucker containers; `-a` includes stopped, `-p` filters by project |
+| `claucker rm [-n name] [-p project]` | Remove containers and volumes; `-n` for specific, `-p` for all in project |
 | `claucker config check` | Validate `claucker.yaml` |
 
 ## Update README.md
@@ -276,7 +323,7 @@ version: "1"
 project: "my-app"
 
 build:
-  image: "node:20-slim"
+  image: "buildpack-deps:bookworm-scm"
   packages: ["git", "ripgrep", "make"]
 
   # Type-safe Dockerfile instructions (validated)
@@ -342,6 +389,10 @@ security:
 4. **Idempotent `up` command** - Attaches to existing container if running
 5. **Type-safe instructions preferred over raw inject** - `build.instructions` is validated and OS-aware; `build.inject` is escape hatch for advanced users
 6. **OS detection from base image** - `RunInstruction` supports `alpine`/`debian` variants; generator detects OS from image name
+7. **Hierarchical container naming** - Format `claucker/project/agent` with "/" separators; enables multiple containers per project
+8. **Docker labels for resource identification** - Labels (`com.claucker.*`) provide reliable filtering; container names can be parsed but labels are authoritative
+9. **Random agent names by default** - If `--agent` not specified, generates Docker-style adjective-noun name (e.g., "clever-fox")
+10. **Backward incompatibility with old naming** - Old `claucker-project` format containers are ignored; users should remove manually
 
 ## Important Gotchas
 

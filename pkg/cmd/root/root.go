@@ -8,9 +8,11 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmd/config"
 	initcmd "github.com/schmitthub/claucker/pkg/cmd/init"
 	"github.com/schmitthub/claucker/pkg/cmd/logs"
+	"github.com/schmitthub/claucker/pkg/cmd/ls"
 	"github.com/schmitthub/claucker/pkg/cmd/monitor"
 	"github.com/schmitthub/claucker/pkg/cmd/prune"
 	"github.com/schmitthub/claucker/pkg/cmd/restart"
+	"github.com/schmitthub/claucker/pkg/cmd/rm"
 	"github.com/schmitthub/claucker/pkg/cmd/run"
 	"github.com/schmitthub/claucker/pkg/cmd/sh"
 	"github.com/schmitthub/claucker/pkg/cmd/start"
@@ -75,6 +77,8 @@ Workspace modes:
 	cmd.AddCommand(restart.NewCmdRestart(f))
 	cmd.AddCommand(sh.NewCmdSh(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))
+	cmd.AddCommand(ls.NewCmdLs(f))
+	cmd.AddCommand(rm.NewCmdRm(f))
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(prune.NewCmdPrune(f))

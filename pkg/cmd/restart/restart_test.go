@@ -1,4 +1,4 @@
-package start
+package restart
 
 import (
 	"testing"
@@ -6,13 +6,12 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 )
 
-func TestNewCmdStart(t *testing.T) {
+func TestNewCmdRestart(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdStart(f)
+	cmd := NewCmdRestart(f)
 
-	expectedUse := "start [-- <claude-args>...]"
-	if cmd.Use != expectedUse {
-		t.Errorf("expected Use '%s', got '%s'", expectedUse, cmd.Use)
+	if cmd.Use != "restart" {
+		t.Errorf("expected Use 'restart', got '%s'", cmd.Use)
 	}
 
 	// Check flags exist
@@ -21,10 +20,7 @@ func TestNewCmdStart(t *testing.T) {
 		shorthand string
 	}{
 		{"agent", ""},
-		{"mode", "m"},
-		{"build", ""},
-		{"detach", ""},
-		{"clean", ""},
+		{"timeout", "t"},
 	}
 
 	for _, fl := range flags {
