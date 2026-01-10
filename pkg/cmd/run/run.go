@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/mount"
+	"github.com/schmitthub/claucker/internal/build"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/credentials"
 	"github.com/schmitthub/claucker/internal/dockerfile"
@@ -20,12 +21,11 @@ import (
 
 // RunOptions contains the options for the run command.
 type RunOptions struct {
-	Mode    string
-	Build   bool
-	NoCache bool
-	Shell   bool     // Run shell instead of claude
-	Keep    bool     // Keep container after exit (inverse of --rm default)
-	Args    []string // Command/args to run in container (after --)
+	Mode  string
+	Build bool
+	Shell bool     // Run shell instead of claude
+	Keep  bool     // Keep container after exit (inverse of --rm default)
+	Args  []string // Command/args to run in container (after --)
 }
 
 // NewCmdRun creates the run command.
@@ -57,7 +57,6 @@ Unlike 'claucker up', this always creates a new container (never reuses existing
 
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "Workspace mode: bind or snapshot (default from config)")
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
-	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Build image without using Docker cache (implies --build)")
 	cmd.Flags().BoolVar(&opts.Shell, "shell", false, "Run shell instead of claude")
 	cmd.Flags().BoolVar(&opts.Keep, "keep", false, "Keep container after exit (default: remove)")
 
@@ -123,9 +122,12 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 
 	// Build or ensure image
 	imageTag := engine.ImageTag(cfg.Project)
-	// --no-cache implies --build
-	forceBuild := opts.Build || opts.NoCache
-	if err := ensureImage(ctx, eng, cfg, imageTag, f.WorkDir, forceBuild, opts.NoCache); err != nil {
+	builder := build.NewBuilder(eng, cfg, f.WorkDir)
+	buildOpts := build.Options{
+		ForceBuild: opts.Build,
+		NoCache:    false, // NoCache only available via 'claucker build'
+	}
+	if err := builder.EnsureImage(ctx, imageTag, buildOpts); err != nil {
 		return err
 	}
 
@@ -141,9 +143,9 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
-	// Always create new container (never FindOrCreate)
+	// Create container (but don't start yet - we need to attach first to capture output)
 	containerMgr := engine.NewContainerManager(eng)
-	containerID, err := containerMgr.CreateAndStart(containerCfg)
+	containerID, err := containerMgr.Create(containerCfg)
 	if err != nil {
 		if dockerErr, ok := err.(*engine.DockerError); ok {
 			fmt.Print(dockerErr.FormatUserError())
@@ -167,8 +169,9 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		}()
 	}
 
-	// Attach to container and wait for completion
-	return attachToContainer(ctx, containerMgr, containerID)
+	// Attach to container, start it, then stream I/O
+	// This order is critical: attach before start to capture output from fast commands
+	return attachAndRun(ctx, containerMgr, containerID)
 }
 
 func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
@@ -176,51 +179,6 @@ func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
 		return config.ParseMode(modeFlag)
 	}
 	return config.ParseMode(cfg.Workspace.DefaultMode)
-}
-
-func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, imageTag, workDir string, forceBuild, noCache bool) error {
-	imgMgr := engine.NewImageManager(eng)
-	gen := dockerfile.NewGenerator(cfg, workDir)
-
-	// Check if we should use a custom Dockerfile
-	if gen.UseCustomDockerfile() {
-		logger.Info().
-			Str("dockerfile", cfg.Build.Dockerfile).
-			Msg("building from custom Dockerfile")
-
-		// Create build context from directory
-		buildCtx, err := dockerfile.CreateBuildContextFromDir(
-			gen.GetBuildContext(),
-			gen.GetCustomDockerfilePath(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create build context: %w", err)
-		}
-
-		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil, noCache)
-	}
-
-	// Check if image exists and we don't need to rebuild
-	if !forceBuild {
-		exists, err := eng.ImageExists(imageTag)
-		if err != nil {
-			return err
-		}
-		if exists {
-			logger.Debug().Str("image", imageTag).Msg("image exists, skipping build")
-			return nil
-		}
-	}
-
-	// Generate and build Dockerfile
-	logger.Info().Str("image", imageTag).Msg("building container image")
-
-	buildCtx, err := gen.GenerateBuildContext()
-	if err != nil {
-		return fmt.Errorf("failed to generate build context: %w", err)
-	}
-
-	return imgMgr.BuildImage(buildCtx, imageTag, "Dockerfile", nil, noCache)
 }
 
 func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string) (workspace.Strategy, error) {
@@ -314,7 +272,9 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	}, nil
 }
 
-func attachToContainer(ctx context.Context, containerMgr *engine.ContainerManager, containerID string) error {
+// attachAndRun attaches to a container, starts it, and streams I/O.
+// The order (attach before start) is critical to capture output from fast commands.
+func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, containerID string) error {
 	// Setup PTY handler
 	pty := term.NewPTYHandler()
 
@@ -324,11 +284,17 @@ func attachToContainer(ctx context.Context, containerMgr *engine.ContainerManage
 	}
 	defer pty.Restore()
 
-	// Attach to container
+	// Attach to container BEFORE starting (critical for capturing output)
 	hijacked, err := containerMgr.Attach(containerID)
 	if err != nil {
 		return err
 	}
+
+	// Now start the container
+	if err := containerMgr.Start(containerID); err != nil {
+		return fmt.Errorf("failed to start container: %w", err)
+	}
+	logger.Debug().Str("container_id", containerID[:12]).Msg("container started")
 
 	// Setup resize handler
 	if pty.IsTerminal() {

@@ -1,4 +1,4 @@
-package down
+package stop
 
 import (
 	"context"
@@ -11,26 +11,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// DownOptions contains the options for the down command.
-type DownOptions struct {
+// StopOptions contains the options for the stop command.
+type StopOptions struct {
 	Clean   bool
 	Force   bool
 	Timeout int
 }
 
-// NewCmdDown creates the down command.
-func NewCmdDown(f *cmdutil.Factory) *cobra.Command {
-	opts := &DownOptions{}
+// NewCmdStop creates the stop command.
+func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
+	opts := &StopOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "down",
+		Use:   "stop",
 		Short: "Stop the Claude container",
 		Long: `Stops the running Claude container for this project.
 
 By default, volumes are preserved for the next session.
 Use --clean to remove all volumes (workspace snapshot, config, history).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDown(f, opts)
+			return runStop(f, opts)
 		},
 	}
 
@@ -41,7 +41,7 @@ Use --clean to remove all volumes (workspace snapshot, config, history).`,
 	return cmd
 }
 
-func runDown(f *cmdutil.Factory, opts *DownOptions) error {
+func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	ctx := context.Background()
 
 	// Load configuration
@@ -156,7 +156,7 @@ func runDown(f *cmdutil.Factory, opts *DownOptions) error {
 	}
 
 	fmt.Println()
-	fmt.Println("To start again: claucker up")
+	fmt.Println("To start again: claucker start")
 
 	return nil
 }

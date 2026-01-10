@@ -1,4 +1,4 @@
-package down
+package stop
 
 import (
 	"testing"
@@ -6,12 +6,12 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 )
 
-func TestNewCmdDown(t *testing.T) {
+func TestNewCmdStop(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdDown(f)
+	cmd := NewCmdStop(f)
 
-	if cmd.Use != "down" {
-		t.Errorf("expected Use 'down', got '%s'", cmd.Use)
+	if cmd.Use != "stop" {
+		t.Errorf("expected Use 'stop', got '%s'", cmd.Use)
 	}
 
 	// Check flags exist

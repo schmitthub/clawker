@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/schmitthub/claucker/pkg/cmd/build"
 	"github.com/schmitthub/claucker/pkg/cmd/config"
-	"github.com/schmitthub/claucker/pkg/cmd/down"
 	initcmd "github.com/schmitthub/claucker/pkg/cmd/init"
 	"github.com/schmitthub/claucker/pkg/cmd/logs"
 	"github.com/schmitthub/claucker/pkg/cmd/run"
 	"github.com/schmitthub/claucker/pkg/cmd/sh"
-	"github.com/schmitthub/claucker/pkg/cmd/up"
+	"github.com/schmitthub/claucker/pkg/cmd/start"
+	"github.com/schmitthub/claucker/pkg/cmd/stop"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/spf13/cobra"
@@ -27,8 +28,8 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 
 Quick start:
   claucker init        # Create claucker.yaml in current directory
-  claucker up          # Build and run Claude in a container
-  claucker down        # Stop the container
+  claucker start       # Build and run Claude in a container
+  claucker stop        # Stop the container
 
 Workspace modes:
   --mode=bind          Live sync with host (default)
@@ -64,9 +65,10 @@ Workspace modes:
 
 	// Add subcommands
 	cmd.AddCommand(initcmd.NewCmdInit(f))
-	cmd.AddCommand(up.NewCmdUp(f))
+	cmd.AddCommand(build.NewCmdBuild(f))
+	cmd.AddCommand(start.NewCmdStart(f))
 	cmd.AddCommand(run.NewCmdRun(f))
-	cmd.AddCommand(down.NewCmdDown(f))
+	cmd.AddCommand(stop.NewCmdStop(f))
 	cmd.AddCommand(sh.NewCmdSh(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))
 	cmd.AddCommand(config.NewCmdConfig(f))

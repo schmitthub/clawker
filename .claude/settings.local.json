@@ -35,10 +35,17 @@
       "Bash(go run:*)",
       "Bash(./bin/claucker up:*)",
       "Bash(tee:*)",
-      "Bash(./bin/claucker:*)"
+      "Bash(./bin/claucker:*)",
+      "Bash(docker info:*)",
+      "Bash(docker run:*)",
+      "Bash(docker ps:*)",
+      "Bash(timeout 10 ./bin/claucker --debug run:*)"
     ],
     "deny": [
       "Read(TODO.md)"
     ]
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true
   }
 }

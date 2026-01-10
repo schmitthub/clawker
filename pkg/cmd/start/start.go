@@ -1,4 +1,4 @@
-package up
+package start
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/mount"
+	"github.com/schmitthub/claucker/internal/build"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/credentials"
 	"github.com/schmitthub/claucker/internal/dockerfile"
@@ -18,22 +19,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// UpOptions contains the options for the up command.
-type UpOptions struct {
-	Mode    string
-	Build   bool
-	NoCache bool
-	Detach  bool
-	Clean   bool
-	Args    []string // Arguments to pass to claude CLI (after --)
+// StartOptions contains the options for the start command.
+type StartOptions struct {
+	Mode   string
+	Build  bool
+	Detach bool
+	Clean  bool
+	Args   []string // Arguments to pass to claude CLI (after --)
 }
 
-// NewCmdUp creates the up command.
-func NewCmdUp(f *cmdutil.Factory) *cobra.Command {
-	opts := &UpOptions{}
+// NewCmdStart creates the start command.
+func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
+	opts := &StartOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "up [-- <claude-args>...]",
+		Use:   "start [-- <claude-args>...]",
 		Short: "Build and run Claude in a container",
 		Long: `Builds the container image (if needed), creates volumes, and runs Claude.
 
@@ -43,8 +43,8 @@ This is an idempotent operation:
   - If no container exists, creates and starts one
 
 Pass arguments to claude CLI after --:
-  claucker up -- -p "build a feature"    # Run claude with prompt
-  claucker up -- --resume                # Resume previous session
+  claucker start -- -p "build a feature"    # Run claude with prompt
+  claucker start -- --resume                # Resume previous session
 
 Workspace modes:
   --mode=bind      Live sync with host filesystem (default)
@@ -52,20 +52,19 @@ Workspace modes:
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
-			return runUp(f, opts)
+			return runStart(f, opts)
 		},
 	}
 
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "Workspace mode: bind or snapshot (default from config)")
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
-	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Build image without using Docker cache (implies --build)")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
 	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
 
 	return cmd
 }
 
-func runUp(f *cmdutil.Factory, opts *UpOptions) error {
+func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
@@ -130,9 +129,12 @@ func runUp(f *cmdutil.Factory, opts *UpOptions) error {
 
 	// Build or ensure image
 	imageTag := engine.ImageTag(cfg.Project)
-	// --no-cache implies --build
-	forceBuild := opts.Build || opts.NoCache
-	if err := ensureImage(ctx, eng, cfg, imageTag, f.WorkDir, forceBuild, opts.NoCache); err != nil {
+	builder := build.NewBuilder(eng, cfg, f.WorkDir)
+	buildOpts := build.Options{
+		ForceBuild: opts.Build,
+		NoCache:    false, // NoCache only available via 'claucker build'
+	}
+	if err := builder.EnsureImage(ctx, imageTag, buildOpts); err != nil {
 		return err
 	}
 
@@ -189,51 +191,6 @@ func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
 		return config.ParseMode(modeFlag)
 	}
 	return config.ParseMode(cfg.Workspace.DefaultMode)
-}
-
-func ensureImage(ctx context.Context, eng *engine.Engine, cfg *config.Config, imageTag, workDir string, forceBuild, noCache bool) error {
-	imgMgr := engine.NewImageManager(eng)
-	gen := dockerfile.NewGenerator(cfg, workDir)
-
-	// Check if we should use a custom Dockerfile
-	if gen.UseCustomDockerfile() {
-		logger.Info().
-			Str("dockerfile", cfg.Build.Dockerfile).
-			Msg("building from custom Dockerfile")
-
-		// Create build context from directory
-		buildCtx, err := dockerfile.CreateBuildContextFromDir(
-			gen.GetBuildContext(),
-			gen.GetCustomDockerfilePath(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create build context: %w", err)
-		}
-
-		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil, noCache)
-	}
-
-	// Check if image exists and we don't need to rebuild
-	if !forceBuild {
-		exists, err := eng.ImageExists(imageTag)
-		if err != nil {
-			return err
-		}
-		if exists {
-			logger.Debug().Str("image", imageTag).Msg("image exists, skipping build")
-			return nil
-		}
-	}
-
-	// Generate and build Dockerfile
-	logger.Info().Str("image", imageTag).Msg("building container image")
-
-	buildCtx, err := gen.GenerateBuildContext()
-	if err != nil {
-		return fmt.Errorf("failed to generate build context: %w", err)
-	}
-
-	return imgMgr.BuildImage(buildCtx, imageTag, "Dockerfile", nil, noCache)
 }
 
 func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string) (workspace.Strategy, error) {

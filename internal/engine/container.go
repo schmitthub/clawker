@@ -39,8 +39,9 @@ type ContainerConfig struct {
 	User         string
 }
 
-// CreateAndStart creates a new container and starts it
-func (cm *ContainerManager) CreateAndStart(cfg ContainerConfig) (string, error) {
+// Create creates a new container without starting it.
+// Use Start() to start the container after attaching.
+func (cm *ContainerManager) Create(cfg ContainerConfig) (string, error) {
 	// Create container config
 	containerConfig := &container.Config{
 		Image:        cfg.Image,
@@ -69,19 +70,39 @@ func (cm *ContainerManager) CreateAndStart(cfg ContainerConfig) (string, error) 
 		return "", err
 	}
 
+	logger.Debug().
+		Str("container", cfg.Name).
+		Str("id", resp.ID[:12]).
+		Msg("container created")
+
+	return resp.ID, nil
+}
+
+// Start starts a created container
+func (cm *ContainerManager) Start(containerID string) error {
+	return cm.engine.ContainerStart(containerID)
+}
+
+// CreateAndStart creates a new container and starts it
+func (cm *ContainerManager) CreateAndStart(cfg ContainerConfig) (string, error) {
+	containerID, err := cm.Create(cfg)
+	if err != nil {
+		return "", err
+	}
+
 	// Start container
-	if err := cm.engine.ContainerStart(resp.ID); err != nil {
+	if err := cm.Start(containerID); err != nil {
 		// Clean up on failure
-		cm.engine.ContainerRemove(resp.ID, true)
+		cm.engine.ContainerRemove(containerID, true)
 		return "", err
 	}
 
 	logger.Info().
 		Str("container", cfg.Name).
-		Str("id", resp.ID[:12]).
+		Str("id", containerID[:12]).
 		Msg("container started")
 
-	return resp.ID, nil
+	return containerID, nil
 }
 
 // FindOrCreate finds an existing container or creates a new one
