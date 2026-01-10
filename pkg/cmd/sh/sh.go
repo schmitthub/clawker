@@ -3,6 +3,7 @@ package sh
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
@@ -58,7 +59,7 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			fmt.Println("Error: No claucker.yaml found in current directory")
+			cmdutil.PrintError("No claucker.yaml found in current directory")
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -73,9 +74,7 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()
@@ -95,10 +94,11 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
 		if existing == nil {
-			fmt.Printf("Error: Container for agent '%s' not found\n\n", opts.Agent)
-			fmt.Println("Next Steps:")
-			fmt.Println("  1. Run 'claucker ls' to see available containers")
-			fmt.Println("  2. Run 'claucker start --agent " + opts.Agent + "' to create it")
+			cmdutil.PrintError("Container for agent '%s' not found", opts.Agent)
+			cmdutil.PrintNextSteps(
+				"Run 'claucker ls' to see available containers",
+				"Run 'claucker start --agent "+opts.Agent+"' to create it",
+			)
 			return fmt.Errorf("container not found")
 		}
 		containerID = existing.ID
@@ -111,21 +111,21 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 		}
 
 		if len(containers) == 0 {
-			fmt.Printf("Error: No running containers found for project '%s'\n\n", cfg.Project)
-			fmt.Println("Next Steps:")
-			fmt.Println("  1. Run 'claucker start' to create a container")
+			cmdutil.PrintError("No running containers found for project '%s'", cfg.Project)
+			cmdutil.PrintNextSteps("Run 'claucker start' to create a container")
 			return fmt.Errorf("no containers found")
 		}
 
 		if len(containers) > 1 {
-			fmt.Printf("Error: Multiple running containers found for project '%s'\n\n", cfg.Project)
-			fmt.Println("Available agents:")
+			cmdutil.PrintError("Multiple running containers found for project '%s'", cfg.Project)
+			fmt.Fprintln(os.Stderr, "\nAvailable agents:")
 			for _, c := range containers {
-				fmt.Printf("  - %s\n", c.Agent)
+				fmt.Fprintf(os.Stderr, "  - %s\n", c.Agent)
 			}
-			fmt.Println()
-			fmt.Println("Use --agent to specify which container:")
-			fmt.Printf("  claucker sh --agent %s\n", containers[0].Agent)
+			cmdutil.PrintNextSteps(
+				"Use --agent to specify which container",
+				"Example: claucker sh --agent "+containers[0].Agent,
+			)
 			return fmt.Errorf("multiple containers found")
 		}
 
@@ -135,9 +135,8 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 	}
 
 	if containerState != "running" {
-		fmt.Printf("Error: Container %s is not running (state: %s)\n\n", containerName, containerState)
-		fmt.Println("Next Steps:")
-		fmt.Println("  1. Run 'claucker start' to start the container")
+		cmdutil.PrintError("Container %s is not running (state: %s)", containerName, containerState)
+		cmdutil.PrintNextSteps("Run 'claucker start' to start the container")
 		return fmt.Errorf("container not running")
 	}
 

@@ -53,11 +53,11 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			fmt.Println("Error: No claucker.yaml found in current directory")
-			fmt.Println()
-			fmt.Println("Next Steps:")
-			fmt.Println("  1. Run 'claucker init' to create a configuration")
-			fmt.Println("  2. Or change to a directory with claucker.yaml")
+			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintNextSteps(
+				"Run 'claucker init' to create a configuration",
+				"Or change to a directory with claucker.yaml",
+			)
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -71,9 +71,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()

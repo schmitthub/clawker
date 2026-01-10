@@ -64,7 +64,9 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 │       │   ├── ls/        # claucker ls (list containers)
 │       │   ├── rm/        # claucker rm (remove containers)
 │       │   └── ...        # Other commands
-│       ├── cmdutil/       # Command utilities, Factory
+│       ├── cmdutil/       # Command utilities, Factory, Output helpers
+│       │   ├── factory.go     # Dependency injection for commands
+│       │   └── output.go      # Error handling and user messaging
 │       └── logger/        # Zerolog setup
 ├── build/templates/       # Docker image templates
 │   ├── Dockerfile.template
@@ -128,6 +130,33 @@ Validates `claucker.yaml` with semantic checks beyond YAML parsing:
 - Port range validation for `instructions.expose`
 - Duration format validation for `healthcheck` intervals
 
+### Output Utilities (pkg/cmdutil/output.go)
+
+Centralized error handling and user messaging for consistent CLI output:
+
+```go
+// Smart error handling - detects DockerError for rich formatting
+cmdutil.HandleError(err)
+
+// Print numbered "Next Steps" guidance
+cmdutil.PrintNextSteps(
+    "Run 'claucker init' to create a configuration",
+    "Or change to a directory with claucker.yaml",
+)
+
+// Simple error/warning output to stderr
+cmdutil.PrintError("Configuration validation failed")
+cmdutil.PrintWarning("Container already exists")
+```
+
+Key functions:
+- `HandleError(err)` - If `*engine.DockerError`, uses `FormatUserError()`; otherwise prints simple message
+- `PrintNextSteps(steps...)` - Prints numbered list of actionable suggestions
+- `PrintError(format, args...)` - Prints `Error: <message>` to stderr
+- `PrintWarning(format, args...)` - Prints `Warning: <message>` to stderr
+
+All output goes to stderr, keeping stdout clean for scripting.
+
 ### Container Naming and Labels
 
 Claucker uses hierarchical naming for multi-container support:
@@ -161,17 +190,39 @@ Helper functions:
 ## Code Style
 
 - Use `zerolog` for all logging (never fmt.Print for debug)
-- Errors must include actionable "Next Steps" for users
+- Use `cmdutil` output functions for user-facing messages (never raw fmt.Print to stdout)
+- Errors must include actionable "Next Steps" using `cmdutil.PrintNextSteps()`
+- All errors and warnings go to stderr via `cmdutil.PrintError()` / `cmdutil.PrintWarning()`
+- Use `cmdutil.HandleError(err)` for Docker errors to get rich formatting
 - Follow standard Go project layout (cmd/, internal/, pkg/)
 - Use interfaces for testability (especially Docker client)
+- See `.claude/docs/cli-guidelines.md` for comprehensive CLI design principles
 
 ## Common Tasks
 
 ### Adding a new CLI command
 
-1. Create `cmd/newcmd.go`
-2. Define cobra.Command with Run function
-3. Register in `cmd/root.go` init()
+1. Create `pkg/cmd/<cmdname>/<cmdname>.go`
+2. Define options struct and `NewCmd<Name>(f *cmdutil.Factory)` function
+3. Use `cmdutil` output functions for user messaging:
+   ```go
+   // Configuration not found
+   if config.IsConfigNotFound(err) {
+       cmdutil.PrintError("No claucker.yaml found in current directory")
+       cmdutil.PrintNextSteps(
+           "Run 'claucker init' to create a configuration",
+           "Or change to a directory with claucker.yaml",
+       )
+       return err
+   }
+
+   // Docker errors (rich formatting)
+   if err != nil {
+       cmdutil.HandleError(err)
+       return err
+   }
+   ```
+4. Register in `pkg/cmd/root/root.go`
 
 ### Modifying Dockerfile generation
 
@@ -202,6 +253,8 @@ Helper functions:
 | `claucker logs [--agent] [-f]` | Stream container logs |
 | `claucker ls [-a] [-p project]` | List claucker containers; `-a` includes stopped, `-p` filters by project |
 | `claucker rm [-n name] [-p project]` | Remove containers and volumes; `-n` for specific, `-p` for all in project |
+| `claucker prune [-a] [-f]` | Remove unused resources; `-a` removes ALL including volumes |
+| `claucker monitor <cmd>` | Manage observability stack (init, up, down, status) |
 | `claucker config check` | Validate `claucker.yaml` |
 
 ## Update README.md

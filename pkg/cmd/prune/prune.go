@@ -83,11 +83,7 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		} else {
-			fmt.Printf("Error: %s\n", err)
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()

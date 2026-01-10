@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 
 	internalconfig "github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
@@ -48,20 +49,22 @@ func runConfigCheck(f *cmdutil.Factory) error {
 	loader := internalconfig.NewLoader(f.WorkDir)
 
 	if !loader.Exists() {
-		fmt.Printf("Error: %s not found\n\n", internalconfig.ConfigFileName)
-		fmt.Println("Next Steps:")
-		fmt.Println("  1. Run 'claucker init' to create a configuration file")
-		fmt.Println("  2. Or create claucker.yaml manually")
+		cmdutil.PrintError("%s not found", internalconfig.ConfigFileName)
+		cmdutil.PrintNextSteps(
+			"Run 'claucker init' to create a configuration file",
+			"Or create claucker.yaml manually",
+		)
 		return fmt.Errorf("configuration file not found")
 	}
 
 	cfg, err := loader.Load()
 	if err != nil {
-		fmt.Printf("Error: Failed to load configuration\n")
-		fmt.Printf("  %s\n\n", err)
-		fmt.Println("Next Steps:")
-		fmt.Println("  1. Check YAML syntax (indentation, colons, quotes)")
-		fmt.Println("  2. Ensure all required fields are present")
+		cmdutil.PrintError("Failed to load configuration")
+		fmt.Fprintf(os.Stderr, "  %s\n", err)
+		cmdutil.PrintNextSteps(
+			"Check YAML syntax (indentation, colons, quotes)",
+			"Ensure all required fields are present",
+		)
 		return err
 	}
 
@@ -73,20 +76,22 @@ func runConfigCheck(f *cmdutil.Factory) error {
 	// Validate configuration
 	validator := internalconfig.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
-		fmt.Printf("Error: Configuration validation failed\n\n")
+		cmdutil.PrintError("Configuration validation failed")
+		fmt.Fprintln(os.Stderr)
 
 		if multiErr, ok := err.(*internalconfig.MultiValidationError); ok {
 			for _, e := range multiErr.ValidationErrors() {
-				fmt.Printf("  - %s\n", e)
+				fmt.Fprintf(os.Stderr, "  - %s\n", e)
 			}
 		} else {
-			fmt.Printf("  %s\n", err)
+			fmt.Fprintf(os.Stderr, "  %s\n", err)
 		}
 
-		fmt.Println("\nNext Steps:")
-		fmt.Println("  1. Review the errors above")
-		fmt.Println("  2. Edit claucker.yaml to fix the issues")
-		fmt.Println("  3. Run 'claucker config check' again")
+		cmdutil.PrintNextSteps(
+			"Review the errors above",
+			"Edit claucker.yaml to fix the issues",
+			"Run 'claucker config check' again",
+		)
 		return err
 	}
 

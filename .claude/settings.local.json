@@ -47,7 +47,11 @@
       "Read(TODO.md)"
     ]
   },
+  "enabledMcpjsonServers": [
+    "serena"
+  ],
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true
-  }
+  },
+  "enableAllProjectMcpServers": true
 }

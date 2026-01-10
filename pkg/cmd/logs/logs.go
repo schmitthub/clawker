@@ -57,7 +57,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			fmt.Println("Error: No claucker.yaml found in current directory")
+			cmdutil.PrintError("No claucker.yaml found in current directory")
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -73,9 +73,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()
@@ -94,10 +92,11 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
 		if existing == nil {
-			fmt.Printf("Error: Container for agent '%s' not found\n\n", opts.Agent)
-			fmt.Println("Next Steps:")
-			fmt.Println("  1. Run 'claucker ls' to see available containers")
-			fmt.Println("  2. Run 'claucker start --agent " + opts.Agent + "' to create it")
+			cmdutil.PrintError("Container for agent '%s' not found", opts.Agent)
+			cmdutil.PrintNextSteps(
+				"Run 'claucker ls' to see available containers",
+				"Run 'claucker start --agent "+opts.Agent+"' to create it",
+			)
 			return fmt.Errorf("container not found")
 		}
 		containerID = existing.ID
@@ -109,21 +108,21 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 		}
 
 		if len(containers) == 0 {
-			fmt.Printf("Error: No containers found for project '%s'\n\n", cfg.Project)
-			fmt.Println("Next Steps:")
-			fmt.Println("  1. Run 'claucker start' to create a container")
+			cmdutil.PrintError("No containers found for project '%s'", cfg.Project)
+			cmdutil.PrintNextSteps("Run 'claucker start' to create a container")
 			return fmt.Errorf("no containers found")
 		}
 
 		if len(containers) > 1 {
-			fmt.Printf("Error: Multiple containers found for project '%s'\n\n", cfg.Project)
-			fmt.Println("Available agents:")
+			cmdutil.PrintError("Multiple containers found for project '%s'", cfg.Project)
+			fmt.Fprintln(os.Stderr, "\nAvailable agents:")
 			for _, c := range containers {
-				fmt.Printf("  - %s (%s)\n", c.Agent, c.Status)
+				fmt.Fprintf(os.Stderr, "  - %s (%s)\n", c.Agent, c.Status)
 			}
-			fmt.Println()
-			fmt.Println("Use --agent to specify which container:")
-			fmt.Printf("  claucker logs --agent %s\n", containers[0].Agent)
+			cmdutil.PrintNextSteps(
+				"Use --agent to specify which container",
+				"Example: claucker logs --agent "+containers[0].Agent,
+			)
 			return fmt.Errorf("multiple containers found")
 		}
 

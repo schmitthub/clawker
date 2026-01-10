@@ -65,10 +65,11 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 	// Check if configuration already exists
 	loader := config.NewLoader(f.WorkDir)
 	if loader.Exists() && !opts.Force {
-		fmt.Printf("Error: %s already exists\n\n", config.ConfigFileName)
-		fmt.Println("Next Steps:")
-		fmt.Println("  1. Use --force to overwrite the existing configuration")
-		fmt.Println("  2. Or edit the existing claucker.yaml manually")
+		cmdutil.PrintError("%s already exists", config.ConfigFileName)
+		cmdutil.PrintNextSteps(
+			"Use --force to overwrite the existing configuration",
+			"Or edit the existing claucker.yaml manually",
+		)
 		return fmt.Errorf("configuration already exists")
 	}
 

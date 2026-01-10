@@ -55,7 +55,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			fmt.Println("Error: No claucker.yaml found in current directory")
+			cmdutil.PrintError("No claucker.yaml found in current directory")
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -71,9 +71,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()

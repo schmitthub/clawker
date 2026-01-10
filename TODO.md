@@ -1,6 +1,7 @@
 # TODO.md
 
 [ ] Add user scoped default templates and configs in their claucker home dir
+[ ] Get rid of the lame ass terminal copy
 [ ] Multi image support. you can create as many or as little claucker containers as you want
 [ ] Add progress bars with status updates to CLI output instead of verbose logs endless log entries in the terminal
 [ ] Add session tracking by container name in metrics collection, explained in metrics docs

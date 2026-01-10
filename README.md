@@ -116,6 +116,8 @@ Claude Code will authenticate automatically without requiring browser login.
 | `claucker logs` | View container logs |
 | `claucker ls` | List all claucker containers |
 | `claucker rm` | Remove containers and their volumes |
+| `claucker prune` | Remove unused claucker resources |
+| `claucker monitor` | Manage local observability stack |
 | `claucker config check` | Validate your `claucker.yaml` |
 
 ### claucker build
@@ -234,6 +236,46 @@ Flags:
   -n, --name <name>      Container name to remove
   -p, --project <name>   Remove all containers for project
   -f, --force            Force remove running containers
+```
+
+### claucker prune
+
+Removes unused claucker resources (stopped containers, dangling images).
+
+```bash
+claucker prune [flags]
+
+# Examples:
+claucker prune        # Remove stopped containers and dangling images
+claucker prune -a     # Remove ALL claucker resources (including volumes)
+claucker prune -f     # Skip confirmation prompt
+
+Flags:
+  -a, --all    Remove ALL claucker resources (containers, images, volumes)
+  -f, --force  Skip confirmation prompt
+```
+
+**Warning:** `--all` removes persistent data including workspace volumes.
+
+### claucker monitor
+
+Manages the local observability stack for telemetry visualization (OpenTelemetry, Jaeger, Prometheus, Grafana).
+
+```bash
+claucker monitor <command>
+
+# Subcommands:
+claucker monitor init     # Scaffold monitoring configuration files
+claucker monitor up       # Start the monitoring stack
+claucker monitor down     # Stop the monitoring stack
+claucker monitor status   # Show monitoring stack status
+```
+
+After starting the monitoring stack, restart your Claude containers to enable telemetry:
+
+```bash
+claucker monitor up
+claucker restart
 ```
 
 ## Configuration
