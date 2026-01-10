@@ -276,7 +276,7 @@ version: "1"
 project: "my-app"
 
 build:
-  image: "node:20-slim"
+  image: "buildpack-deps:bookworm-scm"
   packages: ["git", "ripgrep", "make"]
 
   # Type-safe Dockerfile instructions (validated)

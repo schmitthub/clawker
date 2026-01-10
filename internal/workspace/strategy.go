@@ -41,6 +41,9 @@ type Config struct {
 	// ProjectName is used for naming volumes
 	ProjectName string
 
+	// AgentName is used for naming agent-specific volumes
+	AgentName string
+
 	// IgnorePatterns are patterns to exclude when copying (snapshot mode)
 	IgnorePatterns []string
 }
@@ -59,16 +62,16 @@ func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) {
 
 // GetConfigVolumeMounts returns mounts for persistent config volumes
 // These are used for both bind and snapshot modes to preserve Claude config
-func GetConfigVolumeMounts(projectName string) []mount.Mount {
+func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 	return []mount.Mount{
 		{
 			Type:   mount.TypeVolume,
-			Source: engine.VolumeName(projectName, "config"),
+			Source: engine.VolumeName(projectName, agentName, "config"),
 			Target: "/home/claude/.claude",
 		},
 		{
 			Type:   mount.TypeVolume,
-			Source: engine.VolumeName(projectName, "history"),
+			Source: engine.VolumeName(projectName, agentName, "history"),
 			Target: "/commandhistory",
 		},
 	}

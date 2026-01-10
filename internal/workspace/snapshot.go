@@ -21,7 +21,7 @@ type SnapshotStrategy struct {
 func NewSnapshotStrategy(cfg Config) *SnapshotStrategy {
 	return &SnapshotStrategy{
 		config:     cfg,
-		volumeName: engine.VolumeName(cfg.ProjectName, "workspace"),
+		volumeName: engine.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace"),
 		created:    false,
 	}
 }

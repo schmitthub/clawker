@@ -37,6 +37,7 @@ type ContainerConfig struct {
 	CapAdd       []string
 	NetworkMode  string
 	User         string
+	Labels       map[string]string
 }
 
 // Create creates a new container without starting it.
@@ -55,6 +56,7 @@ func (cm *ContainerManager) Create(cfg ContainerConfig) (string, error) {
 		AttachStdout: cfg.AttachStdout,
 		AttachStderr: cfg.AttachStderr,
 		User:         cfg.User,
+		Labels:       cfg.Labels,
 	}
 
 	// Create host config
@@ -239,14 +241,4 @@ func (cm *ContainerManager) IsRunning(containerID string) (bool, error) {
 		return false, err
 	}
 	return info.State.Running, nil
-}
-
-// ContainerName returns the standard container name for a project
-func ContainerName(projectName string) string {
-	return fmt.Sprintf("claucker-%s", projectName)
-}
-
-// VolumeName returns the standard volume name for a project and purpose
-func VolumeName(projectName, purpose string) string {
-	return fmt.Sprintf("claucker-%s-%s", projectName, purpose)
 }

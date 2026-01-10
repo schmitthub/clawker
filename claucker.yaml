@@ -2,7 +2,7 @@
 # Documentation: https://github.com/schmitthub/claucker
 
 version: "1"
-project: "workspace"
+project: "claucker"
 
 build:
   # Base image for the container

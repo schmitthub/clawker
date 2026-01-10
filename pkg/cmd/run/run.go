@@ -25,6 +25,7 @@ type RunOptions struct {
 	Build bool
 	Shell bool     // Run shell instead of claude
 	Keep  bool     // Keep container after exit (inverse of --rm default)
+	Agent string   // Agent name for the container
 	Args  []string // Command/args to run in container (after --)
 }
 
@@ -59,6 +60,7 @@ Unlike 'claucker up', this always creates a new container (never reuses existing
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
 	cmd.Flags().BoolVar(&opts.Shell, "shell", false, "Run shell instead of claude")
 	cmd.Flags().BoolVar(&opts.Keep, "keep", false, "Keep container after exit (default: remove)")
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
 
 	return cmd
 }
@@ -114,8 +116,15 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
+	// Generate agent name if not provided
+	agentName := opts.Agent
+	if agentName == "" {
+		agentName = engine.GenerateRandomName()
+	}
+
 	logger.Info().
 		Str("project", cfg.Project).
+		Str("agent", agentName).
 		Str("mode", string(mode)).
 		Bool("ephemeral", !opts.Keep).
 		Msg("starting ephemeral container")
@@ -132,7 +141,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	}
 
 	// Setup workspace strategy
-	wsStrategy, err := setupWorkspace(ctx, eng, cfg, mode, f.WorkDir)
+	wsStrategy, err := setupWorkspace(ctx, eng, cfg, mode, f.WorkDir, agentName)
 	if err != nil {
 		return err
 	}
@@ -150,7 +159,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	}
 
 	// Build container configuration
-	containerCfg, err := buildRunContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts, monitoringActive)
+	containerCfg, err := buildRunContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, agentName, f.Version, opts, monitoringActive)
 	if err != nil {
 		return err
 	}
@@ -193,7 +202,7 @@ func determineMode(cfg *config.Config, modeFlag string) (config.Mode, error) {
 	return config.ParseMode(cfg.Workspace.DefaultMode)
 }
 
-func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string) (workspace.Strategy, error) {
+func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config, mode config.Mode, workDir string, agentName string) (workspace.Strategy, error) {
 	// Load ignore patterns
 	ignorePatterns, err := engine.LoadIgnorePatterns(filepath.Join(workDir, config.IgnoreFileName))
 	if err != nil {
@@ -205,6 +214,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 		HostPath:       workDir,
 		RemotePath:     cfg.Workspace.RemotePath,
 		ProjectName:    cfg.Project,
+		AgentName:      agentName,
 		IgnorePatterns: ignorePatterns,
 	}
 
@@ -221,7 +231,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, opts *RunOptions, monitoringActive bool) (engine.ContainerConfig, error) {
+func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, opts *RunOptions, monitoringActive bool) (engine.ContainerConfig, error) {
 	// Build environment variables
 	envBuilder := credentials.NewEnvBuilder()
 
@@ -238,8 +248,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	envBuilder.SetFromHostAll(credentials.DefaultPassthrough())
 
 	// Add OTEL environment variables if monitoring is active
-	// Use ephemeral prefix for run containers since Docker generates their names
-	containerName := fmt.Sprintf("claucker-ephemeral-%s", cfg.Project)
+	containerName := engine.ContainerName(cfg.Project, agentName)
 	if monitoringActive {
 		envBuilder.SetAll(credentials.OtelEnvVars(containerName))
 	}
@@ -251,7 +260,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	mounts = append(mounts, wsStrategy.GetMounts()...)
 
 	// Add config volume mounts (persistent across sessions)
-	mounts = append(mounts, workspace.GetConfigVolumeMounts(cfg.Project)...)
+	mounts = append(mounts, workspace.GetConfigVolumeMounts(cfg.Project, agentName)...)
 
 	// Add Docker socket if enabled
 	if cfg.Security.DockerSocket {
@@ -275,7 +284,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	// If no args and not shell, cmd is empty and entrypoint handles default (claude)
 
 	return engine.ContainerConfig{
-		// No Name - let Docker generate unique name for ephemeral container
+		Name:         containerName,
 		Image:        imageTag,
 		Mounts:       mounts,
 		Env:          envBuilder.Build(),
@@ -289,6 +298,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
+		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 	}, nil
 }
 

@@ -380,43 +380,56 @@ func (e *Engine) IsMonitoringActive() bool {
 	return false
 }
 
-// RunningClauckerContainer represents a running claucker-managed container
-type RunningClauckerContainer struct {
+// ClauckerContainer represents a claucker-managed container
+type ClauckerContainer struct {
 	ID      string
 	Name    string
 	Project string
+	Agent   string
 	Image   string
+	Workdir string
+	Status  string
+	Created int64
 }
 
-// ListRunningClauckerContainers returns all running containers managed by claucker
-// on the claucker-net network. Returns container info including project name.
-func (e *Engine) ListRunningClauckerContainers() ([]RunningClauckerContainer, error) {
-	containers, err := e.cli.ContainerList(e.ctx, container.ListOptions{
-		Filters: filters.NewArgs(
-			filters.Arg("status", "running"),
-		),
-	})
+// ListClauckerContainers returns all containers with com.claucker.managed=true label
+func (e *Engine) ListClauckerContainers(includeAll bool) ([]ClauckerContainer, error) {
+	opts := container.ListOptions{
+		Filters: ClauckerFilter(),
+	}
+	if !includeAll {
+		opts.Filters.Add("status", "running")
+	}
+
+	containers, err := e.cli.ContainerList(e.ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []RunningClauckerContainer
-	for _, c := range containers {
-		// Check if container is on claucker-net
-		if c.NetworkSettings == nil {
-			continue
-		}
-		onClauckerNet := false
-		for netName := range c.NetworkSettings.Networks {
-			if netName == "claucker-net" {
-				onClauckerNet = true
-				break
-			}
-		}
-		if !onClauckerNet {
-			continue
-		}
+	return e.parseClauckerContainers(containers), nil
+}
 
+// ListClauckerContainersByProject returns containers for a specific project
+func (e *Engine) ListClauckerContainersByProject(project string, includeAll bool) ([]ClauckerContainer, error) {
+	opts := container.ListOptions{
+		Filters: ProjectFilter(project),
+	}
+	if !includeAll {
+		opts.Filters.Add("status", "running")
+	}
+
+	containers, err := e.cli.ContainerList(e.ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return e.parseClauckerContainers(containers), nil
+}
+
+// parseClauckerContainers converts Docker container list to ClauckerContainer slice
+func (e *Engine) parseClauckerContainers(containers []types.Container) []ClauckerContainer {
+	var result []ClauckerContainer
+	for _, c := range containers {
 		// Extract container name (remove leading slash)
 		name := ""
 		if len(c.Names) > 0 {
@@ -426,21 +439,71 @@ func (e *Engine) ListRunningClauckerContainers() ([]RunningClauckerContainer, er
 			}
 		}
 
-		// Only include claucker-managed containers (format: claucker-{project})
-		if len(name) <= 9 || name[:9] != "claucker-" {
-			continue
-		}
-
-		// Extract project name from container name
-		project := name[9:]
-
-		result = append(result, RunningClauckerContainer{
+		result = append(result, ClauckerContainer{
 			ID:      c.ID,
 			Name:    name,
-			Project: project,
-			Image:   c.Image,
+			Project: c.Labels[LabelProject],
+			Agent:   c.Labels[LabelAgent],
+			Image:   c.Labels[LabelImage],
+			Workdir: c.Labels[LabelWorkdir],
+			Status:  c.State,
+			Created: c.Created,
 		})
 	}
+	return result
+}
 
-	return result, nil
+// RemoveContainerWithVolumes removes a container and its associated volumes
+func (e *Engine) RemoveContainerWithVolumes(containerID string, force bool) error {
+	// Get container info to find associated project/agent
+	info, err := e.ContainerInspect(containerID)
+	if err != nil {
+		return err
+	}
+
+	project := info.Config.Labels[LabelProject]
+	agent := info.Config.Labels[LabelAgent]
+
+	// Stop container if running
+	if info.State.Running {
+		timeout := 10
+		if err := e.ContainerStop(containerID, &timeout); err != nil {
+			if !force {
+				return err
+			}
+			// Force kill if stop fails
+			logger.Warn().Err(err).Msg("failed to stop container gracefully, forcing")
+		}
+	}
+
+	// Remove container
+	if err := e.ContainerRemove(containerID, force); err != nil {
+		return err
+	}
+
+	// Find and remove associated volumes
+	if project != "" && agent != "" {
+		volumes, err := e.VolumeList(AgentFilter(project, agent))
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to list volumes for cleanup")
+			return nil // Container is removed, don't fail on volume cleanup
+		}
+
+		for _, vol := range volumes.Volumes {
+			if err := e.VolumeRemove(vol.Name, force); err != nil {
+				logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
+			} else {
+				logger.Debug().Str("volume", vol.Name).Msg("removed volume")
+			}
+		}
+	}
+
+	return nil
+}
+
+// ListRunningClauckerContainers returns all running containers managed by claucker
+// on the claucker-net network. Returns container info including project name.
+// Deprecated: Use ListClauckerContainers instead
+func (e *Engine) ListRunningClauckerContainers() ([]ClauckerContainer, error) {
+	return e.ListClauckerContainers(false)
 }
