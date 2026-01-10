@@ -44,6 +44,7 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 ├── claucker/              # Go CLI source code
 │   ├── cmd/               # Cobra commands (init, up, down, sh, logs)
 │   ├── internal/          # Private packages
+│   │   ├── build/         # Shared image building logic
 │   │   ├── config/        # Viper configuration loading
 │   │   ├── engine/        # Docker SDK abstractions
 │   │   ├── workspace/     # Bind vs Snapshot strategies
@@ -141,17 +142,15 @@ Validates `claucker.yaml` with semantic checks beyond YAML parsing:
 4. Add validation in `internal/config/validator.go`
 5. Add tests in `generator_test.go` and `validator_test.go`
 
-### Testing container operations
-
-Integration tests require Docker daemon. Use `go test -short` to skip.
-
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
 | `claucker init` | Scaffold `claucker.yaml` and `.clauckerignore` |
-| `claucker up [--mode=bind\|snapshot]` | Build image, create volume, run container, attach TTY |
-| `claucker down [--clean]` | Stop containers; `--clean` destroys volumes |
+| `claucker build [--no-cache]` | Build container image; `--no-cache` for fresh build |
+| `claucker start [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--build` forces rebuild |
+| `claucker run [-- <command>]` | Run ephemeral container (removed on exit); `--shell` for bash, `--keep` to preserve |
+| `claucker stop [--clean]` | Stop containers; `--clean` destroys volumes |
 | `claucker sh` | Open raw bash shell in running container |
 | `claucker logs [-f]` | Stream container logs |
 | `claucker config check` | Validate `claucker.yaml` |
@@ -199,7 +198,7 @@ The README follows this order:
 Code change: Add --timeout flag to `up` command
 README update:
   1. Add to CLI Commands table
-  2. Add to "claucker up" flags section:
+  2. Add to "claucker start" flags section:
      --timeout=30s  Container startup timeout (default: 30s)
 ```
 

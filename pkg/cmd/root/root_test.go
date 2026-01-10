@@ -22,8 +22,10 @@ func TestNewCmdRoot(t *testing.T) {
 	subcommands := cmd.Commands()
 	expectedCmds := map[string]bool{
 		"init":   false,
-		"up":     false,
-		"down":   false,
+		"build":  false,
+		"start":  false,
+		"run":    false,
+		"stop":   false,
 		"sh":     false,
 		"logs":   false,
 		"config": false,

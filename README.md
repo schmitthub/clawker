@@ -32,13 +32,13 @@ cd your-project
 claucker init
 
 # 3. Start the container
-claucker up
+claucker start
 
 # 4. Claude Code is now running in the container
 # Press Ctrl+C to exit when done
 
 # 5. Stop the container
-claucker down
+claucker stop
 ```
 
 ## Authentication
@@ -52,11 +52,11 @@ Claucker automatically passes Anthropic authentication from your host environmen
 | `ANTHROPIC_BASE_URL` | Custom API endpoint |
 | `ANTHROPIC_CUSTOM_HEADERS` | Additional HTTP headers |
 
-Simply set `ANTHROPIC_API_KEY` on your host before running `claucker up`:
+Simply set `ANTHROPIC_API_KEY` on your host before running `claucker start`:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-claucker up
+claucker start
 ```
 
 Claude Code will authenticate automatically without requiring browser login.
@@ -66,29 +66,78 @@ Claude Code will authenticate automatically without requiring browser login.
 | Command | Description |
 |---------|-------------|
 | `claucker init` | Create `claucker.yaml` and `.clauckerignore` in current directory |
-| `claucker up` | Build image, create container, and attach to Claude Code |
-| `claucker down` | Stop the running container |
+| `claucker build` | Build the container image |
+| `claucker start` | Build image (if needed), create container, and attach to Claude Code |
+| `claucker run` | Run a one-shot command in an ephemeral container |
+| `claucker stop` | Stop the running container |
 | `claucker sh` | Open a bash shell in the running container |
 | `claucker logs` | View container logs |
 | `claucker config check` | Validate your `claucker.yaml` |
 
-### claucker up
+### claucker build
+
+Builds the container image. Use this when you want to pre-build or rebuild with specific options.
 
 ```bash
-claucker up [flags]
+claucker build [flags]
+
+# Examples:
+claucker build              # Build image (uses Docker cache)
+claucker build --no-cache   # Build without Docker cache
+
+Flags:
+  --no-cache  Build without Docker cache
+```
+
+### claucker start
+
+Builds the container (if needed) and runs Claude Code. This is an idempotent operation - it reuses existing containers.
+
+```bash
+claucker start [-- <claude-args>...]
+
+# Examples:
+claucker start                          # Run Claude interactively
+claucker start -- -p "build a feature"  # Pass args to Claude CLI
+claucker start -- --resume              # Resume previous session
+claucker start --build                  # Force rebuild before running
 
 Flags:
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
-  --no-cache            Build without Docker cache (implies --build)
   --detach              Run container in background
   --clean               Remove existing container/volumes before starting
 ```
 
-### claucker down
+**Note:** To build without Docker cache, run `claucker build --no-cache` first.
+
+### claucker run
+
+Runs a command in a new ephemeral container. Container is removed on exit by default (like `docker run --rm`).
 
 ```bash
-claucker down [flags]
+claucker run [flags] [-- <command>...]
+
+# Examples:
+claucker run                           # Run Claude, remove on exit
+claucker run -- -p "quick question"    # Claude with args, remove on exit
+claucker run --shell                   # Run shell, remove on exit
+claucker run -- npm test               # Run arbitrary command
+claucker run --keep                    # Keep container after exit
+
+Flags:
+  --mode=bind|snapshot  Workspace mode (default: from config)
+  --build               Force rebuild of container image
+  --shell               Run shell instead of Claude
+  --keep                Keep container after exit (default: remove)
+```
+
+**Note:** To build without Docker cache, run `claucker build --no-cache` first.
+
+### claucker stop
+
+```bash
+claucker stop [flags]
 
 Flags:
   --clean    Also remove volumes (workspace, config, history)
@@ -290,7 +339,7 @@ build:
 Live sync between host and container. Changes in the container immediately reflect on your host filesystem.
 
 ```bash
-claucker up --mode=bind
+claucker start --mode=bind
 ```
 
 ### Snapshot Mode
@@ -298,7 +347,7 @@ claucker up --mode=bind
 Creates an isolated copy of your workspace in a Docker volume. Host files remain untouched.
 
 ```bash
-claucker up --mode=snapshot
+claucker start --mode=snapshot
 ```
 
 Use snapshot mode when you want Claude to experiment freely without affecting your working directory.

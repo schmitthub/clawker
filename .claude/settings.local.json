@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "deny": [
-      "Read(TODO.md)"
-    ],
     "allow": [
       "WebFetch(domain:github.com)",
       "WebFetch(domain:api.github.com)",
@@ -37,7 +34,18 @@
       "Bash(./bin/claucker config check:*)",
       "Bash(go run:*)",
       "Bash(./bin/claucker up:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(./bin/claucker:*)",
+      "Bash(docker info:*)",
+      "Bash(docker run:*)",
+      "Bash(docker ps:*)",
+      "Bash(timeout 10 ./bin/claucker --debug run:*)"
+    ],
+    "deny": [
+      "Read(TODO.md)"
     ]
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true
   }
 }

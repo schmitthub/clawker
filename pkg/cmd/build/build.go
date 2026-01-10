@@ -1,0 +1,104 @@
+package build
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/schmitthub/claucker/internal/build"
+	"github.com/schmitthub/claucker/internal/config"
+	"github.com/schmitthub/claucker/internal/engine"
+	"github.com/schmitthub/claucker/internal/term"
+	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/spf13/cobra"
+)
+
+// BuildOptions contains the options for the build command.
+type BuildOptions struct {
+	NoCache bool
+}
+
+// NewCmdBuild creates a new build command.
+func NewCmdBuild(f *cmdutil.Factory) *cobra.Command {
+	opts := &BuildOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build the container image",
+		Long: `Builds the container image for this project.
+
+The image is always built unconditionally. Use --no-cache to build
+without Docker's layer cache for a completely fresh build.
+
+Examples:
+  claucker build              # Build image (uses Docker cache)
+  claucker build --no-cache   # Build image without cache`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBuild(f, opts)
+		},
+	}
+
+	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Build image without using Docker cache")
+
+	return cmd
+}
+
+func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
+	ctx, cancel := term.SetupSignalContext(context.Background())
+	defer cancel()
+
+	// Load configuration
+	cfg, err := f.Config()
+	if err != nil {
+		if config.IsConfigNotFound(err) {
+			fmt.Println("Error: No claucker.yaml found in current directory")
+			fmt.Println()
+			fmt.Println("Next Steps:")
+			fmt.Println("  1. Run 'claucker init' to create a configuration")
+			fmt.Println("  2. Or change to a directory with claucker.yaml")
+			return err
+		}
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Validate configuration
+	validator := config.NewValidator(f.WorkDir)
+	if err := validator.Validate(cfg); err != nil {
+		fmt.Println("Error: Configuration validation failed")
+		fmt.Println(err)
+		return err
+	}
+
+	logger.Debug().
+		Str("project", cfg.Project).
+		Bool("no-cache", opts.NoCache).
+		Msg("starting build")
+
+	// Connect to Docker
+	eng, err := engine.NewEngine(ctx)
+	if err != nil {
+		if dockerErr, ok := err.(*engine.DockerError); ok {
+			fmt.Print(dockerErr.FormatUserError())
+		} else {
+			fmt.Printf("Error: %s\n", err)
+		}
+		return err
+	}
+	defer eng.Close()
+
+	// Build image
+	imageTag := engine.ImageTag(cfg.Project)
+	builder := build.NewBuilder(eng, cfg, f.WorkDir)
+
+	logger.Info().
+		Str("project", cfg.Project).
+		Str("image", imageTag).
+		Msg("building container image")
+
+	if err := builder.Build(ctx, imageTag, opts.NoCache); err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully built image: %s\n", imageTag)
+	return nil
+}

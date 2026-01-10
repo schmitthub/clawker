@@ -1,4 +1,4 @@
-package up
+package start
 
 import (
 	"testing"
@@ -6,12 +6,13 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 )
 
-func TestNewCmdUp(t *testing.T) {
+func TestNewCmdStart(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdUp(f)
+	cmd := NewCmdStart(f)
 
-	if cmd.Use != "up" {
-		t.Errorf("expected Use 'up', got '%s'", cmd.Use)
+	expectedUse := "start [-- <claude-args>...]"
+	if cmd.Use != expectedUse {
+		t.Errorf("expected Use '%s', got '%s'", expectedUse, cmd.Use)
 	}
 
 	// Check flags exist
