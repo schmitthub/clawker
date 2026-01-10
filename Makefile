@@ -1,6 +1,6 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
-        cli cli-build cli-test cli-lint cli-install cli-clean
+        cli cli-build cli-generate cli-test cli-lint cli-install cli-clean
 
 # Variables
 IMAGE_NAME ?= claucker
@@ -27,6 +27,7 @@ help:
 	@echo ""
 	@echo "CLI targets:"
 	@echo "  cli                 Build the claucker CLI binary"
+	@echo "  cli-generate        Build the standalone claucker-generate binary"
 	@echo "  cli-test            Run CLI tests"
 	@echo "  cli-lint            Run linter on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
@@ -148,6 +149,12 @@ cli-build:
 	@echo "Building $(BINARY_NAME) $(CLI_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/claucker
+
+# Build the standalone generate binary
+cli-generate:
+	@echo "Building claucker-generate $(CLI_VERSION)..."
+	@mkdir -p $(BIN_DIR)
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/claucker-generate ./cmd/claucker-generate
 
 # Build CLI for multiple platforms
 cli-build-all: cli-build-linux cli-build-darwin cli-build-windows

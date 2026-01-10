@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/claucker/pkg/cmd/build"
 	"github.com/schmitthub/claucker/pkg/cmd/config"
+	"github.com/schmitthub/claucker/pkg/cmd/generate"
 	initcmd "github.com/schmitthub/claucker/pkg/cmd/init"
 	"github.com/schmitthub/claucker/pkg/cmd/logs"
 	"github.com/schmitthub/claucker/pkg/cmd/ls"
@@ -82,6 +83,7 @@ Workspace modes:
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(prune.NewCmdPrune(f))
+	cmd.AddCommand(generate.NewCmdGenerate(f))
 
 	return cmd
 }
