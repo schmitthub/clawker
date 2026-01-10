@@ -144,8 +144,20 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 		return err
 	}
 
+	// Ensure claucker network exists
+	if err := eng.EnsureNetwork(config.ClauckerNetwork); err != nil {
+		logger.Warn().Err(err).Msg("failed to ensure claucker network")
+		// Don't fail hard, container can still run without the network
+	}
+
+	// Check if monitoring stack is active
+	monitoringActive := eng.IsMonitoringActive()
+	if monitoringActive {
+		logger.Info().Msg("monitoring stack detected, enabling telemetry")
+	}
+
 	// Build container configuration
-	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts.Args)
+	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts.Args, monitoringActive)
 	if err != nil {
 		return err
 	}
@@ -221,7 +233,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, claudeArgs []string) (engine.ContainerConfig, error) {
+func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, claudeArgs []string, monitoringActive bool) (engine.ContainerConfig, error) {
 	// Build environment variables
 	envBuilder := credentials.NewEnvBuilder()
 
@@ -236,6 +248,12 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 
 	// Add useful passthrough variables
 	envBuilder.SetFromHostAll(credentials.DefaultPassthrough())
+
+	// Add OTEL environment variables if monitoring is active
+	containerName := engine.ContainerName(cfg.Project)
+	if monitoringActive {
+		envBuilder.SetAll(credentials.OtelEnvVars(containerName))
+	}
 
 	// Build mounts
 	var mounts []mount.Mount
@@ -272,6 +290,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 		AttachStderr: true,
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
+		NetworkMode:  config.ClauckerNetwork,
 	}, nil
 }
 

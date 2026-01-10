@@ -185,3 +185,17 @@ func ErrNetworkError(err error) *DockerError {
 		},
 	}
 }
+
+// ErrNetworkCreateFailed returns an error for when network creation fails
+func ErrNetworkCreateFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_create",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to create network '%s'", name),
+		NextSteps: []string{
+			"Check Docker daemon is running",
+			"Verify no conflicting networks exist: docker network ls",
+			"Check if network with same name exists: docker network inspect " + name,
+		},
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/schmitthub/claucker/pkg/logger"
@@ -287,4 +288,159 @@ func (e *Engine) VolumeExists(name string) (bool, error) {
 // VolumeList lists volumes matching the filter
 func (e *Engine) VolumeList(filter filters.Args) (volume.ListResponse, error) {
 	return e.cli.VolumeList(e.ctx, volume.ListOptions{Filters: filter})
+}
+
+// --- Network Operations ---
+
+// NetworkExists checks if a network exists
+func (e *Engine) NetworkExists(name string) (bool, error) {
+	_, err := e.cli.NetworkInspect(e.ctx, name, network.InspectOptions{})
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// NetworkCreate creates a new network
+func (e *Engine) NetworkCreate(name string) (network.CreateResponse, error) {
+	logger.Debug().Str("network", name).Msg("creating network")
+
+	resp, err := e.cli.NetworkCreate(e.ctx, name, network.CreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{
+			"com.claucker.managed": "true",
+		},
+	})
+	if err != nil {
+		return network.CreateResponse{}, ErrNetworkCreateFailed(name, err)
+	}
+	return resp, nil
+}
+
+// EnsureNetwork creates a network if it doesn't exist
+func (e *Engine) EnsureNetwork(name string) error {
+	exists, err := e.NetworkExists(name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		logger.Debug().Str("network", name).Msg("network already exists")
+		return nil
+	}
+	_, err = e.NetworkCreate(name)
+	return err
+}
+
+// NetworkRemove removes a network
+func (e *Engine) NetworkRemove(name string) error {
+	logger.Debug().Str("network", name).Msg("removing network")
+	return e.cli.NetworkRemove(e.ctx, name)
+}
+
+// NetworkInspect inspects a network
+func (e *Engine) NetworkInspect(name string) (network.Inspect, error) {
+	return e.cli.NetworkInspect(e.ctx, name, network.InspectOptions{})
+}
+
+// NetworkList lists networks matching the filter
+func (e *Engine) NetworkList(filter filters.Args) ([]network.Summary, error) {
+	return e.cli.NetworkList(e.ctx, network.ListOptions{Filters: filter})
+}
+
+// IsMonitoringActive checks if the claucker monitoring stack is running.
+// It looks for the otel-collector container on the claucker-net network.
+func (e *Engine) IsMonitoringActive() bool {
+	// Look for otel-collector container
+	containers, err := e.cli.ContainerList(e.ctx, container.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("name", "otel-collector"),
+			filters.Arg("status", "running"),
+		),
+	})
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to check monitoring status")
+		return false
+	}
+
+	// Check if any otel-collector container is running on claucker-net
+	for _, c := range containers {
+		if c.NetworkSettings != nil {
+			for netName := range c.NetworkSettings.Networks {
+				if netName == "claucker-net" {
+					logger.Debug().Msg("monitoring stack detected as active")
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// RunningClauckerContainer represents a running claucker-managed container
+type RunningClauckerContainer struct {
+	ID      string
+	Name    string
+	Project string
+	Image   string
+}
+
+// ListRunningClauckerContainers returns all running containers managed by claucker
+// on the claucker-net network. Returns container info including project name.
+func (e *Engine) ListRunningClauckerContainers() ([]RunningClauckerContainer, error) {
+	containers, err := e.cli.ContainerList(e.ctx, container.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("status", "running"),
+		),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []RunningClauckerContainer
+	for _, c := range containers {
+		// Check if container is on claucker-net
+		if c.NetworkSettings == nil {
+			continue
+		}
+		onClauckerNet := false
+		for netName := range c.NetworkSettings.Networks {
+			if netName == "claucker-net" {
+				onClauckerNet = true
+				break
+			}
+		}
+		if !onClauckerNet {
+			continue
+		}
+
+		// Extract container name (remove leading slash)
+		name := ""
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+
+		// Only include claucker-managed containers (format: claucker-{project})
+		if len(name) <= 9 || name[:9] != "claucker-" {
+			continue
+		}
+
+		// Extract project name from container name
+		project := name[9:]
+
+		result = append(result, RunningClauckerContainer{
+			ID:      c.ID,
+			Name:    name,
+			Project: project,
+			Image:   c.Image,
+		})
+	}
+
+	return result, nil
 }

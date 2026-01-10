@@ -63,11 +63,13 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 ## Build Commands
 
 ```bash
-# Build the CLI
-cd claucker && go build -o bin/claucker .
+# Build the CLI with go
+go build -o bin/claucker ./cmd/claucker
+# Build the CLI with make
+make build-cli
 
 # Run tests
-cd claucker && go test ./...
+go test ./...
 
 # Run with debug logging
 ./bin/claucker --debug up

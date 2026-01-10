@@ -39,7 +39,9 @@
       "Bash(docker info:*)",
       "Bash(docker run:*)",
       "Bash(docker ps:*)",
-      "Bash(timeout 10 ./bin/claucker --debug run:*)"
+      "Bash(timeout 10 ./bin/claucker --debug run:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(docker logs:*)"
     ],
     "deny": [
       "Read(TODO.md)"
