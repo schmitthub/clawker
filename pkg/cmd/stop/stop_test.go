@@ -19,6 +19,7 @@ func TestNewCmdStop(t *testing.T) {
 		name      string
 		shorthand string
 	}{
+		{"agent", ""},
 		{"clean", ""},
 		{"force", "f"},
 		{"timeout", "t"},

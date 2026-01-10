@@ -10,9 +10,9 @@ func TestContainerName(t *testing.T) {
 		agent   string
 		want    string
 	}{
-		{"my-project", "ralph", "claucker/my-project/ralph"},
-		{"test", "worker", "claucker/test/worker"},
-		{"project123", "clever-fox", "claucker/project123/clever-fox"},
+		{"my-project", "ralph", "claucker.my-project.ralph"},
+		{"test", "worker", "claucker.test.worker"},
+		{"project123", "clever-fox", "claucker.project123.clever-fox"},
 	}
 
 	for _, tt := range tests {
@@ -32,9 +32,9 @@ func TestVolumeName(t *testing.T) {
 		purpose string
 		want    string
 	}{
-		{"my-project", "ralph", "workspace", "claucker/my-project/ralph-workspace"},
-		{"my-project", "ralph", "config", "claucker/my-project/ralph-config"},
-		{"test", "worker", "history", "claucker/test/worker-history"},
+		{"my-project", "ralph", "workspace", "claucker.my-project.ralph-workspace"},
+		{"my-project", "ralph", "config", "claucker.my-project.ralph-config"},
+		{"test", "worker", "history", "claucker.test.worker-history"},
 	}
 
 	for _, tt := range tests {
@@ -54,12 +54,12 @@ func TestParseContainerName(t *testing.T) {
 		agent   string
 		ok      bool
 	}{
-		{"claucker/myapp/ralph", "myapp", "ralph", true},
-		{"claucker/test/worker", "test", "worker", true},
-		{"/claucker/myapp/ralph", "myapp", "ralph", true}, // Docker adds leading /
+		{"claucker.myapp.ralph", "myapp", "ralph", true},
+		{"claucker.test.worker", "test", "worker", true},
+		{"/claucker.myapp.ralph", "myapp", "ralph", true}, // Docker adds leading /
 		{"invalid-name", "", "", false},
 		{"claucker-old-format", "", "", false},
-		{"claucker/only-project", "", "", false},
+		{"claucker.only-project", "", "", false},
 	}
 
 	for _, tt := range tests {
@@ -77,7 +77,7 @@ func TestParseContainerName(t *testing.T) {
 
 func TestContainerNamePrefix(t *testing.T) {
 	got := ContainerNamePrefix("myapp")
-	want := "claucker/myapp/"
+	want := "claucker.myapp."
 	if got != want {
 		t.Errorf("ContainerNamePrefix(%q) = %q, want %q", "myapp", got, want)
 	}
@@ -170,25 +170,25 @@ func TestVolumeNamingConsistency(t *testing.T) {
 	workspaceVolume := VolumeName(projectName, agentName, "workspace")
 	configVolume := VolumeName(projectName, agentName, "config")
 
-	// All names should start with "claucker/"
-	if containerName[:9] != "claucker/" {
-		t.Errorf("Container name should start with 'claucker/': %s", containerName)
+	// All names should start with "claucker."
+	if containerName[:9] != "claucker." {
+		t.Errorf("Container name should start with 'claucker.': %s", containerName)
 	}
-	if workspaceVolume[:9] != "claucker/" {
-		t.Errorf("Workspace volume should start with 'claucker/': %s", workspaceVolume)
+	if workspaceVolume[:9] != "claucker." {
+		t.Errorf("Workspace volume should start with 'claucker.': %s", workspaceVolume)
 	}
-	if configVolume[:9] != "claucker/" {
-		t.Errorf("Config volume should start with 'claucker/': %s", configVolume)
+	if configVolume[:9] != "claucker." {
+		t.Errorf("Config volume should start with 'claucker.': %s", configVolume)
 	}
 
 	// Verify exact formats
-	if containerName != "claucker/my-app/ralph" {
+	if containerName != "claucker.my-app.ralph" {
 		t.Errorf("Container name format unexpected: %s", containerName)
 	}
-	if workspaceVolume != "claucker/my-app/ralph-workspace" {
+	if workspaceVolume != "claucker.my-app.ralph-workspace" {
 		t.Errorf("Workspace volume format unexpected: %s", workspaceVolume)
 	}
-	if configVolume != "claucker/my-app/ralph-config" {
+	if configVolume != "claucker.my-app.ralph-config" {
 		t.Errorf("Config volume format unexpected: %s", configVolume)
 	}
 }

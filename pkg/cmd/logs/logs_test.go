@@ -19,6 +19,7 @@ func TestNewCmdLogs(t *testing.T) {
 		name      string
 		shorthand string
 	}{
+		{"agent", ""},
 		{"follow", "f"},
 		{"tail", ""},
 	}

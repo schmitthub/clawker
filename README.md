@@ -41,6 +41,47 @@ claucker start
 claucker stop
 ```
 
+## Multi-Container Management
+
+Claucker supports running multiple containers per project using **agents**. Each agent has its own container, volumes, and Claude Code session.
+
+### Container Naming
+
+Containers follow the format: `claucker.project.agent`
+
+```
+claucker.myapp.ralph      # Project "myapp", agent "ralph"
+claucker.myapp.writer     # Project "myapp", agent "writer"
+claucker.backend.worker   # Project "backend", agent "worker"
+```
+
+### Working with Agents
+
+```bash
+# Start agents with specific names
+claucker start --agent ralph
+claucker start --agent writer
+
+# If no --agent specified, a random name is generated
+claucker start    # Creates claucker.myapp.clever-fox
+
+# List all containers
+claucker ls
+
+# Work with specific agents
+claucker logs --agent ralph
+claucker sh --agent ralph
+claucker stop --agent ralph
+
+# Stop all agents for a project
+claucker stop
+
+# Remove all containers for a project
+claucker rm -p myapp
+```
+
+Each agent has isolated volumes for workspace (snapshot mode), config, and command history.
+
 ## Authentication
 
 Claucker automatically passes Anthropic authentication from your host environment to the container:
@@ -69,9 +110,12 @@ Claude Code will authenticate automatically without requiring browser login.
 | `claucker build` | Build the container image |
 | `claucker start` | Build image (if needed), create container, and attach to Claude Code |
 | `claucker run` | Run a one-shot command in an ephemeral container |
-| `claucker stop` | Stop the running container |
-| `claucker sh` | Open a bash shell in the running container |
+| `claucker stop` | Stop containers for the project |
+| `claucker restart` | Restart containers to pick up environment changes |
+| `claucker sh` | Open a bash shell in a running container |
 | `claucker logs` | View container logs |
+| `claucker ls` | List all claucker containers |
+| `claucker rm` | Remove containers and their volumes |
 | `claucker config check` | Validate your `claucker.yaml` |
 
 ### claucker build
@@ -98,11 +142,13 @@ claucker start [-- <claude-args>...]
 
 # Examples:
 claucker start                          # Run Claude interactively
+claucker start --agent ralph            # Start a named agent
 claucker start -- -p "build a feature"  # Pass args to Claude CLI
 claucker start -- --resume              # Resume previous session
 claucker start --build                  # Force rebuild before running
 
 Flags:
+  --agent <name>        Agent name for the container (default: random)
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
   --detach              Run container in background
@@ -120,12 +166,14 @@ claucker run [flags] [-- <command>...]
 
 # Examples:
 claucker run                           # Run Claude, remove on exit
+claucker run --agent worker            # Run with a named agent
 claucker run -- -p "quick question"    # Claude with args, remove on exit
 claucker run --shell                   # Run shell, remove on exit
 claucker run -- npm test               # Run arbitrary command
 claucker run --keep                    # Keep container after exit
 
 Flags:
+  --agent <name>        Agent name for the container (default: random)
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
   --shell               Run shell instead of Claude
@@ -136,11 +184,56 @@ Flags:
 
 ### claucker stop
 
+Stops containers for this project. By default, stops all containers; use `--agent` to stop a specific one.
+
 ```bash
 claucker stop [flags]
 
+# Examples:
+claucker stop                    # Stop all containers for project
+claucker stop --agent ralph      # Stop specific agent
+claucker stop --clean            # Stop and remove all volumes
+
 Flags:
-  --clean    Also remove volumes (workspace, config, history)
+  --agent <name>  Agent name to stop (default: all agents)
+  --clean         Also remove volumes (workspace, config, history)
+  --force         Force stop (SIGKILL)
+  --timeout       Seconds before force kill (default: 10)
+```
+
+### claucker ls
+
+Lists all claucker containers across all projects.
+
+```bash
+claucker ls [flags]
+
+# Examples:
+claucker ls              # List running containers
+claucker ls -a           # Include stopped containers
+claucker ls -p myapp     # Filter by project
+
+Flags:
+  -a, --all              Show all containers (including stopped)
+  -p, --project <name>   Filter by project name
+```
+
+### claucker rm
+
+Removes claucker containers and their associated volumes.
+
+```bash
+claucker rm [flags]
+
+# Examples:
+claucker rm -n claucker.myapp.ralph   # Remove specific container
+claucker rm -p myapp                   # Remove all containers for project
+claucker rm -p myapp -f                # Force remove running containers
+
+Flags:
+  -n, --name <name>      Container name to remove
+  -p, --project <name>   Remove all containers for project
+  -f, --force            Force remove running containers
 ```
 
 ## Configuration
