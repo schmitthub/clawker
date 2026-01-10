@@ -418,8 +418,8 @@ func TestTemplateConstants(t *testing.T) {
 	if DefaultGID != 1001 {
 		t.Errorf("DefaultGID = %d, want %d", DefaultGID, 1001)
 	}
-	if DefaultShell != "/bin/bash" {
-		t.Errorf("DefaultShell = %q, want %q", DefaultShell, "/bin/bash")
+	if DefaultShell != "/bin/zsh" {
+		t.Errorf("DefaultShell = %q, want %q", DefaultShell, "/bin/zsh")
 	}
 }
 

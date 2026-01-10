@@ -137,8 +137,20 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
+	// Ensure claucker network exists
+	if err := eng.EnsureNetwork(config.ClauckerNetwork); err != nil {
+		logger.Warn().Err(err).Msg("failed to ensure claucker network")
+		// Don't fail hard, container can still run without the network
+	}
+
+	// Check if monitoring stack is active
+	monitoringActive := eng.IsMonitoringActive()
+	if monitoringActive {
+		logger.Info().Msg("monitoring stack detected, enabling telemetry")
+	}
+
 	// Build container configuration
-	containerCfg, err := buildRunContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts)
+	containerCfg, err := buildRunContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, opts, monitoringActive)
 	if err != nil {
 		return err
 	}
@@ -209,7 +221,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, opts *RunOptions) (engine.ContainerConfig, error) {
+func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, opts *RunOptions, monitoringActive bool) (engine.ContainerConfig, error) {
 	// Build environment variables
 	envBuilder := credentials.NewEnvBuilder()
 
@@ -224,6 +236,13 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 
 	// Add useful passthrough variables
 	envBuilder.SetFromHostAll(credentials.DefaultPassthrough())
+
+	// Add OTEL environment variables if monitoring is active
+	// Use ephemeral prefix for run containers since Docker generates their names
+	containerName := fmt.Sprintf("claucker-ephemeral-%s", cfg.Project)
+	if monitoringActive {
+		envBuilder.SetAll(credentials.OtelEnvVars(containerName))
+	}
 
 	// Build mounts
 	var mounts []mount.Mount
@@ -269,6 +288,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		AttachStderr: true,
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
+		NetworkMode:  config.ClauckerNetwork,
 	}, nil
 }
 

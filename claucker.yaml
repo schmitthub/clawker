@@ -35,6 +35,7 @@ build:
     - gh
     - locales
     - locales-all
+    - iputils-ping
   instructions:
     root_run:
       - cmd: |
@@ -67,7 +68,7 @@ workspace:
 
 security:
   # Enable network firewall (blocks outbound traffic by default)
-  enable_firewall: true
+  enable_firewall: false
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
   # Domains allowed through firewall (only when enable_firewall: true)

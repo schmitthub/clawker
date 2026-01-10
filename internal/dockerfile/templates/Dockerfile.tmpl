@@ -29,6 +29,7 @@ RUN apk add --no-cache \
     git \
     sudo \
     ca-certificates \
+    netcat-openbsd \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
@@ -40,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     sudo \
     ca-certificates \
+    netcat-openbsd \
     {{- range .Packages}}
     {{.}} \
     {{- end}}

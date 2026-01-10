@@ -570,8 +570,8 @@ func TestValidatorValidInstructions(t *testing.T) {
 			name: "valid env",
 			instructions: &DockerInstructions{
 				Env: map[string]string{
-					"NODE_ENV":  "production",
-					"DEBUG":     "false",
+					"NODE_ENV": "production",
+					"DEBUG":    "false",
 				},
 			},
 			wantErr: false,

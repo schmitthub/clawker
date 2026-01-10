@@ -21,7 +21,6 @@ type BuildConfig struct {
 	Inject       *InjectConfig       `yaml:"inject,omitempty" mapstructure:"inject"`
 }
 
-
 // DockerInstructions represents type-safe Dockerfile instructions
 type DockerInstructions struct {
 	Copy        []CopyInstruction  `yaml:"copy,omitempty" mapstructure:"copy"`
