@@ -1,6 +1,6 @@
 # TODO.md
 
-[ ] Add user scoped default templates and configs in their claucker home dir
+[ ] container tags need use the container naming convention
 [ ] Claucker-generate is probably dumb and should just be a standalone go script
 [ ] Add a light monitoring shell UI that is aware of claude subs vs claude sdk api costs
 [ ] Multi image support. you can create as many or as little claucker containers as you want
@@ -8,6 +8,11 @@
 [ ] Add session tracking by container name in metrics collection, explained in metrics docs
 [ ] Make an SRE/Devops specialist sub-agent to troubelshoot container and service issues because it destroys the context
   window
+[ ] Go cli agent needs work. needs to use opus, needs to have a refactor skill / feature updater
+[ ] Fix generate cmd output its too verbose
+[ ] Update Statusline monitor to calculate session limit, maybe consider using python
+[ ] claucker ls should have an alias to list. -a should show monitoring containers (anything on claucker-net)
+[ ] claucker output should mirror claude code ANSI style
 
 ## Bugs
 

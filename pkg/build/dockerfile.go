@@ -333,6 +333,40 @@ func (g *ProjectGenerator) GetBuildContext() string {
 	return g.workDir
 }
 
+// basePackagesAlpine are packages already included in the template for Alpine.
+var basePackagesAlpine = map[string]bool{
+	"bash": true, "less": true, "git": true, "procps": true, "sudo": true,
+	"fzf": true, "zsh": true, "man-db": true, "unzip": true, "gnupg": true,
+	"iptables": true, "ipset": true, "iproute2": true, "bind-tools": true,
+	"jq": true, "nano": true, "vim": true, "wget": true, "curl": true,
+	"github-cli": true, "musl-locales": true, "musl-locales-lang": true,
+}
+
+// basePackagesDebian are packages already included in the template for Debian.
+var basePackagesDebian = map[string]bool{
+	"less": true, "git": true, "procps": true, "sudo": true, "fzf": true,
+	"zsh": true, "man-db": true, "unzip": true, "gnupg2": true,
+	"iptables": true, "ipset": true, "iproute2": true, "dnsutils": true,
+	"aggregate": true, "jq": true, "nano": true, "vim": true, "wget": true,
+	"curl": true, "gh": true, "locales": true, "locales-all": true,
+}
+
+// filterBasePackages removes packages that are already in the template.
+func filterBasePackages(packages []string, isAlpine bool) []string {
+	basePackages := basePackagesDebian
+	if isAlpine {
+		basePackages = basePackagesAlpine
+	}
+
+	var filtered []string
+	for _, pkg := range packages {
+		if !basePackages[pkg] {
+			filtered = append(filtered, pkg)
+		}
+	}
+	return filtered
+}
+
 // buildContext creates the template context from config.
 func (g *ProjectGenerator) buildContext() *DockerfileContext {
 	baseImage := g.config.Build.Image
@@ -340,16 +374,18 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		baseImage = "buildpack-deps:bookworm-scm"
 	}
 
+	isAlpine := engine.IsAlpineImage(baseImage)
+
 	ctx := &DockerfileContext{
 		BaseImage:      baseImage,
-		Packages:       g.config.Build.Packages,
+		Packages:       filterBasePackages(g.config.Build.Packages, isAlpine),
 		Username:       DefaultUsername,
 		UID:            DefaultUID,
 		GID:            DefaultGID,
 		Shell:          DefaultShell,
 		WorkspacePath:  g.config.Workspace.RemotePath,
 		ClaudeVersion:  DefaultClaudeCodeVersion,
-		IsAlpine:       engine.IsAlpineImage(baseImage),
+		IsAlpine:       isAlpine,
 		EnableFirewall: g.config.Security.EnableFirewall,
 		ExtraEnv:       g.config.Agent.Env,
 	}
