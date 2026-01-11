@@ -29,11 +29,12 @@ func NewCmdBuild(f *cmdutil.Factory) *cobra.Command {
 		Long: `Builds the container image for this project.
 
 The image is always built unconditionally. Use --no-cache to build
-without Docker's layer cache for a completely fresh build.
+without Docker's layer cache for a completely fresh build.`,
+		Example: `  # Build image (uses Docker cache)
+  claucker build
 
-Examples:
-  claucker build              # Build image (uses Docker cache)
-  claucker build --no-cache   # Build image without cache`,
+  # Build image without cache
+  claucker build --no-cache`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBuild(f, opts)
 		},
@@ -96,6 +97,6 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		return err
 	}
 
-	fmt.Printf("Successfully built image: %s\n", imageTag)
+	fmt.Fprintf(os.Stderr, "Successfully built image: %s\n", imageTag)
 	return nil
 }

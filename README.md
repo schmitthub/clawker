@@ -119,6 +119,7 @@ Claude Code will authenticate automatically without requiring browser login.
 | `claucker prune` | Remove unused claucker resources |
 | `claucker monitor` | Manage local observability stack |
 | `claucker config check` | Validate your `claucker.yaml` |
+| `claucker generate` | Generate versions.json for Claude Code releases |
 
 ### claucker build
 
@@ -276,6 +277,39 @@ After starting the monitoring stack, restart your Claude containers to enable te
 ```bash
 claucker monitor up
 claucker restart
+```
+
+### claucker generate
+
+Generates `versions.json` for Claude Code releases by fetching version information from npm. Used for maintaining the Docker image build infrastructure.
+
+```bash
+claucker generate [versions...]
+
+# Examples:
+claucker generate                    # Display current versions.json
+claucker generate latest             # Fetch latest version from npm
+claucker generate latest 2.1         # Fetch multiple version patterns
+claucker generate --skip-fetch       # Use existing versions.json only
+
+Flags:
+  --skip-fetch  Skip npm fetch, use existing versions.json only
+  --cleanup     Remove obsolete version directories (default: true)
+```
+
+**Version patterns:**
+- `latest`, `stable`, `next` - Resolve via npm dist-tags
+- `2.1` - Match highest 2.1.x release
+- `2.1.2` - Exact version match
+
+A standalone binary `claucker-generate` is also available for CI/CD pipelines:
+
+```bash
+# Build standalone binary
+make cli-generate
+
+# Run standalone
+./bin/claucker-generate latest 2.1.2
 ```
 
 ## Configuration
@@ -531,14 +565,17 @@ Default exclusions include:
 ## Development
 
 ```bash
-# Build
+# Build CLI
 go build -o bin/claucker ./cmd/claucker
+
+# Build standalone generate binary
+make cli-generate
 
 # Run tests
 go test ./...
 
 # Run with debug logging
-./bin/claucker --debug up
+./bin/claucker --debug start
 ```
 
 ## License

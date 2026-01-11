@@ -42,7 +42,9 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 ```
 /workspace/
 ├── claucker/              # Go CLI source code
-│   ├── cmd/               # Main entry point
+│   ├── cmd/               # Main entry points
+│   │   ├── claucker/          # Main CLI binary
+│   │   └── claucker-generate/ # Standalone generate binary
 │   ├── internal/          # Private packages
 │   │   ├── build/         # Shared image building logic
 │   │   ├── config/        # Viper configuration loading
@@ -53,16 +55,27 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 │   │   │   ├── names.go       # Container/volume naming, random names
 │   │   │   └── volume.go      # VolumeManager
 │   │   ├── workspace/     # Bind vs Snapshot strategies
-│   │   ├── dockerfile/    # Dynamic Dockerfile generation
 │   │   ├── term/          # PTY/terminal handling
 │   │   └── credentials/   # .env parsing and injection
 │   └── pkg/
+│       ├── build/         # Version generation and Dockerfile templates
+│       │   ├── semver/        # Semver parsing, sorting, comparison
+│       │   │   └── semver.go
+│       │   ├── registry/      # NPM registry client
+│       │   │   ├── npm.go         # HTTP client for npm
+│       │   │   ├── types.go       # VersionInfo, DistTags, VersionsFile
+│       │   │   └── fetcher.go     # Fetcher interface
+│       │   ├── templates/     # Embedded Dockerfile, entrypoint, firewall scripts
+│       │   ├── dockerfile.go  # DockerfileManager, ProjectGenerator
+│       │   ├── versions.go    # Version resolution orchestration
+│       │   └── config.go      # Variant configuration (trixie, bookworm, alpine)
 │       ├── cmd/           # Cobra commands
 │       │   ├── start/     # claucker start
 │       │   ├── run/       # claucker run
 │       │   ├── stop/      # claucker stop
 │       │   ├── ls/        # claucker ls (list containers)
 │       │   ├── rm/        # claucker rm (remove containers)
+│       │   ├── generate/  # claucker generate (version generation)
 │       │   └── ...        # Other commands
 │       ├── cmdutil/       # Command utilities, Factory, Output helpers
 │       │   ├── factory.go     # Dependency injection for commands
@@ -84,11 +97,17 @@ go build -o bin/claucker ./cmd/claucker
 # Build the CLI with make
 make build-cli
 
+# Build standalone generate binary
+make cli-generate
+
 # Run tests
 go test ./...
 
 # Run with debug logging
-./bin/claucker --debug up
+./bin/claucker --debug start
+
+# Generate versions.json from npm
+./bin/claucker generate latest 2.1
 
 # Generate Docker images (existing infrastructure)
 make build VERSION=2.1.2 VARIANT=trixie
@@ -121,6 +140,59 @@ Generates Dockerfiles from Go templates with `TemplateData` struct containing:
 - `IsAlpine` - OS detection for conditional package commands
 
 Template injection order: `after_from` → packages → `after_packages` → `root_run` → user setup → `after_user_setup` → COPY → `USER claude` → `after_user_switch` → `user_run` → Claude install → `after_claude_install` → `before_entrypoint` → ENTRYPOINT
+
+### Semver Package (pkg/build/semver)
+
+Pure Go semver implementation (ported from semver.jq) for version parsing, comparison, and matching:
+
+```go
+type Version struct {
+    Major, Minor, Patch int
+    Prerelease, Build   string
+    Original            string
+}
+
+func Parse(s string) (*Version, error)
+func Compare(a, b *Version) int
+func Sort(versions []*Version)
+func SortStrings(versions []string) []string
+func Match(versions []string, target string) (string, error)
+```
+
+Key behaviors:
+- Supports partial versions (`2.1` matches highest `2.1.x`)
+- Prereleases sort before releases (`2.1.0-beta < 2.1.0`)
+- `Match()` finds best matching version for patterns like `latest`, `2.1`, or exact `2.1.2`
+
+### NPM Registry Client (pkg/build/registry)
+
+Fetches Claude Code versions from npm registry:
+
+```go
+type NPMClient struct { ... }
+
+func NewNPMClient() *NPMClient
+func (c *NPMClient) FetchVersions(ctx context.Context, pkg string) ([]string, error)
+func (c *NPMClient) FetchDistTags(ctx context.Context, pkg string) (DistTags, error)
+```
+
+Key types:
+- `DistTags` - Map of tag names to versions (`latest`, `stable`, `next`)
+- `VersionInfo` - Full version metadata with variants
+- `VersionsFile` - Complete versions.json structure
+
+### VersionsManager (pkg/build/versions.go)
+
+Orchestrates version resolution by combining npm fetching with semver matching:
+
+```go
+type VersionsManager struct { ... }
+
+func NewVersionsManager() *VersionsManager
+func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string, opts ResolveOptions) (*VersionsFile, error)
+func LoadVersionsFile(path string) (*VersionsFile, error)
+func SaveVersionsFile(path string, versions *VersionsFile) error
+```
 
 ### ConfigValidator
 
@@ -161,8 +233,8 @@ All output goes to stderr, keeping stdout clean for scripting.
 
 Claucker uses hierarchical naming for multi-container support:
 
-- **Container names**: `claucker/project/agent` (e.g., `claucker/myapp/ralph`)
-- **Volume names**: `claucker/project/agent-purpose` (e.g., `claucker/myapp/ralph-workspace`)
+- **Container names**: `claucker.project.agent` (e.g., `claucker.myapp.ralph`)
+- **Volume names**: `claucker.project.agent-purpose` (e.g., `claucker.myapp.ralph-workspace`)
 
 Key functions in `internal/engine/names.go`:
 - `ContainerName(project, agent)` - generates container name
@@ -198,6 +270,45 @@ Helper functions:
 - Use interfaces for testability (especially Docker client)
 - See `.claude/docs/cli-guidelines.md` for comprehensive CLI design principles
 
+### Cobra CLI Best Practices
+
+All commands follow these patterns:
+
+1. **Use `PersistentPreRunE` not `PersistentPreRun`** - Always return errors properly; never use `logger.Fatal()` or `os.Exit()` in Cobra hooks as they bypass error handling and deferred functions.
+
+2. **Always include Example field** - Every command should have usage examples:
+   ```go
+   cmd := &cobra.Command{
+       Use:   "start",
+       Short: "Start Claude containers",
+       Example: `  # Start Claude interactively
+     claucker start
+
+     # Start with a named agent
+     claucker start --agent ralph`,
+       RunE: func(cmd *cobra.Command, args []string) error { ... },
+   }
+   ```
+
+3. **Route status messages to stderr** - Keep stdout clean for data/scripting:
+   ```go
+   // Status messages → stderr
+   fmt.Fprintln(os.Stderr, "Starting container...")
+   fmt.Fprintf(os.Stderr, "Container %s started\n", name)
+
+   // Data output → stdout (e.g., ls command table)
+   fmt.Println(tableOutput)
+   ```
+
+4. **Use flag validation helpers** - Cobra provides built-in validation:
+   ```go
+   cmd.MarkFlagsOneRequired("name", "project")  // At least one required
+   cmd.MarkFlagsMutuallyExclusive("a", "b")     // Can't use both
+   cmd.MarkFlagRequired("config")               // Always required
+   ```
+
+5. **Consistent error handling** - Use `cmdutil.HandleError(err)` for Docker errors to get rich formatting with "Next Steps" guidance.
+
 ## Common Tasks
 
 ### Adding a new CLI command
@@ -226,16 +337,16 @@ Helper functions:
 
 ### Modifying Dockerfile generation
 
-1. Edit template in `internal/dockerfile/templates/Dockerfile.tmpl`
-2. Update `internal/dockerfile/generator.go` (TemplateData struct)
+1. Edit template in `pkg/build/templates/Dockerfile.tmpl`
+2. Update `pkg/build/dockerfile.go` (DockerfileContext struct for base images, ProjectGenerator.buildContext for project builds)
 3. If adding new config fields, update `internal/config/schema.go`
 4. Add validation in `internal/config/validator.go`
 
 ### Adding new build instructions
 
 1. Add type to `internal/config/schema.go` (e.g., `NewInstruction` struct)
-2. Add field to `DockerInstructions` struct
-3. Add template logic in `Dockerfile.tmpl` at appropriate injection point
+2. Add field to `DockerfileInstructions` in `pkg/build/dockerfile.go`
+3. Add template logic in `pkg/build/templates/Dockerfile.tmpl` at appropriate injection point
 4. Add validation in `internal/config/validator.go`
 5. Add tests in `generator_test.go` and `validator_test.go`
 
@@ -256,6 +367,7 @@ Helper functions:
 | `claucker prune [-a] [-f]` | Remove unused resources; `-a` removes ALL including volumes |
 | `claucker monitor <cmd>` | Manage observability stack (init, up, down, status) |
 | `claucker config check` | Validate `claucker.yaml` |
+| `claucker generate [versions...]` | Generate versions.json from npm; `--skip-fetch` uses existing file |
 
 ## Update README.md
 
@@ -442,14 +554,19 @@ security:
 4. **Idempotent `up` command** - Attaches to existing container if running
 5. **Type-safe instructions preferred over raw inject** - `build.instructions` is validated and OS-aware; `build.inject` is escape hatch for advanced users
 6. **OS detection from base image** - `RunInstruction` supports `alpine`/`debian` variants; generator detects OS from image name
-7. **Hierarchical container naming** - Format `claucker/project/agent` with "/" separators; enables multiple containers per project
+7. **Hierarchical container naming** - Format `claucker.project.agent` with "/" separators; enables multiple containers per project
 8. **Docker labels for resource identification** - Labels (`com.claucker.*`) provide reliable filtering; container names can be parsed but labels are authoritative
 9. **Random agent names by default** - If `--agent` not specified, generates Docker-style adjective-noun name (e.g., "clever-fox")
 10. **Backward incompatibility with old naming** - Old `claucker-project` format containers are ignored; users should remove manually
+11. **Pure Go version generation** - `pkg/build/` replaces shell scripts (semver.jq, versions.sh, apply-templates.sh); provides better testability, cross-platform support, and integration with CLI
+12. **Stdout for data, stderr for status** - All status messages, progress indicators, and user feedback go to stderr; only structured data output (like `ls` table) goes to stdout for scripting compatibility
+13. **Example field in all commands** - Every Cobra command includes an `Example` field with formatted usage examples shown in `--help` output
 
 ## Important Gotchas
 
 - `os.Exit()` does NOT run deferred functions - always restore terminal state explicitly before calling os.Exit
-- In raw terminal mode, signals (SIGINT from Ctrl+C) are not generated - input goes directly to the process
+- In raw terminal mode, signals (SIGINT from Ctrl+C) are not generated - input goes directly to the container
 - When streaming to containers, don't wait for stdin goroutine on exit - it may be blocked on Read()
 - Docker hijacked connections require proper cleanup of both read and write sides
+- Never use `logger.Fatal()` in Cobra hooks (`PersistentPreRun`, etc.) - it bypasses Cobra's error handling; always use `PersistentPreRunE` and return errors
+- Cobra's `MarkFlagsOneRequired()` must be called after flags are defined, not in the command declaration

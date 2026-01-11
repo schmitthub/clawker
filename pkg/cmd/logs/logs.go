@@ -30,13 +30,18 @@ func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
 		Short: "Stream container logs",
 		Long: `Shows logs from a Claude container.
 
-If multiple containers exist and --agent is not specified, you must specify which agent.
+If multiple containers exist and --agent is not specified, you must specify which agent.`,
+		Example: `  # Show logs (if single container)
+  claucker logs
 
-Examples:
-  claucker logs                   # Show logs (if single container)
-  claucker logs --agent ralph     # Show logs for specific agent
-  claucker logs -f                # Follow log output (like tail -f)
-  claucker logs --tail 50         # Show last 50 lines`,
+  # Show logs for specific agent
+  claucker logs --agent ralph
+
+  # Follow log output (like tail -f)
+  claucker logs -f
+
+  # Show last 50 lines
+  claucker logs --tail 50`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogs(f, opts)
 		},

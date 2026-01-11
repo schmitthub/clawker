@@ -20,6 +20,8 @@ func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
 		Long: `Shows the current status of the monitoring stack containers.
 
 Displays running/stopped state and service URLs when the stack is running.`,
+		Example: `  # Check monitoring stack status
+  claucker monitor status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStatus(f)
 		},
@@ -40,9 +42,9 @@ func runStatus(f *cmdutil.Factory) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		fmt.Println("Monitoring stack: NOT INITIALIZED")
-		fmt.Println()
-		fmt.Println("Run 'claucker monitor init' to scaffold configuration files.")
+		fmt.Fprintln(os.Stderr, "Monitoring stack: NOT INITIALIZED")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Run 'claucker monitor init' to scaffold configuration files.")
 		return nil
 	}
 
@@ -56,37 +58,37 @@ func runStatus(f *cmdutil.Factory) error {
 	outputStr := strings.TrimSpace(string(output))
 
 	if outputStr == "" || !strings.Contains(outputStr, "Up") {
-		fmt.Println("Monitoring stack: STOPPED")
-		fmt.Println()
-		fmt.Println("Run 'claucker monitor up' to start the stack.")
+		fmt.Fprintln(os.Stderr, "Monitoring stack: STOPPED")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Run 'claucker monitor up' to start the stack.")
 		return nil
 	}
 
-	fmt.Println("Monitoring stack: RUNNING")
-	fmt.Println()
-	fmt.Println("Containers:")
-	fmt.Println(outputStr)
-	fmt.Println()
+	fmt.Fprintln(os.Stderr, "Monitoring stack: RUNNING")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Containers:")
+	fmt.Fprintln(os.Stderr, outputStr)
+	fmt.Fprintln(os.Stderr)
 
 	// Check which services are actually running and print relevant URLs
-	fmt.Println("Service URLs:")
+	fmt.Fprintln(os.Stderr, "Service URLs:")
 	if strings.Contains(outputStr, "grafana") {
-		fmt.Println("  Grafana:    http://localhost:3000 (No login required)")
+		fmt.Fprintln(os.Stderr, "  Grafana:    http://localhost:3000 (No login required)")
 	}
 	if strings.Contains(outputStr, "jaeger") {
-		fmt.Println("  Jaeger:     http://localhost:16686")
+		fmt.Fprintln(os.Stderr, "  Jaeger:     http://localhost:16686")
 	}
 	if strings.Contains(outputStr, "prometheus") {
-		fmt.Println("  Prometheus: http://localhost:9090")
+		fmt.Fprintln(os.Stderr, "  Prometheus: http://localhost:9090")
 	}
 
 	// Check network status
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	networkCmd := exec.Command("docker", "network", "inspect", config.ClauckerNetwork, "--format", "{{.Name}}")
 	if networkOutput, err := networkCmd.Output(); err == nil {
-		fmt.Printf("Network: %s (active)\n", strings.TrimSpace(string(networkOutput)))
+		fmt.Fprintf(os.Stderr, "Network: %s (active)\n", strings.TrimSpace(string(networkOutput)))
 	} else {
-		fmt.Printf("Network: %s (not found)\n", config.ClauckerNetwork)
+		fmt.Fprintf(os.Stderr, "Network: %s (not found)\n", config.ClauckerNetwork)
 	}
 
 	return nil

@@ -26,6 +26,11 @@ func newCmdDown(f *cmdutil.Factory) *cobra.Command {
 
 This stops and removes all monitoring containers while preserving
 the claucker-net Docker network for other claucker services.`,
+		Example: `  # Stop the monitoring stack
+  claucker monitor down
+
+  # Stop and remove volumes
+  claucker monitor down --volumes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDown(f, opts)
 		},
@@ -65,15 +70,15 @@ func runDown(f *cmdutil.Factory, opts *downOptions) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Println("Stopping monitoring stack...")
+	fmt.Fprintln(os.Stderr, "Stopping monitoring stack...")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to stop monitoring stack: %w", err)
 	}
 
-	fmt.Println()
-	fmt.Println("Monitoring stack stopped.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Monitoring stack stopped.")
 	if !opts.volumes {
-		fmt.Println("Note: Volumes were preserved. Use --volumes to remove them.")
+		fmt.Fprintln(os.Stderr, "Note: Volumes were preserved. Use --volumes to remove them.")
 	}
 
 	return nil

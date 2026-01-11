@@ -10,18 +10,25 @@
        // other flags
    }
    ```
-3. Create command function:
+3. Create command function with Example field:
    ```go
    func NewCmd<Name>(f *cmdutil.Factory) *cobra.Command {
        opts := &CmdOptions{}
        cmd := &cobra.Command{
            Use:   "<cmdname>",
            Short: "Brief description",
+           Example: `  # Basic usage
+  claucker <cmdname>
+
+  # With agent flag
+  claucker <cmdname> --agent ralph`,
            RunE: func(cmd *cobra.Command, args []string) error {
                return run<Name>(f, opts)
            },
        }
        cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name")
+       // Add flag validation if needed
+       // cmd.MarkFlagsOneRequired("name", "project")
        return cmd
    }
    ```

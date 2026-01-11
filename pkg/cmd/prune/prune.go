@@ -42,6 +42,14 @@ With --all, prune removes ALL claucker resources:
   - The claucker-net network (if unused)
 
 WARNING: --all is destructive and will remove persistent data!`,
+		Example: `  # Remove unused resources (stopped containers, dangling images)
+  claucker prune
+
+  # Remove ALL claucker resources (including volumes)
+  claucker prune --all
+
+  # Skip confirmation prompt
+  claucker prune --all --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPrune(f, opts)
 		},
@@ -58,13 +66,13 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 
 	// Warn user about destructive operation
 	if opts.all && !opts.force {
-		fmt.Println("WARNING: This will remove ALL claucker resources including:")
-		fmt.Println("  - All stopped claucker containers")
-		fmt.Println("  - All claucker images")
-		fmt.Println("  - All claucker volumes (PERSISTENT DATA WILL BE LOST)")
-		fmt.Println("  - The claucker-net network")
-		fmt.Println()
-		fmt.Print("Are you sure you want to continue? [y/N] ")
+		fmt.Fprintln(os.Stderr, "WARNING: This will remove ALL claucker resources including:")
+		fmt.Fprintln(os.Stderr, "  - All stopped claucker containers")
+		fmt.Fprintln(os.Stderr, "  - All claucker images")
+		fmt.Fprintln(os.Stderr, "  - All claucker volumes (PERSISTENT DATA WILL BE LOST)")
+		fmt.Fprintln(os.Stderr, "  - The claucker-net network")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprint(os.Stderr, "Are you sure you want to continue? [y/N] ")
 
 		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
@@ -74,10 +82,10 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 
 		response = strings.TrimSpace(strings.ToLower(response))
 		if response != "y" && response != "yes" {
-			fmt.Println("Aborted.")
+			fmt.Fprintln(os.Stderr, "Aborted.")
 			return nil
 		}
-		fmt.Println()
+		fmt.Fprintln(os.Stderr)
 	}
 
 	// Connect to Docker
@@ -119,9 +127,9 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 	}
 
 	if removedCount == 0 {
-		fmt.Println("No claucker resources to remove.")
+		fmt.Fprintln(os.Stderr, "No claucker resources to remove.")
 	} else {
-		fmt.Printf("\nPruned %d claucker resource(s).\n", removedCount)
+		fmt.Fprintf(os.Stderr, "\nPruned %d claucker resource(s).\n", removedCount)
 	}
 
 	return nil
@@ -157,7 +165,7 @@ func pruneContainers(ctx context.Context, eng *engine.Engine, all bool) (int, er
 			containerName = containerName[1:]
 		}
 
-		fmt.Printf("[INFO]  Removing container: %s\n", containerName)
+		fmt.Fprintf(os.Stderr, "[INFO]  Removing container: %s\n", containerName)
 		if err := eng.ContainerRemove(c.ID, true); err != nil {
 			logger.Warn().Err(err).Str("container", containerName).Msg("failed to remove container")
 			continue
@@ -204,7 +212,7 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 			tagName = img.RepoTags[0]
 		}
 
-		fmt.Printf("[INFO]  Removing image: %s\n", tagName)
+		fmt.Fprintf(os.Stderr, "[INFO]  Removing image: %s\n", tagName)
 		if err := eng.ImageRemove(img.ID, true); err != nil {
 			logger.Warn().Err(err).Str("image", tagName).Msg("failed to remove image")
 			continue
@@ -226,7 +234,7 @@ func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
 
 	var removed int
 	for _, vol := range volumes.Volumes {
-		fmt.Printf("[INFO]  Removing volume: %s\n", vol.Name)
+		fmt.Fprintf(os.Stderr, "[INFO]  Removing volume: %s\n", vol.Name)
 		if err := eng.VolumeRemove(vol.Name, true); err != nil {
 			logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
 			continue
@@ -254,10 +262,10 @@ func pruneNetwork(ctx context.Context, eng *engine.Engine) error {
 	}
 
 	if len(network.Containers) > 0 {
-		fmt.Printf("[SKIP]  Network %s is still in use by %d container(s)\n", config.ClauckerNetwork, len(network.Containers))
+		fmt.Fprintf(os.Stderr, "[SKIP]  Network %s is still in use by %d container(s)\n", config.ClauckerNetwork, len(network.Containers))
 		return nil
 	}
 
-	fmt.Printf("[INFO]  Removing network: %s\n", config.ClauckerNetwork)
+	fmt.Fprintf(os.Stderr, "[INFO]  Removing network: %s\n", config.ClauckerNetwork)
 	return eng.NetworkRemove(config.ClauckerNetwork)
 }

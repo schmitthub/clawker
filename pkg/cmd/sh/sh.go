@@ -32,13 +32,18 @@ func NewCmdSh(f *cmdutil.Factory) *cobra.Command {
 This is useful for debugging, exploring the container filesystem,
 or running commands directly without going through Claude.
 
-If multiple containers exist and --agent is not specified, you must specify which agent.
+If multiple containers exist and --agent is not specified, you must specify which agent.`,
+		Example: `  # Open bash shell (if single container)
+  claucker sh
 
-Examples:
-  claucker sh                     # Open bash shell (if single container)
-  claucker sh --agent ralph       # Open shell in specific agent's container
-  claucker sh --shell zsh         # Open zsh shell
-  claucker sh --user root         # Open shell as root`,
+  # Open shell in specific agent's container
+  claucker sh --agent ralph
+
+  # Open zsh shell
+  claucker sh --shell zsh
+
+  # Open shell as root
+  claucker sh --user root`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSh(f, opts)
 		},

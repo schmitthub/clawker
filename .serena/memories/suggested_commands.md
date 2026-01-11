@@ -27,6 +27,8 @@ go test -v ./internal/engine/...  # Test specific package
 ./bin/claucker rm -p myproject    # Remove all project containers
 ./bin/claucker sh --agent ralph   # Shell into specific container
 ./bin/claucker logs -f            # Follow logs
+./bin/claucker generate latest    # Generate versions.json for latest
+./bin/claucker generate latest 2.1 # Generate multiple version patterns
 ```
 
 ## Lint/Format

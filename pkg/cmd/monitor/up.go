@@ -34,6 +34,11 @@ This launches the following services:
 
 The stack connects to the claucker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.`,
+		Example: `  # Start the monitoring stack (detached)
+  claucker monitor up
+
+  # Start in foreground (see logs)
+  claucker monitor up --detach=false`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUp(f, opts)
 		},
@@ -64,14 +69,14 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 	// Check if claucker-net network exists
 	checkNetworkCmd := exec.Command("docker", "network", "inspect", config.ClauckerNetwork)
 	if err := checkNetworkCmd.Run(); err != nil {
-		fmt.Printf("Warning: Docker network '%s' does not exist\n", config.ClauckerNetwork)
-		fmt.Println("  Creating network automatically...")
+		fmt.Fprintf(os.Stderr, "Warning: Docker network '%s' does not exist\n", config.ClauckerNetwork)
+		fmt.Fprintln(os.Stderr, "  Creating network automatically...")
 
 		createNetworkCmd := exec.Command("docker", "network", "create", config.ClauckerNetwork)
 		if err := createNetworkCmd.Run(); err != nil {
 			return fmt.Errorf("failed to create Docker network: %w", err)
 		}
-		fmt.Printf("  Network '%s' created successfully\n", config.ClauckerNetwork)
+		fmt.Fprintf(os.Stderr, "  Network '%s' created successfully\n", config.ClauckerNetwork)
 	}
 
 	// Build docker compose command
@@ -86,21 +91,21 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Println("Starting monitoring stack...")
+	fmt.Fprintln(os.Stderr, "Starting monitoring stack...")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to start monitoring stack: %w", err)
 	}
 
 	if opts.detach {
-		fmt.Println()
-		fmt.Println("Monitoring stack started successfully!")
-		fmt.Println()
-		fmt.Println("Service URLs:")
-		fmt.Println("  Grafana:    http://localhost:3000 (No login required)")
-		fmt.Println("  Jaeger:     http://localhost:16686")
-		fmt.Println("  Prometheus: http://localhost:9090")
-		fmt.Println()
-		fmt.Println("To stop the stack: claucker monitor down")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Monitoring stack started successfully!")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Service URLs:")
+		fmt.Fprintln(os.Stderr, "  Grafana:    http://localhost:3000 (No login required)")
+		fmt.Fprintln(os.Stderr, "  Jaeger:     http://localhost:16686")
+		fmt.Fprintln(os.Stderr, "  Prometheus: http://localhost:9090")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "To stop the stack: claucker monitor down")
 
 		// Check for running claucker containers that need restart
 		checkRunningContainers()
@@ -130,18 +135,18 @@ func checkRunningContainers() {
 		return
 	}
 
-	fmt.Println()
-	fmt.Println("⚠️  Running containers detected without telemetry:")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "⚠️  Running containers detected without telemetry:")
 	for _, c := range containers {
-		fmt.Printf("   • %s\n", c.Name)
+		fmt.Fprintf(os.Stderr, "   • %s\n", c.Name)
 	}
-	fmt.Println()
-	fmt.Println("These containers were started before the monitoring stack and")
-	fmt.Println("won't export telemetry. To enable telemetry, restart them:")
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "These containers were started before the monitoring stack and")
+	fmt.Fprintln(os.Stderr, "won't export telemetry. To enable telemetry, restart them:")
+	fmt.Fprintln(os.Stderr)
 	for _, c := range containers {
-		fmt.Printf("   cd /path/to/%s && claucker restart\n", c.Project)
+		fmt.Fprintf(os.Stderr, "   cd /path/to/%s && claucker restart\n", c.Project)
 	}
-	fmt.Println()
-	fmt.Println("Then run 'claucker start' to start with telemetry enabled.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Then run 'claucker start' to start with telemetry enabled.")
 }

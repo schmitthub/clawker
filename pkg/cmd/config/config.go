@@ -34,6 +34,8 @@ Checks for:
   - Valid field values and formats
   - File existence for referenced paths (dockerfile, includes)
   - Security configuration consistency`,
+		Example: `  # Validate configuration in current directory
+  claucker config check`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigCheck(f)
 		},
@@ -96,22 +98,22 @@ func runConfigCheck(f *cmdutil.Factory) error {
 	}
 
 	// Success output
-	fmt.Println("Configuration is valid!")
-	fmt.Println()
-	fmt.Printf("  Project:    %s\n", cfg.Project)
-	fmt.Printf("  Image:      %s\n", cfg.Build.Image)
+	fmt.Fprintln(os.Stderr, "Configuration is valid!")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Project:    %s\n", cfg.Project)
+	fmt.Fprintf(os.Stderr, "  Image:      %s\n", cfg.Build.Image)
 	if cfg.Build.Dockerfile != "" {
-		fmt.Printf("  Dockerfile: %s\n", cfg.Build.Dockerfile)
+		fmt.Fprintf(os.Stderr, "  Dockerfile: %s\n", cfg.Build.Dockerfile)
 	}
-	fmt.Printf("  Mode:       %s\n", cfg.Workspace.DefaultMode)
-	fmt.Printf("  Firewall:   %t\n", cfg.Security.EnableFirewall)
+	fmt.Fprintf(os.Stderr, "  Mode:       %s\n", cfg.Workspace.DefaultMode)
+	fmt.Fprintf(os.Stderr, "  Firewall:   %t\n", cfg.Security.EnableFirewall)
 
 	if len(cfg.Build.Packages) > 0 {
-		fmt.Printf("  Packages:   %v\n", cfg.Build.Packages)
+		fmt.Fprintf(os.Stderr, "  Packages:   %v\n", cfg.Build.Packages)
 	}
 
 	if len(cfg.Agent.Includes) > 0 {
-		fmt.Printf("  Includes:   %d file(s)\n", len(cfg.Agent.Includes))
+		fmt.Fprintf(os.Stderr, "  Includes:   %d file(s)\n", len(cfg.Agent.Includes))
 	}
 
 	return nil

@@ -20,6 +20,17 @@ Available commands:
   up      Start the monitoring stack
   down    Stop the monitoring stack
   status  Show monitoring stack status`,
+		Example: `  # Initialize monitoring configuration
+  claucker monitor init
+
+  # Start the monitoring stack
+  claucker monitor up
+
+  # Check stack status
+  claucker monitor status
+
+  # Stop the stack
+  claucker monitor down`,
 	}
 
 	cmd.AddCommand(newCmdInit(f))

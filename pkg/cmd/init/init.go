@@ -25,12 +25,15 @@ func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
 		Short: "Initialize a new Claucker project",
 		Long: `Creates a claucker.yaml configuration file and .clauckerignore in the current directory.
 
-If no project name is provided, the current directory name will be used.
+If no project name is provided, the current directory name will be used.`,
+		Example: `  # Use current directory name as project
+  claucker init
 
-Examples:
-  claucker init                  # Use current directory name as project
-  claucker init my-project       # Use "my-project" as project name
-  claucker init --force          # Overwrite existing configuration`,
+  # Use "my-project" as project name
+  claucker init my-project
+
+  # Overwrite existing configuration
+  claucker init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(f, opts, args)
@@ -93,21 +96,21 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 	}
 
 	// Success output
-	fmt.Println("Claucker project initialized!")
-	fmt.Println()
-	fmt.Printf("  Created: %s\n", config.ConfigFileName)
-	fmt.Printf("  Created: %s\n", config.IgnoreFileName)
-	fmt.Printf("  Project: %s\n", projectName)
-	fmt.Println()
-	fmt.Println("Next Steps:")
-	fmt.Println("  1. Review and customize claucker.yaml")
-	fmt.Println("  2. Run 'claucker up' to start Claude in a container")
-	fmt.Println()
-	fmt.Println("Quick Reference:")
-	fmt.Println("  claucker up              # Start Claude (default: bind mode)")
-	fmt.Println("  claucker up --mode=snapshot  # Start in isolated snapshot mode")
-	fmt.Println("  claucker down            # Stop the container")
-	fmt.Println("  claucker sh              # Open shell in running container")
+	fmt.Fprintln(os.Stderr, "Claucker project initialized!")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.ConfigFileName)
+	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.IgnoreFileName)
+	fmt.Fprintf(os.Stderr, "  Project: %s\n", projectName)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Next Steps:")
+	fmt.Fprintln(os.Stderr, "  1. Review and customize claucker.yaml")
+	fmt.Fprintln(os.Stderr, "  2. Run 'claucker start' to start Claude in a container")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Quick Reference:")
+	fmt.Fprintln(os.Stderr, "  claucker start               # Start Claude (default: bind mode)")
+	fmt.Fprintln(os.Stderr, "  claucker start --mode=snapshot   # Start in isolated snapshot mode")
+	fmt.Fprintln(os.Stderr, "  claucker stop                # Stop the container")
+	fmt.Fprintln(os.Stderr, "  claucker sh                  # Open shell in running container")
 
 	return nil
 }

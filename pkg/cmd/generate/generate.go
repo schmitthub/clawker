@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/term"
 	"github.com/schmitthub/claucker/pkg/build"
 	"github.com/schmitthub/claucker/pkg/build/registry"
@@ -19,6 +20,7 @@ type GenerateOptions struct {
 	SkipFetch bool
 	Cleanup   bool
 	Debug     bool
+	OutputDir string // Explicit output directory override
 }
 
 // NewCmdGenerate creates a new generate command.
@@ -27,22 +29,30 @@ func NewCmdGenerate(f *cmdutil.Factory) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "generate [versions...]",
-		Short: "Generate versions.json for Claude Code releases",
-		Long: `Fetches Claude Code versions from npm and generates versions.json.
+		Short: "Generate Dockerfiles for Claude Code releases",
+		Long: `Fetches Claude Code versions from npm and generates Dockerfiles.
 
-If no versions are specified and versions.json exists, displays current versions.
-If versions are specified, fetches them from npm and updates versions.json.
+Generates versions.json and Dockerfiles for each version/variant combination.
+Files are saved to ~/.claucker/build/ (or use --output to specify a directory).
+
+If no versions are specified, displays current versions.json.
+If versions are specified, fetches them from npm and generates Dockerfiles.
 
 Version patterns:
   latest, stable, next   Resolve via npm dist-tags
   2.1                    Match highest 2.1.x release
-  2.1.2                  Exact version match
+  2.1.2                  Exact version match`,
+		Example: `  # Generate Dockerfiles for latest version
+  claucker generate latest
 
-Examples:
-  claucker generate                    # Show current versions.json
-  claucker generate latest             # Fetch latest version
-  claucker generate latest 2.1         # Fetch multiple versions
-  claucker generate --skip-fetch       # Use existing versions.json only`,
+  # Generate for multiple versions
+  claucker generate latest 2.1
+
+  # Output to specific directory
+  claucker generate --output ./build latest
+
+  # Show existing versions.json
+  claucker generate`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Debug = f.Debug
 			return runGenerate(f, opts, args)
@@ -51,6 +61,7 @@ Examples:
 
 	cmd.Flags().BoolVar(&opts.SkipFetch, "skip-fetch", false, "Skip npm fetch, use existing versions.json")
 	cmd.Flags().BoolVar(&opts.Cleanup, "cleanup", true, "Remove obsolete version directories")
+	cmd.Flags().StringVarP(&opts.OutputDir, "output", "o", "", "Output directory for generated files")
 
 	return cmd
 }
@@ -59,11 +70,23 @@ func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) e
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
-	versionsFile := filepath.Join(f.WorkDir, "versions.json")
+	// Determine output directory: explicit flag > factory default
+	outputDir := f.BuildOutputDir
+	if opts.OutputDir != "" {
+		outputDir = opts.OutputDir
+	}
+
+	// Ensure output directory exists
+	if err := config.EnsureDir(outputDir); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	versionsFile := filepath.Join(outputDir, "versions.json")
 
 	logger.Debug().
 		Strs("versions", versions).
 		Bool("skip-fetch", opts.SkipFetch).
+		Str("output-dir", outputDir).
 		Str("versions-file", versionsFile).
 		Msg("starting generate")
 
@@ -76,10 +99,10 @@ func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) e
 	if opts.SkipFetch {
 		vf, err := build.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil.PrintError("Failed to load versions.json")
+			cmdutil.PrintError("Failed to load versions.json from %s", outputDir)
 			cmdutil.PrintNextSteps(
 				"Run 'claucker generate <versions...>' to fetch versions from npm",
-				"Ensure versions.json exists in the project root",
+				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
 			)
 			return err
 		}
@@ -112,7 +135,16 @@ func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) e
 		return err
 	}
 
-	fmt.Printf("Saved %d version(s) to %s\n", len(*vf), versionsFile)
+	fmt.Fprintf(os.Stderr, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
+
+	// Generate Dockerfiles
+	dfMgr := build.NewDockerfileManager(outputDir, nil)
+	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
+		cmdutil.PrintError("Failed to generate Dockerfiles")
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
+
 	return displayVersionsFile(vf)
 }
 
@@ -134,13 +166,13 @@ func showVersions(path string) error {
 }
 
 func displayVersionsFile(vf *registry.VersionsFile) error {
-	fmt.Println("\nVersions:")
+	fmt.Fprintln(os.Stderr, "\nVersions:")
 	for _, key := range vf.SortedKeys() {
 		info := (*vf)[key]
-		fmt.Printf("  %s\n", key)
-		fmt.Printf("    Debian default: %s\n", info.DebianDefault)
-		fmt.Printf("    Alpine default: %s\n", info.AlpineDefault)
-		fmt.Printf("    Variants: %d\n", len(info.Variants))
+		fmt.Fprintf(os.Stderr, "  %s\n", key)
+		fmt.Fprintf(os.Stderr, "    Debian default: %s\n", info.DebianDefault)
+		fmt.Fprintf(os.Stderr, "    Alpine default: %s\n", info.AlpineDefault)
+		fmt.Fprintf(os.Stderr, "    Variants: %d\n", len(info.Variants))
 	}
 	return nil
 }

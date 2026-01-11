@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	internalconfig "github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/pkg/cmd/build"
 	"github.com/schmitthub/claucker/pkg/cmd/config"
 	"github.com/schmitthub/claucker/pkg/cmd/generate"
@@ -27,20 +28,18 @@ import (
 func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claucker",
-		Short: "Claude Container Orchestration",
-		Long: `Claucker wraps the Claude Code agent in secure, reproducible Docker containers.
-
-Core philosophy: "Safe Autonomy" - host system is read-only by default.
+		Short: "Manage Claude Code in secure Docker containers with claucker",
+		Long: `Claucker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
   claucker init        # Create claucker.yaml in current directory
-  claucker start       # Build and run Claude in a container
+  claucker start       # Build and use Claude Code seamlessly in a container
   claucker stop        # Stop the container
 
 Workspace modes:
   --mode=bind          Live sync with host (default)
   --mode=snapshot      Isolated copy in Docker volume`,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize logger with debug flag
 			logger.Init(f.Debug)
 
@@ -49,15 +48,27 @@ Workspace modes:
 				var err error
 				f.WorkDir, err = os.Getwd()
 				if err != nil {
-					logger.Fatal().Err(err).Msg("failed to get working directory")
+					return fmt.Errorf("failed to get working directory: %w", err)
+				}
+			}
+
+			// Set build output directory to CLAUCKER_HOME/build
+			if f.BuildOutputDir == "" {
+				var err error
+				f.BuildOutputDir, err = internalconfig.BuildDir()
+				if err != nil {
+					return fmt.Errorf("failed to determine build directory: %w", err)
 				}
 			}
 
 			logger.Debug().
 				Str("version", f.Version).
 				Str("workdir", f.WorkDir).
+				Str("build-output-dir", f.BuildOutputDir).
 				Bool("debug", f.Debug).
 				Msg("claucker starting")
+
+			return nil
 		},
 		Version: f.Version,
 	}

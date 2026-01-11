@@ -3,6 +3,7 @@ package restart
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
@@ -30,11 +31,12 @@ This is useful after starting the monitoring stack to enable telemetry,
 or after changing environment variables in claucker.yaml or .env files.
 
 By default, restarts all containers for the project. Use --agent to restart a specific agent.
-Volumes (workspace, config, history) are preserved.
+Volumes (workspace, config, history) are preserved.`,
+		Example: `  # Restart all containers for project
+  claucker restart
 
-Examples:
-  claucker restart                # Restart all containers for project
-  claucker restart --agent ralph  # Restart specific agent`,
+  # Restart specific agent
+  claucker restart --agent ralph`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestart(f, opts)
 		},
@@ -108,19 +110,19 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 
 	if len(containersToRestart) == 0 {
 		if opts.Agent != "" {
-			fmt.Printf("Container for agent '%s' not found\n", opts.Agent)
+			fmt.Fprintf(os.Stderr, "Container for agent '%s' not found\n", opts.Agent)
 		} else {
-			fmt.Printf("No containers found for project '%s'\n", cfg.Project)
+			fmt.Fprintf(os.Stderr, "No containers found for project '%s'\n", cfg.Project)
 		}
-		fmt.Println()
-		fmt.Println("To start a new container:")
-		fmt.Println("  claucker start")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "To start a new container:")
+		fmt.Fprintln(os.Stderr, "  claucker start")
 		return nil
 	}
 
 	// Stop and remove each container (preserving volumes)
 	for _, c := range containersToRestart {
-		fmt.Printf("Stopping container %s...\n", c.Name)
+		fmt.Fprintf(os.Stderr, "Stopping container %s...\n", c.Name)
 
 		if c.Status == "running" {
 			if err := containerMgr.Stop(c.ID, opts.Timeout); err != nil {
@@ -135,23 +137,23 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 		}
 
 		logger.Info().Str("container", c.Name).Msg("container stopped for restart")
-		fmt.Printf("Container %s stopped\n", c.Name)
+		fmt.Fprintf(os.Stderr, "Container %s stopped\n", c.Name)
 	}
 
 	// Check if monitoring is active and inform user
 	monitoringActive := eng.IsMonitoringActive()
 
-	fmt.Println()
-	fmt.Printf("Stopped %d container(s). Volumes preserved.\n", len(containersToRestart))
-	fmt.Println()
-	fmt.Println("To start with fresh environment:")
-	fmt.Println("  claucker start")
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Stopped %d container(s). Volumes preserved.\n", len(containersToRestart))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "To start with fresh environment:")
+	fmt.Fprintln(os.Stderr, "  claucker start")
+	fmt.Fprintln(os.Stderr)
 
 	if monitoringActive {
-		fmt.Println("Note: Monitoring stack is active - telemetry will be enabled on next start.")
+		fmt.Fprintln(os.Stderr, "Note: Monitoring stack is active - telemetry will be enabled on next start.")
 	} else {
-		fmt.Println("Tip: Start 'claucker monitor up -d' first to enable telemetry.")
+		fmt.Fprintln(os.Stderr, "Tip: Start 'claucker monitor up -d' first to enable telemetry.")
 	}
 
 	return nil

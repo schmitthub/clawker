@@ -12,8 +12,9 @@ import (
 // It uses lazy initialization for expensive resources like Docker engine connections.
 type Factory struct {
 	// Configuration from flags (set before command execution)
-	WorkDir string
-	Debug   bool
+	WorkDir        string
+	BuildOutputDir string // Directory for build artifacts (versions.json, dockerfiles)
+	Debug          bool
 
 	// Version info (set at build time via ldflags)
 	Version string

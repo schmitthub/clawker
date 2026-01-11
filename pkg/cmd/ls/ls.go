@@ -29,12 +29,15 @@ func NewCmdLs(f *cmdutil.Factory) *cobra.Command {
 		Short:   "List claucker containers",
 		Long: `Lists all containers created by claucker.
 
-By default, shows only running containers. Use -a to show all containers.
+By default, shows only running containers. Use -a to show all containers.`,
+		Example: `  # List running containers
+  claucker ls
 
-Examples:
-  claucker ls              # List running containers
-  claucker ls -a           # List all containers (including stopped)
-  claucker ls -p myproject # List containers for a specific project`,
+  # List all containers (including stopped)
+  claucker ls -a
+
+  # List containers for a specific project
+  claucker ls -p myproject`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLs(f, opts)
 		},
@@ -52,9 +55,7 @@ func runLs(_ *cmdutil.Factory, opts *LsOptions) error {
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
 	if err != nil {
-		if dockerErr, ok := err.(*engine.DockerError); ok {
-			fmt.Print(dockerErr.FormatUserError())
-		}
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer eng.Close()
@@ -72,9 +73,9 @@ func runLs(_ *cmdutil.Factory, opts *LsOptions) error {
 
 	if len(containers) == 0 {
 		if opts.All {
-			fmt.Println("No claucker containers found.")
+			fmt.Fprintln(os.Stderr, "No claucker containers found.")
 		} else {
-			fmt.Println("No running claucker containers found. Use -a to show all containers.")
+			fmt.Fprintln(os.Stderr, "No running claucker containers found. Use -a to show all containers.")
 		}
 		return nil
 	}

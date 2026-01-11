@@ -12,6 +12,10 @@ const (
 	DefaultClauckerDir = ".claucker"
 	// MonitorSubdir is the subdirectory for monitoring stack configuration
 	MonitorSubdir = "monitor"
+	// BuildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
+	BuildSubdir = "build"
+	// DockerfilesSubdir is the subdirectory for generated Dockerfiles
+	DockerfilesSubdir = "dockerfiles"
 	// ClauckerNetwork is the name of the shared Docker network
 	ClauckerNetwork = "claucker-net"
 )
@@ -36,6 +40,24 @@ func MonitorDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, MonitorSubdir), nil
+}
+
+// BuildDir returns the build artifacts directory (~/.claucker/build)
+func BuildDir() (string, error) {
+	home, err := ClauckerHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, BuildSubdir), nil
+}
+
+// DockerfilesDir returns the dockerfiles directory (~/.claucker/build/dockerfiles)
+func DockerfilesDir() (string, error) {
+	buildDir, err := BuildDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(buildDir, DockerfilesSubdir), nil
 }
 
 // EnsureDir creates a directory if it doesn't exist

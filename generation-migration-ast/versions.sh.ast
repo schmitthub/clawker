@@ -1,0 +1,659 @@
+(program [0, 0] - [212, 0]
+  (comment [0, 0] - [0, 19])
+  (command [1, 0] - [1, 18]
+    name: (command_name [1, 0] - [1, 3]
+      (word [1, 0] - [1, 3]))
+    argument: (word [1, 4] - [1, 9])
+    argument: (word [1, 10] - [1, 18]))
+  (comment [3, 0] - [3, 19])
+  (variable_assignment [4, 0] - [4, 16]
+    name: (variable_name [4, 0] - [4, 3])
+    value: (raw_string [4, 4] - [4, 16]))
+  (variable_assignment [5, 0] - [5, 18]
+    name: (variable_name [5, 0] - [5, 5])
+    value: (raw_string [5, 6] - [5, 18]))
+  (variable_assignment [6, 0] - [6, 19]
+    name: (variable_name [6, 0] - [6, 6])
+    value: (raw_string [6, 7] - [6, 19]))
+  (variable_assignment [7, 0] - [7, 12]
+    name: (variable_name [7, 0] - [7, 2])
+    value: (raw_string [7, 3] - [7, 12]))
+  (comment [7, 13] - [7, 23])
+  (comment [10, 0] - [10, 9])
+  (variable_assignment [11, 0] - [11, 16]
+    name: (variable_name [11, 0] - [11, 10])
+    value: (word [11, 11] - [11, 16]))
+  (function_definition [12, 0] - [16, 1]
+    name: (word [12, 0] - [12, 9])
+    body: (compound_statement [12, 12] - [16, 1]
+      (if_statement [13, 4] - [15, 6]
+        condition: (test_command [13, 7] - [13, 36]
+          (binary_expression [13, 10] - [13, 33]
+            left: (string [13, 10] - [13, 23]
+              (simple_expansion [13, 11] - [13, 22]
+                (variable_name [13, 12] - [13, 22])))
+            right: (string [13, 27] - [13, 33]
+              (string_content [13, 28] - [13, 32]))))
+        (redirected_statement [14, 8] - [14, 38]
+          body: (command [14, 8] - [14, 34]
+            name: (command_name [14, 8] - [14, 14]
+              (word [14, 8] - [14, 14]))
+            argument: (string [14, 15] - [14, 29]
+              (string_content [14, 16] - [14, 28]))
+            argument: (string [14, 30] - [14, 34]
+              (simple_expansion [14, 31] - [14, 33]
+                (special_variable_name [14, 32] - [14, 33]))))
+          redirect: (file_redirect [14, 35] - [14, 38]
+            destination: (number [14, 37] - [14, 38]))))))
+  (comment [18, 0] - [18, 48])
+  (variable_assignment [19, 0] - [19, 7]
+    name: (variable_name [19, 0] - [19, 4])
+    value: (array [19, 5] - [19, 7]))
+  (while_statement [20, 0] - [32, 4]
+    condition: (test_command [20, 6] - [20, 20]
+      (binary_expression [20, 9] - [20, 17]
+        left: (simple_expansion [20, 9] - [20, 11]
+          (special_variable_name [20, 10] - [20, 11]))
+        operator: (test_operator [20, 12] - [20, 15])
+        right: (number [20, 16] - [20, 17])))
+    body: (do_group [20, 22] - [32, 4]
+      (case_statement [21, 2] - [31, 6]
+        value: (string [21, 7] - [21, 11]
+          (simple_expansion [21, 8] - [21, 10]
+            (variable_name [21, 9] - [21, 10])))
+        (case_item [22, 4] - [26, 8]
+          value: (extglob_pattern [22, 4] - [22, 6])
+          value: (extglob_pattern [22, 7] - [22, 14])
+          (variable_assignment [23, 6] - [23, 21]
+            name: (variable_name [23, 6] - [23, 16])
+            value: (word [23, 17] - [23, 21]))
+          (command [24, 6] - [24, 31]
+            name: (command_name [24, 6] - [24, 10]
+              (word [24, 6] - [24, 10]))
+            argument: (string [24, 11] - [24, 31]
+              (string_content [24, 12] - [24, 30])))
+          (command [25, 6] - [25, 11]
+            name: (command_name [25, 6] - [25, 11]
+              (word [25, 6] - [25, 11]))))
+        (case_item [27, 4] - [30, 8]
+          value: (extglob_pattern [27, 4] - [27, 5])
+          (variable_assignment [28, 6] - [28, 18]
+            name: (variable_name [28, 6] - [28, 10])
+            value: (array [28, 12] - [28, 18]
+              (string [28, 13] - [28, 17]
+                (simple_expansion [28, 14] - [28, 16]
+                  (variable_name [28, 15] - [28, 16])))))
+          (command [29, 6] - [29, 11]
+            name: (command_name [29, 6] - [29, 11]
+              (word [29, 6] - [29, 11])))))))
+  (comment [34, 0] - [34, 32])
+  (command [35, 0] - [35, 19]
+    name: (command_name [35, 0] - [35, 3]
+      (word [35, 0] - [35, 3]))
+    argument: (word [35, 4] - [35, 6])
+    argument: (string [35, 7] - [35, 19]
+      (expansion [35, 8] - [35, 18]
+        (subscript [35, 10] - [35, 17]
+          name: (variable_name [35, 10] - [35, 14])
+          index: (word [35, 15] - [35, 16])))))
+  (comment [37, 0] - [37, 18])
+  (command [38, 0] - [38, 47]
+    name: (command_name [38, 0] - [38, 2]
+      (word [38, 0] - [38, 2]))
+    argument: (string [38, 3] - [38, 47]
+      (command_substitution [38, 4] - [38, 46]
+        (command [38, 6] - [38, 45]
+          name: (command_name [38, 6] - [38, 13]
+            (word [38, 6] - [38, 13]))
+          argument: (string [38, 14] - [38, 45]
+            (command_substitution [38, 15] - [38, 44]
+              (command [38, 17] - [38, 43]
+                name: (command_name [38, 17] - [38, 25]
+                  (word [38, 17] - [38, 25]))
+                argument: (word [38, 26] - [38, 28])
+                argument: (string [38, 29] - [38, 43]
+                  (simple_expansion [38, 30] - [38, 42]
+                    (variable_name [38, 31] - [38, 42]))))))))))
+  (variable_assignment [40, 0] - [40, 17]
+    name: (variable_name [40, 0] - [40, 8])
+    value: (array [40, 9] - [40, 17]
+      (string [40, 11] - [40, 15]
+        (simple_expansion [40, 12] - [40, 14]
+          (special_variable_name [40, 13] - [40, 14])))))
+  (if_statement [41, 0] - [46, 2]
+    condition: (test_command [41, 3] - [41, 28]
+      (binary_expression [41, 5] - [41, 26]
+        left: (expansion [41, 5] - [41, 20]
+          (subscript [41, 8] - [41, 19]
+            name: (variable_name [41, 8] - [41, 16])
+            index: (word [41, 17] - [41, 18])))
+        operator: (test_operator [41, 21] - [41, 24])
+        right: (number [41, 25] - [41, 26])))
+    (variable_assignment [42, 1] - [42, 16]
+      name: (variable_name [42, 1] - [42, 9])
+      value: (array [42, 10] - [42, 16]
+        (word [42, 12] - [42, 14])))
+    (variable_assignment [43, 1] - [43, 10]
+      name: (variable_name [43, 1] - [43, 5])
+      value: (raw_string [43, 6] - [43, 10]))
+    (else_clause [44, 0] - [46, 0]
+      (variable_assignment [45, 1] - [45, 26]
+        name: (variable_name [45, 1] - [45, 5])
+        value: (string [45, 6] - [45, 26]
+          (command_substitution [45, 7] - [45, 25]
+            redirect: (file_redirect [45, 9] - [45, 24]
+              destination: (word [45, 11] - [45, 24])))))))
+  (variable_assignment [47, 0] - [47, 31]
+    name: (variable_name [47, 0] - [47, 8])
+    value: (array [47, 9] - [47, 31]
+      (string [47, 11] - [47, 29]
+        (expansion [47, 12] - [47, 28]
+          (subscript [47, 14] - [47, 25]
+            name: (variable_name [47, 14] - [47, 22])
+            index: (word [47, 23] - [47, 24]))
+          (regex [47, 26] - [47, 27])))))
+  (command [49, 0] - [49, 47]
+    name: (command_name [49, 0] - [49, 9]
+      (word [49, 0] - [49, 9]))
+    argument: (string [49, 10] - [49, 47]
+      (string_content [49, 11] - [49, 32])
+      (expansion [49, 32] - [49, 46]
+        (subscript [49, 34] - [49, 45]
+          name: (variable_name [49, 34] - [49, 42])
+          index: (word [49, 43] - [49, 44])))))
+  (comment [51, 0] - [51, 24])
+  (variable_assignment [52, 0] - [52, 22]
+    name: (variable_name [52, 0] - [52, 13])
+    value: (string [52, 14] - [52, 22]
+      (string_content [52, 15] - [52, 21])))
+  (variable_assignment [53, 0] - [53, 26]
+    name: (variable_name [53, 0] - [53, 13])
+    value: (string [53, 14] - [53, 26]
+      (string_content [53, 15] - [53, 25])))
+  (command [54, 0] - [54, 41]
+    name: (command_name [54, 0] - [54, 9]
+      (word [54, 0] - [54, 9]))
+    argument: (string [54, 10] - [54, 41]
+      (string_content [54, 11] - [54, 26])
+      (simple_expansion [54, 26] - [54, 40]
+        (variable_name [54, 27] - [54, 40]))))
+  (command [55, 0] - [55, 41]
+    name: (command_name [55, 0] - [55, 9]
+      (word [55, 0] - [55, 9]))
+    argument: (string [55, 10] - [55, 41]
+      (string_content [55, 11] - [55, 26])
+      (simple_expansion [55, 26] - [55, 40]
+        (variable_name [55, 27] - [55, 40]))))
+  (comment [57, 0] - [57, 81])
+  (variable_assignment [58, 0] - [63, 4]
+    name: (variable_name [58, 0] - [58, 17])
+    value: (string [58, 18] - [63, 4]
+      (command_substitution [58, 19] - [63, 3]
+        (command [58, 21] - [63, 2]
+          name: (command_name [58, 21] - [58, 23]
+            (word [58, 21] - [58, 23]))
+          argument: (word [58, 24] - [58, 26])
+          argument: (raw_string [58, 27] - [58, 30])
+          redirect: (herestring_redirect [58, 31] - [63, 2]
+            (raw_string [58, 35] - [63, 2]))))))
+  (command [65, 0] - [65, 53]
+    name: (command_name [65, 0] - [65, 9]
+      (word [65, 0] - [65, 9]))
+    argument: (string [65, 10] - [65, 53]
+      (string_content [65, 11] - [65, 34])
+      (simple_expansion [65, 34] - [65, 52]
+        (variable_name [65, 35] - [65, 52]))))
+  (variable_assignment [67, 0] - [70, 1]
+    name: (variable_name [67, 0] - [67, 15])
+    value: (array [67, 16] - [70, 1]
+      (word [68, 2] - [68, 7])
+      (word [69, 2] - [69, 9])))
+  (command [72, 0] - [72, 50]
+    name: (command_name [72, 0] - [72, 9]
+      (word [72, 0] - [72, 9]))
+    argument: (string [72, 10] - [72, 50]
+      (string_content [72, 11] - [72, 28])
+      (expansion [72, 28] - [72, 49]
+        (subscript [72, 30] - [72, 48]
+          name: (variable_name [72, 30] - [72, 45])
+          index: (word [72, 46] - [72, 47])))))
+  (comment [74, 0] - [74, 39])
+  (variable_assignment [75, 0] - [75, 85]
+    name: (variable_name [75, 0] - [75, 19])
+    value: (string [75, 20] - [75, 85]
+      (command_substitution [75, 21] - [75, 84]
+        (pipeline [75, 23] - [75, 83]
+          (command [75, 23] - [75, 60]
+            name: (command_name [75, 23] - [75, 29]
+              (word [75, 23] - [75, 29]))
+            argument: (raw_string [75, 30] - [75, 36])
+            argument: (string [75, 37] - [75, 60]
+              (expansion [75, 38] - [75, 59]
+                (subscript [75, 40] - [75, 58]
+                  name: (variable_name [75, 40] - [75, 55])
+                  index: (word [75, 56] - [75, 57])))))
+          (command [75, 63] - [75, 70]
+            name: (command_name [75, 63] - [75, 65]
+              (word [75, 63] - [75, 65]))
+            argument: (word [75, 66] - [75, 68])
+            argument: (word [75, 69] - [75, 70]))
+          (command [75, 73] - [75, 83]
+            name: (command_name [75, 73] - [75, 75]
+              (word [75, 73] - [75, 75]))
+            argument: (word [75, 76] - [75, 78])
+            argument: (word [75, 79] - [75, 81])
+            argument: (word [75, 82] - [75, 83]))))))
+  (comment [77, 0] - [77, 34])
+  (variable_assignment [78, 0] - [97, 27]
+    name: (variable_name [78, 0] - [78, 8])
+    value: (string [78, 9] - [97, 27]
+      (command_substitution [78, 10] - [97, 26]
+        (command [78, 12] - [97, 25]
+          name: (command_name [78, 12] - [78, 14]
+            (word [78, 12] - [78, 14]))
+          argument: (word [78, 15] - [78, 17])
+          argument: (word [78, 18] - [78, 27])
+          argument: (word [78, 28] - [78, 34])
+          argument: (string [78, 35] - [78, 57]
+            (simple_expansion [78, 36] - [78, 56]
+              (variable_name [78, 37] - [78, 56])))
+          argument: (raw_string [78, 58] - [97, 1])
+          redirect: (herestring_redirect [97, 2] - [97, 25]
+            (string [97, 5] - [97, 25]
+              (simple_expansion [97, 6] - [97, 24]
+                (variable_name [97, 7] - [97, 24]))))))))
+  (command [99, 0] - [99, 31]
+    name: (command_name [99, 0] - [99, 9]
+      (word [99, 0] - [99, 9]))
+    argument: (string [99, 10] - [99, 31]
+      (string_content [99, 11] - [99, 21])
+      (simple_expansion [99, 21] - [99, 30]
+        (variable_name [99, 22] - [99, 30]))))
+  (command [101, 0] - [101, 49]
+    name: (command_name [101, 0] - [101, 9]
+      (word [101, 0] - [101, 9]))
+    argument: (string [101, 10] - [101, 49]
+      (string_content [101, 11] - [101, 30])
+      (simple_expansion [101, 30] - [101, 48]
+        (variable_name [101, 31] - [101, 48]))))
+  (command [103, 0] - [103, 23]
+    name: (command_name [103, 0] - [103, 9]
+      (word [103, 0] - [103, 9]))
+    argument: (string [103, 10] - [103, 23]
+      (string_content [103, 11] - [103, 17])
+      (simple_expansion [103, 17] - [103, 22]
+        (variable_name [103, 18] - [103, 22]))))
+  (variable_assignment [105, 0] - [107, 2]
+    name: (variable_name [105, 0] - [105, 10])
+    value: (string [105, 11] - [107, 2]
+      (command_substitution [105, 12] - [107, 1]
+        (pipeline [106, 2] - [106, 60]
+          (command [106, 2] - [106, 52]
+            name: (command_name [106, 2] - [106, 5]
+              (word [106, 2] - [106, 5]))
+            argument: (word [106, 6] - [106, 10])
+            argument: (word [106, 11] - [106, 36])
+            argument: (word [106, 37] - [106, 45])
+            argument: (word [106, 46] - [106, 52]))
+          (command [106, 55] - [106, 60]
+            name: (command_name [106, 55] - [106, 57]
+              (word [106, 55] - [106, 57]))
+            argument: (word [106, 58] - [106, 60]))))))
+  (variable_assignment [109, 0] - [111, 2]
+    name: (variable_name [109, 0] - [109, 15])
+    value: (string [109, 16] - [111, 2]
+      (command_substitution [109, 17] - [111, 1]
+        (pipeline [110, 2] - [110, 61]
+          (command [110, 2] - [110, 53]
+            name: (command_name [110, 2] - [110, 5]
+              (word [110, 2] - [110, 5]))
+            argument: (word [110, 6] - [110, 10])
+            argument: (word [110, 11] - [110, 36])
+            argument: (word [110, 37] - [110, 46])
+            argument: (word [110, 47] - [110, 53]))
+          (command [110, 56] - [110, 61]
+            name: (command_name [110, 56] - [110, 58]
+              (word [110, 56] - [110, 58]))
+            argument: (word [110, 59] - [110, 61]))))))
+  (command [113, 0] - [113, 35]
+    name: (command_name [113, 0] - [113, 9]
+      (word [113, 0] - [113, 9]))
+    argument: (string [113, 10] - [113, 35]
+      (string_content [113, 11] - [113, 23])
+      (simple_expansion [113, 23] - [113, 34]
+        (variable_name [113, 24] - [113, 34]))))
+  (command [114, 0] - [114, 45]
+    name: (command_name [114, 0] - [114, 9]
+      (word [114, 0] - [114, 9]))
+    argument: (string [114, 10] - [114, 45]
+      (string_content [114, 11] - [114, 28])
+      (simple_expansion [114, 28] - [114, 44]
+        (variable_name [114, 29] - [114, 44]))))
+  (function_definition [116, 0] - [119, 1]
+    name: (word [116, 0] - [116, 12])
+    body: (compound_statement [116, 15] - [119, 1]
+      (command [117, 2] - [117, 32]
+        name: (command_name [117, 2] - [117, 11]
+          (word [117, 2] - [117, 11]))
+        argument: (string [117, 12] - [117, 32]
+          (string_content [117, 13] - [117, 29])
+          (simple_expansion [117, 29] - [117, 31]
+            (variable_name [117, 30] - [117, 31]))))
+      (pipeline [118, 2] - [118, 56]
+        (command [118, 2] - [118, 15]
+          name: (command_name [118, 2] - [118, 6]
+            (word [118, 2] - [118, 6]))
+          argument: (string [118, 7] - [118, 15]
+            (string_content [118, 8] - [118, 10])
+            (simple_expansion [118, 10] - [118, 12]
+              (variable_name [118, 11] - [118, 12]))
+            (string_content [118, 12] - [118, 14])))
+        (command [118, 18] - [118, 56]
+          name: (command_name [118, 18] - [118, 20]
+            (word [118, 18] - [118, 20]))
+          argument: (word [118, 21] - [118, 23])
+          argument: (raw_string [118, 24] - [118, 56])))))
+  (comment [121, 0] - [121, 46])
+  (variable_assignment [122, 0] - [122, 11]
+    name: (variable_name [122, 0] - [122, 6])
+    value: (raw_string [122, 7] - [122, 11]))
+  (for_statement [124, 0] - [206, 4]
+    variable: (variable_name [124, 4] - [124, 11])
+    value: (string [124, 15] - [124, 31]
+      (expansion [124, 16] - [124, 30]
+        (subscript [124, 18] - [124, 29]
+          name: (variable_name [124, 18] - [124, 26])
+          index: (word [124, 27] - [124, 28]))))
+    body: (do_group [124, 33] - [206, 4]
+      (declaration_command [125, 1] - [125, 15]
+        (variable_name [125, 8] - [125, 15]))
+      (case_statement [127, 2] - [163, 6]
+        value: (string [127, 7] - [127, 17]
+          (simple_expansion [127, 8] - [127, 16]
+            (variable_name [127, 9] - [127, 16])))
+        (case_item [128, 4] - [144, 8]
+          value: (extglob_pattern [128, 4] - [128, 10])
+          value: (extglob_pattern [128, 11] - [128, 17])
+          value: (word [128, 18] - [128, 22])
+          (if_statement [129, 6] - [135, 8]
+            condition: (list [130, 8] - [131, 32]
+              (negated_command [130, 8] - [130, 93]
+                (variable_assignment [130, 10] - [130, 93]
+                  name: (variable_name [130, 10] - [130, 21])
+                  value: (string [130, 22] - [130, 93]
+                    (command_substitution [130, 23] - [130, 92]
+                      (command [130, 25] - [130, 91]
+                        name: (command_name [130, 25] - [130, 27]
+                          (word [130, 25] - [130, 27]))
+                        argument: (word [130, 28] - [130, 30])
+                        argument: (word [130, 31] - [130, 36])
+                        argument: (word [130, 37] - [130, 44])
+                        argument: (string [130, 45] - [130, 55]
+                          (simple_expansion [130, 46] - [130, 54]
+                            (variable_name [130, 47] - [130, 54])))
+                        argument: (raw_string [130, 56] - [130, 69])
+                        redirect: (herestring_redirect [130, 70] - [130, 91]
+                          (string [130, 73] - [130, 91]
+                            (simple_expansion [130, 74] - [130, 90]
+                              (variable_name [130, 75] - [130, 90])))))))))
+              (test_command [131, 11] - [131, 32]
+                (unary_expression [131, 13] - [131, 30]
+                  operator: (test_operator [131, 13] - [131, 15])
+                  (string [131, 16] - [131, 30]
+                    (simple_expansion [131, 17] - [131, 29]
+                      (variable_name [131, 18] - [131, 29]))))))
+            (redirected_statement [133, 8] - [133, 82]
+              body: (command [133, 8] - [133, 12]
+                name: (command_name [133, 8] - [133, 12]
+                  (word [133, 8] - [133, 12])))
+              redirect: (file_redirect [133, 13] - [133, 82]
+                destination: (number [133, 15] - [133, 16])
+                destination: (word [133, 17] - [133, 19])
+                destination: (string [133, 20] - [133, 82]
+                  (expansion [133, 21] - [133, 30]
+                    (variable_name [133, 23] - [133, 29]))
+                  (string_content [133, 30] - [133, 68])
+                  (simple_expansion [133, 68] - [133, 76]
+                    (variable_name [133, 69] - [133, 76]))
+                  (expansion [133, 76] - [133, 81]
+                    (variable_name [133, 78] - [133, 80])))))
+            (command [134, 8] - [134, 16]
+              name: (command_name [134, 8] - [134, 16]
+                (word [134, 8] - [134, 16]))))
+          (comment [137, 6] - [137, 46])
+          (if_statement [138, 6] - [141, 8]
+            condition: (negated_command [138, 9] - [138, 55]
+              (variable_assignment [138, 11] - [138, 55]
+                name: (variable_name [138, 11] - [138, 22])
+                value: (string [138, 23] - [138, 55]
+                  (command_substitution [138, 24] - [138, 54]
+                    (command [138, 26] - [138, 53]
+                      name: (command_name [138, 26] - [138, 38]
+                        (word [138, 26] - [138, 38]))
+                      argument: (string [138, 39] - [138, 53]
+                        (simple_expansion [138, 40] - [138, 52]
+                          (variable_name [138, 41] - [138, 52]))))))))
+            (redirected_statement [139, 8] - [139, 86]
+              body: (command [139, 8] - [139, 12]
+                name: (command_name [139, 8] - [139, 12]
+                  (word [139, 8] - [139, 12])))
+              redirect: (file_redirect [139, 13] - [139, 86]
+                destination: (number [139, 15] - [139, 16])
+                destination: (word [139, 17] - [139, 19])
+                destination: (string [139, 20] - [139, 86]
+                  (expansion [139, 21] - [139, 30]
+                    (variable_name [139, 23] - [139, 29]))
+                  (string_content [139, 30] - [139, 67])
+                  (simple_expansion [139, 67] - [139, 79]
+                    (variable_name [139, 68] - [139, 79]))
+                  (string_content [139, 79] - [139, 80])
+                  (expansion [139, 80] - [139, 85]
+                    (variable_name [139, 82] - [139, 84])))))
+            (command [140, 8] - [140, 16]
+              name: (command_name [140, 8] - [140, 16]
+                (word [140, 8] - [140, 16]))))
+          (command [143, 6] - [143, 71]
+            name: (command_name [143, 6] - [143, 15]
+              (word [143, 6] - [143, 15]))
+            argument: (string [143, 16] - [143, 71]
+              (string_content [143, 17] - [143, 33])
+              (simple_expansion [143, 33] - [143, 41]
+                (variable_name [143, 34] - [143, 41]))
+              (string_content [143, 41] - [143, 43])
+              (simple_expansion [143, 43] - [143, 55]
+                (variable_name [143, 44] - [143, 55]))
+              (string_content [143, 55] - [143, 58])
+              (simple_expansion [143, 58] - [143, 70]
+                (variable_name [143, 59] - [143, 70])))))
+        (case_item [145, 4] - [162, 8]
+          value: (extglob_pattern [145, 4] - [145, 5])
+          (comment [146, 6] - [146, 67])
+          (if_statement [147, 6] - [150, 8]
+            condition: (negated_command [147, 9] - [147, 51]
+              (variable_assignment [147, 11] - [147, 51]
+                name: (variable_name [147, 11] - [147, 22])
+                value: (string [147, 23] - [147, 51]
+                  (command_substitution [147, 24] - [147, 50]
+                    (command [147, 26] - [147, 49]
+                      name: (command_name [147, 26] - [147, 38]
+                        (word [147, 26] - [147, 38]))
+                      argument: (string [147, 39] - [147, 49]
+                        (simple_expansion [147, 40] - [147, 48]
+                          (variable_name [147, 41] - [147, 48]))))))))
+            (redirected_statement [148, 8] - [148, 78]
+              body: (command [148, 8] - [148, 12]
+                name: (command_name [148, 8] - [148, 12]
+                  (word [148, 8] - [148, 12])))
+              redirect: (file_redirect [148, 13] - [148, 78]
+                destination: (number [148, 15] - [148, 16])
+                destination: (word [148, 17] - [148, 19])
+                destination: (string [148, 20] - [148, 78]
+                  (expansion [148, 21] - [148, 30]
+                    (variable_name [148, 23] - [148, 29]))
+                  (string_content [148, 30] - [148, 63])
+                  (simple_expansion [148, 63] - [148, 71]
+                    (variable_name [148, 64] - [148, 71]))
+                  (string_content [148, 71] - [148, 72])
+                  (expansion [148, 72] - [148, 77]
+                    (variable_name [148, 74] - [148, 76])))))
+            (command [149, 8] - [149, 16]
+              name: (command_name [149, 8] - [149, 16]
+                (word [149, 8] - [149, 16]))))
+          (command [152, 6] - [152, 56]
+            name: (command_name [152, 6] - [152, 15]
+              (word [152, 6] - [152, 15]))
+            argument: (string [152, 16] - [152, 56]
+              (string_content [152, 17] - [152, 33])
+              (simple_expansion [152, 33] - [152, 41]
+                (variable_name [152, 34] - [152, 41]))
+              (string_content [152, 41] - [152, 43])
+              (simple_expansion [152, 43] - [152, 55]
+                (variable_name [152, 44] - [152, 55]))))
+          (comment [154, 6] - [154, 56])
+          (if_statement [155, 6] - [161, 8]
+            condition: (list [156, 8] - [157, 32]
+              (negated_command [156, 8] - [156, 121]
+                (variable_assignment [156, 10] - [156, 121]
+                  name: (variable_name [156, 10] - [156, 21])
+                  value: (string [156, 22] - [156, 121]
+                    (command_substitution [156, 23] - [156, 120]
+                      (command [156, 25] - [156, 119]
+                        name: (command_name [156, 25] - [156, 27]
+                          (word [156, 25] - [156, 27]))
+                        argument: (word [156, 28] - [156, 30])
+                        argument: (word [156, 31] - [156, 33])
+                        argument: (word [156, 34] - [156, 35])
+                        argument: (word [156, 36] - [156, 41])
+                        argument: (word [156, 42] - [156, 48])
+                        argument: (string [156, 49] - [156, 59]
+                          (simple_expansion [156, 50] - [156, 58]
+                            (variable_name [156, 51] - [156, 58])))
+                        argument: (raw_string [156, 60] - [156, 101])
+                        redirect: (herestring_redirect [156, 102] - [156, 119]
+                          (string [156, 106] - [156, 119]
+                            (simple_expansion [156, 107] - [156, 118]
+                              (variable_name [156, 108] - [156, 118])))))))))
+              (test_command [157, 11] - [157, 32]
+                (unary_expression [157, 13] - [157, 30]
+                  operator: (test_operator [157, 13] - [157, 15])
+                  (string [157, 16] - [157, 30]
+                    (simple_expansion [157, 17] - [157, 29]
+                      (variable_name [157, 18] - [157, 29]))))))
+            (redirected_statement [159, 8] - [159, 84]
+              body: (command [159, 8] - [159, 12]
+                name: (command_name [159, 8] - [159, 12]
+                  (word [159, 8] - [159, 12])))
+              redirect: (file_redirect [159, 13] - [159, 84]
+                destination: (number [159, 15] - [159, 16])
+                destination: (word [159, 17] - [159, 19])
+                destination: (string [159, 20] - [159, 84]
+                  (expansion [159, 21] - [159, 30]
+                    (variable_name [159, 23] - [159, 29]))
+                  (string_content [159, 30] - [159, 69])
+                  (simple_expansion [159, 69] - [159, 77]
+                    (variable_name [159, 70] - [159, 77]))
+                  (string_content [159, 77] - [159, 78])
+                  (expansion [159, 78] - [159, 83]
+                    (variable_name [159, 80] - [159, 82])))))
+            (command [160, 8] - [160, 16]
+              name: (command_name [160, 8] - [160, 16]
+                (word [160, 8] - [160, 16]))))))
+      (command [165, 2] - [165, 64]
+        name: (command_name [165, 2] - [165, 6]
+          (word [165, 2] - [165, 6]))
+        argument: (word [165, 7] - [165, 9])
+        argument: (string [165, 10] - [165, 64]
+          (expansion [165, 11] - [165, 19]
+            (variable_name [165, 13] - [165, 18]))
+          (string_content [165, 19] - [165, 36])
+          (simple_expansion [165, 36] - [165, 44]
+            (variable_name [165, 37] - [165, 44]))
+          (string_content [165, 44] - [165, 46])
+          (simple_expansion [165, 46] - [165, 58]
+            (variable_name [165, 47] - [165, 58]))
+          (expansion [165, 58] - [165, 63]
+            (variable_name [165, 60] - [165, 62]))))
+      (comment [167, 2] - [167, 56])
+      (comment [168, 2] - [168, 59])
+      (comment [170, 2] - [170, 87])
+      (comment [171, 2] - [171, 231])
+      (comment [172, 2] - [172, 41])
+      (comment [173, 2] - [173, 38])
+      (comment [174, 2] - [174, 29])
+      (comment [175, 2] - [175, 10])
+      (comment [176, 2] - [176, 9])
+      (comment [177, 2] - [177, 11])
+      (comment [178, 2] - [178, 80])
+      (comment [179, 2] - [179, 27])
+      (comment [180, 2] - [180, 9])
+      (comment [181, 2] - [181, 36])
+      (comment [182, 2] - [182, 32])
+      (comment [183, 2] - [183, 43])
+      (comment [184, 2] - [184, 43])
+      (comment [185, 2] - [185, 29])
+      (comment [186, 2] - [186, 9])
+      (comment [187, 2] - [187, 9])
+      (comment [188, 2] - [188, 27])
+      (comment [189, 2] - [189, 33])
+      (comment [190, 2] - [190, 60])
+      (comment [191, 2] - [191, 15])
+      (comment [192, 2] - [192, 7])
+      (comment [193, 2] - [193, 20])
+      (comment [195, 2] - [195, 84])
+      (variable_assignment [196, 2] - [204, 18]
+        name: (variable_name [196, 2] - [196, 8])
+        value: (string [196, 9] - [204, 18]
+          (command_substitution [196, 10] - [204, 17]
+            (command [196, 12] - [204, 16]
+              name: (command_name [196, 12] - [196, 14]
+                (word [196, 12] - [196, 14]))
+              argument: (word [196, 15] - [196, 17])
+              argument: (word [196, 18] - [196, 23])
+              argument: (word [196, 24] - [196, 35])
+              argument: (string [196, 36] - [196, 50]
+                (simple_expansion [196, 37] - [196, 49]
+                  (variable_name [196, 38] - [196, 49])))
+              argument: (word [196, 51] - [196, 60])
+              argument: (word [196, 61] - [196, 72])
+              argument: (string [196, 73] - [196, 87]
+                (simple_expansion [196, 74] - [196, 86]
+                  (variable_name [196, 75] - [196, 86])))
+              argument: (word [196, 88] - [196, 93])
+              argument: (word [196, 94] - [196, 107])
+              argument: (string [196, 108] - [196, 124]
+                (simple_expansion [196, 109] - [196, 123]
+                  (variable_name [196, 110] - [196, 123])))
+              argument: (word [196, 125] - [196, 134])
+              argument: (word [196, 135] - [196, 143])
+              argument: (string [196, 144] - [196, 155]
+                (simple_expansion [196, 145] - [196, 154]
+                  (variable_name [196, 146] - [196, 154])))
+              argument: (word [196, 156] - [196, 161])
+              argument: (word [196, 162] - [196, 175])
+              argument: (string [196, 176] - [196, 192]
+                (simple_expansion [196, 177] - [196, 191]
+                  (variable_name [196, 178] - [196, 191])))
+              argument: (raw_string [196, 193] - [204, 3])
+              redirect: (herestring_redirect [204, 4] - [204, 16]
+                (string [204, 7] - [204, 16]
+                  (simple_expansion [204, 8] - [204, 15]
+                    (variable_name [204, 9] - [204, 15]))))))))))
+  (command [208, 0] - [208, 27]
+    name: (command_name [208, 0] - [208, 9]
+      (word [208, 0] - [208, 9]))
+    argument: (string [208, 10] - [208, 27]
+      (string_content [208, 11] - [208, 19])
+      (simple_expansion [208, 19] - [208, 26]
+        (variable_name [208, 20] - [208, 26]))))
+  (comment [210, 0] - [210, 78])
+  (redirected_statement [211, 0] - [211, 114]
+    body: (command [211, 0] - [211, 98]
+      name: (command_name [211, 0] - [211, 2]
+        (word [211, 0] - [211, 2]))
+      argument: (raw_string [211, 3] - [211, 85])
+      redirect: (herestring_redirect [211, 86] - [211, 98]
+        (string [211, 89] - [211, 98]
+          (simple_expansion [211, 90] - [211, 97]
+            (variable_name [211, 91] - [211, 97])))))
+    redirect: (file_redirect [211, 99] - [211, 114]
+      destination: (word [211, 101] - [211, 114]))))

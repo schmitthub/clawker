@@ -10,10 +10,10 @@ import (
 	"github.com/schmitthub/claucker/internal/build"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/credentials"
-	"github.com/schmitthub/claucker/internal/dockerfile"
 	"github.com/schmitthub/claucker/internal/engine"
 	"github.com/schmitthub/claucker/internal/term"
 	"github.com/schmitthub/claucker/internal/workspace"
+	pkgbuild "github.com/schmitthub/claucker/pkg/build"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/spf13/cobra"
@@ -43,13 +43,23 @@ This is an idempotent operation:
   - If a container exists but is stopped, starts and attaches
   - If no container exists, creates and starts one
 
-Pass arguments to claude CLI after --:
-  claucker start -- -p "build a feature"    # Run claude with prompt
-  claucker start -- --resume                # Resume previous session
-
 Workspace modes:
   --mode=bind      Live sync with host filesystem (default)
   --mode=snapshot  Copy files to ephemeral Docker volume`,
+		Example: `  # Start Claude interactively
+  claucker start
+
+  # Start with a prompt
+  claucker start -- -p "build a feature"
+
+  # Resume previous session
+  claucker start -- --resume
+
+  # Start in snapshot mode
+  claucker start --mode=snapshot
+
+  # Start in background
+  claucker start --detach`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -188,12 +198,12 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 
 	// Handle detached mode
 	if opts.Detach {
-		fmt.Printf("Container %s is running in detached mode\n", containerCfg.Name)
-		fmt.Println()
-		fmt.Println("Commands:")
-		fmt.Println("  claucker logs      # View container logs")
-		fmt.Println("  claucker sh        # Open shell in container")
-		fmt.Println("  claucker down      # Stop the container")
+		fmt.Fprintf(os.Stderr, "Container %s is running in detached mode\n", containerCfg.Name)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  claucker logs      # View container logs")
+		fmt.Fprintln(os.Stderr, "  claucker sh        # Open shell in container")
+		fmt.Fprintln(os.Stderr, "  claucker stop      # Stop the container")
 		return nil
 	}
 
@@ -293,7 +303,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 		AttachStdout: true,
 		AttachStderr: true,
 		CapAdd:       capAdd,
-		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
+		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 	}, nil

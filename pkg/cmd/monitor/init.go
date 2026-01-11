@@ -35,6 +35,11 @@ The monitoring stack includes:
   - Jaeger (trace visualization)
   - Prometheus (metrics storage)
   - Grafana (unified dashboard)`,
+		Example: `  # Initialize monitoring configuration
+  claucker monitor init
+
+  # Overwrite existing configuration
+  claucker monitor init --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(f, opts)
 		},
@@ -55,11 +60,11 @@ func runInit(f *cmdutil.Factory, opts *initOptions) error {
 	logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Ensure directory exists
-	fmt.Printf("[INFO]  Checking configuration directory...\n")
+	fmt.Fprintf(os.Stderr, "[INFO]  Checking configuration directory...\n")
 	if err := config.EnsureDir(monitorDir); err != nil {
 		return fmt.Errorf("failed to create monitor directory: %w", err)
 	}
-	fmt.Printf("[INFO]  Created directory: %s\n", monitorDir)
+	fmt.Fprintf(os.Stderr, "[INFO]  Created directory: %s\n", monitorDir)
 
 	// Define files to write
 	files := []struct {
@@ -80,27 +85,27 @@ func runInit(f *cmdutil.Factory, opts *initOptions) error {
 
 		// Check if file exists
 		if _, err := os.Stat(filePath); err == nil && !opts.force {
-			fmt.Printf("[SKIP]  %s already exists (use --force to overwrite)\n", file.name)
+			fmt.Fprintf(os.Stderr, "[SKIP]  %s already exists (use --force to overwrite)\n", file.name)
 			continue
 		}
 
 		if err := os.WriteFile(filePath, []byte(file.content), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", file.name, err)
 		}
-		fmt.Printf("[INFO]  Generated %s\n", file.name)
+		fmt.Fprintf(os.Stderr, "[INFO]  Generated %s\n", file.name)
 	}
 
 	// Success message
-	fmt.Println("[SUCCESS] Monitoring stack initialized.")
-	fmt.Println()
-	fmt.Println("Next Steps:")
-	fmt.Println("  1. Start the stack:")
-	fmt.Println("     claucker monitor up")
-	fmt.Println("  2. Open Grafana at http://localhost:3000 (No login required)")
-	fmt.Println("  3. Open Jaeger at http://localhost:16686")
-	fmt.Println()
-	fmt.Println("Note: The monitoring stack uses the claucker-net Docker network.")
-	fmt.Println("      Run 'claucker start' or 'claucker run' to create the network if needed.")
+	fmt.Fprintln(os.Stderr, "[SUCCESS] Monitoring stack initialized.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Next Steps:")
+	fmt.Fprintln(os.Stderr, "  1. Start the stack:")
+	fmt.Fprintln(os.Stderr, "     claucker monitor up")
+	fmt.Fprintln(os.Stderr, "  2. Open Grafana at http://localhost:3000 (No login required)")
+	fmt.Fprintln(os.Stderr, "  3. Open Jaeger at http://localhost:16686")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Note: The monitoring stack uses the claucker-net Docker network.")
+	fmt.Fprintln(os.Stderr, "      Run 'claucker start' or 'claucker run' to create the network if needed.")
 
 	return nil
 }

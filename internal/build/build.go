@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/dockerfile"
 	"github.com/schmitthub/claucker/internal/engine"
+	pkgbuild "github.com/schmitthub/claucker/pkg/build"
 	"github.com/schmitthub/claucker/pkg/logger"
 )
 
@@ -37,7 +37,7 @@ func NewBuilder(eng *engine.Engine, cfg *config.Config, workDir string) *Builder
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error {
 	imgMgr := engine.NewImageManager(b.engine)
-	gen := dockerfile.NewGenerator(b.config, b.workDir)
+	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
@@ -46,7 +46,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 			Msg("building from custom Dockerfile")
 
 		// Create build context from directory
-		buildCtx, err := dockerfile.CreateBuildContextFromDir(
+		buildCtx, err := pkgbuild.CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)
@@ -76,7 +76,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool) error {
 	imgMgr := engine.NewImageManager(b.engine)
-	gen := dockerfile.NewGenerator(b.config, b.workDir)
+	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
@@ -84,7 +84,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool) erro
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
-		buildCtx, err := dockerfile.CreateBuildContextFromDir(
+		buildCtx, err := pkgbuild.CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)

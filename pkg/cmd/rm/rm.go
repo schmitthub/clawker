@@ -3,6 +3,7 @@ package rm
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/schmitthub/claucker/internal/engine"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
@@ -27,12 +28,15 @@ func NewCmdRm(f *cmdutil.Factory) *cobra.Command {
 		Short:   "Remove claucker containers",
 		Long: `Removes claucker containers and their associated resources (volumes).
 
-You must specify either --name or --project to remove containers.
+You must specify either --name or --project to remove containers.`,
+		Example: `  # Remove a specific container
+  claucker rm -n claucker/myapp/ralph
 
-Examples:
-  claucker rm -n claucker/myapp/ralph  # Remove a specific container
-  claucker rm -p myapp                 # Remove all containers for a project
-  claucker rm -p myapp -f              # Force remove running containers`,
+  # Remove all containers for a project
+  claucker rm -p myapp
+
+  # Force remove running containers
+  claucker rm -p myapp -f`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRm(f, opts)
 		},
@@ -41,6 +45,8 @@ Examples:
 	cmd.Flags().StringVarP(&opts.Name, "name", "n", "", "Container name to remove")
 	cmd.Flags().StringVarP(&opts.Project, "project", "p", "", "Remove all containers for a project")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force remove running containers")
+
+	cmd.MarkFlagsOneRequired("name", "project")
 
 	return cmd
 }
@@ -82,7 +88,7 @@ func removeByName(eng *engine.Engine, name string, force bool) error {
 		return fmt.Errorf("failed to remove container %q: %w", name, err)
 	}
 
-	fmt.Printf("Removed container: %s\n", name)
+	fmt.Fprintf(os.Stderr, "Removed container: %s\n", name)
 	return nil
 }
 
@@ -94,7 +100,7 @@ func removeByProject(eng *engine.Engine, project string, force bool) error {
 	}
 
 	if len(containers) == 0 {
-		fmt.Printf("No containers found for project %q\n", project)
+		fmt.Fprintf(os.Stderr, "No containers found for project %q\n", project)
 		return nil
 	}
 
@@ -105,7 +111,7 @@ func removeByProject(eng *engine.Engine, project string, force bool) error {
 			logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 			continue
 		}
-		fmt.Printf("Removed container: %s\n", c.Name)
+		fmt.Fprintf(os.Stderr, "Removed container: %s\n", c.Name)
 		removed++
 	}
 
@@ -113,6 +119,6 @@ func removeByProject(eng *engine.Engine, project string, force bool) error {
 		return fmt.Errorf("failed to remove any containers for project %q", project)
 	}
 
-	fmt.Printf("\nRemoved %d container(s) for project %q\n", removed, project)
+	fmt.Fprintf(os.Stderr, "\nRemoved %d container(s) for project %q\n", removed, project)
 	return nil
 }

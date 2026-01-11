@@ -10,10 +10,10 @@ import (
 	"github.com/schmitthub/claucker/internal/build"
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/credentials"
-	"github.com/schmitthub/claucker/internal/dockerfile"
 	"github.com/schmitthub/claucker/internal/engine"
 	"github.com/schmitthub/claucker/internal/term"
 	"github.com/schmitthub/claucker/internal/workspace"
+	pkgbuild "github.com/schmitthub/claucker/pkg/build"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 	"github.com/schmitthub/claucker/pkg/logger"
 	"github.com/spf13/cobra"
@@ -41,14 +41,21 @@ func NewCmdRun(f *cmdutil.Factory) *cobra.Command {
 By default, the container is removed after exit (like docker run --rm).
 Use --keep to preserve the container after exit.
 
-Examples:
-  claucker run                           # Run claude interactively, remove on exit
-  claucker run -- -p "build a feature"   # Run claude with args, remove on exit
-  claucker run --shell                   # Run shell interactively, remove on exit
-  claucker run -- npm test               # Run arbitrary command, remove on exit
-  claucker run --keep                    # Run claude, keep container after exit
+Unlike 'claucker start', this always creates a new container (never reuses existing).`,
+		Example: `  # Run claude interactively, remove on exit
+  claucker run
 
-Unlike 'claucker up', this always creates a new container (never reuses existing).`,
+  # Run claude with args, remove on exit
+  claucker run -- -p "build a feature"
+
+  # Run shell interactively, remove on exit
+  claucker run --shell
+
+  # Run arbitrary command, remove on exit
+  claucker run -- npm test
+
+  # Run claude, keep container after exit
+  claucker run --keep`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -290,7 +297,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		AttachStdout: true,
 		AttachStderr: true,
 		CapAdd:       capAdd,
-		User:         fmt.Sprintf("%d:%d", dockerfile.DefaultUID, dockerfile.DefaultGID),
+		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 	}, nil

@@ -29,8 +29,9 @@ func main() {
 	}
 
 	f := &cmdutil.Factory{
-		WorkDir: wd,
-		Version: Version,
+		WorkDir:        wd,
+		BuildOutputDir: wd, // Standalone binary defaults to CWD
+		Version:        Version,
 	}
 
 	// Create and execute the generate command

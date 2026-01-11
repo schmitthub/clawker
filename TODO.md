@@ -1,7 +1,8 @@
 # TODO.md
 
 [ ] Add user scoped default templates and configs in their claucker home dir
-[ ] Get rid of the lame ass terminal copy
+[ ] Claucker-generate is probably dumb and should just be a standalone go script
+[ ] Add a light monitoring shell UI that is aware of claude subs vs claude sdk api costs
 [ ] Multi image support. you can create as many or as little claucker containers as you want
 [ ] Add progress bars with status updates to CLI output instead of verbose logs endless log entries in the terminal
 [ ] Add session tracking by container name in metrics collection, explained in metrics docs

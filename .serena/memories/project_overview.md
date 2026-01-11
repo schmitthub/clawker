@@ -28,7 +28,7 @@ Claucker supports multiple containers per project using **agents**:
   - `names.go` - Container/volume naming, `GenerateRandomName()`
   - `volume.go` - VolumeManager
 - `internal/workspace/` - Bind vs Snapshot strategies
-- `internal/dockerfile/` - Dynamic Dockerfile generation
+- `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
 - `internal/term/` - PTY/terminal handling
 - `internal/credentials/` - .env parsing and injection
 - `pkg/logger/` - Zerolog setup

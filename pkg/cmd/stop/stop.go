@@ -3,6 +3,7 @@ package stop
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/schmitthub/claucker/internal/config"
 	"github.com/schmitthub/claucker/internal/engine"
@@ -29,12 +30,15 @@ func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
 		Long: `Stops Claude containers for this project.
 
 By default, stops all containers for the project. Use --agent to stop a specific agent.
-Volumes are preserved for the next session. Use --clean to remove all volumes.
+Volumes are preserved for the next session. Use --clean to remove all volumes.`,
+		Example: `  # Stop all containers for this project
+  claucker stop
 
-Examples:
-  claucker stop                    # Stop all containers for this project
-  claucker stop --agent ralph      # Stop only the 'ralph' agent
-  claucker stop --clean            # Stop and remove all volumes`,
+  # Stop only the 'ralph' agent
+  claucker stop --agent ralph
+
+  # Stop and remove all volumes
+  claucker stop --clean`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStop(f, opts)
 		},
@@ -108,15 +112,15 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 
 	if len(containersToStop) == 0 {
 		if opts.Agent != "" {
-			fmt.Printf("Container for agent '%s' not found\n", opts.Agent)
+			fmt.Fprintf(os.Stderr, "Container for agent '%s' not found\n", opts.Agent)
 		} else {
-			fmt.Printf("No containers found for project '%s'\n", cfg.Project)
+			fmt.Fprintf(os.Stderr, "No containers found for project '%s'\n", cfg.Project)
 		}
 	} else {
 		// Stop each container
 		for _, c := range containersToStop {
 			if c.Status == "running" {
-				fmt.Printf("Stopping container %s...\n", c.Name)
+				fmt.Fprintf(os.Stderr, "Stopping container %s...\n", c.Name)
 
 				if opts.Force {
 					if err := containerMgr.Remove(c.ID, true); err != nil {
@@ -135,21 +139,21 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 				}
 
 				logger.Info().Str("container", c.Name).Msg("container stopped")
-				fmt.Printf("Container %s stopped\n", c.Name)
+				fmt.Fprintf(os.Stderr, "Container %s stopped\n", c.Name)
 			} else {
 				// Container exists but not running, just remove it
 				if err := containerMgr.Remove(c.ID, true); err != nil {
 					logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 					continue
 				}
-				fmt.Printf("Removed container %s\n", c.Name)
+				fmt.Fprintf(os.Stderr, "Removed container %s\n", c.Name)
 			}
 		}
 	}
 
 	// Clean volumes if requested
 	if opts.Clean {
-		fmt.Println("Removing volumes...")
+		fmt.Fprintln(os.Stderr, "Removing volumes...")
 		removedCount := 0
 
 		if opts.Agent != "" {
@@ -203,9 +207,9 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 		}
 
 		if removedCount > 0 {
-			fmt.Printf("Removed %d volume(s)\n", removedCount)
+			fmt.Fprintf(os.Stderr, "Removed %d volume(s)\n", removedCount)
 		} else {
-			fmt.Println("No volumes to remove")
+			fmt.Fprintln(os.Stderr, "No volumes to remove")
 		}
 
 		// Also remove the image if clean is specified (only when stopping all)
@@ -216,14 +220,14 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 				if err := eng.ImageRemove(imageTag, true); err != nil {
 					logger.Warn().Str("image", imageTag).Err(err).Msg("failed to remove image")
 				} else {
-					fmt.Printf("Removed image %s\n", imageTag)
+					fmt.Fprintf(os.Stderr, "Removed image %s\n", imageTag)
 				}
 			}
 		}
 	}
 
-	fmt.Println()
-	fmt.Println("To start again: claucker start")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "To start again: claucker start")
 
 	return nil
 }
