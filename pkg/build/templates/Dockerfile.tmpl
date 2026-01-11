@@ -311,8 +311,10 @@ HEALTHCHECK {{if .Instructions.Healthcheck.Interval}}--interval={{.Instructions.
 
 # Install Claude Code
 RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
-COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude/statusline.sh
-COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude/settings.json
+
+# Stage config files for volume initialization (not shadowed by volume mount)
+COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude-init/statusline.sh
+COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude-init/settings.json
 
 {{/* Injection point: after_claude_install */}}
 {{- if .Inject}}

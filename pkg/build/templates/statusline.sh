@@ -60,6 +60,9 @@ NC='\033[0m' # No Color
 
 # ICONS
 GIT=''  # Git branch icon (requires a powerline font)
+DISK_SINGLE_SLICE='⛀'  # Single disk slice icon
+DISK_DOUBLE_SLICE='⛁'  # Double disk slice icon
+DISK_TRIPLE_SLICE='⛁'  # Triple disk slice icon
 
 # Helper functions for common extractions
 get_model_name() { echo "$input" | jq -r '.model.display_name'; }
@@ -87,16 +90,15 @@ if [ "$USAGE" != "null" ]; then
 
 
     if [ "$PERCENT_USED" -lt 40 ]; then
-        ctx=$(printf "${GREEN}%d%%${NC}" "$PERCENT_USED")
+        ctx=$(printf "${GREEN}${DISK_SINGLE_SLICE} %d%%${NC}" "$PERCENT_USED")
     elif [ "$PERCENT_USED" -lt 60 ]; then
-        ctx=$(printf "${YELLOW}%d%%${NC}" "$PERCENT_USED")
+        ctx=$(printf "${YELLOW}${DISK_DOUBLE_SLICE} %d%%${NC}" "$PERCENT_USED")
     elif [ "$PERCENT_USED" -lt 70 ]; then
-        ctx=$(printf "${RED}%d%%${NC}" "$PERCENT_USED")
+        ctx=$(printf "${RED}${DISK_TRIPLE_SLICE} %d%%${NC}" "$PERCENT_USED")
     else
-        ctx=$(printf "${ORANGE}%d%%${NC}" "$PERCENT_USED")
+        ctx=$(printf "${ORANGE}${DISK_TRIPLE_SLICE} %d%%${NC}" "$PERCENT_USED")
     fi
 fi
-
 
 # Extract data from JSON input
 DIR=$(get_current_dir)
@@ -110,14 +112,16 @@ branch=$(git --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 # Vim mode (if enabled)
 vim=$(echo "$input" | jq -r '.vim.mode // empty')
 
+# Claucker info
+output=$(printf "${GRAY}Claucker v%s$ |{NC}" "${CLAUCKER_VERSION:-0.1.0}")
 
 # Build status line prefix from env vars
 PROJECT="${CLAUCKER_PROJECT:-claucker}"
 AGENT="${CLAUCKER_AGENT:-}"
 if [ -n "$AGENT" ]; then
-    output="${ORANGE}${PROJECT}:${AGENT}${NC}"
+    output+=$(printf " ${ORANGE}%s:%s${NC}" "$PROJECT" "$AGENT")
 else
-    output="${ORANGE}${PROJECT}${NC}"
+    output+=$(printf " ${ORANGE}%s${NC}" "$PROJECT")
 fi
 
 # Directory - white, bold
