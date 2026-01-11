@@ -18,10 +18,18 @@
    - Always call `think_about_whether_you_are_done` for determining whether the task is truly completed.
    - Always call `write_memory`, `edit_memory`, `delete_memory` to keep project memories relevant and up to date
 
-2. **Context7** - Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
-   - Always call `resolve-library-id` with `libraryName` and `query` first to get the library ID
-   - Then call `query-docs` using `libraryId` and `query` with topic for relevant docs
-   - Essential for Docker SDK, Go stdlib, and other dependencies
+2. **Context7** - Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask. Project dependencies are listed in @go.mod
+   - Always call `resolve-library-id` using parameters `libraryName` and `query` first to get the library ID
+   - Then call `query-docs` using parameters `libraryId` and `query` with topic for relevant docs
+   - Essential for project dependencies in @go.mod:
+     - Docker SDK
+     - Go stdlib
+     - github.com/docker/docker
+     - github.com/rs/zerolog
+     - github.com/spf13/cobra
+     - github.com/spf13/viper
+     - golang.org/x/term
+     - gopkg.in/yaml.v3
 
 ### I (SHOULD USE) use the following tooling workflow
 
@@ -160,6 +168,7 @@ func Match(versions []string, target string) (string, error)
 ```
 
 Key behaviors:
+
 - Supports partial versions (`2.1` matches highest `2.1.x`)
 - Prereleases sort before releases (`2.1.0-beta < 2.1.0`)
 - `Match()` finds best matching version for patterns like `latest`, `2.1`, or exact `2.1.2`
@@ -177,6 +186,7 @@ func (c *NPMClient) FetchDistTags(ctx context.Context, pkg string) (DistTags, er
 ```
 
 Key types:
+
 - `DistTags` - Map of tag names to versions (`latest`, `stable`, `next`)
 - `VersionInfo` - Full version metadata with variants
 - `VersionsFile` - Complete versions.json structure
@@ -222,6 +232,7 @@ cmdutil.PrintWarning("Container already exists")
 ```
 
 Key functions:
+
 - `HandleError(err)` - If `*engine.DockerError`, uses `FormatUserError()`; otherwise prints simple message
 - `PrintNextSteps(steps...)` - Prints numbered list of actionable suggestions
 - `PrintError(format, args...)` - Prints `Error: <message>` to stderr
@@ -237,6 +248,7 @@ Claucker uses hierarchical naming for multi-container support:
 - **Volume names**: `claucker.project.agent-purpose` (e.g., `claucker.myapp.ralph-workspace`)
 
 Key functions in `internal/engine/names.go`:
+
 - `ContainerName(project, agent)` - generates container name
 - `VolumeName(project, agent, purpose)` - generates volume name
 - `ParseContainerName(name)` - extracts project/agent from name
@@ -254,6 +266,7 @@ Docker labels (`internal/engine/labels.go`) enable reliable filtering:
 | `com.claucker.workdir` | Host working directory |
 
 Helper functions:
+
 - `ContainerLabels(project, agent, version, image, workdir)` - creates container labels
 - `VolumeLabels(project, agent, purpose)` - creates volume labels
 - `ClauckerFilter()` - filter args for all claucker resources
@@ -277,6 +290,7 @@ All commands follow these patterns:
 1. **Use `PersistentPreRunE` not `PersistentPreRun`** - Always return errors properly; never use `logger.Fatal()` or `os.Exit()` in Cobra hooks as they bypass error handling and deferred functions.
 
 2. **Always include Example field** - Every command should have usage examples:
+
    ```go
    cmd := &cobra.Command{
        Use:   "start",
@@ -291,6 +305,7 @@ All commands follow these patterns:
    ```
 
 3. **Route status messages to stderr** - Keep stdout clean for data/scripting:
+
    ```go
    // Status messages → stderr
    fmt.Fprintln(os.Stderr, "Starting container...")
@@ -301,6 +316,7 @@ All commands follow these patterns:
    ```
 
 4. **Use flag validation helpers** - Cobra provides built-in validation:
+
    ```go
    cmd.MarkFlagsOneRequired("name", "project")  // At least one required
    cmd.MarkFlagsMutuallyExclusive("a", "b")     // Can't use both
@@ -316,6 +332,7 @@ All commands follow these patterns:
 1. Create `pkg/cmd/<cmdname>/<cmdname>.go`
 2. Define options struct and `NewCmd<Name>(f *cmdutil.Factory)` function
 3. Use `cmdutil` output functions for user messaging:
+
    ```go
    // Configuration not found
    if config.IsConfigNotFound(err) {
@@ -333,6 +350,7 @@ All commands follow these patterns:
        return err
    }
    ```
+
 4. Register in `pkg/cmd/root/root.go`
 
 ### Modifying Dockerfile generation
