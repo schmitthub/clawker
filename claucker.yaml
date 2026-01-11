@@ -66,7 +66,7 @@ security:
   # Enable network firewall (blocks outbound traffic by default)
   enable_firewall: true
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
-  docker_socket: false
+  docker_socket: true
   # Domains allowed through firewall (only when enable_firewall: true)
   # allowed_domains:
   #   - "api.github.com"

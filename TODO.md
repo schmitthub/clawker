@@ -1,6 +1,16 @@
 # TODO.md
 
+## Bugs
+
 [ ] claucker start is creating new containers instead of attaching to existing
+[ ] claucker list is not showing all the stopped agent containers
+[ ] Serena's language server isn't initialized. Let me use standard tools to explore the engine code.
+[ ] go not found in path, has to find it /usr/local/go/bin/go
+[ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active
+[ ] we need to copy project claude settings local files and not bind so that command approvals aren't shared
+
+## Enhancements
+
 [ ] see if there is a way to pass browser opening events to the host and then back into the container. for example for claude auth, and for mcp's like serena
 [ ] add a statusline to every container so the user knows which container they are in along with kewl metrics. Update Statusline monitor to calculate session limit, maybe consider using python
 [ ] really need to think through the verbage for the cli to run them and what they do and make sure everything is either cleaned up or accessed instead of making new containers over and over again. Should add an `exec` command to run something in an existing instance
@@ -25,30 +35,4 @@
 [ ] Fix generate cmd output its too verbose
 [ ] claucker ls should have an alias to list. -a should show monitoring containers (anything on claucker-net)
 [ ] claucker output should mirror claude code ANSI style
-[ ] Terminal still sometimes locks when quitting out of the container when the CC REPL is active
 [ ] MCP strategy but serena seems to be working inside the container
-
-## Bugs
-
-[ ] monitor start existing container warning command prints out the path of everything instead of simply `claucker restart`.
-  It looks like Claude is trying to detect all running containers within the `claucker-net` network. this can probably be addresssed when multi-image support is added
-
-```shell
-⚠️  Running containers detected without telemetry:
-   • monitor-loki-1
-   • monitor-otel-collector-1
-   • monitor-prometheus-1
-   • monitor-grafana-1
-   • monitor-jaeger-1
-   • claucker-workspace
-
-These containers were started before the monitoring stack and
-won't export telemetry. To enable telemetry, restart them:
-
-cd /path/to/monitor-loki-1 && claucker restart
-cd /path/to/monitor-otel-collector-1 && claucker restart
-cd /path/to/monitor-prometheus-1 && claucker restart
-cd /path/to/monitor-grafana-1 && claucker restart
-cd /path/to/monitor-jaeger-1 && claucker restart
-cd /path/to/workspace && claucker restart
-```

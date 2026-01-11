@@ -395,10 +395,8 @@ type ClauckerContainer struct {
 // ListClauckerContainers returns all containers with com.claucker.managed=true label
 func (e *Engine) ListClauckerContainers(includeAll bool) ([]ClauckerContainer, error) {
 	opts := container.ListOptions{
+		All:     includeAll,
 		Filters: ClauckerFilter(),
-	}
-	if !includeAll {
-		opts.Filters.Add("status", "running")
 	}
 
 	containers, err := e.cli.ContainerList(e.ctx, opts)
@@ -412,10 +410,8 @@ func (e *Engine) ListClauckerContainers(includeAll bool) ([]ClauckerContainer, e
 // ListClauckerContainersByProject returns containers for a specific project
 func (e *Engine) ListClauckerContainersByProject(project string, includeAll bool) ([]ClauckerContainer, error) {
 	opts := container.ListOptions{
+		All:     includeAll,
 		Filters: ProjectFilter(project),
-	}
-	if !includeAll {
-		opts.Filters.Add("status", "running")
 	}
 
 	containers, err := e.cli.ContainerList(e.ctx, opts)

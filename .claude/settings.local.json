@@ -44,7 +44,9 @@
       "Bash(docker logs:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(./bin/claucker-generate:*)"
+      "Bash(./bin/claucker-generate:*)",
+      "Bash(/usr/local/go/bin/go test:*)",
+      "Bash(/usr/local/go/bin/go build:*)"
     ],
     "deny": [
       "Read(TODO.md)"
