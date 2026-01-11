@@ -1,8 +1,8 @@
 # Claucker
 
-Manage full-featured Claude Code development container environments.
+Manage Claude Code in secure Docker containers with claucker
 
-Claucker wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in secure, reproducible Docker containers. Core philosophy: **Safe Autonomy** - your host system is read-only by default.
+Claucker (claude + docker) wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in safe, reproducible, monitored, isolated Docker containers.
 
 ## Quick Start
 
@@ -10,7 +10,6 @@ Claucker wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in 
 
 - Docker installed and running
 - Go 1.21+ (for building from source)
-- An Anthropic API key
 
 ### Installation
 
@@ -24,21 +23,15 @@ go build -o bin/claucker ./cmd/claucker
 ### Basic Workflow
 
 ```bash
-# 1. Set your API key
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# 2. Initialize a project
+# 1. Initialize a project
 cd your-project
 claucker init
 
-# 3. Start the container
+# 2. Start the container
 claucker start
 
-# 4. Claude Code is now running in the container
+# 3. Claude Code is now running in the container
 # Press Ctrl+C to exit when done
-
-# 5. Stop the container
-claucker stop
 ```
 
 ## Multi-Container Management
@@ -298,6 +291,7 @@ Flags:
 ```
 
 **Version patterns:**
+
 - `latest`, `stable`, `next` - Resolve via npm dist-tags
 - `2.1` - Match highest 2.1.x release
 - `2.1.2` - Exact version match
@@ -483,6 +477,7 @@ build:
 ```
 
 **Injection points in order:**
+
 1. `after_from` - After base image, before packages
 2. `after_packages` - After apt/apk install
 3. `after_user_setup` - After claude user created (still root)
@@ -556,6 +551,7 @@ security:
 The `.clauckerignore` file controls which files are excluded in snapshot mode. It follows `.gitignore` syntax.
 
 Default exclusions include:
+
 - `node_modules/`, `vendor/`, `.venv/`
 - Build outputs (`dist/`, `build/`)
 - IDE files (`.idea/`, `.vscode/`)
