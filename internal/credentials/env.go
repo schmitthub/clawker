@@ -53,9 +53,6 @@ func defaultDenyList() []string {
 		"LOGNAME",
 		"PWD",
 		"OLDPWD",
-
-		// Claucker internal
-		"CLAUCKER_",
 	}
 }
 

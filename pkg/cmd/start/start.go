@@ -254,6 +254,10 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	// Add config-specified environment
 	envBuilder.SetAll(cfg.Agent.Env)
 
+	// Inject claucker identity for statusline
+	envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)
+	envBuilder.Set("CLAUCKER_AGENT", agentName)
+
 	// Load .env file if present
 	envFile := filepath.Join(workDir, ".env")
 	if err := envBuilder.LoadDotEnv(envFile); err != nil {

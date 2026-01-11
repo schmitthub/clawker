@@ -46,7 +46,8 @@
       "Bash(git commit:*)",
       "Bash(./bin/claucker-generate:*)",
       "Bash(/usr/local/go/bin/go test:*)",
-      "Bash(/usr/local/go/bin/go build:*)"
+      "Bash(/usr/local/go/bin/go build:*)",
+      "Bash(grep:*)"
     ],
     "deny": [
       "Read(TODO.md)"

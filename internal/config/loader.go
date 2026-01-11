@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -60,11 +62,47 @@ func (l *Loader) Load() (*Config, error) {
 
 	// Unmarshal into Config struct
 	var cfg Config
-	if err := l.viper.Unmarshal(&cfg); err != nil {
+	if err := l.viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+	))); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Fix env map key case - viper lowercases keys, but env vars need original case
+	// Re-read the YAML file to get original key casing for agent.env
+	if err := l.fixEnvKeyCase(&cfg, configPath); err != nil {
+		// Non-fatal, just log and continue with lowercased keys
+		// The env vars will still work, just with lowercase names
+	}
+
 	return &cfg, nil
+}
+
+// fixEnvKeyCase re-reads the YAML to preserve original case for env var keys
+// Viper/mapstructure lowercases all map keys, but env vars are case-sensitive
+func (l *Loader) fixEnvKeyCase(cfg *Config, configPath string) error {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Partial struct just for extracting env with original case
+	var raw struct {
+		Agent struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"agent"`
+	}
+
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if len(raw.Agent.Env) > 0 {
+		cfg.Agent.Env = raw.Agent.Env
+	}
+
+	return nil
 }
 
 // ConfigPath returns the full path to the config file

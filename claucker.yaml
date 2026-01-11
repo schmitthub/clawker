@@ -53,8 +53,10 @@ agent:
   #   - "./README.md"
     # - "./.claude/memory.md"
   # Environment variables for the agent
+  # editor: "vim"    # defaults to "nano" if not set
+  # visual: "vim"    # defaults to "nano" if not set
   env:
-    FARTS: "fartmelopment"
+    FARTS: "are funny"
 
 workspace:
   # Container path where your code is mounted

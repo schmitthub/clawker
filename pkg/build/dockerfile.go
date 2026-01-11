@@ -31,6 +31,12 @@ var EntrypointScript string
 //go:embed templates/init-firewall.sh
 var FirewallScript string
 
+//go:embed templates/statusline.sh
+var StatuslineScript string
+
+//go:embed templates/claude-settings.json
+var SettingsFile string
+
 // Default values for container configuration
 const (
 	DefaultClaudeCodeVersion = "latest"
@@ -59,6 +65,8 @@ type DockerfileContext struct {
 	IsAlpine       bool
 	EnableFirewall bool
 	ExtraEnv       map[string]string
+	Editor         string
+	Visual         string
 	Instructions   *DockerfileInstructions
 	Inject         *DockerfileInject
 }
@@ -192,6 +200,8 @@ func (m *DockerfileManager) createContext(version, variant string) *DockerfileCo
 		IsAlpine:       isAlpine,
 		EnableFirewall: true,
 		ExtraEnv:       map[string]string{},
+		Editor:         "nano",
+		Visual:         "nano",
 		Instructions:   nil,
 		Inject:         nil,
 	}
@@ -273,6 +283,16 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 	if err := addFileToTar(tw, "entrypoint.sh", []byte(EntrypointScript)); err != nil {
 		return nil, err
 	}
+
+	// Add statusline script
+	if err := addFileToTar(tw, "statusline.sh", []byte(StatuslineScript)); err != nil {
+		return nil, err
+	}
+
+  // Add settings file json
+  if err := addFileToTar(tw, "claude-settings.json", []byte(SettingsFile)); err != nil {
+      return nil, err
+  }
 
 	// Add firewall script if enabled
 	if g.config.Security.EnableFirewall {
@@ -376,6 +396,16 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 
 	isAlpine := engine.IsAlpineImage(baseImage)
 
+	// Set editor defaults
+	editor := g.config.Agent.Editor
+	if editor == "" {
+		editor = "nano"
+	}
+	visual := g.config.Agent.Visual
+	if visual == "" {
+		visual = "nano"
+	}
+
 	ctx := &DockerfileContext{
 		BaseImage:      baseImage,
 		Packages:       filterBasePackages(g.config.Build.Packages, isAlpine),
@@ -388,6 +418,8 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		IsAlpine:       isAlpine,
 		EnableFirewall: g.config.Security.EnableFirewall,
 		ExtraEnv:       g.config.Agent.Env,
+		Editor:         editor,
+		Visual:         visual,
 	}
 
 	// Populate Instructions if present

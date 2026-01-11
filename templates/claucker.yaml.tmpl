@@ -18,8 +18,10 @@ build:
 agent:
   # Files to make available to Claude (prompts, docs, memory)
   includes:
-    - "./README.md"
-    # - "./.claude/memory.md"
+    # - "./README.md"
+    # - "~/.claude/memory.md"
+  # editor: "vim"    # defaults to "nano" if not set
+  # visual: "vim"    # defaults to "nano" if not set
   # Environment variables for the agent
   env:
     # NODE_ENV: "development"

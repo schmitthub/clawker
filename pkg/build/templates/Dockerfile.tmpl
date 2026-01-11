@@ -232,8 +232,8 @@ USER ${USERNAME}
 
 # Set environment config
 ENV SHELL={{.Shell}}
-ENV EDITOR=nano
-ENV VISUAL=nano
+ENV EDITOR={{.Editor}}
+ENV VISUAL={{.Visual}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 
 {{/* Injection point: after_user_switch */}}
@@ -290,15 +290,14 @@ RUN {{.Debian}}
 {{- end}}
 {{- end}}
 
-# Install Claude Code
-RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{/* Shell configuration */}}
+{{- if and .Instructions (gt (len .Instructions.Shell) 0)}}
+SHELL [{{range $i, $e := .Instructions.Shell}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
+{{- end}}
 
-{{/* Injection point: after_claude_install */}}
-{{- if .Inject}}
-{{- range .Inject.AfterClaudeInstall}}
-{{.}}
-{{- end}}
-{{- end}}
+# Set the default editor and visual
+ENV EDITOR={{.Editor}}
+ENV VISUAL={{.Visual}}
 
 {{/* Extra ENV from agent config */}}
 {{- range $key, $value := .ExtraEnv}}
@@ -310,9 +309,16 @@ ENV {{$key}}="{{$value}}"
 HEALTHCHECK {{if .Instructions.Healthcheck.Interval}}--interval={{.Instructions.Healthcheck.Interval}} {{end}}{{if .Instructions.Healthcheck.Timeout}}--timeout={{.Instructions.Healthcheck.Timeout}} {{end}}{{if .Instructions.Healthcheck.Retries}}--retries={{.Instructions.Healthcheck.Retries}} {{end}}{{if .Instructions.Healthcheck.StartPeriod}}--start-period={{.Instructions.Healthcheck.StartPeriod}} {{end}}CMD [{{range $i, $e := .Instructions.Healthcheck.Cmd}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
 {{- end}}
 
-{{/* Shell configuration */}}
-{{- if and .Instructions (gt (len .Instructions.Shell) 0)}}
-SHELL [{{range $i, $e := .Instructions.Shell}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
+# Install Claude Code
+RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude/statusline.sh
+COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude/settings.json
+
+{{/* Injection point: after_claude_install */}}
+{{- if .Inject}}
+{{- range .Inject.AfterClaudeInstall}}
+{{.}}
+{{- end}}
 {{- end}}
 
 {{/* Injection point: before_entrypoint */}}
