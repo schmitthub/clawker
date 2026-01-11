@@ -16,7 +16,8 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	NoCache bool
+	NoCache    bool
+	Dockerfile string
 }
 
 // NewCmdBuild creates a new build command.
@@ -34,13 +35,17 @@ without Docker's layer cache for a completely fresh build.`,
   claucker build
 
   # Build image without cache
-  claucker build --no-cache`,
+  claucker build --no-cache
+
+  # Build using custom Dockerfile
+  claucker build --dockerfile ./Dockerfile.dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBuild(f, opts)
 		},
 	}
 
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Build image without using Docker cache")
+	cmd.Flags().StringVar(&opts.Dockerfile, "dockerfile", "", "Path to custom Dockerfile (overrides build.dockerfile in config)")
 
 	return cmd
 }
@@ -69,6 +74,11 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		cmdutil.PrintError("Configuration validation failed")
 		fmt.Fprintln(os.Stderr, err)
 		return err
+	}
+
+	// Override dockerfile from CLI flag if provided
+	if opts.Dockerfile != "" {
+		cfg.Build.Dockerfile = opts.Dockerfile
 	}
 
 	logger.Debug().

@@ -122,11 +122,13 @@ Builds the container image. Use this when you want to pre-build or rebuild with 
 claucker build [flags]
 
 # Examples:
-claucker build              # Build image (uses Docker cache)
-claucker build --no-cache   # Build without Docker cache
+claucker build                            # Build image (uses Docker cache)
+claucker build --no-cache                 # Build without Docker cache
+claucker build --dockerfile ./Dockerfile  # Build using custom Dockerfile
 
 Flags:
-  --no-cache  Build without Docker cache
+  --no-cache              Build without Docker cache
+  --dockerfile <path>     Path to custom Dockerfile (overrides build.dockerfile in config)
 ```
 
 ### claucker start
