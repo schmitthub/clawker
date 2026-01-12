@@ -30,3 +30,7 @@
 [ ] claucker output should mirror claude code ANSI style
 [ ] plan a refactor that sets `CLAUCKER_PROJECT` and `CLAUCKER_AGENT` in two places and move it  "envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)" and "envBuilder.Set("CLAUCKER_AGENT", agentName)" from @pkg/cmd/run/run.go and @pkg/cmd/start/start.go
 [ ] makefile updates to remove calls to the legacy shell scripts; commands to run tests
+
+## Marketing
+
+[ ] Make PRs in popular list repos like <https://github.com/hesreallyhim/awesome-claude-code>
