@@ -1,6 +1,6 @@
 package config
 
-// Config represents the root configuration structure for claucker.yaml
+// Config represents the root configuration structure for clawker.yaml
 type Config struct {
 	Version   string          `yaml:"version" mapstructure:"version"`
 	Project   string          `yaml:"project" mapstructure:"project"`

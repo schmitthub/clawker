@@ -6,10 +6,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/schmitthub/claucker/internal/config"
-	internalmonitor "github.com/schmitthub/claucker/internal/monitor"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +21,7 @@ func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
 
 Displays running/stopped state and service URLs when the stack is running.`,
 		Example: `  # Check monitoring stack status
-  claucker monitor status`,
+  clawker monitor status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStatus(f)
 		},
@@ -44,7 +44,7 @@ func runStatus(f *cmdutil.Factory) error {
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
 		fmt.Fprintln(os.Stderr, "Monitoring stack: NOT INITIALIZED")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Run 'claucker monitor init' to scaffold configuration files.")
+		fmt.Fprintln(os.Stderr, "Run 'clawker monitor init' to scaffold configuration files.")
 		return nil
 	}
 
@@ -60,7 +60,7 @@ func runStatus(f *cmdutil.Factory) error {
 	if outputStr == "" || !strings.Contains(outputStr, "Up") {
 		fmt.Fprintln(os.Stderr, "Monitoring stack: STOPPED")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Run 'claucker monitor up' to start the stack.")
+		fmt.Fprintln(os.Stderr, "Run 'clawker monitor up' to start the stack.")
 		return nil
 	}
 
@@ -84,11 +84,11 @@ func runStatus(f *cmdutil.Factory) error {
 
 	// Check network status
 	fmt.Fprintln(os.Stderr)
-	networkCmd := exec.Command("docker", "network", "inspect", config.ClauckerNetwork, "--format", "{{.Name}}")
+	networkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork, "--format", "{{.Name}}")
 	if networkOutput, err := networkCmd.Output(); err == nil {
 		fmt.Fprintf(os.Stderr, "Network: %s (active)\n", strings.TrimSpace(string(networkOutput)))
 	} else {
-		fmt.Fprintf(os.Stderr, "Network: %s (not found)\n", config.ClauckerNetwork)
+		fmt.Fprintf(os.Stderr, "Network: %s (not found)\n", config.ClawkerNetwork)
 	}
 
 	return nil

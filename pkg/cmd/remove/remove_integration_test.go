@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-const testProject = "claucker-test"
+const testProject = "clawker-test"
 
 var (
-	clauckerBin string
+	clawkerBin  string
 	testdataDir string
 )
 
@@ -29,13 +29,13 @@ func TestMain(m *testing.M) {
 	// Find repo root
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
-	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
+	clawkerBin = filepath.Join(repoRoot, "bin", "clawker")
 	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "remove", "testdata")
 
 	// Build CLI if needed
-	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {
-		fmt.Println("Building claucker binary...")
-		cmd := exec.Command("go", "build", "-o", clauckerBin, "./cmd/claucker")
+	if _, err := os.Stat(clawkerBin); os.IsNotExist(err) {
+		fmt.Println("Building clawker binary...")
+		cmd := exec.Command("go", "build", "-o", clawkerBin, "./cmd/clawker")
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Failed to build: %v\n%s\n", err, out)
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 	// Build test image once
 	fmt.Println("Building test image...")
-	if out, err := runClaucker("build"); err != nil {
+	if out, err := runClawker("build"); err != nil {
 		fmt.Printf("Failed to build test image: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
@@ -93,9 +93,9 @@ func cleanup(containerName string) {
 	exec.Command("docker", "volume", "rm", containerName+"-history").Run()
 }
 
-func runClaucker(args ...string) (string, error) {
+func runClawker(args ...string) (string, error) {
 	fullArgs := append([]string{"--workdir", testdataDir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -103,14 +103,14 @@ func runClaucker(args ...string) (string, error) {
 // TestRm_ByName verifies removes specific container
 func TestRm_ByName(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create stopped container
-	runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 
 	// Remove by name
-	_, err := runClaucker("rm", "-n", containerName)
+	_, err := runClawker("rm", "-n", containerName)
 	if err != nil {
 		t.Fatalf("rm by name failed: %v", err)
 	}
@@ -124,17 +124,17 @@ func TestRm_ByName(t *testing.T) {
 func TestRm_ByProject(t *testing.T) {
 	agent1 := uniqueAgent(t) + "a"
 	agent2 := uniqueAgent(t) + "b"
-	container1 := "claucker." + testProject + "." + agent1
-	container2 := "claucker." + testProject + "." + agent2
+	container1 := "clawker." + testProject + "." + agent1
+	container2 := "clawker." + testProject + "." + agent2
 	defer cleanup(container1)
 	defer cleanup(container2)
 
 	// Create two stopped containers
-	runClaucker("run", "--keep", "--agent", agent1, "--", "echo", "hello")
-	runClaucker("run", "--keep", "--agent", agent2, "--", "echo", "hello")
+	runClawker("run", "--keep", "--agent", agent1, "--", "echo", "hello")
+	runClawker("run", "--keep", "--agent", agent2, "--", "echo", "hello")
 
 	// Remove by project
-	_, err := runClaucker("rm", "-p", testProject)
+	_, err := runClawker("rm", "-p", testProject)
 	if err != nil {
 		t.Fatalf("rm by project failed: %v", err)
 	}
@@ -147,11 +147,11 @@ func TestRm_ByProject(t *testing.T) {
 // TestRm_RemovesVolumes verifies associated volumes deleted
 func TestRm_RemovesVolumes(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create container with volumes
-	runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 
 	// Verify volumes exist
 	if !volumeExists(containerName + "-config") {
@@ -159,7 +159,7 @@ func TestRm_RemovesVolumes(t *testing.T) {
 	}
 
 	// Remove
-	runClaucker("rm", "-n", containerName)
+	runClawker("rm", "-n", containerName)
 
 	// Volumes should be removed
 	if volumeExists(containerName + "-config") {
@@ -170,17 +170,17 @@ func TestRm_RemovesVolumes(t *testing.T) {
 // TestRm_ForceRunning verifies force removes running container
 func TestRm_ForceRunning(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start running container
-	runClaucker("start", "--detach", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
 
 	// Force remove
-	_, err := runClaucker("rm", "-f", "-n", containerName)
+	_, err := runClawker("rm", "-f", "-n", containerName)
 	if err != nil {
 		t.Fatalf("rm -f failed: %v", err)
 	}
@@ -191,21 +191,21 @@ func TestRm_ForceRunning(t *testing.T) {
 }
 
 // TestRm_RunningWithoutForce verifies running container is gracefully stopped then removed
-// NOTE: Unlike docker rm, claucker rm first tries to stop running containers gracefully.
+// NOTE: Unlike docker rm, clawker rm first tries to stop running containers gracefully.
 // The -f flag is only needed if the graceful stop fails.
 func TestRm_RunningWithoutForce(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start running container
-	runClaucker("start", "--detach", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
 
 	// Remove without force - should succeed (gracefully stops first)
-	_, err := runClaucker("rm", "-n", containerName)
+	_, err := runClawker("rm", "-n", containerName)
 	if err != nil {
 		t.Fatalf("rm without -f failed: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRm_RunningWithoutForce(t *testing.T) {
 // TestRm_NonExistent verifies graceful error for missing container
 func TestRm_NonExistent(t *testing.T) {
 	// Remove non-existent container
-	_, err := runClaucker("rm", "-n", "claucker.nonexistent.agent")
+	_, err := runClawker("rm", "-n", "clawker.nonexistent.agent")
 	// Should return error but not panic
 	if err == nil {
 		t.Error("expected error when removing non-existent container")

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/pkg/build/registry"
-	"github.com/schmitthub/claucker/pkg/build/semver"
+	"github.com/schmitthub/clawker/pkg/build/registry"
+	"github.com/schmitthub/clawker/pkg/build/semver"
 )
 
 const (

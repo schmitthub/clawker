@@ -4,13 +4,16 @@
 
 1. Create package: `pkg/cmd/<cmdname>/<cmdname>.go`
 2. Define options struct:
+
    ```go
    type CmdOptions struct {
        Agent string  // --agent flag (common for container commands)
        // other flags
    }
    ```
+
 3. Create command function with Example field:
+
    ```go
    func NewCmd<Name>(f *cmdutil.Factory) *cobra.Command {
        opts := &CmdOptions{}
@@ -18,10 +21,12 @@
            Use:   "<cmdname>",
            Short: "Brief description",
            Example: `  # Basic usage
-  claucker <cmdname>
 
-  # With agent flag
-  claucker <cmdname> --agent ralph`,
+  clawker <cmdname>
+
+# With agent flag
+
+  clawker <cmdname> --agent ralph`,
            RunE: func(cmd *cobra.Command, args []string) error {
                return run<Name>(f, opts)
            },
@@ -31,6 +36,7 @@
        // cmd.MarkFlagsOneRequired("name", "project")
        return cmd
    }
+
    ```
 4. Register in `pkg/cmd/root/root.go`:
    ```go
@@ -61,7 +67,7 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
         containerID = existing.ID
     } else {
         // Find containers for project
-        containers, _ := eng.ListClauckerContainersByProject(cfg.Project, true)
+        containers, _ := eng.ListClawkerContainersByProject(cfg.Project, true)
         if len(containers) == 0 {
             return fmt.Errorf("no containers found")
         }
@@ -108,7 +114,7 @@ mounts := strategy.GetMounts()
 
 ```bash
 # Build
-go build -o bin/claucker ./cmd/claucker
+go build -o bin/clawker ./cmd/clawker
 
 # Run all tests
 go test ./...

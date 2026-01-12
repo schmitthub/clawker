@@ -3,6 +3,7 @@
 ## Command Structure
 
 Every command should have:
+
 1. `Use` - Command name and args pattern
 2. `Short` - One-line description
 3. `Long` - Detailed description (optional)
@@ -13,10 +14,10 @@ Every command should have:
 
 ```go
 Example: `  # Basic usage
-  claucker <cmd>
+  clawker <cmd>
 
   # With flags
-  claucker <cmd> --flag value`,
+  clawker <cmd> --flag value`,
 ```
 
 Note: Indent examples with 2 spaces for proper help formatting.
@@ -51,6 +52,7 @@ cmd.MarkFlagRequired("config")                 // Always required
 ## Related Documentation
 
 See `.claude/docs/CLI-VERBS.md` for the complete CLI verbs reference, including:
+
 - All command flags and examples
 - Known UX issues and recommendations
 - New command checklist template

@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-const testProject = "claucker-test"
+const testProject = "clawker-test"
 
 var (
-	clauckerBin string
+	clawkerBin  string
 	testdataDir string
 )
 
@@ -29,13 +29,13 @@ func TestMain(m *testing.M) {
 	// Find repo root
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
-	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
+	clawkerBin = filepath.Join(repoRoot, "bin", "clawker")
 	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "prune", "testdata")
 
 	// Build CLI if needed
-	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {
-		fmt.Println("Building claucker binary...")
-		cmd := exec.Command("go", "build", "-o", clauckerBin, "./cmd/claucker")
+	if _, err := os.Stat(clawkerBin); os.IsNotExist(err) {
+		fmt.Println("Building clawker binary...")
+		cmd := exec.Command("go", "build", "-o", clawkerBin, "./cmd/clawker")
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Failed to build: %v\n%s\n", err, out)
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 	// Build test image once
 	fmt.Println("Building test image...")
-	if out, err := runClaucker("build"); err != nil {
+	if out, err := runClawker("build"); err != nil {
 		fmt.Printf("Failed to build test image: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
@@ -93,9 +93,9 @@ func cleanup(containerName string) {
 	exec.Command("docker", "volume", "rm", containerName+"-history").Run()
 }
 
-func runClaucker(args ...string) (string, error) {
+func runClawker(args ...string) (string, error) {
 	fullArgs := append([]string{"--workdir", testdataDir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -103,11 +103,11 @@ func runClaucker(args ...string) (string, error) {
 // TestPrune_RemovesStoppedContainers verifies stopped containers are removed
 func TestPrune_RemovesStoppedContainers(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create stopped container
-	_, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	_, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestPrune_RemovesStoppedContainers(t *testing.T) {
 	}
 
 	// Run prune (default mode - removes stopped containers)
-	_, err = runClaucker("prune")
+	_, err = runClawker("prune")
 	if err != nil {
 		t.Fatalf("prune failed: %v", err)
 	}
@@ -131,11 +131,11 @@ func TestPrune_RemovesStoppedContainers(t *testing.T) {
 // TestPrune_SkipsRunningContainers verifies running containers are NOT removed
 func TestPrune_SkipsRunningContainers(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start running container
-	_, err := runClaucker("start", "--detach", "--agent", agent)
+	_, err := runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestPrune_SkipsRunningContainers(t *testing.T) {
 	}
 
 	// Run prune
-	runClaucker("prune")
+	runClawker("prune")
 
 	// Verify running container was NOT removed
 	if !containerRunning(containerName) {
@@ -156,11 +156,11 @@ func TestPrune_SkipsRunningContainers(t *testing.T) {
 // TestPrune_DefaultNoVolumes verifies volumes are NOT removed without --all
 func TestPrune_DefaultNoVolumes(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create container with volumes, then stop it
-	_, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	_, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPrune_DefaultNoVolumes(t *testing.T) {
 	}
 
 	// Run prune (default mode - should NOT remove volumes)
-	runClaucker("prune")
+	runClawker("prune")
 
 	// Verify volumes are preserved
 	if !volumeExists(configVolume) {
@@ -182,11 +182,11 @@ func TestPrune_DefaultNoVolumes(t *testing.T) {
 // TestPrune_AllRemovesVolumes verifies --all removes volumes
 func TestPrune_AllRemovesVolumes(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create container with volumes, then stop it
-	_, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	_, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestPrune_AllRemovesVolumes(t *testing.T) {
 	}
 
 	// Run prune --all --force (skip prompt)
-	_, err = runClaucker("prune", "--all", "--force")
+	_, err = runClawker("prune", "--all", "--force")
 	if err != nil {
 		t.Fatalf("prune --all failed: %v", err)
 	}
@@ -216,11 +216,11 @@ func TestPrune_AllRemovesVolumes(t *testing.T) {
 // TestPrune_AllRemovesContainers verifies --all removes stopped containers
 func TestPrune_AllRemovesContainers(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create stopped container
-	_, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	_, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestPrune_AllRemovesContainers(t *testing.T) {
 	}
 
 	// Run prune --all --force
-	_, err = runClaucker("prune", "--all", "--force")
+	_, err = runClawker("prune", "--all", "--force")
 	if err != nil {
 		t.Fatalf("prune --all failed: %v", err)
 	}
@@ -243,13 +243,13 @@ func TestPrune_AllRemovesContainers(t *testing.T) {
 
 // TestPrune_NoResources verifies graceful handling when nothing to prune
 func TestPrune_NoResources(t *testing.T) {
-	// Run prune with no claucker resources
-	out, err := runClaucker("prune")
+	// Run prune with no clawker resources
+	out, err := runClawker("prune")
 	if err != nil {
 		t.Fatalf("prune failed with no resources: %v", err)
 	}
 
-	// Should not error, may output "No claucker resources to remove"
+	// Should not error, may output "No clawker resources to remove"
 	if strings.Contains(out, "error") || strings.Contains(out, "Error") {
 		t.Errorf("unexpected error in output: %s", out)
 	}
@@ -258,11 +258,11 @@ func TestPrune_NoResources(t *testing.T) {
 // TestPrune_ForceSkipsPrompt verifies --force skips confirmation
 func TestPrune_ForceSkipsPrompt(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Create stopped container with volumes
-	_, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	_, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestPrune_ForceSkipsPrompt(t *testing.T) {
 	// Run prune --all --force (should not hang waiting for input)
 	done := make(chan bool, 1)
 	go func() {
-		runClaucker("prune", "--all", "--force")
+		runClawker("prune", "--all", "--force")
 		done <- true
 	}()
 

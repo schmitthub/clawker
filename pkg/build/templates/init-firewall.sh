@@ -125,7 +125,7 @@ else
     echo "Note: host.docker.internal not available (not running on Docker Desktop)"
 fi
 
-# Allow full access to Docker bridge networks (e.g., claucker-net)
+# Allow full access to Docker bridge networks (e.g., clawker-net)
 # These show up as non-default routes when container is connected to user-defined networks
 echo "Detecting Docker bridge networks..."
 while read -r network; do

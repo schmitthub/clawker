@@ -1,5 +1,5 @@
 version: "1"
-project: "claucker-test"
+project: "clawker-test"
 
 build:
   image: "alpine:latest"

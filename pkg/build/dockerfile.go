@@ -11,10 +11,10 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/build/registry"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/build/registry"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Embedded templates for Dockerfile generation
@@ -242,7 +242,7 @@ func (m *DockerfileManager) DockerfilesDir() string {
 	return filepath.Join(m.outputDir, "dockerfiles")
 }
 
-// ProjectGenerator creates Dockerfiles dynamically from project configuration (claucker.yaml).
+// ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
 	config  *config.Config
 	workDir string

@@ -3,15 +3,15 @@ package root
 import (
 	"testing"
 
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 func TestNewCmdRoot(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdRoot(f)
 
-	if cmd.Use != "claucker" {
-		t.Errorf("expected Use 'claucker', got '%s'", cmd.Use)
+	if cmd.Use != "clawker" {
+		t.Errorf("expected Use 'clawker', got '%s'", cmd.Use)
 	}
 
 	if cmd.Version != "1.0.0" {
@@ -26,7 +26,7 @@ func TestNewCmdRoot(t *testing.T) {
 		"start":  false,
 		"run":    false,
 		"stop":   false,
-		"sh":     false,
+		"shell":  false,
 		"logs":   false,
 		"config": false,
 	}

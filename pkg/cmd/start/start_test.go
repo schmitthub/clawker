@@ -3,7 +3,7 @@ package start
 import (
 	"testing"
 
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 func TestNewCmdStart(t *testing.T) {

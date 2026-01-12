@@ -7,7 +7,7 @@ import (
 )
 
 func TestValidatorValidVersion(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestValidatorValidVersion(t *testing.T) {
 }
 
 func TestValidatorValidProject(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestValidatorValidProject(t *testing.T) {
 }
 
 func TestValidatorValidBuild(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestValidatorValidBuild(t *testing.T) {
 }
 
 func TestValidatorValidWorkspace(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestValidatorValidWorkspace(t *testing.T) {
 }
 
 func TestValidatorValidAgent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestValidatorValidAgent(t *testing.T) {
 }
 
 func TestValidatorValidSecurity(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestMultiValidationError(t *testing.T) {
 }
 
 func TestValidatorCompleteConfig(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestValidatorCompleteConfig(t *testing.T) {
 }
 
 func TestValidatorValidInstructions(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestValidatorValidInstructions(t *testing.T) {
 }
 
 func TestValidatorValidInject(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

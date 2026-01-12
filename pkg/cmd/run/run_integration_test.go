@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-const testProject = "claucker-test"
+const testProject = "clawker-test"
 
 var (
-	clauckerBin string // Absolute path to claucker binary
+	clawkerBin  string // Absolute path to clawker binary
 	testdataDir string // Absolute path to testdata directory
 )
 
@@ -26,16 +26,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Find repo root (where bin/claucker lives)
+	// Find repo root (where bin/clawker lives)
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
-	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
+	clawkerBin = filepath.Join(repoRoot, "bin", "clawker")
 	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "run", "testdata")
 
 	// Build CLI if needed
-	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {
-		fmt.Println("Building claucker binary...")
-		cmd := exec.Command("go", "build", "-o", clauckerBin, "./cmd/claucker")
+	if _, err := os.Stat(clawkerBin); os.IsNotExist(err) {
+		fmt.Println("Building clawker binary...")
+		cmd := exec.Command("go", "build", "-o", clawkerBin, "./cmd/clawker")
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Failed to build: %v\n%s\n", err, out)
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 	// Build test image once
 	fmt.Println("Building test image...")
-	if out, err := runClaucker("build"); err != nil {
+	if out, err := runClawker("build"); err != nil {
 		fmt.Printf("Failed to build test image: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
@@ -88,17 +88,17 @@ func cleanup(containerName string) {
 	exec.Command("docker", "volume", "rm", containerName+"-history").Run()
 }
 
-func runClaucker(args ...string) (string, error) {
-	// Use --workdir to point to testdata directory with claucker.yaml
+func runClawker(args ...string) (string, error) {
+	// Use --workdir to point to testdata directory with clawker.yaml
 	fullArgs := append([]string{"--workdir", testdataDir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func runClauckerWithWorkdir(workdir string, args ...string) (string, error) {
+func runClawkerWithWorkdir(workdir string, args ...string) (string, error) {
 	fullArgs := append([]string{"--workdir", workdir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -106,11 +106,11 @@ func runClauckerWithWorkdir(workdir string, args ...string) (string, error) {
 // TestRun_DefaultCleanup verifies that run removes container AND volumes on exit by default
 func TestRun_DefaultCleanup(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Run a quick command
-	out, err := runClaucker("run", "--agent", agent, "--", "echo", "hello")
+	out, err := runClawker("run", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -132,10 +132,10 @@ func TestRun_DefaultCleanup(t *testing.T) {
 // TestRun_KeepFlag verifies that --keep preserves container and volumes
 func TestRun_KeepFlag(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	out, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -157,10 +157,10 @@ func TestRun_KeepFlag(t *testing.T) {
 // TestRun_BindMode verifies bind mode does NOT create workspace volume
 func TestRun_BindMode(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("run", "--keep", "--mode=bind", "--agent", agent, "--", "echo", "hello")
+	out, err := runClawker("run", "--keep", "--mode=bind", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -174,10 +174,10 @@ func TestRun_BindMode(t *testing.T) {
 // TestRun_SnapshotMode verifies snapshot mode creates workspace volume
 func TestRun_SnapshotMode(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("run", "--keep", "--mode=snapshot", "--agent", agent, "--", "echo", "hello")
+	out, err := runClawker("run", "--keep", "--mode=snapshot", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -188,32 +188,32 @@ func TestRun_SnapshotMode(t *testing.T) {
 	}
 }
 
-// TestRun_ContainerLabels verifies container has correct claucker labels
+// TestRun_ContainerLabels verifies container has correct clawker labels
 func TestRun_ContainerLabels(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	out, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
 
 	// Check labels
 	labelOut, _ := exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.managed\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.managed\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != "true" {
-		t.Errorf("expected com.claucker.managed=true label, got %q", string(labelOut))
+		t.Errorf("expected com.clawker.managed=true label, got %q", string(labelOut))
 	}
 
 	labelOut, _ = exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.project\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.project\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != testProject {
 		t.Errorf("expected project label %s, got %q", testProject, string(labelOut))
 	}
 
 	labelOut, _ = exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.agent\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.agent\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != agent {
 		t.Errorf("expected agent label %s, got %q", agent, string(labelOut))
 	}
@@ -222,12 +222,12 @@ func TestRun_ContainerLabels(t *testing.T) {
 // TestRun_ExitCode verifies container exit code is propagated
 func TestRun_ExitCode(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Run command that exits with code 42
 	fullArgs := []string{"--workdir", testdataDir, "run", "--agent", agent, "--", "sh", "-c", "exit 42"}
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	err := cmd.Run()
 
 	if exitErr, ok := err.(*exec.ExitError); ok {

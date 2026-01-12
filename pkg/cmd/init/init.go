@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -22,18 +22,18 @@ func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
-		Short: "Initialize a new Claucker project",
-		Long: `Creates a claucker.yaml configuration file and .clauckerignore in the current directory.
+		Short: "Initialize a new Clawker project",
+		Long: `Creates a clawker.yaml configuration file and .clawkerignore in the current directory.
 
 If no project name is provided, the current directory name will be used.`,
 		Example: `  # Use current directory name as project
-  claucker init
+  clawker init
 
   # Use "my-project" as project name
-  claucker init my-project
+  clawker init my-project
 
   # Overwrite existing configuration
-  claucker init --force`,
+  clawker init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(f, opts, args)
@@ -71,12 +71,12 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 		cmdutil.PrintError("%s already exists", config.ConfigFileName)
 		cmdutil.PrintNextSteps(
 			"Use --force to overwrite the existing configuration",
-			"Or edit the existing claucker.yaml manually",
+			"Or edit the existing clawker.yaml manually",
 		)
 		return fmt.Errorf("configuration already exists")
 	}
 
-	// Create claucker.yaml
+	// Create clawker.yaml
 	configPath := loader.ConfigPath()
 	configContent := fmt.Sprintf(config.DefaultConfigYAML, projectName)
 
@@ -86,7 +86,7 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 
 	logger.Info().Str("file", configPath).Msg("created configuration file")
 
-	// Create .clauckerignore
+	// Create .clawkerignore
 	ignorePath := loader.IgnorePath()
 	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
@@ -96,21 +96,21 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 	}
 
 	// Success output
-	fmt.Fprintln(os.Stderr, "Claucker project initialized!")
+	fmt.Fprintln(os.Stderr, "Clawker project initialized!")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.ConfigFileName)
 	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.IgnoreFileName)
 	fmt.Fprintf(os.Stderr, "  Project: %s\n", projectName)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Next Steps:")
-	fmt.Fprintln(os.Stderr, "  1. Review and customize claucker.yaml")
-	fmt.Fprintln(os.Stderr, "  2. Run 'claucker start' to start Claude in a container")
+	fmt.Fprintln(os.Stderr, "  1. Review and customize clawker.yaml")
+	fmt.Fprintln(os.Stderr, "  2. Run 'clawker start' to start Claude in a container")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Quick Reference:")
-	fmt.Fprintln(os.Stderr, "  claucker start               # Start Claude (default: bind mode)")
-	fmt.Fprintln(os.Stderr, "  claucker start --mode=snapshot   # Start in isolated snapshot mode")
-	fmt.Fprintln(os.Stderr, "  claucker stop                # Stop the container")
-	fmt.Fprintln(os.Stderr, "  claucker sh                  # Open shell in running container")
+	fmt.Fprintln(os.Stderr, "  clawker start               # Start Claude (default: bind mode)")
+	fmt.Fprintln(os.Stderr, "  clawker start --mode=snapshot   # Start in isolated snapshot mode")
+	fmt.Fprintln(os.Stderr, "  clawker stop                # Stop the container")
+	fmt.Fprintln(os.Stderr, "  clawker sh                  # Open shell in running container")
 
 	return nil
 }

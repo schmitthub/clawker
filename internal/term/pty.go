@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/docker/docker/api/types"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // PTYHandler manages the pseudo-terminal connection to a container

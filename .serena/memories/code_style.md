@@ -11,7 +11,7 @@
 ## Logging
 
 - Use `zerolog` for all logging (never `fmt.Print` for debug)
-- Import via `github.com/schmitthub/claucker/pkg/logger`
+- Import via `github.com/schmitthub/clawker/pkg/logger`
 
 ## Error Handling
 

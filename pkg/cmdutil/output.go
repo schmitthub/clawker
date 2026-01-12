@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/engine"
+	"github.com/schmitthub/clawker/internal/engine"
 )
 
 // HandleError prints an error to stderr with user-friendly formatting.

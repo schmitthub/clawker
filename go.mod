@@ -1,4 +1,4 @@
-module github.com/schmitthub/claucker
+module github.com/schmitthub/clawker
 
 go 1.25
 

@@ -2,7 +2,7 @@
 package build
 
 import (
-	"github.com/schmitthub/claucker/pkg/build/registry"
+	"github.com/schmitthub/clawker/pkg/build/registry"
 )
 
 // Re-export error types from registry for convenience.

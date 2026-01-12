@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/docker/docker/api/types/mount"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // BindStrategy implements Strategy for direct host mount (live sync)

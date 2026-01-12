@@ -3,7 +3,7 @@ package stop
 import (
 	"testing"
 
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 func TestNewCmdStop(t *testing.T) {

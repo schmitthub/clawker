@@ -68,5 +68,9 @@ go.work.sum
 # .idea/
 # .vscode/
 
-**/*/claucker.env
+**/*/clawker.env
 .mcp.json
+
+# serena
+.serena/cache
+.serena/logs

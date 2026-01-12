@@ -6,16 +6,16 @@ import (
 	"github.com/docker/docker/api/types/filters"
 )
 
-// Label keys for claucker-managed resources
+// Label keys for clawker-managed resources
 const (
-	LabelManaged = "com.claucker.managed"
-	LabelProject = "com.claucker.project"
-	LabelAgent   = "com.claucker.agent"
-	LabelVersion = "com.claucker.version"
-	LabelImage   = "com.claucker.image"
-	LabelCreated = "com.claucker.created"
-	LabelWorkdir = "com.claucker.workdir"
-	LabelPurpose = "com.claucker.purpose"
+	LabelManaged = "com.clawker.managed"
+	LabelProject = "com.clawker.project"
+	LabelAgent   = "com.clawker.agent"
+	LabelVersion = "com.clawker.version"
+	LabelImage   = "com.clawker.image"
+	LabelCreated = "com.clawker.created"
+	LabelWorkdir = "com.clawker.workdir"
+	LabelPurpose = "com.clawker.purpose"
 )
 
 // ContainerLabels returns labels for a new container
@@ -41,8 +41,8 @@ func VolumeLabels(project, agent, purpose string) map[string]string {
 	}
 }
 
-// ClauckerFilter returns Docker filter args for listing claucker resources
-func ClauckerFilter() filters.Args {
+// ClawkerFilter returns Docker filter args for listing clawker resources
+func ClawkerFilter() filters.Args {
 	return filters.NewArgs(
 		filters.Arg("label", LabelManaged+"=true"),
 	)

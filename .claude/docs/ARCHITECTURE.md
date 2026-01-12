@@ -1,6 +1,6 @@
-# Claucker Architecture
+# Clawker Architecture
 
-> **LLM Memory Document**: Detailed abstractions and interfaces for the claucker codebase.
+> **LLM Memory Document**: Detailed abstractions and interfaces for the clawker codebase.
 
 ## WorkspaceStrategy Interface
 
@@ -33,6 +33,7 @@ Manages raw terminal mode and bidirectional streaming for interactive Claude ses
 Location: `internal/term/pty.go`
 
 **Key behaviors:**
+
 - In raw mode, Ctrl+C does NOT generate SIGINT - it's passed as a byte to the container
 - Stream methods return immediately when output closes (container exits)
 - Does not wait for stdin goroutine (may be blocked on Read())
@@ -52,6 +53,7 @@ type TemplateData struct {
 ```
 
 **Template injection order:**
+
 1. `after_from`
 2. packages
 3. `after_packages`
@@ -88,6 +90,7 @@ func Match(versions []string, target string) (string, error)
 ```
 
 **Key behaviors:**
+
 - Supports partial versions (`2.1` matches highest `2.1.x`)
 - Prereleases sort before releases (`2.1.0-beta < 2.1.0`)
 - `Match()` finds best matching version for patterns like `latest`, `2.1`, or exact `2.1.2`
@@ -107,6 +110,7 @@ func (c *NPMClient) FetchDistTags(ctx context.Context, pkg string) (DistTags, er
 ```
 
 **Key types:**
+
 - `DistTags` - Map of tag names to versions (`latest`, `stable`, `next`)
 - `VersionInfo` - Full version metadata with variants
 - `VersionsFile` - Complete versions.json structure
@@ -128,11 +132,12 @@ func SaveVersionsFile(path string, versions *VersionsFile) error
 
 ## ConfigValidator
 
-Validates `claucker.yaml` with semantic checks beyond YAML parsing.
+Validates `clawker.yaml` with semantic checks beyond YAML parsing.
 
 Location: `internal/config/validator.go`
 
 **Validates:**
+
 - Path existence and permissions for `instructions.copy`
 - Port range validation for `instructions.expose`
 - Duration format validation for `healthcheck` intervals
@@ -149,8 +154,8 @@ cmdutil.HandleError(err)
 
 // Print numbered "Next Steps" guidance
 cmdutil.PrintNextSteps(
-    "Run 'claucker init' to create a configuration",
-    "Or change to a directory with claucker.yaml",
+    "Run 'clawker init' to create a configuration",
+    "Or change to a directory with clawker.yaml",
 )
 
 // Simple error/warning output to stderr
@@ -159,6 +164,7 @@ cmdutil.PrintWarning("Container already exists")
 ```
 
 **Key functions:**
+
 - `HandleError(err)` - If `*engine.DockerError`, uses `FormatUserError()`; otherwise prints simple message
 - `PrintNextSteps(steps...)` - Prints numbered list of actionable suggestions
 - `PrintError(format, args...)` - Prints `Error: <message>` to stderr
@@ -173,11 +179,13 @@ Manages the observability stack using Docker Compose.
 Location: `internal/monitor/`
 
 **Components:**
+
 - **Prometheus** - Metrics collection
 - **Grafana** - Dashboard visualization
 - **OpenTelemetry Collector** - Telemetry aggregation
 
 **Embedded templates** in `internal/monitor/templates/`:
+
 - `compose.yaml` - Docker Compose stack definition
 - `prometheus.yaml` - Prometheus scrape config
 - `otel-config.yaml` - OTel collector config
@@ -217,6 +225,7 @@ portBindings, exposedPorts, err := engine.ParsePortSpecs([]string{
 ```
 
 **Supported formats:**
+
 - `containerPort` - random host port to container port
 - `hostPort:containerPort` - specific host port mapping
 - `hostIP:hostPort:containerPort` - bind to specific interface
@@ -230,10 +239,12 @@ Hierarchical naming for multi-container support.
 Location: `internal/engine/names.go`, `internal/engine/labels.go`
 
 **Naming conventions:**
-- Container names: `claucker.project.agent` (e.g., `claucker.myapp.ralph`)
-- Volume names: `claucker.project.agent-purpose` (e.g., `claucker.myapp.ralph-workspace`)
+
+- Container names: `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
+- Volume names: `clawker.project.agent-purpose` (e.g., `clawker.myapp.ralph-workspace`)
 
 **Key functions:**
+
 ```go
 ContainerName(project, agent string) string
 VolumeName(project, agent, purpose string) string
@@ -245,15 +256,16 @@ GenerateRandomName() string  // Docker-style adjective-noun
 
 | Label | Purpose |
 |-------|---------|
-| `com.claucker.managed` | Marker for claucker resources |
-| `com.claucker.project` | Project name |
-| `com.claucker.agent` | Agent name |
-| `com.claucker.version` | Claucker version |
-| `com.claucker.image` | Source image tag |
-| `com.claucker.workdir` | Host working directory |
+| `com.clawker.managed` | Marker for clawker resources |
+| `com.clawker.project` | Project name |
+| `com.clawker.agent` | Agent name |
+| `com.clawker.version` | Clawker version |
+| `com.clawker.image` | Source image tag |
+| `com.clawker.workdir` | Host working directory |
 
 **Helper functions:**
+
 - `ContainerLabels(project, agent, version, image, workdir)` - creates container labels
 - `VolumeLabels(project, agent, purpose)` - creates volume labels
-- `ClauckerFilter()` - filter args for all claucker resources
+- `ClawkerFilter()` - filter args for all clawker resources
 - `ProjectFilter(project)` - filter args for specific project

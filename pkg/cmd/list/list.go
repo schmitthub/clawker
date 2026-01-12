@@ -7,9 +7,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -26,20 +26,20 @@ func NewCmdList(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "ps"},
-		Short:   "List claucker containers",
-		Long: `Lists all containers created by claucker.
+		Short:   "List clawker containers",
+		Long: `Lists all containers created by clawker.
 
 By default, shows only running containers. Use -a to show all containers.
 
-Note: Use 'claucker monitor status' for monitoring stack containers.`,
+Note: Use 'clawker monitor status' for monitoring stack containers.`,
 		Example: `  # List running containers
-  claucker list
+  clawker list
 
   # List all containers (including stopped)
-  claucker list -a
+  clawker list -a
 
   # List containers for a specific project
-  claucker list -p myproject`,
+  clawker list -p myproject`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList(f, opts)
 		},
@@ -63,11 +63,11 @@ func runList(_ *cmdutil.Factory, opts *ListOptions) error {
 	defer eng.Close()
 
 	// List containers
-	var containers []engine.ClauckerContainer
+	var containers []engine.ClawkerContainer
 	if opts.Project != "" {
-		containers, err = eng.ListClauckerContainersByProject(opts.Project, opts.All)
+		containers, err = eng.ListClawkerContainersByProject(opts.Project, opts.All)
 	} else {
-		containers, err = eng.ListClauckerContainers(opts.All)
+		containers, err = eng.ListClawkerContainers(opts.All)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)
@@ -75,9 +75,9 @@ func runList(_ *cmdutil.Factory, opts *ListOptions) error {
 
 	if len(containers) == 0 {
 		if opts.All {
-			fmt.Fprintln(os.Stderr, "No claucker containers found.")
+			fmt.Fprintln(os.Stderr, "No clawker containers found.")
 		} else {
-			fmt.Fprintln(os.Stderr, "No running claucker containers found. Use -a to show all containers.")
+			fmt.Fprintln(os.Stderr, "No running clawker containers found. Use -a to show all containers.")
 		}
 		return nil
 	}

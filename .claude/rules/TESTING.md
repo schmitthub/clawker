@@ -9,26 +9,26 @@ paths:
 
 ## Automated Integration Tests
 
-Integration tests execute actual `claucker` commands and verify Docker state (containers, volumes, labels).
-Integration tests require a `claucker.yaml` file in the current working directory
+Integration tests execute actual `clawker` commands and verify Docker state (containers, volumes, labels).
+Integration tests require a `clawker.yaml` file in the current working directory
 
 ### Location
 
 ```
 pkg/cmd/run/run_integration_test.go       # run command integration tests
-pkg/cmd/run/testdata/claucker.yaml        # test config
+pkg/cmd/run/testdata/clawker.yaml        # test config
 
 pkg/cmd/start/start_integration_test.go   # start command integration tests
-pkg/cmd/start/testdata/claucker.yaml      # test config
+pkg/cmd/start/testdata/clawker.yaml      # test config
 
 pkg/cmd/stop/stop_integration_test.go     # stop command integration tests
-pkg/cmd/stop/testdata/claucker.yaml       # test config
+pkg/cmd/stop/testdata/clawker.yaml       # test config
 
 pkg/cmd/remove/remove_integration_test.go # remove command integration tests
-pkg/cmd/remove/testdata/claucker.yaml     # test config
+pkg/cmd/remove/testdata/clawker.yaml     # test config
 
 pkg/cmd/prune/prune_integration_test.go   # prune command integration tests
-pkg/cmd/prune/testdata/claucker.yaml      # test config
+pkg/cmd/prune/testdata/clawker.yaml      # test config
 ```
 
 ### Running Tests
@@ -61,7 +61,7 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestRun_KeepFlag` | Verify `--keep` preserves container + volumes |
 | `TestRun_BindMode` | Verify bind mode creates NO workspace volume |
 | `TestRun_SnapshotMode` | Verify snapshot mode creates workspace volume |
-| `TestRun_ContainerLabels` | Verify correct `com.claucker.*` labels |
+| `TestRun_ContainerLabels` | Verify correct `com.clawker.*` labels |
 | `TestRun_ExitCode` | Verify exit code propagation |
 
 #### Start Command
@@ -73,7 +73,7 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestStart_CleanFlag` | Verify `--clean` removes existing before start |
 | `TestStart_BindMode` | Verify bind mode creates no workspace volume |
 | `TestStart_SnapshotMode` | Verify snapshot mode creates workspace volume |
-| `TestStart_ContainerLabels` | Verify correct `com.claucker.*` labels |
+| `TestStart_ContainerLabels` | Verify correct `com.clawker.*` labels |
 | `TestStart_DetachFlag` | Verify container runs in background |
 | `TestStart_PortPublish` | Verify port binding created |
 
@@ -119,14 +119,14 @@ Tests use build tag `//go:build integration` to separate from unit tests:
 - **uniqueAgent()**: Generates unique agent names to prevent collision
 - **containerExists()/volumeExists()**: Docker state verification helpers
 - **cleanup()**: Removes test containers and volumes
-- **runClaucker()**: Executes claucker with `--workdir` pointing to testdata
+- **runClawker()**: Executes clawker with `--workdir` pointing to testdata
 
 ### Adding New Integration Tests
 
 1. Add test function with `TestRun_` prefix
 2. Generate unique agent name with `uniqueAgent(t)`
 3. Defer `cleanup(containerName)` for cleanup on pass/fail
-4. Run command with `runClaucker(args...)`
+4. Run command with `runClawker(args...)`
 5. Verify Docker state with `containerExists()`/`volumeExists()`
 6. Use `docker inspect` for label verification
 
@@ -149,18 +149,18 @@ Use unique agent names (e.g., `test-<feature>-<variant>`) to isolate tests.
 
 ---
 
-## `claucker run` Tests
+## `clawker run` Tests
 
 ### Test: Default Cleanup (Container + Volumes Removed)
 
-**Purpose**: Verify that `claucker run` removes both container AND volumes on exit by default.
+**Purpose**: Verify that `clawker run` removes both container AND volumes on exit by default.
 
 ```bash
 # Setup: Note existing volumes
-docker volume ls | grep claucker
+docker volume ls | grep clawker
 
 # Execute: Run with unique agent name
-./bin/claucker run --agent test-cleanup -- ls /workspace
+./bin/clawker run --agent test-cleanup -- ls /workspace
 
 # Verify: Container removed
 docker ps -a | grep test-cleanup
@@ -184,7 +184,7 @@ docker volume ls | grep test-cleanup
 
 ```bash
 # Execute: Run with --keep flag
-./bin/claucker run --keep --agent test-keep -- ls /workspace
+./bin/clawker run --keep --agent test-keep -- ls /workspace
 
 # Verify: Container preserved (exited state)
 docker ps -a | grep test-keep
@@ -192,11 +192,11 @@ docker ps -a | grep test-keep
 
 # Verify: Volumes preserved
 docker volume ls | grep test-keep
-# Expected: Shows claucker.project.test-keep-config and claucker.project.test-keep-history
+# Expected: Shows clawker.project.test-keep-config and clawker.project.test-keep-history
 
 # Cleanup
-docker rm -f claucker.claucker.test-keep
-docker volume rm claucker.claucker.test-keep-config claucker.claucker.test-keep-history
+docker rm -f clawker.clawker.test-keep
+docker volume rm clawker.clawker.test-keep-config clawker.clawker.test-keep-history
 ```
 
 **Pass criteria**:
@@ -213,12 +213,12 @@ docker volume rm claucker.claucker.test-keep-config claucker.claucker.test-keep-
 
 ```bash
 # Bind mode (default) - no workspace volume created
-./bin/claucker run --mode=bind --agent test-bind -- ls /workspace
+./bin/clawker run --mode=bind --agent test-bind -- ls /workspace
 docker volume ls | grep test-bind
 # Expected: Only config/history volumes during run, none after exit
 
 # Snapshot mode - workspace volume created
-./bin/claucker run --mode=snapshot --agent test-snap -- ls /workspace
+./bin/clawker run --mode=snapshot --agent test-snap -- ls /workspace
 docker volume ls | grep test-snap
 # Expected: workspace/config/history volumes during run, none after exit
 ```
@@ -230,11 +230,11 @@ docker volume ls | grep test-snap
 ### Check Container State
 
 ```bash
-# List all claucker containers
-docker ps -a --filter "label=com.claucker.managed=true"
+# List all clawker containers
+docker ps -a --filter "label=com.clawker.managed=true"
 
 # Check specific agent
-docker ps -a | grep "claucker.project.agent"
+docker ps -a | grep "clawker.project.agent"
 
 # Inspect container labels
 docker inspect <container> --format '{{json .Config.Labels}}' | jq .
@@ -243,11 +243,11 @@ docker inspect <container> --format '{{json .Config.Labels}}' | jq .
 ### Check Volume State
 
 ```bash
-# List all claucker volumes
-docker volume ls | grep claucker
+# List all clawker volumes
+docker volume ls | grep clawker
 
 # Check specific agent's volumes
-docker volume ls | grep "claucker.project.agent"
+docker volume ls | grep "clawker.project.agent"
 
 # Inspect volume labels (may be null for auto-created volumes)
 docker volume inspect <volume> --format '{{json .Labels}}' | jq .
@@ -257,23 +257,23 @@ docker volume inspect <volume> --format '{{json .Labels}}' | jq .
 
 ```bash
 # Remove specific container
-docker rm -f claucker.project.agent
+docker rm -f clawker.project.agent
 
 # Remove specific volumes
-docker volume rm claucker.project.agent-workspace
-docker volume rm claucker.project.agent-config
-docker volume rm claucker.project.agent-history
+docker volume rm clawker.project.agent-workspace
+docker volume rm clawker.project.agent-config
+docker volume rm clawker.project.agent-history
 
 # Remove all test artifacts for an agent
-docker rm -f claucker.project.agent 2>/dev/null
-docker volume rm claucker.project.agent-{workspace,config,history} 2>/dev/null
+docker rm -f clawker.project.agent 2>/dev/null
+docker volume rm clawker.project.agent-{workspace,config,history} 2>/dev/null
 ```
 
 ---
 
 ## Volume Naming Convention
 
-Volumes follow the pattern: `claucker.{project}.{agent}-{purpose}`
+Volumes follow the pattern: `clawker.{project}.{agent}-{purpose}`
 
 | Purpose | Path in Container | Created When |
 |---------|-------------------|--------------|
@@ -281,7 +281,7 @@ Volumes follow the pattern: `claucker.{project}.{agent}-{purpose}`
 | `config` | `/home/claude/.claude` | Always |
 | `history` | `/commandhistory` | Always |
 
-All volumes (config, history, workspace) are created explicitly with `com.claucker.*` labels, enabling proper cleanup via label-based filtering in `RemoveContainerWithVolumes()`.
+All volumes (config, history, workspace) are created explicitly with `com.clawker.*` labels, enabling proper cleanup via label-based filtering in `RemoveContainerWithVolumes()`.
 
 ---
 
@@ -290,7 +290,7 @@ All volumes (config, history, workspace) are created explicitly with `com.clauck
 1. **Use unique agent names** - Prevents collision with existing containers/volumes
 2. **Check state before AND after** - Confirms the test caused the change
 3. **Clean up regardless of pass/fail** - Use cleanup commands even if test fails
-4. **Use timeout for hanging commands** - `timeout 60 ./bin/claucker run ...`
+4. **Use timeout for hanging commands** - `timeout 60 ./bin/clawker run ...`
 5. **Capture exit codes** - `echo "Exit: $?"` after commands
 
 ---
@@ -302,7 +302,7 @@ When documenting new manual tests, include:
 1. **Test name** - Short descriptive name
 2. **Purpose** - What behavior is being verified
 3. **Setup commands** - Initial state checks
-4. **Execute commands** - The actual claucker command(s)
+4. **Execute commands** - The actual clawker command(s)
 5. **Verify commands** - How to check the outcome
 6. **Expected output** - What success looks like
 7. **Pass criteria** - Explicit conditions for pass/fail

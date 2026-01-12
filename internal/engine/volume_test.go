@@ -173,7 +173,7 @@ func TestMatchPattern(t *testing.T) {
 }
 
 func TestLoadIgnorePatternsNonexistent(t *testing.T) {
-	patterns, err := LoadIgnorePatterns("/nonexistent/path/.clauckerignore")
+	patterns, err := LoadIgnorePatterns("/nonexistent/path/.clawkerignore")
 	if err != nil {
 		t.Errorf("LoadIgnorePatterns() should not error for nonexistent file, got %v", err)
 	}

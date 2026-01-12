@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-const testProject = "claucker-test"
+const testProject = "clawker-test"
 
 var (
-	clauckerBin string
+	clawkerBin  string
 	testdataDir string
 )
 
@@ -29,13 +29,13 @@ func TestMain(m *testing.M) {
 	// Find repo root
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
-	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
+	clawkerBin = filepath.Join(repoRoot, "bin", "clawker")
 	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "start", "testdata")
 
 	// Build CLI if needed
-	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {
-		fmt.Println("Building claucker binary...")
-		cmd := exec.Command("go", "build", "-o", clauckerBin, "./cmd/claucker")
+	if _, err := os.Stat(clawkerBin); os.IsNotExist(err) {
+		fmt.Println("Building clawker binary...")
+		cmd := exec.Command("go", "build", "-o", clawkerBin, "./cmd/clawker")
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Failed to build: %v\n%s\n", err, out)
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 	// Build test image once
 	fmt.Println("Building test image...")
-	if out, err := runClaucker("build"); err != nil {
+	if out, err := runClawker("build"); err != nil {
 		fmt.Printf("Failed to build test image: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
@@ -104,9 +104,9 @@ func cleanup(containerName string) {
 	exec.Command("docker", "volume", "rm", containerName+"-history").Run()
 }
 
-func runClaucker(args ...string) (string, error) {
+func runClawker(args ...string) (string, error) {
 	fullArgs := append([]string{"--workdir", testdataDir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -114,10 +114,10 @@ func runClaucker(args ...string) (string, error) {
 // TestStart_CreatesContainer verifies first start creates container + volumes
 func TestStart_CreatesContainer(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("start", "--detach", "--agent", agent)
+	out, err := runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start failed: %v\n%s", err, out)
 	}
@@ -133,19 +133,19 @@ func TestStart_CreatesContainer(t *testing.T) {
 		t.Error("expected history volume")
 	}
 
-	if !networkExists("claucker-net") {
-		t.Error("expected claucker-net network")
+	if !networkExists("clawker-net") {
+		t.Error("expected clawker-net network")
 	}
 }
 
 // TestStart_Idempotent verifies second start reuses existing container
 func TestStart_Idempotent(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// First start
-	_, err := runClaucker("start", "--detach", "--agent", agent)
+	_, err := runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("first start failed: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestStart_Idempotent(t *testing.T) {
 	exec.Command("docker", "stop", containerName).Run()
 
 	// Second start should reuse
-	_, err = runClaucker("start", "--detach", "--agent", agent)
+	_, err = runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("second start failed: %v", err)
 	}
@@ -170,18 +170,18 @@ func TestStart_Idempotent(t *testing.T) {
 // TestStart_CleanFlag verifies --clean removes existing before start
 func TestStart_CleanFlag(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// First start
-	runClaucker("start", "--detach", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
 	id1, _ := exec.Command("docker", "inspect", containerName, "--format", "{{.Id}}").Output()
 
 	// Stop
 	exec.Command("docker", "stop", containerName).Run()
 
 	// Start with --clean
-	_, err := runClaucker("start", "--detach", "--clean", "--agent", agent)
+	_, err := runClawker("start", "--detach", "--clean", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start --clean failed: %v", err)
 	}
@@ -195,10 +195,10 @@ func TestStart_CleanFlag(t *testing.T) {
 // TestStart_BindMode verifies bind mode creates no workspace volume
 func TestStart_BindMode(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("start", "--detach", "--mode=bind", "--agent", agent)
+	out, err := runClawker("start", "--detach", "--mode=bind", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start --mode=bind failed: %v\n%s", err, out)
 	}
@@ -211,10 +211,10 @@ func TestStart_BindMode(t *testing.T) {
 // TestStart_SnapshotMode verifies snapshot mode creates workspace volume
 func TestStart_SnapshotMode(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("start", "--detach", "--mode=snapshot", "--agent", agent)
+	out, err := runClawker("start", "--detach", "--mode=snapshot", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start --mode=snapshot failed: %v\n%s", err, out)
 	}
@@ -224,31 +224,31 @@ func TestStart_SnapshotMode(t *testing.T) {
 	}
 }
 
-// TestStart_ContainerLabels verifies correct claucker labels
+// TestStart_ContainerLabels verifies correct clawker labels
 func TestStart_ContainerLabels(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClaucker("start", "--detach", "--agent", agent)
+	out, err := runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start failed: %v\n%s", err, out)
 	}
 
 	labelOut, _ := exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.managed\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.managed\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != "true" {
-		t.Errorf("expected com.claucker.managed=true, got %q", string(labelOut))
+		t.Errorf("expected com.clawker.managed=true, got %q", string(labelOut))
 	}
 
 	labelOut, _ = exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.project\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.project\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != testProject {
 		t.Errorf("expected project label %s, got %q", testProject, string(labelOut))
 	}
 
 	labelOut, _ = exec.Command("docker", "inspect", containerName,
-		"--format", "{{index .Config.Labels \"com.claucker.agent\"}}").Output()
+		"--format", "{{index .Config.Labels \"com.clawker.agent\"}}").Output()
 	if strings.TrimSpace(string(labelOut)) != agent {
 		t.Errorf("expected agent label %s, got %q", agent, string(labelOut))
 	}
@@ -257,10 +257,10 @@ func TestStart_ContainerLabels(t *testing.T) {
 // TestStart_DetachFlag verifies container runs in background
 func TestStart_DetachFlag(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	_, err := runClaucker("start", "--detach", "--agent", agent)
+	_, err := runClawker("start", "--detach", "--agent", agent)
 	if err != nil {
 		t.Fatalf("start --detach failed: %v", err)
 	}
@@ -273,10 +273,10 @@ func TestStart_DetachFlag(t *testing.T) {
 // TestStart_PortPublish verifies port binding created
 func TestStart_PortPublish(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	_, err := runClaucker("start", "--detach", "--agent", agent, "-p", "18080:8080")
+	_, err := runClawker("start", "--detach", "--agent", agent, "-p", "18080:8080")
 	if err != nil {
 		t.Fatalf("start with port failed: %v", err)
 	}

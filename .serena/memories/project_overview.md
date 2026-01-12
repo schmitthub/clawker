@@ -1,9 +1,11 @@
-# Claucker Project Overview
+# Clawker Project Overview
 
 ## Purpose
-Claucker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers. Core philosophy: "Safe Autonomy" - host system is read-only by default.
+
+Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers. Core philosophy: "Safe Autonomy" - host system is read-only by default.
 
 ## Tech Stack
+
 - **Language**: Go
 - **CLI Framework**: Cobra
 - **Logging**: Zerolog
@@ -11,14 +13,17 @@ Claucker is a Go CLI tool that wraps the Claude Code agent in secure, reproducib
 - **Container Runtime**: Docker SDK
 
 ## Multi-Container Support
-Claucker supports multiple containers per project using **agents**:
-- Container naming: `claucker.project.agent` (e.g., `claucker.myapp.ralph`)
-- Volume naming: `claucker.project.agent-purpose` (e.g., `claucker.myapp.ralph-workspace`)
-- Docker labels (`com.claucker.*`) enable reliable filtering and identification
+
+Clawker supports multiple containers per project using **agents**:
+
+- Container naming: `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
+- Volume naming: `clawker.project.agent-purpose` (e.g., `clawker.myapp.ralph-workspace`)
+- Docker labels (`com.clawker.*`) enable reliable filtering and identification
 - Random agent names generated if `--agent` flag not specified
 
 ## Key Packages
-- `cmd/claucker/` - Main entry point
+
+- `cmd/clawker/` - Main entry point
 - `pkg/cmd/` - Cobra commands (start, run, stop, ls, rm, sh, logs, etc.)
 - `internal/config/` - Viper configuration loading and validation
 - `internal/engine/` - Docker SDK abstractions
@@ -36,12 +41,13 @@ Claucker supports multiple containers per project using **agents**:
 - `pkg/cmdutil/` - Factory pattern for command dependencies
 
 ## CLI Commands
+
 | Command | Purpose |
 |---------|---------|
-| `claucker start --agent <name>` | Start named container |
-| `claucker run --agent <name>` | Run ephemeral container |
-| `claucker stop --agent <name>` | Stop specific or all containers |
-| `claucker ls -a -p <project>` | List containers |
-| `claucker rm -n <name> -p <project>` | Remove containers |
-| `claucker sh/logs --agent <name>` | Shell/logs for specific agent |
-| `claucker monitor init/up/down/status` | Manage observability stack |
+| `clawker start --agent <name>` | Start named container |
+| `clawker run --agent <name>` | Run ephemeral container |
+| `clawker stop --agent <name>` | Stop specific or all containers |
+| `clawker ls -a -p <project>` | List containers |
+| `clawker rm -n <name> -p <project>` | Remove containers |
+| `clawker sh/logs --agent <name>` | Shell/logs for specific agent |
+| `clawker monitor init/up/down/status` | Manage observability stack |

@@ -8,7 +8,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/go-connections/nat"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // ContainerManager handles container lifecycle operations

@@ -15,7 +15,7 @@ func TestNewLoader(t *testing.T) {
 
 func TestLoaderConfigPath(t *testing.T) {
 	loader := NewLoader("/test/path")
-	expected := "/test/path/claucker.yaml"
+	expected := "/test/path/clawker.yaml"
 	if loader.ConfigPath() != expected {
 		t.Errorf("Loader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
 	}
@@ -23,7 +23,7 @@ func TestLoaderConfigPath(t *testing.T) {
 
 func TestLoaderIgnorePath(t *testing.T) {
 	loader := NewLoader("/test/path")
-	expected := "/test/path/.clauckerignore"
+	expected := "/test/path/.clawkerignore"
 	if loader.IgnorePath() != expected {
 		t.Errorf("Loader.IgnorePath() = %q, want %q", loader.IgnorePath(), expected)
 	}
@@ -31,7 +31,7 @@ func TestLoaderIgnorePath(t *testing.T) {
 
 func TestLoaderExists(t *testing.T) {
 	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestLoaderExists(t *testing.T) {
 }
 
 func TestLoaderLoadMissingFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestLoaderLoadMissingFile(t *testing.T) {
 }
 
 func TestLoaderLoadValidConfig(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -132,7 +132,7 @@ security:
 }
 
 func TestLoaderLoadWithDefaults(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -172,7 +172,7 @@ project: "minimal-project"
 }
 
 func TestLoaderLoadInvalidYAML(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "claucker-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -198,9 +198,9 @@ project: "test
 }
 
 func TestConfigNotFoundError(t *testing.T) {
-	err := &ConfigNotFoundError{Path: "/test/claucker.yaml"}
+	err := &ConfigNotFoundError{Path: "/test/clawker.yaml"}
 
-	expected := "configuration file not found: /test/claucker.yaml"
+	expected := "configuration file not found: /test/clawker.yaml"
 	if err.Error() != expected {
 		t.Errorf("ConfigNotFoundError.Error() = %q, want %q", err.Error(), expected)
 	}
@@ -240,13 +240,13 @@ func TestIsConfigNotFound(t *testing.T) {
 }
 
 func TestConfigFileName(t *testing.T) {
-	if ConfigFileName != "claucker.yaml" {
-		t.Errorf("ConfigFileName = %q, want %q", ConfigFileName, "claucker.yaml")
+	if ConfigFileName != "clawker.yaml" {
+		t.Errorf("ConfigFileName = %q, want %q", ConfigFileName, "clawker.yaml")
 	}
 }
 
 func TestIgnoreFileName(t *testing.T) {
-	if IgnoreFileName != ".clauckerignore" {
-		t.Errorf("IgnoreFileName = %q, want %q", IgnoreFileName, ".clauckerignore")
+	if IgnoreFileName != ".clawkerignore" {
+		t.Errorf("IgnoreFileName = %q, want %q", IgnoreFileName, ".clawkerignore")
 	}
 }

@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/mount"
-	"github.com/schmitthub/claucker/internal/build"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/credentials"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/internal/term"
-	"github.com/schmitthub/claucker/internal/workspace"
-	pkgbuild "github.com/schmitthub/claucker/pkg/build"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/credentials"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/workspace"
+	pkgbuild "github.com/schmitthub/clawker/pkg/build"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -42,24 +42,24 @@ func NewCmdRun(f *cmdutil.Factory) *cobra.Command {
 By default, the container is removed after exit (like docker run --rm).
 Use --keep to preserve the container after exit.
 
-Unlike 'claucker start', this always creates a new container (never reuses existing).`,
+Unlike 'clawker start', this always creates a new container (never reuses existing).`,
 		Example: `  # Run claude interactively, remove on exit
-  claucker run
+  clawker run
 
   # Run claude with args, remove on exit
-  claucker run -- -p "build a feature"
+  clawker run -- -p "build a feature"
 
   # Run shell interactively, remove on exit
-  claucker run --shell
+  clawker run --shell
 
   # Run arbitrary command, remove on exit
-  claucker run -- npm test
+  clawker run -- npm test
 
   # Run claude, keep container after exit
-  claucker run --keep
+  clawker run --keep
 
   # Publish ports to access services
-  claucker run -p 8080:8080`,
+  clawker run -p 8080:8080`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -85,10 +85,10 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			cmdutil.PrintNextSteps(
-				"Run 'claucker init' to create a configuration",
-				"Or change to a directory with claucker.yaml",
+				"Run 'clawker init' to create a configuration",
+				"Or change to a directory with clawker.yaml",
 			)
 			return err
 		}
@@ -142,7 +142,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	builder := build.NewBuilder(eng, cfg, f.WorkDir)
 	buildOpts := build.Options{
 		ForceBuild: opts.Build,
-		NoCache:    false, // NoCache only available via 'claucker build'
+		NoCache:    false, // NoCache only available via 'clawker build'
 	}
 	if err := builder.EnsureImage(ctx, imageTag, buildOpts); err != nil {
 		return err
@@ -154,9 +154,9 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
-	// Ensure claucker network exists
-	if err := eng.EnsureNetwork(config.ClauckerNetwork); err != nil {
-		logger.Warn().Err(err).Msg("failed to ensure claucker network")
+	// Ensure clawker network exists
+	if err := eng.EnsureNetwork(config.ClawkerNetwork); err != nil {
+		logger.Warn().Err(err).Msg("failed to ensure clawker network")
 		// Don't fail hard, container can still run without the network
 	}
 
@@ -265,9 +265,9 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	// Add config-specified environment
 	envBuilder.SetAll(cfg.Agent.Env)
 
-	// Inject claucker identity for statusline
-	envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)
-	envBuilder.Set("CLAUCKER_AGENT", agentName)
+	// Inject clawker identity for statusline
+	envBuilder.Set("CLAWKER_PROJECT", cfg.Project)
+	envBuilder.Set("CLAWKER_AGENT", agentName)
 
 	// Load .env file if present
 	envFile := filepath.Join(workDir, ".env")
@@ -334,7 +334,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		AttachStderr: true,
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
-		NetworkMode:  config.ClauckerNetwork,
+		NetworkMode:  config.ClawkerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 		PortBindings: portBindings,
 		ExposedPorts: exposedPorts,

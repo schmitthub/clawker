@@ -25,8 +25,8 @@ func DefaultConfig() *Config {
 }
 
 // DefaultConfigYAML returns the default configuration as YAML for scaffolding
-const DefaultConfigYAML = `# Claucker Configuration
-# Documentation: https://github.com/schmitthub/claucker
+const DefaultConfigYAML = `# Clawker Configuration
+# Documentation: https://github.com/schmitthub/clawker
 
 version: "1"
 project: "%s"
@@ -68,8 +68,8 @@ security:
   #   - "registry.npmjs.org"
 `
 
-// DefaultIgnoreFile returns the default .clauckerignore content
-const DefaultIgnoreFile = `# Claucker Ignore File
+// DefaultIgnoreFile returns the default .clawkerignore content
+const DefaultIgnoreFile = `# Clawker Ignore File
 # Files matching these patterns will not be copied in snapshot mode
 # Syntax follows .gitignore conventions
 

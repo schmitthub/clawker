@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +32,13 @@ func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
 By default, stops all containers for the project. Use --agent to stop a specific agent.
 Volumes are preserved for the next session. Use --clean to remove all volumes.`,
 		Example: `  # Stop all containers for this project
-  claucker stop
+  clawker stop
 
   # Stop only the 'ralph' agent
-  claucker stop --agent ralph
+  clawker stop --agent ralph
 
   # Stop and remove all volumes
-  claucker stop --clean`,
+  clawker stop --clean`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStop(f, opts)
 		},
@@ -59,7 +59,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -83,7 +83,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	containerMgr := engine.NewContainerManager(eng)
 
 	// Get containers to stop
-	var containersToStop []engine.ClauckerContainer
+	var containersToStop []engine.ClawkerContainer
 
 	if opts.Agent != "" {
 		// Stop specific agent
@@ -93,7 +93,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
 		if existing != nil {
-			containersToStop = append(containersToStop, engine.ClauckerContainer{
+			containersToStop = append(containersToStop, engine.ClawkerContainer{
 				ID:      existing.ID,
 				Name:    containerName,
 				Project: cfg.Project,
@@ -103,7 +103,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 		}
 	} else {
 		// Stop all containers for project
-		containers, err := eng.ListClauckerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
@@ -227,7 +227,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "To start again: claucker start")
+	fmt.Fprintln(os.Stderr, "To start again: clawker start")
 
 	return nil
 }

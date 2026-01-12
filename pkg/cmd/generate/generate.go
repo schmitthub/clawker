@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/term"
-	"github.com/schmitthub/claucker/pkg/build"
-	"github.com/schmitthub/claucker/pkg/build/registry"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/pkg/build"
+	"github.com/schmitthub/clawker/pkg/build/registry"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +33,7 @@ func NewCmdGenerate(f *cmdutil.Factory) *cobra.Command {
 		Long: `Fetches Claude Code versions from npm and generates Dockerfiles.
 
 Generates versions.json and Dockerfiles for each version/variant combination.
-Files are saved to ~/.claucker/build/ (or use --output to specify a directory).
+Files are saved to ~/.clawker/build/ (or use --output to specify a directory).
 
 If no versions are specified, displays current versions.json.
 If versions are specified, fetches them from npm and generates Dockerfiles.
@@ -43,16 +43,16 @@ Version patterns:
   2.1                    Match highest 2.1.x release
   2.1.2                  Exact version match`,
 		Example: `  # Generate Dockerfiles for latest version
-  claucker generate latest
+  clawker generate latest
 
   # Generate for multiple versions
-  claucker generate latest 2.1
+  clawker generate latest 2.1
 
   # Output to specific directory
-  claucker generate --output ./build latest
+  clawker generate --output ./build latest
 
   # Show existing versions.json
-  claucker generate`,
+  clawker generate`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Debug = f.Debug
 			return runGenerate(f, opts, args)
@@ -101,7 +101,7 @@ func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) e
 		if err != nil {
 			cmdutil.PrintError("Failed to load versions.json from %s", outputDir)
 			cmdutil.PrintNextSteps(
-				"Run 'claucker generate <versions...>' to fetch versions from npm",
+				"Run 'clawker generate <versions...>' to fetch versions from npm",
 				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
 			)
 			return err
@@ -154,8 +154,8 @@ func showVersions(path string) error {
 		if os.IsNotExist(err) {
 			cmdutil.PrintError("No versions.json found")
 			cmdutil.PrintNextSteps(
-				"Run 'claucker generate latest' to fetch the latest version",
-				"Run 'claucker generate 2.1.2' to fetch a specific version",
+				"Run 'clawker generate latest' to fetch the latest version",
+				"Run 'clawker generate 2.1.2' to fetch a specific version",
 			)
 			return err
 		}
