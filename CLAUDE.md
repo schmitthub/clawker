@@ -10,11 +10,12 @@ Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core phil
 
 1. **Serena** - Code exploration, symbol search, semantic editing:
    - `initial_instructions` → `check_onboarding_performed` → `list_memories`
-   - `find_symbol`, `get_symbols_overview`, `find_referencing_symbols` for navigation
+   - `search_for_pattern`,`find_symbol`,`get_symbols_overview`,`find_referencing_symbols` for navigation
    - `think_about_collected_information` after research
    - `think_about_task_adherence` before changes
-   - `replace_symbol_body`, `insert_after_symbol` for edits
-   - `think_about_whether_you_are_done` when complete
+   - `replace_symbol_body`, `insert_after_symbol`,`insert_before_symbol`,`rename_symbol` for edits
+   - `think_about_whether_you_are_done` after task
+   - `write_memory`, `edit_memory`, `delete_memory` with updates of the task before completion
 
 2. **Context7** - Library/API docs without explicit requests:
    - `resolve-library-id` first, then `get-library-docs`

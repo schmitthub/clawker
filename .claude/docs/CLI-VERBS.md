@@ -27,12 +27,12 @@ claucker
 │   └── restart       Restart with fresh environment
 │
 ├── Inspection Commands
-│   ├── ls            List containers
+│   ├── list          List containers
 │   ├── logs          Stream container logs
-│   └── sh            Interactive shell
+│   └── shell         Interactive shell
 │
 ├── Cleanup Commands
-│   ├── rm            Remove containers and volumes
+│   ├── remove        Remove containers and volumes
 │   └── prune         Remove unused resources
 │
 ├── Configuration Commands
@@ -274,14 +274,14 @@ claucker restart --agent ralph
 
 ---
 
-### `ls`
+### `list`
 
 **Category:** Inspection
-**File:** `pkg/cmd/ls/ls.go`
-**Aliases:** `list`, `ps`
+**File:** `pkg/cmd/list/list.go`
+**Aliases:** `ls`, `ps`
 
 ```
-claucker ls
+claucker list
 ```
 
 Lists all containers created by claucker.
@@ -294,13 +294,13 @@ Lists all containers created by claucker.
 **Examples:**
 ```bash
 # List running containers
-claucker ls
+claucker list
 
 # List all containers (including stopped)
-claucker ls -a
+claucker list -a
 
 # List containers for a specific project
-claucker ls -p myproject
+claucker list -p myproject
 ```
 
 **Note:** Output goes to stdout (table format) for scripting compatibility.
@@ -341,13 +341,14 @@ claucker logs --tail 50
 
 ---
 
-### `sh`
+### `shell`
 
 **Category:** Inspection
-**File:** `pkg/cmd/sh/sh.go`
+**File:** `pkg/cmd/shell/shell.go`
+**Aliases:** `sh`
 
 ```
-claucker sh
+claucker shell
 ```
 
 Opens an interactive shell session in a running Claude container.
@@ -361,28 +362,28 @@ Opens an interactive shell session in a running Claude container.
 **Examples:**
 ```bash
 # Open bash shell (if single container)
-claucker sh
+claucker shell
 
 # Open shell in specific agent's container
-claucker sh --agent ralph
+claucker shell --agent ralph
 
 # Open zsh shell
-claucker sh --shell zsh
+claucker shell --shell zsh
 
 # Open shell as root
-claucker sh --user root
+claucker shell --user root
 ```
 
 ---
 
-### `rm`
+### `remove`
 
 **Category:** Cleanup
-**File:** `pkg/cmd/rm/rm.go`
-**Aliases:** `remove`
+**File:** `pkg/cmd/remove/remove.go`
+**Aliases:** `rm`
 
 ```
-claucker rm
+claucker remove
 ```
 
 Removes claucker containers and their associated resources. Requires either `--name` or `--project`.
@@ -398,13 +399,13 @@ Removes claucker containers and their associated resources. Requires either `--n
 **Examples:**
 ```bash
 # Remove a specific container
-claucker rm -n claucker/myapp/ralph
+claucker remove -n claucker/myapp/ralph
 
 # Remove all containers for a project
-claucker rm -p myapp
+claucker remove -p myapp
 
 # Force remove running containers
-claucker rm -p myapp -f
+claucker remove -p myapp -f
 ```
 
 **Gotcha:** Uses `-n/--name` instead of `--agent`. See [Known Issues](#known-issues).
@@ -780,9 +781,10 @@ func runMyCommand(f *cmdutil.Factory, opts *Options) error {
 
 | Alias | Canonical Command |
 |-------|-------------------|
-| `list` | `ls` |
-| `ps` | `ls` |
-| `remove` | `rm` |
+| `ls` | `list` |
+| `ps` | `list` |
+| `rm` | `remove` |
+| `sh` | `shell` |
 
 ---
 

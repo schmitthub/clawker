@@ -1,6 +1,6 @@
 //go:build integration
 
-package rm
+package remove
 
 import (
 	"fmt"
@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
 	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
-	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "rm", "testdata")
+	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "remove", "testdata")
 
 	// Build CLI if needed
 	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {

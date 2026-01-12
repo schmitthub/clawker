@@ -1,4 +1,4 @@
-package sh
+package shell
 
 import (
 	"testing"
@@ -6,12 +6,17 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 )
 
-func TestNewCmdSh(t *testing.T) {
+func TestNewCmdShell(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdSh(f)
+	cmd := NewCmdShell(f)
 
-	if cmd.Use != "sh" {
-		t.Errorf("expected Use 'sh', got '%s'", cmd.Use)
+	if cmd.Use != "shell" {
+		t.Errorf("expected Use 'shell', got '%s'", cmd.Use)
+	}
+
+	// Check aliases
+	if len(cmd.Aliases) != 1 || cmd.Aliases[0] != "sh" {
+		t.Errorf("expected Aliases ['sh'], got %v", cmd.Aliases)
 	}
 
 	// Check flags exist

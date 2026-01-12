@@ -1,4 +1,4 @@
-package ls
+package remove
 
 import (
 	"testing"
@@ -6,12 +6,12 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmdutil"
 )
 
-func TestNewCmdLs(t *testing.T) {
+func TestNewCmdRemove(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdLs(f)
+	cmd := NewCmdRemove(f)
 
-	if cmd.Use != "ls" {
-		t.Errorf("expected Use 'ls', got '%s'", cmd.Use)
+	if cmd.Use != "remove" {
+		t.Errorf("expected Use 'remove', got '%s'", cmd.Use)
 	}
 
 	// Check flags exist
@@ -19,8 +19,9 @@ func TestNewCmdLs(t *testing.T) {
 		name      string
 		shorthand string
 	}{
-		{"all", "a"},
+		{"name", "n"},
 		{"project", "p"},
+		{"force", "f"},
 	}
 
 	for _, fl := range flags {
@@ -34,11 +35,11 @@ func TestNewCmdLs(t *testing.T) {
 	}
 }
 
-func TestNewCmdLs_Aliases(t *testing.T) {
+func TestNewCmdRemove_Aliases(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
-	cmd := NewCmdLs(f)
+	cmd := NewCmdRemove(f)
 
-	expected := []string{"list", "ps"}
+	expected := []string{"rm"}
 	if len(cmd.Aliases) != len(expected) {
 		t.Errorf("expected %d aliases, got %d", len(expected), len(cmd.Aliases))
 	}

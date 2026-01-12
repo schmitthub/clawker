@@ -1,4 +1,4 @@
-package sh
+package shell
 
 import (
 	"context"
@@ -13,20 +13,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ShOptions contains the options for the sh command.
-type ShOptions struct {
+// ShellOptions contains the options for the shell command.
+type ShellOptions struct {
 	Agent string
 	Shell string
 	User  string
 }
 
-// NewCmdSh creates the sh command.
-func NewCmdSh(f *cmdutil.Factory) *cobra.Command {
-	opts := &ShOptions{}
+// NewCmdShell creates the shell command.
+func NewCmdShell(f *cmdutil.Factory) *cobra.Command {
+	opts := &ShellOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "sh",
-		Short: "Open a shell in a running container",
+		Use:     "shell",
+		Aliases: []string{"sh"},
+		Short:   "Open a shell in a running container",
 		Long: `Opens an interactive shell session in a running Claude container.
 
 This is useful for debugging, exploring the container filesystem,
@@ -34,18 +35,18 @@ or running commands directly without going through Claude.
 
 If multiple containers exist and --agent is not specified, you must specify which agent.`,
 		Example: `  # Open bash shell (if single container)
-  claucker sh
+  claucker shell
 
   # Open shell in specific agent's container
-  claucker sh --agent ralph
+  claucker shell --agent ralph
 
   # Open zsh shell
-  claucker sh --shell zsh
+  claucker shell --shell zsh
 
   # Open shell as root
-  claucker sh --user root`,
+  claucker shell --user root`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSh(f, opts)
+			return runShell(f, opts)
 		},
 	}
 
@@ -56,7 +57,7 @@ If multiple containers exist and --agent is not specified, you must specify whic
 	return cmd
 }
 
-func runSh(f *cmdutil.Factory, opts *ShOptions) error {
+func runShell(f *cmdutil.Factory, opts *ShellOptions) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
@@ -101,7 +102,7 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 		if existing == nil {
 			cmdutil.PrintError("Container for agent '%s' not found", opts.Agent)
 			cmdutil.PrintNextSteps(
-				"Run 'claucker ls' to see available containers",
+				"Run 'claucker list' to see available containers",
 				"Run 'claucker start --agent "+opts.Agent+"' to create it",
 			)
 			return fmt.Errorf("container not found")
@@ -129,7 +130,7 @@ func runSh(f *cmdutil.Factory, opts *ShOptions) error {
 			}
 			cmdutil.PrintNextSteps(
 				"Use --agent to specify which container",
-				"Example: claucker sh --agent "+containers[0].Agent,
+				"Example: claucker shell --agent "+containers[0].Agent,
 			)
 			return fmt.Errorf("multiple containers found")
 		}
