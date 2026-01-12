@@ -9,6 +9,8 @@
 [ ] go not found in path, has to find it /usr/local/go/bin/go
 [ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active
 [ ] we need to copy project claude settings local files and not bind so that command approvals aren't shared
+[ ] claucker rm and prune aren't properly removing volumes. whole thing is convoluted tbh
+[ ] auth sessions arne't being saved making restarts a pain in the ass
 
 ## Enhancements
 

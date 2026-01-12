@@ -144,6 +144,8 @@ claucker start --agent ralph            # Start a named agent
 claucker start -- -p "build a feature"  # Pass args to Claude CLI
 claucker start -- --resume              # Resume previous session
 claucker start --build                  # Force rebuild before running
+claucker start -p 8080:8080             # Publish port 8080 to host
+claucker start -p 24282:24282           # Access MCP dashboard from host
 
 Flags:
   --agent <name>        Agent name for the container (default: random)
@@ -151,6 +153,7 @@ Flags:
   --build               Force rebuild of container image
   --detach              Run container in background
   --clean               Remove existing container/volumes before starting
+  -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
 ```
 
 **Note:** To build without Docker cache, run `claucker build --no-cache` first.
@@ -169,6 +172,7 @@ claucker run -- -p "quick question"    # Claude with args, remove on exit
 claucker run --shell                   # Run shell, remove on exit
 claucker run -- npm test               # Run arbitrary command
 claucker run --keep                    # Keep container after exit
+claucker run -p 8080:8080              # Publish port to host
 
 Flags:
   --agent <name>        Agent name for the container (default: random)
@@ -176,6 +180,7 @@ Flags:
   --build               Force rebuild of container image
   --shell               Run shell instead of Claude
   --keep                Keep container after exit (default: remove)
+  -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
 ```
 
 **Note:** To build without Docker cache, run `claucker build --no-cache` first.

@@ -113,7 +113,7 @@ branch=$(git --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 vim=$(echo "$input" | jq -r '.vim.mode // empty')
 
 # Claucker info
-output=$(printf "${GRAY}Claucker v%s$ |{NC}" "${CLAUCKER_VERSION:-0.1.0}")
+output=$(printf "${GRAY}Claucker v%s |${NC}" "${CLAUCKER_VERSION:-0.1.0}")
 
 # Build status line prefix from env vars
 PROJECT="${CLAUCKER_PROJECT:-claucker}"

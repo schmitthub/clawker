@@ -49,52 +49,76 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 
 ```
 /workspace/
-├── claucker/              # Go CLI source code
-│   ├── cmd/               # Main entry points
-│   │   ├── claucker/          # Main CLI binary
-│   │   └── claucker-generate/ # Standalone generate binary
-│   ├── internal/          # Private packages
-│   │   ├── build/         # Shared image building logic
-│   │   ├── config/        # Viper configuration loading
-│   │   ├── engine/        # Docker SDK abstractions
-│   │   │   ├── client.go      # Docker client wrapper, container listing
-│   │   │   ├── container.go   # ContainerManager, ContainerConfig
-│   │   │   ├── labels.go      # Label constants, filtering helpers
-│   │   │   ├── names.go       # Container/volume naming, random names
-│   │   │   └── volume.go      # VolumeManager
-│   │   ├── workspace/     # Bind vs Snapshot strategies
-│   │   ├── term/          # PTY/terminal handling
-│   │   └── credentials/   # .env parsing and injection
-│   └── pkg/
-│       ├── build/         # Version generation and Dockerfile templates
-│       │   ├── semver/        # Semver parsing, sorting, comparison
-│       │   │   └── semver.go
-│       │   ├── registry/      # NPM registry client
-│       │   │   ├── npm.go         # HTTP client for npm
-│       │   │   ├── types.go       # VersionInfo, DistTags, VersionsFile
-│       │   │   └── fetcher.go     # Fetcher interface
-│       │   ├── templates/     # Embedded Dockerfile, entrypoint, firewall scripts
-│       │   ├── dockerfile.go  # DockerfileManager, ProjectGenerator
-│       │   ├── versions.go    # Version resolution orchestration
-│       │   └── config.go      # Variant configuration (trixie, bookworm, alpine)
-│       ├── cmd/           # Cobra commands
-│       │   ├── start/     # claucker start
-│       │   ├── run/       # claucker run
-│       │   ├── stop/      # claucker stop
-│       │   ├── ls/        # claucker ls (list containers)
-│       │   ├── rm/        # claucker rm (remove containers)
-│       │   ├── generate/  # claucker generate (version generation)
-│       │   └── ...        # Other commands
-│       ├── cmdutil/       # Command utilities, Factory, Output helpers
-│       │   ├── factory.go     # Dependency injection for commands
-│       │   └── output.go      # Error handling and user messaging
-│       └── logger/        # Zerolog setup
-├── build/templates/       # Docker image templates
-│   ├── Dockerfile.template
-│   ├── docker-entrypoint.sh
-│   └── docker-init-firewall.sh
-├── dockerfiles/           # Generated Dockerfiles (do not edit)
-└── .devcontainer/         # Development container config
+├── cmd/                           # CLI entry points
+│   ├── claucker/                  # Main CLI binary
+│   └── claucker-generate/         # Standalone generate binary
+├── internal/                      # Private packages
+│   ├── build/                     # Image building orchestration
+│   ├── claucker/                  # Main entry point (bridges cmd/ → pkg/cmd/)
+│   ├── config/                    # Viper configuration loading + validation
+│   │   ├── schema.go             # Config types (DockerInstructions, etc.)
+│   │   ├── loader.go             # YAML loading
+│   │   ├── validator.go          # Semantic validation
+│   │   ├── defaults.go           # Default values
+│   │   └── home.go               # Home directory helpers
+│   ├── credentials/               # Environment & secrets handling
+│   │   ├── env.go                # EnvBuilder for variable management
+│   │   ├── dotenv.go             # .env file parsing
+│   │   └── otel.go               # OpenTelemetry config injection
+│   ├── engine/                    # Docker SDK abstractions
+│   │   ├── client.go             # Engine wrapper, container listing
+│   │   ├── container.go          # ContainerManager, ContainerConfig
+│   │   ├── volume.go             # VolumeManager
+│   │   ├── image.go              # Image management
+│   │   ├── names.go              # Container/volume naming, random names
+│   │   ├── labels.go             # Label constants, filtering helpers
+│   │   ├── ports.go              # Port specification parsing for -p flag
+│   │   └── errors.go             # DockerError with user-friendly messages
+│   ├── monitor/                   # Observability stack (Prometheus, Grafana, OTel)
+│   │   ├── templates.go          # Embedded template loader
+│   │   └── templates/            # compose.yaml, prometheus.yaml, etc.
+│   ├── term/                      # PTY/terminal handling
+│   │   ├── pty.go                # PTY session management
+│   │   ├── raw.go                # Raw terminal mode
+│   │   └── signal.go             # Signal handling (SIGWINCH)
+│   └── workspace/                 # Bind vs Snapshot strategies
+│       ├── strategy.go           # Strategy interface
+│       ├── bind.go               # Live host mount
+│       └── snapshot.go           # Ephemeral volume copy
+├── pkg/                           # Public packages
+│   ├── build/                     # Version generation and Dockerfile templates
+│   │   ├── dockerfile.go         # DockerfileManager, ProjectGenerator
+│   │   ├── versions.go           # VersionsManager (npm → semver)
+│   │   ├── config.go             # Variant configuration (base images)
+│   │   ├── semver/               # Pure Go semver implementation
+│   │   ├── registry/             # NPM registry client
+│   │   └── templates/            # Embedded Dockerfile, entrypoint, firewall
+│   ├── cmd/                       # Cobra commands
+│   │   ├── root/                 # Root command (integrates all subcommands)
+│   │   ├── start/                # claucker start
+│   │   ├── run/                  # claucker run (ephemeral)
+│   │   ├── stop/                 # claucker stop
+│   │   ├── restart/              # claucker restart
+│   │   ├── build/                # claucker build
+│   │   ├── sh/                   # claucker sh
+│   │   ├── logs/                 # claucker logs
+│   │   ├── ls/                   # claucker ls
+│   │   ├── rm/                   # claucker rm
+│   │   ├── prune/                # claucker prune
+│   │   ├── init/                 # claucker init
+│   │   ├── config/               # claucker config check
+│   │   ├── generate/             # claucker generate
+│   │   └── monitor/              # claucker monitor (init/up/down/status)
+│   ├── cmdutil/                   # Command utilities
+│   │   ├── factory.go            # Factory for dependency injection
+│   │   └── output.go             # Error handling and user messaging
+│   └── logger/                    # Zerolog setup
+├── templates/                     # Scaffolding templates for init command
+│   ├── claucker.yaml.tmpl        # Configuration template
+│   └── clauckerignore.tmpl       # Ignore file template
+├── artifacts/                     # Generated/build output (do not edit)
+│   └── dockerfiles/              # Generated Dockerfiles
+└── .devcontainer/                 # Development container config
 ```
 
 ## Build Commands
@@ -240,6 +264,59 @@ Key functions:
 
 All output goes to stderr, keeping stdout clean for scripting.
 
+### Monitor Package (internal/monitor)
+
+Manages the observability stack using Docker Compose:
+
+- **Prometheus** - Metrics collection
+- **Grafana** - Dashboard visualization
+- **OpenTelemetry Collector** - Telemetry aggregation
+
+Embedded templates in `internal/monitor/templates/`:
+- `compose.yaml` - Docker Compose stack definition
+- `prometheus.yaml` - Prometheus scrape config
+- `otel-config.yaml` - OTel collector config
+- `grafana-datasources.yaml` - Grafana data source config
+- `grafana-dashboard.json` - Pre-built dashboard
+
+Commands: `claucker monitor init|up|down|status`
+
+### EnvBuilder (internal/credentials/env.go)
+
+Manages environment variable construction with allow/deny lists:
+
+```go
+envBuilder := credentials.NewEnvBuilder()
+envBuilder.Set("KEY", "value")
+envBuilder.SetAll(cfg.Agent.Env)
+envBuilder.LoadDotEnv(filepath.Join(workDir, ".env"))
+envBuilder.SetFromHostAll(credentials.DefaultPassthrough())
+env := envBuilder.Build()  // []string{"KEY=value", ...}
+```
+
+Also handles OTEL variable injection when monitoring is active via `credentials.OtelEnvVars()`.
+
+### Port Parsing (internal/engine/ports.go)
+
+Parses Docker-style port specifications for the `-p` flag:
+
+```go
+// Parse port specs into Docker SDK types
+portBindings, exposedPorts, err := engine.ParsePortSpecs([]string{
+    "8080:8080",              // host:container
+    "127.0.0.1:3000:3000",    // ip:host:container
+    "24280-24290:24280-24290", // port range
+    "53:53/udp",              // UDP protocol
+})
+```
+
+Supported formats:
+- `containerPort` - random host port to container port
+- `hostPort:containerPort` - specific host port mapping
+- `hostIP:hostPort:containerPort` - bind to specific interface
+- `startPort-endPort:startPort-endPort` - port range mapping
+- Any format with `/tcp` or `/udp` suffix (default: tcp)
+
 ### Container Naming and Labels
 
 Claucker uses hierarchical naming for multi-container support:
@@ -374,8 +451,8 @@ All commands follow these patterns:
 |---------|-------------|
 | `claucker init` | Scaffold `claucker.yaml` and `.clauckerignore` |
 | `claucker build [--no-cache]` | Build container image; `--no-cache` for fresh build |
-| `claucker start [--agent] [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--agent` names the container |
-| `claucker run [--agent] [-- <command>]` | Run ephemeral container (removed on exit); `--agent` names the container |
+| `claucker start [--agent] [-p port] [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--agent` names the container; `-p` publishes ports |
+| `claucker run [--agent] [-p port] [-- <command>]` | Run ephemeral container (removed on exit); `--agent` names the container; `-p` publishes ports |
 | `claucker stop [--agent] [--clean]` | Stop containers; `--agent` for specific, `--clean` destroys volumes |
 | `claucker restart [--agent]` | Restart containers to pick up env changes |
 | `claucker sh [--agent]` | Open raw bash shell in running container |

@@ -27,6 +27,7 @@ type StartOptions struct {
 	Clean  bool
 	Agent  string   // Agent name for the container
 	Args   []string // Arguments to pass to claude CLI (after --)
+	Ports  []string // Port mappings (host:container)
 }
 
 // NewCmdStart creates the start command.
@@ -59,7 +60,11 @@ Workspace modes:
   claucker start --mode=snapshot
 
   # Start in background
-  claucker start --detach`,
+  claucker start --detach
+
+  # Publish ports to access services (e.g., MCP dashboard)
+  claucker start -p 24282:24282
+  claucker start -p 8080:8080 -p 3000:3000`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -72,6 +77,7 @@ Workspace modes:
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
 	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
+	cmd.Flags().StringArrayVarP(&opts.Ports, "publish", "p", nil, "Publish container port(s) to host (e.g., -p 8080:8080)")
 
 	return cmd
 }
@@ -172,7 +178,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	}
 
 	// Build container configuration
-	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, agentName, f.Version, opts.Args, monitoringActive)
+	containerCfg, err := buildContainerConfig(cfg, imageTag, wsStrategy, f.WorkDir, agentName, f.Version, opts.Args, opts.Ports, monitoringActive)
 	if err != nil {
 		return err
 	}
@@ -247,7 +253,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, claudeArgs []string, monitoringActive bool) (engine.ContainerConfig, error) {
+func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, claudeArgs []string, ports []string, monitoringActive bool) (engine.ContainerConfig, error) {
 	// Build environment variables
 	envBuilder := credentials.NewEnvBuilder()
 
@@ -294,6 +300,12 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	}
 	capAdd = append(capAdd, cfg.Security.CapAdd...)
 
+	// Parse port bindings
+	portBindings, exposedPorts, err := engine.ParsePortSpecs(ports)
+	if err != nil {
+		return engine.ContainerConfig{}, fmt.Errorf("invalid port specification: %w", err)
+	}
+
 	return engine.ContainerConfig{
 		Name:         containerName,
 		Image:        imageTag,
@@ -310,6 +322,8 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
+		PortBindings: portBindings,
+		ExposedPorts: exposedPorts,
 	}, nil
 }
 

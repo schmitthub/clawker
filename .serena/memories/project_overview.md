@@ -28,9 +28,10 @@ Claucker supports multiple containers per project using **agents**:
   - `names.go` - Container/volume naming, `GenerateRandomName()`
   - `volume.go` - VolumeManager
 - `internal/workspace/` - Bind vs Snapshot strategies
+- `internal/credentials/` - .env parsing, EnvBuilder, OTEL injection
+- `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
 - `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
 - `internal/term/` - PTY/terminal handling
-- `internal/credentials/` - .env parsing and injection
 - `pkg/logger/` - Zerolog setup
 - `pkg/cmdutil/` - Factory pattern for command dependencies
 
@@ -43,3 +44,4 @@ Claucker supports multiple containers per project using **agents**:
 | `claucker ls -a -p <project>` | List containers |
 | `claucker rm -n <name> -p <project>` | Remove containers |
 | `claucker sh/logs --agent <name>` | Shell/logs for specific agent |
+| `claucker monitor init/up/down/status` | Manage observability stack |

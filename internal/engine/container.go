@@ -7,6 +7,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/go-connections/nat"
 	"github.com/schmitthub/claucker/pkg/logger"
 )
 
@@ -38,6 +39,8 @@ type ContainerConfig struct {
 	NetworkMode  string
 	User         string
 	Labels       map[string]string
+	PortBindings nat.PortMap
+	ExposedPorts nat.PortSet
 }
 
 // Create creates a new container without starting it.
@@ -57,13 +60,15 @@ func (cm *ContainerManager) Create(cfg ContainerConfig) (string, error) {
 		AttachStderr: cfg.AttachStderr,
 		User:         cfg.User,
 		Labels:       cfg.Labels,
+		ExposedPorts: cfg.ExposedPorts,
 	}
 
 	// Create host config
 	hostConfig := &container.HostConfig{
-		Mounts:      cfg.Mounts,
-		NetworkMode: container.NetworkMode(cfg.NetworkMode),
-		CapAdd:      cfg.CapAdd,
+		Mounts:       cfg.Mounts,
+		NetworkMode:  container.NetworkMode(cfg.NetworkMode),
+		CapAdd:       cfg.CapAdd,
+		PortBindings: cfg.PortBindings,
 	}
 
 	// Create container
