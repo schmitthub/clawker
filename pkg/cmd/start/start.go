@@ -250,6 +250,11 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 		return nil, fmt.Errorf("failed to prepare workspace: %w", err)
 	}
 
+	// Ensure config and history volumes exist with proper labels
+	if err := workspace.EnsureConfigVolumes(eng, cfg.Project, agentName); err != nil {
+		return nil, fmt.Errorf("failed to create config volumes: %w", err)
+	}
+
 	return strategy, nil
 }
 

@@ -77,6 +77,29 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 	}
 }
 
+// EnsureConfigVolumes creates config and history volumes with proper labels.
+// Should be called before container creation to ensure volumes have claucker labels.
+// This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
+func EnsureConfigVolumes(eng *engine.Engine, projectName, agentName string) error {
+	vm := engine.NewVolumeManager(eng)
+
+	// Create config volume
+	configVolume := engine.VolumeName(projectName, agentName, "config")
+	configLabels := engine.VolumeLabels(projectName, agentName, "config")
+	if _, err := vm.EnsureVolume(configVolume, configLabels); err != nil {
+		return fmt.Errorf("failed to create config volume: %w", err)
+	}
+
+	// Create history volume
+	historyVolume := engine.VolumeName(projectName, agentName, "history")
+	historyLabels := engine.VolumeLabels(projectName, agentName, "history")
+	if _, err := vm.EnsureVolume(historyVolume, historyLabels); err != nil {
+		return fmt.Errorf("failed to create history volume: %w", err)
+	}
+
+	return nil
+}
+
 // GetDockerSocketMount returns the Docker socket mount if enabled
 func GetDockerSocketMount() mount.Mount {
 	return mount.Mount{
