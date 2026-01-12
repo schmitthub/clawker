@@ -25,6 +25,9 @@ pkg/cmd/stop/testdata/claucker.yaml       # test config
 
 pkg/cmd/rm/rm_integration_test.go         # rm command integration tests
 pkg/cmd/rm/testdata/claucker.yaml         # test config
+
+pkg/cmd/prune/prune_integration_test.go   # prune command integration tests
+pkg/cmd/prune/testdata/claucker.yaml      # test config
 ```
 
 ### Running Tests
@@ -41,6 +44,7 @@ go test ./pkg/cmd/run/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/start/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/stop/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/rm/... -tags=integration -v -timeout 5m
+go test ./pkg/cmd/prune/... -tags=integration -v -timeout 5m
 
 # Run specific test
 go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
@@ -93,6 +97,18 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestRm_ForceRunning` | Verify force removes running container |
 | `TestRm_RunningWithoutForce` | Verify gracefully stops then removes running container |
 | `TestRm_NonExistent` | Verify graceful error for missing container |
+
+#### Prune Command
+
+| Test | Purpose |
+|------|---------|
+| `TestPrune_RemovesStoppedContainers` | Verify stopped containers are removed |
+| `TestPrune_SkipsRunningContainers` | Verify running containers are NOT removed |
+| `TestPrune_DefaultNoVolumes` | Verify volumes are NOT removed without `--all` |
+| `TestPrune_AllRemovesVolumes` | Verify `--all` removes volumes |
+| `TestPrune_AllRemovesContainers` | Verify `--all` removes stopped containers |
+| `TestPrune_NoResources` | Verify graceful handling when nothing to prune |
+| `TestPrune_ForceSkipsPrompt` | Verify `--force` skips confirmation |
 
 ### Test Infrastructure
 
