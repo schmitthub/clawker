@@ -479,17 +479,37 @@ func (e *Engine) RemoveContainerWithVolumes(containerID string, force bool) erro
 
 	// Find and remove associated volumes
 	if project != "" && agent != "" {
+		// Try label-based lookup first
 		volumes, err := e.VolumeList(AgentFilter(project, agent))
 		if err != nil {
 			logger.Warn().Err(err).Msg("failed to list volumes for cleanup")
-			return nil // Container is removed, don't fail on volume cleanup
 		}
 
+		removedByLabel := make(map[string]bool)
 		for _, vol := range volumes.Volumes {
 			if err := e.VolumeRemove(vol.Name, force); err != nil {
 				logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
 			} else {
 				logger.Debug().Str("volume", vol.Name).Msg("removed volume")
+				removedByLabel[vol.Name] = true
+			}
+		}
+
+		// Fallback: try removing by known volume names (for unlabeled volumes)
+		knownVolumes := []string{
+			VolumeName(project, agent, "workspace"),
+			VolumeName(project, agent, "config"),
+			VolumeName(project, agent, "history"),
+		}
+		for _, volName := range knownVolumes {
+			if removedByLabel[volName] {
+				continue // Already removed via label lookup
+			}
+			if err := e.VolumeRemove(volName, force); err != nil {
+				// Ignore errors - volume may not exist
+				logger.Debug().Str("volume", volName).Err(err).Msg("fallback volume removal skipped")
+			} else {
+				logger.Debug().Str("volume", volName).Msg("removed volume via name fallback")
 			}
 		}
 	}

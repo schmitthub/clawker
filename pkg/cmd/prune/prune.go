@@ -136,12 +136,10 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 }
 
 func pruneContainers(ctx context.Context, eng *engine.Engine, all bool) (int, error) {
-	// List claucker containers
+	// List claucker containers using label filter
 	containers, err := eng.ContainerList(container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("name", "claucker-"),
-		),
+		All:     true,
+		Filters: engine.ClauckerFilter(),
 	})
 	if err != nil {
 		return 0, err
@@ -190,7 +188,7 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 		// Check if any tag matches claucker pattern
 		isClauckerImage := false
 		for _, tag := range img.RepoTags {
-			if strings.HasPrefix(tag, "claucker-") {
+			if strings.HasPrefix(tag, "claucker/") {
 				isClauckerImage = true
 				break
 			}
@@ -224,19 +222,37 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 }
 
 func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
-	// List claucker volumes
-	volumes, err := eng.VolumeList(filters.NewArgs(
-		filters.Arg("name", "claucker-"),
+	// Track volumes to remove (use map to dedupe)
+	volumesToRemove := make(map[string]bool)
+
+	// First, find volumes by label (new volumes with proper labels)
+	labeledVolumes, err := eng.VolumeList(engine.ClauckerFilter())
+	if err != nil {
+		logger.Warn().Err(err).Msg("error listing labeled volumes")
+	} else {
+		for _, vol := range labeledVolumes.Volumes {
+			volumesToRemove[vol.Name] = true
+		}
+	}
+
+	// Fallback: find volumes by name prefix (legacy volumes without labels)
+	// Volumes are named: claucker.project.agent-purpose
+	nameFilteredVolumes, err := eng.VolumeList(filters.NewArgs(
+		filters.Arg("name", "claucker."),
 	))
 	if err != nil {
-		return 0, err
+		logger.Warn().Err(err).Msg("error listing volumes by name")
+	} else {
+		for _, vol := range nameFilteredVolumes.Volumes {
+			volumesToRemove[vol.Name] = true
+		}
 	}
 
 	var removed int
-	for _, vol := range volumes.Volumes {
-		fmt.Fprintf(os.Stderr, "[INFO]  Removing volume: %s\n", vol.Name)
-		if err := eng.VolumeRemove(vol.Name, true); err != nil {
-			logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
+	for volName := range volumesToRemove {
+		fmt.Fprintf(os.Stderr, "[INFO]  Removing volume: %s\n", volName)
+		if err := eng.VolumeRemove(volName, true); err != nil {
+			logger.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
 			continue
 		}
 		removed++
