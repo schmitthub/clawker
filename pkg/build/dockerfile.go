@@ -177,6 +177,16 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 			if err := os.WriteFile(path, content, 0644); err != nil {
 				return fmt.Errorf("failed to write Dockerfile %s: %w", path, err)
 			}
+
+			firewallScriptPath := filepath.Join(dockerfilesDir, "init-firewall.sh")
+			if err := os.WriteFile(firewallScriptPath, []byte(FirewallScript), 0755); err != nil {
+				return fmt.Errorf("failed to write firewall script %s: %w", firewallScriptPath, err)
+			}
+
+			entrypointScriptPath := filepath.Join(dockerfilesDir, "entrypoint.sh")
+			if err := os.WriteFile(entrypointScriptPath, []byte(EntrypointScript), 0755); err != nil {
+				return fmt.Errorf("failed to write entrypoint script %s: %w", entrypointScriptPath, err)
+			}
 		}
 	}
 
