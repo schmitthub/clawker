@@ -33,3 +33,21 @@ func TestNewCmdLs(t *testing.T) {
 		}
 	}
 }
+
+func TestNewCmdLs_Aliases(t *testing.T) {
+	f := cmdutil.New("1.0.0", "abc123")
+	cmd := NewCmdLs(f)
+
+	expected := []string{"list", "ps"}
+	if len(cmd.Aliases) != len(expected) {
+		t.Errorf("expected %d aliases, got %d", len(expected), len(cmd.Aliases))
+	}
+	for i, alias := range expected {
+		if i >= len(cmd.Aliases) {
+			break
+		}
+		if cmd.Aliases[i] != alias {
+			t.Errorf("expected alias %d '%s', got '%s'", i, alias, cmd.Aliases[i])
+		}
+	}
+}

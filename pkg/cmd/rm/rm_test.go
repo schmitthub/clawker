@@ -34,3 +34,21 @@ func TestNewCmdRm(t *testing.T) {
 		}
 	}
 }
+
+func TestNewCmdRm_Aliases(t *testing.T) {
+	f := cmdutil.New("1.0.0", "abc123")
+	cmd := NewCmdRm(f)
+
+	expected := []string{"remove"}
+	if len(cmd.Aliases) != len(expected) {
+		t.Errorf("expected %d aliases, got %d", len(expected), len(cmd.Aliases))
+	}
+	for i, alias := range expected {
+		if i >= len(cmd.Aliases) {
+			break
+		}
+		if cmd.Aliases[i] != alias {
+			t.Errorf("expected alias %d '%s', got '%s'", i, alias, cmd.Aliases[i])
+		}
+	}
+}

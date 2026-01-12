@@ -25,6 +25,7 @@ func TestNewCmdRun(t *testing.T) {
 		{"build", ""},
 		{"shell", ""},
 		{"keep", ""},
+		{"publish", "p"},
 	}
 
 	for _, fl := range flags {
