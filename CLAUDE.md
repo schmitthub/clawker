@@ -153,6 +153,7 @@ security:
 | @.claude/docs/CLI-VERBS.md | CLI command reference with flags and examples |
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
+| @.claude/docs/TESTING.md | Manual CLI test patterns (**only access when writing command tests**) |
 | @README.md | User-facing documentation |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) as appropriate.

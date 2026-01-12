@@ -160,7 +160,7 @@ Flags:
 
 ### claucker run
 
-Runs a command in a new ephemeral container. Container is removed on exit by default (like `docker run --rm`).
+Runs a command in a new ephemeral container. Container and volumes are removed on exit by default (like `docker run --rm`).
 
 ```bash
 claucker run [flags] [-- <command>...]

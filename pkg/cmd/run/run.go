@@ -188,10 +188,26 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	// Setup cleanup on exit unless --keep
 	if !opts.Keep {
 		defer func() {
+			// Remove container first
 			if err := containerMgr.Remove(containerID, true); err != nil {
 				logger.Warn().Err(err).Msg("failed to remove ephemeral container")
 			} else {
 				logger.Info().Str("container_id", containerID[:12]).Msg("removed ephemeral container")
+			}
+
+			// Remove associated volumes by name (they may not have labels)
+			volumes := []string{
+				engine.VolumeName(cfg.Project, agentName, "workspace"),
+				engine.VolumeName(cfg.Project, agentName, "config"),
+				engine.VolumeName(cfg.Project, agentName, "history"),
+			}
+			for _, vol := range volumes {
+				if err := eng.VolumeRemove(vol, true); err != nil {
+					// Ignore errors - volume may not exist (e.g., bind mode has no workspace volume)
+					logger.Debug().Str("volume", vol).Err(err).Msg("failed to remove volume")
+				} else {
+					logger.Debug().Str("volume", vol).Msg("removed volume")
+				}
 			}
 		}()
 	}

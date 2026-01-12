@@ -181,14 +181,14 @@ claucker start -p 8080:8080 -p 3000:3000
 claucker run [flags] [-- <command>...]
 ```
 
-Runs a command in a new container and removes it when done (like `docker run --rm`). Always creates a new container.
+Runs a command in a new container and removes it (with volumes) when done (like `docker run --rm`). Always creates a new container.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
 | `-m` | `--mode` | string | config | Workspace mode: `bind` or `snapshot` |
 | | `--build` | bool | `false` | Force rebuild of the container image |
 | | `--shell` | bool | `false` | Run shell instead of claude |
-| | `--keep` | bool | `false` | Keep container after exit |
+| | `--keep` | bool | `false` | Keep container and volumes after exit |
 | | `--agent` | string | random | Agent name for the container |
 | `-p` | `--publish` | []string | `nil` | Publish container port(s) to host |
 

@@ -3,7 +3,6 @@
 ## Bugs
 
 [ ] plan a refactor that sets `CLAUCKER_PROJECT` and `CLAUCKER_AGENT` in two places and move it  "envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)" and "envBuilder.Set("CLAUCKER_AGENT", agentName)" from @pkg/cmd/run/run.go and @pkg/cmd/start/start.go
-[ ] claucker start is creating new containers instead of attaching to existing
 [ ] claucker list is not showing all the stopped agent containers
 [ ] Serena's language server isn't initialized. Let me use standard tools to explore the engine code.
 [ ] go not found in path, has to find it /usr/local/go/bin/go
@@ -15,6 +14,7 @@
 ## Enhancements
 
 [ ] Make timezone in the dockerfile tmpl configurable in claucker.yaml or use the hosts default TZ
+[ ] claucker start is creating new containers instead of attaching to existing
 [ ] see if there is a way to pass browser opening events to the host and then back into the container. for example for claude auth, and for mcp's like serena
 [ ] add a statusline to every container so the user knows which container they are in along with kewl metrics. Update Statusline monitor to calculate session limit, maybe consider using python
 [ ] really need to think through the verbage for the cli to run them and what they do and make sure everything is either cleaned up or accessed instead of making new containers over and over again. Should add an `exec` command to run something in an existing instance
