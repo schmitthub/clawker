@@ -48,6 +48,13 @@ cmd.MarkFlagsMutuallyExclusive("bind", "snapshot")  // Not both
 cmd.MarkFlagRequired("config")                 // Always required
 ```
 
+## Related Documentation
+
+See `.claude/docs/CLI-VERBS.md` for the complete CLI verbs reference, including:
+- All command flags and examples
+- Known UX issues and recommendations
+- New command checklist template
+
 ## Common Patterns Fixed
 
 1. **root.go**: Changed `PersistentPreRun` → `PersistentPreRunE`
