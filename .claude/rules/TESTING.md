@@ -10,6 +10,7 @@ paths:
 ## Automated Integration Tests
 
 Integration tests execute actual `claucker` commands and verify Docker state (containers, volumes, labels).
+Integration tests require a `claucker.yaml` file in the current working directory
 
 ### Location
 
@@ -23,8 +24,8 @@ pkg/cmd/start/testdata/claucker.yaml      # test config
 pkg/cmd/stop/stop_integration_test.go     # stop command integration tests
 pkg/cmd/stop/testdata/claucker.yaml       # test config
 
-pkg/cmd/rm/rm_integration_test.go         # rm command integration tests
-pkg/cmd/rm/testdata/claucker.yaml         # test config
+pkg/cmd/remove/remove_integration_test.go # remove command integration tests
+pkg/cmd/remove/testdata/claucker.yaml     # test config
 
 pkg/cmd/prune/prune_integration_test.go   # prune command integration tests
 pkg/cmd/prune/testdata/claucker.yaml      # test config
@@ -43,7 +44,7 @@ go test ./pkg/cmd/... -tags=integration -v -timeout 10m
 go test ./pkg/cmd/run/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/start/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/stop/... -tags=integration -v -timeout 5m
-go test ./pkg/cmd/rm/... -tags=integration -v -timeout 5m
+go test ./pkg/cmd/remove/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/prune/... -tags=integration -v -timeout 5m
 
 # Run specific test
@@ -87,7 +88,7 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestStop_ForceFlag` | Verify force kills container |
 | `TestStop_AlreadyStopped` | Verify handles stopped container gracefully |
 
-#### Rm Command
+#### Remove Command
 
 | Test | Purpose |
 |------|---------|

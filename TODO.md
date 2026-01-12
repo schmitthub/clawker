@@ -6,6 +6,8 @@
 
 ## Enhancements
 
+[ ] change name to clawker
+[ ] update verbs. `run` with flag `-r --remove` should start a container. work on passthrough if someone wants a shell or abitrary command or claude flag passed. add `-sh --shell` as a convenience flag. remove `start` and `sh`
 [ ] leverage llm doc gen to describe this project to claude easily: <https://cobra.dev/docs/how-to-guides/clis-for-llms/>
 [ ] add these cobra site docs to context ex: <https://github.com/spf13/cobra/blob/main/site/content/user_guide.md>
 [ ] identify situations that could benefit from active help: <https://github.com/spf13/cobra/blob/main/site/content/active_help.md>
@@ -28,4 +30,3 @@
 [ ] claucker output should mirror claude code ANSI style
 [ ] plan a refactor that sets `CLAUCKER_PROJECT` and `CLAUCKER_AGENT` in two places and move it  "envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)" and "envBuilder.Set("CLAUCKER_AGENT", agentName)" from @pkg/cmd/run/run.go and @pkg/cmd/start/start.go
 [ ] makefile updates to remove calls to the legacy shell scripts; commands to run tests
-[ ] feels like command name directories should be the long form instead (ie list/ instead of ls/). check what the trend is

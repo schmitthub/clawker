@@ -59,18 +59,18 @@ claucker start --agent writer
 claucker start    # Creates claucker.myapp.clever-fox
 
 # List all containers
-claucker ls
+claucker list
 
 # Work with specific agents
 claucker logs --agent ralph
-claucker sh --agent ralph
+claucker shell --agent ralph
 claucker stop --agent ralph
 
 # Stop all agents for a project
 claucker stop
 
 # Remove all containers for a project
-claucker rm -p myapp
+claucker remove -p myapp
 ```
 
 Each agent has isolated volumes for workspace (snapshot mode), config, and command history.
@@ -105,10 +105,10 @@ Claude Code will authenticate automatically without requiring browser login.
 | `claucker run` | Run a one-shot command in an ephemeral container |
 | `claucker stop` | Stop containers for the project |
 | `claucker restart` | Restart containers to pick up environment changes |
-| `claucker sh` | Open a bash shell in a running container |
+| `claucker shell` | Open a bash shell in a running container |
 | `claucker logs` | View container logs |
-| `claucker ls` | List all claucker containers |
-| `claucker rm` | Remove containers and their volumes |
+| `claucker list` | List all claucker containers |
+| `claucker remove` | Remove containers and their volumes |
 | `claucker prune` | Remove unused claucker resources |
 | `claucker monitor` | Manage local observability stack |
 | `claucker config check` | Validate your `claucker.yaml` |
@@ -204,34 +204,34 @@ Flags:
   --timeout       Seconds before force kill (default: 10)
 ```
 
-### claucker ls
+### claucker list
 
 Lists all claucker containers across all projects.
 
 ```bash
-claucker ls [flags]
+claucker list [flags]
 
 # Examples:
-claucker ls              # List running containers
-claucker ls -a           # Include stopped containers
-claucker ls -p myapp     # Filter by project
+claucker list              # List running containers
+claucker list -a           # Include stopped containers
+claucker list -p myapp     # Filter by project
 
 Flags:
   -a, --all              Show all containers (including stopped)
   -p, --project <name>   Filter by project name
 ```
 
-### claucker rm
+### claucker remove
 
 Removes claucker containers and their associated volumes.
 
 ```bash
-claucker rm [flags]
+claucker remove [flags]
 
 # Examples:
-claucker rm -n claucker.myapp.ralph   # Remove specific container
-claucker rm -p myapp                   # Remove all containers for project
-claucker rm -p myapp -f                # Force remove running containers
+claucker remove -n claucker.myapp.ralph   # Remove specific container
+claucker remove -p myapp                   # Remove all containers for project
+claucker remove -p myapp -f                # Force remove running containers
 
 Flags:
   -n, --name <name>      Container name to remove

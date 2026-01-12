@@ -1,4 +1,4 @@
-package ls
+package list
 
 import (
 	"context"
@@ -13,19 +13,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// LsOptions contains the options for the ls command.
-type LsOptions struct {
+// ListOptions contains the options for the list command.
+type ListOptions struct {
 	All     bool   // -a, --all: show stopped containers too
 	Project string // -p, --project: filter by project
 }
 
-// NewCmdLs creates the ls command.
-func NewCmdLs(f *cmdutil.Factory) *cobra.Command {
-	opts := &LsOptions{}
+// NewCmdList creates the list command.
+func NewCmdList(f *cmdutil.Factory) *cobra.Command {
+	opts := &ListOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "ls",
-		Aliases: []string{"list", "ps"},
+		Use:     "list",
+		Aliases: []string{"ls", "ps"},
 		Short:   "List claucker containers",
 		Long: `Lists all containers created by claucker.
 
@@ -33,15 +33,15 @@ By default, shows only running containers. Use -a to show all containers.
 
 Note: Use 'claucker monitor status' for monitoring stack containers.`,
 		Example: `  # List running containers
-  claucker ls
+  claucker list
 
   # List all containers (including stopped)
-  claucker ls -a
+  claucker list -a
 
   # List containers for a specific project
-  claucker ls -p myproject`,
+  claucker list -p myproject`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLs(f, opts)
+			return runList(f, opts)
 		},
 	}
 
@@ -51,7 +51,7 @@ Note: Use 'claucker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runLs(_ *cmdutil.Factory, opts *LsOptions) error {
+func runList(_ *cmdutil.Factory, opts *ListOptions) error {
 	ctx := context.Background()
 
 	// Connect to Docker

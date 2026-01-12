@@ -1,4 +1,4 @@
-package rm
+package remove
 
 import (
 	"context"
@@ -11,34 +11,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// RmOptions contains the options for the rm command.
-type RmOptions struct {
+// RemoveOptions contains the options for the remove command.
+type RemoveOptions struct {
 	Name    string // -n, --name: specific container name
 	Project string // -p, --project: remove all in project
 	Force   bool   // -f, --force: force remove running containers
 }
 
-// NewCmdRm creates the rm command.
-func NewCmdRm(f *cmdutil.Factory) *cobra.Command {
-	opts := &RmOptions{}
+// NewCmdRemove creates the remove command.
+func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
+	opts := &RemoveOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "rm",
-		Aliases: []string{"remove"},
+		Use:     "remove",
+		Aliases: []string{"rm"},
 		Short:   "Remove claucker containers",
 		Long: `Removes claucker containers and their associated resources (volumes).
 
 You must specify either --name or --project to remove containers.`,
 		Example: `  # Remove a specific container
-  claucker rm -n claucker/myapp/ralph
+  claucker remove -n claucker/myapp/ralph
 
   # Remove all containers for a project
-  claucker rm -p myapp
+  claucker remove -p myapp
 
   # Force remove running containers
-  claucker rm -p myapp -f`,
+  claucker remove -p myapp -f`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRm(f, opts)
+			return runRemove(f, opts)
 		},
 	}
 
@@ -51,7 +51,7 @@ You must specify either --name or --project to remove containers.`,
 	return cmd
 }
 
-func runRm(_ *cmdutil.Factory, opts *RmOptions) error {
+func runRemove(_ *cmdutil.Factory, opts *RemoveOptions) error {
 	if opts.Name == "" && opts.Project == "" {
 		return fmt.Errorf("either --name or --project must be specified")
 	}

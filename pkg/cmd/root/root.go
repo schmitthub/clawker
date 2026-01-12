@@ -9,14 +9,14 @@ import (
 	"github.com/schmitthub/claucker/pkg/cmd/config"
 	"github.com/schmitthub/claucker/pkg/cmd/generate"
 	initcmd "github.com/schmitthub/claucker/pkg/cmd/init"
+	"github.com/schmitthub/claucker/pkg/cmd/list"
 	"github.com/schmitthub/claucker/pkg/cmd/logs"
-	"github.com/schmitthub/claucker/pkg/cmd/ls"
 	"github.com/schmitthub/claucker/pkg/cmd/monitor"
 	"github.com/schmitthub/claucker/pkg/cmd/prune"
+	"github.com/schmitthub/claucker/pkg/cmd/remove"
 	"github.com/schmitthub/claucker/pkg/cmd/restart"
-	"github.com/schmitthub/claucker/pkg/cmd/rm"
 	"github.com/schmitthub/claucker/pkg/cmd/run"
-	"github.com/schmitthub/claucker/pkg/cmd/sh"
+	"github.com/schmitthub/claucker/pkg/cmd/shell"
 	"github.com/schmitthub/claucker/pkg/cmd/start"
 	"github.com/schmitthub/claucker/pkg/cmd/stop"
 	"github.com/schmitthub/claucker/pkg/cmdutil"
@@ -87,10 +87,10 @@ Workspace modes:
 	cmd.AddCommand(run.NewCmdRun(f))
 	cmd.AddCommand(stop.NewCmdStop(f))
 	cmd.AddCommand(restart.NewCmdRestart(f))
-	cmd.AddCommand(sh.NewCmdSh(f))
+	cmd.AddCommand(shell.NewCmdShell(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))
-	cmd.AddCommand(ls.NewCmdLs(f))
-	cmd.AddCommand(rm.NewCmdRm(f))
+	cmd.AddCommand(list.NewCmdList(f))
+	cmd.AddCommand(remove.NewCmdRemove(f))
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(prune.NewCmdPrune(f))
