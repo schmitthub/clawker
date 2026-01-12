@@ -95,7 +95,7 @@ if [ "$USAGE" != "null" ]; then
         ctx=$(printf "${GREEN}${DISK_LOW_FULL} %d%%${NC}" "$PERCENT_USED")
     elif [ "$PERCENT_USED" -lt 50 ]; then
         ctx=$(printf "${YELLOW}${DISK_MEDIUM} %d%%${NC}" "$PERCENT_USED")
-    elif [ "$PERCENT_USED" -lt 60 ]; then
+    elif [ "$PERCENT_USED" -lt 70 ]; then
         ctx=$(printf "${YELLOW}${DISK_HIGH} %d%%${NC}" "$PERCENT_USED")
     else
         ctx=$(printf "${RED}${DISK_HIGH} %d%%${NC}" "$PERCENT_USED")
