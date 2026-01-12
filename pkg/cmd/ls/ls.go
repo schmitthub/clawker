@@ -29,7 +29,9 @@ func NewCmdLs(f *cmdutil.Factory) *cobra.Command {
 		Short:   "List claucker containers",
 		Long: `Lists all containers created by claucker.
 
-By default, shows only running containers. Use -a to show all containers.`,
+By default, shows only running containers. Use -a to show all containers.
+
+Note: Use 'claucker monitor status' for monitoring stack containers.`,
 		Example: `  # List running containers
   claucker ls
 
