@@ -27,6 +27,7 @@ type RunOptions struct {
 	Keep  bool     // Keep container after exit (inverse of --rm default)
 	Agent string   // Agent name for the container
 	Args  []string // Command/args to run in container (after --)
+	Ports []string // Port mappings (host:container)
 }
 
 // NewCmdRun creates the run command.
@@ -55,7 +56,10 @@ Unlike 'claucker start', this always creates a new container (never reuses exist
   claucker run -- npm test
 
   # Run claude, keep container after exit
-  claucker run --keep`,
+  claucker run --keep
+
+  # Publish ports to access services
+  claucker run -p 8080:8080`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -68,6 +72,7 @@ Unlike 'claucker start', this always creates a new container (never reuses exist
 	cmd.Flags().BoolVar(&opts.Shell, "shell", false, "Run shell instead of claude")
 	cmd.Flags().BoolVar(&opts.Keep, "keep", false, "Keep container after exit (default: remove)")
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
+	cmd.Flags().StringArrayVarP(&opts.Ports, "publish", "p", nil, "Publish container port(s) to host (e.g., -p 8080:8080)")
 
 	return cmd
 }
@@ -288,6 +293,12 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	}
 	// If no args and not shell, cmd is empty and entrypoint handles default (claude)
 
+	// Parse port bindings
+	portBindings, exposedPorts, err := engine.ParsePortSpecs(opts.Ports)
+	if err != nil {
+		return engine.ContainerConfig{}, fmt.Errorf("invalid port specification: %w", err)
+	}
+
 	return engine.ContainerConfig{
 		Name:         containerName,
 		Image:        imageTag,
@@ -304,6 +315,8 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
 		NetworkMode:  config.ClauckerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
+		PortBindings: portBindings,
+		ExposedPorts: exposedPorts,
 	}, nil
 }
 

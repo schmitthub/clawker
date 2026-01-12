@@ -40,12 +40,19 @@ build:
     root_run:
       - cmd: |
           ARCH=$(dpkg --print-architecture) && \
-            curl -fsSL "https://golang.org/dl/go1.25.5.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf -
+            curl -fsSL "https://golang.org/dl/go1.25.5.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
+            && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
     user_run:
       - cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - cmd: /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
 
   inject:
-    after_claude_install: RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)"
+    # after_from: # docker instructions to run after the base image FROM instruction
+    # after_packages: # docker instructions to run after installing system packages
+    # after_user_setup: # docker instructions to run after creation of the non-root user but before switching to it
+    after_user_switch: ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin" # docker instructions to run after switching to the non-root user
+    after_claude_install: RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    # before_entrypoint: # docker instructions to run before the container entrypoint
 
 agent:
   # Files to make available to Claude (prompts, docs, memory)
