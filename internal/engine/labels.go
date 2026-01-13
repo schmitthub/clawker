@@ -7,6 +7,7 @@ import (
 )
 
 // Label keys for clawker-managed resources
+// TODO: this shit probably shouldn't be here. engine should be decoupled from config
 const (
 	LabelManaged = "com.clawker.managed"
 	LabelProject = "com.clawker.project"
@@ -17,6 +18,15 @@ const (
 	LabelWorkdir = "com.clawker.workdir"
 	LabelPurpose = "com.clawker.purpose"
 )
+
+func ImageLabels(project string, version string) map[string]string {
+	return map[string]string{
+		LabelManaged: "true",
+		LabelProject: project,
+		LabelVersion: version,
+		LabelCreated: time.Now().Format(time.RFC3339),
+	}
+}
 
 // ContainerLabels returns labels for a new container
 func ContainerLabels(project, agent, version, image, workdir string) map[string]string {

@@ -376,5 +376,11 @@ func pruneNetwork(_ context.Context, eng *engine.Engine) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "[INFO]  Removing network: %s\n", config.ClawkerNetwork)
-	return eng.NetworkRemove(config.ClawkerNetwork)
+	neterr := eng.NetworkRemove(config.ClawkerNetwork)
+	if neterr != nil {
+		logger.Warn().Err(neterr).Str("network", config.ClawkerNetwork).Msg("failed to remove network")
+		return neterr
+	}
+	fmt.Fprintf(os.Stderr, "[INFO]  Removed network: %s\n", config.ClawkerNetwork)
+	return nil
 }

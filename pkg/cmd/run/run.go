@@ -59,9 +59,9 @@ func NewCmdRun(f *cmdutil.Factory) *cobra.Command {
 		Long: `Builds the container image (if needed), creates volumes, and runs Claude.
 
 This is an idempotent operation:
-  - If a container is already running, attaches to it
-  - If a container exists but is stopped, starts and attaches
-  - If no container exists, creates and starts one
+  - If a container matching --agent is already running, attaches to it
+  - If a container matching --agent exists but is stopped, starts and attaches
+  - If no container matching exists, creates and starts one
 
 Use --remove for ephemeral containers that are deleted on exit.
 

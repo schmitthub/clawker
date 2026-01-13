@@ -308,6 +308,69 @@ func TestRm_UnusedFlag_WithAll_RemovesVolumes(t *testing.T) {
 	}
 }
 
+// TestRm_UnusedFlag_NoUnused verifies no-op when no unused containers
+func TestRm_UnusedFlag_NoUnused(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+	// Create running container
+	runClawker("run", "--detach", "--agent", agent)
+	if !containerRunning(containerName) {
+		t.Fatal("setup failed: container not running")
+	}
+
+	// Remove with --unused flag
+	out, err := runClawker("remove", "--unused", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused failed: %v", err)
+	}
+
+	// Output should indicate no unused containers found
+	if !strings.Contains(out, "No unused containers found") {
+		t.Error("expected message indicating no unused containers found")
+	}
+
+	// Cleanup
+	exec.Command("docker", "stop", containerName).Run()
+}
+
+// TestRm_UnusedFlag_WithAll_RemovesImages verifies --unused --all removes dangling untagged clawker created images
+func TestRm_UnusedFlag_WithAll_RemovesImages(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+	// Create container then stop it
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	if !containerExists(containerName) {
+		t.Fatal("setup failed: container not created")
+	}
+
+	// Create dangling image by committing container and removing tag
+	out, err := exec.Command("docker", "commit", containerName).CombinedOutput()
+	if err != nil {
+		t.Fatalf("setup failed: docker commit failed: %v\n%s", err, out)
+	}
+	imageID := strings.TrimSpace(string(out))
+	exec.Command("docker", "rmi", imageID).Run() // Remove tag to make dangling
+
+	// Remove with --unused --all --force
+	_, err = runClawker("remove", "--unused", "--all", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused --all failed: %v", err)
+	}
+
+	// Dangling image should be removed
+	out, _ = exec.Command("docker", "images", "-f", "dangling=true", "-q").Output()
+	danglingImages := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, img := range danglingImages {
+		if img == imageID {
+			t.Error("expected dangling image to be removed with --unused --all")
+		}
+	}
+}
+
+// ============= 'prune' alias tests =============
+
 // TestRm_PruneAlias verifies 'prune' works as alias to 'remove --unused'
 func TestRm_PruneAlias(t *testing.T) {
 	agent := uniqueAgent(t)
