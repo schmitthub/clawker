@@ -4,12 +4,19 @@
 
 [ ] Get a good list of software development terms for prompt creating. You could prob make a good article. (ie enhancement, feature, integration test, regression test, hotfix, etc etc)
 
+## Quality issues
+
+[ ] pkg/cmd/run/run.go:75 The short flag -u is used by both run --user and remove --unused commands. While Cobra allows different subcommands to have the same short flags, this creates confusion for users and violates CLI consistency guidelines. Consider changing one of these short flags to avoid ambiguity. Recommendation: Use a different short flag for --unused (perhaps no short flag, or -U if uppercase is acceptable).
+[ ]
+
 ## Bugs
 
+[ ] Tests are a fucking mess so putting this under bugs. need to do it one cmd at a time so claude can focus
 [ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active
 
 ## Enhancements
 
+[ ] Update config template to have all vars in it, commented out. have a helper function describe the entire config schema
 [ ] figure out what you're gunna do about seamlessly handling git creds :D, prob just copy mount ssh dir
 [ ] I will need incorporate a mimic of docker attach for container shell session detachment and re-attachment. Right now we can leverage `run` with a --detach flag to start a claude command. Users might want to leave containers running a job and re-log into the same shell session later
 [ ] Might also want to add exec too

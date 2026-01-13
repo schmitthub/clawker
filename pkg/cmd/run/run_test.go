@@ -31,6 +31,8 @@ func TestNewCmdRun(t *testing.T) {
 		{"detach", ""},
 		{"clean", ""},
 		{"publish", "p"},
+		{"quiet", "q"},
+		{"json", ""},
 	}
 
 	for _, fl := range flags {
@@ -76,6 +78,8 @@ func TestNewCmdRun_DefaultValues(t *testing.T) {
 		{"detach", "false"},
 		{"clean", "false"},
 		{"build", "false"},
+		{"quiet", "false"},
+		{"json", "false"},
 	}
 
 	for _, tt := range tests {
@@ -88,6 +92,32 @@ func TestNewCmdRun_DefaultValues(t *testing.T) {
 			t.Errorf("expected --%s default '%s', got '%s'", tt.name, tt.expected, flag.DefValue)
 		}
 	}
+}
+
+func TestExitError(t *testing.T) {
+	t.Run("Error method returns correct message", func(t *testing.T) {
+		exitErr := &ExitError{Code: 42}
+		expected := "container exited with code 42"
+		if exitErr.Error() != expected {
+			t.Errorf("expected '%s', got '%s'", expected, exitErr.Error())
+		}
+	})
+
+	t.Run("Code 0 message", func(t *testing.T) {
+		exitErr := &ExitError{Code: 0}
+		expected := "container exited with code 0"
+		if exitErr.Error() != expected {
+			t.Errorf("expected '%s', got '%s'", expected, exitErr.Error())
+		}
+	})
+
+	t.Run("Negative code message", func(t *testing.T) {
+		exitErr := &ExitError{Code: -1}
+		expected := "container exited with code -1"
+		if exitErr.Error() != expected {
+			t.Errorf("expected '%s', got '%s'", expected, exitErr.Error())
+		}
+	})
 }
 
 func TestResolveShellPath(t *testing.T) {

@@ -64,3 +64,6 @@ See `.claude/docs/CLI-VERBS.md` for the complete CLI verbs reference, including:
 3. **rm.go**: Added `MarkFlagsOneRequired("name", "project")`
 4. **All commands**: Added `Example` field
 5. **All commands**: Changed `fmt.Printf` → `fmt.Fprintf(os.Stderr, ...)`
+6. **run.go**: Added `--quiet` and `--json` flags for scripting
+7. **run.go**: Fixed exit code handling to allow deferred cleanup with `ExitError` type
+8. **run.go**: Added flag validation for `--user` requiring `--shell`

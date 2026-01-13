@@ -153,10 +153,11 @@ Builds the image (if needed), creates volumes, and runs Claude. **Idempotent**: 
 
 **Shell Path Resolution:**
 The shell path is resolved using Viper configuration hierarchy:
+
 1. CLI flag `-s, --shell-path` (highest priority)
-2. `CLAWKER_SHELL` environment variable
+2. `CLAWKER_AGENT_SHELL` environment variable
 3. `agent.shell` in clawker.yaml
-4. Default: `/bin/bash`
+4. Default: `/bin/sh`
 
 **Examples:**
 

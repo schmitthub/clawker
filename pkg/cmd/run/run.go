@@ -2,9 +2,11 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/clawker/internal/build"
@@ -19,6 +21,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ExitError represents a container exit with non-zero code.
+// This allows deferred cleanup to run before the process exits.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("container exited with code %d", e.Code)
+}
+
 // RunOptions contains the options for the run command.
 type RunOptions struct {
 	Mode      string
@@ -30,6 +42,8 @@ type RunOptions struct {
 	Detach    bool   // Run in background (detached mode)
 	Clean     bool   // Remove existing container/volumes before starting
 	Agent     string // Agent name for the container
+	Quiet     bool   // Suppress informational output
+	JSON      bool   // Output as JSON (detached mode only)
 	Args      []string
 	Ports     []string
 }
@@ -53,7 +67,13 @@ Use --remove for ephemeral containers that are deleted on exit.
 
 Workspace modes:
   --mode=bind      Live sync with host filesystem (default)
-  --mode=snapshot  Copy files to ephemeral Docker volume`,
+  --mode=snapshot  Copy files to ephemeral Docker volume
+
+Shell path resolution (--shell mode):
+  1. CLI flag -s/--shell-path (highest priority)
+  2. CLAWKER_AGENT_SHELL environment variable
+  3. agent.shell in clawker.yaml
+  4. Default: /bin/sh`,
 		Example: `  # Run Claude interactively (container preserved after exit)
   clawker run
 
@@ -90,20 +110,36 @@ Workspace modes:
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "Workspace mode: bind or snapshot (default from config)")
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
 	cmd.Flags().BoolVar(&opts.Shell, "shell", false, "Run shell instead of claude")
-	cmd.Flags().StringVarP(&opts.ShellPath, "shell-path", "s", "", "Path to shell executable (default from config or /bin/bash)")
+	cmd.Flags().StringVarP(&opts.ShellPath, "shell-path", "s", "", "Path to shell executable (default from config or /bin/sh)")
 	cmd.Flags().StringVarP(&opts.ShellUser, "user", "u", "", "User to run shell as (only with --shell)")
 	cmd.Flags().BoolVarP(&opts.Remove, "remove", "r", false, "Remove container and volumes on exit (ephemeral mode)")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
 	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
 	cmd.Flags().StringArrayVarP(&opts.Ports, "publish", "p", nil, "Publish container port(s) to host (e.g., -p 8080:8080)")
+	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress informational output")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON (detached mode only)")
+
+	// Shell completion for --mode flag
+	_ = cmd.RegisterFlagCompletionFunc("mode", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"bind", "snapshot"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
 
-func runRun(f *cmdutil.Factory, opts *RunOptions) error {
+func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
+
+	// Handle ExitError after all other defers run (LIFO order means this runs last)
+	// This ensures cleanup completes before we exit with the container's exit code
+	defer func() {
+		var exitErr *ExitError
+		if errors.As(retErr, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
+	}()
 
 	// Load configuration
 	cfg, err := f.Config()
@@ -125,6 +161,14 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		cmdutil.PrintError("Configuration validation failed")
 		fmt.Fprintln(os.Stderr, err)
 		return err
+	}
+
+	// Validate flag combinations
+	if opts.ShellUser != "" && !opts.Shell {
+		return fmt.Errorf("--user requires --shell flag")
+	}
+	if opts.Detach && opts.Remove {
+		cmdutil.PrintWarning("--remove has no effect with --detach (container runs in background)")
 	}
 
 	logger.Debug().
@@ -259,12 +303,25 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 			// Ignore "already started" errors
 			logger.Debug().Err(err).Msg("start returned error (may be already running)")
 		}
-		fmt.Fprintf(os.Stderr, "Container %s is running in detached mode\n", containerCfg.Name)
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  clawker logs      # View container logs")
-		fmt.Fprintln(os.Stderr, "  clawker run --shell  # Open shell in container")
-		fmt.Fprintln(os.Stderr, "  clawker stop      # Stop the container")
+
+		// Output as JSON if requested
+		if opts.JSON {
+			return cmdutil.OutputJSON(map[string]string{
+				"container": containerCfg.Name,
+				"id":        containerID,
+				"status":    "running",
+			})
+		}
+
+		// Standard output (respects --quiet)
+		if !opts.Quiet {
+			fmt.Fprintf(os.Stderr, "Container %s is running in detached mode\n", containerCfg.Name)
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "Commands:")
+			fmt.Fprintln(os.Stderr, "  clawker logs      # View container logs")
+			fmt.Fprintln(os.Stderr, "  clawker run --shell  # Open shell in container")
+			fmt.Fprintln(os.Stderr, "  clawker stop      # Stop the container")
+		}
 		return nil
 	}
 
@@ -464,7 +521,7 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	}
 
 	// Stream I/O
-	fmt.Println() // Clear line before attaching
+	fmt.Fprintln(os.Stderr) // Clear line before attaching
 	if err := pty.StreamWithResize(ctx, hijacked, func(height, width uint) error {
 		return containerMgr.Resize(containerID, height, width)
 	}); err != nil {
@@ -482,15 +539,24 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 
 	if exitCode != 0 {
 		logger.Debug().Int64("exit_code", exitCode).Msg("container exited with non-zero status")
-		// Must restore terminal before os.Exit since defers don't run
-		pty.Restore()
-		os.Exit(int(exitCode))
+		// Return ExitError to allow deferred cleanup to run
+		// The caller (runRun) will handle propagating the exit code
+		return &ExitError{Code: int(exitCode)}
 	}
 
 	return nil
 }
 
 func cleanupResources(_ context.Context, eng *engine.Engine, projectName, agentName string) error {
+	// Create cleanup-specific context with 30s timeout
+	// We use context.Background() as parent since the passed ctx may be cancelled
+	// (e.g., when cleanup runs in deferred functions after Ctrl+C)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Note: cleanupCtx will be used when engine operations accept context
+	_ = cleanupCtx
+
 	containerMgr := engine.NewContainerManager(eng)
 	volumeMgr := engine.NewVolumeManager(eng)
 

@@ -156,7 +156,7 @@ Flags:
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
   --shell               Run shell instead of Claude
-  -s, --shell-path      Path to shell executable (default: /bin/bash)
+  -s, --shell-path      Path to shell executable (default: /bin/sh)
   -u, --user            User to run shell as (only with --shell)
   -r, --remove          Remove container and volumes on exit (ephemeral)
   --detach              Run container in background
