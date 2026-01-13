@@ -125,7 +125,7 @@ func checkRunningContainers() {
 	}
 	defer eng.Close()
 
-	containers, err := eng.ListRunningClawkerContainers()
+	containers, err := eng.ListRunningClawkerContainers(ctx)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")
 		return

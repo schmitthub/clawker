@@ -102,15 +102,15 @@ func runRemove(_ *cmdutil.Factory, opts *RemoveOptions) error {
 	defer eng.Close()
 
 	if opts.Name != "" {
-		return removeByName(eng, opts.Name, opts.Force)
+		return removeByName(ctx, eng, opts.Name, opts.Force)
 	}
 
-	return removeByProject(eng, opts.Project, opts.Force)
+	return removeByProject(ctx, eng, opts.Project, opts.Force)
 }
 
-func removeByName(eng *engine.Engine, name string, force bool) error {
+func removeByName(ctx context.Context, eng *engine.Engine, name string, force bool) error {
 	// Find container by name
-	container, err := eng.FindContainerByName(name)
+	container, err := eng.FindContainerByName(ctx, name)
 	if err != nil {
 		return fmt.Errorf("failed to find container %q: %w", name, err)
 	}
@@ -119,7 +119,7 @@ func removeByName(eng *engine.Engine, name string, force bool) error {
 	}
 
 	// Remove container and volumes
-	if err := eng.RemoveContainerWithVolumes(container.ID, force); err != nil {
+	if err := eng.RemoveContainerWithVolumes(ctx, container.ID, force); err != nil {
 		return fmt.Errorf("failed to remove container %q: %w", name, err)
 	}
 
@@ -127,9 +127,9 @@ func removeByName(eng *engine.Engine, name string, force bool) error {
 	return nil
 }
 
-func removeByProject(eng *engine.Engine, project string, force bool) error {
+func removeByProject(ctx context.Context, eng *engine.Engine, project string, force bool) error {
 	// List all containers for project (including stopped)
-	containers, err := eng.ListClawkerContainersByProject(project, true)
+	containers, err := eng.ListClawkerContainersByProject(ctx, project, true)
 	if err != nil {
 		return fmt.Errorf("failed to list containers for project %q: %w", project, err)
 	}
@@ -142,7 +142,7 @@ func removeByProject(eng *engine.Engine, project string, force bool) error {
 	// Remove each container
 	var removed int
 	for _, c := range containers {
-		if err := eng.RemoveContainerWithVolumes(c.ID, force); err != nil {
+		if err := eng.RemoveContainerWithVolumes(ctx, c.ID, force); err != nil {
 			logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 			continue
 		}
@@ -231,9 +231,9 @@ func RunPrune(ctx context.Context, all bool, force bool) error {
 	return nil
 }
 
-func pruneContainers(_ context.Context, eng *engine.Engine, all bool) (int, error) {
+func pruneContainers(ctx context.Context, eng *engine.Engine, all bool) (int, error) {
 	// List clawker containers using label filter
-	containers, err := eng.ContainerList(container.ListOptions{
+	containers, err := eng.ContainerList(ctx, container.ListOptions{
 		All:     true,
 		Filters: engine.ClawkerFilter(),
 	})
@@ -257,7 +257,7 @@ func pruneContainers(_ context.Context, eng *engine.Engine, all bool) (int, erro
 		containerName := strings.TrimPrefix(c.Names[0], "/")
 
 		fmt.Fprintf(os.Stderr, "[INFO]  Removing container: %s\n", containerName)
-		if err := eng.ContainerRemove(c.ID, true); err != nil {
+		if err := eng.ContainerRemove(ctx, c.ID, true); err != nil {
 			logger.Warn().Err(err).Str("container", containerName).Msg("failed to remove container")
 			continue
 		}
@@ -304,7 +304,7 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 		}
 
 		fmt.Fprintf(os.Stderr, "[INFO]  Removing image: %s\n", tagName)
-		if err := eng.ImageRemove(img.ID, true); err != nil {
+		if err := eng.ImageRemove(ctx, img.ID, true); err != nil {
 			logger.Warn().Err(err).Str("image", tagName).Msg("failed to remove image")
 			continue
 		}
@@ -314,12 +314,12 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 	return removed, nil
 }
 
-func pruneVolumes(_ context.Context, eng *engine.Engine) (int, error) {
+func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
 	// Track volumes to remove (use map to dedupe)
 	volumesToRemove := make(map[string]bool)
 
 	// First, find volumes by label (new volumes with proper labels)
-	labeledVolumes, err := eng.VolumeList(engine.ClawkerFilter())
+	labeledVolumes, err := eng.VolumeList(ctx, engine.ClawkerFilter())
 	if err != nil {
 		logger.Warn().Err(err).Msg("error listing labeled volumes")
 	} else {
@@ -330,7 +330,7 @@ func pruneVolumes(_ context.Context, eng *engine.Engine) (int, error) {
 
 	// Fallback: find volumes by name prefix (legacy volumes without labels)
 	// Volumes are named: clawker.project.agent-purpose
-	nameFilteredVolumes, err := eng.VolumeList(filters.NewArgs(
+	nameFilteredVolumes, err := eng.VolumeList(ctx, filters.NewArgs(
 		filters.Arg("name", "clawker."),
 	))
 	if err != nil {
@@ -344,7 +344,7 @@ func pruneVolumes(_ context.Context, eng *engine.Engine) (int, error) {
 	var removed int
 	for volName := range volumesToRemove {
 		fmt.Fprintf(os.Stderr, "[INFO]  Removing volume: %s\n", volName)
-		if err := eng.VolumeRemove(volName, true); err != nil {
+		if err := eng.VolumeRemove(ctx, volName, true); err != nil {
 			logger.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
 			continue
 		}
@@ -354,9 +354,9 @@ func pruneVolumes(_ context.Context, eng *engine.Engine) (int, error) {
 	return removed, nil
 }
 
-func pruneNetwork(_ context.Context, eng *engine.Engine) error {
+func pruneNetwork(ctx context.Context, eng *engine.Engine) error {
 	// Check if network exists
-	exists, err := eng.NetworkExists(config.ClawkerNetwork)
+	exists, err := eng.NetworkExists(ctx, config.ClawkerNetwork)
 	if err != nil {
 		return err
 	}
@@ -365,7 +365,7 @@ func pruneNetwork(_ context.Context, eng *engine.Engine) error {
 	}
 
 	// Check if network is in use
-	network, err := eng.NetworkInspect(config.ClawkerNetwork)
+	network, err := eng.NetworkInspect(ctx, config.ClawkerNetwork)
 	if err != nil {
 		return err
 	}
@@ -376,7 +376,7 @@ func pruneNetwork(_ context.Context, eng *engine.Engine) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "[INFO]  Removing network: %s\n", config.ClawkerNetwork)
-	neterr := eng.NetworkRemove(config.ClawkerNetwork)
+	neterr := eng.NetworkRemove(ctx, config.ClawkerNetwork)
 	if neterr != nil {
 		logger.Warn().Err(neterr).Str("network", config.ClawkerNetwork).Msg("failed to remove network")
 		return neterr

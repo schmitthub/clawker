@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -26,8 +27,8 @@ func NewVolumeManager(engine *Engine) *VolumeManager {
 }
 
 // EnsureVolume creates a volume if it doesn't exist, returns true if created
-func (vm *VolumeManager) EnsureVolume(name string, labels map[string]string) (bool, error) {
-	exists, err := vm.engine.VolumeExists(name)
+func (vm *VolumeManager) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error) {
+	exists, err := vm.engine.VolumeExists(ctx, name)
 	if err != nil {
 		return false, err
 	}
@@ -37,7 +38,7 @@ func (vm *VolumeManager) EnsureVolume(name string, labels map[string]string) (bo
 		return false, nil
 	}
 
-	_, err = vm.engine.VolumeCreate(name, labels)
+	_, err = vm.engine.VolumeCreate(ctx, name, labels)
 	if err != nil {
 		return false, err
 	}
@@ -47,7 +48,7 @@ func (vm *VolumeManager) EnsureVolume(name string, labels map[string]string) (bo
 }
 
 // CopyToVolume copies a directory to a Docker volume using a temporary container
-func (vm *VolumeManager) CopyToVolume(volumeName, srcDir, destPath string, ignorePatterns []string) error {
+func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error {
 	logger.Debug().
 		Str("volume", volumeName).
 		Str("src", srcDir).
@@ -77,9 +78,9 @@ func (vm *VolumeManager) CopyToVolume(volumeName, srcDir, destPath string, ignor
 	}
 
 	// Pull busybox if needed
-	exists, _ := vm.engine.ImageExists("busybox:latest")
+	exists, _ := vm.engine.ImageExists(ctx, "busybox:latest")
 	if !exists {
-		reader, err := vm.engine.ImagePull("busybox:latest")
+		reader, err := vm.engine.ImagePull(ctx, "busybox:latest")
 		if err != nil {
 			return ErrVolumeCopyFailed(fmt.Errorf("failed to pull busybox: %w", err))
 		}
@@ -88,15 +89,15 @@ func (vm *VolumeManager) CopyToVolume(volumeName, srcDir, destPath string, ignor
 	}
 
 	// Create temporary container
-	resp, err := vm.engine.ContainerCreate(containerConfig, hostConfig, "")
+	resp, err := vm.engine.ContainerCreate(ctx, containerConfig, hostConfig, "")
 	if err != nil {
 		return ErrVolumeCopyFailed(fmt.Errorf("failed to create temp container: %w", err))
 	}
-	defer vm.engine.ContainerRemove(resp.ID, true)
+	defer vm.engine.ContainerRemove(ctx, resp.ID, true)
 
 	// Copy tar archive to container
 	err = vm.engine.Client().CopyToContainer(
-		vm.engine.Context(),
+		ctx,
 		resp.ID,
 		destPath,
 		tarBuffer,
@@ -115,10 +116,10 @@ func (vm *VolumeManager) CopyToVolume(volumeName, srcDir, destPath string, ignor
 }
 
 // RemoveVolumes removes multiple volumes
-func (vm *VolumeManager) RemoveVolumes(names []string, force bool) error {
+func (vm *VolumeManager) RemoveVolumes(ctx context.Context, names []string, force bool) error {
 	var lastErr error
 	for _, name := range names {
-		if err := vm.engine.VolumeRemove(name, force); err != nil {
+		if err := vm.engine.VolumeRemove(ctx, name, force); err != nil {
 			logger.Warn().Str("volume", name).Err(err).Msg("failed to remove volume")
 			lastErr = err
 		} else {

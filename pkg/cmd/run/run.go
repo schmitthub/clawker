@@ -229,13 +229,13 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	}
 
 	// Ensure clawker network exists
-	if err := eng.EnsureNetwork(config.ClawkerNetwork); err != nil {
+	if err := eng.EnsureNetwork(ctx, config.ClawkerNetwork); err != nil {
 		logger.Warn().Err(err).Msg("failed to ensure clawker network")
 		// Don't fail hard, container can still run without the network
 	}
 
 	// Check if monitoring stack is active
-	monitoringActive := eng.IsMonitoringActive()
+	monitoringActive := eng.IsMonitoringActive(ctx)
 	if monitoringActive {
 		logger.Info().Msg("monitoring stack detected, enabling telemetry")
 	}
@@ -248,7 +248,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 
 	// Create or find container (idempotent)
 	containerMgr := engine.NewContainerManager(eng)
-	containerID, created, err := containerMgr.FindOrCreate(containerCfg)
+	containerID, created, err := containerMgr.FindOrCreate(ctx, containerCfg)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -269,8 +269,11 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	// Setup cleanup on exit if --remove
 	if opts.Remove {
 		defer func() {
+			// Use background context for cleanup since main ctx may be cancelled
+			cleanupCtx := context.Background()
+
 			// Remove container first
-			if err := containerMgr.Remove(containerID, true); err != nil {
+			if err := containerMgr.Remove(cleanupCtx, containerID, true); err != nil {
 				logger.Warn().Err(err).Msg("failed to remove ephemeral container")
 			} else {
 				logger.Info().Str("container_id", containerID[:12]).Msg("removed ephemeral container")
@@ -283,7 +286,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 				engine.VolumeName(cfg.Project, agentName, "history"),
 			}
 			for _, vol := range volumes {
-				if err := eng.VolumeRemove(vol, true); err != nil {
+				if err := eng.VolumeRemove(cleanupCtx, vol, true); err != nil {
 					// Ignore errors - volume may not exist (e.g., bind mode has no workspace volume)
 					logger.Debug().Str("volume", vol).Err(err).Msg("failed to remove volume")
 				} else {
@@ -296,7 +299,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	// Handle detached mode
 	if opts.Detach {
 		// Start container if not already running
-		if err := containerMgr.Start(containerID); err != nil {
+		if err := containerMgr.Start(ctx, containerID); err != nil {
 			// Ignore "already started" errors
 			logger.Debug().Err(err).Msg("start returned error (may be already running)")
 		}
@@ -360,7 +363,7 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	}
 
 	// Ensure config and history volumes exist with proper labels
-	if err := workspace.EnsureConfigVolumes(eng, cfg.Project, agentName); err != nil {
+	if err := workspace.EnsureConfigVolumes(ctx, eng, cfg.Project, agentName); err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
 
@@ -490,13 +493,13 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	defer pty.Restore()
 
 	// Attach to container BEFORE starting (critical for capturing output)
-	hijacked, err := containerMgr.Attach(containerID)
+	hijacked, err := containerMgr.Attach(ctx, containerID)
 	if err != nil {
 		return err
 	}
 
 	// Now start the container
-	if err := containerMgr.Start(containerID); err != nil {
+	if err := containerMgr.Start(ctx, containerID); err != nil {
 		// Ignore "already started" errors - container may be reused
 		logger.Debug().Err(err).Msg("start returned error (may be already running)")
 	}
@@ -506,7 +509,7 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	if pty.IsTerminal() {
 		resizeHandler := term.NewResizeHandler(
 			func(height, width uint) error {
-				return containerMgr.Resize(containerID, height, width)
+				return containerMgr.Resize(ctx, containerID, height, width)
 			},
 			pty.GetSize,
 		)
@@ -520,7 +523,7 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	// Stream I/O
 	fmt.Fprintln(os.Stderr) // Clear line before attaching
 	if err := pty.StreamWithResize(ctx, hijacked, func(height, width uint) error {
-		return containerMgr.Resize(containerID, height, width)
+		return containerMgr.Resize(ctx, containerID, height, width)
 	}); err != nil {
 		if err == context.Canceled {
 			return nil
@@ -529,7 +532,7 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	}
 
 	// Wait for container to exit
-	exitCode, err := containerMgr.Wait(containerID)
+	exitCode, err := containerMgr.Wait(ctx, containerID)
 	if err != nil {
 		return err
 	}
@@ -551,21 +554,18 @@ func cleanupResources(_ context.Context, eng *engine.Engine, projectName, agentN
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// TODO: Use cleanupCtx for containerMgr/volumeMgr once engine operations accept context
-	_ = cleanupCtx
-
 	containerMgr := engine.NewContainerManager(eng)
 	volumeMgr := engine.NewVolumeManager(eng)
 
 	// Remove container
 	containerName := engine.ContainerName(projectName, agentName)
-	existing, err := eng.FindContainerByName(containerName)
+	existing, err := eng.FindContainerByName(cleanupCtx, containerName)
 	if err != nil {
 		return err
 	}
 	if existing != nil {
 		logger.Info().Str("container", containerName).Msg("removing existing container")
-		if err := containerMgr.Remove(existing.ID, true); err != nil {
+		if err := containerMgr.Remove(cleanupCtx, existing.ID, true); err != nil {
 			logger.Warn().Err(err).Msg("failed to remove container")
 		}
 	}
@@ -577,7 +577,7 @@ func cleanupResources(_ context.Context, eng *engine.Engine, projectName, agentN
 		engine.VolumeName(projectName, agentName, "history"),
 	}
 
-	if err := volumeMgr.RemoveVolumes(volumes, true); err != nil {
+	if err := volumeMgr.RemoveVolumes(cleanupCtx, volumes, true); err != nil {
 		logger.Warn().Err(err).Msg("failed to remove some volumes")
 	}
 

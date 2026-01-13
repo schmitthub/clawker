@@ -48,7 +48,8 @@
       "Bash(/usr/local/go/bin/go test:*)",
       "Bash(/usr/local/go/bin/go build:*)",
       "Bash(grep:*)",
-      "Bash(/Users/andrew/Code/clawker/bin/clawker prune:*)"
+      "Bash(/Users/andrew/Code/clawker/bin/clawker prune:*)",
+      "Bash(ls:*)"
     ],
     "deny": [
       "Read(TODO.md)",

@@ -55,12 +55,17 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil, opts.NoCache, opts.Labels)
+		return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+			Tag:        imageTag,
+			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
+			NoCache:    opts.NoCache,
+			Labels:     opts.Labels,
+		})
 	}
 
 	// Check if image exists and we don't need to rebuild
 	if !opts.ForceBuild {
-		exists, err := b.engine.ImageExists(imageTag)
+		exists, err := b.engine.ImageExists(ctx, imageTag)
 		if err != nil {
 			return err
 		}
@@ -93,7 +98,12 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return imgMgr.BuildImage(buildCtx, imageTag, filepath.Base(gen.GetCustomDockerfilePath()), nil, noCache, labels)
+		return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+			Tag:        imageTag,
+			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
+			NoCache:    noCache,
+			Labels:     labels,
+		})
 	}
 
 	logger.Info().Str("image", imageTag).Msg("building container image")
@@ -103,5 +113,10 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
-	return imgMgr.BuildImage(buildCtx, imageTag, "Dockerfile", nil, noCache, labels)
+	return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+		Tag:        imageTag,
+		Dockerfile: "Dockerfile",
+		NoCache:    noCache,
+		Labels:     labels,
+	})
 }
