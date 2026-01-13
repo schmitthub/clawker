@@ -47,6 +47,20 @@ Note: Indent examples with 2 spaces for proper help formatting.
 cmd.MarkFlagsOneRequired("name", "project")    // At least one
 cmd.MarkFlagsMutuallyExclusive("bind", "snapshot")  // Not both
 cmd.MarkFlagRequired("config")                 // Always required
+
+// Runtime validation in RunE for dependent flags:
+if opts.ShellUser != "" && !opts.Shell {
+    return fmt.Errorf("--user requires --shell flag")
+}
+```
+
+## Shell Completion
+
+```go
+// Add completion for flags with known values:
+_ = cmd.RegisterFlagCompletionFunc("mode", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+    return []string{"bind", "snapshot"}, cobra.ShellCompDirectiveNoFileComp
+})
 ```
 
 ## Related Documentation

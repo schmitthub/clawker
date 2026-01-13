@@ -15,7 +15,7 @@ Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core phil
    - `think_about_task_adherence` before changes
    - `replace_symbol_body`, `insert_after_symbol`,`insert_before_symbol`,`rename_symbol` for edits
    - `think_about_whether_you_are_done` after task
-   - `write_memory`, `edit_memory`, `delete_memory` with updates of the task before completion
+   - `write_memory`, `edit_memory`, `delete_memory` to update memories with current status before completion
 
 2. **Context7** - Library/API docs without explicit requests:
    - `resolve-library-id` first, then `get-library-docs`
@@ -168,6 +168,7 @@ go test ./pkg/cmd/... -tags=integration -v -timeout 10m
 | Regression tests | Add to test files | Prevent fixed bugs from reoccurring |
 
 **Before completing any code change:**
+
 1. Run `go test ./...` - all unit tests must pass
 2. Run `go test ./pkg/cmd/... -tags=integration` - all integration tests must pass
 3. Add regression tests for bug fixes
@@ -185,4 +186,4 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/rules/TESTING.md | CLI testing guildelines (**only access when writing command tests**) |
 | @README.md | User-facing documentation |
 
-**Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) as appropriate.
+**Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.

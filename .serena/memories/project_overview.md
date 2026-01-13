@@ -44,10 +44,11 @@ Clawker supports multiple containers per project using **agents**:
 
 | Command | Purpose |
 |---------|---------|
-| `clawker start --agent <name>` | Start named container |
-| `clawker run --agent <name>` | Run ephemeral container |
+| `clawker run --agent <name>` | Run container |
+| `clawker run --remove --agent <name>` | Run ephemeral container |
 | `clawker stop --agent <name>` | Stop specific or all containers |
 | `clawker ls -a -p <project>` | List containers |
 | `clawker rm -n <name> -p <project>` | Remove containers |
-| `clawker sh/logs --agent <name>` | Shell/logs for specific agent |
+| `clawker logs --agent <name>` | logs for specific agent |
+| `clawker run --agent <name> --shell -s /bin/zsh/ --user <claude/root>` | shell for specific agent |
 | `clawker monitor init/up/down/status` | Manage observability stack |

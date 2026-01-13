@@ -47,7 +47,7 @@
 
 ## Container Command Pattern
 
-For commands that operate on containers (logs, sh, stop, etc.):
+For commands that operate on containers (logs, stop, etc.):
 
 ```go
 func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
@@ -108,6 +108,77 @@ wsConfig := workspace.Config{
 strategy, _ := workspace.NewStrategy(mode, wsConfig)
 strategy.Prepare(ctx, eng)
 mounts := strategy.GetMounts()
+```
+
+## Exit Code Handling Pattern
+
+When a command needs to exit with a specific code but allow deferred cleanup to run:
+
+```go
+// Define ExitError type
+type ExitError struct {
+    Code int
+}
+
+func (e *ExitError) Error() string {
+    return fmt.Sprintf("container exited with code %d", e.Code)
+}
+
+// Use named return to handle exit after defers
+func runCmd(f *cmdutil.Factory, opts *Options) (retErr error) {
+    defer func() {
+        var exitErr *ExitError
+        if errors.As(retErr, &exitErr) {
+            os.Exit(exitErr.Code)  // Runs after all defers complete
+        }
+    }()
+
+    // ... deferred cleanup ...
+    defer cleanup()
+
+    // Return ExitError instead of calling os.Exit directly
+    if exitCode != 0 {
+        return &ExitError{Code: exitCode}
+    }
+    return nil
+}
+```
+
+## Quiet/JSON Output Pattern
+
+For commands that support scripting with `--quiet` and `--json` flags:
+
+```go
+type Options struct {
+    Quiet bool
+    JSON  bool
+}
+
+// Add flags
+cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress informational output")
+cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON")
+
+// Use in command
+if opts.JSON {
+    return cmdutil.OutputJSON(map[string]string{"key": "value"})
+}
+if !opts.Quiet {
+    fmt.Fprintf(os.Stderr, "Status message\n")
+}
+```
+
+## Flag Validation Pattern
+
+For flags that depend on other flags:
+
+```go
+// In runCmd, after config validation
+if opts.ShellUser != "" && !opts.Shell {
+    return fmt.Errorf("--user requires --shell flag")
+}
+if opts.Detach && opts.Remove {
+    cmdutil.PrintWarning("--remove has no effect with --detach")
+}
 ```
 
 ## Testing
