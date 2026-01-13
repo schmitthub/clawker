@@ -340,3 +340,4 @@ COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.cla
 # Copy and set up entrypoint script
 COPY entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["entrypoint.sh"]
+CMD ["claude"]

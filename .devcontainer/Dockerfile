@@ -176,6 +176,7 @@ USER node
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=/home/node/.local/bin:$PATH:/usr/local/share/npm-global/bin
+ENV PATH=$PATH:/usr/local/go/bin:/home/node/go/bin
 
 # Set the default shell to zsh rather than sh
 ENV SHELL=/bin/zsh
@@ -196,9 +197,34 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
+
 # Install Claude
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @ast-grep/cli
 
+# Stage config files for volume initialization (not shadowed by volume mount)
+COPY --chown=node:node statusline.sh /home/node/.claude-init/statusline.sh
+COPY --chown=node:node claude-settings.json /home/node/.claude-init/settings.json
+
+RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+
+# Initialize Claude config from staged defaults
+RUN INIT_DIR="$HOME/.claude-init" && \
+  CONFIG_DIR="$HOME/.claude" && \
+  if [ -d "$INIT_DIR" ]; then \
+    # Copy statusline.sh if missing
+    [ ! -f "$CONFIG_DIR/statusline.sh" ] && cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"; \
+    # Initialize or merge settings.json
+    if [ ! -f "$CONFIG_DIR/settings.json" ]; then \
+      cp "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json"; \
+    else \
+      # Merge: init defaults first, user settings override
+      jq -s '.[0] * .[1]' "$INIT_DIR/settings.json" "$CONFIG_DIR/settings.json" > "$CONFIG_DIR/settings.json.tmp" 2>/dev/null \
+        && mv "$CONFIG_DIR/settings.json.tmp" "$CONFIG_DIR/settings.json" \
+        || true; \
+    fi; \
+  fi
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
