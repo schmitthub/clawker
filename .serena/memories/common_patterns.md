@@ -47,7 +47,7 @@
 
 ## Container Command Pattern
 
-For commands that operate on containers (logs, stop, etc.):
+For commands that operate on containers (logs, stop, etc.). **Note: Always pass `ctx` to all engine/manager methods.**
 
 ```go
 func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
@@ -60,14 +60,14 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
     if opts.Agent != "" {
         // Specific agent
         containerName := engine.ContainerName(cfg.Project, opts.Agent)
-        existing, _ := eng.FindContainerByName(containerName)
+        existing, _ := eng.FindContainerByName(ctx, containerName)  // Pass ctx
         if existing == nil {
             return fmt.Errorf("container not found")
         }
         containerID = existing.ID
     } else {
         // Find containers for project
-        containers, _ := eng.ListClawkerContainersByProject(cfg.Project, true)
+        containers, _ := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)  // Pass ctx
         if len(containers) == 0 {
             return fmt.Errorf("no containers found")
         }
@@ -83,6 +83,8 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
 
 ## Creating Containers with Labels
 
+**Always pass `ctx` to manager methods:**
+
 ```go
 containerCfg := engine.ContainerConfig{
     Name:        engine.ContainerName(cfg.Project, agentName),
@@ -91,10 +93,12 @@ containerCfg := engine.ContainerConfig{
     // ... other config
 }
 containerMgr := engine.NewContainerManager(eng)
-containerID, _ := containerMgr.Create(containerCfg)
+containerID, _ := containerMgr.Create(ctx, containerCfg)  // Pass ctx
 ```
 
 ## Workspace Strategy Pattern
+
+**Pass `ctx` to Prepare and EnsureConfigVolumes:**
 
 ```go
 // Setup workspace (bind or snapshot mode)
@@ -106,8 +110,11 @@ wsConfig := workspace.Config{
     IgnorePatterns: ignorePatterns,
 }
 strategy, _ := workspace.NewStrategy(mode, wsConfig)
-strategy.Prepare(ctx, eng)
+strategy.Prepare(ctx, eng)  // ctx passed through
 mounts := strategy.GetMounts()
+
+// Ensure config volumes exist
+workspace.EnsureConfigVolumes(ctx, eng, cfg.Project, agentName)  // Pass ctx
 ```
 
 ## Exit Code Handling Pattern

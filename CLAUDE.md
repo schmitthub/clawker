@@ -1,6 +1,13 @@
 # Clawker
 
-Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core philosophy: **Safe Autonomy** - host is read-only by default.
+Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers. The goal is to create a solution to easily spin up claude code agents in containers to isolate them from damaging the user's host system, especially when running in unsafe unattended modes. You can distill clawker users into two groups
+
+1. **Group Name: Vibers**: Users new to software development and its tooling who have absolutely no understanding what they are doing and yern for a good harness with features to abstract away the complexity of running and monitoring agents using advanced techniques without harming their machines
+2. **Group Name: Wizards**: Users who are very experienced with software development and its tooling who would enjoy the convenience of clawker's features
+
+The assumption right now is the majority of users will most likely fall in the first group as `clawker` is an abstraction that simplifies creating and managing containers. `docker` experienced users will be less apt to pursue a solution like this, but may want to adopt for other convenience features like monitoring etc.
+
+**`clawker` should prioritize being intuitive for those new to container management and just want to intuitively run claude code, but do its best to also make docker users feel right at home whenever possible**
 
 <critical_instructions>
 
@@ -148,6 +155,40 @@ security:
 - Never use `logger.Fatal()` in Cobra hooks - return errors instead
 - Don't wait for stdin goroutine on container exit (may block on Read)
 - Docker hijacked connections need cleanup of both read and write sides
+
+## Context Management (Critical)
+
+**NEVER** store `context.Context` in struct fields. This is an antipattern that breaks cancellation and timeouts.
+
+```go
+// ❌ WRONG - Static context antipattern
+type Engine struct {
+    ctx context.Context  // DO NOT DO THIS
+}
+
+// ✅ CORRECT - Per-operation context
+func (e *Engine) ContainerStart(ctx context.Context, id string) error {
+    return e.cli.ContainerStart(ctx, id, container.StartOptions{})
+}
+```
+
+All `internal/engine` methods accept `ctx context.Context` as their first parameter:
+
+- `Engine`: `ContainerCreate(ctx, ...)`, `VolumeExists(ctx, ...)`, `ImagePull(ctx, ...)`
+- `ContainerManager`: `Create(ctx, ...)`, `Start(ctx, ...)`, `FindOrCreate(ctx, ...)`
+- `VolumeManager`: `EnsureVolume(ctx, ...)`, `CopyToVolume(ctx, ...)`
+- `ImageManager`: `EnsureImage(ctx, ...)`, `BuildImage(ctx, ...)`
+
+For cleanup in deferred functions, use `context.Background()` since the original context may be cancelled:
+
+```go
+defer func() {
+    cleanupCtx := context.Background()
+    containerMgr.Remove(cleanupCtx, containerID, true)
+}()
+```
+
+See `context_management` memory for detailed patterns and examples.
 
 ## Testing Requirements
 
