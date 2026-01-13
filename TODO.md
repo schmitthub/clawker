@@ -10,6 +10,7 @@
 
 ## Enhancements
 
+[ ] figure out what you're gunna do about seamlessly handling git creds :D, prob just copy mount ssh dir
 [ ] I will need incorporate a mimic of docker attach for container shell session detachment and re-attachment. Right now we can leverage `run` with a --detach flag to start a claude command. Users might want to leave containers running a job and re-log into the same shell session later
 [ ] Might also want to add exec too
 [ ] Custom actions? let people create workflows to wrap container start finish?
