@@ -44,8 +44,9 @@ func NewEngine(ctx context.Context) (*Engine, error) {
 	return engine, nil
 }
 
-// HealthCheck verifies Docker daemon connectivity
+// HealthCheck verifies engine external dependency health
 func (e *Engine) HealthCheck(ctx context.Context) error {
+	// check if Docker daemon is reachable
 	_, err := e.cli.Ping(ctx)
 	if err != nil {
 		return ErrDockerNotRunning(err)

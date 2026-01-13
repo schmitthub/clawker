@@ -91,7 +91,8 @@ for domain in \
     "production.cloudflare.docker.com" \
     "proxy.golang.org" \
     "sum.golang.org" \
-    "docker.io"; do
+    "docker.io" \
+    "pypi.org"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then

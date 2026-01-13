@@ -61,6 +61,11 @@ services:
     networks:
       - clawker-net
 
+  mcp-gateway:
+    image: docker/mcp-gateway
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 networks:
   clawker-net:
     external: true  # Created by clawker start/run, shared by all clawker services
