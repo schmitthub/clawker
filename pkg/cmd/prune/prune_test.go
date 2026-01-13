@@ -3,7 +3,7 @@ package prune
 import (
 	"testing"
 
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 func TestNewCmdPrune(t *testing.T) {

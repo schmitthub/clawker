@@ -6,52 +6,52 @@ import (
 )
 
 const (
-	// ClauckerHomeEnv is the environment variable for the claucker home directory
-	ClauckerHomeEnv = "CLAUCKER_HOME"
-	// DefaultClauckerDir is the default directory name under user home
-	DefaultClauckerDir = ".claucker"
+	// ClawkerHomeEnv is the environment variable for the clawker home directory
+	ClawkerHomeEnv = "CLAWKER_HOME"
+	// DefaultClawkerDir is the default directory name under user home
+	DefaultClawkerDir = ".clawker"
 	// MonitorSubdir is the subdirectory for monitoring stack configuration
 	MonitorSubdir = "monitor"
 	// BuildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
 	BuildSubdir = "build"
 	// DockerfilesSubdir is the subdirectory for generated Dockerfiles
 	DockerfilesSubdir = "dockerfiles"
-	// ClauckerNetwork is the name of the shared Docker network
-	ClauckerNetwork = "claucker-net"
+	// ClawkerNetwork is the name of the shared Docker network
+	ClawkerNetwork = "clawker-net"
 )
 
-// ClauckerHome returns the claucker home directory.
-// It checks CLAUCKER_HOME environment variable first, then defaults to ~/.claucker
-func ClauckerHome() (string, error) {
-	if home := os.Getenv(ClauckerHomeEnv); home != "" {
+// ClawkerHome returns the clawker home directory.
+// It checks CLAWKER_HOME environment variable first, then defaults to ~/.clawker
+func ClawkerHome() (string, error) {
+	if home := os.Getenv(ClawkerHomeEnv); home != "" {
 		return home, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, DefaultClauckerDir), nil
+	return filepath.Join(home, DefaultClawkerDir), nil
 }
 
-// MonitorDir returns the monitor stack directory (~/.claucker/monitor)
+// MonitorDir returns the monitor stack directory (~/.clawker/monitor)
 func MonitorDir() (string, error) {
-	home, err := ClauckerHome()
+	home, err := ClawkerHome()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, MonitorSubdir), nil
 }
 
-// BuildDir returns the build artifacts directory (~/.claucker/build)
+// BuildDir returns the build artifacts directory (~/.clawker/build)
 func BuildDir() (string, error) {
-	home, err := ClauckerHome()
+	home, err := ClawkerHome()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, BuildSubdir), nil
 }
 
-// DockerfilesDir returns the dockerfiles directory (~/.claucker/build/dockerfiles)
+// DockerfilesDir returns the dockerfiles directory (~/.clawker/build/dockerfiles)
 func DockerfilesDir() (string, error) {
 	buildDir, err := BuildDir()
 	if err != nil {

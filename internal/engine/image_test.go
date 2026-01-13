@@ -9,9 +9,9 @@ func TestImageTag(t *testing.T) {
 		project string
 		want    string
 	}{
-		{"my-project", "claucker/my-project:latest"},
-		{"test", "claucker/test:latest"},
-		{"project123", "claucker/project123:latest"},
+		{"my-project", "clawker/my-project:latest"},
+		{"test", "clawker/test:latest"},
+		{"project123", "clawker/project123:latest"},
 	}
 
 	for _, tt := range tests {

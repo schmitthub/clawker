@@ -1,14 +1,14 @@
-// claucker-generate is a standalone binary for generating versions.json.
-// It provides the same functionality as 'claucker generate' but can be run
-// independently without the full claucker CLI.
+// clawkergenerate is a standalone binary for generating versions.json.
+// It provides the same functionality as 'clawkergenerate' but can be run
+// independently without the full clawkerCLI.
 package main
 
 import (
 	"os"
 
-	"github.com/schmitthub/claucker/pkg/cmd/generate"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/cmd/generate"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Build-time variables set by ldflags.
@@ -36,7 +36,7 @@ func main() {
 
 	// Create and execute the generate command
 	cmd := generate.NewCmdGenerate(f)
-	cmd.Use = "claucker-generate" // Override for standalone use
+	cmd.Use = "clawkergenerate" // Override for standalone use
 	cmd.Version = Version
 
 	if err := cmd.Execute(); err != nil {

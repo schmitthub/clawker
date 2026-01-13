@@ -6,11 +6,11 @@ import (
 	"io"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/internal/term"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -32,16 +32,16 @@ func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
 
 If multiple containers exist and --agent is not specified, you must specify which agent.`,
 		Example: `  # Show logs (if single container)
-  claucker logs
+  clawker logs
 
   # Show logs for specific agent
-  claucker logs --agent ralph
+  clawker logs --agent ralph
 
   # Follow log output (like tail -f)
-  claucker logs -f
+  clawker logs -f
 
   # Show last 50 lines
-  claucker logs --tail 50`,
+  clawker logs --tail 50`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogs(f, opts)
 		},
@@ -62,7 +62,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			return err
 		}
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -99,22 +99,22 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 		if existing == nil {
 			cmdutil.PrintError("Container for agent '%s' not found", opts.Agent)
 			cmdutil.PrintNextSteps(
-				"Run 'claucker ls' to see available containers",
-				"Run 'claucker start --agent "+opts.Agent+"' to create it",
+				"Run 'clawker ls' to see available containers",
+				"Run 'clawker start --agent "+opts.Agent+"' to create it",
 			)
 			return fmt.Errorf("container not found")
 		}
 		containerID = existing.ID
 	} else {
 		// Find containers for project
-		containers, err := eng.ListClauckerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
 
 		if len(containers) == 0 {
 			cmdutil.PrintError("No containers found for project '%s'", cfg.Project)
-			cmdutil.PrintNextSteps("Run 'claucker start' to create a container")
+			cmdutil.PrintNextSteps("Run 'clawker start' to create a container")
 			return fmt.Errorf("no containers found")
 		}
 
@@ -126,7 +126,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 			}
 			cmdutil.PrintNextSteps(
 				"Use --agent to specify which container",
-				"Example: claucker logs --agent "+containers[0].Agent,
+				"Example: clawker logs --agent "+containers[0].Agent,
 			)
 			return fmt.Errorf("multiple containers found")
 		}

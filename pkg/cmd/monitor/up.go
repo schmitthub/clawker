@@ -6,11 +6,11 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	internalmonitor "github.com/schmitthub/claucker/internal/monitor"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +32,13 @@ This launches the following services:
   - Prometheus (port 9090)
   - Grafana (port 3000)
 
-The stack connects to the claucker-net Docker network, allowing
+The stack connects to the clawker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.`,
 		Example: `  # Start the monitoring stack (detached)
-  claucker monitor up
+  clawker monitor up
 
   # Start in foreground (see logs)
-  claucker monitor up --detach=false`,
+  clawker monitor up --detach=false`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUp(f, opts)
 		},
@@ -62,21 +62,21 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
 		cmdutil.PrintError("Monitoring stack not initialized")
-		cmdutil.PrintNextSteps("Run 'claucker monitor init' to scaffold configuration files")
+		cmdutil.PrintNextSteps("Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
-	// Check if claucker-net network exists
-	checkNetworkCmd := exec.Command("docker", "network", "inspect", config.ClauckerNetwork)
+	// Check if clawker-net network exists
+	checkNetworkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork)
 	if err := checkNetworkCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Docker network '%s' does not exist\n", config.ClauckerNetwork)
+		fmt.Fprintf(os.Stderr, "Warning: Docker network '%s' does not exist\n", config.ClawkerNetwork)
 		fmt.Fprintln(os.Stderr, "  Creating network automatically...")
 
-		createNetworkCmd := exec.Command("docker", "network", "create", config.ClauckerNetwork)
+		createNetworkCmd := exec.Command("docker", "network", "create", config.ClawkerNetwork)
 		if err := createNetworkCmd.Run(); err != nil {
 			return fmt.Errorf("failed to create Docker network: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "  Network '%s' created successfully\n", config.ClauckerNetwork)
+		fmt.Fprintf(os.Stderr, "  Network '%s' created successfully\n", config.ClawkerNetwork)
 	}
 
 	// Build docker compose command
@@ -105,16 +105,16 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 		fmt.Fprintln(os.Stderr, "  Jaeger:     http://localhost:16686")
 		fmt.Fprintln(os.Stderr, "  Prometheus: http://localhost:9090")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "To stop the stack: claucker monitor down")
+		fmt.Fprintln(os.Stderr, "To stop the stack: clawker monitor down")
 
-		// Check for running claucker containers that need restart
+		// Check for running clawker containers that need restart
 		checkRunningContainers()
 	}
 
 	return nil
 }
 
-// checkRunningContainers warns if there are running claucker containers
+// checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
 func checkRunningContainers() {
 	ctx := context.Background()
@@ -125,7 +125,7 @@ func checkRunningContainers() {
 	}
 	defer eng.Close()
 
-	containers, err := eng.ListRunningClauckerContainers()
+	containers, err := eng.ListRunningClawkerContainers()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")
 		return
@@ -145,8 +145,8 @@ func checkRunningContainers() {
 	fmt.Fprintln(os.Stderr, "won't export telemetry. To enable telemetry, restart them:")
 	fmt.Fprintln(os.Stderr)
 	for _, c := range containers {
-		fmt.Fprintf(os.Stderr, "   cd /path/to/%s && claucker restart\n", c.Project)
+		fmt.Fprintf(os.Stderr, "   cd /path/to/%s && clawker restart\n", c.Project)
 	}
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Then run 'claucker start' to start with telemetry enabled.")
+	fmt.Fprintln(os.Stderr, "Then run 'clawker start' to start with telemetry enabled.")
 }

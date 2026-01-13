@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 func TestNewCmdConfig(t *testing.T) {

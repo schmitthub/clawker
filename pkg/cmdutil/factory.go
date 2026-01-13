@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
 )
 
 // Factory provides shared dependencies for CLI commands.

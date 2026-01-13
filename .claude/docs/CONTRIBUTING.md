@@ -1,4 +1,4 @@
-# Contributing to Claucker
+# Contributing to Clawker
 
 > **LLM Memory Document**: Development guidelines for adding features and maintaining documentation.
 
@@ -7,6 +7,7 @@
 1. **Create the command file**: `pkg/cmd/<cmdname>/<cmdname>.go`
 
 2. **Define options struct and constructor**:
+
    ```go
    type Options struct {
        Force bool
@@ -20,10 +21,10 @@
            Short: "One-line description",
            Long: `Detailed description.`,
            Example: `  # Basic usage
-     claucker mycommand
+     clawker mycommand
 
      # With flags
-     claucker mycommand --force`,
+     clawker mycommand --force`,
            RunE: func(cmd *cobra.Command, args []string) error {
                return runMyCommand(f, opts)
            },
@@ -35,13 +36,14 @@
    ```
 
 3. **Use cmdutil output functions**:
+
    ```go
    // Configuration not found
    if config.IsConfigNotFound(err) {
-       cmdutil.PrintError("No claucker.yaml found in current directory")
+       cmdutil.PrintError("No clawker.yaml found in current directory")
        cmdutil.PrintNextSteps(
-           "Run 'claucker init' to create a configuration",
-           "Or change to a directory with claucker.yaml",
+           "Run 'clawker init' to create a configuration",
+           "Or change to a directory with clawker.yaml",
        )
        return err
    }
@@ -74,6 +76,7 @@
 ## Adding New Build Instructions
 
 1. **Add type**: `internal/config/schema.go`
+
    ```go
    type NewInstruction struct {
        Name    string `yaml:"name"`
@@ -99,7 +102,7 @@
 ### When to Update
 
 1. **New CLI commands or flags** - Update CLI Commands table and add usage examples
-2. **Configuration changes** - Update the `claucker.yaml` example and field descriptions
+2. **Configuration changes** - Update the `clawker.yaml` example and field descriptions
 3. **New features** - Add to appropriate section (Quick Start, Workspace Modes, Security, etc.)
 4. **Authentication changes** - Update Authentication section with new env vars or methods
 5. **Behavior changes** - Update affected sections to reflect new behavior
@@ -119,10 +122,10 @@
 1. Quick Start - Get users running in 5 minutes
 2. Authentication - How to pass API keys
 3. CLI Commands - Reference table + detailed usage
-4. Configuration - Full `claucker.yaml` spec with comments
+4. Configuration - Full `clawker.yaml` spec with comments
 5. Workspace Modes - bind vs snapshot explained
 6. Security - Defaults and opt-in dangerous features
-7. Ignore Patterns - `.clauckerignore` behavior
+7. Ignore Patterns - `.clawkerignore` behavior
 8. Development - Build instructions for contributors
 
 ---

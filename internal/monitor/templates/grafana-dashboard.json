@@ -488,7 +488,7 @@
   "refresh": "30s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["claude-code", "claucker", "monitoring"],
+  "tags": ["claude-code", "clawker", "monitoring"],
   "templating": {
     "list": [
       {

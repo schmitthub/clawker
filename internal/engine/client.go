@@ -11,10 +11,10 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
-// Engine wraps the Docker client with Claucker-specific operations
+// Engine wraps the Docker client with Clawker-specific operations
 type Engine struct {
 	cli *client.Client
 	ctx context.Context
@@ -311,7 +311,7 @@ func (e *Engine) NetworkCreate(name string) (network.CreateResponse, error) {
 	resp, err := e.cli.NetworkCreate(e.ctx, name, network.CreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
-			"com.claucker.managed": "true",
+			"com.clawker.managed": "true",
 		},
 	})
 	if err != nil {
@@ -350,8 +350,8 @@ func (e *Engine) NetworkList(filter filters.Args) ([]network.Summary, error) {
 	return e.cli.NetworkList(e.ctx, network.ListOptions{Filters: filter})
 }
 
-// IsMonitoringActive checks if the claucker monitoring stack is running.
-// It looks for the otel-collector container on the claucker-net network.
+// IsMonitoringActive checks if the clawker monitoring stack is running.
+// It looks for the otel-collector container on the clawker-net network.
 func (e *Engine) IsMonitoringActive() bool {
 	// Look for otel-collector container
 	containers, err := e.cli.ContainerList(e.ctx, container.ListOptions{
@@ -365,11 +365,11 @@ func (e *Engine) IsMonitoringActive() bool {
 		return false
 	}
 
-	// Check if any otel-collector container is running on claucker-net
+	// Check if any otel-collector container is running on clawker-net
 	for _, c := range containers {
 		if c.NetworkSettings != nil {
 			for netName := range c.NetworkSettings.Networks {
-				if netName == "claucker-net" {
+				if netName == "clawker-net" {
 					logger.Debug().Msg("monitoring stack detected as active")
 					return true
 				}
@@ -380,8 +380,8 @@ func (e *Engine) IsMonitoringActive() bool {
 	return false
 }
 
-// ClauckerContainer represents a claucker-managed container
-type ClauckerContainer struct {
+// ClawkerContainer represents a clawker-managed container
+type ClawkerContainer struct {
 	ID      string
 	Name    string
 	Project string
@@ -392,11 +392,11 @@ type ClauckerContainer struct {
 	Created int64
 }
 
-// ListClauckerContainers returns all containers with com.claucker.managed=true label
-func (e *Engine) ListClauckerContainers(includeAll bool) ([]ClauckerContainer, error) {
+// ListClawkerContainers returns all containers with com.clawker.managed=true label
+func (e *Engine) ListClawkerContainers(includeAll bool) ([]ClawkerContainer, error) {
 	opts := container.ListOptions{
 		All:     includeAll,
-		Filters: ClauckerFilter(),
+		Filters: ClawkerFilter(),
 	}
 
 	containers, err := e.cli.ContainerList(e.ctx, opts)
@@ -404,11 +404,11 @@ func (e *Engine) ListClauckerContainers(includeAll bool) ([]ClauckerContainer, e
 		return nil, err
 	}
 
-	return e.parseClauckerContainers(containers), nil
+	return e.parseClawkerContainers(containers), nil
 }
 
-// ListClauckerContainersByProject returns containers for a specific project
-func (e *Engine) ListClauckerContainersByProject(project string, includeAll bool) ([]ClauckerContainer, error) {
+// ListClawkerContainersByProject returns containers for a specific project
+func (e *Engine) ListClawkerContainersByProject(project string, includeAll bool) ([]ClawkerContainer, error) {
 	opts := container.ListOptions{
 		All:     includeAll,
 		Filters: ProjectFilter(project),
@@ -419,12 +419,12 @@ func (e *Engine) ListClauckerContainersByProject(project string, includeAll bool
 		return nil, err
 	}
 
-	return e.parseClauckerContainers(containers), nil
+	return e.parseClawkerContainers(containers), nil
 }
 
-// parseClauckerContainers converts Docker container list to ClauckerContainer slice
-func (e *Engine) parseClauckerContainers(containers []types.Container) []ClauckerContainer {
-	var result []ClauckerContainer
+// parseClawkerContainers converts Docker container list to ClawkerContainer slice
+func (e *Engine) parseClawkerContainers(containers []types.Container) []ClawkerContainer {
+	var result []ClawkerContainer
 	for _, c := range containers {
 		// Extract container name (remove leading slash)
 		name := ""
@@ -435,7 +435,7 @@ func (e *Engine) parseClauckerContainers(containers []types.Container) []Claucke
 			}
 		}
 
-		result = append(result, ClauckerContainer{
+		result = append(result, ClawkerContainer{
 			ID:      c.ID,
 			Name:    name,
 			Project: c.Labels[LabelProject],
@@ -517,9 +517,9 @@ func (e *Engine) RemoveContainerWithVolumes(containerID string, force bool) erro
 	return nil
 }
 
-// ListRunningClauckerContainers returns all running containers managed by claucker
-// on the claucker-net network. Returns container info including project name.
-// Deprecated: Use ListClauckerContainers instead
-func (e *Engine) ListRunningClauckerContainers() ([]ClauckerContainer, error) {
-	return e.ListClauckerContainers(false)
+// ListRunningClawkerContainers returns all running containers managed by clawker
+// on the clawker-net network. Returns container info including project name.
+// Deprecated: Use ListClawkerContainers instead
+func (e *Engine) ListRunningClawkerContainers() ([]ClawkerContainer, error) {
+	return e.ListClawkerContainers(false)
 }

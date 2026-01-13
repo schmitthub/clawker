@@ -5,10 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/monitor"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,7 @@ func newCmdInit(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold monitoring configuration files",
-		Long: `Scaffolds the monitoring stack configuration files in ~/.claucker/monitor/.
+		Long: `Scaffolds the monitoring stack configuration files in ~/.clawker/monitor/.
 
 This command generates:
   - compose.yaml        Docker Compose stack definition
@@ -36,10 +36,10 @@ The monitoring stack includes:
   - Prometheus (metrics storage)
   - Grafana (unified dashboard)`,
 		Example: `  # Initialize monitoring configuration
-  claucker monitor init
+  clawker monitor init
 
   # Overwrite existing configuration
-  claucker monitor init --force`,
+  clawker monitor init --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(f, opts)
 		},
@@ -100,12 +100,12 @@ func runInit(f *cmdutil.Factory, opts *initOptions) error {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Next Steps:")
 	fmt.Fprintln(os.Stderr, "  1. Start the stack:")
-	fmt.Fprintln(os.Stderr, "     claucker monitor up")
+	fmt.Fprintln(os.Stderr, "     clawker monitor up")
 	fmt.Fprintln(os.Stderr, "  2. Open Grafana at http://localhost:3000 (No login required)")
 	fmt.Fprintln(os.Stderr, "  3. Open Jaeger at http://localhost:16686")
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Note: The monitoring stack uses the claucker-net Docker network.")
-	fmt.Fprintln(os.Stderr, "      Run 'claucker start' or 'claucker run' to create the network if needed.")
+	fmt.Fprintln(os.Stderr, "Note: The monitoring stack uses the clawker-net Docker network.")
+	fmt.Fprintln(os.Stderr, "      Run 'clawker start' or 'clawker run' to create the network if needed.")
 
 	return nil
 }

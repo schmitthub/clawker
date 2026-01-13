@@ -13,7 +13,7 @@ func OtelEnvVars(containerName string) map[string]string {
 		"OTEL_LOGS_EXPORTER":    "otlp",
 
 		// OTLP exporter configuration - using HTTP/protobuf with explicit endpoints
-		// Uses Docker network hostname since containers share claucker-net
+		// Uses Docker network hostname since containers share clawker-net
 		"OTEL_EXPORTER_OTLP_PROTOCOL":         "http/protobuf",
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://otel-collector:4318/v1/metrics",
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":    "http://otel-collector:4318/v1/logs",

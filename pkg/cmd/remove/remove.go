@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -25,18 +25,18 @@ func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "remove",
 		Aliases: []string{"rm"},
-		Short:   "Remove claucker containers",
-		Long: `Removes claucker containers and their associated resources (volumes).
+		Short:   "Remove clawker containers",
+		Long: `Removes clawker containers and their associated resources (volumes).
 
 You must specify either --name or --project to remove containers.`,
 		Example: `  # Remove a specific container
-  claucker remove -n claucker/myapp/ralph
+  clawker remove -n clawker/myapp/ralph
 
   # Remove all containers for a project
-  claucker remove -p myapp
+  clawker remove -p myapp
 
   # Force remove running containers
-  claucker remove -p myapp -f`,
+  clawker remove -p myapp -f`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRemove(f, opts)
 		},
@@ -94,7 +94,7 @@ func removeByName(eng *engine.Engine, name string, force bool) error {
 
 func removeByProject(eng *engine.Engine, project string, force bool) error {
 	// List all containers for project (including stopped)
-	containers, err := eng.ListClauckerContainersByProject(project, true)
+	containers, err := eng.ListClawkerContainersByProject(project, true)
 	if err != nil {
 		return fmt.Errorf("failed to list containers for project %q: %w", project, err)
 	}

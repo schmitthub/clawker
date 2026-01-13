@@ -1,8 +1,8 @@
-package claucker
+package clawker
 
 import (
-	"github.com/schmitthub/claucker/pkg/cmd/root"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmd/root"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
 // Build-time variables injected via ldflags
@@ -11,7 +11,7 @@ var (
 	Commit  = "none"
 )
 
-// Main is the entry point for the claucker CLI.
+// Main is the entry point for the clawker CLI.
 // It initializes the Factory, creates the root command, and executes it.
 func Main() int {
 	// Create factory with version info

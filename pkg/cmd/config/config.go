@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	internalconfig "github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	internalconfig "github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +15,7 @@ func NewCmdConfig(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Configuration management commands",
-		Long:  `Commands for managing and validating claucker configuration.`,
+		Long:  `Commands for managing and validating clawker configuration.`,
 	}
 
 	cmd.AddCommand(newCmdConfigCheck(f))
@@ -26,8 +26,8 @@ func NewCmdConfig(f *cmdutil.Factory) *cobra.Command {
 func newCmdConfigCheck(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
-		Short: "Validate claucker.yaml configuration",
-		Long: `Validates the claucker.yaml configuration file in the current directory.
+		Short: "Validate clawker.yaml configuration",
+		Long: `Validates the clawker.yaml configuration file in the current directory.
 
 Checks for:
   - Required fields (version, project, build.image)
@@ -35,7 +35,7 @@ Checks for:
   - File existence for referenced paths (dockerfile, includes)
   - Security configuration consistency`,
 		Example: `  # Validate configuration in current directory
-  claucker config check`,
+  clawker config check`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigCheck(f)
 		},
@@ -53,8 +53,8 @@ func runConfigCheck(f *cmdutil.Factory) error {
 	if !loader.Exists() {
 		cmdutil.PrintError("%s not found", internalconfig.ConfigFileName)
 		cmdutil.PrintNextSteps(
-			"Run 'claucker init' to create a configuration file",
-			"Or create claucker.yaml manually",
+			"Run 'clawker init' to create a configuration file",
+			"Or create clawker.yaml manually",
 		)
 		return fmt.Errorf("configuration file not found")
 	}
@@ -91,8 +91,8 @@ func runConfigCheck(f *cmdutil.Factory) error {
 
 		cmdutil.PrintNextSteps(
 			"Review the errors above",
-			"Edit claucker.yaml to fix the issues",
-			"Run 'claucker config check' again",
+			"Edit clawker.yaml to fix the issues",
+			"Run 'clawker config check' again",
 		)
 		return err
 	}

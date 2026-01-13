@@ -90,28 +90,28 @@ func GenerateRandomName() string {
 }
 
 // ParseContainerName extracts project and agent from container name
-// Container name format: claucker/project/agent
+// Container name format: clawker/project/agent
 func ParseContainerName(name string) (project, agent string, ok bool) {
 	// Remove leading slash if present (Docker adds it)
 	name = strings.TrimPrefix(name, "/")
 	parts := strings.Split(name, ".")
-	if len(parts) != 3 || parts[0] != "claucker" {
+	if len(parts) != 3 || parts[0] != "clawker" {
 		return "", "", false
 	}
 	return parts[1], parts[2], true
 }
 
-// ContainerName generates container name: claucker/project/agent
+// ContainerName generates container name: clawker/project/agent
 func ContainerName(projectName, agentName string) string {
-	return fmt.Sprintf("claucker.%s.%s", projectName, agentName)
+	return fmt.Sprintf("clawker.%s.%s", projectName, agentName)
 }
 
-// ContainerNamePrefix returns prefix for filtering: claucker/project/
+// ContainerNamePrefix returns prefix for filtering: clawker/project/
 func ContainerNamePrefix(projectName string) string {
-	return fmt.Sprintf("claucker.%s.", projectName)
+	return fmt.Sprintf("clawker.%s.", projectName)
 }
 
-// VolumeName generates volume name: claucker/project/agent-purpose
+// VolumeName generates volume name: clawker/project/agent-purpose
 func VolumeName(projectName, agentName, purpose string) string {
-	return fmt.Sprintf("claucker.%s.%s-%s", projectName, agentName, purpose)
+	return fmt.Sprintf("clawker.%s.%s-%s", projectName, agentName, purpose)
 }

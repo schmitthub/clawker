@@ -1,4 +1,4 @@
-# Claucker
+# Clawker
 
 Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core philosophy: **Safe Autonomy** - host is read-only by default.
 
@@ -30,7 +30,7 @@ Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core phil
 ## Repository Structure
 
 ```
-├── cmd/claucker/              # Main CLI binary
+├── cmd/clawker/              # Main CLI binary
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── config/                # Viper config loading + validation
@@ -44,16 +44,16 @@ Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core phil
 │   ├── cmd/                   # Cobra commands (start, run, stop, ls, etc.)
 │   ├── cmdutil/               # Factory, error handling, output utilities
 │   └── logger/                # Zerolog setup
-└── templates/                 # claucker.yaml scaffolding
+└── templates/                 # clawker.yaml scaffolding
 ```
 
 ## Build Commands
 
 ```bash
-go build -o bin/claucker ./cmd/claucker  # Build CLI
+go build -o bin/clawker ./cmd/clawker  # Build CLI
 go test ./...                             # Run tests
-./bin/claucker --debug start              # Debug logging
-./bin/claucker generate latest 2.1        # Generate versions.json
+./bin/clawker --debug start              # Debug logging
+./bin/clawker generate latest 2.1        # Generate versions.json
 ```
 
 ## Key Concepts
@@ -63,7 +63,7 @@ go test ./...                             # Run tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `DockerEngine` | Docker SDK with user-friendly errors + "Next Steps" |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
-| `ContainerConfig` | Labels, naming (`claucker.project.agent`), volumes |
+| `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 
 See @.claude/docs/ARCHITECTURE.md for detailed abstractions.
 
@@ -79,8 +79,8 @@ See @.claude/docs/ARCHITECTURE.md for detailed abstractions.
 cmd := &cobra.Command{
     Use:     "mycommand",
     Short:   "One-line description",
-    Example: `  claucker mycommand
-  claucker mycommand --flag`,
+    Example: `  clawker mycommand
+  clawker mycommand --flag`,
     RunE:    func(cmd *cobra.Command, args []string) error { ... },
 }
 ```
@@ -96,7 +96,7 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 | `rm`, `prune` | Cleanup |
 | `config check`, `monitor *` | Configuration/observability |
 
-## Configuration (claucker.yaml)
+## Configuration (clawker.yaml)
 
 ```yaml
 version: "1"
@@ -135,8 +135,8 @@ security:
 2. Docker socket disabled by default
 3. Volumes preserved unless `--clean`
 4. `start` is idempotent (reattaches to existing container)
-5. Hierarchical naming: `claucker.project.agent`
-6. Labels (`com.claucker.*`) are authoritative for filtering
+5. Hierarchical naming: `clawker.project.agent`
+6. Labels (`com.clawker.*`) are authoritative for filtering
 7. stdout for data, stderr for status
 
 ## Important Gotchas

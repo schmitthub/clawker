@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/docker/docker/api/types/mount"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
 )
 
 // Strategy defines the interface for workspace mounting strategies
@@ -78,7 +78,7 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 }
 
 // EnsureConfigVolumes creates config and history volumes with proper labels.
-// Should be called before container creation to ensure volumes have claucker labels.
+// Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
 func EnsureConfigVolumes(eng *engine.Engine, projectName, agentName string) error {
 	vm := engine.NewVolumeManager(eng)

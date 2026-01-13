@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/build"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/internal/term"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +32,13 @@ func NewCmdBuild(f *cmdutil.Factory) *cobra.Command {
 The image is always built unconditionally. Use --no-cache to build
 without Docker's layer cache for a completely fresh build.`,
 		Example: `  # Build image (uses Docker cache)
-  claucker build
+  clawker build
 
   # Build image without cache
-  claucker build --no-cache
+  clawker build --no-cache
 
   # Build using custom Dockerfile
-  claucker build --dockerfile ./Dockerfile.dev`,
+  clawker build --dockerfile ./Dockerfile.dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBuild(f, opts)
 		},
@@ -58,10 +58,10 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			cmdutil.PrintNextSteps(
-				"Run 'claucker init' to create a configuration",
-				"Or change to a directory with claucker.yaml",
+				"Run 'clawker init' to create a configuration",
+				"Or change to a directory with clawker.yaml",
 			)
 			return err
 		}

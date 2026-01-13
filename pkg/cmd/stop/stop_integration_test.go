@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-const testProject = "claucker-test"
+const testProject = "clawker-test"
 
 var (
-	clauckerBin string
+	clawkerBin  string
 	testdataDir string
 )
 
@@ -29,13 +29,13 @@ func TestMain(m *testing.M) {
 	// Find repo root
 	wd, _ := os.Getwd()
 	repoRoot := findRepoRoot(wd)
-	clauckerBin = filepath.Join(repoRoot, "bin", "claucker")
+	clawkerBin = filepath.Join(repoRoot, "bin", "clawker")
 	testdataDir = filepath.Join(repoRoot, "pkg", "cmd", "stop", "testdata")
 
 	// Build CLI if needed
-	if _, err := os.Stat(clauckerBin); os.IsNotExist(err) {
-		fmt.Println("Building claucker binary...")
-		cmd := exec.Command("go", "build", "-o", clauckerBin, "./cmd/claucker")
+	if _, err := os.Stat(clawkerBin); os.IsNotExist(err) {
+		fmt.Println("Building clawker binary...")
+		cmd := exec.Command("go", "build", "-o", clawkerBin, "./cmd/clawker")
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Failed to build: %v\n%s\n", err, out)
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 	// Build test image once
 	fmt.Println("Building test image...")
-	if out, err := runClaucker("build"); err != nil {
+	if out, err := runClawker("build"); err != nil {
 		fmt.Printf("Failed to build test image: %v\n%s\n", err, out)
 		os.Exit(1)
 	}
@@ -98,9 +98,9 @@ func cleanup(containerName string) {
 	exec.Command("docker", "volume", "rm", containerName+"-history").Run()
 }
 
-func runClaucker(args ...string) (string, error) {
+func runClawker(args ...string) (string, error) {
 	fullArgs := append([]string{"--workdir", testdataDir}, args...)
-	cmd := exec.Command(clauckerBin, fullArgs...)
+	cmd := exec.Command(clawkerBin, fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -108,17 +108,17 @@ func runClaucker(args ...string) (string, error) {
 // TestStop_StopsContainer verifies container stopped and removed
 func TestStop_StopsContainer(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start container
-	runClaucker("start", "--detach", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
 
 	// Stop
-	_, err := runClaucker("stop", "--agent", agent)
+	_, err := runClawker("stop", "--agent", agent)
 	if err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}
@@ -132,12 +132,12 @@ func TestStop_StopsContainer(t *testing.T) {
 // TestStop_PreservesVolumes verifies volumes preserved by default
 func TestStop_PreservesVolumes(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start and stop
-	runClaucker("start", "--detach", "--agent", agent)
-	runClaucker("stop", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
+	runClawker("stop", "--agent", agent)
 
 	// Volumes should still exist
 	if !volumeExists(containerName + "-config") {
@@ -151,12 +151,12 @@ func TestStop_PreservesVolumes(t *testing.T) {
 // TestStop_CleanFlag verifies --clean removes volumes + image
 func TestStop_CleanFlag(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start and stop with --clean
-	runClaucker("start", "--detach", "--agent", agent)
-	_, err := runClaucker("stop", "--clean", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
+	_, err := runClawker("stop", "--clean", "--agent", agent)
 	if err != nil {
 		t.Fatalf("stop --clean failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestStop_CleanFlag(t *testing.T) {
 	}
 
 	// Image should be removed
-	if imageExists("claucker-" + testProject) {
+	if imageExists("clawker-" + testProject) {
 		t.Error("expected image to be removed with --clean")
 	}
 }
@@ -179,17 +179,17 @@ func TestStop_CleanFlag(t *testing.T) {
 func TestStop_SpecificAgent(t *testing.T) {
 	agent1 := uniqueAgent(t) + "a"
 	agent2 := uniqueAgent(t) + "b"
-	container1 := "claucker." + testProject + "." + agent1
-	container2 := "claucker." + testProject + "." + agent2
+	container1 := "clawker." + testProject + "." + agent1
+	container2 := "clawker." + testProject + "." + agent2
 	defer cleanup(container1)
 	defer cleanup(container2)
 
 	// Start two containers
-	runClaucker("start", "--detach", "--agent", agent1)
-	runClaucker("start", "--detach", "--agent", agent2)
+	runClawker("start", "--detach", "--agent", agent1)
+	runClawker("start", "--detach", "--agent", agent2)
 
 	// Stop only agent1
-	runClaucker("stop", "--agent", agent1)
+	runClawker("stop", "--agent", agent1)
 
 	// agent1 stopped, agent2 still running
 	if containerExists(container1) {
@@ -203,14 +203,14 @@ func TestStop_SpecificAgent(t *testing.T) {
 // TestStop_ForceFlag verifies force kills container
 func TestStop_ForceFlag(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start container
-	runClaucker("start", "--detach", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
 
 	// Force stop
-	_, err := runClaucker("stop", "--force", "--agent", agent)
+	_, err := runClawker("stop", "--force", "--agent", agent)
 	if err != nil {
 		t.Fatalf("stop --force failed: %v", err)
 	}
@@ -223,14 +223,14 @@ func TestStop_ForceFlag(t *testing.T) {
 // TestStop_AlreadyStopped verifies handles stopped container gracefully
 func TestStop_AlreadyStopped(t *testing.T) {
 	agent := uniqueAgent(t)
-	containerName := "claucker." + testProject + "." + agent
+	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
 	// Start and stop
-	runClaucker("start", "--detach", "--agent", agent)
-	runClaucker("stop", "--agent", agent)
+	runClawker("start", "--detach", "--agent", agent)
+	runClawker("stop", "--agent", agent)
 
 	// Stop again - should not panic
-	_, _ = runClaucker("stop", "--agent", agent)
+	_, _ = runClawker("stop", "--agent", agent)
 	// Just verify it doesn't crash
 }

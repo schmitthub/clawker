@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/mount"
-	"github.com/schmitthub/claucker/internal/build"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/credentials"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/internal/term"
-	"github.com/schmitthub/claucker/internal/workspace"
-	pkgbuild "github.com/schmitthub/claucker/pkg/build"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/credentials"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/workspace"
+	pkgbuild "github.com/schmitthub/clawker/pkg/build"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -48,23 +48,23 @@ Workspace modes:
   --mode=bind      Live sync with host filesystem (default)
   --mode=snapshot  Copy files to ephemeral Docker volume`,
 		Example: `  # Start Claude interactively
-  claucker start
+  clawker start
 
   # Start with a prompt
-  claucker start -- -p "build a feature"
+  clawker start -- -p "build a feature"
 
   # Resume previous session
-  claucker start -- --resume
+  clawker start -- --resume
 
   # Start in snapshot mode
-  claucker start --mode=snapshot
+  clawker start --mode=snapshot
 
   # Start in background
-  claucker start --detach
+  clawker start --detach
 
   # Publish ports to access services (e.g., MCP dashboard)
-  claucker start -p 24282:24282
-  claucker start -p 8080:8080 -p 3000:3000`,
+  clawker start -p 24282:24282
+  clawker start -p 8080:8080 -p 3000:3000`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args
@@ -90,10 +90,10 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			cmdutil.PrintNextSteps(
-				"Run 'claucker init' to create a configuration",
-				"Or change to a directory with claucker.yaml",
+				"Run 'clawker init' to create a configuration",
+				"Or change to a directory with clawker.yaml",
 			)
 			return err
 		}
@@ -153,7 +153,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 	builder := build.NewBuilder(eng, cfg, f.WorkDir)
 	buildOpts := build.Options{
 		ForceBuild: opts.Build,
-		NoCache:    false, // NoCache only available via 'claucker build'
+		NoCache:    false, // NoCache only available via 'clawker build'
 	}
 	if err := builder.EnsureImage(ctx, imageTag, buildOpts); err != nil {
 		return err
@@ -165,9 +165,9 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 		return err
 	}
 
-	// Ensure claucker network exists
-	if err := eng.EnsureNetwork(config.ClauckerNetwork); err != nil {
-		logger.Warn().Err(err).Msg("failed to ensure claucker network")
+	// Ensure clawker network exists
+	if err := eng.EnsureNetwork(config.ClawkerNetwork); err != nil {
+		logger.Warn().Err(err).Msg("failed to ensure clawker network")
 		// Don't fail hard, container can still run without the network
 	}
 
@@ -207,9 +207,9 @@ func runStart(f *cmdutil.Factory, opts *StartOptions) error {
 		fmt.Fprintf(os.Stderr, "Container %s is running in detached mode\n", containerCfg.Name)
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  claucker logs      # View container logs")
-		fmt.Fprintln(os.Stderr, "  claucker sh        # Open shell in container")
-		fmt.Fprintln(os.Stderr, "  claucker stop      # Stop the container")
+		fmt.Fprintln(os.Stderr, "  clawker logs      # View container logs")
+		fmt.Fprintln(os.Stderr, "  clawker sh        # Open shell in container")
+		fmt.Fprintln(os.Stderr, "  clawker stop      # Stop the container")
 		return nil
 	}
 
@@ -265,9 +265,9 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 	// Add config-specified environment
 	envBuilder.SetAll(cfg.Agent.Env)
 
-	// Inject claucker identity for statusline
-	envBuilder.Set("CLAUCKER_PROJECT", cfg.Project)
-	envBuilder.Set("CLAUCKER_AGENT", agentName)
+	// Inject clawker identity for statusline
+	envBuilder.Set("CLAWKER_PROJECT", cfg.Project)
+	envBuilder.Set("CLAWKER_AGENT", agentName)
 
 	// Load .env file if present
 	envFile := filepath.Join(workDir, ".env")
@@ -325,7 +325,7 @@ func buildContainerConfig(cfg *config.Config, imageTag string, wsStrategy worksp
 		AttachStderr: true,
 		CapAdd:       capAdd,
 		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
-		NetworkMode:  config.ClauckerNetwork,
+		NetworkMode:  config.ClawkerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 		PortBindings: portBindings,
 		ExposedPorts: exposedPorts,

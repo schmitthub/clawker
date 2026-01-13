@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/docker/docker/api/types/mount"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // SnapshotStrategy implements Strategy for ephemeral volume copy (isolated)
@@ -61,9 +61,9 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 
 	// Create the volume
 	labels := map[string]string{
-		"claucker.project": s.config.ProjectName,
-		"claucker.type":    "workspace",
-		"claucker.mode":    "snapshot",
+		"clawker.project": s.config.ProjectName,
+		"clawker.type":    "workspace",
+		"clawker.mode":    "snapshot",
 	}
 
 	created, err := vm.EnsureVolume(s.volumeName, labels)

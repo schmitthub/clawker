@@ -3,7 +3,7 @@
         cli cli-build cli-generate cli-test cli-lint cli-install cli-clean
 
 # Variables
-IMAGE_NAME ?= claucker
+IMAGE_NAME ?= clawker
 DOCKERFILES_DIR ?= ./dockerfiles
 DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 
@@ -11,23 +11,23 @@ DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 VERSIONS ?= stable latest
 
 # Go CLI variables
-BINARY_NAME := claucker
+BINARY_NAME := clawker
 CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 CLI_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 GO ?= go
 GOFLAGS := -trimpath
 LDFLAGS := -s -w \
-	-X 'github.com/schmitthub/claucker/internal/claucker.Version=$(CLI_VERSION)' \
-	-X 'github.com/schmitthub/claucker/internal/claucker.Commit=$(CLI_COMMIT)'
+	-X 'github.com/schmitthub/clawker/internal/clawker.Version=$(CLI_VERSION)' \
+	-X 'github.com/schmitthub/clawker/internal/clawker.Commit=$(CLI_COMMIT)'
 BIN_DIR := bin
 DIST_DIR := dist
 
 help:
-	@echo "Claucker - Claude Code Docker Images & CLI"
+	@echo "Clawker - Claude Code Docker Images & CLI"
 	@echo ""
 	@echo "CLI targets:"
-	@echo "  cli                 Build the claucker CLI binary"
-	@echo "  cli-generate        Build the standalone claucker-generate binary"
+	@echo "  cli                 Build the clawker CLI binary"
+	@echo "  cli-generate        Build the standalone clawker-generate binary"
 	@echo "  cli-test            Run CLI tests"
 	@echo "  cli-lint            Run linter on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
@@ -148,13 +148,13 @@ cli: cli-build
 cli-build:
 	@echo "Building $(BINARY_NAME) $(CLI_VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/claucker
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
 # Build the standalone generate binary
 cli-generate:
-	@echo "Building claucker-generate $(CLI_VERSION)..."
+	@echo "Building clawker-generate $(CLI_VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/claucker-generate ./cmd/claucker-generate
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
 
 # Build CLI for multiple platforms
 cli-build-all: cli-build-linux cli-build-darwin cli-build-windows
@@ -162,19 +162,19 @@ cli-build-all: cli-build-linux cli-build-darwin cli-build-windows
 cli-build-linux:
 	@echo "Building CLI for Linux..."
 	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/claucker
-	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/claucker
+	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/clawker
+	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/clawker
 
 cli-build-darwin:
 	@echo "Building CLI for macOS..."
 	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/claucker
-	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/claucker
+	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/clawker
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/clawker
 
 cli-build-windows:
 	@echo "Building CLI for Windows..."
 	@mkdir -p $(DIST_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/claucker
+	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/clawker
 
 # Run CLI tests
 cli-test:

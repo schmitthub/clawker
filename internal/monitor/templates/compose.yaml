@@ -9,7 +9,7 @@ services:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
     networks:
-      - claucker-net
+      - clawker-net
 
   jaeger:
     container_name: jaeger
@@ -20,7 +20,7 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     networks:
-      - claucker-net
+      - clawker-net
 
   prometheus:
     container_name: prometheus
@@ -33,7 +33,7 @@ services:
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
     networks:
-      - claucker-net
+      - clawker-net
 
   loki:
     container_name: loki
@@ -42,7 +42,7 @@ services:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     networks:
-      - claucker-net
+      - clawker-net
 
   grafana:
     container_name: grafana
@@ -59,8 +59,8 @@ services:
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
     networks:
-      - claucker-net
+      - clawker-net
 
 networks:
-  claucker-net:
-    external: true  # Created by claucker start/run, shared by all claucker services
+  clawker-net:
+    external: true  # Created by clawker start/run, shared by all clawker services

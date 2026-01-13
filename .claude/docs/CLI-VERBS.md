@@ -1,10 +1,10 @@
 # CLI Verbs Reference
 
-> **LLM Memory Document**: This document is optimized for Claude to reference during planning. It catalogs all claucker CLI commands, their flags, and design conventions to ensure consistency across the codebase.
+> **LLM Memory Document**: This document is optimized for Claude to reference during planning. It catalogs all clawker CLI commands, their flags, and design conventions to ensure consistency across the codebase.
 
 ## Design Philosophy
 
-Claucker follows the [CLI Guidelines](cli-guidelines.md) with these core principles:
+Clawker follows the [CLI Guidelines](cli-guidelines.md) with these core principles:
 
 | Principle | Implementation |
 |-----------|----------------|
@@ -17,7 +17,7 @@ Claucker follows the [CLI Guidelines](cli-guidelines.md) with these core princip
 ## Command Taxonomy
 
 ```
-claucker
+clawker
 ├── Lifecycle Commands
 │   ├── init          Create project configuration
 │   ├── build         Build container image
@@ -37,7 +37,7 @@ claucker
 │
 ├── Configuration Commands
 │   └── config
-│       └── check     Validate claucker.yaml
+│       └── check     Validate clawker.yaml
 │
 ├── Observability Commands
 │   └── monitor
@@ -73,25 +73,26 @@ These flags are available on all commands via `PersistentFlags()`:
 **File:** `pkg/cmd/init/init.go`
 
 ```
-claucker init [project-name]
+clawker init [project-name]
 ```
 
-Creates `claucker.yaml` and `.clauckerignore` in the current directory.
+Creates `clawker.yaml` and `.clawkerignore` in the current directory.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
 | `-f` | `--force` | bool | `false` | Overwrite existing configuration files |
 
 **Examples:**
+
 ```bash
 # Use current directory name as project
-claucker init
+clawker init
 
 # Use "my-project" as project name
-claucker init my-project
+clawker init my-project
 
 # Overwrite existing configuration
-claucker init --force
+clawker init --force
 ```
 
 ---
@@ -102,7 +103,7 @@ claucker init --force
 **File:** `pkg/cmd/build/build.go`
 
 ```
-claucker build
+clawker build
 ```
 
 Builds the container image for this project. Always builds unconditionally.
@@ -113,15 +114,16 @@ Builds the container image for this project. Always builds unconditionally.
 | | `--dockerfile` | string | `""` | Path to custom Dockerfile (overrides config) |
 
 **Examples:**
+
 ```bash
 # Build image (uses Docker cache)
-claucker build
+clawker build
 
 # Build image without cache
-claucker build --no-cache
+clawker build --no-cache
 
 # Build using custom Dockerfile
-claucker build --dockerfile ./Dockerfile.dev
+clawker build --dockerfile ./Dockerfile.dev
 ```
 
 ---
@@ -132,7 +134,7 @@ claucker build --dockerfile ./Dockerfile.dev
 **File:** `pkg/cmd/start/start.go`
 
 ```
-claucker start [-- <claude-args>...]
+clawker start [-- <claude-args>...]
 ```
 
 Builds the image (if needed), creates volumes, and runs Claude. **Idempotent**: reattaches to existing containers.
@@ -147,25 +149,26 @@ Builds the image (if needed), creates volumes, and runs Claude. **Idempotent**: 
 | `-p` | `--publish` | []string | `nil` | Publish container port(s) to host |
 
 **Examples:**
+
 ```bash
 # Start Claude interactively
-claucker start
+clawker start
 
 # Start with a prompt
-claucker start -- -p "build a feature"
+clawker start -- -p "build a feature"
 
 # Resume previous session
-claucker start -- --resume
+clawker start -- --resume
 
 # Start in snapshot mode
-claucker start --mode=snapshot
+clawker start --mode=snapshot
 
 # Start in background
-claucker start --detach
+clawker start --detach
 
 # Publish ports
-claucker start -p 24282:24282
-claucker start -p 8080:8080 -p 3000:3000
+clawker start -p 24282:24282
+clawker start -p 8080:8080 -p 3000:3000
 ```
 
 **Gotcha:** The `-p` flag conflicts with `ls -p` (project filter). See [Known Issues](#known-issues).
@@ -178,7 +181,7 @@ claucker start -p 8080:8080 -p 3000:3000
 **File:** `pkg/cmd/run/run.go`
 
 ```
-claucker run [flags] [-- <command>...]
+clawker run [flags] [-- <command>...]
 ```
 
 Runs a command in a new container and removes it (with volumes) when done (like `docker run --rm`). Always creates a new container.
@@ -193,24 +196,25 @@ Runs a command in a new container and removes it (with volumes) when done (like 
 | `-p` | `--publish` | []string | `nil` | Publish container port(s) to host |
 
 **Examples:**
+
 ```bash
 # Run claude interactively, remove on exit
-claucker run
+clawker run
 
 # Run claude with args, remove on exit
-claucker run -- -p "build a feature"
+clawker run -- -p "build a feature"
 
 # Run shell interactively
-claucker run --shell
+clawker run --shell
 
 # Run arbitrary command
-claucker run -- npm test
+clawker run -- npm test
 
 # Keep container after exit
-claucker run --keep
+clawker run --keep
 
 # Publish ports
-claucker run -p 8080:8080
+clawker run -p 8080:8080
 ```
 
 ---
@@ -221,7 +225,7 @@ claucker run -p 8080:8080
 **File:** `pkg/cmd/stop/stop.go`
 
 ```
-claucker stop
+clawker stop
 ```
 
 Stops Claude containers for this project. Volumes are preserved unless `--clean` is used.
@@ -234,15 +238,16 @@ Stops Claude containers for this project. Volumes are preserved unless `--clean`
 | `-t` | `--timeout` | int | `10` | Timeout in seconds before force kill |
 
 **Examples:**
+
 ```bash
 # Stop all containers for this project
-claucker stop
+clawker stop
 
 # Stop only the 'ralph' agent
-claucker stop --agent ralph
+clawker stop --agent ralph
 
 # Stop and remove all volumes
-claucker stop --clean
+clawker stop --clean
 ```
 
 ---
@@ -253,7 +258,7 @@ claucker stop --clean
 **File:** `pkg/cmd/restart/restart.go`
 
 ```
-claucker restart
+clawker restart
 ```
 
 Restarts Claude containers to pick up environment changes. Volumes are preserved.
@@ -264,12 +269,13 @@ Restarts Claude containers to pick up environment changes. Volumes are preserved
 | `-t` | `--timeout` | int | `10` | Timeout in seconds before force kill |
 
 **Examples:**
+
 ```bash
 # Restart all containers for project
-claucker restart
+clawker restart
 
 # Restart specific agent
-claucker restart --agent ralph
+clawker restart --agent ralph
 ```
 
 ---
@@ -281,10 +287,10 @@ claucker restart --agent ralph
 **Aliases:** `ls`, `ps`
 
 ```
-claucker list
+clawker list
 ```
 
-Lists all containers created by claucker.
+Lists all containers created by clawker.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
@@ -292,15 +298,16 @@ Lists all containers created by claucker.
 | `-p` | `--project` | string | `""` | Filter by project name |
 
 **Examples:**
+
 ```bash
 # List running containers
-claucker list
+clawker list
 
 # List all containers (including stopped)
-claucker list -a
+clawker list -a
 
 # List containers for a specific project
-claucker list -p myproject
+clawker list -p myproject
 ```
 
 **Note:** Output goes to stdout (table format) for scripting compatibility.
@@ -313,7 +320,7 @@ claucker list -p myproject
 **File:** `pkg/cmd/logs/logs.go`
 
 ```
-claucker logs
+clawker logs
 ```
 
 Shows logs from a Claude container.
@@ -325,18 +332,19 @@ Shows logs from a Claude container.
 | | `--tail` | string | `"100"` | Number of lines to show (or `"all"`) |
 
 **Examples:**
+
 ```bash
 # Show logs (if single container)
-claucker logs
+clawker logs
 
 # Show logs for specific agent
-claucker logs --agent ralph
+clawker logs --agent ralph
 
 # Follow log output
-claucker logs -f
+clawker logs -f
 
 # Show last 50 lines
-claucker logs --tail 50
+clawker logs --tail 50
 ```
 
 ---
@@ -348,7 +356,7 @@ claucker logs --tail 50
 **Aliases:** `sh`
 
 ```
-claucker shell
+clawker shell
 ```
 
 Opens an interactive shell session in a running Claude container.
@@ -360,18 +368,19 @@ Opens an interactive shell session in a running Claude container.
 | `-u` | `--user` | string | container default | User to run shell as |
 
 **Examples:**
+
 ```bash
 # Open bash shell (if single container)
-claucker shell
+clawker shell
 
 # Open shell in specific agent's container
-claucker shell --agent ralph
+clawker shell --agent ralph
 
 # Open zsh shell
-claucker shell --shell zsh
+clawker shell --shell zsh
 
 # Open shell as root
-claucker shell --user root
+clawker shell --user root
 ```
 
 ---
@@ -383,10 +392,10 @@ claucker shell --user root
 **Aliases:** `rm`
 
 ```
-claucker remove
+clawker remove
 ```
 
-Removes claucker containers and their associated resources. Requires either `--name` or `--project`.
+Removes clawker containers and their associated resources. Requires either `--name` or `--project`.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
@@ -397,15 +406,16 @@ Removes claucker containers and their associated resources. Requires either `--n
 **Validation:** `cmd.MarkFlagsOneRequired("name", "project")`
 
 **Examples:**
+
 ```bash
 # Remove a specific container
-claucker remove -n claucker/myapp/ralph
+clawker remove -n clawker/myapp/ralph
 
 # Remove all containers for a project
-claucker remove -p myapp
+clawker remove -p myapp
 
 # Force remove running containers
-claucker remove -p myapp -f
+clawker remove -p myapp -f
 ```
 
 **Gotcha:** Uses `-n/--name` instead of `--agent`. See [Known Issues](#known-issues).
@@ -418,26 +428,27 @@ claucker remove -p myapp -f
 **File:** `pkg/cmd/prune/prune.go`
 
 ```
-claucker prune
+clawker prune
 ```
 
-Removes unused claucker resources. With `--all`, removes ALL resources including volumes.
+Removes unused clawker resources. With `--all`, removes ALL resources including volumes.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
-| `-a` | `--all` | bool | `false` | Remove ALL claucker resources (including volumes) |
+| `-a` | `--all` | bool | `false` | Remove ALL clawker resources (including volumes) |
 | `-f` | `--force` | bool | `false` | Skip confirmation prompt |
 
 **Examples:**
+
 ```bash
 # Remove unused resources (stopped containers, dangling images)
-claucker prune
+clawker prune
 
-# Remove ALL claucker resources (including volumes)
-claucker prune --all
+# Remove ALL clawker resources (including volumes)
+clawker prune --all
 
 # Skip confirmation prompt
-claucker prune --all --force
+clawker prune --all --force
 ```
 
 **Note:** `prune --all` prompts for confirmation unless `--force` is used.
@@ -450,17 +461,18 @@ claucker prune --all --force
 **File:** `pkg/cmd/config/config.go`
 
 ```
-claucker config check
+clawker config check
 ```
 
-Validates the `claucker.yaml` configuration file.
+Validates the `clawker.yaml` configuration file.
 
 No additional flags.
 
 **Examples:**
+
 ```bash
 # Validate configuration in current directory
-claucker config check
+clawker config check
 ```
 
 ---
@@ -471,22 +483,23 @@ claucker config check
 **File:** `pkg/cmd/monitor/init.go`
 
 ```
-claucker monitor init
+clawker monitor init
 ```
 
-Scaffolds monitoring stack configuration files in `~/.claucker/monitor/`.
+Scaffolds monitoring stack configuration files in `~/.clawker/monitor/`.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
 | `-f` | `--force` | bool | `false` | Overwrite existing configuration files |
 
 **Examples:**
+
 ```bash
 # Initialize monitoring configuration
-claucker monitor init
+clawker monitor init
 
 # Overwrite existing configuration
-claucker monitor init --force
+clawker monitor init --force
 ```
 
 ---
@@ -497,7 +510,7 @@ claucker monitor init --force
 **File:** `pkg/cmd/monitor/up.go`
 
 ```
-claucker monitor up
+clawker monitor up
 ```
 
 Starts the monitoring stack using Docker Compose.
@@ -507,12 +520,13 @@ Starts the monitoring stack using Docker Compose.
 | | `--detach` | bool | `true` | Run in detached mode |
 
 **Examples:**
+
 ```bash
 # Start the monitoring stack (detached)
-claucker monitor up
+clawker monitor up
 
 # Start in foreground (see logs)
-claucker monitor up --detach=false
+clawker monitor up --detach=false
 ```
 
 ---
@@ -523,7 +537,7 @@ claucker monitor up --detach=false
 **File:** `pkg/cmd/monitor/down.go`
 
 ```
-claucker monitor down
+clawker monitor down
 ```
 
 Stops the monitoring stack.
@@ -533,12 +547,13 @@ Stops the monitoring stack.
 | `-v` | `--volumes` | bool | `false` | Remove named volumes from compose.yaml |
 
 **Examples:**
+
 ```bash
 # Stop the monitoring stack
-claucker monitor down
+clawker monitor down
 
 # Stop and remove volumes
-claucker monitor down --volumes
+clawker monitor down --volumes
 ```
 
 ---
@@ -549,7 +564,7 @@ claucker monitor down --volumes
 **File:** `pkg/cmd/monitor/status.go`
 
 ```
-claucker monitor status
+clawker monitor status
 ```
 
 Shows the current status of the monitoring stack containers.
@@ -557,9 +572,10 @@ Shows the current status of the monitoring stack containers.
 No additional flags.
 
 **Examples:**
+
 ```bash
 # Check monitoring stack status
-claucker monitor status
+clawker monitor status
 ```
 
 ---
@@ -570,7 +586,7 @@ claucker monitor status
 **File:** `pkg/cmd/generate/generate.go`
 
 ```
-claucker generate [versions...]
+clawker generate [versions...]
 ```
 
 Fetches Claude Code versions from npm and generates Dockerfiles.
@@ -582,18 +598,19 @@ Fetches Claude Code versions from npm and generates Dockerfiles.
 | `-o` | `--output` | string | `""` | Output directory for generated files |
 
 **Examples:**
+
 ```bash
 # Generate Dockerfiles for latest version
-claucker generate latest
+clawker generate latest
 
 # Generate for multiple versions
-claucker generate latest 2.1
+clawker generate latest 2.1
 
 # Output to specific directory
-claucker generate --output ./build latest
+clawker generate --output ./build latest
 
 # Show existing versions.json
-claucker generate
+clawker generate
 ```
 
 ---
@@ -645,10 +662,10 @@ if err != nil {
 
 // Config not found
 if config.IsConfigNotFound(err) {
-    cmdutil.PrintError("No claucker.yaml found in current directory")
+    cmdutil.PrintError("No clawker.yaml found in current directory")
     cmdutil.PrintNextSteps(
-        "Run 'claucker init' to create a configuration",
-        "Or change to a directory with claucker.yaml",
+        "Run 'clawker init' to create a configuration",
+        "Or change to a directory with clawker.yaml",
     )
     return err
 }
@@ -664,10 +681,10 @@ cmd := &cobra.Command{
 
 Additional paragraphs as needed.`,
     Example: `  # Basic usage
-  claucker command
+  clawker command
 
   # With flags
-  claucker command --flag value`,
+  clawker command --flag value`,
     RunE: func(cmd *cobra.Command, args []string) error { ... },
 }
 ```
@@ -679,6 +696,7 @@ Additional paragraphs as needed.`,
 ### Issue 1: `-p` Flag Conflict
 
 **Problem:** `-p` means different things in different commands:
+
 - `ls -p` → `--project` (filter by project)
 - `start -p` → `--publish` (port mapping)
 
@@ -687,6 +705,7 @@ Additional paragraphs as needed.`,
 ### Issue 2: `--agent` vs `-n/--name` Inconsistency
 
 **Problem:** Different container targeting patterns:
+
 - `stop`, `restart`, `logs`, `sh` use `--agent`
 - `rm` uses `-n/--name` (expects full container name)
 
@@ -695,6 +714,7 @@ Additional paragraphs as needed.`,
 ### Issue 3: Missing Standard Flags
 
 **Problem:** Missing common CLI flags:
+
 - No `--json` output for scripting (`ls`, `config check`)
 - No `--quiet/-q` for silent operation
 - No `--dry-run` for preview
@@ -736,7 +756,7 @@ import (
     "fmt"
     "os"
 
-    "github.com/schmitthub/claucker/pkg/cmdutil"
+    "github.com/schmitthub/clawker/pkg/cmdutil"
     "github.com/spf13/cobra"
 )
 
@@ -754,10 +774,10 @@ func NewCmdMyCommand(f *cmdutil.Factory) *cobra.Command {
 
 Additional context here.`,
         Example: `  # Basic usage
-  claucker mycommand
+  clawker mycommand
 
   # With flags
-  claucker mycommand --force`,
+  clawker mycommand --force`,
         RunE: func(cmd *cobra.Command, args []string) error {
             return runMyCommand(f, opts)
         },

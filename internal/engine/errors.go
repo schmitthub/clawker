@@ -93,7 +93,7 @@ func ErrContainerNotFound(name string) *DockerError {
 		Err:     nil,
 		Message: fmt.Sprintf("Container '%s' not found", name),
 		NextSteps: []string{
-			"Run 'claucker up' to start a new container",
+			"Run 'clawker up' to start a new container",
 			"Check running containers: docker ps",
 			"Check all containers: docker ps -a",
 		},
@@ -110,7 +110,7 @@ func ErrContainerStartFailed(name string, err error) *DockerError {
 			"Check container logs: docker logs " + name,
 			"Verify the image is valid",
 			"Check for port conflicts",
-			"Try removing and recreating: claucker down --clean && claucker up",
+			"Try removing and recreating: clawker down --clean && clawker up",
 		},
 	}
 }
@@ -153,7 +153,7 @@ func ErrVolumeCopyFailed(err error) *DockerError {
 		NextSteps: []string{
 			"Check source directory exists and is readable",
 			"Verify disk space is available",
-			"Check .clauckerignore for excluded files",
+			"Check .clawkerignore for excluded files",
 		},
 	}
 }
@@ -167,7 +167,7 @@ func ErrAttachFailed(err error) *DockerError {
 		NextSteps: []string{
 			"Verify the container is running",
 			"Check if the container has a TTY allocated",
-			"Try reconnecting: claucker up",
+			"Try reconnecting: clawker up",
 		},
 	}
 }

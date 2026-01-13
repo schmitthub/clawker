@@ -1,7 +1,7 @@
 package monitor
 
 import (
-	"github.com/schmitthub/claucker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -21,16 +21,16 @@ Available commands:
   down    Stop the monitoring stack
   status  Show monitoring stack status`,
 		Example: `  # Initialize monitoring configuration
-  claucker monitor init
+  clawker monitor init
 
   # Start the monitoring stack
-  claucker monitor up
+  clawker monitor up
 
   # Check stack status
-  claucker monitor status
+  clawker monitor status
 
   # Stop the stack
-  claucker monitor down`,
+  clawker monitor down`,
 	}
 
 	cmd.AddCommand(newCmdInit(f))

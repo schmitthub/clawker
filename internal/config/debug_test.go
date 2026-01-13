@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadActualConfig(t *testing.T) {
-	loader := NewLoader("/Users/andrew/Code/claucker")
+	loader := NewLoader("/Users/andrew/Code/clawker")
 	cfg, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)

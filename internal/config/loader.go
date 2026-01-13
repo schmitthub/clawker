@@ -12,12 +12,12 @@ import (
 
 const (
 	// ConfigFileName is the default configuration file name
-	ConfigFileName = "claucker.yaml"
+	ConfigFileName = "clawker.yaml"
 	// IgnoreFileName is the default ignore file name
-	IgnoreFileName = ".clauckerignore"
+	IgnoreFileName = ".clawkerignore"
 )
 
-// Loader handles loading and parsing of claucker configuration
+// Loader handles loading and parsing of clawker configuration
 type Loader struct {
 	workDir string
 	viper   *viper.Viper
@@ -31,7 +31,7 @@ func NewLoader(workDir string) *Loader {
 	}
 }
 
-// Load reads and parses the claucker.yaml configuration file
+// Load reads and parses the clawker.yaml configuration file
 func (l *Loader) Load() (*Config, error) {
 	configPath := filepath.Join(l.workDir, ConfigFileName)
 

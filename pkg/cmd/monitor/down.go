@@ -5,10 +5,10 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/schmitthub/claucker/internal/config"
-	internalmonitor "github.com/schmitthub/claucker/internal/monitor"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -25,12 +25,12 @@ func newCmdDown(f *cmdutil.Factory) *cobra.Command {
 		Long: `Stops the monitoring stack using Docker Compose.
 
 This stops and removes all monitoring containers while preserving
-the claucker-net Docker network for other claucker services.`,
+the clawker-net Docker network for other clawker services.`,
 		Example: `  # Stop the monitoring stack
-  claucker monitor down
+  clawker monitor down
 
   # Stop and remove volumes
-  claucker monitor down --volumes`,
+  clawker monitor down --volumes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDown(f, opts)
 		},
@@ -54,7 +54,7 @@ func runDown(f *cmdutil.Factory, opts *downOptions) error {
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
 		cmdutil.PrintError("Monitoring stack not initialized")
-		cmdutil.PrintNextSteps("Run 'claucker monitor init' to scaffold configuration files")
+		cmdutil.PrintNextSteps("Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 

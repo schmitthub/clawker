@@ -1,4 +1,4 @@
-# Claucker - Claude Code Development Container Orchestration
+# Clawker - Claude Code Development Container Orchestration
 
 <critical_instructions>
 
@@ -42,7 +42,7 @@
 
 ## Project Overview
 
-Claucker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
+Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
 Core philosophy: "Safe Autonomy" - host system is read-only by default.
 
 ## Repository Structure
@@ -50,11 +50,11 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 ```
 /workspace/
 ├── cmd/                           # CLI entry points
-│   ├── claucker/                  # Main CLI binary
-│   └── claucker-generate/         # Standalone generate binary
+│   ├── clawker                  # Main CLI binary
+│   └── clawkergenerate/         # Standalone generate binary
 ├── internal/                      # Private packages
 │   ├── build/                     # Image building orchestration
-│   ├── claucker/                  # Main entry point (bridges cmd/ → pkg/cmd/)
+│   ├── clawker                  # Main entry point (bridges cmd/ → pkg/cmd/)
 │   ├── config/                    # Viper configuration loading + validation
 │   │   ├── schema.go             # Config types (DockerInstructions, etc.)
 │   │   ├── loader.go             # YAML loading
@@ -95,27 +95,27 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 │   │   └── templates/            # Embedded Dockerfile, entrypoint, firewall
 │   ├── cmd/                       # Cobra commands
 │   │   ├── root/                 # Root command (integrates all subcommands)
-│   │   ├── start/                # claucker start
-│   │   ├── run/                  # claucker run (ephemeral)
-│   │   ├── stop/                 # claucker stop
-│   │   ├── restart/              # claucker restart
-│   │   ├── build/                # claucker build
-│   │   ├── sh/                   # claucker sh
-│   │   ├── logs/                 # claucker logs
-│   │   ├── ls/                   # claucker ls
-│   │   ├── rm/                   # claucker rm
-│   │   ├── prune/                # claucker prune
-│   │   ├── init/                 # claucker init
-│   │   ├── config/               # claucker config check
-│   │   ├── generate/             # claucker generate
-│   │   └── monitor/              # claucker monitor (init/up/down/status)
+│   │   ├── start/                # clawkerstart
+│   │   ├── run/                  # clawkerrun (ephemeral)
+│   │   ├── stop/                 # clawkerstop
+│   │   ├── restart/              # clawkerrestart
+│   │   ├── build/                # clawkerbuild
+│   │   ├── sh/                   # clawkersh
+│   │   ├── logs/                 # clawkerlogs
+│   │   ├── ls/                   # clawkerls
+│   │   ├── rm/                   # clawkerrm
+│   │   ├── prune/                # clawkerprune
+│   │   ├── init/                 # clawkerinit
+│   │   ├── config/               # clawkerconfig check
+│   │   ├── generate/             # clawkergenerate
+│   │   └── monitor/              # clawkermonitor (init/up/down/status)
 │   ├── cmdutil/                   # Command utilities
 │   │   ├── factory.go            # Factory for dependency injection
 │   │   └── output.go             # Error handling and user messaging
 │   └── logger/                    # Zerolog setup
 ├── templates/                     # Scaffolding templates for init command
-│   ├── claucker.yaml.tmpl        # Configuration template
-│   └── clauckerignore.tmpl       # Ignore file template
+│   ├── clawkeryaml.tmpl        # Configuration template
+│   └── clawkergnore.tmpl       # Ignore file template
 ├── artifacts/                     # Generated/build output (do not edit)
 │   └── dockerfiles/              # Generated Dockerfiles
 └── .devcontainer/                 # Development container config
@@ -125,7 +125,7 @@ Core philosophy: "Safe Autonomy" - host system is read-only by default.
 
 ```bash
 # Build the CLI with go
-go build -o bin/claucker ./cmd/claucker
+go build -o bin/clawker./cmd/cclawker
 # Build the CLI with make
 make build-cli
 
@@ -136,10 +136,10 @@ make cli-generate
 go test ./...
 
 # Run with debug logging
-./bin/claucker --debug start
+./bin/clawker--debug start
 
 # Generate versions.json from npm
-./bin/claucker generate latest 2.1
+./bin/clawkergenerate latest 2.1
 
 # Generate Docker images (existing infrastructure)
 make build VERSION=2.1.2 VARIANT=trixie
@@ -230,7 +230,7 @@ func SaveVersionsFile(path string, versions *VersionsFile) error
 
 ### ConfigValidator
 
-Validates `claucker.yaml` with semantic checks beyond YAML parsing:
+Validates `clawkeryaml` with semantic checks beyond YAML parsing:
 
 - Path existence and permissions for `instructions.copy`
 - Port range validation for `instructions.expose`
@@ -246,8 +246,8 @@ cmdutil.HandleError(err)
 
 // Print numbered "Next Steps" guidance
 cmdutil.PrintNextSteps(
-    "Run 'claucker init' to create a configuration",
-    "Or change to a directory with claucker.yaml",
+    "Run 'clawkerinit' to create a configuration",
+    "Or change to a directory with clawkeryaml",
 )
 
 // Simple error/warning output to stderr
@@ -273,13 +273,14 @@ Manages the observability stack using Docker Compose:
 - **OpenTelemetry Collector** - Telemetry aggregation
 
 Embedded templates in `internal/monitor/templates/`:
+
 - `compose.yaml` - Docker Compose stack definition
 - `prometheus.yaml` - Prometheus scrape config
 - `otel-config.yaml` - OTel collector config
 - `grafana-datasources.yaml` - Grafana data source config
 - `grafana-dashboard.json` - Pre-built dashboard
 
-Commands: `claucker monitor init|up|down|status`
+Commands: `clawkermonitor init|up|down|status`
 
 ### EnvBuilder (internal/credentials/env.go)
 
@@ -311,6 +312,7 @@ portBindings, exposedPorts, err := engine.ParsePortSpecs([]string{
 ```
 
 Supported formats:
+
 - `containerPort` - random host port to container port
 - `hostPort:containerPort` - specific host port mapping
 - `hostIP:hostPort:containerPort` - bind to specific interface
@@ -319,10 +321,10 @@ Supported formats:
 
 ### Container Naming and Labels
 
-Claucker uses hierarchical naming for multi-container support:
+Clawker uses hierarchical naming for multi-container support:
 
-- **Container names**: `claucker.project.agent` (e.g., `claucker.myapp.ralph`)
-- **Volume names**: `claucker.project.agent-purpose` (e.g., `claucker.myapp.ralph-workspace`)
+- **Container names**: `clawkerproject.agent` (e.g., `cclawkeryapp.ralph`)
+- **Volume names**: `clawkerproject.agent-purpose` (e.g., `cclawkeryapp.ralph-workspace`)
 
 Key functions in `internal/engine/names.go`:
 
@@ -335,18 +337,18 @@ Docker labels (`internal/engine/labels.go`) enable reliable filtering:
 
 | Label | Purpose |
 |-------|---------|
-| `com.claucker.managed` | Marker for claucker resources |
-| `com.claucker.project` | Project name |
-| `com.claucker.agent` | Agent name |
-| `com.claucker.version` | Claucker version |
-| `com.claucker.image` | Source image tag |
-| `com.claucker.workdir` | Host working directory |
+| `com.clawkermanaged` | Marker for cclawkeresources |
+| `com.clawkerproject` | Project name |
+| `com.clawkeragent` | Agent name |
+| `com.clawkerversion` | CClawkerversion |
+| `com.clawkerimage` | Source image tag |
+| `com.clawkerworkdir` | Host working directory |
 
 Helper functions:
 
 - `ContainerLabels(project, agent, version, image, workdir)` - creates container labels
 - `VolumeLabels(project, agent, purpose)` - creates volume labels
-- `ClauckerFilter()` - filter args for all claucker resources
+- `ClawkerFilter()` - filter args for all clawkerresources
 - `ProjectFilter(project)` - filter args for specific project
 
 ## Code Style
@@ -373,10 +375,10 @@ All commands follow these patterns:
        Use:   "start",
        Short: "Start Claude containers",
        Example: `  # Start Claude interactively
-     claucker start
+     clawkerstart
 
      # Start with a named agent
-     claucker start --agent ralph`,
+     clawkerstart --agent ralph`,
        RunE: func(cmd *cobra.Command, args []string) error { ... },
    }
    ```
@@ -413,10 +415,10 @@ All commands follow these patterns:
    ```go
    // Configuration not found
    if config.IsConfigNotFound(err) {
-       cmdutil.PrintError("No claucker.yaml found in current directory")
+       cmdutil.PrintError("No clawkeryaml found in current directory")
        cmdutil.PrintNextSteps(
-           "Run 'claucker init' to create a configuration",
-           "Or change to a directory with claucker.yaml",
+           "Run 'clawkerinit' to create a configuration",
+           "Or change to a directory with clawkeryaml",
        )
        return err
    }
@@ -449,20 +451,20 @@ All commands follow these patterns:
 
 | Command | Description |
 |---------|-------------|
-| `claucker init` | Scaffold `claucker.yaml` and `.clauckerignore` |
-| `claucker build [--no-cache]` | Build container image; `--no-cache` for fresh build |
-| `claucker start [--agent] [-p port] [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--agent` names the container; `-p` publishes ports |
-| `claucker run [--agent] [-p port] [-- <command>]` | Run ephemeral container (removed on exit); `--agent` names the container; `-p` publishes ports |
-| `claucker stop [--agent] [--clean]` | Stop containers; `--agent` for specific, `--clean` destroys volumes |
-| `claucker restart [--agent]` | Restart containers to pick up env changes |
-| `claucker sh [--agent]` | Open raw bash shell in running container |
-| `claucker logs [--agent] [-f]` | Stream container logs |
-| `claucker ls [-a] [-p project]` | List claucker containers; `-a` includes stopped, `-p` filters by project |
-| `claucker rm [-n name] [-p project]` | Remove containers and volumes; `-n` for specific, `-p` for all in project |
-| `claucker prune [-a] [-f]` | Remove unused resources; `-a` removes ALL including volumes |
-| `claucker monitor <cmd>` | Manage observability stack (init, up, down, status) |
-| `claucker config check` | Validate `claucker.yaml` |
-| `claucker generate [versions...]` | Generate versions.json from npm; `--skip-fetch` uses existing file |
+| `clawkerinit` | Scaffold `cclawkeraml` and `.clclawkerore` |
+| `clawkerbuild [--no-cache]` | Build container image; `--no-cache` for fresh build |
+| `clawkerstart [--agent] [-p port] [-- <claude-args>]` | Build image (if needed), create/reuse container, attach TTY; `--agent` names the container; `-p` publishes ports |
+| `clawkerrun [--agent] [-p port] [-- <command>]` | Run ephemeral container (removed on exit); `--agent` names the container; `-p` publishes ports |
+| `clawkerstop [--agent] [--clean]` | Stop containers; `--agent` for specific, `--clean` destroys volumes |
+| `clawkerrestart [--agent]` | Restart containers to pick up env changes |
+| `clawkersh [--agent]` | Open raw bash shell in running container |
+| `clawkerlogs [--agent] [-f]` | Stream container logs |
+| `clawkerls [-a] [-p project]` | List cclawkerontainers; `-a` includes stopped, `-p` filters by project |
+| `clawkerrm [-n name] [-p project]` | Remove containers and volumes; `-n` for specific, `-p` for all in project |
+| `clawkerprune [-a] [-f]` | Remove unused resources; `-a` removes ALL including volumes |
+| `clawkermonitor <cmd>` | Manage observability stack (init, up, down, status) |
+| `clawkerconfig check` | Validate `cclawkeraml` |
+| `clawkergenerate [versions...]` | Generate versions.json from npm; `--skip-fetch` uses existing file |
 
 ## Update README.md
 
@@ -473,7 +475,7 @@ After making any of the following changes, you MUST update [README.md](README.md
 ### When to Update README
 
 1. **New CLI commands or flags** - Update CLI Commands table and add usage examples
-2. **Configuration changes** - Update the `claucker.yaml` example and field descriptions
+2. **Configuration changes** - Update the `clawkeryaml` example and field descriptions
 3. **New features** - Add to appropriate section (Quick Start, Workspace Modes, Security, etc.)
 4. **Authentication changes** - Update Authentication section with new env vars or methods
 5. **Behavior changes** - Update affected sections to reflect new behavior
@@ -495,10 +497,10 @@ The README follows this order:
 1. Quick Start - Get users running in 5 minutes
 2. Authentication - How to pass API keys
 3. CLI Commands - Reference table + detailed usage
-4. Configuration - Full `claucker.yaml` spec with comments
+4. Configuration - Full `clawkeryaml` spec with comments
 5. Workspace Modes - bind vs snapshot explained
 6. Security - Defaults and opt-in dangerous features
-7. Ignore Patterns - `.clauckerignore` behavior
+7. Ignore Patterns - `.clawkergnore` behavior
 8. Development - Build instructions for contributors
 
 ### Example Update Pattern
@@ -507,7 +509,7 @@ The README follows this order:
 Code change: Add --timeout flag to `up` command
 README update:
   1. Add to CLI Commands table
-  2. Add to "claucker start" flags section:
+  2. Add to "clawkerstart" flags section:
      --timeout=30s  Container startup timeout (default: 30s)
 ```
 
@@ -576,7 +578,7 @@ CLAUDE.md update:
 
 **After implementing features, ensure CLAUDE.md guides future AI agents and developers correctly.**
 
-## Configuration (claucker.yaml)
+## Configuration (clawkeryaml)
 
 ```yaml
 version: "1"
@@ -649,10 +651,10 @@ security:
 4. **Idempotent `up` command** - Attaches to existing container if running
 5. **Type-safe instructions preferred over raw inject** - `build.instructions` is validated and OS-aware; `build.inject` is escape hatch for advanced users
 6. **OS detection from base image** - `RunInstruction` supports `alpine`/`debian` variants; generator detects OS from image name
-7. **Hierarchical container naming** - Format `claucker.project.agent` with "/" separators; enables multiple containers per project
-8. **Docker labels for resource identification** - Labels (`com.claucker.*`) provide reliable filtering; container names can be parsed but labels are authoritative
+7. **Hierarchical container naming** - Format `clawkerproject.agent` with "/" separators; enables multiple containers per project
+8. **Docker labels for resource identification** - Labels (`com.clawker*`) provide reliable filtering; container names can be parsed but labels are authoritative
 9. **Random agent names by default** - If `--agent` not specified, generates Docker-style adjective-noun name (e.g., "clever-fox")
-10. **Backward incompatibility with old naming** - Old `claucker-project` format containers are ignored; users should remove manually
+10. **Backward incompatibility with old naming** - Old `clawkerproject` format containers are ignored; users should remove manually
 11. **Pure Go version generation** - `pkg/build/` replaces shell scripts (semver.jq, versions.sh, apply-templates.sh); provides better testability, cross-platform support, and integration with CLI
 12. **Stdout for data, stderr for status** - All status messages, progress indicators, and user feedback go to stderr; only structured data output (like `ls` table) goes to stdout for scripting compatibility
 13. **Example field in all commands** - Every Cobra command includes an `Example` field with formatted usage examples shown in `--help` output

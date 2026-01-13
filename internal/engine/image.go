@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // ImageManager handles Docker image operations
@@ -158,9 +158,9 @@ func (im *ImageManager) processBuildOutput(reader io.Reader) error {
 	return nil
 }
 
-// ImageTag returns the standard tag for a claucker-built image
+// ImageTag returns the standard tag for a clawker-built image
 func ImageTag(projectName string) string {
-	return fmt.Sprintf("claucker/%s:latest", projectName)
+	return fmt.Sprintf("clawker/%s:latest", projectName)
 }
 
 // IsAlpineImage checks if an image reference appears to be Alpine-based

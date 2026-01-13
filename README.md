@@ -1,8 +1,8 @@
-# Claucker
+# Clawker
 
-Manage Claude Code in secure Docker containers with claucker
+Manage Claude Code in secure Docker containers with clawker
 
-Claucker (claude + docker) wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in safe, reproducible, monitored, isolated Docker containers.
+Clawker (claude + docker) wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in safe, reproducible, monitored, isolated Docker containers.
 
 ## Quick Start
 
@@ -15,9 +15,9 @@ Claucker (claude + docker) wraps [Claude Code](https://docs.anthropic.com/en/doc
 
 ```bash
 # Build from source
-git clone https://github.com/schmitthub/claucker.git
-cd claucker
-go build -o bin/claucker ./cmd/claucker
+git clone https://github.com/schmitthub/clawker.git
+cd clawker
+go build -o bin/clawker ./cmd/clawker
 ```
 
 ### Basic Workflow
@@ -25,10 +25,10 @@ go build -o bin/claucker ./cmd/claucker
 ```bash
 # 1. Initialize a project
 cd your-project
-claucker init
+clawker init
 
 # 2. Start the container
-claucker start
+clawker start
 
 # 3. Claude Code is now running in the container
 # Press Ctrl+C to exit when done
@@ -36,48 +36,48 @@ claucker start
 
 ## Multi-Container Management
 
-Claucker supports running multiple containers per project using **agents**. Each agent has its own container, volumes, and Claude Code session.
+Clawker supports running multiple containers per project using **agents**. Each agent has its own container, volumes, and Claude Code session.
 
 ### Container Naming
 
-Containers follow the format: `claucker.project.agent`
+Containers follow the format: `clawker.project.agent`
 
 ```
-claucker.myapp.ralph      # Project "myapp", agent "ralph"
-claucker.myapp.writer     # Project "myapp", agent "writer"
-claucker.backend.worker   # Project "backend", agent "worker"
+clawker.myapp.ralph      # Project "myapp", agent "ralph"
+clawker.myapp.writer     # Project "myapp", agent "writer"
+clawker.backend.worker   # Project "backend", agent "worker"
 ```
 
 ### Working with Agents
 
 ```bash
 # Start agents with specific names
-claucker start --agent ralph
-claucker start --agent writer
+clawker start --agent ralph
+clawker start --agent writer
 
 # If no --agent specified, a random name is generated
-claucker start    # Creates claucker.myapp.clever-fox
+clawker start    # Creates clawker.myapp.clever-fox
 
 # List all containers
-claucker list
+clawker list
 
 # Work with specific agents
-claucker logs --agent ralph
-claucker shell --agent ralph
-claucker stop --agent ralph
+clawker logs --agent ralph
+clawker shell --agent ralph
+clawker stop --agent ralph
 
 # Stop all agents for a project
-claucker stop
+clawker stop
 
 # Remove all containers for a project
-claucker remove -p myapp
+clawker remove -p myapp
 ```
 
 Each agent has isolated volumes for workspace (snapshot mode), config, and command history.
 
 ## Authentication
 
-Claucker automatically passes Anthropic authentication from your host environment to the container:
+Clawker automatically passes Anthropic authentication from your host environment to the container:
 
 | Environment Variable | Purpose |
 |---------------------|---------|
@@ -86,11 +86,11 @@ Claucker automatically passes Anthropic authentication from your host environmen
 | `ANTHROPIC_BASE_URL` | Custom API endpoint |
 | `ANTHROPIC_CUSTOM_HEADERS` | Additional HTTP headers |
 
-Simply set `ANTHROPIC_API_KEY` on your host before running `claucker start`:
+Simply set `ANTHROPIC_API_KEY` on your host before running `clawker start`:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-claucker start
+clawker start
 ```
 
 Claude Code will authenticate automatically without requiring browser login.
@@ -99,53 +99,53 @@ Claude Code will authenticate automatically without requiring browser login.
 
 | Command | Description |
 |---------|-------------|
-| `claucker init` | Create `claucker.yaml` and `.clauckerignore` in current directory |
-| `claucker build` | Build the container image |
-| `claucker start` | Build image (if needed), create container, and attach to Claude Code |
-| `claucker run` | Run a one-shot command in an ephemeral container |
-| `claucker stop` | Stop containers for the project |
-| `claucker restart` | Restart containers to pick up environment changes |
-| `claucker shell` | Open a bash shell in a running container |
-| `claucker logs` | View container logs |
-| `claucker list` | List all claucker containers |
-| `claucker remove` | Remove containers and their volumes |
-| `claucker prune` | Remove unused claucker resources |
-| `claucker monitor` | Manage local observability stack |
-| `claucker config check` | Validate your `claucker.yaml` |
-| `claucker generate` | Generate versions.json for Claude Code releases |
+| `clawker init` | Create `clawker.yaml` and `.clawkerignore` in current directory |
+| `clawker build` | Build the container image |
+| `clawker start` | Build image (if needed), create container, and attach to Claude Code |
+| `clawker run` | Run a one-shot command in an ephemeral container |
+| `clawker stop` | Stop containers for the project |
+| `clawker restart` | Restart containers to pick up environment changes |
+| `clawker shell` | Open a bash shell in a running container |
+| `clawker logs` | View container logs |
+| `clawker list` | List all clawker containers |
+| `clawker remove` | Remove containers and their volumes |
+| `clawker prune` | Remove unused clawker resources |
+| `clawker monitor` | Manage local observability stack |
+| `clawker config check` | Validate your `clawker.yaml` |
+| `clawker generate` | Generate versions.json for Claude Code releases |
 
-### claucker build
+### clawker build
 
 Builds the container image. Use this when you want to pre-build or rebuild with specific options.
 
 ```bash
-claucker build [flags]
+clawker build [flags]
 
 # Examples:
-claucker build                            # Build image (uses Docker cache)
-claucker build --no-cache                 # Build without Docker cache
-claucker build --dockerfile ./Dockerfile  # Build using custom Dockerfile
+clawker build                            # Build image (uses Docker cache)
+clawker build --no-cache                 # Build without Docker cache
+clawker build --dockerfile ./Dockerfile  # Build using custom Dockerfile
 
 Flags:
   --no-cache              Build without Docker cache
   --dockerfile <path>     Path to custom Dockerfile (overrides build.dockerfile in config)
 ```
 
-### claucker start
+### clawker start
 
 Builds the container (if needed) and runs Claude Code. This is an idempotent operation - it reuses existing containers.
 
 ```bash
-claucker start [-- <claude-args>...]
+clawker start [-- <claude-args>...]
 
 # Examples:
-claucker start                          # Run Claude interactively
-claucker start --agent ralph            # Start a named agent
-claucker start -- -p "build a feature"  # Pass args to Claude CLI
-claucker start -- --resume              # Resume previous session
-claucker start --build                  # Force rebuild before running
-claucker start -p 8080:8080             # Publish port 8080 to host
-claucker start -p 24282:24282           # Access MCP dashboard from host
+clawker start                          # Run Claude interactively
+clawker start --agent ralph            # Start a named agent
+clawker start -- -p "build a feature"  # Pass args to Claude CLI
+clawker start -- --resume              # Resume previous session
+clawker start --build                  # Force rebuild before running
+clawker start -p 8080:8080             # Publish port 8080 to host
+clawker start -p 24282:24282           # Access MCP dashboard from host
 
 Flags:
   --agent <name>        Agent name for the container (default: random)
@@ -156,23 +156,23 @@ Flags:
   -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
 ```
 
-**Note:** To build without Docker cache, run `claucker build --no-cache` first.
+**Note:** To build without Docker cache, run `clawker build --no-cache` first.
 
-### claucker run
+### clawker run
 
 Runs a command in a new ephemeral container. Container and volumes are removed on exit by default (like `docker run --rm`).
 
 ```bash
-claucker run [flags] [-- <command>...]
+clawker run [flags] [-- <command>...]
 
 # Examples:
-claucker run                           # Run Claude, remove on exit
-claucker run --agent worker            # Run with a named agent
-claucker run -- -p "quick question"    # Claude with args, remove on exit
-claucker run --shell                   # Run shell, remove on exit
-claucker run -- npm test               # Run arbitrary command
-claucker run --keep                    # Keep container after exit
-claucker run -p 8080:8080              # Publish port to host
+clawker run                           # Run Claude, remove on exit
+clawker run --agent worker            # Run with a named agent
+clawker run -- -p "quick question"    # Claude with args, remove on exit
+clawker run --shell                   # Run shell, remove on exit
+clawker run -- npm test               # Run arbitrary command
+clawker run --keep                    # Keep container after exit
+clawker run -p 8080:8080              # Publish port to host
 
 Flags:
   --agent <name>        Agent name for the container (default: random)
@@ -183,19 +183,19 @@ Flags:
   -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
 ```
 
-**Note:** To build without Docker cache, run `claucker build --no-cache` first.
+**Note:** To build without Docker cache, run `clawker build --no-cache` first.
 
-### claucker stop
+### clawker stop
 
 Stops containers for this project. By default, stops all containers; use `--agent` to stop a specific one.
 
 ```bash
-claucker stop [flags]
+clawker stop [flags]
 
 # Examples:
-claucker stop                    # Stop all containers for project
-claucker stop --agent ralph      # Stop specific agent
-claucker stop --clean            # Stop and remove all volumes
+clawker stop                    # Stop all containers for project
+clawker stop --agent ralph      # Stop specific agent
+clawker stop --clean            # Stop and remove all volumes
 
 Flags:
   --agent <name>  Agent name to stop (default: all agents)
@@ -204,34 +204,34 @@ Flags:
   --timeout       Seconds before force kill (default: 10)
 ```
 
-### claucker list
+### clawker list
 
-Lists all claucker containers across all projects.
+Lists all clawker containers across all projects.
 
 ```bash
-claucker list [flags]
+clawker list [flags]
 
 # Examples:
-claucker list              # List running containers
-claucker list -a           # Include stopped containers
-claucker list -p myapp     # Filter by project
+clawker list              # List running containers
+clawker list -a           # Include stopped containers
+clawker list -p myapp     # Filter by project
 
 Flags:
   -a, --all              Show all containers (including stopped)
   -p, --project <name>   Filter by project name
 ```
 
-### claucker remove
+### clawker remove
 
-Removes claucker containers and their associated volumes.
+Removes clawker containers and their associated volumes.
 
 ```bash
-claucker remove [flags]
+clawker remove [flags]
 
 # Examples:
-claucker remove -n claucker.myapp.ralph   # Remove specific container
-claucker remove -p myapp                   # Remove all containers for project
-claucker remove -p myapp -f                # Force remove running containers
+clawker remove -n clawker.myapp.ralph   # Remove specific container
+clawker remove -p myapp                   # Remove all containers for project
+clawker remove -p myapp -f                # Force remove running containers
 
 Flags:
   -n, --name <name>      Container name to remove
@@ -239,58 +239,58 @@ Flags:
   -f, --force            Force remove running containers
 ```
 
-### claucker prune
+### clawker prune
 
-Removes unused claucker resources (stopped containers, dangling images).
+Removes unused clawker resources (stopped containers, dangling images).
 
 ```bash
-claucker prune [flags]
+clawker prune [flags]
 
 # Examples:
-claucker prune        # Remove stopped containers and dangling images
-claucker prune -a     # Remove ALL claucker resources (including volumes)
-claucker prune -f     # Skip confirmation prompt
+clawker prune        # Remove stopped containers and dangling images
+clawker prune -a     # Remove ALL clawker resources (including volumes)
+clawker prune -f     # Skip confirmation prompt
 
 Flags:
-  -a, --all    Remove ALL claucker resources (containers, images, volumes)
+  -a, --all    Remove ALL clawker resources (containers, images, volumes)
   -f, --force  Skip confirmation prompt
 ```
 
 **Warning:** `--all` removes persistent data including workspace volumes.
 
-### claucker monitor
+### clawker monitor
 
 Manages the local observability stack for telemetry visualization (OpenTelemetry, Jaeger, Prometheus, Grafana).
 
 ```bash
-claucker monitor <command>
+clawker monitor <command>
 
 # Subcommands:
-claucker monitor init     # Scaffold monitoring configuration files
-claucker monitor up       # Start the monitoring stack
-claucker monitor down     # Stop the monitoring stack
-claucker monitor status   # Show monitoring stack status
+clawker monitor init     # Scaffold monitoring configuration files
+clawker monitor up       # Start the monitoring stack
+clawker monitor down     # Stop the monitoring stack
+clawker monitor status   # Show monitoring stack status
 ```
 
 After starting the monitoring stack, restart your Claude containers to enable telemetry:
 
 ```bash
-claucker monitor up
-claucker restart
+clawker monitor up
+clawker restart
 ```
 
-### claucker generate
+### clawker generate
 
 Generates `versions.json` for Claude Code releases by fetching version information from npm. Used for maintaining the Docker image build infrastructure.
 
 ```bash
-claucker generate [versions...]
+clawker generate [versions...]
 
 # Examples:
-claucker generate                    # Display current versions.json
-claucker generate latest             # Fetch latest version from npm
-claucker generate latest 2.1         # Fetch multiple version patterns
-claucker generate --skip-fetch       # Use existing versions.json only
+clawker generate                    # Display current versions.json
+clawker generate latest             # Fetch latest version from npm
+clawker generate latest 2.1         # Fetch multiple version patterns
+clawker generate --skip-fetch       # Use existing versions.json only
 
 Flags:
   --skip-fetch  Skip npm fetch, use existing versions.json only
@@ -303,19 +303,19 @@ Flags:
 - `2.1` - Match highest 2.1.x release
 - `2.1.2` - Exact version match
 
-A standalone binary `claucker-generate` is also available for CI/CD pipelines:
+A standalone binary `clawker-generate` is also available for CI/CD pipelines:
 
 ```bash
 # Build standalone binary
 make cli-generate
 
 # Run standalone
-./bin/claucker-generate latest 2.1.2
+./bin/clawker-generate latest 2.1.2
 ```
 
 ## Configuration
 
-Claucker uses `claucker.yaml` for project configuration. Run `claucker init` to generate a template.
+Clawker uses `clawker.yaml` for project configuration. Run `clawker init` to generate a template.
 
 ### Full Example
 
@@ -362,7 +362,7 @@ security:
 
 ## Advanced Build Configuration
 
-Claucker provides two ways to customize the generated Dockerfile: **type-safe instructions** and **raw injection points**.
+Clawker provides two ways to customize the generated Dockerfile: **type-safe instructions** and **raw injection points**.
 
 ### Type-Safe Instructions (`build.instructions`)
 
@@ -447,7 +447,7 @@ instructions:
       debian: "apt-get install -y postgresql-client"
 ```
 
-Claucker detects the base image OS and uses the appropriate command.
+Clawker detects the base image OS and uses the appropriate command.
 
 ### Raw Injection Points (`build.inject`)
 
@@ -510,7 +510,7 @@ build:
 Live sync between host and container. Changes in the container immediately reflect on your host filesystem.
 
 ```bash
-claucker start --mode=bind
+clawker start --mode=bind
 ```
 
 ### Snapshot Mode
@@ -518,14 +518,14 @@ claucker start --mode=bind
 Creates an isolated copy of your workspace in a Docker volume. Host files remain untouched.
 
 ```bash
-claucker start --mode=snapshot
+clawker start --mode=snapshot
 ```
 
 Use snapshot mode when you want Claude to experiment freely without affecting your working directory.
 
 ## Security
 
-Claucker prioritizes security by default:
+Clawker prioritizes security by default:
 
 - **Firewall enabled** - Outbound network traffic is blocked by default
 - **Docker socket disabled** - No Docker-in-Docker unless explicitly enabled
@@ -555,7 +555,7 @@ security:
 
 ## Ignore Patterns
 
-The `.clauckerignore` file controls which files are excluded in snapshot mode. It follows `.gitignore` syntax.
+The `.clawkerignore` file controls which files are excluded in snapshot mode. It follows `.gitignore` syntax.
 
 Default exclusions include:
 
@@ -569,7 +569,7 @@ Default exclusions include:
 
 ```bash
 # Build CLI
-go build -o bin/claucker ./cmd/claucker
+go build -o bin/clawker ./cmd/clawker
 
 # Build standalone generate binary
 make cli-generate
@@ -578,7 +578,7 @@ make cli-generate
 go test ./...
 
 # Run with debug logging
-./bin/claucker --debug start
+./bin/clawker --debug start
 ```
 
 ## License

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -28,15 +28,15 @@ func NewCmdRestart(f *cmdutil.Factory) *cobra.Command {
 		Long: `Restarts Claude containers to pick up environment changes.
 
 This is useful after starting the monitoring stack to enable telemetry,
-or after changing environment variables in claucker.yaml or .env files.
+or after changing environment variables in clawker.yaml or .env files.
 
 By default, restarts all containers for the project. Use --agent to restart a specific agent.
 Volumes (workspace, config, history) are preserved.`,
 		Example: `  # Restart all containers for project
-  claucker restart
+  clawker restart
 
   # Restart specific agent
-  claucker restart --agent ralph`,
+  clawker restart --agent ralph`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestart(f, opts)
 		},
@@ -55,10 +55,10 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No claucker.yaml found in current directory")
+			cmdutil.PrintError("No clawker.yaml found in current directory")
 			cmdutil.PrintNextSteps(
-				"Run 'claucker init' to create a configuration",
-				"Or change to a directory with claucker.yaml",
+				"Run 'clawker init' to create a configuration",
+				"Or change to a directory with clawker.yaml",
 			)
 			return err
 		}
@@ -81,7 +81,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	containerMgr := engine.NewContainerManager(eng)
 
 	// Get containers to restart
-	var containersToRestart []engine.ClauckerContainer
+	var containersToRestart []engine.ClawkerContainer
 
 	if opts.Agent != "" {
 		// Restart specific agent
@@ -91,7 +91,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
 		if existing != nil {
-			containersToRestart = append(containersToRestart, engine.ClauckerContainer{
+			containersToRestart = append(containersToRestart, engine.ClawkerContainer{
 				ID:      existing.ID,
 				Name:    containerName,
 				Project: cfg.Project,
@@ -101,7 +101,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 		}
 	} else {
 		// Restart all containers for project
-		containers, err := eng.ListClauckerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
@@ -116,7 +116,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 		}
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "To start a new container:")
-		fmt.Fprintln(os.Stderr, "  claucker start")
+		fmt.Fprintln(os.Stderr, "  clawker start")
 		return nil
 	}
 
@@ -147,13 +147,13 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	fmt.Fprintf(os.Stderr, "Stopped %d container(s). Volumes preserved.\n", len(containersToRestart))
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "To start with fresh environment:")
-	fmt.Fprintln(os.Stderr, "  claucker start")
+	fmt.Fprintln(os.Stderr, "  clawker start")
 	fmt.Fprintln(os.Stderr)
 
 	if monitoringActive {
 		fmt.Fprintln(os.Stderr, "Note: Monitoring stack is active - telemetry will be enabled on next start.")
 	} else {
-		fmt.Fprintln(os.Stderr, "Tip: Start 'claucker monitor up -d' first to enable telemetry.")
+		fmt.Fprintln(os.Stderr, "Tip: Start 'clawker monitor up -d' first to enable telemetry.")
 	}
 
 	return nil

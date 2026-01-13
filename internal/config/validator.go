@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Validator validates a Config for correctness

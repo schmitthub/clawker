@@ -10,10 +10,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	"github.com/schmitthub/claucker/pkg/cmdutil"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -28,34 +28,34 @@ func NewCmdPrune(f *cmdutil.Factory) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove unused claucker resources",
-		Long: `Remove unused claucker resources (stopped containers, dangling images).
+		Short: "Remove unused clawker resources",
+		Long: `Remove unused clawker resources (stopped containers, dangling images).
 
 By default, prune removes:
-  - Stopped claucker containers
-  - Dangling claucker images
+  - Stopped clawker containers
+  - Dangling clawker images
 
-With --all, prune removes ALL claucker resources:
-  - All claucker containers (stopped)
-  - All claucker images
-  - All claucker volumes
-  - The claucker-net network (if unused)
+With --all, prune removes ALL clawker resources:
+  - All clawker containers (stopped)
+  - All clawker images
+  - All clawker volumes
+  - The clawker-net network (if unused)
 
 WARNING: --all is destructive and will remove persistent data!`,
 		Example: `  # Remove unused resources (stopped containers, dangling images)
-  claucker prune
+  clawker prune
 
-  # Remove ALL claucker resources (including volumes)
-  claucker prune --all
+  # Remove ALL clawker resources (including volumes)
+  clawker prune --all
 
   # Skip confirmation prompt
-  claucker prune --all --force`,
+  clawker prune --all --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPrune(f, opts)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.all, "all", "a", false, "Remove ALL claucker resources (including volumes)")
+	cmd.Flags().BoolVarP(&opts.all, "all", "a", false, "Remove ALL clawker resources (including volumes)")
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Skip confirmation prompt")
 
 	return cmd
@@ -66,11 +66,11 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 
 	// Warn user about destructive operation
 	if opts.all && !opts.force {
-		fmt.Fprintln(os.Stderr, "WARNING: This will remove ALL claucker resources including:")
-		fmt.Fprintln(os.Stderr, "  - All stopped claucker containers")
-		fmt.Fprintln(os.Stderr, "  - All claucker images")
-		fmt.Fprintln(os.Stderr, "  - All claucker volumes (PERSISTENT DATA WILL BE LOST)")
-		fmt.Fprintln(os.Stderr, "  - The claucker-net network")
+		fmt.Fprintln(os.Stderr, "WARNING: This will remove ALL clawker resources including:")
+		fmt.Fprintln(os.Stderr, "  - All stopped clawker containers")
+		fmt.Fprintln(os.Stderr, "  - All clawker images")
+		fmt.Fprintln(os.Stderr, "  - All clawker volumes (PERSISTENT DATA WILL BE LOST)")
+		fmt.Fprintln(os.Stderr, "  - The clawker-net network")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprint(os.Stderr, "Are you sure you want to continue? [y/N] ")
 
@@ -127,19 +127,19 @@ func runPrune(f *cmdutil.Factory, opts *pruneOptions) error {
 	}
 
 	if removedCount == 0 {
-		fmt.Fprintln(os.Stderr, "No claucker resources to remove.")
+		fmt.Fprintln(os.Stderr, "No clawker resources to remove.")
 	} else {
-		fmt.Fprintf(os.Stderr, "\nPruned %d claucker resource(s).\n", removedCount)
+		fmt.Fprintf(os.Stderr, "\nPruned %d clawker resource(s).\n", removedCount)
 	}
 
 	return nil
 }
 
 func pruneContainers(ctx context.Context, eng *engine.Engine, all bool) (int, error) {
-	// List claucker containers using label filter
+	// List clawker containers using label filter
 	containers, err := eng.ContainerList(container.ListOptions{
 		All:     true,
-		Filters: engine.ClauckerFilter(),
+		Filters: engine.ClawkerFilter(),
 	})
 	if err != nil {
 		return 0, err
@@ -185,16 +185,16 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 
 	var removed int
 	for _, img := range images {
-		// Check if any tag matches claucker pattern
-		isClauckerImage := false
+		// Check if any tag matches clawker pattern
+		isClawkerImage := false
 		for _, tag := range img.RepoTags {
-			if strings.HasPrefix(tag, "claucker/") {
-				isClauckerImage = true
+			if strings.HasPrefix(tag, "clawker/") {
+				isClawkerImage = true
 				break
 			}
 		}
 
-		if !isClauckerImage {
+		if !isClawkerImage {
 			continue
 		}
 
@@ -226,7 +226,7 @@ func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
 	volumesToRemove := make(map[string]bool)
 
 	// First, find volumes by label (new volumes with proper labels)
-	labeledVolumes, err := eng.VolumeList(engine.ClauckerFilter())
+	labeledVolumes, err := eng.VolumeList(engine.ClawkerFilter())
 	if err != nil {
 		logger.Warn().Err(err).Msg("error listing labeled volumes")
 	} else {
@@ -236,9 +236,9 @@ func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
 	}
 
 	// Fallback: find volumes by name prefix (legacy volumes without labels)
-	// Volumes are named: claucker.project.agent-purpose
+	// Volumes are named: clawker.project.agent-purpose
 	nameFilteredVolumes, err := eng.VolumeList(filters.NewArgs(
-		filters.Arg("name", "claucker."),
+		filters.Arg("name", "clawker."),
 	))
 	if err != nil {
 		logger.Warn().Err(err).Msg("error listing volumes by name")
@@ -263,7 +263,7 @@ func pruneVolumes(ctx context.Context, eng *engine.Engine) (int, error) {
 
 func pruneNetwork(ctx context.Context, eng *engine.Engine) error {
 	// Check if network exists
-	exists, err := eng.NetworkExists(config.ClauckerNetwork)
+	exists, err := eng.NetworkExists(config.ClawkerNetwork)
 	if err != nil {
 		return err
 	}
@@ -272,16 +272,16 @@ func pruneNetwork(ctx context.Context, eng *engine.Engine) error {
 	}
 
 	// Check if network is in use
-	network, err := eng.NetworkInspect(config.ClauckerNetwork)
+	network, err := eng.NetworkInspect(config.ClawkerNetwork)
 	if err != nil {
 		return err
 	}
 
 	if len(network.Containers) > 0 {
-		fmt.Fprintf(os.Stderr, "[SKIP]  Network %s is still in use by %d container(s)\n", config.ClauckerNetwork, len(network.Containers))
+		fmt.Fprintf(os.Stderr, "[SKIP]  Network %s is still in use by %d container(s)\n", config.ClawkerNetwork, len(network.Containers))
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "[INFO]  Removing network: %s\n", config.ClauckerNetwork)
-	return eng.NetworkRemove(config.ClauckerNetwork)
+	fmt.Fprintf(os.Stderr, "[INFO]  Removing network: %s\n", config.ClawkerNetwork)
+	return eng.NetworkRemove(config.ClawkerNetwork)
 }

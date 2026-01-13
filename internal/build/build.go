@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/schmitthub/claucker/internal/config"
-	"github.com/schmitthub/claucker/internal/engine"
-	pkgbuild "github.com/schmitthub/claucker/pkg/build"
-	"github.com/schmitthub/claucker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/engine"
+	pkgbuild "github.com/schmitthub/clawker/pkg/build"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
-// Builder handles Docker image building for claucker projects.
+// Builder handles Docker image building for clawker projects.
 type Builder struct {
 	engine  *engine.Engine
 	config  *config.Config
