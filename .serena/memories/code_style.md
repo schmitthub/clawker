@@ -49,3 +49,4 @@
 - Never use `logger.Fatal()` in Cobra hooks - it bypasses error handling
 - Cobra's `MarkFlagsOneRequired()` must be called after flags are defined
 - Use `context.Background()` as parent for cleanup contexts (passed context may be cancelled)
+- Do not pass `context.Context` during struct initialization and re-use it for all of its member methods this is an anti-pattern. Do pass `context.Context` to each method individually
