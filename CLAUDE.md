@@ -1,14 +1,5 @@
 # Clawker
 
-Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers. The goal is to create a solution to easily spin up claude code agents in containers to isolate them from damaging the user's host system, especially when running in unsafe unattended modes. You can distill clawker users into two groups
-
-1. **Group Name: Vibers**: Users new to software development and its tooling who have absolutely no understanding what they are doing and yern for a good harness with features to abstract away the complexity of running and monitoring agents using advanced techniques without harming their machines
-2. **Group Name: Wizards**: Users who are very experienced with software development and its tooling who would enjoy the convenience of clawker's features
-
-The assumption right now is the majority of users will most likely fall in the first group as `clawker` is an abstraction that simplifies creating and managing containers. `docker` experienced users will be less apt to pursue a solution like this, but may want to adopt for other convenience features like monitoring etc.
-
-**`clawker` should prioritize being intuitive for those new to container management and just want to intuitively run claude code, but do its best to also make docker users feel right at home whenever possible**
-
 <critical_instructions>
 
 ## Required Tooling
@@ -33,6 +24,15 @@ The assumption right now is the majority of users will most likely fall in the f
 - **ast-grep** - Structural code search when Serena unavailable
 
 </critical_instructions>
+
+Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers. The goal is to create a solution to easily spin up claude code agents in containers to isolate them from damaging the user's host system, especially when running in unsafe unattended modes. You can distill clawker users into two groups
+
+1. **Group Name: Vibers**: Users new to software development and its tooling who have absolutely no understanding what they are doing and yern for a good harness with features to abstract away the complexity of running and monitoring agents using advanced techniques without harming their machines
+2. **Group Name: Wizards**: Users who are very experienced with software development and its tooling who would enjoy the convenience of clawker's features
+
+The assumption right now is the majority of users will most likely fall in the first group as `clawker` is an abstraction that simplifies creating and managing containers. `docker` experienced users will be less apt to pursue a solution like this, but may want to adopt for other convenience features like monitoring etc.
+
+**`clawker` should prioritize being intuitive for those new to container management and just want to intuitively run claude code, but do its best to also make docker users feel right at home whenever possible**
 
 ## Repository Structure
 

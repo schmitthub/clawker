@@ -1,6 +1,6 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
-        cli cli-build cli-generate cli-test cli-lint cli-install cli-clean
+        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-install cli-clean
 
 # Variables
 IMAGE_NAME ?= clawker
@@ -29,6 +29,7 @@ help:
 	@echo "  cli                 Build the clawker CLI binary"
 	@echo "  cli-generate        Build the standalone clawker-generate binary"
 	@echo "  cli-test            Run CLI tests"
+	@echo "  cli-test-integration Run CLI integration tests (requires Docker)"
 	@echo "  cli-lint            Run linter on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
 	@echo "  cli-clean           Remove CLI build artifacts"
@@ -180,6 +181,11 @@ cli-build-windows:
 cli-test:
 	@echo "Running CLI tests..."
 	$(GO) test -v ./...
+
+# Run CLI integration tests
+cli-test-integration:
+	@echo "Running CLI integration tests (requires Docker)..."
+	$(GO) test ./pkg/cmd/... -tags=integration -v -timeout 10m
 
 # Run CLI tests with coverage
 cli-test-coverage:

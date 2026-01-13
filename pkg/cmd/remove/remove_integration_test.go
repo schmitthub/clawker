@@ -71,9 +71,9 @@ func findRepoRoot(start string) string {
 var testCounter atomic.Int64
 
 func uniqueAgent(t *testing.T) string {
-	// Use atomic counter + timestamp for guaranteed uniqueness across parallel tests
+	// Use PID + atomic counter + timestamp for guaranteed uniqueness across test runs
 	count := testCounter.Add(1)
-	return fmt.Sprintf("t%d-%d", time.Now().UnixNano()%100000, count)
+	return fmt.Sprintf("t%d-%d-%d", os.Getpid(), time.Now().UnixNano()%1000000, count)
 }
 
 func containerExists(name string) bool {
@@ -313,8 +313,9 @@ func TestRm_UnusedFlag_NoUnused(t *testing.T) {
 	agent := uniqueAgent(t)
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
-	// Create running container
-	runClawker("run", "--detach", "--agent", agent)
+	// Create running container with sleep command to keep it alive
+	// (without a command, the entrypoint runs claude which exits immediately in detached mode)
+	runClawker("run", "--detach", "--agent", agent, "--", "sleep", "300")
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
@@ -325,9 +326,9 @@ func TestRm_UnusedFlag_NoUnused(t *testing.T) {
 		t.Fatalf("remove --unused failed: %v", err)
 	}
 
-	// Output should indicate no unused containers found
-	if !strings.Contains(out, "No unused containers found") {
-		t.Error("expected message indicating no unused containers found")
+	// Output should indicate no resources to remove
+	if !strings.Contains(out, "No clawker resources to remove") {
+		t.Errorf("expected message indicating no resources to remove, got: %s", out)
 	}
 
 	// Cleanup

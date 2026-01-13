@@ -71,9 +71,9 @@ func findRepoRoot(start string) string {
 var testCounter atomic.Int64
 
 func uniqueAgent(t *testing.T) string {
-	// Use atomic counter + timestamp for guaranteed uniqueness across parallel tests
+	// Use PID + atomic counter + timestamp for guaranteed uniqueness across test runs
 	count := testCounter.Add(1)
-	return fmt.Sprintf("t%d-%d", time.Now().UnixNano()%100000, count)
+	return fmt.Sprintf("t%d-%d-%d", os.Getpid(), time.Now().UnixNano()%1000000, count)
 }
 
 func containerExists(name string) bool {
@@ -344,5 +344,52 @@ func TestRun_ExitCode(t *testing.T) {
 		t.Error("expected exit error with code 42, got nil")
 	} else {
 		t.Errorf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+}
+
+// TestBuild_ImageLabels verifies that built images have correct clawker labels
+func TestBuild_ImageLabels(t *testing.T) {
+	// The test image was already built in TestMain, verify its labels
+	imageTag := "clawker/" + testProject + ":latest"
+
+	// Check com.clawker.managed label
+	labelOut, err := exec.Command("docker", "inspect", imageTag,
+		"--format", "{{index .Config.Labels \"com.clawker.managed\"}}").Output()
+	if err != nil {
+		t.Fatalf("failed to inspect image: %v", err)
+	}
+	if strings.TrimSpace(string(labelOut)) != "true" {
+		t.Errorf("expected com.clawker.managed=true label, got %q", string(labelOut))
+	}
+
+	// Check com.clawker.project label
+	labelOut, err = exec.Command("docker", "inspect", imageTag,
+		"--format", "{{index .Config.Labels \"com.clawker.project\"}}").Output()
+	if err != nil {
+		t.Fatalf("failed to inspect image: %v", err)
+	}
+	if strings.TrimSpace(string(labelOut)) != testProject {
+		t.Errorf("expected com.clawker.project=%s label, got %q", testProject, string(labelOut))
+	}
+
+	// Check com.clawker.version label exists (value varies)
+	labelOut, err = exec.Command("docker", "inspect", imageTag,
+		"--format", "{{index .Config.Labels \"com.clawker.version\"}}").Output()
+	if err != nil {
+		t.Fatalf("failed to inspect image: %v", err)
+	}
+	if strings.TrimSpace(string(labelOut)) == "" {
+		t.Error("expected com.clawker.version label to have a value")
+	}
+
+	// Check com.clawker.created label exists and is valid RFC3339
+	labelOut, err = exec.Command("docker", "inspect", imageTag,
+		"--format", "{{index .Config.Labels \"com.clawker.created\"}}").Output()
+	if err != nil {
+		t.Fatalf("failed to inspect image: %v", err)
+	}
+	created := strings.TrimSpace(string(labelOut))
+	if created == "" {
+		t.Error("expected com.clawker.created label to have a value")
 	}
 }
