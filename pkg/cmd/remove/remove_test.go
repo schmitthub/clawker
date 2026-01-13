@@ -21,6 +21,8 @@ func TestNewCmdRemove(t *testing.T) {
 	}{
 		{"name", "n"},
 		{"project", "p"},
+		{"unused", "u"},
+		{"all", "a"},
 		{"force", "f"},
 	}
 
@@ -49,6 +51,32 @@ func TestNewCmdRemove_Aliases(t *testing.T) {
 		}
 		if cmd.Aliases[i] != alias {
 			t.Errorf("expected alias %d '%s', got '%s'", i, alias, cmd.Aliases[i])
+		}
+	}
+}
+
+func TestNewCmdRemove_DefaultValues(t *testing.T) {
+	f := cmdutil.New("1.0.0", "abc123")
+	cmd := NewCmdRemove(f)
+
+	// Verify default values for key flags
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		{"unused", "false"},
+		{"all", "false"},
+		{"force", "false"},
+	}
+
+	for _, tt := range tests {
+		flag := cmd.Flags().Lookup(tt.name)
+		if flag == nil {
+			t.Errorf("flag --%s not found", tt.name)
+			continue
+		}
+		if flag.DefValue != tt.expected {
+			t.Errorf("expected --%s default '%s', got '%s'", tt.name, tt.expected, flag.DefValue)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,8 +68,12 @@ func findRepoRoot(start string) string {
 	}
 }
 
+var testCounter atomic.Int64
+
 func uniqueAgent(t *testing.T) string {
-	return fmt.Sprintf("t%d", time.Now().UnixNano()%100000)
+	// Use atomic counter + timestamp for guaranteed uniqueness across parallel tests
+	count := testCounter.Add(1)
+	return fmt.Sprintf("t%d-%d", time.Now().UnixNano()%100000, count)
 }
 
 func containerExists(name string) bool {
@@ -103,46 +108,22 @@ func runClawkerWithWorkdir(workdir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// TestRun_DefaultCleanup verifies that run removes container AND volumes on exit by default
-func TestRun_DefaultCleanup(t *testing.T) {
+// TestRun_PreservesContainerByDefault verifies that run preserves container and volumes by default
+// This is the NEW behavior after verb consolidation (run now acts like old start)
+func TestRun_PreservesContainerByDefault(t *testing.T) {
 	agent := uniqueAgent(t)
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	// Run a quick command
+	// Run a quick command (default behavior: preserve)
 	out, err := runClawker("run", "--agent", agent, "--", "echo", "hello")
-	if err != nil {
-		t.Fatalf("run failed: %v\nOutput: %s", err, out)
-	}
-
-	// Verify container removed
-	if containerExists(containerName) {
-		t.Error("expected container to be removed after exit")
-	}
-
-	// Verify volumes removed
-	if volumeExists(containerName + "-config") {
-		t.Error("expected config volume to be removed")
-	}
-	if volumeExists(containerName + "-history") {
-		t.Error("expected history volume to be removed")
-	}
-}
-
-// TestRun_KeepFlag verifies that --keep preserves container and volumes
-func TestRun_KeepFlag(t *testing.T) {
-	agent := uniqueAgent(t)
-	containerName := "clawker." + testProject + "." + agent
-	defer cleanup(containerName)
-
-	out, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
 
 	// Verify container preserved (Exited state)
 	if !containerExists(containerName) {
-		t.Error("expected container to be preserved with --keep")
+		t.Error("expected container to be preserved by default")
 	}
 
 	// Verify volumes preserved
@@ -154,13 +135,136 @@ func TestRun_KeepFlag(t *testing.T) {
 	}
 }
 
+// TestRun_RemoveFlag verifies that --remove removes container AND volumes on exit
+func TestRun_RemoveFlag(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Run with --remove flag (ephemeral mode)
+	out, err := runClawker("run", "--remove", "--agent", agent, "--", "echo", "hello")
+	if err != nil {
+		t.Fatalf("run --remove failed: %v\nOutput: %s", err, out)
+	}
+
+	// Verify container removed
+	if containerExists(containerName) {
+		t.Error("expected container to be removed with --remove")
+	}
+
+	// Verify volumes removed
+	if volumeExists(containerName + "-config") {
+		t.Error("expected config volume to be removed")
+	}
+	if volumeExists(containerName + "-history") {
+		t.Error("expected history volume to be removed")
+	}
+}
+
+// TestRun_StartAlias verifies that 'start' works as alias to 'run'
+func TestRun_StartAlias(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Use 'start' alias instead of 'run'
+	out, err := runClawker("start", "--agent", agent, "--", "echo", "hello")
+	if err != nil {
+		t.Fatalf("start failed: %v\nOutput: %s", err, out)
+	}
+
+	// Verify container preserved (same as run default)
+	if !containerExists(containerName) {
+		t.Error("expected container to be preserved with start alias")
+	}
+}
+
+// TestRun_Idempotent verifies that run reattaches to existing container
+func TestRun_Idempotent(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// First run
+	out, err := runClawker("run", "--agent", agent, "--", "echo", "first")
+	if err != nil {
+		t.Fatalf("first run failed: %v\nOutput: %s", err, out)
+	}
+
+	// Get container ID
+	id1, _ := exec.Command("docker", "inspect", containerName, "--format", "{{.Id}}").Output()
+
+	// Second run should reuse same container
+	out, err = runClawker("run", "--agent", agent, "--", "echo", "second")
+	if err != nil {
+		t.Fatalf("second run failed: %v\nOutput: %s", err, out)
+	}
+
+	id2, _ := exec.Command("docker", "inspect", containerName, "--format", "{{.Id}}").Output()
+
+	if string(id1) != string(id2) {
+		t.Error("expected second run to reuse existing container")
+	}
+}
+
+// TestRun_CleanFlag verifies that --clean removes existing before starting
+func TestRun_CleanFlag(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// First run to create container
+	out, err := runClawker("run", "--agent", agent, "--", "echo", "first")
+	if err != nil {
+		t.Fatalf("first run failed: %v\nOutput: %s", err, out)
+	}
+
+	// Get original container ID
+	id1, _ := exec.Command("docker", "inspect", containerName, "--format", "{{.Id}}").Output()
+
+	// Second run with --clean should create new container
+	out, err = runClawker("run", "--clean", "--agent", agent, "--", "echo", "second")
+	if err != nil {
+		t.Fatalf("run --clean failed: %v\nOutput: %s", err, out)
+	}
+
+	id2, _ := exec.Command("docker", "inspect", containerName, "--format", "{{.Id}}").Output()
+
+	if string(id1) == string(id2) {
+		t.Error("expected --clean to create new container")
+	}
+}
+
+// TestRun_DetachFlag verifies that --detach runs container in background
+func TestRun_DetachFlag(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Run in detached mode
+	out, err := runClawker("run", "--detach", "--agent", agent)
+	if err != nil {
+		t.Fatalf("run --detach failed: %v\nOutput: %s", err, out)
+	}
+
+	// Container should be running
+	running, _ := exec.Command("docker", "ps", "--filter", "name=^"+containerName+"$", "--format", "{{.Names}}").Output()
+	if strings.TrimSpace(string(running)) != containerName {
+		t.Error("expected container to be running with --detach")
+	}
+
+	// Stop for cleanup
+	exec.Command("docker", "stop", containerName).Run()
+}
+
 // TestRun_BindMode verifies bind mode does NOT create workspace volume
 func TestRun_BindMode(t *testing.T) {
 	agent := uniqueAgent(t)
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClawker("run", "--keep", "--mode=bind", "--agent", agent, "--", "echo", "hello")
+	// Default behavior preserves container, no need for --keep
+	out, err := runClawker("run", "--mode=bind", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -177,7 +281,8 @@ func TestRun_SnapshotMode(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClawker("run", "--keep", "--mode=snapshot", "--agent", agent, "--", "echo", "hello")
+	// Default behavior preserves container, no need for --keep
+	out, err := runClawker("run", "--mode=snapshot", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}
@@ -194,7 +299,8 @@ func TestRun_ContainerLabels(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	out, err := runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	// Default behavior preserves container, no need for --keep
+	out, err := runClawker("run", "--agent", agent, "--", "echo", "hello")
 	if err != nil {
 		t.Fatalf("run failed: %v\nOutput: %s", err, out)
 	}

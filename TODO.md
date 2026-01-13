@@ -1,19 +1,26 @@
 # TODO.md
 
+## Personal
+
+[ ] Get a good list of software development terms for prompt creating. You could prob make a good article. (ie enhancement, feature, integration test, regression test, hotfix, etc etc)
+
 ## Bugs
 
 [ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active
 
 ## Enhancements
 
-[ ] change name to clawker
-[ ] update verbs. `run` with flag `-r --remove` should start a container. work on passthrough if someone wants a shell or abitrary command or claude flag passed. add `-sh --shell` as a convenience flag. remove `start` and `sh`
+[ ] I will need incorporate a mimic of docker attach for container shell session detachment and re-attachment. Right now we can leverage `run` with a --detach flag to start a claude command. Users might want to leave containers running a job and re-log into the same shell session later
+[ ] Might also want to add exec too
+[ ] Custom actions? let people create workflows to wrap container start finish?
+[ ] add firewall config overrides to run command (flag, env var)
+[ ] grafana subscription tracking support
 [ ] leverage llm doc gen to describe this project to claude easily: <https://cobra.dev/docs/how-to-guides/clis-for-llms/>
 [ ] add these cobra site docs to context ex: <https://github.com/spf13/cobra/blob/main/site/content/user_guide.md>
 [ ] identify situations that could benefit from active help: <https://github.com/spf13/cobra/blob/main/site/content/active_help.md>
 [ ] docker mcp toolkit integration
 [ ] Add monitoring pre-check. Disable pre-checks in local yaml
-[ ] Add modes: yolo and ralf, to start claude in unsafe auto or through a ralf entry script that accepts a prompt and num iterations
+[ ] Add modes: yolo and ralf, to start claude in unsafe auto or through a ralf entry script that accepts a prompt and num iterations. prob should add aliases to them as command verbs for fun (ie run --mode ralph aliased to clawker ralf). or have a modes subcommand like clawker modes ralph.
 [ ] Make timezone in the dockerfile tmpl configurable in clawker.yaml or use the hosts default TZ
 [ ] see if there is a way to pass browser opening events to the host and then back into the container. for example for claude auth, and for mcp's like serena
 [ ] can you rename @pkg/build/ to something like pkg/package/ since it is simply creating dockerfiles  based on current claude code changes. could there be a better name to fit trends to fit this behavior better?

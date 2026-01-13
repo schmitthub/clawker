@@ -11,7 +11,7 @@ Clawker follows the [CLI Guidelines](cli-guidelines.md) with these core principl
 | **Human-First** | Conversational error messages with "Next Steps" guidance |
 | **Safe Autonomy** | Destructive operations require `--force` or confirmation |
 | **Composability** | stdout for data, stderr for status messages |
-| **Idempotent** | `start` reattaches to existing containers |
+| **Idempotent** | `run` reattaches to existing containers |
 | **Discoverability** | All commands have `Example` fields |
 
 ## Command Taxonomy
@@ -21,19 +21,17 @@ clawker
 ├── Lifecycle Commands
 │   ├── init          Create project configuration
 │   ├── build         Build container image
-│   ├── start         Build and run Claude (reattaches if running)
-│   ├── run           Ephemeral one-shot execution
+│   ├── run           Build and run Claude (idempotent, aliases: start)
 │   ├── stop          Stop containers
 │   └── restart       Restart with fresh environment
 │
 ├── Inspection Commands
 │   ├── list          List containers
-│   ├── logs          Stream container logs
-│   └── shell         Interactive shell
+│   └── logs          Stream container logs
 │
 ├── Cleanup Commands
-│   ├── remove        Remove containers and volumes
-│   └── prune         Remove unused resources
+│   ├── remove        Remove containers, volumes, or unused resources
+│   └── prune         Alias for 'remove --unused'
 │
 ├── Configuration Commands
 │   └── config
@@ -128,94 +126,74 @@ clawker build --dockerfile ./Dockerfile.dev
 
 ---
 
-### `start`
-
-**Category:** Lifecycle
-**File:** `pkg/cmd/start/start.go`
-
-```
-clawker start [-- <claude-args>...]
-```
-
-Builds the image (if needed), creates volumes, and runs Claude. **Idempotent**: reattaches to existing containers.
-
-| Short | Long | Type | Default | Description |
-|-------|------|------|---------|-------------|
-| `-m` | `--mode` | string | config | Workspace mode: `bind` or `snapshot` |
-| | `--build` | bool | `false` | Force rebuild of the container image |
-| | `--detach` | bool | `false` | Run container in background |
-| | `--clean` | bool | `false` | Remove existing container and volumes before starting |
-| | `--agent` | string | random | Agent name for the container |
-| `-p` | `--publish` | []string | `nil` | Publish container port(s) to host |
-
-**Examples:**
-
-```bash
-# Start Claude interactively
-clawker start
-
-# Start with a prompt
-clawker start -- -p "build a feature"
-
-# Resume previous session
-clawker start -- --resume
-
-# Start in snapshot mode
-clawker start --mode=snapshot
-
-# Start in background
-clawker start --detach
-
-# Publish ports
-clawker start -p 24282:24282
-clawker start -p 8080:8080 -p 3000:3000
-```
-
-**Gotcha:** The `-p` flag conflicts with `ls -p` (project filter). See [Known Issues](#known-issues).
-
----
-
 ### `run`
 
 **Category:** Lifecycle
 **File:** `pkg/cmd/run/run.go`
+**Aliases:** `start`
 
 ```
 clawker run [flags] [-- <command>...]
 ```
 
-Runs a command in a new container and removes it (with volumes) when done (like `docker run --rm`). Always creates a new container.
+Builds the image (if needed), creates volumes, and runs Claude. **Idempotent**: reattaches to existing containers. Containers are preserved by default; use `--remove` for ephemeral containers.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
 | `-m` | `--mode` | string | config | Workspace mode: `bind` or `snapshot` |
 | | `--build` | bool | `false` | Force rebuild of the container image |
 | | `--shell` | bool | `false` | Run shell instead of claude |
-| | `--keep` | bool | `false` | Keep container and volumes after exit |
+| `-s` | `--shell-path` | string | config/bash | Path to shell executable |
+| `-u` | `--user` | string | claude | User to run shell as (only with --shell) |
+| `-r` | `--remove` | bool | `false` | Remove container and volumes on exit (ephemeral) |
+| | `--detach` | bool | `false` | Run container in background |
+| | `--clean` | bool | `false` | Remove existing container and volumes before starting |
 | | `--agent` | string | random | Agent name for the container |
 | `-p` | `--publish` | []string | `nil` | Publish container port(s) to host |
+
+**Shell Path Resolution:**
+The shell path is resolved using Viper configuration hierarchy:
+1. CLI flag `-s, --shell-path` (highest priority)
+2. `CLAWKER_SHELL` environment variable
+3. `agent.shell` in clawker.yaml
+4. Default: `/bin/bash`
 
 **Examples:**
 
 ```bash
-# Run claude interactively, remove on exit
+# Run Claude interactively (container preserved after exit)
 clawker run
 
-# Run claude with args, remove on exit
+# Using 'start' alias (same behavior)
+clawker start
+
+# Run Claude with a prompt
 clawker run -- -p "build a feature"
 
-# Run shell interactively
+# Resume previous session
+clawker run -- --resume
+
+# Run in snapshot mode
+clawker run --mode=snapshot
+
+# Run in background
+clawker run --detach
+
+# Run ephemeral container (removed on exit)
+clawker run --remove
+
+# Open a shell session
 clawker run --shell
 
-# Run arbitrary command
-clawker run -- npm test
+# Open shell with specific shell and user
+clawker run --shell -s /bin/zsh -u root
 
-# Keep container after exit
-clawker run --keep
-
-# Publish ports
+# Publish ports to access services
 clawker run -p 8080:8080
+clawker run -p 24282:24282
 ```
+
+**Gotcha:** The `-p` flag conflicts with `ls -p` (project filter). See [Known Issues](#known-issues).
 
 ---
 
@@ -349,42 +327,6 @@ clawker logs --tail 50
 
 ---
 
-### `shell`
-
-**Category:** Inspection
-**File:** `pkg/cmd/shell/shell.go`
-**Aliases:** `sh`
-
-```
-clawker shell
-```
-
-Opens an interactive shell session in a running Claude container.
-
-| Short | Long | Type | Default | Description |
-|-------|------|------|---------|-------------|
-| | `--agent` | string | `""` | Agent name (required if multiple containers) |
-| `-s` | `--shell` | string | `/bin/bash` | Shell to use |
-| `-u` | `--user` | string | container default | User to run shell as |
-
-**Examples:**
-
-```bash
-# Open bash shell (if single container)
-clawker shell
-
-# Open shell in specific agent's container
-clawker shell --agent ralph
-
-# Open zsh shell
-clawker shell --shell zsh
-
-# Open shell as root
-clawker shell --user root
-```
-
----
-
 ### `remove`
 
 **Category:** Cleanup
@@ -395,27 +337,38 @@ clawker shell --user root
 clawker remove
 ```
 
-Removes clawker containers and their associated resources. Requires either `--name` or `--project`.
+Removes clawker containers and their associated resources. Supports three modes: by name, by project, or unused resources.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
 | `-n` | `--name` | string | `""` | Container name to remove |
 | `-p` | `--project` | string | `""` | Remove all containers for a project |
-| `-f` | `--force` | bool | `false` | Force remove running containers |
+| `-u` | `--unused` | bool | `false` | Remove unused resources (prune mode) |
+| `-a` | `--all` | bool | `false` | With --unused, also remove volumes and all images |
+| `-f` | `--force` | bool | `false` | Force remove or skip confirmation |
 
-**Validation:** `cmd.MarkFlagsOneRequired("name", "project")`
+**Validation:** `cmd.MarkFlagsOneRequired("name", "project", "unused")`
 
 **Examples:**
 
 ```bash
 # Remove a specific container
-clawker remove -n clawker/myapp/ralph
+clawker remove -n clawker.myapp.ralph
 
 # Remove all containers for a project
 clawker remove -p myapp
 
 # Force remove running containers
 clawker remove -p myapp -f
+
+# Remove unused resources (stopped containers, dangling images)
+clawker remove --unused
+
+# Remove ALL clawker resources (including volumes)
+clawker remove --unused --all
+
+# Skip confirmation prompt
+clawker remove --unused --all --force
 ```
 
 **Gotcha:** Uses `-n/--name` instead of `--agent`. See [Known Issues](#known-issues).
@@ -431,7 +384,7 @@ clawker remove -p myapp -f
 clawker prune
 ```
 
-Removes unused clawker resources. With `--all`, removes ALL resources including volumes.
+Alias for `clawker remove --unused`. Removes unused clawker resources. With `--all`, removes ALL resources including volumes.
 
 | Short | Long | Type | Default | Description |
 |-------|------|------|---------|-------------|
@@ -623,11 +576,15 @@ clawker generate
 |------|-------|----------|
 | `-d, --debug` | Enable debug logging | Global |
 | `-f, --force` | Skip confirmation or overwrite | `init`, `stop`, `rm`, `prune`, `monitor init` |
-| `-a, --all` | Expand scope (include stopped/all) | `ls`, `prune` |
-| `--agent` | Target specific agent container | `start`, `run`, `stop`, `restart`, `logs`, `sh` |
+| `-a, --all` | Expand scope (include stopped/all) | `ls`, `rm --unused`, `prune` |
+| `-r, --remove` | Remove resources on exit | `run` |
+| `-u, --unused` | Target unused resources | `rm` |
+| `--agent` | Target specific agent container | `run`, `stop`, `restart`, `logs` |
 | `-p, --project` | Filter by project name | `ls`, `rm` |
 | `-t, --timeout` | Timeout in seconds | `stop`, `restart` |
-| `-m, --mode` | Workspace mode (bind/snapshot) | `start`, `run` |
+| `-m, --mode` | Workspace mode (bind/snapshot) | `run` |
+| `-s, --shell-path` | Shell executable path | `run --shell` |
+| `-u, --user` | User to run as | `run --shell` |
 
 ### Flag Naming Patterns
 
@@ -698,7 +655,7 @@ Additional paragraphs as needed.`,
 **Problem:** `-p` means different things in different commands:
 
 - `ls -p` → `--project` (filter by project)
-- `start -p` → `--publish` (port mapping)
+- `run -p` → `--publish` (port mapping)
 
 **Recommendation:** Change publish to `-P` (uppercase) or use `--port` long form only.
 
@@ -706,7 +663,7 @@ Additional paragraphs as needed.`,
 
 **Problem:** Different container targeting patterns:
 
-- `stop`, `restart`, `logs`, `sh` use `--agent`
+- `stop`, `restart`, `logs` use `--agent`
 - `rm` uses `-n/--name` (expects full container name)
 
 **Recommendation:** Add `--agent` to `rm`, deprecate `-n/--name`.
@@ -801,13 +758,19 @@ func runMyCommand(f *cmdutil.Factory, opts *Options) error {
 
 | Alias | Canonical Command |
 |-------|-------------------|
+| `start` | `run` |
 | `ls` | `list` |
 | `ps` | `list` |
 | `rm` | `remove` |
-| `sh` | `shell` |
+| `prune` | `remove --unused` |
 
 ---
 
 ## Version History
 
+- **v1.1**: CLI verb consolidation (2026-01)
+  - Merged `start` into `run` (start is now alias)
+  - Removed standalone `shell` command (use `run --shell`)
+  - Added `--unused` to `remove` (prune is now alias)
+  - Changed `run` default: preserves containers (use `--remove` for ephemeral)
 - **v1.0**: Initial CLI verbs reference (2025-01)

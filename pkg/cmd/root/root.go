@@ -16,8 +16,6 @@ import (
 	"github.com/schmitthub/clawker/pkg/cmd/remove"
 	"github.com/schmitthub/clawker/pkg/cmd/restart"
 	"github.com/schmitthub/clawker/pkg/cmd/run"
-	"github.com/schmitthub/clawker/pkg/cmd/shell"
-	"github.com/schmitthub/clawker/pkg/cmd/start"
 	"github.com/schmitthub/clawker/pkg/cmd/stop"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -83,11 +81,9 @@ Workspace modes:
 	// Add subcommands
 	cmd.AddCommand(initcmd.NewCmdInit(f))
 	cmd.AddCommand(build.NewCmdBuild(f))
-	cmd.AddCommand(start.NewCmdStart(f))
-	cmd.AddCommand(run.NewCmdRun(f))
+	cmd.AddCommand(run.NewCmdRun(f)) // Also aliased as "start"
 	cmd.AddCommand(stop.NewCmdStop(f))
 	cmd.AddCommand(restart.NewCmdRestart(f))
-	cmd.AddCommand(shell.NewCmdShell(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))
 	cmd.AddCommand(list.NewCmdList(f))
 	cmd.AddCommand(remove.NewCmdRemove(f))

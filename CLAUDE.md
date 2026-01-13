@@ -52,7 +52,7 @@ Go CLI wrapping Claude Code in secure, reproducible Docker containers. Core phil
 ```bash
 go build -o bin/clawker ./cmd/clawker  # Build CLI
 go test ./...                             # Run tests
-./bin/clawker --debug start              # Debug logging
+./bin/clawker --debug run                # Debug logging
 ./bin/clawker generate latest 2.1        # Generate versions.json
 ```
 
@@ -91,9 +91,9 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 
 | Command | Description |
 |---------|-------------|
-| `init`, `build`, `start`, `run`, `stop` | Lifecycle |
-| `ls`, `logs`, `sh` | Inspection |
-| `rm`, `prune` | Cleanup |
+| `init`, `build`, `run` (alias: `start`), `stop` | Lifecycle |
+| `ls`, `logs` | Inspection |
+| `rm` (alias: `prune`), `rm --unused` | Cleanup |
 | `config check`, `monitor *` | Configuration/observability |
 
 ## Configuration (clawker.yaml)
@@ -133,11 +133,13 @@ security:
 
 1. Firewall enabled by default
 2. Docker socket disabled by default
-3. Volumes preserved unless `--clean`
-4. `start` is idempotent (reattaches to existing container)
-5. Hierarchical naming: `clawker.project.agent`
-6. Labels (`com.clawker.*`) are authoritative for filtering
-7. stdout for data, stderr for status
+3. Volumes preserved unless `--clean` or `--remove`
+4. `run` is idempotent (reattaches to existing container); `start` is alias
+5. `run` preserves containers by default; use `--remove` for ephemeral
+6. Hierarchical naming: `clawker.project.agent`
+7. Labels (`com.clawker.*`) are authoritative for filtering
+8. stdout for data, stderr for status
+9. Shell path via Viper: CLI flag → `CLAWKER_SHELL` env → config → `/bin/bash`
 
 ## Important Gotchas
 
@@ -146,6 +148,32 @@ security:
 - Never use `logger.Fatal()` in Cobra hooks - return errors instead
 - Don't wait for stdin goroutine on container exit (may block on Read)
 - Docker hijacked connections need cleanup of both read and write sides
+
+## Testing Requirements
+
+**CRITICAL: All tests must pass before any change is complete.**
+
+```bash
+# Unit tests (fast, no Docker required)
+go test ./...
+
+# Integration tests (requires Docker)
+go test ./pkg/cmd/... -tags=integration -v -timeout 10m
+```
+
+| Test Type | Location | Purpose |
+|-----------|----------|---------|
+| Unit tests | `*_test.go` | Flag parsing, option defaults, function logic |
+| Integration tests | `*_integration_test.go` | Docker state verification, end-to-end flows |
+| Regression tests | Add to test files | Prevent fixed bugs from reoccurring |
+
+**Before completing any code change:**
+1. Run `go test ./...` - all unit tests must pass
+2. Run `go test ./pkg/cmd/... -tags=integration` - all integration tests must pass
+3. Add regression tests for bug fixes
+4. Update existing tests when behavior changes
+
+See @.claude/rules/TESTING.md for detailed testing guidelines.
 
 ## Documentation
 

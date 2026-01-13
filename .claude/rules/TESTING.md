@@ -1,11 +1,44 @@
 ---
 paths:
-  - "pkg/cmd/**/*.go"
+  - "**/*.go"
 ---
 
 # CLI Testing Guide
 
 > **LLM Memory Document**: Reference this document when writing CLI command tests. Contains both automated integration tests and manual test patterns.
+
+## CRITICAL: All Tests Must Pass
+
+**No code change is complete until ALL tests pass.** This is non-negotiable.
+
+```bash
+# 1. Run ALL unit tests (fast, no Docker required)
+go test ./...
+
+# 2. Run ALL integration tests (requires Docker)
+go test ./pkg/cmd/... -tags=integration -v -timeout 10m
+```
+
+**Before marking any task complete:**
+1. ✅ All unit tests pass (`go test ./...`)
+2. ✅ All integration tests pass (`go test ./pkg/cmd/... -tags=integration`)
+3. ✅ Regression tests added for bug fixes
+4. ✅ Existing tests updated when behavior changes
+
+**If any test fails:**
+- Do NOT consider the change complete
+- Fix the failing test or the code causing the failure
+- Re-run the full test suite
+
+## Regression Tests
+
+> **IMPORTANT**: Always write regression tests for new CLI features and bug fixes. Regression tests prevent previously fixed bugs from reoccurring. For each bug fix or feature addition:
+>
+> 1. Add a test case that would have caught the original issue
+> 2. Name it descriptively: `TestRun_BugFixDescription` or `TestStart_FeatureDescription`
+> 3. Include both the failing scenario and the expected correct behavior
+> 4. Run the test against the old code to confirm it fails, then against the fixed code to confirm it passes
+> 5. Keep the test permanent in the test suite to prevent regression
 
 ## Automated Integration Tests
 
@@ -15,21 +48,17 @@ Integration tests require a `clawker.yaml` file in the current working directory
 ### Location
 
 ```
-pkg/cmd/run/run_integration_test.go       # run command integration tests
+pkg/cmd/run/run_integration_test.go       # run command integration tests (includes start alias)
 pkg/cmd/run/testdata/clawker.yaml        # test config
-
-pkg/cmd/start/start_integration_test.go   # start command integration tests
-pkg/cmd/start/testdata/clawker.yaml      # test config
 
 pkg/cmd/stop/stop_integration_test.go     # stop command integration tests
 pkg/cmd/stop/testdata/clawker.yaml       # test config
 
-pkg/cmd/remove/remove_integration_test.go # remove command integration tests
+pkg/cmd/remove/remove_integration_test.go # remove command integration tests (includes --unused/prune)
 pkg/cmd/remove/testdata/clawker.yaml     # test config
-
-pkg/cmd/prune/prune_integration_test.go   # prune command integration tests
-pkg/cmd/prune/testdata/clawker.yaml      # test config
 ```
+
+Note: `start` is an alias to `run`, tested in run_integration_test.go. `prune` is tested via `remove --unused`.
 
 ### Running Tests
 
@@ -42,40 +71,29 @@ go test ./pkg/cmd/... -tags=integration -v -timeout 10m
 
 # Run specific command tests
 go test ./pkg/cmd/run/... -tags=integration -v -timeout 5m
-go test ./pkg/cmd/start/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/stop/... -tags=integration -v -timeout 5m
 go test ./pkg/cmd/remove/... -tags=integration -v -timeout 5m
-go test ./pkg/cmd/prune/... -tags=integration -v -timeout 5m
 
 # Run specific test
-go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
+go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_PreservesContainerByDefault
 ```
 
 ### Test Cases
 
-#### Run Command
+#### Run Command (includes `start` alias)
 
 | Test | Purpose |
 |------|---------|
-| `TestRun_DefaultCleanup` | Verify container + volumes removed on exit by default |
-| `TestRun_KeepFlag` | Verify `--keep` preserves container + volumes |
+| `TestRun_PreservesContainerByDefault` | Verify container + volumes preserved by default (NEW behavior) |
+| `TestRun_RemoveFlag` | Verify `--remove` removes container + volumes on exit |
+| `TestRun_StartAlias` | Verify `start` works as alias to `run` |
+| `TestRun_Idempotent` | Verify second run reuses existing container |
+| `TestRun_CleanFlag` | Verify `--clean` removes existing before starting |
+| `TestRun_DetachFlag` | Verify `--detach` runs container in background |
 | `TestRun_BindMode` | Verify bind mode creates NO workspace volume |
 | `TestRun_SnapshotMode` | Verify snapshot mode creates workspace volume |
 | `TestRun_ContainerLabels` | Verify correct `com.clawker.*` labels |
 | `TestRun_ExitCode` | Verify exit code propagation |
-
-#### Start Command
-
-| Test | Purpose |
-|------|---------|
-| `TestStart_CreatesContainer` | Verify first start creates container + volumes |
-| `TestStart_Idempotent` | Verify second start reuses existing container |
-| `TestStart_CleanFlag` | Verify `--clean` removes existing before start |
-| `TestStart_BindMode` | Verify bind mode creates no workspace volume |
-| `TestStart_SnapshotMode` | Verify snapshot mode creates workspace volume |
-| `TestStart_ContainerLabels` | Verify correct `com.clawker.*` labels |
-| `TestStart_DetachFlag` | Verify container runs in background |
-| `TestStart_PortPublish` | Verify port binding created |
 
 #### Stop Command
 
@@ -88,7 +106,7 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestStop_ForceFlag` | Verify force kills container |
 | `TestStop_AlreadyStopped` | Verify handles stopped container gracefully |
 
-#### Remove Command
+#### Remove Command (includes `--unused`/`prune` alias)
 
 | Test | Purpose |
 |------|---------|
@@ -98,18 +116,10 @@ go test ./pkg/cmd/run/... -tags=integration -v -run TestRun_DefaultCleanup
 | `TestRm_ForceRunning` | Verify force removes running container |
 | `TestRm_RunningWithoutForce` | Verify gracefully stops then removes running container |
 | `TestRm_NonExistent` | Verify graceful error for missing container |
-
-#### Prune Command
-
-| Test | Purpose |
-|------|---------|
-| `TestPrune_RemovesStoppedContainers` | Verify stopped containers are removed |
-| `TestPrune_SkipsRunningContainers` | Verify running containers are NOT removed |
-| `TestPrune_DefaultNoVolumes` | Verify volumes are NOT removed without `--all` |
-| `TestPrune_AllRemovesVolumes` | Verify `--all` removes volumes |
-| `TestPrune_AllRemovesContainers` | Verify `--all` removes stopped containers |
-| `TestPrune_NoResources` | Verify graceful handling when nothing to prune |
-| `TestPrune_ForceSkipsPrompt` | Verify `--force` skips confirmation |
+| `TestRm_UnusedFlag_RemovesStoppedContainers` | Verify `--unused` removes stopped containers |
+| `TestRm_UnusedFlag_SkipsRunningContainers` | Verify `--unused` skips running containers |
+| `TestRm_UnusedFlag_WithAll_RemovesVolumes` | Verify `--unused --all` removes volumes |
+| `TestRm_PruneAlias` | Verify `prune` works as alias to `remove --unused` |
 
 ### Test Infrastructure
 
