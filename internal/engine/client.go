@@ -44,8 +44,9 @@ func NewEngine(ctx context.Context) (*Engine, error) {
 	return engine, nil
 }
 
-// HealthCheck verifies Docker daemon connectivity
+// HealthCheck verifies engine external dependency health
 func (e *Engine) HealthCheck(ctx context.Context) error {
+	// check if Docker daemon is reachable
 	_, err := e.cli.Ping(ctx)
 	if err != nil {
 		return ErrDockerNotRunning(err)
@@ -237,6 +238,15 @@ func (e *Engine) FindContainerByName(ctx context.Context, namePrefix string) (*t
 	}
 
 	return nil, nil
+}
+
+func (e *Engine) FindContainerByAgent(ctx context.Context, project string, agent string) (string, *types.Container, error) {
+	containerName := ContainerName(project, agent)
+	c, err := e.FindContainerByName(ctx, containerName)
+	if err != nil {
+		return "", nil, err
+	}
+	return containerName, c, nil
 }
 
 // --- Volume Operations ---

@@ -51,7 +51,16 @@ build:
     # after_packages: # docker instructions to run after installing system packages
     # after_user_setup: # docker instructions to run after creation of the non-root user but before switching to it
     after_user_switch: ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin" # docker instructions to run after switching to the non-root user
-    after_claude_install: RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    after_claude_install: |
+      RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+      Run # Currently you can't run docker mcp client connect inside a container due to a check docker does to see if docker desktop is running. see: https://github.com/docker/mcp-gateway/issues/112
+        # Install Docker MCP
+        # ARG DOCKER_MCP_VERSION=0.35.0
+        # RUN ARCH=$(dpkg --print-architecture) && \
+        #   mkdir -p /home/node/.docker/cli-plugins && \
+        #   curl -fsSL "https://github.com/docker/mcp-gateway/releases/download/v${DOCKER_MCP_VERSION}/docker-mcp-linux-${ARCH}.tar.gz" | tar -C ~/.docker/cli-plugins -xzf - && \
+        #   chmod +x /home/node/.docker/cli-plugins/docker-mcp
+        # RUN docker mcp client connect claude-code
     # before_entrypoint: # docker instructions to run before the container entrypoint
 
 agent:

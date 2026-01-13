@@ -67,7 +67,14 @@ while read -r cidr; do
         exit 1
     fi
     echo "Adding GitHub range $cidr"
-    ipset add allowed-domains "$cidr"
+    if ! ipset add allowed-domains "$cidr" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
+        # Ignore "already added" errors, but fail on others
+        error_msg=$(ipset add allowed-domains "$cidr" 2>&1 || true)
+        if [[ ! "$error_msg" =~ "already added" ]]; then
+            echo "ERROR: Failed to add $cidr: $error_msg"
+            exit 1
+        fi
+    fi
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
@@ -84,7 +91,8 @@ for domain in \
     "production.cloudflare.docker.com" \
     "proxy.golang.org" \
     "sum.golang.org" \
-    "docker.io"; do
+    "docker.io" \
+    "pypi.org"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
@@ -98,7 +106,15 @@ for domain in \
             exit 1
         fi
         echo "Adding $ip for $domain"
-        ipset add allowed-domains "$ip"
+        if ! ipset add allowed-domains "$ip" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
+            echo "INFO: $ip for $domain is already in the set, skipping"
+            # Ignore "already added" errors, but fail on others
+            error_msg=$(ipset add allowed-domains "$ip" 2>&1 || true)
+            if [[ ! "$error_msg" =~ "already added" ]]; then
+                echo "ERROR: Failed to add $ip: $error_msg"
+                exit 1
+            fi
+        fi
     done < <(echo "$ips")
 done
 

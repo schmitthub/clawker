@@ -29,7 +29,7 @@
 ## Bugs
 
 [ ] Tests are a fucking mess so putting this under bugs. need to do it one cmd at a time so claude can focus
-[ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active
+[ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active. devcontainer has the same issue
 
 ## Enhancements
 

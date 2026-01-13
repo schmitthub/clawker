@@ -112,7 +112,7 @@ func TestRm_ByName(t *testing.T) {
 	defer cleanup(containerName)
 
 	// Create stopped container (default behavior now preserves)
-	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	runClawker("run", "--agent", agent, "echo", "hello")
 
 	// Remove by name
 	_, err := runClawker("rm", "-n", containerName)
@@ -135,8 +135,8 @@ func TestRm_ByProject(t *testing.T) {
 	defer cleanup(container2)
 
 	// Create two stopped containers (default behavior now preserves)
-	runClawker("run", "--agent", agent1, "--", "echo", "hello")
-	runClawker("run", "--agent", agent2, "--", "echo", "hello")
+	runClawker("run", "--agent", agent1, "echo", "hello")
+	runClawker("run", "--agent", agent2, "echo", "hello")
 
 	// Remove by project
 	_, err := runClawker("rm", "-p", testProject)
@@ -156,7 +156,7 @@ func TestRm_RemovesVolumes(t *testing.T) {
 	defer cleanup(containerName)
 
 	// Create container with volumes (default behavior now preserves)
-	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	runClawker("run", "--agent", agent, "echo", "hello")
 
 	// Verify volumes exist
 	if !volumeExists(containerName + "-config") {
