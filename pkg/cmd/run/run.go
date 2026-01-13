@@ -167,9 +167,6 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	if opts.ShellUser != "" && !opts.Shell {
 		return fmt.Errorf("--user requires --shell flag")
 	}
-	if opts.Detach && opts.Remove {
-		cmdutil.PrintWarning("--remove has no effect with --detach (container runs in background)")
-	}
 
 	logger.Debug().
 		Str("project", cfg.Project).
@@ -554,7 +551,7 @@ func cleanupResources(_ context.Context, eng *engine.Engine, projectName, agentN
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Note: cleanupCtx will be used when engine operations accept context
+	// TODO: Use cleanupCtx for containerMgr/volumeMgr once engine operations accept context
 	_ = cleanupCtx
 
 	containerMgr := engine.NewContainerManager(eng)

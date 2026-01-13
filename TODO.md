@@ -7,6 +7,39 @@
 ## Quality issues
 
 [ ] pkg/cmd/run/run.go:75 The short flag -u is used by both run --user and remove --unused commands. While Cobra allows different subcommands to have the same short flags, this creates confusion for users and violates CLI consistency guidelines. Consider changing one of these short flags to avoid ambiguity. Recommendation: Use a different short flag for --unused (perhaps no short flag, or -U if uppercase is acceptable).
+[ ] pkg/cmd/run/run.go The new --detach and --quiet/--json flags in the run command lack unit tests. The existing tests check for flag existence but don't verify the actual behavior. Consider adding tests that verify:
+  --detach starts container in background without attaching
+  --quiet suppresses informational output
+  --json produces valid JSON output in detached mode
+  --json without --detach is handled appropriately
+[ ] pkg/cmd/run/run.go The new --shell functionality in the run command (replacing the standalone shell command) lacks integration test coverage. There
+  are  no tests verifying that:
+  --shell flag opens a shell session
+  --shell-path correctly overrides the default shell
+  --user flag works correctly with --shell
+  The shell path resolution hierarchy works as documented
+  This is a significant behavior change that merged the shell command into run, and should have integration tests similar to what the old shell command had.
+[ ] pkg/cmd/remove/remove.go The --unused --all functionality should include testing for image removal (not just volumes), as documented
+  in the command's long description (lines 44-47 in remove.go). The integration tests only verify volume removal with TestRm_UnusedFlag_WithAll_RemovesVolumes but don't test that images are being removed as claimed in the documentation.
+[ ] pkg/cmd/remove/remove.go The function pruneNetwork should verify that the network removal was successful after calling eng.
+  NetworkRemove. Currently, it returns the result of NetworkRemove but doesn't log success like the other prune functions do. This inconsistency makes it harder to track what was actually removed during a prune operation.
+
+  Consider adding a success log message: fmt.Fprintf(os.Stderr, "[INFO]  Removed network: %s\n", config.ClawkerNetwork) after successful removal (or moving the existing message after the removal call).
+[ ] internal/config/loader.go The new environment variable binding functionality added to the config loader (lines 48-52) lacks test
+  coverage. Specifically, there are no tests verifying that:
+
+* The CLAWKER_prefix works correctly
+* The SetEnvKeyReplacer properly converts dots to underscores
+* Environment variables like CLAWKER_AGENT_SHELL correctly override config file values
+* The AutomaticEnv() integration works as expected
+  This is critical functionality for the shell path resolution feature and should have comprehensive tests.
+[ ] The new utility functions PrintStatus and OutputJSON in pkg/cmdutil/output.go lack unit tests. These are public API functions that
+  will be used across the codebase and should have test coverage verifying:
+
+* PrintStatus respects the quiet flag
+* OutputJSON produces valid, indented JSON
+* Error cases are handled appropriately
+  Consider adding tests in pkg/cmdutil/output_test.go
 [ ]
 
 ## Bugs

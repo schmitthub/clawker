@@ -139,7 +139,7 @@ security:
 6. Hierarchical naming: `clawker.project.agent`
 7. Labels (`com.clawker.*`) are authoritative for filtering
 8. stdout for data, stderr for status
-9. Shell path via Viper: CLI flag → `CLAWKER_SHELL` env → config → `/bin/bash`
+9. Shell path via Viper: CLI flag → `CLAWKER_SHELL` env → config → `/bin/sh`
 
 ## Important Gotchas
 
