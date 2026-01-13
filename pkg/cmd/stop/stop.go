@@ -87,18 +87,17 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 
 	if opts.Agent != "" {
 		// Stop specific agent
-		containerName := engine.ContainerName(cfg.Project, opts.Agent)
-		existing, err := eng.FindContainerByName(ctx, containerName)
+		containerName, container, err := eng.FindContainerByAgent(ctx, cfg.Project, opts.Agent)
 		if err != nil {
-			return fmt.Errorf("failed to find container: %w", err)
+			return fmt.Errorf("failed to find container for agent '%s': %w", opts.Agent, err)
 		}
-		if existing != nil {
+		if container != nil {
 			containersToStop = append(containersToStop, engine.ClawkerContainer{
-				ID:      existing.ID,
+				ID:      container.ID,
 				Name:    containerName,
 				Project: cfg.Project,
 				Agent:   opts.Agent,
-				Status:  existing.State,
+				Status:  container.State,
 			})
 		}
 	} else {

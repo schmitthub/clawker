@@ -19,6 +19,7 @@ import (
 
 // RemoveOptions contains the options for the remove command.
 type RemoveOptions struct {
+	Agent   string // -a, --agent: specific agent name
 	Name    string // -n, --name: specific container name
 	Project string // -p, --project: remove all in project
 	Unused  bool   // -u, --unused: remove unused resources (prune mode)
@@ -70,13 +71,14 @@ WARNING: --unused --all is destructive and will remove persistent data!`,
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name")
 	cmd.Flags().StringVarP(&opts.Name, "name", "n", "", "Container name to remove")
 	cmd.Flags().StringVarP(&opts.Project, "project", "p", "", "Remove all containers for a project")
 	cmd.Flags().BoolVarP(&opts.Unused, "unused", "u", false, "Remove unused resources (stopped containers, dangling images)")
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "With --unused, also remove volumes and all images")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force remove running containers or skip confirmation")
 
-	cmd.MarkFlagsOneRequired("name", "project", "unused")
+	cmd.MarkFlagsOneRequired("agent", "name", "project", "unused")
 
 	return cmd
 }
@@ -89,8 +91,8 @@ func runRemove(_ *cmdutil.Factory, opts *RemoveOptions) error {
 		return RunPrune(ctx, opts.All, opts.Force)
 	}
 
-	if opts.Name == "" && opts.Project == "" {
-		return fmt.Errorf("either --name, --project, or --unused must be specified")
+	if opts.Name == "" && opts.Project == "" && opts.Agent == "" {
+		return fmt.Errorf("either --agent, --name, --project, or --unused must be specified")
 	}
 
 	// Connect to Docker
@@ -103,6 +105,17 @@ func runRemove(_ *cmdutil.Factory, opts *RemoveOptions) error {
 
 	if opts.Name != "" {
 		return removeByName(ctx, eng, opts.Name, opts.Force)
+	}
+
+	if opts.Agent != "" {
+		// Stop specific agent
+		containerName, container, err := eng.FindContainerByAgent(ctx, opts.Project, opts.Agent)
+		if err != nil {
+			return fmt.Errorf("failed to find container for agent '%s': %w", opts.Agent, err)
+		}
+		if container != nil {
+			return removeByName(ctx, eng, containerName, opts.Force)
+		}
 	}
 
 	return removeByProject(ctx, eng, opts.Project, opts.Force)

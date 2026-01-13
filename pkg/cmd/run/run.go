@@ -169,6 +169,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	}
 
 	logger.Debug().
+		Str("agent", opts.Agent).
 		Str("project", cfg.Project).
 		Str("mode", opts.Mode).
 		Bool("shell", opts.Shell).

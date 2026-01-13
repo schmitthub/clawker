@@ -239,6 +239,15 @@ func (e *Engine) FindContainerByName(ctx context.Context, namePrefix string) (*t
 	return nil, nil
 }
 
+func (e *Engine) FindContainerByAgent(ctx context.Context, project string, agent string) (string, *types.Container, error) {
+	containerName := ContainerName(project, agent)
+	c, err := e.FindContainerByName(ctx, containerName)
+	if err != nil {
+		return "", nil, err
+	}
+	return containerName, c, nil
+}
+
 // --- Volume Operations ---
 
 // VolumeCreate creates a new volume
