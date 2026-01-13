@@ -18,6 +18,7 @@ import (
 type BuildOptions struct {
 	NoCache    bool
 	Dockerfile string
+	Labels     map[string]string
 }
 
 // NewCmdBuild creates a new build command.
@@ -103,7 +104,13 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		Str("image", imageTag).
 		Msg("building container image")
 
-	if err := builder.Build(ctx, imageTag, opts.NoCache); err != nil {
+	// add image labels
+	opts.Labels = engine.ImageLabels(
+		cfg.Project,
+		cfg.Version,
+	)
+
+	if err := builder.Build(ctx, imageTag, opts.NoCache, opts.Labels); err != nil {
 		return err
 	}
 

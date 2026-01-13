@@ -2,9 +2,11 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/clawker/internal/build"
@@ -19,15 +21,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ExitError represents a container exit with non-zero code.
+// This allows deferred cleanup to run before the process exits.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("container exited with code %d", e.Code)
+}
+
 // RunOptions contains the options for the run command.
 type RunOptions struct {
-	Mode  string
-	Build bool
-	Shell bool     // Run shell instead of claude
-	Keep  bool     // Keep container after exit (inverse of --rm default)
-	Agent string   // Agent name for the container
-	Args  []string // Command/args to run in container (after --)
-	Ports []string // Port mappings (host:container)
+	Mode      string
+	Build     bool
+	Shell     bool   // Run shell instead of claude
+	ShellPath string // Path to shell executable (overrides config)
+	ShellUser string // User to run shell as
+	Remove    bool   // Remove container after exit (ephemeral mode)
+	Detach    bool   // Run in background (detached mode)
+	Clean     bool   // Remove existing container/volumes before starting
+	Agent     string // Agent name for the container
+	Quiet     bool   // Suppress informational output
+	JSON      bool   // Output as JSON (detached mode only)
+	Args      []string
+	Ports     []string
 }
 
 // NewCmdRun creates the run command.
@@ -35,28 +53,50 @@ func NewCmdRun(f *cmdutil.Factory) *cobra.Command {
 	opts := &RunOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "run [flags] [-- <command>...]",
-		Short: "Run a one-shot command in an ephemeral container",
-		Long: `Runs a command in a new container and removes it when done.
+		Use:     "run [flags] [-- <command>...]",
+		Aliases: []string{"start"},
+		Short:   "Build and run Claude in a container",
+		Long: `Builds the container image (if needed), creates volumes, and runs Claude.
 
-By default, the container is removed after exit (like docker run --rm).
-Use --keep to preserve the container after exit.
+This is an idempotent operation:
+  - If a container matching --agent is already running, attaches to it
+  - If a container matching --agent exists but is stopped, starts and attaches
+  - If no container matching exists, creates and starts one
 
-Unlike 'clawker start', this always creates a new container (never reuses existing).`,
-		Example: `  # Run claude interactively, remove on exit
+Use --remove for ephemeral containers that are deleted on exit.
+
+Workspace modes:
+  --mode=bind      Live sync with host filesystem (default)
+  --mode=snapshot  Copy files to ephemeral Docker volume
+
+Shell path resolution (--shell mode):
+  1. CLI flag -s/--shell-path (highest priority)
+  2. CLAWKER_AGENT_SHELL environment variable
+  3. agent.shell in clawker.yaml
+  4. Default: /bin/sh`,
+		Example: `  # Run Claude interactively (container preserved after exit)
   clawker run
 
-  # Run claude with args, remove on exit
+  # Run Claude with a prompt
   clawker run -- -p "build a feature"
 
-  # Run shell interactively, remove on exit
+  # Resume previous session
+  clawker run -- --resume
+
+  # Run in snapshot mode
+  clawker run --mode=snapshot
+
+  # Run in background
+  clawker run --detach
+
+  # Run ephemeral container (removed on exit)
+  clawker run --remove
+
+  # Open a shell session
   clawker run --shell
 
-  # Run arbitrary command, remove on exit
-  clawker run -- npm test
-
-  # Run claude, keep container after exit
-  clawker run --keep
+  # Open shell with specific shell and user
+  clawker run --shell -s /bin/zsh -u root
 
   # Publish ports to access services
   clawker run -p 8080:8080`,
@@ -70,16 +110,36 @@ Unlike 'clawker start', this always creates a new container (never reuses existi
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "Workspace mode: bind or snapshot (default from config)")
 	cmd.Flags().BoolVar(&opts.Build, "build", false, "Force rebuild of the container image")
 	cmd.Flags().BoolVar(&opts.Shell, "shell", false, "Run shell instead of claude")
-	cmd.Flags().BoolVar(&opts.Keep, "keep", false, "Keep container after exit (default: remove)")
+	cmd.Flags().StringVarP(&opts.ShellPath, "shell-path", "s", "", "Path to shell executable (default from config or /bin/sh)")
+	cmd.Flags().StringVarP(&opts.ShellUser, "user", "u", "", "User to run shell as (only with --shell)")
+	cmd.Flags().BoolVarP(&opts.Remove, "remove", "r", false, "Remove container and volumes on exit (ephemeral mode)")
+	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background (detached mode)")
+	cmd.Flags().BoolVar(&opts.Clean, "clean", false, "Remove existing container and volumes before starting")
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for the container (default: random)")
 	cmd.Flags().StringArrayVarP(&opts.Ports, "publish", "p", nil, "Publish container port(s) to host (e.g., -p 8080:8080)")
+	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress informational output")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON (detached mode only)")
+
+	// Shell completion for --mode flag
+	_ = cmd.RegisterFlagCompletionFunc("mode", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"bind", "snapshot"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
 
-func runRun(f *cmdutil.Factory, opts *RunOptions) error {
+func runRun(f *cmdutil.Factory, opts *RunOptions) (retErr error) {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
+
+	// Handle ExitError after all other defers run (LIFO order means this runs last)
+	// This ensures cleanup completes before we exit with the container's exit code
+	defer func() {
+		var exitErr *ExitError
+		if errors.As(retErr, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
+	}()
 
 	// Load configuration
 	cfg, err := f.Config()
@@ -103,12 +163,19 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
+	// Validate flag combinations
+	if opts.ShellUser != "" && !opts.Shell {
+		return fmt.Errorf("--user requires --shell flag")
+	}
+
 	logger.Debug().
 		Str("project", cfg.Project).
 		Str("mode", opts.Mode).
 		Bool("shell", opts.Shell).
-		Bool("keep", opts.Keep).
-		Msg("starting ephemeral run")
+		Bool("remove", opts.Remove).
+		Bool("detach", opts.Detach).
+		Bool("clean", opts.Clean).
+		Msg("starting container")
 
 	// Connect to Docker
 	eng, err := engine.NewEngine(ctx)
@@ -130,12 +197,19 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		agentName = engine.GenerateRandomName()
 	}
 
+	// Clean if requested (now that we know the agent name)
+	if opts.Clean {
+		if err := cleanupResources(ctx, eng, cfg.Project, agentName); err != nil {
+			logger.Warn().Err(err).Msg("cleanup encountered errors")
+		}
+	}
+
 	logger.Info().
 		Str("project", cfg.Project).
 		Str("agent", agentName).
 		Str("mode", string(mode)).
-		Bool("ephemeral", !opts.Keep).
-		Msg("starting ephemeral container")
+		Bool("ephemeral", opts.Remove).
+		Msg("starting Claude container")
 
 	// Build or ensure image
 	imageTag := engine.ImageTag(cfg.Project)
@@ -155,13 +229,13 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 	}
 
 	// Ensure clawker network exists
-	if err := eng.EnsureNetwork(config.ClawkerNetwork); err != nil {
+	if err := eng.EnsureNetwork(ctx, config.ClawkerNetwork); err != nil {
 		logger.Warn().Err(err).Msg("failed to ensure clawker network")
 		// Don't fail hard, container can still run without the network
 	}
 
 	// Check if monitoring stack is active
-	monitoringActive := eng.IsMonitoringActive()
+	monitoringActive := eng.IsMonitoringActive(ctx)
 	if monitoringActive {
 		logger.Info().Msg("monitoring stack detected, enabling telemetry")
 	}
@@ -172,24 +246,34 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		return err
 	}
 
-	// Create container (but don't start yet - we need to attach first to capture output)
+	// Create or find container (idempotent)
 	containerMgr := engine.NewContainerManager(eng)
-	containerID, err := containerMgr.Create(containerCfg)
+	containerID, created, err := containerMgr.FindOrCreate(ctx, containerCfg)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
 
-	logger.Info().
-		Str("container_id", containerID[:12]).
-		Bool("ephemeral", !opts.Keep).
-		Msg("created ephemeral container")
+	if created {
+		logger.Info().
+			Str("container", containerCfg.Name).
+			Str("mode", string(mode)).
+			Bool("ephemeral", opts.Remove).
+			Msg("created new container")
+	} else {
+		logger.Info().
+			Str("container", containerCfg.Name).
+			Msg("using existing container")
+	}
 
-	// Setup cleanup on exit unless --keep
-	if !opts.Keep {
+	// Setup cleanup on exit if --remove
+	if opts.Remove {
 		defer func() {
+			// Use background context for cleanup since main ctx may be cancelled
+			cleanupCtx := context.Background()
+
 			// Remove container first
-			if err := containerMgr.Remove(containerID, true); err != nil {
+			if err := containerMgr.Remove(cleanupCtx, containerID, true); err != nil {
 				logger.Warn().Err(err).Msg("failed to remove ephemeral container")
 			} else {
 				logger.Info().Str("container_id", containerID[:12]).Msg("removed ephemeral container")
@@ -202,7 +286,7 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 				engine.VolumeName(cfg.Project, agentName, "history"),
 			}
 			for _, vol := range volumes {
-				if err := eng.VolumeRemove(vol, true); err != nil {
+				if err := eng.VolumeRemove(cleanupCtx, vol, true); err != nil {
 					// Ignore errors - volume may not exist (e.g., bind mode has no workspace volume)
 					logger.Debug().Str("volume", vol).Err(err).Msg("failed to remove volume")
 				} else {
@@ -212,8 +296,36 @@ func runRun(f *cmdutil.Factory, opts *RunOptions) error {
 		}()
 	}
 
+	// Handle detached mode
+	if opts.Detach {
+		// Start container if not already running
+		if err := containerMgr.Start(ctx, containerID); err != nil {
+			// Ignore "already started" errors
+			logger.Debug().Err(err).Msg("start returned error (may be already running)")
+		}
+
+		// Output as JSON if requested
+		if opts.JSON {
+			return cmdutil.OutputJSON(map[string]string{
+				"container": containerCfg.Name,
+				"id":        containerID,
+				"status":    "running",
+			})
+		}
+
+		// Standard output (respects --quiet)
+		if !opts.Quiet {
+			fmt.Fprintf(os.Stderr, "Container %s is running in detached mode\n", containerCfg.Name)
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "Commands:")
+			fmt.Fprintln(os.Stderr, "  clawker logs      # View container logs")
+			fmt.Fprintln(os.Stderr, "  clawker run --shell  # Open shell in container")
+			fmt.Fprintln(os.Stderr, "  clawker stop      # Stop the container")
+		}
+		return nil
+	}
+
 	// Attach to container, start it, then stream I/O
-	// This order is critical: attach before start to capture output from fast commands
 	return attachAndRun(ctx, containerMgr, containerID)
 }
 
@@ -251,11 +363,31 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	}
 
 	// Ensure config and history volumes exist with proper labels
-	if err := workspace.EnsureConfigVolumes(eng, cfg.Project, agentName); err != nil {
+	if err := workspace.EnsureConfigVolumes(ctx, eng, cfg.Project, agentName); err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
 
 	return strategy, nil
+}
+
+// resolveShellPath resolves the shell path using configuration hierarchy:
+// 1. CLI flag (opts.ShellPath) - highest priority
+// 2. CLAWKER_AGENT_SHELL environment variable (via Viper AutomaticEnv)
+// 3. agent.shell from clawker.yaml
+// 4. Default: /bin/sh
+func resolveShellPath(cfg *config.Config, opts *RunOptions) string {
+	// CLI flag takes highest precedence
+	if opts.ShellPath != "" {
+		return opts.ShellPath
+	}
+
+	// Config (already includes env var override via Viper AutomaticEnv)
+	if cfg.Agent.Shell != "" {
+		return cfg.Agent.Shell
+	}
+
+	// Default (should be set in Loader, but fallback here)
+	return "/bin/sh"
 }
 
 func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, opts *RunOptions, monitoringActive bool) (engine.ContainerConfig, error) {
@@ -308,11 +440,18 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	// Determine command to run
 	var cmd []string
 	if opts.Shell {
-		cmd = []string{"/bin/bash"}
+		shellPath := resolveShellPath(cfg, opts)
+		cmd = []string{shellPath}
 	} else if len(opts.Args) > 0 {
 		cmd = opts.Args
 	}
 	// If no args and not shell, cmd is empty and entrypoint handles default (claude)
+
+	// Determine user
+	user := fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID)
+	if opts.Shell && opts.ShellUser != "" {
+		user = opts.ShellUser
+	}
 
 	// Parse port bindings
 	portBindings, exposedPorts, err := engine.ParsePortSpecs(opts.Ports)
@@ -333,7 +472,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 		AttachStdout: true,
 		AttachStderr: true,
 		CapAdd:       capAdd,
-		User:         fmt.Sprintf("%d:%d", pkgbuild.DefaultUID, pkgbuild.DefaultGID),
+		User:         user,
 		NetworkMode:  config.ClawkerNetwork,
 		Labels:       engine.ContainerLabels(cfg.Project, agentName, version, imageTag, workDir),
 		PortBindings: portBindings,
@@ -354,14 +493,15 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	defer pty.Restore()
 
 	// Attach to container BEFORE starting (critical for capturing output)
-	hijacked, err := containerMgr.Attach(containerID)
+	hijacked, err := containerMgr.Attach(ctx, containerID)
 	if err != nil {
 		return err
 	}
 
 	// Now start the container
-	if err := containerMgr.Start(containerID); err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
+	if err := containerMgr.Start(ctx, containerID); err != nil {
+		// Ignore "already started" errors - container may be reused
+		logger.Debug().Err(err).Msg("start returned error (may be already running)")
 	}
 	logger.Debug().Str("container_id", containerID[:12]).Msg("container started")
 
@@ -369,7 +509,7 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	if pty.IsTerminal() {
 		resizeHandler := term.NewResizeHandler(
 			func(height, width uint) error {
-				return containerMgr.Resize(containerID, height, width)
+				return containerMgr.Resize(ctx, containerID, height, width)
 			},
 			pty.GetSize,
 		)
@@ -381,9 +521,9 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	}
 
 	// Stream I/O
-	fmt.Println() // Clear line before attaching
+	fmt.Fprintln(os.Stderr) // Clear line before attaching
 	if err := pty.StreamWithResize(ctx, hijacked, func(height, width uint) error {
-		return containerMgr.Resize(containerID, height, width)
+		return containerMgr.Resize(ctx, containerID, height, width)
 	}); err != nil {
 		if err == context.Canceled {
 			return nil
@@ -392,16 +532,53 @@ func attachAndRun(ctx context.Context, containerMgr *engine.ContainerManager, co
 	}
 
 	// Wait for container to exit
-	exitCode, err := containerMgr.Wait(containerID)
+	exitCode, err := containerMgr.Wait(ctx, containerID)
 	if err != nil {
 		return err
 	}
 
 	if exitCode != 0 {
 		logger.Debug().Int64("exit_code", exitCode).Msg("container exited with non-zero status")
-		// Must restore terminal before os.Exit since defers don't run
-		pty.Restore()
-		os.Exit(int(exitCode))
+		// Return ExitError to allow deferred cleanup to run
+		// The caller (runRun) will handle propagating the exit code
+		return &ExitError{Code: int(exitCode)}
+	}
+
+	return nil
+}
+
+func cleanupResources(_ context.Context, eng *engine.Engine, projectName, agentName string) error {
+	// Create cleanup-specific context with 30s timeout
+	// We use context.Background() as parent since the passed ctx may be cancelled
+	// (e.g., when cleanup runs in deferred functions after Ctrl+C)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	containerMgr := engine.NewContainerManager(eng)
+	volumeMgr := engine.NewVolumeManager(eng)
+
+	// Remove container
+	containerName := engine.ContainerName(projectName, agentName)
+	existing, err := eng.FindContainerByName(cleanupCtx, containerName)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		logger.Info().Str("container", containerName).Msg("removing existing container")
+		if err := containerMgr.Remove(cleanupCtx, existing.ID, true); err != nil {
+			logger.Warn().Err(err).Msg("failed to remove container")
+		}
+	}
+
+	// Remove volumes
+	volumes := []string{
+		engine.VolumeName(projectName, agentName, "workspace"),
+		engine.VolumeName(projectName, agentName, "config"),
+		engine.VolumeName(projectName, agentName, "history"),
+	}
+
+	if err := volumeMgr.RemoveVolumes(cleanupCtx, volumes, true); err != nil {
+		logger.Warn().Err(err).Msg("failed to remove some volumes")
 	}
 
 	return nil

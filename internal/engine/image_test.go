@@ -114,3 +114,20 @@ func TestImageClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestImageLabels(t *testing.T) {
+	project := "my-project"
+	version := "1.2.3"
+	labels := ImageLabels(project, version)
+	expectedLabels := map[string]string{
+		LabelManaged: "true",
+		LabelProject: project,
+		LabelVersion: version,
+	}
+
+	for key, expectedValue := range expectedLabels {
+		if val, ok := labels[key]; !ok || val != expectedValue {
+			t.Errorf("Expected label %q to be %q, got %q", key, expectedValue, val)
+		}
+	}
+}

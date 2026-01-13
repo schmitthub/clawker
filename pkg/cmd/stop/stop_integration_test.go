@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,8 +68,12 @@ func findRepoRoot(start string) string {
 	}
 }
 
+var testCounter atomic.Int64
+
 func uniqueAgent(t *testing.T) string {
-	return fmt.Sprintf("t%d", time.Now().UnixNano()%100000)
+	// Use PID + atomic counter + timestamp for guaranteed uniqueness across test runs
+	count := testCounter.Add(1)
+	return fmt.Sprintf("t%d-%d-%d", os.Getpid(), time.Now().UnixNano()%1000000, count)
 }
 
 func containerExists(name string) bool {

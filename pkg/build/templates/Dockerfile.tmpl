@@ -205,6 +205,13 @@ LABEL {{$key}}="{{$value}}"
 {{- end}}
 {{- end}}
 
+{{/* Clawker Image Labels */}}
+{{- if .ImageLabels}}
+{{- range $key, $value := .ImageLabels}}
+LABEL {{$key}}="{{$value}}"
+{{- end}}
+{{- end}}
+
 {{/* EXPOSE ports */}}
 {{- if .Instructions}}
 {{- range .Instructions.Expose}}

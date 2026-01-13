@@ -80,20 +80,20 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 // EnsureConfigVolumes creates config and history volumes with proper labels.
 // Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
-func EnsureConfigVolumes(eng *engine.Engine, projectName, agentName string) error {
+func EnsureConfigVolumes(ctx context.Context, eng *engine.Engine, projectName, agentName string) error {
 	vm := engine.NewVolumeManager(eng)
 
 	// Create config volume
 	configVolume := engine.VolumeName(projectName, agentName, "config")
 	configLabels := engine.VolumeLabels(projectName, agentName, "config")
-	if _, err := vm.EnsureVolume(configVolume, configLabels); err != nil {
+	if _, err := vm.EnsureVolume(ctx, configVolume, configLabels); err != nil {
 		return fmt.Errorf("failed to create config volume: %w", err)
 	}
 
 	// Create history volume
 	historyVolume := engine.VolumeName(projectName, agentName, "history")
 	historyLabels := engine.VolumeLabels(projectName, agentName, "history")
-	if _, err := vm.EnsureVolume(historyVolume, historyLabels); err != nil {
+	if _, err := vm.EnsureVolume(ctx, historyVolume, historyLabels); err != nil {
 		return fmt.Errorf("failed to create history volume: %w", err)
 	}
 

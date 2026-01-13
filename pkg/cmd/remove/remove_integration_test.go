@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,8 +68,12 @@ func findRepoRoot(start string) string {
 	}
 }
 
+var testCounter atomic.Int64
+
 func uniqueAgent(t *testing.T) string {
-	return fmt.Sprintf("t%d", time.Now().UnixNano()%100000)
+	// Use PID + atomic counter + timestamp for guaranteed uniqueness across test runs
+	count := testCounter.Add(1)
+	return fmt.Sprintf("t%d-%d-%d", os.Getpid(), time.Now().UnixNano()%1000000, count)
 }
 
 func containerExists(name string) bool {
@@ -106,8 +111,8 @@ func TestRm_ByName(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	// Create stopped container
-	runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	// Create stopped container (default behavior now preserves)
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
 
 	// Remove by name
 	_, err := runClawker("rm", "-n", containerName)
@@ -129,9 +134,9 @@ func TestRm_ByProject(t *testing.T) {
 	defer cleanup(container1)
 	defer cleanup(container2)
 
-	// Create two stopped containers
-	runClawker("run", "--keep", "--agent", agent1, "--", "echo", "hello")
-	runClawker("run", "--keep", "--agent", agent2, "--", "echo", "hello")
+	// Create two stopped containers (default behavior now preserves)
+	runClawker("run", "--agent", agent1, "--", "echo", "hello")
+	runClawker("run", "--agent", agent2, "--", "echo", "hello")
 
 	// Remove by project
 	_, err := runClawker("rm", "-p", testProject)
@@ -150,8 +155,8 @@ func TestRm_RemovesVolumes(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	// Create container with volumes
-	runClawker("run", "--keep", "--agent", agent, "--", "echo", "hello")
+	// Create container with volumes (default behavior now preserves)
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
 
 	// Verify volumes exist
 	if !volumeExists(containerName + "-config") {
@@ -173,8 +178,8 @@ func TestRm_ForceRunning(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	// Start running container
-	runClawker("start", "--detach", "--agent", agent)
+	// Start running container (start is now alias to run)
+	runClawker("run", "--detach", "--agent", agent)
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
@@ -198,8 +203,8 @@ func TestRm_RunningWithoutForce(t *testing.T) {
 	containerName := "clawker." + testProject + "." + agent
 	defer cleanup(containerName)
 
-	// Start running container
-	runClawker("start", "--detach", "--agent", agent)
+	// Start running container (start is now alias to run)
+	runClawker("run", "--detach", "--agent", agent)
 	if !containerRunning(containerName) {
 		t.Fatal("setup failed: container not running")
 	}
@@ -223,5 +228,170 @@ func TestRm_NonExistent(t *testing.T) {
 	// Should return error but not panic
 	if err == nil {
 		t.Error("expected error when removing non-existent container")
+	}
+}
+
+// ============= New --unused flag tests =============
+
+// TestRm_UnusedFlag_RemovesStoppedContainers verifies --unused removes stopped containers
+func TestRm_UnusedFlag_RemovesStoppedContainers(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Create stopped container
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	if !containerExists(containerName) {
+		t.Fatal("setup failed: container not created")
+	}
+
+	// Remove with --unused flag
+	_, err := runClawker("remove", "--unused", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused failed: %v", err)
+	}
+
+	// Stopped container should be removed
+	if containerExists(containerName) {
+		t.Error("expected stopped container to be removed with --unused")
+	}
+}
+
+// TestRm_UnusedFlag_SkipsRunningContainers verifies --unused skips running containers
+func TestRm_UnusedFlag_SkipsRunningContainers(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Create running container
+	runClawker("run", "--detach", "--agent", agent)
+	if !containerRunning(containerName) {
+		t.Fatal("setup failed: container not running")
+	}
+
+	// Remove with --unused flag
+	runClawker("remove", "--unused", "--force")
+
+	// Running container should NOT be removed
+	if !containerRunning(containerName) {
+		t.Error("expected running container to be skipped with --unused")
+	}
+
+	// Stop for cleanup
+	exec.Command("docker", "stop", containerName).Run()
+}
+
+// TestRm_UnusedFlag_WithAll_RemovesVolumes verifies --unused --all removes volumes
+func TestRm_UnusedFlag_WithAll_RemovesVolumes(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Create container with volumes then stop it
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	if !volumeExists(containerName + "-config") {
+		t.Fatal("setup failed: volume not created")
+	}
+
+	// Remove with --unused --all --force
+	_, err := runClawker("remove", "--unused", "--all", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused --all failed: %v", err)
+	}
+
+	// Container and volumes should be removed
+	if containerExists(containerName) {
+		t.Error("expected container to be removed with --unused --all")
+	}
+	if volumeExists(containerName + "-config") {
+		t.Error("expected volumes to be removed with --unused --all")
+	}
+}
+
+// TestRm_UnusedFlag_NoUnused verifies no-op when no unused containers
+func TestRm_UnusedFlag_NoUnused(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+	// Create running container with sleep command to keep it alive
+	// (without a command, the entrypoint runs claude which exits immediately in detached mode)
+	runClawker("run", "--detach", "--agent", agent, "--", "sleep", "300")
+	if !containerRunning(containerName) {
+		t.Fatal("setup failed: container not running")
+	}
+
+	// Remove with --unused flag
+	out, err := runClawker("remove", "--unused", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused failed: %v", err)
+	}
+
+	// Output should indicate no resources to remove
+	if !strings.Contains(out, "No clawker resources to remove") {
+		t.Errorf("expected message indicating no resources to remove, got: %s", out)
+	}
+
+	// Cleanup
+	exec.Command("docker", "stop", containerName).Run()
+}
+
+// TestRm_UnusedFlag_WithAll_RemovesImages verifies --unused --all removes dangling untagged clawker created images
+func TestRm_UnusedFlag_WithAll_RemovesImages(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+	// Create container then stop it
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	if !containerExists(containerName) {
+		t.Fatal("setup failed: container not created")
+	}
+
+	// Create dangling image by committing container and removing tag
+	out, err := exec.Command("docker", "commit", containerName).CombinedOutput()
+	if err != nil {
+		t.Fatalf("setup failed: docker commit failed: %v\n%s", err, out)
+	}
+	imageID := strings.TrimSpace(string(out))
+	exec.Command("docker", "rmi", imageID).Run() // Remove tag to make dangling
+
+	// Remove with --unused --all --force
+	_, err = runClawker("remove", "--unused", "--all", "--force")
+	if err != nil {
+		t.Fatalf("remove --unused --all failed: %v", err)
+	}
+
+	// Dangling image should be removed
+	out, _ = exec.Command("docker", "images", "-f", "dangling=true", "-q").Output()
+	danglingImages := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, img := range danglingImages {
+		if img == imageID {
+			t.Error("expected dangling image to be removed with --unused --all")
+		}
+	}
+}
+
+// ============= 'prune' alias tests =============
+
+// TestRm_PruneAlias verifies 'prune' works as alias to 'remove --unused'
+func TestRm_PruneAlias(t *testing.T) {
+	agent := uniqueAgent(t)
+	containerName := "clawker." + testProject + "." + agent
+	defer cleanup(containerName)
+
+	// Create stopped container
+	runClawker("run", "--agent", agent, "--", "echo", "hello")
+	if !containerExists(containerName) {
+		t.Fatal("setup failed: container not created")
+	}
+
+	// Use prune alias (equivalent to remove --unused)
+	_, err := runClawker("prune", "--force")
+	if err != nil {
+		t.Fatalf("prune failed: %v", err)
+	}
+
+	// Stopped container should be removed
+	if containerExists(containerName) {
+		t.Error("expected stopped container to be removed with prune")
 	}
 }

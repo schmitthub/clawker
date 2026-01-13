@@ -88,7 +88,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 	if opts.Agent != "" {
 		// Stop specific agent
 		containerName := engine.ContainerName(cfg.Project, opts.Agent)
-		existing, err := eng.FindContainerByName(containerName)
+		existing, err := eng.FindContainerByName(ctx, containerName)
 		if err != nil {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
@@ -103,7 +103,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 		}
 	} else {
 		// Stop all containers for project
-		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
@@ -123,16 +123,16 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 				fmt.Fprintf(os.Stderr, "Stopping container %s...\n", c.Name)
 
 				if opts.Force {
-					if err := containerMgr.Remove(c.ID, true); err != nil {
+					if err := containerMgr.Remove(ctx, c.ID, true); err != nil {
 						logger.Warn().Err(err).Str("container", c.Name).Msg("failed to force remove container")
 						continue
 					}
 				} else {
-					if err := containerMgr.Stop(c.ID, opts.Timeout); err != nil {
+					if err := containerMgr.Stop(ctx, c.ID, opts.Timeout); err != nil {
 						logger.Warn().Err(err).Str("container", c.Name).Msg("failed to stop container")
 						continue
 					}
-					if err := containerMgr.Remove(c.ID, false); err != nil {
+					if err := containerMgr.Remove(ctx, c.ID, false); err != nil {
 						logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 						continue
 					}
@@ -142,7 +142,7 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 				fmt.Fprintf(os.Stderr, "Container %s stopped\n", c.Name)
 			} else {
 				// Container exists but not running, just remove it
-				if err := containerMgr.Remove(c.ID, true); err != nil {
+				if err := containerMgr.Remove(ctx, c.ID, true); err != nil {
 					logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 					continue
 				}
@@ -165,13 +165,13 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 			}
 
 			for _, vol := range volumes {
-				exists, err := eng.VolumeExists(vol)
+				exists, err := eng.VolumeExists(ctx, vol)
 				if err != nil {
 					logger.Warn().Str("volume", vol).Err(err).Msg("failed to check volume")
 					continue
 				}
 				if exists {
-					if err := eng.VolumeRemove(vol, true); err != nil {
+					if err := eng.VolumeRemove(ctx, vol, true); err != nil {
 						logger.Warn().Str("volume", vol).Err(err).Msg("failed to remove volume")
 					} else {
 						removedCount++
@@ -189,13 +189,13 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 				}
 
 				for _, vol := range volumes {
-					exists, err := eng.VolumeExists(vol)
+					exists, err := eng.VolumeExists(ctx, vol)
 					if err != nil {
 						logger.Warn().Str("volume", vol).Err(err).Msg("failed to check volume")
 						continue
 					}
 					if exists {
-						if err := eng.VolumeRemove(vol, true); err != nil {
+						if err := eng.VolumeRemove(ctx, vol, true); err != nil {
 							logger.Warn().Str("volume", vol).Err(err).Msg("failed to remove volume")
 						} else {
 							removedCount++
@@ -215,9 +215,9 @@ func runStop(f *cmdutil.Factory, opts *StopOptions) error {
 		// Also remove the image if clean is specified (only when stopping all)
 		if opts.Agent == "" {
 			imageTag := engine.ImageTag(cfg.Project)
-			exists, _ := eng.ImageExists(imageTag)
+			exists, _ := eng.ImageExists(ctx, imageTag)
 			if exists {
-				if err := eng.ImageRemove(imageTag, true); err != nil {
+				if err := eng.ImageRemove(ctx, imageTag, true); err != nil {
 					logger.Warn().Str("image", imageTag).Err(err).Msg("failed to remove image")
 				} else {
 					fmt.Fprintf(os.Stderr, "Removed image %s\n", imageTag)

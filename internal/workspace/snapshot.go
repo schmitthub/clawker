@@ -47,7 +47,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 	vm := engine.NewVolumeManager(eng)
 
 	// Check if volume already exists
-	exists, err := eng.VolumeExists(s.volumeName)
+	exists, err := eng.VolumeExists(ctx, s.volumeName)
 	if err != nil {
 		return fmt.Errorf("failed to check volume existence: %w", err)
 	}
@@ -66,7 +66,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 		"clawker.mode":    "snapshot",
 	}
 
-	created, err := vm.EnsureVolume(s.volumeName, labels)
+	created, err := vm.EnsureVolume(ctx, s.volumeName, labels)
 	if err != nil {
 		return fmt.Errorf("failed to create volume: %w", err)
 	}
@@ -81,13 +81,14 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 			Msg("copying files to snapshot volume")
 
 		if err := vm.CopyToVolume(
+			ctx,
 			s.volumeName,
 			s.config.HostPath,
 			s.config.RemotePath,
 			s.config.IgnorePatterns,
 		); err != nil {
 			// Clean up on failure
-			eng.VolumeRemove(s.volumeName, true)
+			eng.VolumeRemove(ctx, s.volumeName, true)
 			return fmt.Errorf("failed to copy files to volume: %w", err)
 		}
 
@@ -117,7 +118,7 @@ func (s *SnapshotStrategy) Cleanup(ctx context.Context, eng *engine.Engine) erro
 		Str("volume", s.volumeName).
 		Msg("cleaning up snapshot workspace")
 
-	if err := eng.VolumeRemove(s.volumeName, false); err != nil {
+	if err := eng.VolumeRemove(ctx, s.volumeName, false); err != nil {
 		logger.Warn().
 			Str("volume", s.volumeName).
 			Err(err).

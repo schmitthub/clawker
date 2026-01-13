@@ -92,7 +92,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	if opts.Agent != "" {
 		// Use specific agent
 		containerName = engine.ContainerName(cfg.Project, opts.Agent)
-		existing, err := eng.FindContainerByName(containerName)
+		existing, err := eng.FindContainerByName(ctx, containerName)
 		if err != nil {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
@@ -107,7 +107,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 		containerID = existing.ID
 	} else {
 		// Find containers for project
-		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
@@ -136,7 +136,7 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions) error {
 	}
 
 	// Get logs
-	reader, err := containerMgr.Logs(containerID, opts.Follow, opts.Tail)
+	reader, err := containerMgr.Logs(ctx, containerID, opts.Follow, opts.Tail)
 	if err != nil {
 		return fmt.Errorf("failed to get logs: %w", err)
 	}

@@ -65,9 +65,9 @@ func runList(_ *cmdutil.Factory, opts *ListOptions) error {
 	// List containers
 	var containers []engine.ClawkerContainer
 	if opts.Project != "" {
-		containers, err = eng.ListClawkerContainersByProject(opts.Project, opts.All)
+		containers, err = eng.ListClawkerContainersByProject(ctx, opts.Project, opts.All)
 	} else {
-		containers, err = eng.ListClawkerContainers(opts.All)
+		containers, err = eng.ListClawkerContainers(ctx, opts.All)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)

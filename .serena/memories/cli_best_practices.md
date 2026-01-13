@@ -47,6 +47,20 @@ Note: Indent examples with 2 spaces for proper help formatting.
 cmd.MarkFlagsOneRequired("name", "project")    // At least one
 cmd.MarkFlagsMutuallyExclusive("bind", "snapshot")  // Not both
 cmd.MarkFlagRequired("config")                 // Always required
+
+// Runtime validation in RunE for dependent flags:
+if opts.ShellUser != "" && !opts.Shell {
+    return fmt.Errorf("--user requires --shell flag")
+}
+```
+
+## Shell Completion
+
+```go
+// Add completion for flags with known values:
+_ = cmd.RegisterFlagCompletionFunc("mode", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+    return []string{"bind", "snapshot"}, cobra.ShellCompDirectiveNoFileComp
+})
 ```
 
 ## Related Documentation
@@ -64,3 +78,6 @@ See `.claude/docs/CLI-VERBS.md` for the complete CLI verbs reference, including:
 3. **rm.go**: Added `MarkFlagsOneRequired("name", "project")`
 4. **All commands**: Added `Example` field
 5. **All commands**: Changed `fmt.Printf` → `fmt.Fprintf(os.Stderr, ...)`
+6. **run.go**: Added `--quiet` and `--json` flags for scripting
+7. **run.go**: Fixed exit code handling to allow deferred cleanup with `ExitError` type
+8. **run.go**: Added flag validation for `--user` requiring `--shell`

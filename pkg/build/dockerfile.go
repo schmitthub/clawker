@@ -69,6 +69,7 @@ type DockerfileContext struct {
 	Visual         string
 	Instructions   *DockerfileInstructions
 	Inject         *DockerfileInject
+	ImageLabels    map[string]string // Clawker internal labels (com.clawker.*)
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -430,6 +431,7 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		ExtraEnv:       g.config.Agent.Env,
 		Editor:         editor,
 		Visual:         visual,
+		ImageLabels:    engine.ImageLabels(g.config.Project, g.config.Version),
 	}
 
 	// Populate Instructions if present

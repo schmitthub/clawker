@@ -63,7 +63,7 @@ clawker list
 
 # Work with specific agents
 clawker logs --agent ralph
-clawker shell --agent ralph
+clawker run --shell --agent ralph
 clawker stop --agent ralph
 
 # Stop all agents for a project
@@ -101,15 +101,14 @@ Claude Code will authenticate automatically without requiring browser login.
 |---------|-------------|
 | `clawker init` | Create `clawker.yaml` and `.clawkerignore` in current directory |
 | `clawker build` | Build the container image |
-| `clawker start` | Build image (if needed), create container, and attach to Claude Code |
-| `clawker run` | Run a one-shot command in an ephemeral container |
+| `clawker run` | Build image, create container, and run Claude (idempotent) |
+| `clawker start` | Alias for `clawker run` |
 | `clawker stop` | Stop containers for the project |
 | `clawker restart` | Restart containers to pick up environment changes |
-| `clawker shell` | Open a bash shell in a running container |
 | `clawker logs` | View container logs |
 | `clawker list` | List all clawker containers |
-| `clawker remove` | Remove containers and their volumes |
-| `clawker prune` | Remove unused clawker resources |
+| `clawker remove` | Remove containers, volumes, or unused resources |
+| `clawker prune` | Alias for `clawker remove --unused` |
 | `clawker monitor` | Manage local observability stack |
 | `clawker config check` | Validate your `clawker.yaml` |
 | `clawker generate` | Generate versions.json for Claude Code releases |
@@ -131,47 +130,25 @@ Flags:
   --dockerfile <path>     Path to custom Dockerfile (overrides build.dockerfile in config)
 ```
 
-### clawker start
-
-Builds the container (if needed) and runs Claude Code. This is an idempotent operation - it reuses existing containers.
-
-```bash
-clawker start [-- <claude-args>...]
-
-# Examples:
-clawker start                          # Run Claude interactively
-clawker start --agent ralph            # Start a named agent
-clawker start -- -p "build a feature"  # Pass args to Claude CLI
-clawker start -- --resume              # Resume previous session
-clawker start --build                  # Force rebuild before running
-clawker start -p 8080:8080             # Publish port 8080 to host
-clawker start -p 24282:24282           # Access MCP dashboard from host
-
-Flags:
-  --agent <name>        Agent name for the container (default: random)
-  --mode=bind|snapshot  Workspace mode (default: from config)
-  --build               Force rebuild of container image
-  --detach              Run container in background
-  --clean               Remove existing container/volumes before starting
-  -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
-```
-
-**Note:** To build without Docker cache, run `clawker build --no-cache` first.
-
 ### clawker run
 
-Runs a command in a new ephemeral container. Container and volumes are removed on exit by default (like `docker run --rm`).
+The primary command for running Claude. Builds the image (if needed), creates volumes, and runs Claude. This is an **idempotent** operation - it reuses existing containers.
+
+Containers are **preserved by default**. Use `--remove` for ephemeral containers that are deleted on exit.
 
 ```bash
 clawker run [flags] [-- <command>...]
 
 # Examples:
-clawker run                           # Run Claude, remove on exit
-clawker run --agent worker            # Run with a named agent
-clawker run -- -p "quick question"    # Claude with args, remove on exit
-clawker run --shell                   # Run shell, remove on exit
-clawker run -- npm test               # Run arbitrary command
-clawker run --keep                    # Keep container after exit
+clawker run                           # Run Claude interactively (preserved)
+clawker run --agent ralph             # Run with a named agent
+clawker run -- -p "build a feature"   # Pass args to Claude CLI
+clawker run -- --resume               # Resume previous session
+clawker run --remove                  # Ephemeral: remove container on exit
+clawker run --shell                   # Open a shell session
+clawker run --shell -s /bin/zsh       # Use specific shell
+clawker run --shell -u root           # Run shell as root
+clawker run --detach                  # Run in background
 clawker run -p 8080:8080              # Publish port to host
 
 Flags:
@@ -179,11 +156,27 @@ Flags:
   --mode=bind|snapshot  Workspace mode (default: from config)
   --build               Force rebuild of container image
   --shell               Run shell instead of Claude
-  --keep                Keep container after exit (default: remove)
+  -s, --shell-path      Path to shell executable (default: /bin/sh)
+  -u, --user            User to run shell as (only with --shell)
+  -r, --remove          Remove container and volumes on exit (ephemeral)
+  --detach              Run container in background
+  --clean               Remove existing container/volumes before starting
   -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
 ```
 
+**Shell Path Resolution:** The shell is resolved from: CLI flag → `CLAWKER_SHELL` env → `agent.shell` in config → `/bin/bash`.
+
 **Note:** To build without Docker cache, run `clawker build --no-cache` first.
+
+### clawker start
+
+Alias for `clawker run`. Provided for users familiar with docker-compose workflows.
+
+```bash
+# These are equivalent:
+clawker start
+clawker run
+```
 
 ### clawker stop
 
@@ -223,25 +216,30 @@ Flags:
 
 ### clawker remove
 
-Removes clawker containers and their associated volumes.
+Removes clawker containers and their associated resources. Supports three modes: by name, by project, or unused resources.
 
 ```bash
 clawker remove [flags]
 
 # Examples:
 clawker remove -n clawker.myapp.ralph   # Remove specific container
-clawker remove -p myapp                   # Remove all containers for project
-clawker remove -p myapp -f                # Force remove running containers
+clawker remove -p myapp                 # Remove all containers for project
+clawker remove -p myapp -f              # Force remove running containers
+clawker remove --unused                 # Remove unused resources (prune)
+clawker remove --unused --all           # Remove ALL clawker resources
+clawker remove --unused --all -f        # Skip confirmation
 
 Flags:
   -n, --name <name>      Container name to remove
   -p, --project <name>   Remove all containers for project
-  -f, --force            Force remove running containers
+  -u, --unused           Remove unused resources (prune mode)
+  -a, --all              With --unused, also remove volumes and images
+  -f, --force            Force remove or skip confirmation
 ```
 
 ### clawker prune
 
-Removes unused clawker resources (stopped containers, dangling images).
+Alias for `clawker remove --unused`. Removes unused clawker resources.
 
 ```bash
 clawker prune [flags]

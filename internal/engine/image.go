@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,10 +23,10 @@ func NewImageManager(engine *Engine) *ImageManager {
 }
 
 // EnsureImage ensures an image is available locally, pulling if necessary
-func (im *ImageManager) EnsureImage(imageRef string) error {
-	exists, err := im.engine.ImageExists(imageRef)
+func (im *ImageManager) EnsureImage(ctx context.Context, imageRef string) error {
+	exists, err := im.engine.ImageExists(ctx, imageRef)
 	if err != nil {
-		return err
+		return fmt.Errorf("checking if image exists: %w", err)
 	}
 
 	if exists {
@@ -35,9 +36,9 @@ func (im *ImageManager) EnsureImage(imageRef string) error {
 
 	logger.Info().Str("image", imageRef).Msg("pulling image")
 
-	reader, err := im.engine.ImagePull(imageRef)
+	reader, err := im.engine.ImagePull(ctx, imageRef)
 	if err != nil {
-		return err
+		return fmt.Errorf("pulling image: %w", err)
 	}
 	defer reader.Close()
 
@@ -45,19 +46,28 @@ func (im *ImageManager) EnsureImage(imageRef string) error {
 	return im.processPullOutput(reader)
 }
 
+type BuildImageOpts struct {
+	Tag        string
+	Dockerfile string
+	BuildArgs  map[string]*string
+	NoCache    bool
+	Labels     map[string]string
+}
+
 // BuildImage builds a Docker image from a build context
-func (im *ImageManager) BuildImage(buildContext io.Reader, tag string, dockerfile string, buildArgs map[string]*string, noCache bool) error {
+func (im *ImageManager) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
 	options := types.ImageBuildOptions{
-		Tags:       []string{tag},
-		Dockerfile: dockerfile,
+		Tags:       []string{opts.Tag},
+		Dockerfile: opts.Dockerfile,
 		Remove:     true,
-		NoCache:    noCache,
-		BuildArgs:  buildArgs,
+		NoCache:    opts.NoCache,
+		BuildArgs:  opts.BuildArgs,
+		Labels:     opts.Labels,
 	}
 
-	resp, err := im.engine.ImageBuild(buildContext, options)
+	resp, err := im.engine.ImageBuild(ctx, buildContext, options)
 	if err != nil {
-		return err
+		return fmt.Errorf("building image: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -82,6 +92,7 @@ func (im *ImageManager) processPullOutput(reader io.Reader) error {
 		}
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			logger.Debug().Err(err).Msg("failed to parse pull output line")
 			continue
 		}
 

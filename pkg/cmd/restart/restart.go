@@ -86,7 +86,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	if opts.Agent != "" {
 		// Restart specific agent
 		containerName := engine.ContainerName(cfg.Project, opts.Agent)
-		existing, err := eng.FindContainerByName(containerName)
+		existing, err := eng.FindContainerByName(ctx, containerName)
 		if err != nil {
 			return fmt.Errorf("failed to find container: %w", err)
 		}
@@ -101,7 +101,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 		}
 	} else {
 		// Restart all containers for project
-		containers, err := eng.ListClawkerContainersByProject(cfg.Project, true)
+		containers, err := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
@@ -125,13 +125,13 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 		fmt.Fprintf(os.Stderr, "Stopping container %s...\n", c.Name)
 
 		if c.Status == "running" {
-			if err := containerMgr.Stop(c.ID, opts.Timeout); err != nil {
+			if err := containerMgr.Stop(ctx, c.ID, opts.Timeout); err != nil {
 				logger.Warn().Err(err).Str("container", c.Name).Msg("failed to stop container")
 				continue
 			}
 		}
 
-		if err := containerMgr.Remove(c.ID, false); err != nil {
+		if err := containerMgr.Remove(ctx, c.ID, false); err != nil {
 			logger.Warn().Err(err).Str("container", c.Name).Msg("failed to remove container")
 			continue
 		}
@@ -141,7 +141,7 @@ func runRestart(f *cmdutil.Factory, opts *RestartOptions) error {
 	}
 
 	// Check if monitoring is active and inform user
-	monitoringActive := eng.IsMonitoringActive()
+	monitoringActive := eng.IsMonitoringActive(ctx)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "Stopped %d container(s). Volumes preserved.\n", len(containersToRestart))

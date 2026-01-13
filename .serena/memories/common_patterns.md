@@ -47,7 +47,7 @@
 
 ## Container Command Pattern
 
-For commands that operate on containers (logs, sh, stop, etc.):
+For commands that operate on containers (logs, stop, etc.). **Note: Always pass `ctx` to all engine/manager methods.**
 
 ```go
 func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
@@ -60,14 +60,14 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
     if opts.Agent != "" {
         // Specific agent
         containerName := engine.ContainerName(cfg.Project, opts.Agent)
-        existing, _ := eng.FindContainerByName(containerName)
+        existing, _ := eng.FindContainerByName(ctx, containerName)  // Pass ctx
         if existing == nil {
             return fmt.Errorf("container not found")
         }
         containerID = existing.ID
     } else {
         // Find containers for project
-        containers, _ := eng.ListClawkerContainersByProject(cfg.Project, true)
+        containers, _ := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)  // Pass ctx
         if len(containers) == 0 {
             return fmt.Errorf("no containers found")
         }
@@ -83,6 +83,8 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
 
 ## Creating Containers with Labels
 
+**Always pass `ctx` to manager methods:**
+
 ```go
 containerCfg := engine.ContainerConfig{
     Name:        engine.ContainerName(cfg.Project, agentName),
@@ -91,10 +93,12 @@ containerCfg := engine.ContainerConfig{
     // ... other config
 }
 containerMgr := engine.NewContainerManager(eng)
-containerID, _ := containerMgr.Create(containerCfg)
+containerID, _ := containerMgr.Create(ctx, containerCfg)  // Pass ctx
 ```
 
 ## Workspace Strategy Pattern
+
+**Pass `ctx` to Prepare and EnsureConfigVolumes:**
 
 ```go
 // Setup workspace (bind or snapshot mode)
@@ -106,8 +110,82 @@ wsConfig := workspace.Config{
     IgnorePatterns: ignorePatterns,
 }
 strategy, _ := workspace.NewStrategy(mode, wsConfig)
-strategy.Prepare(ctx, eng)
+strategy.Prepare(ctx, eng)  // ctx passed through
 mounts := strategy.GetMounts()
+
+// Ensure config volumes exist
+workspace.EnsureConfigVolumes(ctx, eng, cfg.Project, agentName)  // Pass ctx
+```
+
+## Exit Code Handling Pattern
+
+When a command needs to exit with a specific code but allow deferred cleanup to run:
+
+```go
+// Define ExitError type
+type ExitError struct {
+    Code int
+}
+
+func (e *ExitError) Error() string {
+    return fmt.Sprintf("container exited with code %d", e.Code)
+}
+
+// Use named return to handle exit after defers
+func runCmd(f *cmdutil.Factory, opts *Options) (retErr error) {
+    defer func() {
+        var exitErr *ExitError
+        if errors.As(retErr, &exitErr) {
+            os.Exit(exitErr.Code)  // Runs after all defers complete
+        }
+    }()
+
+    // ... deferred cleanup ...
+    defer cleanup()
+
+    // Return ExitError instead of calling os.Exit directly
+    if exitCode != 0 {
+        return &ExitError{Code: exitCode}
+    }
+    return nil
+}
+```
+
+## Quiet/JSON Output Pattern
+
+For commands that support scripting with `--quiet` and `--json` flags:
+
+```go
+type Options struct {
+    Quiet bool
+    JSON  bool
+}
+
+// Add flags
+cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress informational output")
+cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON")
+
+// Use in command
+if opts.JSON {
+    return cmdutil.OutputJSON(map[string]string{"key": "value"})
+}
+if !opts.Quiet {
+    fmt.Fprintf(os.Stderr, "Status message\n")
+}
+```
+
+## Flag Validation Pattern
+
+For flags that depend on other flags:
+
+```go
+// In runCmd, after config validation
+if opts.ShellUser != "" && !opts.Shell {
+    return fmt.Errorf("--user requires --shell flag")
+}
+if opts.Detach && opts.Remove {
+    cmdutil.PrintWarning("--remove has no effect with --detach")
+}
 ```
 
 ## Testing

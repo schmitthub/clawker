@@ -7,6 +7,8 @@
 - Use `cmdutil.HandleError(err)` for Docker errors to get rich formatting
 - Use `cmdutil.PrintNextSteps(...)` for actionable guidance
 - All errors/warnings go to stderr via `cmdutil.PrintError()` / `cmdutil.PrintWarning()`
+- Use `cmdutil.PrintStatus(quiet, ...)` for status messages that respect `--quiet` flag
+- Use `cmdutil.OutputJSON(data)` for JSON output when `--json` flag is set
 
 ## Logging
 
@@ -40,9 +42,11 @@
 
 ## Important Gotchas
 
-- `os.Exit()` does NOT run deferred functions - always restore terminal state explicitly before calling os.Exit
+- `os.Exit()` does NOT run deferred functions - use `ExitError` type with named returns to allow cleanup before exit
 - In raw terminal mode, Ctrl+C does NOT generate SIGINT - input goes directly to the container
 - PTY streaming returns immediately when output closes - never wait for stdin goroutine (may be blocked on Read())
 - Docker hijacked connections require proper cleanup of both read and write sides
 - Never use `logger.Fatal()` in Cobra hooks - it bypasses error handling
 - Cobra's `MarkFlagsOneRequired()` must be called after flags are defined
+- Use `context.Background()` as parent for cleanup contexts (passed context may be cancelled)
+- Do not pass `context.Context` during struct initialization and re-use it for all of its member methods this is an anti-pattern. Do pass `context.Context` to each method individually

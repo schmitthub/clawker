@@ -89,6 +89,7 @@ type AgentConfig struct {
 	Memory   string            `yaml:"memory,omitempty" mapstructure:"memory"`
 	Editor   string            `yaml:"editor,omitempty" mapstructure:"editor"`
 	Visual   string            `yaml:"visual,omitempty" mapstructure:"visual"`
+	Shell    string            `yaml:"shell,omitempty" mapstructure:"shell"`
 }
 
 // WorkspaceConfig defines workspace mounting behavior
