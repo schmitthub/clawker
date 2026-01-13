@@ -280,8 +280,8 @@ func pruneImages(ctx context.Context, eng *engine.Engine, all bool) (int, error)
 	for _, img := range images {
 		// Check if any tag matches clawker pattern
 		isClawkerImage := false
-		for _, tag := range img.RepoTags {
-			if strings.HasPrefix(tag, "clawker/") {
+		for k, v := range img.Labels {
+			if k == engine.LabelManaged && v == "true" {
 				isClawkerImage = true
 				break
 			}
