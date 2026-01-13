@@ -17,7 +17,6 @@ import (
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // RunOptions contains the options for the run command.
@@ -314,24 +313,24 @@ func setupWorkspace(ctx context.Context, eng *engine.Engine, cfg *config.Config,
 	return strategy, nil
 }
 
-// resolveShellPath resolves the shell path using Viper configuration hierarchy:
+// resolveShellPath resolves the shell path using configuration hierarchy:
 // 1. CLI flag (opts.ShellPath) - highest priority
-// 2. CLAWKER_SHELL environment variable
+// 2. CLAWKER_AGENT_SHELL environment variable (via Viper AutomaticEnv)
 // 3. agent.shell from clawker.yaml
-// 4. Default: /bin/bash
-func resolveShellPath(opts *RunOptions) string {
+// 4. Default: /bin/sh
+func resolveShellPath(cfg *config.Config, opts *RunOptions) string {
 	// CLI flag takes highest precedence
 	if opts.ShellPath != "" {
 		return opts.ShellPath
 	}
 
-	// Check Viper (env var and config file)
-	if shellPath := viper.GetString("agent.shell"); shellPath != "" {
-		return shellPath
+	// Config (already includes env var override via Viper AutomaticEnv)
+	if cfg.Agent.Shell != "" {
+		return cfg.Agent.Shell
 	}
 
-	// Default
-	return "/bin/bash"
+	// Default (should be set in Loader, but fallback here)
+	return "/bin/sh"
 }
 
 func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy workspace.Strategy, workDir string, agentName string, version string, opts *RunOptions, monitoringActive bool) (engine.ContainerConfig, error) {
@@ -384,7 +383,7 @@ func buildRunContainerConfig(cfg *config.Config, imageTag string, wsStrategy wor
 	// Determine command to run
 	var cmd []string
 	if opts.Shell {
-		shellPath := resolveShellPath(opts)
+		shellPath := resolveShellPath(cfg, opts)
 		cmd = []string{shellPath}
 	} else if len(opts.Args) > 0 {
 		cmd = opts.Args

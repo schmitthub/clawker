@@ -3,6 +3,7 @@ package run
 import (
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 )
 
@@ -91,30 +92,40 @@ func TestNewCmdRun_DefaultValues(t *testing.T) {
 
 func TestResolveShellPath(t *testing.T) {
 	tests := []struct {
-		name      string
-		opts      *RunOptions
-		expected  string
+		name     string
+		cfg      *config.Config
+		opts     *RunOptions
+		expected string
 	}{
 		{
-			name:     "default when empty",
+			name:     "default when empty config and opts",
+			cfg:      &config.Config{},
 			opts:     &RunOptions{},
-			expected: "/bin/bash",
+			expected: "/bin/sh",
 		},
 		{
-			name:     "explicit shell path",
-			opts:     &RunOptions{ShellPath: "/bin/zsh"},
+			name:     "config shell path",
+			cfg:      &config.Config{Agent: config.AgentConfig{Shell: "/bin/zsh"}},
+			opts:     &RunOptions{},
 			expected: "/bin/zsh",
 		},
 		{
-			name:     "shell flag takes precedence",
-			opts:     &RunOptions{ShellPath: "/bin/fish"},
-			expected: "/bin/fish",
+			name:     "explicit shell path overrides config",
+			cfg:      &config.Config{Agent: config.AgentConfig{Shell: "/bin/zsh"}},
+			opts:     &RunOptions{ShellPath: "/bin/bash"},
+			expected: "/bin/bash",
+		},
+		{
+			name:     "CLI flag takes precedence over everything",
+			cfg:      &config.Config{Agent: config.AgentConfig{Shell: "/bin/zsh"}},
+			opts:     &RunOptions{ShellPath: "/bin/bash"},
+			expected: "/bin/bash",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveShellPath(tt.opts)
+			result := resolveShellPath(tt.cfg, tt.opts)
 			if result != tt.expected {
 				t.Errorf("expected %s, got %s", tt.expected, result)
 			}

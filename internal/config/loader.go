@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -44,6 +45,12 @@ func (l *Loader) Load() (*Config, error) {
 	l.viper.SetConfigFile(configPath)
 	l.viper.SetConfigType("yaml")
 
+	// Enable environment variable binding with CLAWKER_ prefix
+	// This allows CLAWKER_AGENT_SHELL to override agent.shell from config
+	l.viper.SetEnvPrefix("CLAWKER")
+	l.viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	l.viper.AutomaticEnv()
+
 	// Set defaults from DefaultConfig
 	defaults := DefaultConfig()
 	l.viper.SetDefault("version", defaults.Version)
@@ -54,6 +61,7 @@ func (l *Loader) Load() (*Config, error) {
 	l.viper.SetDefault("security.enable_firewall", defaults.Security.EnableFirewall)
 	l.viper.SetDefault("security.docker_socket", defaults.Security.DockerSocket)
 	l.viper.SetDefault("security.cap_add", defaults.Security.CapAdd)
+	l.viper.SetDefault("agent.shell", "/bin/sh")
 
 	// Read the config file
 	if err := l.viper.ReadInConfig(); err != nil {
