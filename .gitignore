@@ -74,3 +74,4 @@ go.work.sum
 # serena
 .serena/cache
 .serena/logs
+.claude/settings.local.json
