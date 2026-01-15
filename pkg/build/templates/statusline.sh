@@ -1,48 +1,52 @@
 #!/bin/bash
 
 # Claude Code Status Line
-# Design: Minimal monochrome matching Claude Code's UI aesthetic
-# Mostly white/gray text on dark background with subtle orange accents
 
 # JSON input strucure:
 # {
-#   "hook_event_name": "Status",
-#   "session_id": "abc123...",
-#   "transcript_path": "/path/to/transcript.json",
-#   "cwd": "/current/working/directory",
+#   "session_id": "9e12a865-cb3e-4484-913c-d8fa330d04ba",
+#   "transcript_path": "/Users/andrew/.claude/projects/-Users-andrew-Code-clawker/9e12a865-cb3e-4484-913c-d8fa330d04ba.jsonl",
+#   "cwd": "/Users/andrew/Code/clawker",
 #   "model": {
-#     "id": "claude-opus-4-1",
-#     "display_name": "Opus"
+#     "id": "claude-opus-4-5-20251101",
+#     "display_name": "Opus 4.5"
 #   },
 #   "workspace": {
-#     "current_dir": "/current/working/directory",
-#     "project_dir": "/original/project/directory"
+#     "current_dir": "/Users/andrew/Code/clawker",
+#     "project_dir": "/Users/andrew/Code/clawker"
 #   },
-#   "version": "1.0.80",
+#   "version": "2.1.7",
 #   "output_style": {
 #     "name": "default"
 #   },
 #   "cost": {
-#     "total_cost_usd": 0.01234,
-#     "total_duration_ms": 45000,
-#     "total_api_duration_ms": 2300,
-#     "total_lines_added": 156,
-#     "total_lines_removed": 23
+#     "total_cost_usd": 8.342332000000003,
+#     "total_duration_ms": 36549424,
+#     "total_api_duration_ms": 1094625,
+#     "total_lines_added": 0,
+#     "total_lines_removed": 0
 #   },
 #   "context_window": {
-#     "total_input_tokens": 15234,
-#     "total_output_tokens": 4521,
+#     "total_input_tokens": 195938,
+#     "total_output_tokens": 43480,
 #     "context_window_size": 200000,
 #     "current_usage": {
-#       "input_tokens": 8500,
-#       "output_tokens": 1200,
-#       "cache_creation_input_tokens": 5000,
-#       "cache_read_input_tokens": 2000
-#     }
-#   }
+#       "input_tokens": 10,
+#       "output_tokens": 42,
+#       "cache_creation_input_tokens": 76444,
+#       "cache_read_input_tokens": 14391
+#     },
+#     "used_percentage": 45,
+#     "remaining_percentage": 55
+#   },
+#   "exceeds_200k_tokens": false
 # }
 
+
 input=$(cat)
+
+# write input to a temp file for debugging
+# echo "$input" >> /tmp/claude_status_input.json
 
 # Colors - minimal, matching Claude Code UI
 # Orange accent: \033[38;5;214m (Claude orange for key items)
@@ -77,11 +81,10 @@ get_context_window_size() { echo "$input" | jq -r '.context_window.context_windo
 get_context_window_usage() { echo "$input" | jq '.context_window.current_usage'; }
 get_output_style() { echo "$input" | jq -r '.output_style.name'; }
 
-MODEL=$(get_model_name)
-USAGE=$(get_context_window_usage)
-CONTEXT_SIZE=$(get_context_window_size)
 
 # Context window calculation
+USAGE=$(get_context_window_usage)
+CONTEXT_SIZE=$(get_context_window_size)
 ctx=''
 if [ "$USAGE" != "null" ]; then
     # Calculate current context usage
@@ -94,12 +97,22 @@ if [ "$USAGE" != "null" ]; then
     elif [ "$PERCENT_USED" -lt 40 ]; then
         ctx=$(printf "${GREEN}${DISK_LOW_FULL} %d%%${NC}" "$PERCENT_USED")
     elif [ "$PERCENT_USED" -lt 50 ]; then
+        ctx=$(printf "${GREEN}${DISK_LOW_FULL} %d%%${NC}" "$PERCENT_USED")
+    elif [ "$PERCENT_USED" -lt 60 ]; then
         ctx=$(printf "${YELLOW}${DISK_MEDIUM} %d%%${NC}" "$PERCENT_USED")
     elif [ "$PERCENT_USED" -lt 70 ]; then
         ctx=$(printf "${YELLOW}${DISK_HIGH} %d%%${NC}" "$PERCENT_USED")
     else
         ctx=$(printf "${RED}${DISK_HIGH} %d%%${NC}" "$PERCENT_USED")
     fi
+fi
+
+# Lines Added
+LINES_ADDED=$(get_lines_added)
+LINES_REMOVED=$(get_lines_removed)
+lines=''
+if [ "$LINES_ADDED" != "null" ] && [ "$LINES_REMOVED" != "null" ]; then
+    lines=$(printf "${GREEN}+%d${NC} ${RED}-%d${NC}" "$LINES_ADDED" "$LINES_REMOVED")
 fi
 
 
@@ -125,6 +138,11 @@ output+=$(printf "%s/" "$(basename "$DIR")")
 # Git branch - dim gray
 if [ -n "$branch" ]; then
     output+=$(printf " ${GRAY}%s${NC}" "${GIT}$branch")
+fi
+
+# Lines added/removed
+if [ -n "$lines" ]; then
+    output+=$(printf " %s" "$lines")
 fi
 
 # Model - orange
