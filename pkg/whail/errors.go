@@ -131,6 +131,21 @@ func ErrContainerCreateFailed(err error) *DockerError {
 	}
 }
 
+// ErrContainerRemoveFailed returns an error for when container removal fails.
+func ErrContainerRemoveFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "remove",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to remove container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists",
+			"Verify the container is not running",
+			"Check for dependent resources",
+			"Review Docker daemon logs for details",
+		},
+	}
+}
+
 // ErrVolumeCreateFailed returns an error for when volume creation fails.
 func ErrVolumeCreateFailed(name string, err error) *DockerError {
 	return &DockerError{
@@ -185,6 +200,18 @@ func ErrNetworkError(err error) *DockerError {
 	}
 }
 
+func ErrNetworkNotFound(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_find",
+		Err:     err,
+		Message: fmt.Sprintf("Network '%s' not found", name),
+		NextSteps: []string{
+			"Check the network name is correct",
+			"List existing networks: docker network ls",
+		},
+	}
+}
+
 // ErrNetworkCreateFailed returns an error for when network creation fails.
 func ErrNetworkCreateFailed(name string, err error) *DockerError {
 	return &DockerError{
@@ -195,6 +222,86 @@ func ErrNetworkCreateFailed(name string, err error) *DockerError {
 			"Check Docker daemon is running",
 			"Verify no conflicting networks exist: docker network ls",
 			"Check if network with same name exists: docker network inspect " + name,
+		},
+	}
+}
+
+// ErrContainerStopFailed returns an error for when a container fails to stop.
+func ErrContainerStopFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "stop",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to stop container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Try force stopping: docker stop -f " + name,
+			"Check container logs: docker logs " + name,
+		},
+	}
+}
+
+// ErrContainerInspectFailed returns an error for when container inspection fails.
+func ErrContainerInspectFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "inspect",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to inspect container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify Docker daemon is running",
+		},
+	}
+}
+
+// ErrContainerLogsFailed returns an error for when fetching container logs fails.
+func ErrContainerLogsFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "logs",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to get logs for container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the container has been started at least once",
+		},
+	}
+}
+
+// ErrVolumeNotFound returns an error for when a volume cannot be found.
+func ErrVolumeNotFound(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "volume_find",
+		Err:     err,
+		Message: fmt.Sprintf("Volume '%s' not found", name),
+		NextSteps: []string{
+			"Check the volume name is correct",
+			"List existing volumes: docker volume ls",
+		},
+	}
+}
+
+// ErrVolumeRemoveFailed returns an error for when volume removal fails.
+func ErrVolumeRemoveFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "volume_remove",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to remove volume '%s'", name),
+		NextSteps: []string{
+			"Check if the volume is in use by a container",
+			"Stop containers using this volume first",
+			"Try force removal: docker volume rm -f " + name,
+		},
+	}
+}
+
+// ErrVolumeInspectFailed returns an error for when volume inspection fails.
+func ErrVolumeInspectFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "volume_inspect",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to inspect volume '%s'", name),
+		NextSteps: []string{
+			"Check if the volume exists: docker volume ls",
+			"Verify Docker daemon is running",
 		},
 	}
 }

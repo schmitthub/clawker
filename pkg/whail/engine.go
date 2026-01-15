@@ -2,6 +2,7 @@ package whail
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
@@ -30,7 +31,9 @@ const DefaultManagedLabel = "managed"
 // All list operations automatically inject filters to only return resources
 // managed by this engine (identified by the configured label prefix).
 type Engine struct {
-	cli     *client.Client
+	// cli     *client.Client
+	client.APIClient
+	// logger *log.Logger // TODO: Add logger
 	options EngineOptions
 
 	// Precomputed values for efficiency
@@ -38,56 +41,76 @@ type Engine struct {
 	managedLabelValue string // always "true"
 }
 
-// NewEngine creates a new Engine with the given options.
+// New creates a new Engine with default options.
+// The caller is responsible for calling Close() when done.
+func New(ctx context.Context) (*Engine, error) {
+	return NewWithOptions(ctx, EngineOptions{})
+}
+
+// NewWithOptions creates a new Engine with the given options.
 // It connects to the Docker daemon and verifies the connection.
-func NewEngine(ctx context.Context, opts EngineOptions) (*Engine, error) {
-	cli, err := client.NewClientWithOpts(
+func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
+	clientOpts := []client.Opt{
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
-	)
-	if err != nil {
-		return nil, ErrDockerNotRunning(err)
 	}
+
+	// if opts.Host != "" {
+	// 	clientOpts = append(clientOpts, client.WithHost(opts.Host))
+	// }
+	// if opts.APIVersion != "" {
+	// 	clientOpts = append(clientOpts, client.WithVersion(opts.APIVersion))
+	// }
 
 	// Apply defaults
 	if opts.ManagedLabel == "" {
 		opts.ManagedLabel = DefaultManagedLabel
 	}
 
-	engine := &Engine{
-		cli:               cli,
+	// Create the underlying Docker client
+	realClient, err := client.NewClientWithOpts(clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker client: %w", err)
+	}
+
+	// logger := opts.Logger
+	// if logger == nil {
+	// 	logger = log.Default()
+	// }
+
+	e := &Engine{
+		APIClient:         realClient,
 		options:           opts,
 		managedLabelKey:   opts.LabelPrefix + "." + opts.ManagedLabel,
 		managedLabelValue: "true",
+		// logger:    logger,
 	}
 
-	// Verify connection
-	if err := engine.HealthCheck(ctx); err != nil {
-		cli.Close()
+	// Verify connectivity
+
+	if err := e.HealthCheck(ctx); err != nil {
 		return nil, err
 	}
+	// logger.Printf("[Engine] Connected to Docker daemon")
 
-	return engine, nil
+	return e, nil
+}
+
+// NewFromExisting wraps an existing APIClient (useful for testing with mocks).
+func NewFromExisting(c client.APIClient) *Engine {
+	return &Engine{
+		APIClient: c,
+		// logger:    log.Default(),
+	}
 }
 
 // HealthCheck verifies the Docker daemon is reachable.
 func (e *Engine) HealthCheck(ctx context.Context) error {
-	_, err := e.cli.Ping(ctx)
+	_, err := e.Ping(ctx)
 	if err != nil {
 		return ErrDockerNotRunning(err)
 	}
 	return nil
-}
-
-// Close releases Docker client resources.
-func (e *Engine) Close() error {
-	return e.cli.Close()
-}
-
-// Client returns the underlying Docker client for advanced operations.
-// Use with caution - direct client usage bypasses label filtering.
-func (e *Engine) Client() *client.Client {
-	return e.cli
 }
 
 // Options returns the engine options.
@@ -159,4 +182,9 @@ func (e *Engine) imageLabels(extra ...map[string]string) map[string]string {
 	configLabels := e.options.Labels.ImageLabels()
 	all := append([]map[string]string{base, configLabels}, extra...)
 	return MergeLabels(all...)
+}
+
+func (e *Engine) isManagedLabelPresent(labels map[string]string) bool {
+	val, ok := labels[e.managedLabelKey]
+	return ok && val == e.managedLabelValue
 }

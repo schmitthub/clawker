@@ -9,13 +9,21 @@ import (
 
 // NetworkCreate creates a new network with managed labels automatically applied.
 // The provided labels are merged with the engine's configured labels.
-func (e *Engine) NetworkCreate(ctx context.Context, name string, extraLabels ...map[string]string) (network.CreateResponse, error) {
+func (e *Engine) NetworkCreate(ctx context.Context, name string, options network.CreateOptions, extraLabels ...map[string]string) (network.CreateResponse, error) {
 	labels := e.networkLabels(extraLabels...)
+	// Merge labels into options instead of ignoring them
+	if options.Labels == nil {
+		options.Labels = labels
+	} else {
+		options.Labels = MergeLabels(options.Labels, labels)
+	}
 
-	resp, err := e.cli.NetworkCreate(ctx, name, network.CreateOptions{
-		Driver: "bridge",
-		Labels: labels,
-	})
+	// Set default driver if not specified
+	if options.Driver == "" {
+		options.Driver = "bridge"
+	}
+
+	resp, err := e.APIClient.NetworkCreate(ctx, name, options)
 	if err != nil {
 		return network.CreateResponse{}, ErrNetworkCreateFailed(name, err)
 	}
@@ -24,17 +32,25 @@ func (e *Engine) NetworkCreate(ctx context.Context, name string, extraLabels ...
 
 // NetworkRemove removes a network.
 func (e *Engine) NetworkRemove(ctx context.Context, name string) error {
-	return e.cli.NetworkRemove(ctx, name)
+	isManaged, err := e.IsNetworkManaged(ctx, name)
+	if err != nil || !isManaged {
+		return ErrNetworkNotFound(name, err)
+	}
+	return e.APIClient.NetworkRemove(ctx, name)
 }
 
 // NetworkInspect inspects a network.
-func (e *Engine) NetworkInspect(ctx context.Context, name string) (network.Inspect, error) {
-	return e.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+func (e *Engine) NetworkInspect(ctx context.Context, name string, options network.InspectOptions) (network.Inspect, error) {
+	isManaged, err := e.IsNetworkManaged(ctx, name)
+	if err != nil || !isManaged {
+		return network.Inspect{}, ErrNetworkNotFound(name, err)
+	}
+	return e.APIClient.NetworkInspect(ctx, name, options)
 }
 
 // NetworkExists checks if a network exists.
 func (e *Engine) NetworkExists(ctx context.Context, name string) (bool, error) {
-	_, err := e.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	_, err := e.APIClient.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err != nil {
 		if client.IsErrNotFound(err) {
 			return false, nil
@@ -53,35 +69,27 @@ func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]str
 			f.Add("label", k+"="+v)
 		}
 	}
-	return e.cli.NetworkList(ctx, network.ListOptions{Filters: f})
-}
-
-// NetworkListAll lists all managed networks.
-func (e *Engine) NetworkListAll(ctx context.Context) ([]network.Summary, error) {
-	return e.NetworkList(ctx)
-}
-
-// NetworkListByLabels lists networks matching additional label filters.
-// The managed label filter is automatically injected.
-func (e *Engine) NetworkListByLabels(ctx context.Context, labels map[string]string) ([]network.Summary, error) {
-	return e.NetworkList(ctx, labels)
+	return e.APIClient.NetworkList(ctx, network.ListOptions{Filters: f})
 }
 
 // EnsureNetwork creates a network if it doesn't exist.
 // Returns the network ID.
-func (e *Engine) EnsureNetwork(ctx context.Context, name string, extraLabels ...map[string]string) (string, error) {
+func (e *Engine) EnsureNetwork(ctx context.Context, name string, options network.CreateOptions, verbose bool, extraLabels ...map[string]string) (string, error) {
 	exists, err := e.NetworkExists(ctx, name)
 	if err != nil {
 		return "", err
 	}
 	if exists {
-		info, err := e.NetworkInspect(ctx, name)
+		info, err := e.NetworkInspect(ctx, name, network.InspectOptions{
+			Verbose: verbose,
+			Scope:   options.Scope,
+		})
 		if err != nil {
 			return "", err
 		}
 		return info.ID, nil
 	}
-	resp, err := e.NetworkCreate(ctx, name, extraLabels...)
+	resp, err := e.NetworkCreate(ctx, name, options, extraLabels...)
 	if err != nil {
 		return "", err
 	}
@@ -90,7 +98,7 @@ func (e *Engine) EnsureNetwork(ctx context.Context, name string, extraLabels ...
 
 // IsNetworkManaged checks if a network has the managed label.
 func (e *Engine) IsNetworkManaged(ctx context.Context, name string) (bool, error) {
-	info, err := e.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	info, err := e.APIClient.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err != nil {
 		if client.IsErrNotFound(err) {
 			return false, nil
