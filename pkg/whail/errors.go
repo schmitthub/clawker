@@ -305,3 +305,223 @@ func ErrVolumeInspectFailed(name string, err error) *DockerError {
 		},
 	}
 }
+
+// ErrContainerKillFailed returns an error for when killing a container fails.
+func ErrContainerKillFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "kill",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to kill container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Try stopping gracefully: docker stop " + name,
+		},
+	}
+}
+
+// ErrContainerRestartFailed returns an error for when restarting a container fails.
+func ErrContainerRestartFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "restart",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to restart container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Check container logs: docker logs " + name,
+		},
+	}
+}
+
+// ErrContainerPauseFailed returns an error for when pausing a container fails.
+func ErrContainerPauseFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "pause",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to pause container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Verify the container is not already paused",
+		},
+	}
+}
+
+// ErrContainerUnpauseFailed returns an error for when unpausing a container fails.
+func ErrContainerUnpauseFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "unpause",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to unpause container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is paused: docker ps",
+		},
+	}
+}
+
+// ErrContainerRenameFailed returns an error for when renaming a container fails.
+func ErrContainerRenameFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "rename",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to rename container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the new name is not already in use",
+		},
+	}
+}
+
+// ErrContainerTopFailed returns an error for when getting container processes fails.
+func ErrContainerTopFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "top",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to get processes for container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Verify the container has processes running",
+		},
+	}
+}
+
+// ErrContainerStatsFailed returns an error for when getting container stats fails.
+func ErrContainerStatsFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "stats",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to get stats for container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+		},
+	}
+}
+
+// ErrContainerUpdateFailed returns an error for when updating container config fails.
+func ErrContainerUpdateFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "update",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to update container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the update configuration is valid",
+		},
+	}
+}
+
+// ErrCopyToContainerFailed returns an error for when copying to a container fails.
+func ErrCopyToContainerFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "copy_to",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to copy files to container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the destination path is valid",
+			"Check if the source file exists",
+		},
+	}
+}
+
+// ErrCopyFromContainerFailed returns an error for when copying from a container fails.
+func ErrCopyFromContainerFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "copy_from",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to copy files from container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the source path exists in the container",
+		},
+	}
+}
+
+// ErrContainerStatPathFailed returns an error for when stat'ing a path in a container fails.
+func ErrContainerStatPathFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "stat_path",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to stat path in container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify the path exists in the container",
+		},
+	}
+}
+
+// ErrContainerExecFailed returns an error for when exec operations fail.
+func ErrContainerExecFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "exec",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to execute command in container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Verify the command exists in the container",
+		},
+	}
+}
+
+// ErrContainerResizeFailed returns an error for when resizing a container TTY fails.
+func ErrContainerResizeFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "resize",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to resize TTY for container '%s'", name),
+		NextSteps: []string{
+			"Check if the container is running: docker ps",
+			"Verify the container has a TTY attached",
+		},
+	}
+}
+
+// ErrContainerWaitFailed returns an error for when waiting on a container fails.
+func ErrContainerWaitFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "wait",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to wait for container '%s'", name),
+		NextSteps: []string{
+			"Check if the container exists: docker ps -a",
+			"Verify Docker daemon is running",
+		},
+	}
+}
+
+// ErrContainerListFailed returns an error for when listing containers fails.
+func ErrContainerListFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "list",
+		Err:     err,
+		Message: "Failed to list containers",
+		NextSteps: []string{
+			"Check if Docker daemon is running",
+			"Verify Docker socket is accessible",
+		},
+	}
+}
+
+// ErrExecAttachFailed returns an error for when attaching to an exec instance fails.
+func ErrExecAttachFailed(execID string, err error) *DockerError {
+	return &DockerError{
+		Op:      "exec_attach",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to attach to exec instance '%s'", execID),
+		NextSteps: []string{
+			"Check if the exec instance is still valid",
+			"Verify the container is still running",
+		},
+	}
+}
+
+// ErrExecResizeFailed returns an error for when resizing an exec instance TTY fails.
+func ErrExecResizeFailed(execID string, err error) *DockerError {
+	return &DockerError{
+		Op:      "exec_resize",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to resize exec TTY '%s'", execID),
+		NextSteps: []string{
+			"Check if the exec instance is still valid",
+			"Verify the exec has a TTY attached",
+		},
+	}
+}

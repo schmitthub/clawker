@@ -130,12 +130,24 @@ func (e *Engine) ManagedLabelValue() string {
 
 // injectManagedFilter adds the managed label filter to existing filters.
 // This ensures all list operations only return managed resources.
+// Returns a new filters.Args - does not mutate the input.
 func (e *Engine) injectManagedFilter(existing filters.Args) filters.Args {
-	if existing.Len() == 0 {
-		existing = filters.NewArgs()
+	// Always create a fresh filter to avoid mutating caller's filters.
+	// Context is everything, kid - you don't touch another man's state.
+	result := filters.NewArgs()
+
+	// Copy existing filter entries if present
+	if existing.Len() > 0 {
+		for _, key := range existing.Keys() {
+			for _, value := range existing.Get(key) {
+				result.Add(key, value)
+			}
+		}
 	}
-	existing.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
-	return existing
+
+	// Add managed filter to the copy
+	result.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
+	return result
 }
 
 // newManagedFilter creates a new filter with just the managed label.

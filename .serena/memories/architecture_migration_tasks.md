@@ -1,8 +1,22 @@
 # Architecture Migration Task List
 
-**Last Updated**: 2026-01-13
-**Current Phase**: PLANNING (Not Started)
-**Plan File**: `~/.claude/plans/warm-humming-ocean.md`
+**Last Updated**: 2026-01-15
+**Current Phase**: Phase 3 - Docker CLI Mimicry (REPLANNED)
+**Plan File**: `~/.claude/plans/rosy-churning-puffin.md`
+
+## IMPORTANT: Phase 3 Pivot
+
+Phase 3 has been **pivoted** to implement Docker CLI command mimicry. Key changes:
+
+- Commands will mirror Docker CLI structure (`clawker container run`, `clawker container ls`, etc.)
+- Both top-level shortcuts AND management commands (like Docker)
+- `clawker run` will behave like `docker run` (always creates new container)
+- Keep `--agent` flag separate from `--name` for clawker-specific naming
+
+**Reference Documents**:
+
+- `.claude/docs/docker-cli-map.md` - Docker CLI → SDK mapping (1,740 lines)
+- `.claude/docs/docker_top_level_commands.md` - Commands to implement
 
 ## Quick Resume
 
@@ -164,58 +178,89 @@ The assistant should:
 
 ---
 
-## Phase 3: Update Commands
+## Phase 3: Docker CLI Mimicry
 
-**Status**: NOT STARTED
-**Estimated Sessions**: 2-3
+**Status**: REPLANNED - Ready to Start
+**Estimated Sessions**: 4-6
+**Full Plan**: `~/.claude/plans/rosy-churning-puffin.md`
 
-### Task 3.1: Update factory
+### Task 3.1: Add Missing whail Methods
 
-- [ ] Update `pkg/cmdutil/factory.go`:
-  - [ ] Add `Client() (*docker.Client, error)` method
-  - [ ] Keep `Engine()` temporarily for backward compat
-  - [ ] Update lazy initialization
+**Status**: COMPLETED (2026-01-15)
 
-### Task 3.2: Update run command
+**Files**: `pkg/whail/container.go`, new `pkg/whail/copy.go`
+**Reference**: `docker-cli-map.md` sections for each command
 
-- [ ] Update `pkg/cmd/run/run.go`:
-  - [ ] Replace `engine.NewEngine` with `docker.NewClient`
-  - [ ] Use new label/name helpers
-  - [ ] Run integration tests
+- [x] Add `ContainerKill(ctx, id, signal)`
+- [x] Add `ContainerPause(ctx, id)` / `ContainerUnpause(ctx, id)`
+- [x] Add `ContainerRestart(ctx, id, timeout)`
+- [x] Add `ContainerRename(ctx, id, newName)`
+- [x] Add `ContainerTop(ctx, id, args)`
+- [x] Add `ContainerStats(ctx, id, stream)` - returns io.ReadCloser
+- [x] Add `ContainerStatsOneShot(ctx, id)` - returns StatsResponseReader
+- [x] Add `ContainerUpdate(ctx, id, config)`
+- [x] Add `CopyToContainer(ctx, id, path, content, opts)` - tar handling
+- [x] Add `CopyFromContainer(ctx, id, path)` - returns tar reader
+- [x] Add `ContainerStatPath(ctx, id, path)` - stat path in container
+- [x] Add tests for new methods (Kill, Pause/Unpause, Restart, Rename, Top)
+- [x] Add error types in `errors.go` for all new operations
+- [x] All tests passing: `go test ./...`
 
-### Task 3.3: Update stop command
+### Task 3.2: Create Management Command Structure
 
-- [ ] Update `pkg/cmd/stop/stop.go`
-- [ ] Run integration tests
+**Files**: New `pkg/cmd/container/`, `pkg/cmd/image/`
 
-### Task 3.4: Update list command
+- [ ] Create `pkg/cmd/container/container.go` - parent command
+- [ ] Create `pkg/cmd/image/image.go` - parent command
+- [ ] Ensure `pkg/cmd/volume/` and `pkg/cmd/network/` exist
+- [ ] Update `pkg/cmd/root/root.go` to register management commands
 
-- [ ] Update `pkg/cmd/list/list.go`
-- [ ] Run integration tests
+### Task 3.3: Implement Container Commands
 
-### Task 3.5: Update remove command
+**Order**: Start with simplest, build up
+**Reference**: `docker-cli-map.md` Container Commands section
 
-- [ ] Update `pkg/cmd/remove/remove.go`
-- [ ] Update `pkg/cmd/prune/prune.go`
-- [ ] Run integration tests
+- [ ] `container ls` (refactor from `list`)
+- [ ] `container rm` (refactor from `remove`)
+- [ ] `container start` / `container stop` (refactor)
+- [ ] `container logs` (refactor from `logs`)
+- [ ] `container create` (new)
+- [ ] `container run` (refactor - Docker-style, no FindOrCreate)
+- [ ] `container exec` (new)
+- [ ] `container attach` (new)
+- [ ] `container inspect` (new)
+- [ ] `container kill` / `pause` / `unpause` (new)
+- [ ] `container restart` (refactor)
+- [ ] `container cp` (new)
+- [ ] `container top` / `stats` / `wait` / `port` / `rename` / `update` (new)
+- [ ] Add tests for new commands
 
-### Task 3.6: Update logs command
+### Task 3.4: Implement Image Commands
 
-- [ ] Update `pkg/cmd/logs/logs.go`
+**Reference**: `docker-cli-map.md` Image Commands section
 
-### Task 3.7: Update restart command
+- [ ] `image ls` (alias: `images`)
+- [ ] `image build` (refactor from `build`)
+- [ ] `image rm` (alias: `rmi`)
+- [ ] `image inspect` (new)
+- [ ] `image pull` (new)
+- [ ] Add tests for new commands
 
-- [ ] Update `pkg/cmd/restart/restart.go`
+### Task 3.5: Implement Top-Level Shortcuts
 
-### Task 3.8: Update build command
+- [ ] Create shortcuts in `pkg/cmd/root/root.go`
+- [ ] Each shortcut delegates to management command
+- [ ] Maintain backward compatibility aliases
+- [ ] Add tests for new commands
 
-- [ ] Update `pkg/cmd/build/build.go`
+### Task 3.6: Update internal/docker Layer
 
-### Task 3.9: Update workspace strategy
+- [ ] Update `internal/docker/client.go` to use new whail methods
+- [ ] Add agent resolution helpers
+- [ ] Remove internal/engine dependencies
+- [ ] Add tests for new functionality
 
-- [ ] Update `internal/workspace/strategy.go` engine references
-
-### Task 3.10: Full test suite
+### Task 3.7: Full Test Suite
 
 - [ ] `go test ./...`
 - [ ] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
@@ -334,6 +379,56 @@ Track each session's progress here:
   - All tests passing: `go test ./...`
 - **Next**: Start Phase 3 (update commands to use `internal/docker`)
 - **Blockers**: None
+
+### Session 5 (2026-01-15)
+
+- **Duration**: ~15 minutes
+- **Work Done**:
+  - COMPLETED Task 3.1: Updated factory with Client() method
+    - Added `clientOnce`, `client`, `clientErr` fields
+    - Added `Client(ctx)` method with lazy initialization
+    - Added `CloseClient()` method
+    - Marked `CloseEngine()` as deprecated
+  - Started Task 3.2 but hit design issue
+    - Initial approach was adding wrapper methods to docker.Client
+    - User feedback: don't wrap unless modifying behavior
+    - Need to replan Phase 3 approach
+- **Next**: Decide on approach for Phase 3 before proceeding
+- **Blockers**: Need decision on where ContainerConfig/FindOrCreate logic should live
+
+### Session 6 (2026-01-15)
+
+- **Duration**: ~30 minutes
+- **Work Done**:
+  - COMPLETED Task 3.1 (Phase 3.1): Added all missing whail methods
+    - Added container methods: `ContainerKill`, `ContainerPause`, `ContainerUnpause`, `ContainerRestart`, `ContainerRename`, `ContainerTop`, `ContainerStats`, `ContainerStatsOneShot`, `ContainerUpdate`
+    - Created `pkg/whail/copy.go` with: `CopyToContainer`, `CopyFromContainer`, `ContainerStatPath`
+    - Added 11 new error types in `pkg/whail/errors.go`
+    - Added integration tests for: Kill, Pause/Unpause, Restart, Rename, Top
+    - All tests passing: `go test ./...`
+- **Next**: Task 3.2 - Create management command structure
+- **Blockers**: None
+
+### Session 7 (2026-01-15)
+
+- **Duration**: ~20 minutes
+- **Work Done**:
+  - COMPLETED Task 3.1.1: PR Review Fixes
+  - Ran comprehensive PR review using pr-review-toolkit agents (code-reviewer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer)
+  - Fixed critical issue: `ContainerWait` now wraps SDK channel errors
+  - Fixed important issues:
+    - Removed duplicate `generateCopyContainerName` from `copy_test.go`
+    - Added `TestContainerWait` with channel semantics testing
+    - Added `TestContainerAttach` with managed/unmanaged verification
+    - `IsContainerManaged` now wraps non-NotFound errors with `ErrContainerInspectFailed`
+  - All whail tests passing: `go test ./pkg/whail/...`
+  - Integration tests: 2 pre-existing failures unrelated to changes (TestRm_UnusedFlag_NoUnused, TestRun_BuildsImage)
+- **Next**: Task 3.2 - Create management command structure
+- **Blockers**: None
+- **Key Learnings**:
+  - Channel-based methods like `ContainerWait` need goroutines to wrap SDK errors
+  - Test helper functions should not be duplicated across test files in same package
+  - `IsContainerManaged` silently returns `(false, nil)` for not-found - document this behavior
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/engine"
 )
 
@@ -20,10 +21,15 @@ type Factory struct {
 	Version string
 	Commit  string
 
-	// Lazy-loaded dependencies
+	// Lazy-loaded dependencies - legacy (use Client() instead)
 	engineOnce sync.Once
 	engine     *engine.Engine
 	engineErr  error
+
+	// Lazy-loaded dependencies - new architecture
+	clientOnce sync.Once
+	client     *docker.Client
+	clientErr  error
 
 	configOnce   sync.Once
 	configLoader *config.Loader
@@ -49,9 +55,27 @@ func (f *Factory) Engine(ctx context.Context) (*engine.Engine, error) {
 }
 
 // CloseEngine closes the Docker engine if it was initialized.
+// Deprecated: Use CloseClient() instead with the new docker.Client.
 func (f *Factory) CloseEngine() {
 	if f.engine != nil {
 		f.engine.Close()
+	}
+}
+
+// Client returns a lazily-initialized Docker client.
+// The client wraps pkg/whail.Engine with clawker-specific label configuration.
+// This is the preferred method over Engine() for new code.
+func (f *Factory) Client(ctx context.Context) (*docker.Client, error) {
+	f.clientOnce.Do(func() {
+		f.client, f.clientErr = docker.NewClient(ctx)
+	})
+	return f.client, f.clientErr
+}
+
+// CloseClient closes the Docker client if it was initialized.
+func (f *Factory) CloseClient() {
+	if f.client != nil {
+		f.client.Close()
 	}
 }
 
