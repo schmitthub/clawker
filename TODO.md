@@ -34,6 +34,10 @@
 
 ## Enhancements
 
+[ ] review post mvp docker commands to mimic
+[ ] make sure all to curate a list of docker cli commands to mimic and which flags to support
+[ ] versioning
+[ ] Make integration tests first class citizens
 [ ] Add logger to whailer engine
 [ ] Update config template to have all vars in it, commented out. have a helper function describe the entire config schema
 [ ] figure out what you're gunna do about seamlessly handling git creds :D, prob just copy mount ssh dir

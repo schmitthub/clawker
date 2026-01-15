@@ -104,6 +104,116 @@ type EngineOptions struct {
 
 **Note:** Commands should use `internal/docker.Client` rather than `pkg/whail` directly. The whail package is the reusable foundation; internal/docker adds clawker-specific semantics.
 
+### Container Methods (pkg/whail/container.go)
+
+All methods check `IsContainerManaged` first and return `ErrContainerNotFound` for unmanaged containers.
+
+| Method | Description |
+|--------|-------------|
+| `ContainerCreate` | Create container with managed labels |
+| `ContainerStart` | Start a managed container |
+| `ContainerStop` | Stop with optional timeout |
+| `ContainerRemove` | Remove (force optional) |
+| `ContainerKill` | Send signal (default: SIGKILL) |
+| `ContainerPause` | Pause running container |
+| `ContainerUnpause` | Unpause paused container |
+| `ContainerRestart` | Restart with optional timeout |
+| `ContainerRename` | Rename container |
+| `ContainerList` | List with managed filter injection |
+| `ContainerListAll` | List all (including stopped) |
+| `ContainerListRunning` | List only running |
+| `ContainerListByLabels` | List with additional label filters |
+| `ContainerInspect` | Inspect managed container |
+| `ContainerAttach` | Attach to TTY |
+| `ContainerWait` | Wait for exit |
+| `ContainerLogs` | Stream logs |
+| `ContainerResize` | Resize TTY |
+| `ContainerTop` | Get running processes |
+| `ContainerStats` | Stream resource usage stats |
+| `ContainerStatsOneShot` | Single stats snapshot |
+| `ContainerUpdate` | Update resource constraints |
+| `ContainerExecCreate` | Create exec instance |
+| `ContainerExecAttach` | Attach to exec |
+| `ContainerExecResize` | Resize exec TTY |
+| `FindContainerByName` | Find by exact name |
+| `IsContainerManaged` | Check if has managed label |
+
+### Copy Methods (pkg/whail/copy.go)
+
+| Method | Description |
+|--------|-------------|
+| `CopyToContainer` | Copy tar archive to container path |
+| `CopyFromContainer` | Copy tar archive from container path |
+| `ContainerStatPath` | Stat path inside container |
+
+### Volume Methods (pkg/whail/volume.go)
+
+| Method | Description |
+|--------|-------------|
+| `VolumeCreate` | Create with managed labels |
+| `VolumeList` | List with managed filter |
+| `VolumeRemove` | Remove managed volume |
+| `VolumeExists` | Check if exists |
+| `VolumeInspect` | Inspect managed volume |
+| `IsVolumeManaged` | Check if has managed label |
+
+### Network Methods (pkg/whail/network.go)
+
+| Method | Description |
+|--------|-------------|
+| `NetworkCreate` | Create with managed labels |
+| `NetworkList` | List with managed filter |
+| `NetworkRemove` | Remove managed network |
+| `NetworkExists` | Check if exists |
+| `NetworkInspect` | Inspect managed network |
+| `EnsureNetwork` | Create if not exists |
+| `IsNetworkManaged` | Check if has managed label |
+
+### Image Methods (pkg/whail/image.go)
+
+| Method | Description |
+|--------|-------------|
+| `ImageBuild` | Build with managed labels |
+| `ImagePull` | Pull image |
+| `ImageList` | List with managed filter |
+| `ImageRemove` | Remove managed image |
+| `ImageExists` | Check if exists |
+| `IsImageManaged` | Check if has managed label |
+
+### Error Types (pkg/whail/errors.go)
+
+All error constructors return `*DockerError` with user-friendly messages and "Next Steps" guidance:
+
+- `ErrDockerNotRunning` - Cannot connect to Docker daemon
+- `ErrImageNotFound` - Image not found
+- `ErrImageBuildFailed` - Build failed
+- `ErrContainerNotFound` - Container not found (or not managed)
+- `ErrContainerStartFailed` - Start failed
+- `ErrContainerCreateFailed` - Create failed
+- `ErrContainerRemoveFailed` - Remove failed
+- `ErrContainerStopFailed` - Stop failed
+- `ErrContainerInspectFailed` - Inspect failed
+- `ErrContainerLogsFailed` - Logs failed
+- `ErrContainerKillFailed` - Kill failed
+- `ErrContainerRestartFailed` - Restart failed
+- `ErrContainerPauseFailed` - Pause failed
+- `ErrContainerUnpauseFailed` - Unpause failed
+- `ErrContainerRenameFailed` - Rename failed
+- `ErrContainerTopFailed` - Top (processes) failed
+- `ErrContainerStatsFailed` - Stats failed
+- `ErrContainerUpdateFailed` - Update failed
+- `ErrCopyToContainerFailed` - Copy to container failed
+- `ErrCopyFromContainerFailed` - Copy from container failed
+- `ErrVolumeCreateFailed` - Volume create failed
+- `ErrVolumeCopyFailed` - Copy to volume failed
+- `ErrVolumeNotFound` - Volume not found
+- `ErrVolumeRemoveFailed` - Volume remove failed
+- `ErrVolumeInspectFailed` - Volume inspect failed
+- `ErrNetworkError` - Generic network error
+- `ErrNetworkNotFound` - Network not found
+- `ErrNetworkCreateFailed` - Network create failed
+- `ErrAttachFailed` - Container attach failed
+
 ---
 
 ## WorkspaceStrategy Interface

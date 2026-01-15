@@ -245,3 +245,161 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 	val, ok := info.Config.Labels[e.managedLabelKey]
 	return ok && val == e.managedLabelValue, nil
 }
+
+// ContainerKill sends a signal to a container.
+// Only kills managed containers. Default signal is SIGKILL.
+func (e *Engine) ContainerKill(ctx context.Context, containerID, signal string) error {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return ErrContainerKillFailed(containerID, err)
+	}
+	if !isManaged {
+		return ErrContainerNotFound(containerID)
+	}
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+	if err := e.APIClient.ContainerKill(ctx, containerID, signal); err != nil {
+		return ErrContainerKillFailed(containerID, err)
+	}
+	return nil
+}
+
+// ContainerPause pauses a running container.
+// Only pauses managed containers.
+func (e *Engine) ContainerPause(ctx context.Context, containerID string) error {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return ErrContainerPauseFailed(containerID, err)
+	}
+	if !isManaged {
+		return ErrContainerNotFound(containerID)
+	}
+	if err := e.APIClient.ContainerPause(ctx, containerID); err != nil {
+		return ErrContainerPauseFailed(containerID, err)
+	}
+	return nil
+}
+
+// ContainerUnpause unpauses a paused container.
+// Only unpauses managed containers.
+func (e *Engine) ContainerUnpause(ctx context.Context, containerID string) error {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return ErrContainerUnpauseFailed(containerID, err)
+	}
+	if !isManaged {
+		return ErrContainerNotFound(containerID)
+	}
+	if err := e.APIClient.ContainerUnpause(ctx, containerID); err != nil {
+		return ErrContainerUnpauseFailed(containerID, err)
+	}
+	return nil
+}
+
+// ContainerRestart restarts a container with an optional timeout.
+// If timeout is nil, the Docker default is used.
+// Only restarts managed containers.
+func (e *Engine) ContainerRestart(ctx context.Context, containerID string, timeout *int) error {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return ErrContainerRestartFailed(containerID, err)
+	}
+	if !isManaged {
+		return ErrContainerNotFound(containerID)
+	}
+	var stopOptions container.StopOptions
+	if timeout != nil {
+		stopOptions.Timeout = timeout
+	}
+	if err := e.APIClient.ContainerRestart(ctx, containerID, stopOptions); err != nil {
+		return ErrContainerRestartFailed(containerID, err)
+	}
+	return nil
+}
+
+// ContainerRename renames a container.
+// Only renames managed containers.
+func (e *Engine) ContainerRename(ctx context.Context, containerID, newName string) error {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return ErrContainerRenameFailed(containerID, err)
+	}
+	if !isManaged {
+		return ErrContainerNotFound(containerID)
+	}
+	if err := e.APIClient.ContainerRename(ctx, containerID, newName); err != nil {
+		return ErrContainerRenameFailed(containerID, err)
+	}
+	return nil
+}
+
+// ContainerTop returns the running processes in a container.
+// Only returns processes for managed containers.
+func (e *Engine) ContainerTop(ctx context.Context, containerID string, args []string) (container.ContainerTopOKBody, error) {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return container.ContainerTopOKBody{}, ErrContainerTopFailed(containerID, err)
+	}
+	if !isManaged {
+		return container.ContainerTopOKBody{}, ErrContainerNotFound(containerID)
+	}
+	top, err := e.APIClient.ContainerTop(ctx, containerID, args)
+	if err != nil {
+		return container.ContainerTopOKBody{}, ErrContainerTopFailed(containerID, err)
+	}
+	return top, nil
+}
+
+// ContainerStats returns resource usage statistics for a container.
+// If stream is true, stats are streamed until the context is cancelled.
+// Only returns stats for managed containers.
+func (e *Engine) ContainerStats(ctx context.Context, containerID string, stream bool) (io.ReadCloser, error) {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return nil, ErrContainerStatsFailed(containerID, err)
+	}
+	if !isManaged {
+		return nil, ErrContainerNotFound(containerID)
+	}
+	stats, err := e.APIClient.ContainerStats(ctx, containerID, stream)
+	if err != nil {
+		return nil, ErrContainerStatsFailed(containerID, err)
+	}
+	return stats.Body, nil
+}
+
+// ContainerStatsOneShot returns a single snapshot of container stats.
+// The caller is responsible for closing the Body in the returned StatsResponseReader.
+// Only returns stats for managed containers.
+func (e *Engine) ContainerStatsOneShot(ctx context.Context, containerID string) (container.StatsResponseReader, error) {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return container.StatsResponseReader{}, ErrContainerStatsFailed(containerID, err)
+	}
+	if !isManaged {
+		return container.StatsResponseReader{}, ErrContainerNotFound(containerID)
+	}
+	stats, err := e.APIClient.ContainerStatsOneShot(ctx, containerID)
+	if err != nil {
+		return container.StatsResponseReader{}, ErrContainerStatsFailed(containerID, err)
+	}
+	return stats, nil
+}
+
+// ContainerUpdate updates a container's resource constraints.
+// Only updates managed containers.
+func (e *Engine) ContainerUpdate(ctx context.Context, containerID string, updateConfig container.UpdateConfig) (container.ContainerUpdateOKBody, error) {
+	isManaged, err := e.IsContainerManaged(ctx, containerID)
+	if err != nil {
+		return container.ContainerUpdateOKBody{}, ErrContainerUpdateFailed(containerID, err)
+	}
+	if !isManaged {
+		return container.ContainerUpdateOKBody{}, ErrContainerNotFound(containerID)
+	}
+	resp, err := e.APIClient.ContainerUpdate(ctx, containerID, updateConfig)
+	if err != nil {
+		return container.ContainerUpdateOKBody{}, ErrContainerUpdateFailed(containerID, err)
+	}
+	return resp, nil
+}
