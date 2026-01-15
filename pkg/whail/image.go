@@ -12,6 +12,7 @@ import (
 // Labels are applied via the build options.
 func (e *Engine) ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error) {
 	// Merge labels: base managed + config + user-provided
+	// TODO: will this mutation be problematic if options is reused?
 	options.Labels = MergeLabels(
 		e.imageLabels(),
 		options.Labels,
@@ -36,8 +37,10 @@ func (e *Engine) ImageRemove(ctx context.Context, imageID string, options image.
 // ImageList lists images matching the filter.
 // The managed label filter is automatically injected.
 func (e *Engine) ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
+	// TODO: this seems sloppy. overwriting users filters without merging them. prob need a copy to preserve options
 	f := e.newManagedFilter()
-	return e.APIClient.ImageList(ctx, image.ListOptions{Filters: f})
+	options.Filters = f
+	return e.APIClient.ImageList(ctx, options)
 }
 
 // ImageInspect inspects an image.

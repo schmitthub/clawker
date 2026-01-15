@@ -28,11 +28,13 @@
 
 ## Bugs
 
+[ ] Merging lables and filters needs to return a deep copy instead of mutating user input
 [ ] Tests are a fucking mess so putting this under bugs. need to do it one cmd at a time so claude can focus
 [ ] Terminal still locks when quitting out of the container when the CC initial setup page (auth, accept dir, etc) is active. devcontainer has the same issue
 
 ## Enhancements
 
+[ ] Add logger to whailer engine
 [ ] Update config template to have all vars in it, commented out. have a helper function describe the entire config schema
 [ ] figure out what you're gunna do about seamlessly handling git creds :D, prob just copy mount ssh dir
 [ ] I will need incorporate a mimic of docker attach for container shell session detachment and re-attachment. Right now we can leverage `run` with a --detach flag to start a claude command. Users might want to leave containers running a job and re-log into the same shell session later

@@ -95,8 +95,8 @@ com.clawker.agent=<agent-name>
 └─────────────────────┬───────────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────────┐
-│                   pkg/docker                                 │
-│              (External Engine - Reusable)                    │
+│                   pkg/whailer                                │
+│              (External Engine - Reusable docker decorator)   │
 │         - Label-based selector injection                     │
 │         - Whitelist of allowed operations                    │
 │         - Standalone library for other projects              │
@@ -108,20 +108,55 @@ com.clawker.agent=<agent-name>
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3.1 External Engine (`pkg/docker`)
+### 3.1 External Engine (`pkg/whailer`)
 
-A standalone, reusable library for building isolated Docker clients. Designed for use in other container-based AI wrapper projects.
+A standalone, reusable library for building isolated Docker clients. Designed for use in other container-based AI wrapper projects. Decorates docker client to scope methods to resources with managed labels while adding utility methods for filtering, checking, option merging.
 
 **Core Mechanism: Selector Injection**
 
-The engine wraps Docker SDK calls and automatically injects label filters:
+The engine wraps Docker SDK and injects label filtering logic for some methods. :
 
 ```go
 // User calls:
 engine.ContainerList(ctx, opts)
 
 // Engine transforms to:
-client.ContainerList(ctx, opts.WithLabelFilter("com.clawker.managed=true"))
+// ContainerList lists containers matching the filter.
+// The managed label filter is automatically injected.
+func (e *Engine) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
+ options.Filters = e.injectManagedFilter(options.Filters)
+ return e.APIClient.ContainerList(ctx, options)
+}
+
+// User calls:
+engine.ContainerInspect(ctx, containerID)
+// ContainerInspect inspects a container.
+// Only inspects managed containers.
+func (e *Engine) ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+ isManaged, err := e.IsContainerManaged(ctx, containerID) // added checker method
+ if err != nil {
+  return types.ContainerJSON{}, ErrContainerInspectFailed(containerID, err)
+ }
+ if !isManaged {
+  return types.ContainerJSON{}, ErrContainerNotFound(containerID)
+ }
+ return e.APIClient.ContainerInspect(ctx, containerID)
+}
+
+// checker method for if container is managed
+// IsContainerManaged checks if a container has the managed label.
+func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bool, error) {
+ info, err := e.APIClient.ContainerInspect(ctx, containerID)
+ if err != nil {
+  if client.IsErrNotFound(err) {
+   return false, nil
+  }
+  return false, err
+ }
+
+ val, ok := info.Config.Labels[e.managedLabelKey]
+ return ok && val == e.managedLabelValue, nil
+}
 ```
 
 **Whitelist Approach**
