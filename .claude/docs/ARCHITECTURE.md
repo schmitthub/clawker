@@ -75,6 +75,79 @@ func ParseContainerName(name string) (project, agent string, ok bool)
 func GenerateRandomName() string                        // Docker-style adjective-noun
 ```
 
+## Container Commands (pkg/cmd/container)
+
+Docker CLI-compatible subcommands for direct container management.
+
+Location: `pkg/cmd/container/`
+
+### Command Structure
+
+The `container` parent command groups Docker-like subcommands:
+
+```
+clawker container
+├── list      (aliases: ls, ps)    List containers
+├── inspect                         Display detailed container info (JSON)
+├── logs                            Fetch container logs
+├── start                           Start stopped containers
+├── stop                            Stop running containers
+├── kill                            Kill containers with signal
+├── pause                           Pause running containers
+├── unpause                         Unpause paused containers
+└── remove    (alias: rm)          Remove containers
+```
+
+### Design Pattern
+
+These commands follow Docker CLI mimicry:
+
+1. **Positional Arguments**: Container names are positional args, not flags
+   - `clawker container stop clawker.myapp.ralph` (not `--name` or `--agent`)
+   - Multiple containers supported: `clawker container stop c1 c2 c3`
+
+2. **Use `internal/docker.Client`**: All commands use the clawker Docker client
+   ```go
+   client, err := docker.NewClient(ctx)
+   if err != nil {
+       return cmdutil.HandleError(err)
+   }
+   defer client.Close()
+   ```
+
+3. **Args Validation via Cobra**: Use `Args: cobra.MinimumNArgs(1)` for required containers
+
+4. **File Naming**: Use long names (e.g., `list.go`, `remove.go`), alias short names in command
+
+### Command Files
+
+| File | Commands | Description |
+|------|----------|-------------|
+| `container.go` | `container` | Parent command, registers subcommands |
+| `list.go` | `list`, `ls`, `ps` | List containers with `--all`, `--project` |
+| `inspect.go` | `inspect` | JSON output of container details |
+| `logs.go` | `logs` | `--follow`, `--tail`, `--timestamps`, `--since`, `--until` |
+| `start.go` | `start` | Start stopped containers |
+| `stop.go` | `stop` | `--time`, `--signal` |
+| `kill.go` | `kill` | `--signal` (default: SIGKILL) |
+| `pause.go` | `pause`, `unpause` | Pause/unpause containers |
+| `remove.go` | `remove`, `rm` | `--force`, `--volumes` |
+
+### Test Pattern
+
+Tests use RunE override to capture options without execution:
+
+```go
+cmd.RunE = func(cmd *cobra.Command, args []string) error {
+    cmdOpts = &ListOptions{}
+    cmdOpts.All, _ = cmd.Flags().GetBool("all")
+    cmdOpts.Project, _ = cmd.Flags().GetString("project")
+    return nil
+}
+```
+
+---
+
 ## Whail Engine (pkg/whail)
 
 Reusable Docker engine library with label-based resource isolation. Designed for use in other container-based projects.

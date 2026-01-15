@@ -99,6 +99,24 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 | `ls`, `logs` | Inspection |
 | `rm` (alias: `prune`), `rm --unused` | Cleanup |
 | `config check`, `monitor *` | Configuration/observability |
+| `container *` | Docker CLI-compatible container management |
+
+### Container Commands (Docker CLI Mimicry)
+
+The `clawker container` command group provides Docker CLI-compatible subcommands:
+
+| Command | Description |
+|---------|-------------|
+| `container list` (aliases: `ls`, `ps`) | List containers |
+| `container inspect` | Display detailed container info (JSON) |
+| `container logs` | Fetch container logs |
+| `container start` | Start stopped containers |
+| `container stop` | Stop running containers |
+| `container kill` | Kill containers with signal |
+| `container pause` / `unpause` | Pause/unpause containers |
+| `container remove` (alias: `rm`) | Remove containers |
+
+These commands use positional arguments for container names (e.g., `clawker container stop clawker.myapp.ralph`) rather than `--agent` flags, matching Docker's interface.
 
 ## Configuration (clawker.yaml)
 

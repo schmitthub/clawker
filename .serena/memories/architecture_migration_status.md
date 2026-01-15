@@ -140,9 +140,34 @@ Created parent management commands for Docker CLI mimicry:
 
 Commands appear in CLI help as "Additional help topics" until subcommands are added (Task 3.3).
 
-### Task 3.3: Implement Container Commands - ⏳ NEXT
+### Task 3.3: Implement Container Commands - 🔄 IN PROGRESS (2026-01-15)
 
-### Remaining Tasks (3.3-3.7)
+Created 9 container subcommands in `pkg/cmd/container/`:
+
+**Completed Commands:**
+| Command | File | Description |
+|---------|------|-------------|
+| `list` | `list.go` | List containers (aliases: ls, ps) |
+| `remove` | `remove.go` | Remove containers (alias: rm) |
+| `start` | `start.go` | Start stopped containers |
+| `stop` | `stop.go` | Stop running containers |
+| `logs` | `logs.go` | Fetch container logs |
+| `inspect` | `inspect.go` | Display detailed info (JSON) |
+| `kill` | `kill.go` | Kill with custom signal |
+| `pause` | `pause.go` | Pause container processes |
+| `unpause` | `pause.go` | Resume paused containers |
+
+**All commands:**
+- Accept container names as positional arguments (Docker-like)
+- Use `internal/docker.Client` instead of legacy `internal/engine`
+- Include comprehensive unit tests
+
+**Remaining Commands:**
+- `create`, `run`, `exec`, `attach`
+- `restart`, `cp`
+- `top`, `stats`, `wait`, `port`, `rename`, `update`
+
+### Remaining Tasks (3.4-3.7)
 
 See `architecture_migration_tasks` memory for full task list.
 
@@ -190,6 +215,11 @@ type Client struct {
 8. **Error wrapping consistency** - all methods should wrap errors consistently, including in helper functions like `IsContainerManaged`
 9. **Test helper deduplication** - test files in the same package share helpers; avoid duplicate functions like `generateCopyContainerName`
 10. **Channel-based methods need special testing** - verify both the response channel AND error channel behavior, including nil checks
+11. **CLI command naming**: Use long names for files (e.g., `list.go` not `ls.go`), alias short names in cobra
+12. **Cobra test pattern**: Override `RunE` to capture options without executing, use `splitArgs` helper for parsing
+13. **Commands use positional args**: Docker-like interface - `clawker container rm NAME` not `clawker container rm --name NAME`
+14. **Parent commands**: Add subcommands alphabetically with `cmd.AddCommand()`, Cobra auto-sorts in help output
+15. **Test expectedSubcommands**: Keep sorted alphabetically to match Cobra's output order
 
 ## How to Resume
 
