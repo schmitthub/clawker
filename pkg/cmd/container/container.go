@@ -31,12 +31,15 @@ container management commands.`,
 	}
 
 	// Add subcommands
-	// Note: Subcommands will be added in Task 3.3
-	// cmd.AddCommand(NewCmdLs(f))
-	// cmd.AddCommand(NewCmdRm(f))
-	// cmd.AddCommand(NewCmdStart(f))
-	// cmd.AddCommand(NewCmdStop(f))
-	// etc.
+	cmd.AddCommand(NewCmdInspect(f))
+	cmd.AddCommand(NewCmdKill(f))
+	cmd.AddCommand(NewCmdList(f))
+	cmd.AddCommand(NewCmdLogs(f))
+	cmd.AddCommand(NewCmdPause(f))
+	cmd.AddCommand(NewCmdRemove(f))
+	cmd.AddCommand(NewCmdStart(f))
+	cmd.AddCommand(NewCmdStop(f))
+	cmd.AddCommand(NewCmdUnpause(f))
 
 	return cmd
 }

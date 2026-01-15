@@ -222,23 +222,30 @@ The assistant should:
 
 ### Task 3.3: Implement Container Commands
 
+**Status**: IN PROGRESS (2026-01-15)
 **Order**: Start with simplest, build up
 **Reference**: `docker-cli-map.md` Container Commands section
 
-- [ ] `container ls` (refactor from `list`)
-- [ ] `container rm` (refactor from `remove`)
-- [ ] `container start` / `container stop` (refactor)
-- [ ] `container logs` (refactor from `logs`)
+Completed:
+- [x] `container list` (with aliases ls, ps)
+- [x] `container remove` (with alias rm)
+- [x] `container start`
+- [x] `container stop`
+- [x] `container logs`
+- [x] `container inspect`
+- [x] `container kill`
+- [x] `container pause`
+- [x] `container unpause`
+- [x] Tests for all completed commands
+
+Remaining:
 - [ ] `container create` (new)
 - [ ] `container run` (refactor - Docker-style, no FindOrCreate)
 - [ ] `container exec` (new)
 - [ ] `container attach` (new)
-- [ ] `container inspect` (new)
-- [ ] `container kill` / `pause` / `unpause` (new)
 - [ ] `container restart` (refactor)
 - [ ] `container cp` (new)
 - [ ] `container top` / `stats` / `wait` / `port` / `rename` / `update` (new)
-- [ ] Add tests for new commands
 
 ### Task 3.4: Implement Image Commands
 
@@ -458,6 +465,31 @@ Track each session's progress here:
 - **Key Learnings**:
   - Cobra shows parent commands without subcommands under "Additional help topics"
   - Once subcommands are added, they move to "Available Commands"
+
+### Session 9 (2026-01-15)
+
+- **Duration**: ~45 minutes
+- **Work Done**:
+  - STARTED Task 3.3: Implement Container Commands
+  - Created 9 new container subcommands using `internal/docker` client:
+    - `pkg/cmd/container/list.go` - List containers (aliases: ls, ps)
+    - `pkg/cmd/container/remove.go` - Remove containers (alias: rm)
+    - `pkg/cmd/container/start.go` - Start stopped containers
+    - `pkg/cmd/container/stop.go` - Stop running containers
+    - `pkg/cmd/container/logs.go` - Fetch container logs
+    - `pkg/cmd/container/inspect.go` - Display detailed container info (JSON)
+    - `pkg/cmd/container/kill.go` - Kill containers with signal
+    - `pkg/cmd/container/pause.go` - Pause/unpause containers
+  - Created comprehensive tests for all commands
+  - Updated `container.go` parent command to register all subcommands
+  - All tests passing: `go test ./...`
+  - CLI shows "Available Commands" with all 9 subcommands
+- **Next**: Continue Task 3.3 - Implement remaining container commands (create, run, exec, attach, restart, cp, top, stats, etc.)
+- **Blockers**: None
+- **Key Learnings**:
+  - Commands use positional args for container names (Docker-like)
+  - Helper function `splitArgs` shared across test files in same package
+  - Commands use `internal/docker.Client` instead of legacy `internal/engine`
 
 ---
 

@@ -43,12 +43,25 @@ func TestNewCmdContainer_Subcommands(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdContainer(f)
 
-	// Currently no subcommands are registered (Task 3.3 will add them)
-	// This test will be expanded when subcommands are added
 	subcommands := cmd.Commands()
 
-	// For now, expect no subcommands
-	if len(subcommands) != 0 {
-		t.Errorf("expected 0 subcommands (none registered yet), got %d", len(subcommands))
+	// Check expected subcommands are registered
+	expectedSubcommands := []string{"inspect", "kill", "list", "logs", "pause", "remove", "start", "stop", "unpause"}
+	if len(subcommands) != len(expectedSubcommands) {
+		t.Errorf("expected %d subcommands, got %d", len(expectedSubcommands), len(subcommands))
+	}
+
+	// Verify each expected subcommand is present
+	for _, expected := range expectedSubcommands {
+		found := false
+		for _, sub := range subcommands {
+			if sub.Name() == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected subcommand '%s' not found", expected)
+		}
 	}
 }
