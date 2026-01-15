@@ -214,6 +214,7 @@ The assistant should:
 - [ ] Create `pkg/cmd/image/image.go` - parent command
 - [ ] Ensure `pkg/cmd/volume/` and `pkg/cmd/network/` exist
 - [ ] Update `pkg/cmd/root/root.go` to register management commands
+- [ ] Write tests for new commands, especially integration tests. prefer test case tables
 
 ### Task 3.3: Implement Container Commands
 
