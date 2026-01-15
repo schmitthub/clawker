@@ -127,12 +127,20 @@ Fixed issues identified during comprehensive PR review:
 - Added `TestContainerAttach` with managed/unmanaged verification
 - `IsContainerManaged` now wraps non-NotFound errors with `ErrContainerInspectFailed`
 
-### Task 3.2: Create Management Command Structure - ⏳ NEXT
+### Task 3.2: Create Management Command Structure - ✅ COMPLETED (2026-01-15)
 
-Create:
-- `pkg/cmd/container/container.go` - Parent command
-- `pkg/cmd/image/image.go` - Parent command
-- Update `pkg/cmd/root/root.go` to register management commands
+Created parent management commands for Docker CLI mimicry:
+- `pkg/cmd/container/container.go` - Container management parent command
+- `pkg/cmd/image/image.go` - Image management parent command
+- `pkg/cmd/volume/volume.go` - Volume management parent command
+- `pkg/cmd/network/network.go` - Network management parent command
+- Updated `pkg/cmd/root/root.go` to register all management commands
+- Added tests: `container_test.go`, `image_test.go`, `volume_test.go`, `network_test.go`
+- Updated `pkg/cmd/root/root_test.go` to verify management commands registered
+
+Commands appear in CLI help as "Additional help topics" until subcommands are added (Task 3.3).
+
+### Task 3.3: Implement Container Commands - ⏳ NEXT
 
 ### Remaining Tasks (3.3-3.7)
 

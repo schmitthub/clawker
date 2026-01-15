@@ -208,13 +208,17 @@ The assistant should:
 
 ### Task 3.2: Create Management Command Structure
 
-**Files**: New `pkg/cmd/container/`, `pkg/cmd/image/`
+**Status**: COMPLETED (2026-01-15)
+**Files**: `pkg/cmd/container/`, `pkg/cmd/image/`, `pkg/cmd/volume/`, `pkg/cmd/network/`
 
-- [ ] Create `pkg/cmd/container/container.go` - parent command
-- [ ] Create `pkg/cmd/image/image.go` - parent command
-- [ ] Ensure `pkg/cmd/volume/` and `pkg/cmd/network/` exist
-- [ ] Update `pkg/cmd/root/root.go` to register management commands
-- [ ] Write tests for new commands, especially integration tests. prefer test case tables
+- [x] Create `pkg/cmd/container/container.go` - parent command
+- [x] Create `pkg/cmd/image/image.go` - parent command
+- [x] Create `pkg/cmd/volume/volume.go` - parent command
+- [x] Create `pkg/cmd/network/network.go` - parent command
+- [x] Update `pkg/cmd/root/root.go` to register management commands
+- [x] Write tests: `container_test.go`, `image_test.go`, `volume_test.go`, `network_test.go`
+- [x] Update `pkg/cmd/root/root_test.go` to verify management commands
+- [x] All tests passing: `go test ./...`
 
 ### Task 3.3: Implement Container Commands
 
@@ -430,6 +434,30 @@ Track each session's progress here:
   - Channel-based methods like `ContainerWait` need goroutines to wrap SDK errors
   - Test helper functions should not be duplicated across test files in same package
   - `IsContainerManaged` silently returns `(false, nil)` for not-found - document this behavior
+
+### Session 8 (2026-01-15)
+
+- **Duration**: ~20 minutes
+- **Work Done**:
+  - COMPLETED Task 3.2: Create Management Command Structure
+  - Created 4 parent command files for Docker CLI mimicry:
+    - `pkg/cmd/container/container.go`
+    - `pkg/cmd/image/image.go`
+    - `pkg/cmd/volume/volume.go`
+    - `pkg/cmd/network/network.go`
+  - Updated `pkg/cmd/root/root.go` with imports and command registration
+  - Created tests for each parent command verifying:
+    - Command basics (Use, Short, Long, Example)
+    - No RunE (parent commands)
+    - No subcommands yet (Task 3.3 will add them)
+  - Updated `pkg/cmd/root/root_test.go` to include management commands
+  - All tests passing: `go test ./...`
+  - CLI shows management commands in "Additional help topics" (expected until subcommands added)
+- **Next**: Task 3.3 - Implement Container Commands (container ls, container rm, etc.)
+- **Blockers**: None
+- **Key Learnings**:
+  - Cobra shows parent commands without subcommands under "Additional help topics"
+  - Once subcommands are added, they move to "Available Commands"
 
 ---
 
