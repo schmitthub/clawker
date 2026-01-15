@@ -23,12 +23,18 @@ func TestNewCmdRoot(t *testing.T) {
 	// Note: 'shell' was removed (use 'run --shell' instead)
 	subcommands := cmd.Commands()
 	expectedCmds := map[string]bool{
+		// Top-level commands (shortcuts)
 		"init":   false,
 		"build":  false,
 		"run":    false, // Also aliased as 'start'
 		"stop":   false,
 		"logs":   false,
 		"config": false,
+		// Management commands
+		"container": false,
+		"image":     false,
+		"volume":    false,
+		"network":   false,
 	}
 
 	for _, sub := range subcommands {
