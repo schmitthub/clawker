@@ -204,6 +204,9 @@ All error constructors return `*DockerError` with user-friendly messages and "Ne
 - `ErrContainerUpdateFailed` - Update failed
 - `ErrCopyToContainerFailed` - Copy to container failed
 - `ErrCopyFromContainerFailed` - Copy from container failed
+- `ErrContainerStatPathFailed` - Stat path in container failed
+- `ErrContainerWaitFailed` - Wait for container failed
+- `ErrContainerListFailed` - List containers failed
 - `ErrVolumeCreateFailed` - Volume create failed
 - `ErrVolumeCopyFailed` - Copy to volume failed
 - `ErrVolumeNotFound` - Volume not found

@@ -289,6 +289,92 @@ func (e *Engine) ContainerXxx(ctx context.Context, containerID string, ...) erro
 - `CopyFromContainer` returns `(io.ReadCloser, container.PathStat, error)`
 - Use `container.PathStat` not `types.ContainerPathStat` (deprecated)
 
+## Channel-Based Method Pattern (ContainerWait)
+
+For methods returning channels, wrap SDK errors in a goroutine:
+
+```go
+func (e *Engine) ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+    errCh := make(chan error, 1)
+
+    // 1. Check managed status first
+    isManaged, err := e.IsContainerManaged(ctx, containerID)
+    if err != nil {
+        errCh <- ErrContainerWaitFailed(containerID, err)
+        close(errCh)
+        return nil, errCh  // Return nil for response channel
+    }
+    if !isManaged {
+        errCh <- ErrContainerNotFound(containerID)
+        close(errCh)
+        return nil, errCh
+    }
+
+    // 2. Get channels from SDK
+    waitCh, rawErrCh := e.APIClient.ContainerWait(ctx, containerID, condition)
+
+    // 3. Wrap SDK errors in goroutine for consistent UX
+    wrappedErrCh := make(chan error, 1)
+    go func() {
+        defer close(wrappedErrCh)
+        if err := <-rawErrCh; err != nil {
+            wrappedErrCh <- ErrContainerWaitFailed(containerID, err)
+        }
+    }()
+
+    return waitCh, wrappedErrCh
+}
+```
+
+**Key learnings:**
+- Return `nil` for response channel when container is unmanaged (callers must check!)
+- Always close error channel after sending error
+- Use buffered channels (`make(chan error, 1)`) to prevent goroutine leaks
+- Wrap SDK errors in goroutine to maintain consistent error formatting
+
+## IsContainerManaged Behavior
+
+**Important:** `IsContainerManaged` returns `(false, nil)` when container doesn't exist:
+
+```go
+func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bool, error) {
+    info, err := e.APIClient.ContainerInspect(ctx, containerID)
+    if err != nil {
+        if client.IsErrNotFound(err) {
+            return false, nil  // NOT AN ERROR - container just doesn't exist
+        }
+        return false, ErrContainerInspectFailed(containerID, err)  // Wrap other errors
+    }
+    // Check label...
+}
+```
+
+**Implications:**
+- Callers cannot distinguish "not found" from "exists but unmanaged"
+- Both cases result in `ErrContainerNotFound` from calling methods
+- This is intentional: from user's perspective, unmanaged = doesn't exist
+- Document this behavior when writing methods that use `IsContainerManaged`
+
+## Test Helper Pattern
+
+Test files in the same package share helpers. **Do not duplicate:**
+
+```go
+// container_test.go - define shared helpers
+func generateContainerName(prefix string) string {
+    return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
+func setupManagedContainer(ctx context.Context, t *testing.T, name string) string { ... }
+func setupUnmanagedContainer(ctx context.Context, t *testing.T, name string, labels map[string]string) string { ... }
+
+// copy_test.go - USE the shared helpers, don't redefine
+func TestCopyToContainer(t *testing.T) {
+    containerName := generateContainerName("test-copy")  // Uses shared helper
+    // ...
+}
+```
+
 ## Key Files to Check When Making Changes
 
 **New Architecture (preferred):**

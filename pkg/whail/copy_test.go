@@ -4,18 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"testing"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 )
-
-// generateCopyContainerName creates a unique container name for copy tests.
-func generateCopyContainerName(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
-}
 
 // createTarContent creates a tar archive with a single file.
 func createTarContent(filename, content string) (*bytes.Buffer, error) {
@@ -53,7 +46,7 @@ func TestCopyToContainer(t *testing.T) {
 	}{
 		{
 			name:          "should copy to managed container",
-			containerName: generateCopyContainerName("test-copy-to-managed"),
+			containerName: generateContainerName("test-copy-to-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
 				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
@@ -69,7 +62,7 @@ func TestCopyToContainer(t *testing.T) {
 		},
 		{
 			name:          "should not copy to unmanaged container",
-			containerName: generateCopyContainerName("test-copy-to-unmanaged"),
+			containerName: generateContainerName("test-copy-to-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
@@ -125,7 +118,7 @@ func TestCopyFromContainer(t *testing.T) {
 	}{
 		{
 			name:          "should copy from managed container",
-			containerName: generateCopyContainerName("test-copy-from-managed"),
+			containerName: generateContainerName("test-copy-from-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
 				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
@@ -141,7 +134,7 @@ func TestCopyFromContainer(t *testing.T) {
 		},
 		{
 			name:          "should not copy from unmanaged container",
-			containerName: generateCopyContainerName("test-copy-from-unmanaged"),
+			containerName: generateContainerName("test-copy-from-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
@@ -208,7 +201,7 @@ func TestContainerStatPath(t *testing.T) {
 	}{
 		{
 			name:          "should stat path in managed container",
-			containerName: generateCopyContainerName("test-stat-path-managed"),
+			containerName: generateContainerName("test-stat-path-managed"),
 			path:          "/etc/hostname",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
@@ -225,7 +218,7 @@ func TestContainerStatPath(t *testing.T) {
 		},
 		{
 			name:          "should not stat path in unmanaged container",
-			containerName: generateCopyContainerName("test-stat-path-unmanaged"),
+			containerName: generateContainerName("test-stat-path-unmanaged"),
 			path:          "/etc/hostname",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})

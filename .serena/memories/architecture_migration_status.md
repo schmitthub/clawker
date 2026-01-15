@@ -101,6 +101,9 @@ Added to `pkg/whail/errors.go`:
 - `ErrContainerUpdateFailed`
 - `ErrCopyToContainerFailed`
 - `ErrCopyFromContainerFailed`
+- `ErrContainerStatPathFailed`
+- `ErrContainerWaitFailed`
+- `ErrContainerListFailed`
 
 Tests added to `pkg/whail/container_test.go`:
 - `TestContainerKill`
@@ -108,6 +111,21 @@ Tests added to `pkg/whail/container_test.go`:
 - `TestContainerRestart`
 - `TestContainerRename`
 - `TestContainerTop`
+- `TestContainerWait` (added in PR review)
+- `TestContainerAttach` (added in PR review)
+
+### Task 3.1.1: PR Review Fixes - ✅ COMPLETED (2026-01-15)
+
+Fixed issues identified during comprehensive PR review:
+
+**Critical Fix:**
+- `ContainerWait` now wraps SDK channel errors for consistent user-friendly messaging
+
+**Important Fixes:**
+- Removed duplicate `generateCopyContainerName` helper from `copy_test.go` (uses shared `generateContainerName`)
+- Added `TestContainerWait` with channel semantics testing (nil wait channel for unmanaged)
+- Added `TestContainerAttach` with managed/unmanaged verification
+- `IsContainerManaged` now wraps non-NotFound errors with `ErrContainerInspectFailed`
 
 ### Task 3.2: Create Management Command Structure - ⏳ NEXT
 
@@ -159,6 +177,11 @@ type Client struct {
 3. All new container methods follow the same pattern: check `IsContainerManaged` first, return `ErrContainerNotFound` if not managed
 4. Tests use table-driven pattern with `setupFunc` and `cleanupFunc` for each test case
 5. Integration tests require Docker running and use a shared `testEngine` instance
+6. **ContainerWait returns channels** - errors from SDK must be wrapped in a goroutine to maintain consistent UX
+7. **IsContainerManaged** returns `(false, nil)` for not-found containers - callers cannot distinguish "not found" from "unmanaged"
+8. **Error wrapping consistency** - all methods should wrap errors consistently, including in helper functions like `IsContainerManaged`
+9. **Test helper deduplication** - test files in the same package share helpers; avoid duplicate functions like `generateCopyContainerName`
+10. **Channel-based methods need special testing** - verify both the response channel AND error channel behavior, including nil checks
 
 ## How to Resume
 

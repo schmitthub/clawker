@@ -409,6 +409,27 @@ Track each session's progress here:
 - **Next**: Task 3.2 - Create management command structure
 - **Blockers**: None
 
+### Session 7 (2026-01-15)
+
+- **Duration**: ~20 minutes
+- **Work Done**:
+  - COMPLETED Task 3.1.1: PR Review Fixes
+  - Ran comprehensive PR review using pr-review-toolkit agents (code-reviewer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer)
+  - Fixed critical issue: `ContainerWait` now wraps SDK channel errors
+  - Fixed important issues:
+    - Removed duplicate `generateCopyContainerName` from `copy_test.go`
+    - Added `TestContainerWait` with channel semantics testing
+    - Added `TestContainerAttach` with managed/unmanaged verification
+    - `IsContainerManaged` now wraps non-NotFound errors with `ErrContainerInspectFailed`
+  - All whail tests passing: `go test ./pkg/whail/...`
+  - Integration tests: 2 pre-existing failures unrelated to changes (TestRm_UnusedFlag_NoUnused, TestRun_BuildsImage)
+- **Next**: Task 3.2 - Create management command structure
+- **Blockers**: None
+- **Key Learnings**:
+  - Channel-based methods like `ContainerWait` need goroutines to wrap SDK errors
+  - Test helper functions should not be duplicated across test files in same package
+  - `IsContainerManaged` silently returns `(false, nil)` for not-found - document this behavior
+
 ---
 
 ## Notes

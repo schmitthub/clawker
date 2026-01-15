@@ -178,7 +178,20 @@ func (e *Engine) ContainerWait(ctx context.Context, containerID string, conditio
 		close(errCh)
 		return nil, errCh
 	}
-	return e.APIClient.ContainerWait(ctx, containerID, condition)
+
+	// Get channels from Docker SDK
+	waitCh, rawErrCh := e.APIClient.ContainerWait(ctx, containerID, condition)
+
+	// Wrap errors from the SDK to provide consistent user-friendly messages
+	wrappedErrCh := make(chan error, 1)
+	go func() {
+		defer close(wrappedErrCh)
+		if err := <-rawErrCh; err != nil {
+			wrappedErrCh <- ErrContainerWaitFailed(containerID, err)
+		}
+	}()
+
+	return waitCh, wrappedErrCh
 }
 
 // ContainerLogs streams container logs.
@@ -287,7 +300,8 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 		if client.IsErrNotFound(err) {
 			return false, nil
 		}
-		return false, err
+		// Wrap non-NotFound errors for consistent user-friendly messaging
+		return false, ErrContainerInspectFailed(containerID, err)
 	}
 
 	val, ok := info.Config.Labels[e.managedLabelKey]
