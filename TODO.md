@@ -77,3 +77,7 @@
 ## Marketing
 
 [ ] Make PRs in popular list repos like <https://github.com/hesreallyhim/awesome-claude-code>
+
+### Fun
+
+* [ ] Make a Claude Code skills repo purely about giving it different personalities
