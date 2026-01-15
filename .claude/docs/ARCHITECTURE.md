@@ -2,6 +2,110 @@
 
 > **LLM Memory Document**: Detailed abstractions and interfaces for the clawker codebase.
 
+## Docker Client (internal/docker)
+
+Clawker-specific middleware wrapping `pkg/whail` with label conventions and naming schemes.
+
+Location: `internal/docker/`
+
+### Client
+
+Embeds `whail.Engine` with clawker's label configuration. All whail methods are available directly.
+
+```go
+type Client struct {
+    *whail.Engine
+}
+
+func NewClient(ctx context.Context) (*Client, error)
+func (c *Client) Close() error
+
+// Clawker-specific high-level operations
+func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Container, error)
+func (c *Client) ListContainersByProject(ctx context.Context, project string, includeAll bool) ([]Container, error)
+func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (string, *types.Container, error)
+func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID string, force bool) error
+```
+
+**Key behaviors:**
+
+- `FindContainerByAgent` returns `(name, nil, nil)` when container not found (not an error)
+- `RemoveContainerWithVolumes` handles stopping, removal, and volume cleanup in one call
+- All whail.Engine methods available via embedding (e.g., `client.ContainerStart(ctx, id, opts)`)
+
+### Labels
+
+Clawker label constants and filter helpers.
+
+```go
+const (
+    LabelPrefix  = "com.clawker."
+    LabelManaged = "com.clawker.managed"
+    LabelProject = "com.clawker.project"
+    LabelAgent   = "com.clawker.agent"
+    LabelVersion = "com.clawker.version"
+    LabelImage   = "com.clawker.image"
+    LabelWorkdir = "com.clawker.workdir"
+    LabelPurpose = "com.clawker.purpose"
+)
+
+func ContainerLabels(project, agent, version, image, workdir string) map[string]string
+func VolumeLabels(project, agent, purpose string) map[string]string
+func ImageLabels(project, version string) map[string]string
+func NetworkLabels() map[string]string
+
+func ClawkerFilter() filters.Args    // All clawker resources
+func ProjectFilter(project string) filters.Args  // Specific project
+func AgentFilter(project, agent string) filters.Args  // Specific agent
+```
+
+### Names
+
+Container and volume naming conventions.
+
+```go
+const NamePrefix = "clawker"
+const NetworkName = "clawker-net"
+
+func ContainerName(project, agent string) string        // clawker.project.agent
+func ContainerNamePrefix(project string) string         // clawker.project.
+func VolumeName(project, agent, purpose string) string  // clawker.project.agent-purpose
+func ImageTag(project string) string                    // clawker-project:latest
+func ParseContainerName(name string) (project, agent string, ok bool)
+func GenerateRandomName() string                        // Docker-style adjective-noun
+```
+
+## Whail Engine (pkg/whail)
+
+Reusable Docker engine library with label-based resource isolation. Designed for use in other container-based projects.
+
+Location: `pkg/whail/`
+
+```go
+type Engine struct {
+    APIClient client.APIClient
+    // ... internal fields
+}
+
+func New(ctx context.Context) (*Engine, error)
+func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error)
+
+type EngineOptions struct {
+    LabelPrefix  string  // e.g., "com.clawker"
+    ManagedLabel string  // e.g., "managed"
+}
+```
+
+**Key behaviors:**
+
+- Automatically injects managed label filter on list operations
+- Refuses to operate on resources without managed label
+- Exposes wrapped Docker SDK methods with label enforcement
+
+**Note:** Commands should use `internal/docker.Client` rather than `pkg/whail` directly. The whail package is the reusable foundation; internal/docker adds clawker-specific semantics.
+
+---
+
 ## WorkspaceStrategy Interface
 
 Two implementations for host-container file sharing:
@@ -232,7 +336,9 @@ portBindings, exposedPorts, err := engine.ParsePortSpecs([]string{
 - `startPort-endPort:startPort-endPort` - port range mapping
 - Any format with `/tcp` or `/udp` suffix (default: tcp)
 
-## Container Naming and Labels
+## Container Naming and Labels (Legacy)
+
+> **Note:** This section documents `internal/engine/` which is being migrated to `internal/docker/`. For new code, use `internal/docker` labels and names instead.
 
 Hierarchical naming for multi-container support.
 

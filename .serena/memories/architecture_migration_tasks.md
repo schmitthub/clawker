@@ -116,50 +116,51 @@ The assistant should:
 
 ## Phase 2: Create `internal/docker` Layer (Thin)
 
-**Status**: NOT STARTED
-**Estimated Sessions**: 1-2
+**Status**: COMPLETED (2026-01-14)
+**Actual Sessions**: 1
 
-### Task 2.1: Create client.go
+### Task 2.1: Create labels.go
 
-- [ ] Create `internal/docker/` directory
-- [ ] Create `internal/docker/client.go` with:
-  - [ ] `Client` struct wrapping `*whail.Engine`
-  - [ ] `NewClient(ctx, cfg)` that configures whail with clawker labels
-  - [ ] `Close()` method
-  - [ ] Expose `Engine()` for direct access when needed
+- [x] Create `internal/docker/` directory
+- [x] Create `internal/docker/labels.go` with:
+  - [x] Clawker label key constants (`LabelProject`, `LabelAgent`, etc.)
+  - [x] `ContainerLabels()`, `VolumeLabels()`, `ImageLabels()`, `NetworkLabels()`
+  - [x] Filter functions: `ClawkerFilter()`, `ProjectFilter()`, `AgentFilter()`
 
-### Task 2.2: Create labels.go
+### Task 2.2: Create names.go
 
-- [ ] Create `internal/docker/labels.go` with:
-  - [ ] Clawker label key constants (`LabelProject`, `LabelAgent`, etc.)
-  - [ ] Move constants from `internal/engine/labels.go`
-  - [ ] `ContainerLabels(project, agent, version, image, workdir)` helper
-  - [ ] `VolumeLabels(project, agent, purpose)` helper
+- [x] Create `internal/docker/names.go`:
+  - [x] `ContainerName(project, agent)`
+  - [x] `VolumeName(project, agent, purpose)`
+  - [x] `ParseContainerName(name)`
+  - [x] `GenerateRandomName()`
+  - [x] `ImageTag(project)`
+  - [x] `NetworkName` constant
 
-### Task 2.3: Create names.go
+### Task 2.3: Create client.go
 
-- [ ] Create `internal/docker/names.go`:
-  - [ ] Move from `internal/engine/names.go`
-  - [ ] `ContainerName(project, agent)`
-  - [ ] `VolumeName(project, agent, purpose)`
-  - [ ] `ParseContainerName(name)`
-  - [ ] `GenerateRandomName()`
-  - [ ] `ImageTag(project)`
+- [x] Create `internal/docker/client.go` with:
+  - [x] `Client` struct wrapping `*whail.Engine`
+  - [x] `NewClient(ctx)` that configures whail with clawker labels
+  - [x] `Close()` method
+  - [x] `Engine()` for direct access when needed
+  - [x] `ListContainers()`, `ListContainersByProject()`
+  - [x] `FindContainerByAgent()` with graceful not-found handling
+  - [x] `RemoveContainerWithVolumes()`
 
-### Task 2.4: Create agent.go (thin wrappers)
+### Task 2.4: agent.go - SKIPPED
 
-- [ ] Create `internal/docker/agent.go` with:
-  - [ ] `RunAgent(ctx, agent, opts)` - thin, composes Engine calls
-  - [ ] `StopAgent(ctx, agent, opts)` - thin
-  - [ ] `RemoveAgent(ctx, agent, opts)` - thin
-  - [ ] `ListAgents(ctx, opts)` - thin
-  - [ ] `RestartAgent(ctx, agent, opts)` - thin
+- Not needed: Commands compose operations directly
+- No `RunAgent`, `StopAgent` etc. methods exist in current codebase
+- Adding them would be new functionality, not migration
 
 ### Task 2.5: Run tests and verify
 
-- [ ] Write minimal tests for thin wrappers
-- [ ] `go test ./internal/docker/...`
-- [ ] Verify it uses `pkg/whail` correctly
+- [x] Created `labels_test.go` - unit tests for label constants and helpers
+- [x] Created `names_test.go` - unit tests for naming functions
+- [x] Created `client_test.go` - integration tests for Client
+- [x] `go test ./internal/docker/...` - all tests pass
+- [x] `go test ./...` - full test suite passes
 
 ---
 
@@ -317,6 +318,21 @@ Track each session's progress here:
   - Added tests for: ImageBuild with label injection
   - All tests passing: `go test ./...` and `go test ./pkg/whail/...`
 - **Next**: Start Phase 2 (create `internal/docker` layer)
+- **Blockers**: None
+
+### Session 4 (2026-01-14)
+
+- **Duration**: ~30 minutes
+- **Work Done**:
+  - COMPLETED Phase 2: Created `internal/docker` layer (thin)
+  - Created `labels.go` with clawker label constants and filter functions
+  - Created `names.go` with container/volume naming functions
+  - Created `client.go` wrapping whail.Engine with clawker config
+  - Created unit tests for labels and names
+  - Created integration tests for Client
+  - Decided to SKIP agent.go (not needed - commands compose operations directly)
+  - All tests passing: `go test ./...`
+- **Next**: Start Phase 3 (update commands to use `internal/docker`)
 - **Blockers**: None
 
 ---
