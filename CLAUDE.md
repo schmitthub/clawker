@@ -19,6 +19,9 @@
    - `resolve-library-id` first, then `get-library-docs`
    - For: Docker SDK, spf13/cobra, spf13/viper, rs/zerolog, gopkg.in/yaml.v3
 
+3. **ripgrep** - Use `ripgrep` instead of `grep`
+4. **exa-search** - When making web searches use `web_search_exa`
+
 ### Workflow Requirements
 
 **Planning**: You MUST adhere to @.claude/docs/DESIGN.md
