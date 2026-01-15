@@ -176,7 +176,7 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 
 // parseContainers converts Docker container list to Container slice.
 func parseContainers(containers []types.Container) []Container {
-	var result []Container
+	var result = make([]Container, 0, len(containers))
 	for _, c := range containers {
 		// Extract container name (remove leading slash)
 		name := ""
@@ -198,5 +198,6 @@ func parseContainers(containers []types.Container) []Container {
 			Created: c.Created,
 		})
 	}
+
 	return result
 }
