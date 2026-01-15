@@ -3,6 +3,8 @@ package docker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -87,17 +89,20 @@ func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string
 	containerName := ContainerName(project, agent)
 	ctr, err := c.FindContainerByName(ctx, containerName)
 	if err != nil {
-		// Check if it's a "not found" error
+		// Only treat "not found" as a non-error condition
 		var dockerErr *whail.DockerError
-		if errors.As(err, &dockerErr) && dockerErr.Op == "find" {
+		if errors.As(err, &dockerErr) && strings.Contains(dockerErr.Message, "not found") {
 			return containerName, nil, nil
 		}
-		return "", nil, err
+		// All other errors should be propagated
+		return "", nil, fmt.Errorf("failed to find container %q: %w", containerName, err)
 	}
 	return containerName, ctr, nil
 }
 
 // RemoveContainerWithVolumes removes a container and its associated volumes.
+// If force is true, volume cleanup errors are logged but not returned.
+// If force is false, volume cleanup errors are returned.
 func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID string, force bool) error {
 	// Get container info to find associated project/agent
 	info, err := c.ContainerInspect(ctx, containerID)
@@ -115,8 +120,8 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 			if !force {
 				return err
 			}
-			// Force kill if stop fails
-			logger.Warn().Err(err).Msg("failed to stop container gracefully, forcing")
+			// Graceful stop failed, but force is true so we'll attempt forced removal
+			logger.Warn().Err(err).Msg("failed to stop container gracefully, proceeding with forced removal")
 		}
 	}
 
@@ -127,35 +132,49 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 
 	// Find and remove associated volumes
 	if project != "" && agent != "" {
-		c.removeAgentVolumes(ctx, project, agent, force)
+		if err := c.removeAgentVolumes(ctx, project, agent, force); err != nil {
+			if !force {
+				return fmt.Errorf("container removed but volume cleanup failed: %w", err)
+			}
+			// Force mode: log but don't fail
+			logger.Warn().Err(err).Msg("volume cleanup incomplete")
+		}
 	}
 
 	return nil
 }
 
 // removeAgentVolumes removes all volumes associated with an agent.
-func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, force bool) {
+// Returns an error if any volume removal fails (unless the volume doesn't exist).
+func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, force bool) error {
+	var errs []string
+	removedByLabel := make(map[string]bool)
+
 	// Try label-based lookup first
-	// whail.VolumeList accepts map[string]string for extra labels
 	volumes, err := c.VolumeList(ctx, map[string]string{
 		LabelProject: project,
 		LabelAgent:   agent,
 	})
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to list volumes for cleanup")
-	}
-
-	removedByLabel := make(map[string]bool)
-	for _, vol := range volumes.Volumes {
-		if err := c.VolumeRemove(ctx, vol.Name, force); err != nil {
-			logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
-		} else {
-			logger.Debug().Str("volume", vol.Name).Msg("removed volume")
-			removedByLabel[vol.Name] = true
+		logger.Warn().Err(err).Msg("failed to list volumes for cleanup, trying fallback")
+		// Continue to fallback - don't return yet
+	} else {
+		// Only iterate if VolumeList succeeded (volumes.Volumes is valid)
+		for _, vol := range volumes.Volumes {
+			if err := c.VolumeRemove(ctx, vol.Name, force); err != nil {
+				// Check if it's a "not found" error (shouldn't happen but be safe)
+				if !isNotFoundError(err) {
+					logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
+					errs = append(errs, fmt.Sprintf("%s: %v", vol.Name, err))
+				}
+			} else {
+				logger.Debug().Str("volume", vol.Name).Msg("removed volume")
+				removedByLabel[vol.Name] = true
+			}
 		}
 	}
 
-	// Fallback: try removing by known volume names (for unlabeled volumes)
+	// Fallback: try removing by known volume names (for unlabeled volumes or if list failed)
 	knownVolumes := []string{
 		VolumeName(project, agent, "workspace"),
 		VolumeName(project, agent, "config"),
@@ -166,12 +185,34 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 			continue // Already removed via label lookup
 		}
 		if err := c.VolumeRemove(ctx, volName, force); err != nil {
-			// Ignore errors - volume may not exist
-			logger.Debug().Str("volume", volName).Err(err).Msg("fallback volume removal skipped")
+			// Only report errors that aren't "not found"
+			if !isNotFoundError(err) {
+				logger.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
+				errs = append(errs, fmt.Sprintf("%s: %v", volName, err))
+			} else {
+				logger.Debug().Str("volume", volName).Msg("volume does not exist, skipping")
+			}
 		} else {
 			logger.Debug().Str("volume", volName).Msg("removed volume via name fallback")
 		}
 	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to remove %d volume(s): %s", len(errs), strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// isNotFoundError checks if an error indicates a resource was not found.
+func isNotFoundError(err error) bool {
+	var dockerErr *whail.DockerError
+	if errors.As(err, &dockerErr) {
+		return strings.Contains(dockerErr.Message, "not found") ||
+			strings.Contains(dockerErr.Message, "No such")
+	}
+	// Also check for raw error message
+	return strings.Contains(err.Error(), "not found") ||
+		strings.Contains(err.Error(), "No such")
 }
 
 // parseContainers converts Docker container list to Container slice.

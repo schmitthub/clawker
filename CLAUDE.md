@@ -36,7 +36,8 @@
 │   ├── build/                 # Image building orchestration
 │   ├── config/                # Viper config loading + validation
 │   ├── credentials/           # Env vars, .env parsing, OTEL
-│   ├── engine/                # Docker SDK wrappers
+│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── engine/                # Docker SDK wrappers (legacy, being migrated)
 │   ├── monitor/               # Observability stack (Prometheus, Grafana)
 │   ├── term/                  # PTY/terminal handling
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -44,7 +45,8 @@
 │   ├── build/                 # Dockerfile templates, semver, npm registry
 │   ├── cmd/                   # Cobra commands (start, run, stop, ls, etc.)
 │   ├── cmdutil/               # Factory, error handling, output utilities
-│   └── logger/                # Zerolog setup
+│   ├── logger/                # Zerolog setup
+│   └── whail/                 # Reusable Docker engine with label-based isolation
 └── templates/                 # clawker.yaml scaffolding
 ```
 
@@ -61,8 +63,9 @@ go test ./...                             # Run tests
 
 | Abstraction | Purpose |
 |-------------|---------|
+| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
+| `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `DockerEngine` | Docker SDK with user-friendly errors + "Next Steps" |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 
