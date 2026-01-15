@@ -11,8 +11,9 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// ContainerCreate overrides to add managed labels
+// ContainerCreate overrides to add managed labels.
 // The provided labels are merged with the engine's configured labels.
+// Does not mutate the caller's config - creates an internal copy.
 func (e *Engine) ContainerCreate(
 	ctx context.Context,
 	config *container.Config,
@@ -22,13 +23,17 @@ func (e *Engine) ContainerCreate(
 	name string,
 	extraLabels ...map[string]string,
 ) (container.CreateResponse, error) {
-	// Merge labels: base managed + config + extra + user-provided
-	config.Labels = MergeLabels(
+	// Copy the config to avoid mutating caller's struct.
+	// Listen, pal - context is sacred. You don't touch what isn't yours.
+	configCopy := *config
+
+	// Merge labels into the copy: base managed + config + extra + user-provided
+	configCopy.Labels = MergeLabels(
 		e.containerLabels(extraLabels...),
 		config.Labels,
 	)
 
-	resp, err := e.APIClient.ContainerCreate(ctx, config, hostConfig, networkingConfig, platform, name)
+	resp, err := e.APIClient.ContainerCreate(ctx, &configCopy, hostConfig, networkingConfig, platform, name)
 	if err != nil {
 		return container.CreateResponse{}, ErrContainerCreateFailed(err)
 	}
