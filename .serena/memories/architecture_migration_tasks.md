@@ -7,12 +7,14 @@
 ## IMPORTANT: Phase 3 Pivot
 
 Phase 3 has been **pivoted** to implement Docker CLI command mimicry. Key changes:
+
 - Commands will mirror Docker CLI structure (`clawker container run`, `clawker container ls`, etc.)
 - Both top-level shortcuts AND management commands (like Docker)
 - `clawker run` will behave like `docker run` (always creates new container)
 - Keep `--agent` flag separate from `--name` for clawker-specific naming
 
 **Reference Documents**:
+
 - `.claude/docs/docker-cli-map.md` - Docker CLI → SDK mapping (1,740 lines)
 - `.claude/docs/docker_top_level_commands.md` - Commands to implement
 
@@ -231,6 +233,7 @@ The assistant should:
 - [ ] `container restart` (refactor)
 - [ ] `container cp` (new)
 - [ ] `container top` / `stats` / `wait` / `port` / `rename` / `update` (new)
+- [ ] Add tests for new commands
 
 ### Task 3.4: Implement Image Commands
 
@@ -241,18 +244,21 @@ The assistant should:
 - [ ] `image rm` (alias: `rmi`)
 - [ ] `image inspect` (new)
 - [ ] `image pull` (new)
+- [ ] Add tests for new commands
 
 ### Task 3.5: Implement Top-Level Shortcuts
 
 - [ ] Create shortcuts in `pkg/cmd/root/root.go`
 - [ ] Each shortcut delegates to management command
 - [ ] Maintain backward compatibility aliases
+- [ ] Add tests for new commands
 
 ### Task 3.6: Update internal/docker Layer
 
 - [ ] Update `internal/docker/client.go` to use new whail methods
 - [ ] Add agent resolution helpers
 - [ ] Remove internal/engine dependencies
+- [ ] Add tests for new functionality
 
 ### Task 3.7: Full Test Suite
 
