@@ -66,7 +66,10 @@ func (e *Engine) ContainerStop(ctx context.Context, containerID string, timeout 
 	if timeout != nil {
 		stopOptions.Timeout = timeout
 	}
-	return e.APIClient.ContainerStop(ctx, containerID, stopOptions)
+	if err := e.APIClient.ContainerStop(ctx, containerID, stopOptions); err != nil {
+		return ErrContainerStopFailed(containerID, err)
+	}
+	return nil
 }
 
 // ContainerRemove overrides to only remove managed containers.
@@ -78,17 +81,24 @@ func (e *Engine) ContainerRemove(ctx context.Context, containerID string, force 
 	if !isManaged {
 		return ErrContainerNotFound(containerID)
 	}
-	return e.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	if err := e.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
 		Force:         force,
 		RemoveVolumes: false,
-	})
+	}); err != nil {
+		return ErrContainerRemoveFailed(containerID, err)
+	}
+	return nil
 }
 
 // ContainerList lists containers matching the filter.
 // The managed label filter is automatically injected.
 func (e *Engine) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
 	options.Filters = e.injectManagedFilter(options.Filters)
-	return e.APIClient.ContainerList(ctx, options)
+	containers, err := e.APIClient.ContainerList(ctx, options)
+	if err != nil {
+		return nil, ErrContainerListFailed(err)
+	}
+	return containers, nil
 }
 
 // ContainerListAll lists all containers (including stopped) with the managed filter.
@@ -108,10 +118,14 @@ func (e *Engine) ContainerListByLabels(ctx context.Context, labels map[string]st
 	for k, v := range labels {
 		f.Add("label", k+"="+v)
 	}
-	return e.APIClient.ContainerList(ctx, container.ListOptions{
+	containers, err := e.APIClient.ContainerList(ctx, container.ListOptions{
 		All:     all,
 		Filters: f,
 	})
+	if err != nil {
+		return nil, ErrContainerListFailed(err)
+	}
+	return containers, nil
 }
 
 // ContainerInspect inspects a container.
@@ -124,7 +138,11 @@ func (e *Engine) ContainerInspect(ctx context.Context, containerID string) (type
 	if !isManaged {
 		return types.ContainerJSON{}, ErrContainerNotFound(containerID)
 	}
-	return e.APIClient.ContainerInspect(ctx, containerID)
+	result, err := e.APIClient.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return types.ContainerJSON{}, ErrContainerInspectFailed(containerID, err)
+	}
+	return result, nil
 }
 
 // ContainerAttach attaches to a container's TTY.
@@ -147,9 +165,15 @@ func (e *Engine) ContainerAttach(ctx context.Context, containerID string, option
 // ContainerWait waits for a container to exit.
 // Only waits for managed containers.
 func (e *Engine) ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+	errCh := make(chan error, 1)
+
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
-	if err != nil || !isManaged {
-		errCh := make(chan error, 1)
+	if err != nil {
+		errCh <- ErrContainerWaitFailed(containerID, err)
+		close(errCh)
+		return nil, errCh
+	}
+	if !isManaged {
 		errCh <- ErrContainerNotFound(containerID)
 		close(errCh)
 		return nil, errCh
@@ -167,43 +191,67 @@ func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options 
 	if !isManaged {
 		return nil, ErrContainerNotFound(containerID)
 	}
-	return e.APIClient.ContainerLogs(ctx, containerID, options)
+	logs, err := e.APIClient.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return nil, ErrContainerLogsFailed(containerID, err)
+	}
+	return logs, nil
 }
 
 // ContainerResize resizes a container's TTY.
 // Only resizes managed containers.
 func (e *Engine) ContainerResize(ctx context.Context, containerID string, height, width uint) error {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
-	if err != nil || !isManaged {
+	if err != nil {
+		return ErrContainerResizeFailed(containerID, err)
+	}
+	if !isManaged {
 		return ErrContainerNotFound(containerID)
 	}
-	return e.APIClient.ContainerResize(ctx, containerID, container.ResizeOptions{
+	if err := e.APIClient.ContainerResize(ctx, containerID, container.ResizeOptions{
 		Height: height,
 		Width:  width,
-	})
+	}); err != nil {
+		return ErrContainerResizeFailed(containerID, err)
+	}
+	return nil
 }
 
 // ContainerExecCreate creates an exec instance.
 // Only creates exec instances for managed containers.
 func (e *Engine) ContainerExecCreate(ctx context.Context, containerID string, opts container.ExecOptions) (types.IDResponse, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
-	if err != nil || !isManaged {
+	if err != nil {
+		return types.IDResponse{}, ErrContainerExecFailed(containerID, err)
+	}
+	if !isManaged {
 		return types.IDResponse{}, ErrContainerNotFound(containerID)
 	}
-	return e.APIClient.ContainerExecCreate(ctx, containerID, opts)
+	resp, err := e.APIClient.ContainerExecCreate(ctx, containerID, opts)
+	if err != nil {
+		return types.IDResponse{}, ErrContainerExecFailed(containerID, err)
+	}
+	return resp, nil
 }
 
 // ContainerExecAttach attaches to an exec instance.
 func (e *Engine) ContainerExecAttach(ctx context.Context, execID string, opts container.ExecStartOptions) (types.HijackedResponse, error) {
-	return e.APIClient.ContainerExecAttach(ctx, execID, opts)
+	resp, err := e.APIClient.ContainerExecAttach(ctx, execID, opts)
+	if err != nil {
+		return types.HijackedResponse{}, ErrExecAttachFailed(execID, err)
+	}
+	return resp, nil
 }
 
 // ContainerExecResize resizes an exec instance's TTY.
 func (e *Engine) ContainerExecResize(ctx context.Context, execID string, height, width uint) error {
-	return e.APIClient.ContainerExecResize(ctx, execID, container.ResizeOptions{
+	if err := e.APIClient.ContainerExecResize(ctx, execID, container.ResizeOptions{
 		Height: height,
 		Width:  width,
-	})
+	}); err != nil {
+		return ErrExecResizeFailed(execID, err)
+	}
+	return nil
 }
 
 // FindContainerByName finds a managed container by exact name.
@@ -217,7 +265,7 @@ func (e *Engine) FindContainerByName(ctx context.Context, name string) (*types.C
 		Filters: f,
 	})
 	if err != nil {
-		return nil, err
+		return nil, ErrContainerListFailed(err)
 	}
 
 	// Find exact match

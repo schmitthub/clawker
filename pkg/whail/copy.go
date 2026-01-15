@@ -48,14 +48,14 @@ func (e *Engine) CopyFromContainer(ctx context.Context, containerID, srcPath str
 func (e *Engine) ContainerStatPath(ctx context.Context, containerID, path string) (container.PathStat, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return container.PathStat{}, ErrCopyFromContainerFailed(containerID, err)
+		return container.PathStat{}, ErrContainerStatPathFailed(containerID, err)
 	}
 	if !isManaged {
 		return container.PathStat{}, ErrContainerNotFound(containerID)
 	}
 	stat, err := e.APIClient.ContainerStatPath(ctx, containerID, path)
 	if err != nil {
-		return container.PathStat{}, ErrCopyFromContainerFailed(containerID, err)
+		return container.PathStat{}, ErrContainerStatPathFailed(containerID, err)
 	}
 	return stat, nil
 }
