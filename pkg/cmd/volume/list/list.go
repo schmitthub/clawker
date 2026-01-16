@@ -14,8 +14,7 @@ import (
 
 // Options holds options for the list command.
 type Options struct {
-	Quiet  bool
-	Filter string
+	Quiet bool
 }
 
 // NewCmd creates the volume list command.
@@ -46,7 +45,6 @@ Volumes are used to persist data between container runs, including:
 	}
 
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Only display volume names")
-	cmd.Flags().StringVarP(&opts.Filter, "filter", "f", "", "Filter output based on conditions")
 
 	return cmd
 }
@@ -65,7 +63,8 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	// List volumes
 	resp, err := client.VolumeList(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list volumes: %w", err)
+		cmdutil.HandleError(err)
+		return err
 	}
 
 	if len(resp.Volumes) == 0 {

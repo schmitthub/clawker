@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -13,7 +14,6 @@ import (
 
 // Options holds options for the prune command.
 type Options struct {
-	All   bool
 	Force bool
 }
 
@@ -32,16 +32,12 @@ Use with caution as this will permanently delete data.`,
   clawker volume prune
 
   # Remove without confirmation prompt
-  clawker volume prune --force
-
-  # Remove all unused volumes (including named volumes)
-  clawker volume prune --all`,
+  clawker volume prune --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Remove all unused volumes, not just anonymous ones")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Do not prompt for confirmation")
 
 	return cmd
@@ -62,7 +58,11 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	if !opts.Force {
 		fmt.Fprint(os.Stderr, "WARNING! This will remove all unused clawker-managed volumes.\nAre you sure you want to continue? [y/N] ")
 		var response string
-		fmt.Scanln(&response)
+		if _, err := fmt.Scanln(&response); err != nil {
+			// Treat read errors (EOF, etc.) as "no"
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return nil
+		}
 		if response != "y" && response != "Y" {
 			fmt.Fprintln(os.Stderr, "Aborted.")
 			return nil
@@ -73,7 +73,8 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	// For now, list and remove volumes one by one as a workaround
 	resp, err := client.VolumeList(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list volumes: %w", err)
+		cmdutil.HandleError(err)
+		return err
 	}
 
 	if len(resp.Volumes) == 0 {
@@ -86,11 +87,19 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	for _, v := range resp.Volumes {
 		// Try to remove the volume (will fail if in use)
 		if err := client.VolumeRemove(ctx, v.Name, false); err != nil {
-			// Volume is likely in use, skip it
+			// Check if it's an "in use" error vs unexpected error
+			if strings.Contains(err.Error(), "volume is in use") {
+				continue
+			}
+			// Log unexpected errors but continue with other volumes
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove volume %s: %v\n", v.Name, err)
 			continue
 		}
 		removed++
-		reclaimedSpace += v.UsageData.Size
+		// UsageData may be nil if Docker didn't return size info
+		if v.UsageData != nil {
+			reclaimedSpace += v.UsageData.Size
+		}
 		fmt.Fprintf(os.Stderr, "Deleted: %s\n", v.Name)
 	}
 

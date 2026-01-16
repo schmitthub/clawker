@@ -14,7 +14,7 @@ import (
 
 // Options holds options for the inspect command.
 type Options struct {
-	Format string
+	// Format is reserved for future Go template support
 }
 
 // NewCmd creates the volume inspect command.
@@ -26,27 +26,22 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 		Short: "Display detailed information on one or more volumes",
 		Long: `Returns low-level information about clawker volumes.
 
-By default, outputs JSON. Use --format to extract specific fields.`,
+Outputs detailed volume information in JSON format.`,
 		Example: `  # Inspect a volume
   clawker volume inspect clawker.myapp.ralph-workspace
 
   # Inspect multiple volumes
-  clawker volume inspect clawker.myapp.ralph-workspace clawker.myapp.ralph-config
-
-  # Get specific field using Go template
-  clawker volume inspect --format '{{.Mountpoint}}' clawker.myapp.ralph-workspace`,
+  clawker volume inspect clawker.myapp.ralph-workspace clawker.myapp.ralph-config`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)
 		},
 	}
 
-	cmd.Flags().StringVarP(&opts.Format, "format", "f", "", "Format output using a Go template")
-
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, volumes []string) error {
+func run(_ *cmdutil.Factory, _ *Options, volumes []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
@@ -73,22 +68,14 @@ func run(_ *cmdutil.Factory, opts *Options, volumes []string) error {
 
 	// Output results
 	if len(results) > 0 {
-		if opts.Format != "" {
-			// TODO: Implement Go template formatting
-			// For now, just output JSON
-			if err := outputJSON(results); err != nil {
-				return err
-			}
-		} else {
-			if err := outputJSON(results); err != nil {
-				return err
-			}
+		if err := outputJSON(results); err != nil {
+			return err
 		}
 	}
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", e)
+			cmdutil.HandleError(e)
 		}
 		return fmt.Errorf("failed to inspect %d volume(s)", len(errs))
 	}

@@ -31,21 +31,6 @@ func TestNewCmd(t *testing.T) {
 			input:    "-f",
 			wantOpts: Options{Force: true},
 		},
-		{
-			name:     "all flag",
-			input:    "--all",
-			wantOpts: Options{All: true},
-		},
-		{
-			name:     "all flag short",
-			input:    "-a",
-			wantOpts: Options{All: true},
-		},
-		{
-			name:     "all and force flags",
-			input:    "-a -f",
-			wantOpts: Options{All: true, Force: true},
-		},
 	}
 
 	for _, tt := range tests {
@@ -58,7 +43,6 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
-				cmdOpts.All, _ = cmd.Flags().GetBool("all")
 				cmdOpts.Force, _ = cmd.Flags().GetBool("force")
 				return nil
 			}
@@ -76,7 +60,6 @@ func TestNewCmd(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.All, cmdOpts.All)
 			require.Equal(t, tt.wantOpts.Force, cmdOpts.Force)
 		})
 	}
@@ -94,11 +77,9 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("all"))
 	require.NotNil(t, cmd.Flags().Lookup("force"))
 
 	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("a"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 }
 

@@ -31,16 +31,6 @@ func TestNewCmd(t *testing.T) {
 			input:    "--quiet",
 			wantOpts: Options{Quiet: true},
 		},
-		{
-			name:     "filter flag",
-			input:    "-f dangling=true",
-			wantOpts: Options{Filter: "dangling=true"},
-		},
-		{
-			name:     "filter flag long",
-			input:    "--filter dangling=true",
-			wantOpts: Options{Filter: "dangling=true"},
-		},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +44,6 @@ func TestNewCmd(t *testing.T) {
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
 				cmdOpts.Quiet, _ = cmd.Flags().GetBool("quiet")
-				cmdOpts.Filter, _ = cmd.Flags().GetString("filter")
 				return nil
 			}
 
@@ -72,7 +61,6 @@ func TestNewCmd(t *testing.T) {
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
 			require.Equal(t, tt.wantOpts.Quiet, cmdOpts.Quiet)
-			require.Equal(t, tt.wantOpts.Filter, cmdOpts.Filter)
 		})
 	}
 }
@@ -91,9 +79,7 @@ func TestCmd_Properties(t *testing.T) {
 
 	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("quiet"))
-	require.NotNil(t, cmd.Flags().Lookup("filter"))
 
 	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("q"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 }

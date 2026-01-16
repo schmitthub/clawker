@@ -14,29 +14,16 @@ func TestNewCmd(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantOpts   Options
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
-			name:     "single volume",
-			input:    "myvolume",
-			wantOpts: Options{},
+			name:  "single volume",
+			input: "myvolume",
 		},
 		{
-			name:     "multiple volumes",
-			input:    "vol1 vol2",
-			wantOpts: Options{},
-		},
-		{
-			name:     "with format flag",
-			input:    "--format '{{.Mountpoint}}' myvolume",
-			wantOpts: Options{Format: "{{.Mountpoint}}"},
-		},
-		{
-			name:     "with format flag short",
-			input:    "-f '{{.Name}}' myvolume",
-			wantOpts: Options{Format: "{{.Name}}"},
+			name:  "multiple volumes",
+			input: "vol1 vol2",
 		},
 		{
 			name:       "no arguments",
@@ -50,13 +37,10 @@ func TestNewCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *Options
 			cmd := NewCmd(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Format, _ = cmd.Flags().GetString("format")
 				return nil
 			}
 
@@ -79,7 +63,6 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Format, cmdOpts.Format)
 		})
 	}
 }
@@ -94,10 +77,4 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
-
-	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("format"))
-
-	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 }
