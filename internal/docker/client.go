@@ -1,13 +1,18 @@
 package docker
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -38,6 +43,128 @@ func NewClient(ctx context.Context) (*Client, error) {
 // Close closes the underlying Docker connection.
 func (c *Client) Close() error {
 	return c.APIClient.Close()
+}
+
+// IsMonitoringActive checks if the clawker monitoring stack is running.
+// It looks for the otel-collector container on the clawker-net network.
+// Note: This method bypasses whail's label filtering because monitoring
+// containers are not clawker-managed resources.
+func (c *Client) IsMonitoringActive(ctx context.Context) bool {
+	// Use raw API client to bypass managed label filtering
+	// since monitoring containers aren't clawker-managed
+	containers, err := c.APIClient.ContainerList(ctx, container.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("name", "otel-collector"),
+			filters.Arg("status", "running"),
+		),
+	})
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to check monitoring status")
+		return false
+	}
+
+	// Check if any otel-collector container is running on clawker-net
+	for _, ctr := range containers {
+		if ctr.NetworkSettings != nil {
+			for netName := range ctr.NetworkSettings.Networks {
+				if netName == "clawker-net" {
+					logger.Debug().Msg("monitoring stack detected as active")
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// ImageExists checks if an image exists locally.
+// Returns true if the image exists, false if not found.
+// Note: This bypasses whail's label filtering since images may or may not be managed.
+func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
+	_, _, err := c.APIClient.ImageInspectWithRaw(ctx, imageRef)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// BuildImageOpts contains options for building an image.
+type BuildImageOpts struct {
+	Tag        string
+	Dockerfile string
+	BuildArgs  map[string]*string
+	NoCache    bool
+	Labels     map[string]string
+}
+
+// BuildImage builds a Docker image from a build context.
+// It processes the build output and logs progress.
+func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
+	options := types.ImageBuildOptions{
+		Tags:       []string{opts.Tag},
+		Dockerfile: opts.Dockerfile,
+		Remove:     true,
+		NoCache:    opts.NoCache,
+		BuildArgs:  opts.BuildArgs,
+		Labels:     opts.Labels,
+	}
+
+	resp, err := c.ImageBuild(ctx, buildContext, options)
+	if err != nil {
+		return fmt.Errorf("building image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Process the build output
+	return c.processBuildOutput(resp.Body)
+}
+
+// processBuildOutput processes and displays Docker build output.
+func (c *Client) processBuildOutput(reader io.Reader) error {
+	scanner := bufio.NewScanner(reader)
+
+	for scanner.Scan() {
+		var event struct {
+			Stream      string `json:"stream"`
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+
+		if event.Error != "" {
+			return fmt.Errorf("build error: %s", event.Error)
+		}
+
+		if event.ErrorDetail.Message != "" {
+			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
+		}
+
+		// Log build output (trimmed)
+		if stream := strings.TrimSpace(event.Stream); stream != "" {
+			// Only show step progress in debug mode
+			if strings.HasPrefix(stream, "Step ") {
+				logger.Info().Msg(stream)
+			} else {
+				logger.Debug().Msg(stream)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading build output: %w", err)
+	}
+
+	logger.Info().Msg("image build complete")
+	return nil
 }
 
 // Container represents a clawker-managed container with parsed metadata.

@@ -18,9 +18,9 @@ import (
 
 // Options holds options for the cp command.
 type Options struct {
-	Archive       bool
-	FollowLink    bool
-	CopyUIDGID    bool
+	Archive    bool
+	FollowLink bool
+	CopyUIDGID bool
 }
 
 // NewCmd creates a new cp command.

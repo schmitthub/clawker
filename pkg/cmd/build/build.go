@@ -7,7 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -88,16 +88,16 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		Msg("starting build")
 
 	// Connect to Docker
-	eng, err := engine.NewEngine(ctx)
+	client, err := docker.NewClient(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer eng.Close()
+	defer client.Close()
 
 	// Build image
-	imageTag := engine.ImageTag(cfg.Project)
-	builder := build.NewBuilder(eng, cfg, f.WorkDir)
+	imageTag := docker.ImageTag(cfg.Project)
+	builder := build.NewBuilder(client, cfg, f.WorkDir)
 
 	logger.Info().
 		Str("project", cfg.Project).
@@ -105,7 +105,7 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		Msg("building container image")
 
 	// add image labels
-	opts.Labels = engine.ImageLabels(
+	opts.Labels = docker.ImageLabels(
 		cfg.Project,
 		cfg.Version,
 	)

@@ -6,7 +6,7 @@ import (
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 )
 
 // Strategy defines the interface for workspace mounting strategies
@@ -18,13 +18,13 @@ type Strategy interface {
 	Mode() config.Mode
 
 	// Prepare sets up any required resources (volumes, etc.)
-	Prepare(ctx context.Context, eng *engine.Engine) error
+	Prepare(ctx context.Context, cli *docker.Client) error
 
 	// GetMounts returns the Docker mount configuration for the workspace
 	GetMounts() []mount.Mount
 
 	// Cleanup removes any temporary resources
-	Cleanup(ctx context.Context, eng *engine.Engine) error
+	Cleanup(ctx context.Context, cli *docker.Client) error
 
 	// ShouldPreserve returns true if resources should be preserved on down
 	ShouldPreserve() bool
@@ -66,12 +66,12 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 	return []mount.Mount{
 		{
 			Type:   mount.TypeVolume,
-			Source: engine.VolumeName(projectName, agentName, "config"),
+			Source: docker.VolumeName(projectName, agentName, "config"),
 			Target: "/home/claude/.claude",
 		},
 		{
 			Type:   mount.TypeVolume,
-			Source: engine.VolumeName(projectName, agentName, "history"),
+			Source: docker.VolumeName(projectName, agentName, "history"),
 			Target: "/commandhistory",
 		},
 	}
@@ -80,20 +80,18 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 // EnsureConfigVolumes creates config and history volumes with proper labels.
 // Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
-func EnsureConfigVolumes(ctx context.Context, eng *engine.Engine, projectName, agentName string) error {
-	vm := engine.NewVolumeManager(eng)
-
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error {
 	// Create config volume
-	configVolume := engine.VolumeName(projectName, agentName, "config")
-	configLabels := engine.VolumeLabels(projectName, agentName, "config")
-	if _, err := vm.EnsureVolume(ctx, configVolume, configLabels); err != nil {
+	configVolume := docker.VolumeName(projectName, agentName, "config")
+	configLabels := docker.VolumeLabels(projectName, agentName, "config")
+	if _, err := cli.EnsureVolume(ctx, configVolume, configLabels); err != nil {
 		return fmt.Errorf("failed to create config volume: %w", err)
 	}
 
 	// Create history volume
-	historyVolume := engine.VolumeName(projectName, agentName, "history")
-	historyLabels := engine.VolumeLabels(projectName, agentName, "history")
-	if _, err := vm.EnsureVolume(ctx, historyVolume, historyLabels); err != nil {
+	historyVolume := docker.VolumeName(projectName, agentName, "history")
+	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
+	if _, err := cli.EnsureVolume(ctx, historyVolume, historyLabels); err != nil {
 		return fmt.Errorf("failed to create history volume: %w", err)
 	}
 

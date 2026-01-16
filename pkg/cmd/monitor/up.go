@@ -7,7 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -118,14 +118,14 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 // that were started before the monitoring stack and won't have telemetry enabled.
 func checkRunningContainers() {
 	ctx := context.Background()
-	eng, err := engine.NewEngine(ctx)
+	cli, err := docker.NewClient(ctx)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to connect to docker for container check")
 		return
 	}
-	defer eng.Close()
+	defer cli.Close()
 
-	containers, err := eng.ListRunningClawkerContainers(ctx)
+	containers, err := cli.ListContainers(ctx, false)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")
 		return

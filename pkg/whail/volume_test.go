@@ -408,13 +408,12 @@ func TestIsVolumeManaged(t *testing.T) {
 	}
 }
 
-
 func TestVolumesPrune(t *testing.T) {
 	tests := []struct {
-		name                string
-		setupFunc           func(ctx context.Context, t *testing.T) string
-		cleanupFunc         func(ctx context.Context, t *testing.T, volumeName string)
-		shouldBeRemoved     bool
+		name                 string
+		setupFunc            func(ctx context.Context, t *testing.T) string
+		cleanupFunc          func(ctx context.Context, t *testing.T, volumeName string)
+		shouldBeRemoved      bool
 		skipUnmanagedCleanup bool
 	}{
 		{

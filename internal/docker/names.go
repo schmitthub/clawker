@@ -127,3 +127,9 @@ func ParseContainerName(name string) (project, agent string, ok bool) {
 	}
 	return parts[1], parts[2], true
 }
+
+// IsAlpineImage checks if an image reference appears to be Alpine-based.
+func IsAlpineImage(imageRef string) bool {
+	imageRef = strings.ToLower(imageRef)
+	return strings.Contains(imageRef, "alpine")
+}

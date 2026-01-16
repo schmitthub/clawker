@@ -185,7 +185,6 @@ func TestImageRemove(t *testing.T) {
 	}
 }
 
-
 func TestImagesPrune(t *testing.T) {
 	ctx := context.Background()
 

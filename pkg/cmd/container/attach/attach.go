@@ -17,8 +17,8 @@ import (
 
 // Options holds options for the attach command.
 type Options struct {
-	NoStdin   bool
-	SigProxy  bool
+	NoStdin    bool
+	SigProxy   bool
 	DetachKeys string
 }
 

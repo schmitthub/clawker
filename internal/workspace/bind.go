@@ -5,7 +5,7 @@ import (
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
@@ -30,7 +30,7 @@ func (s *BindStrategy) Mode() config.Mode {
 }
 
 // Prepare sets up resources for bind mount (no-op for bind mode)
-func (s *BindStrategy) Prepare(ctx context.Context, eng *engine.Engine) error {
+func (s *BindStrategy) Prepare(ctx context.Context, cli *docker.Client) error {
 	logger.Debug().
 		Str("strategy", s.Name()).
 		Str("host_path", s.config.HostPath).
@@ -58,7 +58,7 @@ func (s *BindStrategy) GetMounts() []mount.Mount {
 }
 
 // Cleanup removes resources (no-op for bind mode)
-func (s *BindStrategy) Cleanup(ctx context.Context, eng *engine.Engine) error {
+func (s *BindStrategy) Cleanup(ctx context.Context, cli *docker.Client) error {
 	logger.Debug().
 		Str("strategy", s.Name()).
 		Msg("cleanup called (no-op for bind mode)")

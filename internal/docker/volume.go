@@ -1,4 +1,4 @@
-package engine
+package docker
 
 import (
 	"archive/tar"
@@ -12,23 +12,15 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
-// VolumeManager handles volume operations for workspaces
-type VolumeManager struct {
-	engine *Engine
-}
-
-// NewVolumeManager creates a new volume manager
-func NewVolumeManager(engine *Engine) *VolumeManager {
-	return &VolumeManager{engine: engine}
-}
-
-// EnsureVolume creates a volume if it doesn't exist, returns true if created
-func (vm *VolumeManager) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error) {
-	exists, err := vm.engine.VolumeExists(ctx, name)
+// EnsureVolume creates a volume if it doesn't exist, returns true if created.
+func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error) {
+	exists, err := c.VolumeExists(ctx, name)
 	if err != nil {
 		return false, err
 	}
@@ -38,7 +30,11 @@ func (vm *VolumeManager) EnsureVolume(ctx context.Context, name string, labels m
 		return false, nil
 	}
 
-	_, err = vm.engine.VolumeCreate(ctx, name, labels)
+	opts := volume.CreateOptions{
+		Name:   name,
+		Labels: labels,
+	}
+	_, err = c.VolumeCreate(ctx, opts, labels)
 	if err != nil {
 		return false, err
 	}
@@ -47,8 +43,8 @@ func (vm *VolumeManager) EnsureVolume(ctx context.Context, name string, labels m
 	return true, nil
 }
 
-// CopyToVolume copies a directory to a Docker volume using a temporary container
-func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error {
+// CopyToVolume copies a directory to a Docker volume using a temporary container.
+func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error {
 	logger.Debug().
 		Str("volume", volumeName).
 		Str("src", srcDir).
@@ -58,7 +54,7 @@ func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, d
 	// Create a tar archive of the source directory
 	tarBuffer := new(bytes.Buffer)
 	if err := createTarArchive(srcDir, tarBuffer, ignorePatterns); err != nil {
-		return ErrVolumeCopyFailed(fmt.Errorf("failed to create tar archive: %w", err))
+		return fmt.Errorf("failed to create tar archive: %w", err)
 	}
 
 	// Create a temporary container with the volume mounted
@@ -78,25 +74,25 @@ func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, d
 	}
 
 	// Pull busybox if needed
-	exists, _ := vm.engine.ImageExists(ctx, "busybox:latest")
+	exists, _ := c.ImageExists(ctx, "busybox:latest")
 	if !exists {
-		reader, err := vm.engine.ImagePull(ctx, "busybox:latest")
+		reader, err := c.APIClient.ImagePull(ctx, "busybox:latest", image.PullOptions{})
 		if err != nil {
-			return ErrVolumeCopyFailed(fmt.Errorf("failed to pull busybox: %w", err))
+			return fmt.Errorf("failed to pull busybox: %w", err)
 		}
 		io.Copy(io.Discard, reader)
 		reader.Close()
 	}
 
-	// Create temporary container
-	resp, err := vm.engine.ContainerCreate(ctx, containerConfig, hostConfig, "")
+	// Create temporary container (bypass whail's label checks for temp container)
+	resp, err := c.APIClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
-		return ErrVolumeCopyFailed(fmt.Errorf("failed to create temp container: %w", err))
+		return fmt.Errorf("failed to create temp container: %w", err)
 	}
-	defer vm.engine.ContainerRemove(ctx, resp.ID, true)
+	defer c.APIClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
 	// Copy tar archive to container
-	err = vm.engine.Client().CopyToContainer(
+	err = c.APIClient.CopyToContainer(
 		ctx,
 		resp.ID,
 		destPath,
@@ -104,7 +100,7 @@ func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, d
 		container.CopyToContainerOptions{},
 	)
 	if err != nil {
-		return ErrVolumeCopyFailed(fmt.Errorf("failed to copy to container: %w", err))
+		return fmt.Errorf("failed to copy to container: %w", err)
 	}
 
 	logger.Info().
@@ -115,21 +111,7 @@ func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, d
 	return nil
 }
 
-// RemoveVolumes removes multiple volumes
-func (vm *VolumeManager) RemoveVolumes(ctx context.Context, names []string, force bool) error {
-	var lastErr error
-	for _, name := range names {
-		if err := vm.engine.VolumeRemove(ctx, name, force); err != nil {
-			logger.Warn().Str("volume", name).Err(err).Msg("failed to remove volume")
-			lastErr = err
-		} else {
-			logger.Info().Str("volume", name).Msg("removed volume")
-		}
-	}
-	return lastErr
-}
-
-// createTarArchive creates a tar archive of a directory
+// createTarArchive creates a tar archive of a directory.
 func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) error {
 	tw := tar.NewWriter(buf)
 	defer tw.Close()
@@ -199,7 +181,7 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) err
 	})
 }
 
-// shouldIgnore checks if a path should be ignored based on patterns
+// shouldIgnore checks if a path should be ignored based on patterns.
 func shouldIgnore(path string, isDir bool, patterns []string) bool {
 	// Always ignore .git directory
 	if path == ".git" || strings.HasPrefix(path, ".git/") || strings.HasPrefix(path, ".git\\") {
@@ -239,7 +221,7 @@ func shouldIgnore(path string, isDir bool, patterns []string) bool {
 	return false
 }
 
-// matchPattern matches a path against a gitignore-style pattern
+// matchPattern matches a path against a gitignore-style pattern.
 func matchPattern(path, pattern string) bool {
 	// Convert path separators
 	path = filepath.ToSlash(path)
@@ -283,7 +265,7 @@ func matchPattern(path, pattern string) bool {
 	return false
 }
 
-// LoadIgnorePatterns reads patterns from an ignore file
+// LoadIgnorePatterns reads patterns from an ignore file.
 func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 	file, err := os.Open(ignoreFile)
 	if err != nil {

@@ -12,11 +12,11 @@ import (
 
 func TestNPMClient_FetchVersions(t *testing.T) {
 	tests := []struct {
-		name       string
-		handler    http.HandlerFunc
-		want       []string
-		wantErr    bool
-		errType    interface{}
+		name    string
+		handler http.HandlerFunc
+		want    []string
+		wantErr bool
+		errType interface{}
 	}{
 		{
 			name: "successful fetch",

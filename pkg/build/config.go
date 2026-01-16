@@ -26,10 +26,10 @@ func DefaultVariantConfig() *VariantConfig {
 		AlpineDefault: "alpine3.23",
 		Arches:        arches,
 		Variants: map[string][]string{
-			"trixie":      arches,
-			"bookworm":    arches,
-			"alpine3.23":  arches,
-			"alpine3.22":  arches,
+			"trixie":     arches,
+			"bookworm":   arches,
+			"alpine3.23": arches,
+			"alpine3.22": arches,
 		},
 	}
 }
