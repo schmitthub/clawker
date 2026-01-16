@@ -1,6 +1,6 @@
 # Architecture Migration Task List
 
-**Last Updated**: 2026-01-15
+**Last Updated**: 2026-01-16
 **Current Phase**: Phase 3 - Docker CLI Mimicry (REFOCUSED)
 **Plan File**: `~/.claude/plans/curried-floating-pizza.md`
 
@@ -21,9 +21,9 @@ Phase 3 has been **refocused** to implement Docker CLI command mimicry with clea
    - If whail lacks a method, scaffold with `// TODO: implement in whail`
 
 3. **Canonical vs Shortcut**:
-   - Canonical: `container list`, `container remove`
+   - Canonical: `container list`, `container remove`, `container run`
    - Shortcuts: Cobra aliases (`ls`, `ps`, `rm`) on same command
-   - Top-level project commands CAN BE shortcuts they are documented in @./claude
+   - Top-level `run`/`start` are thin aliases to `container run` (Docker CLI pattern)
 
 **Docker Shortcuts**
 | Shortcut | Canonical Command | Notes |
@@ -297,10 +297,10 @@ The assistant should:
 - [x] `container attach`
 - [x] `container cp`
 
-#### 3.3.5: Advanced Container Commands (Session F - deferred)
+#### 3.3.5: Advanced Container Commands (Session F) - ✅ COMPLETED (2026-01-16)
 
-- [ ] `container create`
-- [ ] `container run` (Docker-style)
+- [x] `container create` - Create containers with Docker CLI-compatible flags
+- [x] `container run` - Create+start+attach with --detach support
 
 ### Task 3.4: Volume Commands (Session B - ~30 min) - ✅ COMPLETED
 
@@ -346,6 +346,14 @@ The assistant should:
 
 - [x] `go test ./...`
 - [x] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
+
+### Task 4: Top-Level Shortcuts - ✅ COMPLETED (2026-01-16)
+
+Made `pkg/cmd/run` a thin alias to `pkg/cmd/container/run`:
+- Replaced 587-line implementation with 17-line alias
+- Deleted old tests (`run_test.go`, `run_integration_test.go`) and `testdata/`
+- Updated CLAUDE.md and README.md documentation
+- `clawker run` and `clawker start` now delegate to `clawker container run`
 
 ---
 
@@ -436,6 +444,9 @@ After each session if you've learned anything add it to this list, avoid verbosi
   - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
   - Test ordering matters: tests that remove resources affect later tests using same resources
   - TestImageRemove must create its own image, not reuse testImageTag that other tests need
+  - Container create/run reuse buildConfigs for Docker config construction
+  - Run command must handle both TTY and non-TTY I/O with proper channel selection
+  - Test slices: GetStringArray returns empty slice not nil; use helper to compare nil==[]
 
 Summarize subtasks and tasks into short summaries after they are complete to keep this file footprint small
 
@@ -448,4 +459,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → ~~G~~ → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → ~~G~~ → ~~F~~ (ALL COMPLETE)

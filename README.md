@@ -27,10 +27,12 @@ go build -o bin/clawker ./cmd/clawker
 cd your-project
 clawker init
 
-# 2. Start the container
-clawker start
+# 2. Build the image
+clawker build
 
-# 3. Claude Code is now running in the container
+# 3. Run a container
+clawker run -it --agent dev myimage sh
+
 # Press Ctrl+C to exit when done
 ```
 
@@ -51,19 +53,16 @@ clawker.backend.worker   # Project "backend", agent "worker"
 ### Working with Agents
 
 ```bash
-# Start agents with specific names
-clawker start --agent ralph
-clawker start --agent writer
-
-# If no --agent specified, a random name is generated
-clawker start    # Creates clawker.myapp.clever-fox
+# Run containers with specific agent names
+clawker run -it --agent ralph alpine sh
+clawker run -it --agent writer node
 
 # List all containers
 clawker list
 
-# Work with specific agents
+# Work with specific agents using container commands
 clawker logs --agent ralph
-clawker run --shell --agent ralph
+clawker container exec -it clawker.myapp.ralph sh
 clawker stop --agent ralph
 
 # Stop all agents for a project
@@ -72,8 +71,6 @@ clawker stop
 # Remove all containers for a project
 clawker remove -p myapp
 ```
-
-Each agent has isolated volumes for workspace (snapshot mode), config, and command history.
 
 ## Authentication
 
@@ -86,14 +83,14 @@ Clawker automatically passes Anthropic authentication from your host environment
 | `ANTHROPIC_BASE_URL` | Custom API endpoint |
 | `ANTHROPIC_CUSTOM_HEADERS` | Additional HTTP headers |
 
-Simply set `ANTHROPIC_API_KEY` on your host before running `clawker start`:
+Simply set `ANTHROPIC_API_KEY` on your host before running containers:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-clawker start
+clawker run -it --agent dev -e ANTHROPIC_API_KEY myimage claude
 ```
 
-Claude Code will authenticate automatically without requiring browser login.
+The environment variable is passed to the container for authentication.
 
 ## CLI Commands
 
@@ -101,8 +98,8 @@ Claude Code will authenticate automatically without requiring browser login.
 |---------|-------------|
 | `clawker init` | Create `clawker.yaml` and `.clawkerignore` in current directory |
 | `clawker build` | Build the container image |
-| `clawker run` | Build image, create container, and run Claude (idempotent) |
-| `clawker start` | Alias for `clawker run` |
+| `clawker run` | Create and run a new container (alias for `container run`) |
+| `clawker start` | Start stopped containers (alias for `container start`) |
 | `clawker stop` | Stop containers for the project |
 | `clawker restart` | Restart containers to pick up environment changes |
 | `clawker logs` | View container logs |
@@ -132,50 +129,51 @@ Flags:
 
 ### clawker run
 
-The primary command for running Claude. Builds the image (if needed), creates volumes, and runs Claude. This is an **idempotent** operation - it reuses existing containers.
-
-Containers are **preserved by default**. Use `--remove` for ephemeral containers that are deleted on exit.
+Creates and runs a new container. This is an alias for `clawker container run`, following Docker's pattern where `docker run` is an alias for `docker container run`.
 
 ```bash
-clawker run [flags] [-- <command>...]
+clawker run [OPTIONS] IMAGE [COMMAND] [ARG...]
 
 # Examples:
-clawker run                           # Run Claude interactively (preserved)
-clawker run --agent ralph             # Run with a named agent
-clawker run -- -p "build a feature"   # Pass args to Claude CLI
-clawker run -- --resume               # Resume previous session
-clawker run --remove                  # Ephemeral: remove container on exit
-clawker run --shell                   # Open a shell session
-clawker run --shell -s /bin/zsh       # Use specific shell
-clawker run --shell -u root           # Run shell as root
-clawker run --detach                  # Run in background
-clawker run -p 8080:8080              # Publish port to host
+clawker run -it --agent shell alpine sh        # Run interactive shell
+clawker run --agent worker alpine echo "hello" # Run a command
+clawker run --detach --agent web -p 8080:80 nginx  # Run in background
+clawker run -it --agent dev -e NODE_ENV=dev node   # With env vars
+clawker run -it --agent dev -v /host:/container alpine  # With bind mount
+clawker run --rm -it alpine sh                 # Auto-remove on exit
 
 Flags:
-  --agent <name>        Agent name for the container (default: random)
-  --mode=bind|snapshot  Workspace mode (default: from config)
-  --build               Force rebuild of container image
-  --shell               Run shell instead of Claude
-  -s, --shell-path      Path to shell executable (default: /bin/sh)
-  -u, --user            User to run shell as (only with --shell)
-  -r, --remove          Remove container and volumes on exit (ephemeral)
-  --detach              Run container in background
-  --clean               Remove existing container/volumes before starting
-  -p, --publish <port>  Publish container port to host (e.g., -p 8080:8080)
+  --agent <name>        Agent name (uses clawker.<project>.<agent> naming)
+  --name <name>         Full container name (overrides --agent)
+  -e, --env <var>       Set environment variables
+  -v, --volume <mount>  Bind mount a volume
+  -p, --publish <port>  Publish container port to host
+  -u, --user <user>     Username or UID
+  -w, --workdir <dir>   Working directory inside container
+  -i, --interactive     Keep STDIN open
+  -t, --tty             Allocate a pseudo-TTY
+  --rm                  Auto-remove container on exit
+  --detach              Run in background
+  --entrypoint <cmd>    Override default entrypoint
+  --network <name>      Connect to a network
 ```
 
-**Shell Path Resolution:** The shell is resolved from: CLI flag → `CLAWKER_SHELL` env → `agent.shell` in config → `/bin/bash`.
-
-**Note:** To build without Docker cache, run `clawker build --no-cache` first.
+**Note:** Build your image first with `clawker build` before running.
 
 ### clawker start
 
-Alias for `clawker run`. Provided for users familiar with docker-compose workflows.
+Alias for `clawker container start`. Starts one or more stopped containers.
 
 ```bash
-# These are equivalent:
-clawker start
-clawker run
+clawker start CONTAINER [CONTAINER...]
+
+# Examples:
+clawker start clawker.myapp.ralph         # Start a stopped container
+clawker start --attach clawker.myapp.ralph  # Start and attach
+
+Flags:
+  -a, --attach       Attach STDOUT/STDERR and forward signals
+  -i, --interactive  Attach container's STDIN
 ```
 
 ### clawker stop

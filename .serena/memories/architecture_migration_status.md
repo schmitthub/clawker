@@ -15,10 +15,10 @@
 
 ### Phase 3 Key Design Decisions (2026-01-15)
 
-1. **Two Parallel Command Interfaces** (Keep Both Separate):
-   - **Project Commands** (`clawker run/stop/logs`) - Project-aware, uses `--agent` flag
+1. **Two Command Interface Patterns**:
+   - **Top-level shortcuts** (`clawker run/start`) - Aliases to `container run` (Docker CLI pattern)
    - **Management Commands** (`clawker container *`) - Docker-compatible, positional container names
-   - These do NOT delegate to each other - they have different semantics
+   - Top-level `run`/`start` ARE aliases that delegate to `container run`
 
 2. **Architecture Constraint** (CRITICAL):
    - All Docker SDK calls MUST go through `pkg/whail`
@@ -105,7 +105,7 @@ A.1 → A.2 → A.3 → B → C → D → E → G → F
 | D | Image subcommands | 30 min | ✅ |
 | E | Missing whail prune methods | 30 min | ✅ |
 | G | Documentation update | 30 min | ✅ |
-| F | Container create/run | 45 min | ⏳ |
+| F | Container create/run | 45 min | ✅ |
 
 **Total**: ~4.5 hours across 9 sessions
 
@@ -228,8 +228,8 @@ Session E: ✅ COMPLETED (2026-01-16)
 - [x] Updated prune commands to use new whail methods instead of list+remove workaround
 - [x] Fixed test ordering issue in TestImageRemove affecting TestImageInspect
 
-Session F (deferred):
-- [ ] `create`, `run`
+Session F: ✅ COMPLETED (2026-01-16)
+- [x] `create`, `run`
 
 ### Remaining Tasks
 
@@ -241,7 +241,7 @@ Session F (deferred):
 | 3.7 | Missing whail prune methods | E | ✅ |
 | 3.8 | Documentation update | G | ✅ |
 | 3.9 | Full test suite | - | ✅ |
-| 3.10 | Container create/run (advanced) | F | ⏳ |
+| 3.10 | Container create/run (advanced) | F | ✅ |
 
 See `architecture_migration_tasks` memory for detailed checklists.
 
