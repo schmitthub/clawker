@@ -95,7 +95,7 @@ func run(_ *cmdutil.Factory, opts *Options, containers []string) error {
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, name)
+			fmt.Println(name)
 		}
 	}
 

@@ -53,7 +53,7 @@ func runPause(_ *cmdutil.Factory, containers []string) error {
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, name)
+			fmt.Println(name)
 		}
 	}
 
@@ -118,7 +118,7 @@ func runUnpause(_ *cmdutil.Factory, containers []string) error {
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, name)
+			fmt.Println(name)
 		}
 	}
 

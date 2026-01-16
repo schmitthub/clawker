@@ -9,7 +9,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -98,11 +97,7 @@ func runList(_ *cmdutil.Factory, opts *ListOptions) error {
 		)
 	}
 
-	if err := w.Flush(); err != nil {
-		logger.Warn().Err(err).Msg("failed to flush output")
-	}
-
-	return nil
+	return w.Flush()
 }
 
 // formatCreatedTime formats a Unix timestamp into a human-readable relative time.

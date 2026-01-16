@@ -104,14 +104,17 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 
+	var errs []error
 	for _, name := range containers {
 		// Find container by name
 		c, err := client.FindContainerByName(ctx, name)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to find container %q: %w", name, err))
 			fmt.Fprintf(os.Stderr, "Error: failed to find container %q: %v\n", name, err)
 			continue
 		}
 		if c == nil {
+			errs = append(errs, fmt.Errorf("container %q not found", name))
 			fmt.Fprintf(os.Stderr, "Error: container %q not found\n", name)
 			continue
 		}
@@ -119,6 +122,7 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		// Get one-shot stats
 		statsReader, err := client.ContainerStatsOneShot(ctx, c.ID)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get stats for %q: %w", name, err))
 			fmt.Fprintf(os.Stderr, "Error: failed to get stats for %q: %v\n", name, err)
 			continue
 		}
@@ -126,6 +130,7 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		var stats container.StatsResponse
 		if err := json.NewDecoder(statsReader.Body).Decode(&stats); err != nil {
 			statsReader.Body.Close()
+			errs = append(errs, fmt.Errorf("failed to decode stats for %q: %w", name, err))
 			fmt.Fprintf(os.Stderr, "Error: failed to decode stats for %q: %v\n", name, err)
 			continue
 		}
@@ -135,7 +140,14 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		printStats(w, c.ID, name, &stats, opts)
 	}
 
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("failed to flush output: %w", err)
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to get stats for %d container(s)", len(errs))
+	}
+	return nil
 }
 
 func streamStats(ctx context.Context, client *docker.Client, containers []string, opts *Options) error {
@@ -151,25 +163,38 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 		Err   error
 	}
 
-	// Start goroutines for each container
-	results := make(chan statResult)
-	for _, name := range containers {
-		go func(containerName string) {
-			// Find container by name
-			c, err := client.FindContainerByName(ctx, containerName)
-			if err != nil {
-				results <- statResult{Name: containerName, Err: fmt.Errorf("failed to find container: %w", err)}
-				return
-			}
-			if c == nil {
-				results <- statResult{Name: containerName, Err: fmt.Errorf("container not found")}
-				return
-			}
+	// Use buffered channel to prevent goroutine blocking when context is cancelled
+	results := make(chan statResult, len(containers)*2)
 
+	// Pre-resolve container IDs to avoid repeated lookups in the display loop
+	containerIDs := make(map[string]string)
+	for _, name := range containers {
+		c, err := client.FindContainerByName(ctx, name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to resolve container %q: %v\n", name, err)
+			continue
+		}
+		if c == nil {
+			fmt.Fprintf(os.Stderr, "Warning: container %q not found\n", name)
+			continue
+		}
+		containerIDs[name] = c.ID
+	}
+
+	if len(containerIDs) == 0 {
+		return fmt.Errorf("no valid containers found")
+	}
+
+	// Start goroutines for each container
+	for name, id := range containerIDs {
+		go func(containerName, containerID string) {
 			// Start streaming stats
-			reader, err := client.ContainerStats(ctx, c.ID, true)
+			reader, err := client.ContainerStats(ctx, containerID, true)
 			if err != nil {
-				results <- statResult{ID: c.ID, Name: containerName, Err: err}
+				select {
+				case results <- statResult{ID: containerID, Name: containerName, Err: err}:
+				case <-ctx.Done():
+				}
 				return
 			}
 			defer reader.Close()
@@ -179,13 +204,20 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 				var stats container.StatsResponse
 				if err := decoder.Decode(&stats); err != nil {
 					if err != io.EOF && ctx.Err() == nil {
-						results <- statResult{ID: c.ID, Name: containerName, Err: err}
+						select {
+						case results <- statResult{ID: containerID, Name: containerName, Err: err}:
+						case <-ctx.Done():
+						}
 					}
 					return
 				}
-				results <- statResult{ID: c.ID, Name: containerName, Stats: &stats}
+				select {
+				case results <- statResult{ID: containerID, Name: containerName, Stats: &stats}:
+				case <-ctx.Done():
+					return
+				}
 			}
-		}(name)
+		}(name, id)
 	}
 
 	// Collect and print stats
@@ -198,7 +230,9 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 
 	// Print header once
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: output flush failed: %v\n", err)
+	}
 
 	for {
 		select {
@@ -215,13 +249,12 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 			fmt.Print("\033[H\033[2J")
 			fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 			for name, stats := range lastStats {
-				id := ""
-				if c, _ := client.FindContainerByName(ctx, name); c != nil {
-					id = c.ID
-				}
+				id := containerIDs[name]
 				printStats(w, id, name, stats, opts)
 			}
-			w.Flush()
+			if err := w.Flush(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: output flush failed: %v\n", err)
+			}
 		}
 	}
 }

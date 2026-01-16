@@ -101,3 +101,60 @@ func TestCmd_ArgsValidation(t *testing.T) {
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
 }
+
+func TestCmd_ArgsParsing(t *testing.T) {
+	tests := []struct {
+		name              string
+		args              []string
+		expectedContainer string
+		expectedPsArgs    int // number of ps args expected
+	}{
+		{
+			name:              "container only",
+			args:              []string{"mycontainer"},
+			expectedContainer: "mycontainer",
+			expectedPsArgs:    0,
+		},
+		{
+			name:              "container with ps args",
+			args:              []string{"mycontainer", "aux"},
+			expectedContainer: "mycontainer",
+			expectedPsArgs:    1,
+		},
+		{
+			name:              "container with multiple ps args using separator",
+			args:              []string{"mycontainer", "--", "-e", "-f"},
+			expectedContainer: "mycontainer",
+			expectedPsArgs:    2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &cmdutil.Factory{}
+			cmd := NewCmd(f)
+
+			var capturedContainer string
+			var capturedPsArgsCount int
+
+			// Override RunE to capture args
+			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+				if len(args) > 0 {
+					capturedContainer = args[0]
+					capturedPsArgsCount = len(args) - 1
+				}
+				return nil
+			}
+
+			cmd.SetArgs(tt.args)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+
+			_, err := cmd.ExecuteC()
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedContainer, capturedContainer)
+			require.Equal(t, tt.expectedPsArgs, capturedPsArgsCount)
+		})
+	}
+}

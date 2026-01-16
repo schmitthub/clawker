@@ -52,6 +52,14 @@ Container names can be:
 func runStart(_ *cmdutil.Factory, opts *StartOptions, containers []string) error {
 	ctx := context.Background()
 
+	// Warn about unimplemented flags
+	if opts.Attach {
+		fmt.Fprintln(os.Stderr, "Warning: --attach flag is not yet implemented")
+	}
+	if opts.Interactive {
+		fmt.Fprintln(os.Stderr, "Warning: --interactive flag is not yet implemented")
+	}
+
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)
 	if err != nil {
@@ -66,7 +74,7 @@ func runStart(_ *cmdutil.Factory, opts *StartOptions, containers []string) error
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, name)
+			fmt.Println(name)
 		}
 	}
 

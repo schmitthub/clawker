@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -167,6 +168,96 @@ func TestFormatBytes(t *testing.T) {
 		t.Run(tt.expected, func(t *testing.T) {
 			result := formatBytes(tt.bytes)
 			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCalculateCPUPercent(t *testing.T) {
+	tests := []struct {
+		name           string
+		cpuUsage       uint64
+		preCPUUsage    uint64
+		systemUsage    uint64
+		preSystemUsage uint64
+		onlineCPUs     uint32
+		expected       float64
+	}{
+		{
+			name:           "zero delta - no usage",
+			cpuUsage:       1000,
+			preCPUUsage:    1000,
+			systemUsage:    2000,
+			preSystemUsage: 2000,
+			onlineCPUs:     4,
+			expected:       0.0,
+		},
+		{
+			name:           "zero system delta",
+			cpuUsage:       2000,
+			preCPUUsage:    1000,
+			systemUsage:    2000,
+			preSystemUsage: 2000,
+			onlineCPUs:     4,
+			expected:       0.0,
+		},
+		{
+			name:           "zero cpu delta",
+			cpuUsage:       1000,
+			preCPUUsage:    1000,
+			systemUsage:    3000,
+			preSystemUsage: 2000,
+			onlineCPUs:     4,
+			expected:       0.0,
+		},
+		{
+			name:           "normal usage single core",
+			cpuUsage:       2000000000,
+			preCPUUsage:    1000000000,
+			systemUsage:    20000000000,
+			preSystemUsage: 10000000000,
+			onlineCPUs:     1,
+			expected:       10.0, // (1B / 10B) * 1 * 100 = 10%
+		},
+		{
+			name:           "normal usage multi core",
+			cpuUsage:       2000000000,
+			preCPUUsage:    1000000000,
+			systemUsage:    20000000000,
+			preSystemUsage: 10000000000,
+			onlineCPUs:     4,
+			expected:       40.0, // (1B / 10B) * 4 * 100 = 40%
+		},
+		{
+			name:           "100% single core",
+			cpuUsage:       2000000000,
+			preCPUUsage:    1000000000,
+			systemUsage:    2000000000,
+			preSystemUsage: 1000000000,
+			onlineCPUs:     1,
+			expected:       100.0, // (1B / 1B) * 1 * 100 = 100%
+		},
+		{
+			name:           "50% of 8 cores",
+			cpuUsage:       5000000000,
+			preCPUUsage:    1000000000,
+			systemUsage:    9000000000,
+			preSystemUsage: 1000000000,
+			onlineCPUs:     8,
+			expected:       400.0, // (4B / 8B) * 8 * 100 = 400%
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stats := &container.StatsResponse{}
+			stats.CPUStats.CPUUsage.TotalUsage = tt.cpuUsage
+			stats.PreCPUStats.CPUUsage.TotalUsage = tt.preCPUUsage
+			stats.CPUStats.SystemUsage = tt.systemUsage
+			stats.PreCPUStats.SystemUsage = tt.preSystemUsage
+			stats.CPUStats.OnlineCPUs = tt.onlineCPUs
+
+			result := calculateCPUPercent(stats)
+			require.InDelta(t, tt.expected, result, 0.01)
 		})
 	}
 }

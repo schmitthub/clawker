@@ -67,7 +67,7 @@ func runKill(_ *cmdutil.Factory, opts *KillOptions, containers []string) error {
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, name)
+			fmt.Println(name)
 		}
 	}
 

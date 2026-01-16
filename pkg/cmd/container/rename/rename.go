@@ -4,7 +4,6 @@ package rename
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -61,6 +60,6 @@ func run(_ *cmdutil.Factory, containerName, newName string) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, newName)
+	fmt.Println(newName)
 	return nil
 }

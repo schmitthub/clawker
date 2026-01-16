@@ -144,3 +144,26 @@ func TestCmd_ArgsValidation(t *testing.T) {
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
 }
+
+func TestCmd_MultipleContainers(t *testing.T) {
+	f := &cmdutil.Factory{}
+	cmd := NewCmd(f)
+
+	var capturedArgs []string
+	// Override RunE to capture args
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		capturedArgs = args
+		return nil
+	}
+
+	// Test that multiple container arguments are captured
+	cmd.SetArgs([]string{"container1", "container2", "container3"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	_, err := cmd.ExecuteC()
+	require.NoError(t, err)
+	require.Len(t, capturedArgs, 3)
+	require.Equal(t, []string{"container1", "container2", "container3"}, capturedArgs)
+}

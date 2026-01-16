@@ -104,6 +104,8 @@ func runLogs(_ *cmdutil.Factory, opts *LogsOptions, containerName string) error 
 	defer reader.Close()
 
 	// Stream logs to stdout
-	_, err = io.Copy(os.Stdout, reader)
-	return err
+	if _, err = io.Copy(os.Stdout, reader); err != nil {
+		return fmt.Errorf("error streaming logs: %w", err)
+	}
+	return nil
 }
