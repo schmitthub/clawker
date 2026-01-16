@@ -274,13 +274,13 @@ The assistant should:
 - [ ] `container create`
 - [ ] `container run` (Docker-style)
 
-### Task 3.4: Volume Commands (Session B - ~30 min)
+### Task 3.4: Volume Commands (Session B - ~30 min) - ✅ COMPLETED
 
-- [ ] `volume list` (alias: ls)
-- [ ] `volume inspect`
-- [ ] `volume create`
-- [ ] `volume remove` (alias: rm)
-- [ ] `volume prune` (scaffold with TODO for whail method)
+- [x] `volume list` (alias: ls)
+- [x] `volume inspect`
+- [x] `volume create`
+- [x] `volume remove` (alias: rm)
+- [x] `volume prune` (scaffold with TODO for whail method)
 
 ### Task 3.5: Network Commands (Session C - ~30 min)
 
@@ -615,6 +615,29 @@ Track each session's progress here:
   - cp command uses tar archives for file transfer; handle both copy directions
   - attach command detects container TTY from ContainerInspect
 
+### Session 13 (2026-01-15)
+
+- **Duration**: ~20 minutes
+- **Work Done**:
+  - COMPLETED Session B: Volume Commands
+  - Created 5 new volume subcommands in subpackages:
+    - `pkg/cmd/volume/list/list.go` - List volumes (alias: ls) with quiet mode
+    - `pkg/cmd/volume/inspect/inspect.go` - Inspect volumes (JSON output)
+    - `pkg/cmd/volume/create/create.go` - Create volumes with driver/label options
+    - `pkg/cmd/volume/remove/remove.go` - Remove volumes (alias: rm) with force flag
+    - `pkg/cmd/volume/prune/prune.go` - Prune unused volumes (workaround for missing whail method)
+  - All commands follow subpackage pattern (`volume/list/list.go`)
+  - Updated `volume.go` parent to register all 5 subcommands
+  - Updated `volume_test.go` to expect 5 subcommands
+  - All tests passing: `go test ./...`
+  - CLI shows all 5 volume subcommands: create, inspect, list, prune, remove
+- **Next**: Session C - Network commands (list, inspect, create, remove, prune)
+- **Blockers**: None
+- **Key Learnings**:
+  - Subcommands go in their own subpackages (volume/list/list.go not volume/list.go)
+  - shlex.Split strips quotes, so test expected values shouldn't include quotes
+  - prune workaround: list+remove individual volumes instead of waiting for VolumesPrune
+
 ---
 
 ## Notes
@@ -624,4 +647,4 @@ Track each session's progress here:
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → B → C → D → G → E → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → C → D → G → E → F

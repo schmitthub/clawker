@@ -2,6 +2,11 @@
 package volume
 
 import (
+	"github.com/schmitthub/clawker/pkg/cmd/volume/create"
+	"github.com/schmitthub/clawker/pkg/cmd/volume/inspect"
+	"github.com/schmitthub/clawker/pkg/cmd/volume/list"
+	"github.com/schmitthub/clawker/pkg/cmd/volume/prune"
+	"github.com/schmitthub/clawker/pkg/cmd/volume/remove"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -28,10 +33,11 @@ configuration, and command history between container runs.`,
 	}
 
 	// Add subcommands
-	// Note: Subcommands will be added in a future task
-	// cmd.AddCommand(NewCmdLs(f))
-	// cmd.AddCommand(NewCmdRm(f))
-	// cmd.AddCommand(NewCmdInspect(f))
+	cmd.AddCommand(create.NewCmd(f))
+	cmd.AddCommand(inspect.NewCmd(f))
+	cmd.AddCommand(list.NewCmd(f))
+	cmd.AddCommand(prune.NewCmd(f))
+	cmd.AddCommand(remove.NewCmd(f))
 
 	return cmd
 }

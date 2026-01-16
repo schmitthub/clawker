@@ -100,7 +100,7 @@ A.1 → A.2 → A.3 → B → C → D → G → E → F
 | A.1 | Container: restart, rename, wait | 20 min |
 | A.2 | Container: top, stats, update | 25 min |
 | A.3 | Container: exec, attach, cp | 30 min |
-| B | Volume: list, inspect, create, remove, prune | 30 min |
+| B | Volume: list, inspect, create, remove, prune | 30 min | ✅ |
 | C | Network: list, inspect, create, remove, prune | 30 min |
 | D | Image: list, inspect, remove, build, prune | 30 min |
 | G | Documentation update | 30 min |
@@ -209,6 +209,9 @@ Session A.2: ✅ COMPLETED
 
 Session A.3: ✅ COMPLETED
 - [x] `exec`, `attach`, `cp`
+
+Session B: ✅ COMPLETED
+- [x] `volume list`, `volume inspect`, `volume create`, `volume remove`, `volume prune`
 
 Session F (deferred):
 - [ ] `create`, `run`
