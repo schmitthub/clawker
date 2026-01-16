@@ -37,12 +37,25 @@ func TestNewCmdVolume_Subcommands(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdVolume(f)
 
-	// Currently no subcommands are registered
-	// This test will be expanded when subcommands are added
 	subcommands := cmd.Commands()
 
-	// For now, expect no subcommands
-	if len(subcommands) != 0 {
-		t.Errorf("expected 0 subcommands (none registered yet), got %d", len(subcommands))
+	// Check expected subcommands are registered
+	expectedSubcommands := []string{"create", "inspect", "list", "prune", "remove"}
+	if len(subcommands) != len(expectedSubcommands) {
+		t.Errorf("expected %d subcommands, got %d", len(expectedSubcommands), len(subcommands))
+	}
+
+	// Verify each expected subcommand is present
+	for _, expected := range expectedSubcommands {
+		found := false
+		for _, sub := range subcommands {
+			if sub.Name() == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected subcommand '%s' not found", expected)
+		}
 	}
 }
