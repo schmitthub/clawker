@@ -23,7 +23,35 @@ Phase 3 has been **refocused** to implement Docker CLI command mimicry with clea
 3. **Canonical vs Shortcut**:
    - Canonical: `container list`, `container remove`
    - Shortcuts: Cobra aliases (`ls`, `ps`, `rm`) on same command
-   - Top-level project commands are NOT shortcuts (different semantics)
+   - Top-level project commands CAN BE shortcuts they are documented in @./claude
+
+**Docker Shortcuts**
+| Shortcut | Canonical Command | Notes |
+|----------|-------------------|-------|
+| `docker ps` | `docker container list` | Also: `docker container ls`, `docker container ps` |
+| `docker run` | `docker container run` | Compound: create + start |
+| `docker exec` | `docker container exec` | |
+| `docker attach` | `docker container attach` | |
+| `docker cp` | `docker container cp` | |
+| `docker create` | `docker container create` | |
+| `docker kill` | `docker container kill` | |
+| `docker logs` | `docker container logs` | |
+| `docker pause` | `docker container pause` | |
+| `docker port` | `docker container port` | |
+| `docker rename` | `docker container rename` | |
+| `docker restart` | `docker container restart` | |
+| `docker rm` | `docker container remove` | Also: `docker container rm` |
+| `docker start` | `docker container start` | |
+| `docker stats` | `docker container stats` | |
+| `docker stop` | `docker container stop` | |
+| `docker top` | `docker container top` | |
+| `docker unpause` | `docker container unpause` | |
+| `docker update` | `docker container update` | |
+| `docker wait` | `docker container wait` | |
+| `docker build` | `docker image build` | Also: `docker buildx build` |
+| `docker images` | `docker image list` | Also: `docker image ls` |
+| `docker rmi` | `docker image remove` | Also: `docker image rm` |
+
 
 **Reference Documents**:
 
@@ -377,266 +405,34 @@ The assistant should:
 
 ---
 
-## Session Log
+### Lessons Learned
 
-Track each session's progress here:
+After each session if you've learned anything add it to this list, avoid verbosity.
 
-### Session 1 (2026-01-13)
-
-- **Duration**: ~1 hour
-- **Work Done**:
-  - Created migration plan
-  - Established design philosophy (whail=heavy, docker=thin)
-  - User decisions: pkg/whail name, Docker SDK-like API, defer swarm
-  - Created task list (this memory)
-- **Next**: Start Task 1.1 (create pkg/whail/engine.go)
-- **Blockers**: None
-
-### Session 2 (2026-01-14)
-
-- **Duration**: ~45 minutes
-- **Work Done**:
-  - Created `pkg/whail` foundation
-  - Created all core files: engine.go, container.go, volume.go, network.go, image.go, labels.go, errors.go
-  - Created unit tests: labels_test.go, errors_test.go
-  - Package is standalone (no clawker-specific imports)
-- **Next**: Add integration tests
-- **Blockers**: None
-
-### Session 3 (2026-01-14)
-
-- **Duration**: ~20 minutes
-- **Work Done**:
-  - COMPLETED Phase 1: Added comprehensive integration tests
-  - Consolidated tests in `pkg/whail/engine_test.go` (55 tests total)
-  - Added tests for: ContainerStop, ContainerListByLabels, FindManagedContainerByName, IsContainerManaged
-  - Added tests for: VolumeListByLabels, IsVolumeManaged
-  - Added tests for: IsNetworkManaged
-  - Added tests for: ImageBuild with label injection
-  - All tests passing: `go test ./...` and `go test ./pkg/whail/...`
-- **Next**: Start Phase 2 (create `internal/docker` layer)
-- **Blockers**: None
-
-### Session 4 (2026-01-14)
-
-- **Duration**: ~30 minutes
-- **Work Done**:
-  - COMPLETED Phase 2: Created `internal/docker` layer (thin)
-  - Created `labels.go` with clawker label constants and filter functions
-  - Created `names.go` with container/volume naming functions
-  - Created `client.go` wrapping whail.Engine with clawker config
-  - Created unit tests for labels and names
-  - Created integration tests for Client
-  - Decided to SKIP agent.go (not needed - commands compose operations directly)
-  - All tests passing: `go test ./...`
-- **Next**: Start Phase 3 (update commands to use `internal/docker`)
-- **Blockers**: None
-
-### Session 5 (2026-01-15)
-
-- **Duration**: ~15 minutes
-- **Work Done**:
-  - COMPLETED Task 3.1: Updated factory with Client() method
-    - Added `clientOnce`, `client`, `clientErr` fields
-    - Added `Client(ctx)` method with lazy initialization
-    - Added `CloseClient()` method
-    - Marked `CloseEngine()` as deprecated
-  - Started Task 3.2 but hit design issue
-    - Initial approach was adding wrapper methods to docker.Client
-    - User feedback: don't wrap unless modifying behavior
-    - Need to replan Phase 3 approach
-- **Next**: Decide on approach for Phase 3 before proceeding
-- **Blockers**: Need decision on where ContainerConfig/FindOrCreate logic should live
-
-### Session 6 (2026-01-15)
-
-- **Duration**: ~30 minutes
-- **Work Done**:
-  - COMPLETED Task 3.1 (Phase 3.1): Added all missing whail methods
-    - Added container methods: `ContainerKill`, `ContainerPause`, `ContainerUnpause`, `ContainerRestart`, `ContainerRename`, `ContainerTop`, `ContainerStats`, `ContainerStatsOneShot`, `ContainerUpdate`
-    - Created `pkg/whail/copy.go` with: `CopyToContainer`, `CopyFromContainer`, `ContainerStatPath`
-    - Added 11 new error types in `pkg/whail/errors.go`
-    - Added integration tests for: Kill, Pause/Unpause, Restart, Rename, Top
-    - All tests passing: `go test ./...`
-- **Next**: Task 3.2 - Create management command structure
-- **Blockers**: None
-
-### Session 7 (2026-01-15)
-
-- **Duration**: ~20 minutes
-- **Work Done**:
-  - COMPLETED Task 3.1.1: PR Review Fixes
-  - Ran comprehensive PR review using pr-review-toolkit agents (code-reviewer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer)
-  - Fixed critical issue: `ContainerWait` now wraps SDK channel errors
-  - Fixed important issues:
-    - Removed duplicate `generateCopyContainerName` from `copy_test.go`
-    - Added `TestContainerWait` with channel semantics testing
-    - Added `TestContainerAttach` with managed/unmanaged verification
-    - `IsContainerManaged` now wraps non-NotFound errors with `ErrContainerInspectFailed`
-  - All whail tests passing: `go test ./pkg/whail/...`
-  - Integration tests: 2 pre-existing failures unrelated to changes (TestRm_UnusedFlag_NoUnused, TestRun_BuildsImage)
-- **Next**: Task 3.2 - Create management command structure
-- **Blockers**: None
-- **Key Learnings**:
+**Key Learnings**:
   - Channel-based methods like `ContainerWait` need goroutines to wrap SDK errors
   - Test helper functions should not be duplicated across test files in same package
   - `IsContainerManaged` silently returns `(false, nil)` for not-found - document this behavior
-
-### Session 8 (2026-01-15)
-
-- **Duration**: ~20 minutes
-- **Work Done**:
-  - COMPLETED Task 3.2: Create Management Command Structure
-  - Created 4 parent command files for Docker CLI mimicry:
-    - `pkg/cmd/container/container.go`
-    - `pkg/cmd/image/image.go`
-    - `pkg/cmd/volume/volume.go`
-    - `pkg/cmd/network/network.go`
-  - Updated `pkg/cmd/root/root.go` with imports and command registration
-  - Created tests for each parent command verifying:
-    - Command basics (Use, Short, Long, Example)
-    - No RunE (parent commands)
-    - No subcommands yet (Task 3.3 will add them)
-  - Updated `pkg/cmd/root/root_test.go` to include management commands
-  - All tests passing: `go test ./...`
-  - CLI shows management commands in "Additional help topics" (expected until subcommands added)
-- **Next**: Task 3.3 - Implement Container Commands (container ls, container rm, etc.)
-- **Blockers**: None
-- **Key Learnings**:
   - Cobra shows parent commands without subcommands under "Additional help topics"
   - Once subcommands are added, they move to "Available Commands"
-
-### Session 9 (2026-01-15)
-
-- **Duration**: ~45 minutes
-- **Work Done**:
-  - STARTED Task 3.3: Implement Container Commands
-  - Created 9 new container subcommands using `internal/docker` client:
-    - `pkg/cmd/container/list.go` - List containers (aliases: ls, ps)
-    - `pkg/cmd/container/remove.go` - Remove containers (alias: rm)
-    - `pkg/cmd/container/start.go` - Start stopped containers
-    - `pkg/cmd/container/stop.go` - Stop running containers
-    - `pkg/cmd/container/logs.go` - Fetch container logs
-    - `pkg/cmd/container/inspect.go` - Display detailed container info (JSON)
-    - `pkg/cmd/container/kill.go` - Kill containers with signal
-    - `pkg/cmd/container/pause.go` - Pause/unpause containers
-  - Created comprehensive tests for all commands
-  - Updated `container.go` parent command to register all subcommands
-  - All tests passing: `go test ./...`
-  - CLI shows "Available Commands" with all 9 subcommands
-- **Next**: Continue Task 3.3 - Implement remaining container commands (create, run, exec, attach, restart, cp, top, stats, etc.)
-- **Blockers**: None
-- **Key Learnings**:
   - Commands use positional args for container names (Docker-like)
   - Helper function `splitArgs` shared across test files in same package
   - Commands use `internal/docker.Client` instead of legacy `internal/engine`
-
-### Session 10 (2026-01-15)
-
-- **Duration**: ~45 minutes
-- **Work Done**:
-  - REFOCUSED Phase 3 migration plan
-  - Created comprehensive plan at `~/.claude/plans/curried-floating-pizza.md`
-  - Key design decisions documented:
-    1. Two parallel command interfaces (project commands vs management commands) - keep both separate
-    2. Architecture constraint: all SDK calls through pkg/whail only
-    3. Canonical commands with Cobra aliases for shortcuts
-  - Broke remaining work into 9 manageable sessions:
-    - A.1: Container restart, rename, wait (20 min)
-    - A.2: Container top, stats, update (25 min)
-    - A.3: Container exec, attach, cp (30 min)
-    - B: Volume commands (30 min)
-    - C: Network commands (30 min)
-    - D: Image commands (30 min)
-    - E: Missing whail methods (30 min)
-    - F: Container create/run (45 min)
-    - G: Documentation update (30 min)
-  - Updated this memory with new task structure (3.3.1-3.9)
-- **Next**: Session A.1 - Implement container restart, rename, wait
-- **Blockers**: None
-- **Key Learnings**:
   - Top-level project commands (run, stop, logs) are NOT shortcuts to management commands
   - They have different semantics (project-based with --agent vs container-name-based)
   - Never bypass whail - scaffold with TODO if method missing
-
-### Session 11 (2026-01-15)
-
-- **Duration**: ~25 minutes
-- **Work Done**:
-  - COMPLETED Session A.2: Inspection Container Commands
-  - Created 3 new container subcommands:
-    - `pkg/cmd/container/top/top.go` - Display running processes (ContainerTop)
-    - `pkg/cmd/container/stats/stats.go` - Display resource usage statistics (ContainerStats/StatsOneShot)
-    - `pkg/cmd/container/update/update.go` - Update container resource constraints (ContainerUpdate)
-  - All commands include:
-    - Comprehensive flag parsing
-    - Unit tests for flag handling and command properties
-    - Proper error handling through cmdutil.HandleError
-  - Stats command features:
-    - One-shot mode (--no-stream) and streaming mode
-    - CPU %, memory usage, network I/O, block I/O, PIDs display
-    - Support for multiple containers
-  - Update command features:
-    - --cpus, --memory, --memory-reservation, --memory-swap
-    - --cpu-shares, --cpuset-cpus, --cpuset-mems
-    - --pids-limit, --blkio-weight
-    - Human-readable memory size parsing (512m, 1g, etc.)
-  - Updated `container.go` parent to register all 3 new commands
-  - Updated `container_test.go` to expect 15 subcommands
-  - All tests passing: `go test ./...`
-  - CLI shows all 15 container subcommands
-- **Next**: Session A.3 - Container exec, attach, cp
-- **Blockers**: None
-- **Key Learnings**:
   - Stats streaming requires goroutines for concurrent container stat collection
   - Memory size parsing needs case-insensitive suffix handling
   - Cobra interprets args starting with `-` as flags; use `--` separator or avoid such test inputs
-
-### Session 12 (2026-01-15)
-
-- **Duration**: ~35 minutes
-- **Work Done**:
-  - COMPLETED Session A.3: Interactive Container Commands
-  - Created 3 new container subcommands with tests:
-    - `pkg/cmd/container/exec/exec.go` - Execute command in container (TTY, stdin handling)
-    - `pkg/cmd/container/attach/attach.go` - Attach to running container (TTY, signal handling)
-    - `pkg/cmd/container/cp/cp.go` - Copy files to/from container (tar archive handling)
-  - All commands use `internal/docker.Client` and `internal/term.PTYHandler` for TTY
-  - Fixed `-d` shorthand conflict (exec's `--detach` no longer has shorthand, conflicts with global `--debug`)
-  - Updated `container.go` to register all 3 new commands (now 18 total subcommands)
-  - Updated `container_test.go` expectedSubcommands to include attach, cp, exec
-  - All tests passing: `go test ./...`
-  - CLI shows all 18 container subcommands in help
-- **Next**: Session B - Volume commands (list, inspect, create, remove, prune)
-- **Blockers**: None
-- **Key Learnings**:
   - Global flags like `-d` (--debug) conflict with command-specific flags; avoid reusing shorthands
   - exec command must check container is running before creating exec instance
   - cp command uses tar archives for file transfer; handle both copy directions
   - attach command detects container TTY from ContainerInspect
-
-### Session 13 (2026-01-15)
-
-- **Duration**: ~20 minutes
-- **Work Done**:
-  - COMPLETED Session B: Volume Commands
-  - Created 5 new volume subcommands in subpackages:
-    - `pkg/cmd/volume/list/list.go` - List volumes (alias: ls) with quiet mode
-    - `pkg/cmd/volume/inspect/inspect.go` - Inspect volumes (JSON output)
-    - `pkg/cmd/volume/create/create.go` - Create volumes with driver/label options
-    - `pkg/cmd/volume/remove/remove.go` - Remove volumes (alias: rm) with force flag
-    - `pkg/cmd/volume/prune/prune.go` - Prune unused volumes (workaround for missing whail method)
-  - All commands follow subpackage pattern (`volume/list/list.go`)
-  - Updated `volume.go` parent to register all 5 subcommands
-  - Updated `volume_test.go` to expect 5 subcommands
-  - All tests passing: `go test ./...`
-  - CLI shows all 5 volume subcommands: create, inspect, list, prune, remove
-- **Next**: Session C - Network commands (list, inspect, create, remove, prune)
-- **Blockers**: None
-- **Key Learnings**:
   - Subcommands go in their own subpackages (volume/list/list.go not volume/list.go)
   - shlex.Split strips quotes, so test expected values shouldn't include quotes
   - prune workaround: list+remove individual volumes instead of waiting for VolumesPrune
+
+Summarize subtasks and tasks into short summaries after they are complete to keep this file footprint small
 
 ---
 
