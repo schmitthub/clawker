@@ -1,22 +1,35 @@
 # Architecture Migration Task List
 
 **Last Updated**: 2026-01-15
-**Current Phase**: Phase 3 - Docker CLI Mimicry (REPLANNED)
-**Plan File**: `~/.claude/plans/rosy-churning-puffin.md`
+**Current Phase**: Phase 3 - Docker CLI Mimicry (REFOCUSED)
+**Plan File**: `~/.claude/plans/curried-floating-pizza.md`
 
-## IMPORTANT: Phase 3 Pivot
+## IMPORTANT: Phase 3 Refocused
 
-Phase 3 has been **pivoted** to implement Docker CLI command mimicry. Key changes:
+Phase 3 has been **refocused** to implement Docker CLI command mimicry with clear separation:
 
-- Commands will mirror Docker CLI structure (`clawker container run`, `clawker container ls`, etc.)
-- Both top-level shortcuts AND management commands (like Docker)
-- `clawker run` will behave like `docker run` (always creates new container)
-- Keep `--agent` flag separate from `--name` for clawker-specific naming
+### Key Design Decisions
+
+1. **Two Parallel Command Interfaces** (Keep Both):
+   - **Project Commands** (`clawker run/stop/logs`) - Project-aware, uses `--agent` flag
+   - **Management Commands** (`clawker container *`) - Docker-compatible, positional container names
+   - These serve different purposes and do NOT delegate to each other
+
+2. **Architecture Constraint**:
+   - All Docker SDK calls MUST go through `pkg/whail`
+   - Never call Docker SDK directly from commands
+   - If whail lacks a method, scaffold with `// TODO: implement in whail`
+
+3. **Canonical vs Shortcut**:
+   - Canonical: `container list`, `container remove`
+   - Shortcuts: Cobra aliases (`ls`, `ps`, `rm`) on same command
+   - Top-level project commands are NOT shortcuts (different semantics)
 
 **Reference Documents**:
 
-- `.claude/docs/docker-cli-map.md` - Docker CLI → SDK mapping (1,740 lines)
-- `.claude/docs/docker_top_level_commands.md` - Commands to implement
+- `.claude/docs/docker-cli-sdk-mapping.md` - Docker CLI → SDK mapping
+- `.claude/docs/desired_docker_top_level_commands.md` - Commands to implement
+- `~/.claude/plans/curried-floating-pizza.md` - Full implementation plan
 
 ## Quick Resume
 
@@ -223,10 +236,10 @@ The assistant should:
 ### Task 3.3: Implement Container Commands
 
 **Status**: IN PROGRESS (2026-01-15)
-**Order**: Start with simplest, build up
-**Reference**: `docker-cli-map.md` Container Commands section
+**Reference**: `~/.claude/plans/curried-floating-pizza.md`
 
-Completed:
+#### 3.3.1: Basic Container Commands (COMPLETED)
+
 - [x] `container list` (with aliases ls, ps)
 - [x] `container remove` (with alias rm)
 - [x] `container start`
@@ -238,41 +251,68 @@ Completed:
 - [x] `container unpause`
 - [x] Tests for all completed commands
 
-Remaining:
-- [ ] `container create` (new)
-- [ ] `container run` (refactor - Docker-style, no FindOrCreate)
-- [ ] `container exec` (new)
-- [ ] `container attach` (new)
-- [ ] `container restart` (refactor)
-- [ ] `container cp` (new)
-- [ ] `container top` / `stats` / `wait` / `port` / `rename` / `update` (new)
+#### 3.3.2: Simple Container Commands (Session A.1 - ~20 min)
 
-### Task 3.4: Implement Image Commands
+- [x] `container restart`
+- [x] `container rename`
+- [x] `container wait`
 
-**Reference**: `docker-cli-map.md` Image Commands section
+#### 3.3.3: Inspection Container Commands (Session A.2 - ~25 min) - ✅ COMPLETED
 
-- [ ] `image ls` (alias: `images`)
-- [ ] `image build` (refactor from `build`)
-- [ ] `image rm` (alias: `rmi`)
-- [ ] `image inspect` (new)
-- [ ] `image pull` (new)
-- [ ] Add tests for new commands
+- [x] `container top`
+- [x] `container stats`
+- [x] `container update`
 
-### Task 3.5: Implement Top-Level Shortcuts
+#### 3.3.4: Interactive Container Commands (Session A.3 - ~30 min)
 
-- [ ] Create shortcuts in `pkg/cmd/root/root.go`
-- [ ] Each shortcut delegates to management command
-- [ ] Maintain backward compatibility aliases
-- [ ] Add tests for new commands
+- [ ] `container exec`
+- [ ] `container attach`
+- [ ] `container cp`
 
-### Task 3.6: Update internal/docker Layer
+#### 3.3.5: Advanced Container Commands (Session F - deferred)
 
-- [ ] Update `internal/docker/client.go` to use new whail methods
-- [ ] Add agent resolution helpers
-- [ ] Remove internal/engine dependencies
-- [ ] Add tests for new functionality
+- [ ] `container create`
+- [ ] `container run` (Docker-style)
 
-### Task 3.7: Full Test Suite
+### Task 3.4: Volume Commands (Session B - ~30 min)
+
+- [ ] `volume list` (alias: ls)
+- [ ] `volume inspect`
+- [ ] `volume create`
+- [ ] `volume remove` (alias: rm)
+- [ ] `volume prune` (scaffold with TODO for whail method)
+
+### Task 3.5: Network Commands (Session C - ~30 min)
+
+- [ ] `network list` (alias: ls)
+- [ ] `network inspect`
+- [ ] `network create`
+- [ ] `network remove` (alias: rm)
+- [ ] `network prune` (scaffold with TODO for whail method)
+
+### Task 3.6: Image Commands (Session D - ~30 min)
+
+- [ ] `image list` (aliases: ls, images)
+- [ ] `image inspect` (scaffold with TODO for whail method)
+- [ ] `image remove` (aliases: rm, rmi)
+- [ ] `image build` (delegate to top-level)
+- [ ] `image prune` (scaffold with TODO for whail method)
+
+### Task 3.7: Missing whail Methods (Session E - ~30 min)
+
+- [ ] `VolumesPrune` in pkg/whail/volume.go
+- [ ] `NetworksPrune` in pkg/whail/network.go
+- [ ] `ImagesPrune` in pkg/whail/image.go
+- [ ] `ImageInspect` in pkg/whail/image.go
+
+### Task 3.8: Documentation Update (Session G - ~30 min)
+
+- [ ] Update CLI-VERBS.md with all new commands
+- [ ] Update ARCHITECTURE.md with command taxonomy
+- [ ] Update README.md CLI commands table
+- [ ] Update this memory (architecture_migration_tasks)
+
+### Task 3.9: Full Test Suite
 
 - [ ] `go test ./...`
 - [ ] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
@@ -491,6 +531,67 @@ Track each session's progress here:
   - Helper function `splitArgs` shared across test files in same package
   - Commands use `internal/docker.Client` instead of legacy `internal/engine`
 
+### Session 10 (2026-01-15)
+
+- **Duration**: ~45 minutes
+- **Work Done**:
+  - REFOCUSED Phase 3 migration plan
+  - Created comprehensive plan at `~/.claude/plans/curried-floating-pizza.md`
+  - Key design decisions documented:
+    1. Two parallel command interfaces (project commands vs management commands) - keep both separate
+    2. Architecture constraint: all SDK calls through pkg/whail only
+    3. Canonical commands with Cobra aliases for shortcuts
+  - Broke remaining work into 9 manageable sessions:
+    - A.1: Container restart, rename, wait (20 min)
+    - A.2: Container top, stats, update (25 min)
+    - A.3: Container exec, attach, cp (30 min)
+    - B: Volume commands (30 min)
+    - C: Network commands (30 min)
+    - D: Image commands (30 min)
+    - E: Missing whail methods (30 min)
+    - F: Container create/run (45 min)
+    - G: Documentation update (30 min)
+  - Updated this memory with new task structure (3.3.1-3.9)
+- **Next**: Session A.1 - Implement container restart, rename, wait
+- **Blockers**: None
+- **Key Learnings**:
+  - Top-level project commands (run, stop, logs) are NOT shortcuts to management commands
+  - They have different semantics (project-based with --agent vs container-name-based)
+  - Never bypass whail - scaffold with TODO if method missing
+
+### Session 11 (2026-01-15)
+
+- **Duration**: ~25 minutes
+- **Work Done**:
+  - COMPLETED Session A.2: Inspection Container Commands
+  - Created 3 new container subcommands:
+    - `pkg/cmd/container/top/top.go` - Display running processes (ContainerTop)
+    - `pkg/cmd/container/stats/stats.go` - Display resource usage statistics (ContainerStats/StatsOneShot)
+    - `pkg/cmd/container/update/update.go` - Update container resource constraints (ContainerUpdate)
+  - All commands include:
+    - Comprehensive flag parsing
+    - Unit tests for flag handling and command properties
+    - Proper error handling through cmdutil.HandleError
+  - Stats command features:
+    - One-shot mode (--no-stream) and streaming mode
+    - CPU %, memory usage, network I/O, block I/O, PIDs display
+    - Support for multiple containers
+  - Update command features:
+    - --cpus, --memory, --memory-reservation, --memory-swap
+    - --cpu-shares, --cpuset-cpus, --cpuset-mems
+    - --pids-limit, --blkio-weight
+    - Human-readable memory size parsing (512m, 1g, etc.)
+  - Updated `container.go` parent to register all 3 new commands
+  - Updated `container_test.go` to expect 15 subcommands
+  - All tests passing: `go test ./...`
+  - CLI shows all 15 container subcommands
+- **Next**: Session A.3 - Container exec, attach, cp
+- **Blockers**: None
+- **Key Learnings**:
+  - Stats streaming requires goroutines for concurrent container stat collection
+  - Memory size parsing needs case-insensitive suffix handling
+  - Cobra interprets args starting with `-` as flags; use `--` separator or avoid such test inputs
+
 ---
 
 ## Notes
@@ -498,4 +599,6 @@ Track each session's progress here:
 - **Always run tests** after each task: `go test ./...`
 - **Context running low?** Update this memory before ending session
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
-- **Plan file**: `~/.claude/plans/warm-humming-ocean.md`
+- **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
+- **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
+- **Session order**: ~~A.1~~ → ~~A.2~~ → A.3 → B → C → D → G → E → F

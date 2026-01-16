@@ -2,15 +2,33 @@
 
 ## Migration: Current → "Padded Cell" Design
 
-**Status**: PHASE 3 IN PROGRESS
-**Plan Location**: `~/.claude/plans/rosy-churning-puffin.md`
+**Status**: PHASE 3 IN PROGRESS (REFOCUSED)
+**Plan Location**: `~/.claude/plans/curried-floating-pizza.md`
 **Design Document**: `.claude/docs/DESIGN.md`
+**SDK Mapping**: `.claude/docs/docker-cli-sdk-mapping.md`
 
 ## Design Decisions (User Confirmed)
 - **Package name**: `pkg/whail` (whale jail - a Docker jail wrapper)
 - **API style**: Docker SDK-like for familiarity
 - **Swarm commands**: Deferred to future project (not in this migration)
-- **Phase 3 pivot**: Docker CLI mimicry (commands mirror Docker CLI structure)
+- **Phase 3 refocused**: Docker CLI mimicry with clear separation of concerns
+
+### Phase 3 Key Design Decisions (2026-01-15)
+
+1. **Two Parallel Command Interfaces** (Keep Both Separate):
+   - **Project Commands** (`clawker run/stop/logs`) - Project-aware, uses `--agent` flag
+   - **Management Commands** (`clawker container *`) - Docker-compatible, positional container names
+   - These do NOT delegate to each other - they have different semantics
+
+2. **Architecture Constraint** (CRITICAL):
+   - All Docker SDK calls MUST go through `pkg/whail`
+   - Never call Docker SDK directly from commands or internal/docker
+   - If whail lacks a method, scaffold with `// TODO: implement in whail`
+
+3. **Canonical vs Shortcut Structure**:
+   - Canonical: `container list`, `container remove` (management subcommands)
+   - Shortcuts: Cobra aliases (`ls`, `ps`, `rm`) on same command
+   - Top-level project commands are NOT shortcuts (different semantics)
 
 ## Key Architectural Changes
 
@@ -68,9 +86,28 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 | **Phase 4** | Remove legacy code | ⏳ NOT STARTED |
 | **Phase 5** | Documentation updates | ⏳ NOT STARTED |
 
-## Phase 3: Docker CLI Mimicry
+## Phase 3: Docker CLI Mimicry (REFOCUSED 2026-01-15)
 
-**Pivot**: Phase 3 was replanned to implement Docker CLI command structure.
+**Plan File**: `~/.claude/plans/curried-floating-pizza.md`
+
+### Session Execution Order
+```
+A.1 → A.2 → A.3 → B → C → D → G → E → F
+```
+
+| Session | Description | Est. Time |
+|---------|-------------|-----------|
+| A.1 | Container: restart, rename, wait | 20 min |
+| A.2 | Container: top, stats, update | 25 min |
+| A.3 | Container: exec, attach, cp | 30 min |
+| B | Volume: list, inspect, create, remove, prune | 30 min |
+| C | Network: list, inspect, create, remove, prune | 30 min |
+| D | Image: list, inspect, remove, build, prune | 30 min |
+| G | Documentation update | 30 min |
+| E | Missing whail methods | 30 min |
+| F | Container create/run | 45 min |
+
+**Total**: ~4.5 hours across 9 sessions
 
 ### Task 3.1: Add Missing whail Methods - ✅ COMPLETED (2026-01-15)
 
@@ -162,14 +199,32 @@ Created 9 container subcommands in `pkg/cmd/container/`:
 - Use `internal/docker.Client` instead of legacy `internal/engine`
 - Include comprehensive unit tests
 
-**Remaining Commands:**
-- `create`, `run`, `exec`, `attach`
-- `restart`, `cp`
-- `top`, `stats`, `wait`, `port`, `rename`, `update`
+**Remaining Commands (broken into sessions):**
 
-### Remaining Tasks (3.4-3.7)
+Session A.1:
+- [ ] `restart`, `rename`, `wait`
 
-See `architecture_migration_tasks` memory for full task list.
+Session A.2: ✅ COMPLETED
+- [x] `top`, `stats`, `update`
+
+Session A.3:
+- [ ] `exec`, `attach`, `cp`
+
+Session F (deferred):
+- [ ] `create`, `run`
+
+### Remaining Tasks (3.4-3.8)
+
+| Task | Description | Session |
+|------|-------------|---------|
+| 3.4 | Volume commands | B |
+| 3.5 | Network commands | C |
+| 3.6 | Image commands | D |
+| 3.7 | Missing whail methods | E |
+| 3.8 | Documentation update | G |
+| 3.9 | Full test suite | - |
+
+See `architecture_migration_tasks` memory for detailed checklists.
 
 ## Key Design Patterns
 
@@ -223,13 +278,43 @@ type Client struct {
 
 ## How to Resume
 
-**Say**: "Continue working on the architecture migration"
+**Say**: "Continue working on the architecture migration" or "Start Session A.1"
 
 **Then**:
 1. Read `architecture_migration_tasks` memory for detailed task list
-2. Check `Current Phase` and `Next Task` in that memory
-3. Resume work from where last session stopped
-4. **Before context runs out**: Update the task list and Session Log
+2. Read the plan file for implementation details
+3. Check `Current Phase` and `Next Task` in task memory
+4. Resume work from where last session stopped
+5. **Before context runs out**: Update the task list and Session Log
 
 **Task List Memory**: `architecture_migration_tasks`
-**Plan File**: `~/.claude/plans/rosy-churning-puffin.md`
+**Plan File**: `~/.claude/plans/curried-floating-pizza.md`
+**SDK Mapping**: `.claude/docs/docker-cli-sdk-mapping.md`
+
+## Quick Reference
+
+### Command Pattern for Management Subcommands
+```go
+func NewCmd<Action>(f *cmdutil.Factory) *cobra.Command {
+    cmd := &cobra.Command{
+        Use:     "<action> RESOURCE [RESOURCE...]",
+        Aliases: []string{"<alias>"},
+        Args:    cobra.MinimumNArgs(1),
+        RunE: func(cmd *cobra.Command, args []string) error {
+            client, err := docker.NewClient(ctx)
+            if err != nil { return cmdutil.HandleError(err) }
+            defer client.Close()
+            // Call whail methods through client
+        },
+    }
+    return cmd
+}
+```
+
+### Verification After Each Session
+```bash
+go test ./pkg/cmd/<package>/...  # Unit tests
+go test ./...                     # Full suite
+go build ./cmd/clawker           # Build binary
+./bin/clawker <command> --help   # Manual test
+```

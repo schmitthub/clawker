@@ -2,6 +2,12 @@
 package container
 
 import (
+	"github.com/schmitthub/clawker/pkg/cmd/container/rename"
+	"github.com/schmitthub/clawker/pkg/cmd/container/restart"
+	"github.com/schmitthub/clawker/pkg/cmd/container/stats"
+	"github.com/schmitthub/clawker/pkg/cmd/container/top"
+	"github.com/schmitthub/clawker/pkg/cmd/container/update"
+	"github.com/schmitthub/clawker/pkg/cmd/container/wait"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -37,9 +43,15 @@ container management commands.`,
 	cmd.AddCommand(NewCmdLogs(f))
 	cmd.AddCommand(NewCmdPause(f))
 	cmd.AddCommand(NewCmdRemove(f))
+	cmd.AddCommand(rename.NewCmd(f))
+	cmd.AddCommand(restart.NewCmd(f))
 	cmd.AddCommand(NewCmdStart(f))
+	cmd.AddCommand(stats.NewCmd(f))
 	cmd.AddCommand(NewCmdStop(f))
+	cmd.AddCommand(top.NewCmd(f))
 	cmd.AddCommand(NewCmdUnpause(f))
+	cmd.AddCommand(update.NewCmd(f))
+	cmd.AddCommand(wait.NewCmd(f))
 
 	return cmd
 }

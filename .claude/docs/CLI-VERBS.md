@@ -14,6 +14,8 @@ Clawker follows the [CLI Guidelines](cli-guidelines.md) with these core principl
 | **Idempotent** | `run` reattaches to existing containers |
 | **Discoverability** | All commands have `Example` fields |
 
+Clawker will mimic a subset of docker cli commands, add additional flags or functionality to a subset of docker commands, or explose its own bespoke commands that don't match docker cli.
+
 ## Command Taxonomy
 
 ```
