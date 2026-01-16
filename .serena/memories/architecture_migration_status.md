@@ -2,8 +2,8 @@
 
 ## Migration: Current → "Padded Cell" Design
 
-**Status**: PHASE 3 IN PROGRESS (REFOCUSED)
-**Plan Location**: `~/.claude/plans/curried-floating-pizza.md`
+**Status**: ✅ MIGRATION COMPLETE (2026-01-16)
+**Plan Location**: `~/.claude/plans/purring-stargazing-floyd.md` (Phase 4)
 **Design Document**: `.claude/docs/DESIGN.md`
 **SDK Mapping**: `.claude/docs/docker-cli-sdk-mapping.md`
 
@@ -37,10 +37,37 @@
 cmd/clawker → pkg/cmd/* → internal/engine → Docker SDK
 ```
 
-### To
+### After (Current - Migration Complete)
 ```
 cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 ```
+
+## Phase 4: Remove Legacy Code - COMPLETED (2026-01-16)
+
+**Key Changes:**
+- Deleted `internal/engine/` directory entirely
+- All code now uses `internal/docker.Client` which wraps `pkg/whail.Engine`
+- Removed deprecated `Engine()` and `CloseEngine()` from `pkg/cmdutil/factory.go`
+- Migrated `pkg/cmdutil/output.go` to use `whail.DockerError`
+- Migrated `internal/build/build.go` to use `docker.Client`
+- Migrated `internal/workspace/` package to use `docker.Client`
+- Migrated `pkg/cmd/monitor/up.go` to use `docker.Client`
+- Added methods to `internal/docker/client.go`: `IsMonitoringActive`, `ImageExists`, `BuildImage`
+- Added `internal/docker/volume.go` with `EnsureVolume`, `CopyToVolume`, and tar helpers
+- Added `IsAlpineImage` to `internal/docker/names.go`
+- Deleted `pkg/cmd/remove/` and `pkg/cmd/prune/` packages (user cleanup)
+- Updated root.go and root_test.go to reflect current command structure
+
+**Type Mappings Applied:**
+- `engine.Engine` → `docker.Client`
+- `engine.NewEngine(ctx)` → `docker.NewClient(ctx)`
+- `engine.ClawkerContainer` → `docker.Container`
+- `engine.ContainerName()` → `docker.ContainerName()`
+- `engine.VolumeName()` → `docker.VolumeName()`
+- `engine.ImageTag()` → `docker.ImageTag()`
+- `engine.ImageLabels()` → `docker.ImageLabels()`
+- `engine.IsAlpineImage()` → `docker.IsAlpineImage()`
+- `*engine.DockerError` → `*whail.DockerError`
 
 ## Completed Packages
 
@@ -82,9 +109,9 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 |-------|-------------|--------|
 | **Phase 1** | Create `pkg/whail` foundation | ✅ COMPLETED |
 | **Phase 2** | Create `internal/docker` layer | ✅ COMPLETED |
-| **Phase 3** | Docker CLI Mimicry | 🔄 IN PROGRESS |
-| **Phase 4** | Remove legacy code | ⏳ NOT STARTED |
-| **Phase 5** | Documentation updates | ⏳ NOT STARTED |
+| **Phase 3** | Docker CLI Mimicry | ✅ COMPLETED |
+| **Phase 4** | Remove legacy code | ✅ COMPLETED (2026-01-16) |
+| **Phase 5** | Documentation updates | ✅ COMPLETED |
 
 ## Phase 3: Docker CLI Mimicry (REFOCUSED 2026-01-15)
 
@@ -313,6 +340,32 @@ type Client struct {
 **Task List Memory**: `architecture_migration_tasks`
 **Plan File**: `~/.claude/plans/curried-floating-pizza.md`
 **SDK Mapping**: `.claude/docs/docker-cli-sdk-mapping.md`
+
+## Migration Complete Summary
+
+The architecture migration from `internal/engine` to `pkg/whail` + `internal/docker` is **complete**.
+
+### Final Architecture
+```
+cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
+```
+
+### What Was Achieved
+- Created `pkg/whail` as a reusable, label-isolated Docker engine library
+- Created `internal/docker` as a thin clawker-specific wrapper
+- Implemented full Docker CLI mimicry (`container`, `volume`, `network`, `image` commands)
+- Removed legacy `internal/engine` package entirely
+- All tests passing, binary builds successfully
+
+### Key Files
+- `pkg/whail/` - Reusable Docker engine (container, volume, network, image, copy operations)
+- `internal/docker/` - Clawker middleware (labels, names, client)
+- `pkg/cmd/container/` - 18 container subcommands
+- `pkg/cmd/volume/` - 5 volume subcommands
+- `pkg/cmd/network/` - 5 network subcommands
+- `pkg/cmd/image/` - 5 image subcommands
+
+---
 
 ## Quick Reference
 

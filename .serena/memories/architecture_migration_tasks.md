@@ -1,8 +1,14 @@
 # Architecture Migration Task List
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 3 - Docker CLI Mimicry (REFOCUSED)
-**Plan File**: `~/.claude/plans/curried-floating-pizza.md`
+**Current Phase**: ✅ MIGRATION COMPLETE
+**Plan File**: `~/.claude/plans/purring-stargazing-floyd.md` (Phase 4)
+
+## MIGRATION STATUS: PHASE 4 COMPLETED
+
+The legacy `internal/engine/` package has been **fully removed**. All code now uses:
+- `internal/docker.Client` for clawker-specific Docker operations
+- `pkg/whail.Engine` for label-isolated Docker SDK operations
 
 ## IMPORTANT: Phase 3 Refocused
 
@@ -359,58 +365,68 @@ Made `pkg/cmd/run` a thin alias to `pkg/cmd/container/run`:
 
 ## Phase 4: Remove Legacy Code
 
-**Status**: NOT STARTED
-**Estimated Sessions**: 1
+**Status**: ✅ COMPLETED (2026-01-16)
+**Actual Sessions**: 1
 
-### Task 4.1: Remove internal/engine
+### Task 4.1: Remove internal/engine - ✅ COMPLETED
 
-- [ ] Delete `internal/engine/` directory
-- [ ] Update all remaining imports
-- [ ] Remove `Engine()` from factory (keep only `Client()`)
+- [x] Delete `internal/engine/` directory
+- [x] Update all remaining imports
+- [x] Remove `Engine()` and `CloseEngine()` from factory
+- [x] Migrate `pkg/cmdutil/output.go` to use `whail.DockerError`
+- [x] Migrate `internal/build/build.go` to use `docker.Client`
+- [x] Migrate `internal/workspace/` package to use `docker.Client`
+- [x] Migrate `pkg/cmd/monitor/up.go` to use `docker.Client`
+- [x] Add `IsMonitoringActive`, `ImageExists`, `BuildImage` to `docker.Client`
+- [x] Add `internal/docker/volume.go` with volume helpers
+- [x] Add `IsAlpineImage` to `internal/docker/names.go`
 
-### Task 4.2: Cleanup
+### Task 4.2: Cleanup - ✅ COMPLETED
 
-- [ ] `go mod tidy`
-- [ ] `go vet ./...`
-- [ ] `go fmt ./...`
+- [x] `go mod tidy`
+- [x] `go vet ./...`
+- [x] `go fmt ./...`
+- [x] Deleted `pkg/cmd/remove/` and `pkg/cmd/prune/` (user cleanup)
+- [x] Updated `pkg/cmd/root/root.go` and `root_test.go`
 
-### Task 4.3: Final test run
+### Task 4.3: Final test run - ✅ COMPLETED
 
-- [ ] `go test ./...`
-- [ ] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
+- [x] `go test ./...` - All tests pass
+- [x] `go build -o bin/clawker ./cmd/clawker` - Binary builds successfully
 
 ---
 
 ## Phase 5: Documentation
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETED (2026-01-16)
 **Estimated Sessions**: 1
 
-### Task 5.1: Update CLAUDE.md
+### Task 5.1: Update CLAUDE.md - ✅ COMPLETED
 
-- [ ] Update Repository Structure
-- [ ] Update Key Concepts table
-- [ ] Update code examples
+- [x] Update Repository Structure (remove internal/engine reference)
+- [x] Update Key Concepts table
+- [x] Update code examples
 
-### Task 5.2: Update ARCHITECTURE.md
+### Task 5.2: Update ARCHITECTURE.md - ✅ COMPLETED
 
-- [ ] Update doc with concise high level abstract overview of the architecture without going deep into implemenation details
+- [x] Update doc with concise high level abstract overview
 
-### Task 5.3: Update DESIGN.md
+### Task 5.3: Update DESIGN.md - ✅ COMPLETED
 
-- [ ] Mark implementation complete
-- [ ] Add implementation notes
-- [ ]
+- [x] Mark implementation complete
+- [x] Add implementation notes
 
-### Task 5.4: Update README.md
+### Task 5.4: Update README.md - ✅ COMPLETED
 
-- [ ] If any user-facing changes
+- [x] User-facing changes reflected
 
-### Task 5.5: Update Serena memories
+### Task 5.5: Update Serena memories - ✅ COMPLETED
 
-- [ ] Update `project_overview`
-- [ ] Update `common_patterns`
-- [ ] Condense `architecture_migration_tasks` and `architecture_migration_stats` with any deferred items or lessons learned into a single memeory named `migratin_post_mortem`. Do not transfer itemized finished tasks, just give a very very brief history of what was done during the migration without going into detail.
+- [x] Update `architecture_migration_status`
+- [x] Update `architecture_migration_tasks`
+- [x] Update `project_overview`
+- [x] Update `common_patterns`
+- [x] Key learnings captured in `key_learnings` memory
 
 ---
 

@@ -53,29 +53,32 @@ func (e *Engine) DoOperation(ctx context.Context, args string) error {
 }
 ```
 
-## Engine Package Method Signatures
+## Current Package Method Signatures (Post-Migration)
 
-All `internal/engine` methods follow this pattern:
+All `pkg/whail` and `internal/docker` methods follow this pattern:
 
 ```go
-// Engine methods (internal/engine/client.go)
+// whail.Engine methods (pkg/whail/container.go)
 func (e *Engine) ContainerCreate(ctx context.Context, config *container.Config, ...) (Response, error)
 func (e *Engine) ContainerStart(ctx context.Context, containerID string) error
+func (e *Engine) ContainerStop(ctx context.Context, containerID string, timeout *int) error
+func (e *Engine) ContainerKill(ctx context.Context, containerID, signal string) error
+func (e *Engine) ContainerRemove(ctx context.Context, containerID string, force bool) error
+
+// whail.Engine methods (pkg/whail/volume.go)
+func (e *Engine) VolumeCreate(ctx context.Context, name string, labels map[string]string) error
 func (e *Engine) VolumeExists(ctx context.Context, name string) (bool, error)
-func (e *Engine) ImagePull(ctx context.Context, imageRef string) (io.ReadCloser, error)
+func (e *Engine) VolumeRemove(ctx context.Context, name string, force bool) error
 
-// ContainerManager methods (internal/engine/container.go)
-func (cm *ContainerManager) Create(ctx context.Context, cfg ContainerConfig) (string, error)
-func (cm *ContainerManager) Start(ctx context.Context, containerID string) error
-func (cm *ContainerManager) FindOrCreate(ctx context.Context, cfg ContainerConfig) (string, bool, error)
+// docker.Client methods (internal/docker/client.go) - wraps whail.Engine
+func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Container, error)
+func (c *Client) ListContainersByProject(ctx context.Context, project string, includeAll bool) ([]Container, error)
+func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (*Container, error)
+func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID string, force bool) error
 
-// VolumeManager methods (internal/engine/volume.go)
-func (vm *VolumeManager) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error)
-func (vm *VolumeManager) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error
-
-// ImageManager methods (internal/engine/image.go)
-func (im *ImageManager) EnsureImage(ctx context.Context, imageRef string) error
-func (im *ImageManager) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error
+// docker.Client volume helpers (internal/docker/volume.go)
+func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error)
+func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error
 ```
 
 ## CLI Command Pattern
@@ -84,16 +87,20 @@ func (im *ImageManager) BuildImage(ctx context.Context, buildContext io.Reader, 
 func runCommand(f *cmdutil.Factory, opts *Options) error {
     ctx := context.Background()  // Or use term.SetupSignalContext for cancellation
     
-    eng, err := engine.NewEngine(ctx)
+    // Use docker.NewClient for clawker-specific operations
+    client, err := docker.NewClient(ctx)
     if err != nil {
         return err
     }
-    defer eng.Close()
+    defer client.Close()
     
-    // Pass ctx to all engine operations
-    containers, err := eng.ListClawkerContainers(ctx, true)
-    containerMgr := engine.NewContainerManager(eng)
-    containerMgr.Start(ctx, containerID)
+    // Pass ctx to all client operations
+    containers, err := client.ListContainers(ctx, true)
+    client.ContainerStart(ctx, containerID)
+    
+    // Or use f.Client(ctx) for factory-managed client
+    client, err := f.Client(ctx)
+    defer f.CloseClient()
 }
 ```
 
@@ -113,8 +120,8 @@ func runCommand(...) error {
         cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
         defer cancel()
         
-        containerMgr.Remove(cleanupCtx, containerID, true)
-        eng.VolumeRemove(cleanupCtx, volumeName, true)
+        client.ContainerRemove(cleanupCtx, containerID, true)
+        client.VolumeRemove(cleanupCtx, volumeName, true)
     }()
     
     // ... main operation using ctx
