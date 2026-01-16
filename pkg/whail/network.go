@@ -109,3 +109,15 @@ func (e *Engine) IsNetworkManaged(ctx context.Context, name string) (bool, error
 	val, ok := info.Labels[e.managedLabelKey]
 	return ok && val == e.managedLabelValue, nil
 }
+
+// NetworksPrune removes all unused managed networks.
+// The managed label filter is automatically injected to ensure only
+// managed networks are affected.
+func (e *Engine) NetworksPrune(ctx context.Context) (network.PruneReport, error) {
+	f := e.newManagedFilter()
+	report, err := e.APIClient.NetworksPrune(ctx, f)
+	if err != nil {
+		return network.PruneReport{}, ErrNetworksPruneFailed(err)
+	}
+	return report, nil
+}

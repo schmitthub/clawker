@@ -518,3 +518,74 @@ func TestIsNetworkManaged(t *testing.T) {
 		})
 	}
 }
+
+
+func TestNetworksPrune(t *testing.T) {
+	tests := []struct {
+		name            string
+		setupFunc       func(ctx context.Context, t *testing.T) string
+		cleanupFunc     func(ctx context.Context, t *testing.T, networkName string)
+		shouldBeRemoved bool
+	}{
+		{
+			name: "should prune managed networks",
+			setupFunc: func(ctx context.Context, t *testing.T) string {
+				name := generateNetworkName("test-network-prune-managed")
+				return setupManagedNetwork(ctx, t, name)
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
+				// Network should be pruned, but try cleanup anyway in case test fails
+				testEngine.APIClient.NetworkRemove(ctx, networkName)
+			},
+			shouldBeRemoved: true,
+		},
+		{
+			name: "should not prune unmanaged networks",
+			setupFunc: func(ctx context.Context, t *testing.T) string {
+				name := generateNetworkName("test-network-prune-unmanaged")
+				return setupUnmanagedNetwork(ctx, t, name, map[string]string{"other.label": "value"})
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
+				testEngine.APIClient.NetworkRemove(ctx, networkName)
+			},
+			shouldBeRemoved: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			networkName := tt.setupFunc(ctx, t)
+			defer tt.cleanupFunc(ctx, t, networkName)
+
+			// Verify network exists before prune
+			exists, err := testEngine.NetworkExists(ctx, networkName)
+			if err != nil {
+				t.Fatalf("Failed to check if network exists before prune: %v", err)
+			}
+			if !exists {
+				t.Fatalf("Network should exist before prune")
+			}
+
+			// Prune networks
+			_, err = testEngine.NetworksPrune(ctx)
+			if err != nil {
+				t.Fatalf("NetworksPrune failed: %v", err)
+			}
+
+			// Check if network still exists
+			exists, err = testEngine.NetworkExists(ctx, networkName)
+			if err != nil {
+				t.Fatalf("Failed to check if network exists after prune: %v", err)
+			}
+
+			if tt.shouldBeRemoved && exists {
+				t.Errorf("Expected managed network %q to be pruned, but it still exists", networkName)
+			}
+			if !tt.shouldBeRemoved && !exists {
+				t.Errorf("Expected unmanaged network %q to NOT be pruned, but it was removed", networkName)
+			}
+		})
+	}
+}

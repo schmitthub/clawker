@@ -92,20 +92,20 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 
 ### Session Execution Order
 ```
-A.1 → A.2 → A.3 → B → C → D → G → E → F
+A.1 → A.2 → A.3 → B → C → D → E → G → F
 ```
 
-| Session | Description | Est. Time |
-|---------|-------------|-----------|
-| A.1 | Container: restart, rename, wait | 20 min |
-| A.2 | Container: top, stats, update | 25 min |
-| A.3 | Container: exec, attach, cp | 30 min |
-| B | Volume: list, inspect, create, remove, prune | 30 min | ✅ |
-| C | Network: list, inspect, create, remove, prune | 30 min | ✅ |
-| D | Image: list, inspect, remove, build, prune | 30 min | ✅ |
-| G | Documentation update | 30 min |
-| E | Missing whail methods | 30 min |
-| F | Container create/run | 45 min |
+| Session | Description | Est. Time | Status |
+|---------|-------------|-----------|--------|
+| A.1 | Container: restart, rename, wait | 20 min | ✅ |
+| A.2 | Container: top, stats, update | 25 min | ✅ |
+| A.3 | Container: exec, attach, cp | 30 min | ✅ |
+| B | Volume subcommands | 30 min | ✅ |
+| C | Network subcommands | 30 min | ✅ |
+| D | Image subcommands | 30 min | ✅ |
+| E | Missing whail prune methods | 30 min | ✅ |
+| G | Documentation update | 30 min | ⏳ |
+| F | Container create/run | 45 min | ⏳ |
 
 **Total**: ~4.5 hours across 9 sessions
 
@@ -219,19 +219,29 @@ Session C: ✅ COMPLETED (2026-01-16)
 Session D: ✅ COMPLETED (2026-01-16)
 - [x] `image list`, `image inspect`, `image remove`, `image build`, `image prune`
 
+Session E: ✅ COMPLETED (2026-01-16)
+- [x] `VolumesPrune(ctx, all bool)` - with `all` param to include named volumes
+- [x] `NetworksPrune(ctx)` - managed label filter injection
+- [x] `ImagesPrune(ctx, dangling bool)` - managed label filter injection
+- [x] `ImageInspect` was already implemented
+- [x] Error constructors: `ErrVolumesPruneFailed`, `ErrNetworksPruneFailed`, `ErrImagesPruneFailed`
+- [x] Updated prune commands to use new whail methods instead of list+remove workaround
+- [x] Fixed test ordering issue in TestImageRemove affecting TestImageInspect
+
 Session F (deferred):
 - [ ] `create`, `run`
 
-### Remaining Tasks (3.4-3.8)
+### Remaining Tasks
 
-| Task | Description | Session |
-|------|-------------|---------|
-| 3.4 | Volume commands | B |
-| 3.5 | Network commands | C |
-| 3.6 | Image commands | D |
-| 3.7 | Missing whail methods | E |
-| 3.8 | Documentation update | G |
-| 3.9 | Full test suite | - |
+| Task | Description | Session | Status |
+|------|-------------|---------|--------|
+| 3.4 | Volume commands | B | ✅ |
+| 3.5 | Network commands | C | ✅ |
+| 3.6 | Image commands | D | ✅ |
+| 3.7 | Missing whail prune methods | E | ✅ |
+| 3.8 | Documentation update | G | ⏳ |
+| 3.9 | Full test suite | - | ✅ |
+| 3.10 | Container create/run (advanced) | F | ⏳ |
 
 See `architecture_migration_tasks` memory for detailed checklists.
 
@@ -285,6 +295,9 @@ type Client struct {
 14. **Parent commands**: Add subcommands alphabetically with `cmd.AddCommand()`, Cobra auto-sorts in help output
 15. **Test expectedSubcommands**: Keep sorted alphabetically to match Cobra's output order
 16. **Global flag shorthand conflict**: Don't use `-d` shorthand in subcommands - it conflicts with the global `--debug` flag
+17. **VolumesPrune all param**: Docker only prunes anonymous volumes by default; pass `all=true` filter to include named volumes
+18. **Test ordering**: Tests run in file order; avoid using shared test fixtures in tests that modify them (TestImageRemove used testImageTag which TestImageInspect needed)
+19. **Prune API signatures**: VolumesPrune takes `all bool`, ImagesPrune takes `dangling bool`, NetworksPrune has no params
 
 ## How to Resume
 

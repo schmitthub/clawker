@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -69,45 +68,23 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		}
 	}
 
-	// TODO: implement VolumesPrune in pkg/whail/volume.go
-	// For now, list and remove volumes one by one as a workaround
-	resp, err := client.VolumeList(ctx)
+	// Prune all unused managed volumes (all=true to include named volumes)
+	report, err := client.VolumesPrune(ctx, true)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
 
-	if len(resp.Volumes) == 0 {
+	if len(report.VolumesDeleted) == 0 {
 		fmt.Fprintln(os.Stderr, "No unused clawker volumes to remove.")
 		return nil
 	}
 
-	var removed int
-	var reclaimedSpace int64
-	for _, v := range resp.Volumes {
-		// Try to remove the volume (will fail if in use)
-		if err := client.VolumeRemove(ctx, v.Name, false); err != nil {
-			// Check if it's an "in use" error vs unexpected error
-			if strings.Contains(err.Error(), "volume is in use") {
-				continue
-			}
-			// Log unexpected errors but continue with other volumes
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove volume %s: %v\n", v.Name, err)
-			continue
-		}
-		removed++
-		// UsageData may be nil if Docker didn't return size info
-		if v.UsageData != nil {
-			reclaimedSpace += v.UsageData.Size
-		}
-		fmt.Fprintf(os.Stderr, "Deleted: %s\n", v.Name)
+	for _, name := range report.VolumesDeleted {
+		fmt.Fprintf(os.Stderr, "Deleted: %s\n", name)
 	}
 
-	if removed == 0 {
-		fmt.Fprintln(os.Stderr, "No unused clawker volumes to remove.")
-	} else {
-		fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(reclaimedSpace))
-	}
+	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.SpaceReclaimed)))
 
 	return nil
 }

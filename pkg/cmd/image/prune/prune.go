@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -84,89 +83,31 @@ func run(cmd *cobra.Command, _ *cmdutil.Factory, opts *Options) error {
 		}
 	}
 
-	// TODO: implement ImagesPrune in pkg/whail/image.go
-	// For now, list and remove images one by one as a workaround
-	listOpts := image.ListOptions{
-		All: opts.All, // Include intermediate images if --all
-	}
-	images, err := client.ImageList(ctx, listOpts)
+	// Prune unused managed images
+	// dangling=!opts.All: if --all is false, only prune dangling images
+	report, err := client.ImagesPrune(ctx, !opts.All)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
 
-	if len(images) == 0 {
-		fmt.Fprintln(os.Stderr, "No clawker images to remove.")
-		return nil
-	}
-
-	// Filter to only dangling images if not --all
-	var toRemove []image.Summary
-	if opts.All {
-		toRemove = images
-	} else {
-		for _, img := range images {
-			// Dangling images have no tags
-			if len(img.RepoTags) == 0 || (len(img.RepoTags) == 1 && img.RepoTags[0] == "<none>:<none>") {
-				toRemove = append(toRemove, img)
-			}
-		}
-	}
-
-	if len(toRemove) == 0 {
+	if len(report.ImagesDeleted) == 0 {
 		fmt.Fprintln(os.Stderr, "No unused clawker images to remove.")
 		return nil
 	}
 
-	var removed int
-	var reclaimedSpace int64
-	removeOpts := image.RemoveOptions{
-		Force:         false,
-		PruneChildren: true,
-	}
-
-	for _, img := range toRemove {
-		// Try to remove the image (will fail if in use)
-		responses, err := client.ImageRemove(ctx, img.ID, removeOpts)
-		if err != nil {
-			// Check if it's an "in use" error vs unexpected error
-			if strings.Contains(err.Error(), "image is being used") ||
-				strings.Contains(err.Error(), "image has dependent child images") {
-				continue
-			}
-			// Log unexpected errors but continue with other images
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove image %s: %v\n", truncateID(img.ID), err)
-			continue
+	for _, img := range report.ImagesDeleted {
+		if img.Untagged != "" {
+			fmt.Fprintf(os.Stderr, "Untagged: %s\n", img.Untagged)
 		}
-
-		for _, resp := range responses {
-			if resp.Untagged != "" {
-				fmt.Fprintf(os.Stderr, "Untagged: %s\n", resp.Untagged)
-			}
-			if resp.Deleted != "" {
-				fmt.Fprintf(os.Stderr, "Deleted: %s\n", resp.Deleted)
-				removed++
-			}
+		if img.Deleted != "" {
+			fmt.Fprintf(os.Stderr, "Deleted: %s\n", img.Deleted)
 		}
-		reclaimedSpace += img.Size
 	}
 
-	if removed == 0 {
-		fmt.Fprintln(os.Stderr, "No unused clawker images to remove.")
-	} else {
-		fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(reclaimedSpace))
-	}
+	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.SpaceReclaimed)))
 
 	return nil
-}
-
-// truncateID shortens an image ID to 12 characters.
-func truncateID(id string) string {
-	id = strings.TrimPrefix(id, "sha256:")
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }
 
 // formatBytes formats bytes into a human-readable string.

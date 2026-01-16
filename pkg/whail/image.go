@@ -64,3 +64,25 @@ func (e *Engine) isManagedImage(ctx context.Context, imageRef string) (bool, err
 	}
 	return e.isManagedLabelPresent(info.Config.Labels), nil
 }
+
+// ImagesPrune removes all unused managed images.
+// The managed label filter is automatically injected to ensure only
+// managed images are affected.
+// The dangling parameter controls whether to only remove dangling images (untagged)
+// or all unused images.
+func (e *Engine) ImagesPrune(ctx context.Context, dangling bool) (image.PruneReport, error) {
+	f := e.newManagedFilter()
+	// dangling=true means only remove images without tags
+	// dangling=false means remove all unused images
+	// Note: Docker defaults to dangling=true, so we must explicitly set false
+	if dangling {
+		f.Add("dangling", "true")
+	} else {
+		f.Add("dangling", "false")
+	}
+	report, err := e.APIClient.ImagesPrune(ctx, f)
+	if err != nil {
+		return image.PruneReport{}, ErrImagesPruneFailed(err)
+	}
+	return report, nil
+}

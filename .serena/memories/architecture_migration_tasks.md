@@ -326,12 +326,15 @@ The assistant should:
 - [x] `image build` (delegates to top-level with guidance message)
 - [x] `image prune` (uses list+remove workaround like volume prune)
 
-### Task 3.7: Missing whail Methods (Session E - ~30 min)
+### Task 3.7: Missing whail Methods (Session E - ~30 min) - ✅ COMPLETED (2026-01-16)
 
-- [ ] `VolumesPrune` in pkg/whail/volume.go
-- [ ] `NetworksPrune` in pkg/whail/network.go
-- [ ] `ImagesPrune` in pkg/whail/image.go
-- [ ] `ImageInspect` in pkg/whail/image.go
+- [x] `VolumesPrune(ctx, all bool)` in pkg/whail/volume.go - with `all` param for named volumes
+- [x] `NetworksPrune(ctx)` in pkg/whail/network.go
+- [x] `ImagesPrune(ctx, dangling bool)` in pkg/whail/image.go
+- [x] `ImageInspect(ctx, imageRef)` in pkg/whail/image.go (already existed)
+- [x] Error constructors: `ErrVolumesPruneFailed`, `ErrNetworksPruneFailed`, `ErrImagesPruneFailed`
+- [x] Tests: `TestVolumesPrune`, `TestNetworksPrune`, `TestImagesPrune`, `TestImageInspect`
+- [x] Updated prune commands to use new whail methods
 
 ### Task 3.8: Documentation Update (Session G - ~30 min)
 
@@ -432,6 +435,9 @@ After each session if you've learned anything add it to this list, avoid verbosi
   - shlex.Split strips quotes, so test expected values shouldn't include quotes
   - prune workaround: list+remove individual volumes instead of waiting for VolumesPrune
   - Global flag `-d/--debug` reserves `-d` shorthand; don't reuse it in subcommands
+  - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
+  - Test ordering matters: tests that remove resources affect later tests using same resources
+  - TestImageRemove must create its own image, not reuse testImageTag that other tests need
 
 Summarize subtasks and tasks into short summaries after they are complete to keep this file footprint small
 
@@ -444,4 +450,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → G → E → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → G → F
