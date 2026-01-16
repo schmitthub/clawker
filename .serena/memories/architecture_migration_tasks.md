@@ -263,11 +263,11 @@ The assistant should:
 - [x] `container stats`
 - [x] `container update`
 
-#### 3.3.4: Interactive Container Commands (Session A.3 - ~30 min)
+#### 3.3.4: Interactive Container Commands (Session A.3 - ~30 min) - ✅ COMPLETED
 
-- [ ] `container exec`
-- [ ] `container attach`
-- [ ] `container cp`
+- [x] `container exec`
+- [x] `container attach`
+- [x] `container cp`
 
 #### 3.3.5: Advanced Container Commands (Session F - deferred)
 
@@ -592,6 +592,29 @@ Track each session's progress here:
   - Memory size parsing needs case-insensitive suffix handling
   - Cobra interprets args starting with `-` as flags; use `--` separator or avoid such test inputs
 
+### Session 12 (2026-01-15)
+
+- **Duration**: ~35 minutes
+- **Work Done**:
+  - COMPLETED Session A.3: Interactive Container Commands
+  - Created 3 new container subcommands with tests:
+    - `pkg/cmd/container/exec/exec.go` - Execute command in container (TTY, stdin handling)
+    - `pkg/cmd/container/attach/attach.go` - Attach to running container (TTY, signal handling)
+    - `pkg/cmd/container/cp/cp.go` - Copy files to/from container (tar archive handling)
+  - All commands use `internal/docker.Client` and `internal/term.PTYHandler` for TTY
+  - Fixed `-d` shorthand conflict (exec's `--detach` no longer has shorthand, conflicts with global `--debug`)
+  - Updated `container.go` to register all 3 new commands (now 18 total subcommands)
+  - Updated `container_test.go` expectedSubcommands to include attach, cp, exec
+  - All tests passing: `go test ./...`
+  - CLI shows all 18 container subcommands in help
+- **Next**: Session B - Volume commands (list, inspect, create, remove, prune)
+- **Blockers**: None
+- **Key Learnings**:
+  - Global flags like `-d` (--debug) conflict with command-specific flags; avoid reusing shorthands
+  - exec command must check container is running before creating exec instance
+  - cp command uses tar archives for file transfer; handle both copy directions
+  - attach command detects container TTY from ContainerInspect
+
 ---
 
 ## Notes
@@ -601,4 +624,4 @@ Track each session's progress here:
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → A.3 → B → C → D → G → E → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → B → C → D → G → E → F

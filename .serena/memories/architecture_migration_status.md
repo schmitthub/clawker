@@ -179,7 +179,7 @@ Commands appear in CLI help as "Additional help topics" until subcommands are ad
 
 ### Task 3.3: Implement Container Commands - 🔄 IN PROGRESS (2026-01-15)
 
-Created 9 container subcommands in `pkg/cmd/container/`:
+Created 18 container subcommands in `pkg/cmd/container/`:
 
 **Completed Commands:**
 | Command | File | Description |
@@ -201,14 +201,14 @@ Created 9 container subcommands in `pkg/cmd/container/`:
 
 **Remaining Commands (broken into sessions):**
 
-Session A.1:
-- [ ] `restart`, `rename`, `wait`
+Session A.1: ✅ COMPLETED
+- [x] `restart`, `rename`, `wait`
 
 Session A.2: ✅ COMPLETED
 - [x] `top`, `stats`, `update`
 
-Session A.3:
-- [ ] `exec`, `attach`, `cp`
+Session A.3: ✅ COMPLETED
+- [x] `exec`, `attach`, `cp`
 
 Session F (deferred):
 - [ ] `create`, `run`

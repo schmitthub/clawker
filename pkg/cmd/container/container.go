@@ -2,6 +2,9 @@
 package container
 
 import (
+	"github.com/schmitthub/clawker/pkg/cmd/container/attach"
+	"github.com/schmitthub/clawker/pkg/cmd/container/cp"
+	"github.com/schmitthub/clawker/pkg/cmd/container/exec"
 	"github.com/schmitthub/clawker/pkg/cmd/container/rename"
 	"github.com/schmitthub/clawker/pkg/cmd/container/restart"
 	"github.com/schmitthub/clawker/pkg/cmd/container/stats"
@@ -37,6 +40,9 @@ container management commands.`,
 	}
 
 	// Add subcommands
+	cmd.AddCommand(attach.NewCmd(f))
+	cmd.AddCommand(cp.NewCmd(f))
+	cmd.AddCommand(exec.NewCmd(f))
 	cmd.AddCommand(NewCmdInspect(f))
 	cmd.AddCommand(NewCmdKill(f))
 	cmd.AddCommand(NewCmdList(f))
