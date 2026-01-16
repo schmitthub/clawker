@@ -2,6 +2,11 @@
 package image
 
 import (
+	"github.com/schmitthub/clawker/pkg/cmd/image/build"
+	"github.com/schmitthub/clawker/pkg/cmd/image/inspect"
+	"github.com/schmitthub/clawker/pkg/cmd/image/list"
+	"github.com/schmitthub/clawker/pkg/cmd/image/prune"
+	"github.com/schmitthub/clawker/pkg/cmd/image/remove"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -23,16 +28,22 @@ image management commands.`,
   clawker image build
 
   # Remove an image
-  clawker image rm clawker-myapp:latest`,
+  clawker image rm clawker-myapp:latest
+
+  # Inspect an image
+  clawker image inspect clawker-myapp:latest
+
+  # Remove unused images
+  clawker image prune`,
 		// No RunE - this is a parent command
 	}
 
 	// Add subcommands
-	// Note: Subcommands will be added in Task 3.4
-	// cmd.AddCommand(NewCmdLs(f))
-	// cmd.AddCommand(NewCmdBuild(f))
-	// cmd.AddCommand(NewCmdRm(f))
-	// etc.
+	cmd.AddCommand(build.NewCmd(f))
+	cmd.AddCommand(inspect.NewCmd(f))
+	cmd.AddCommand(list.NewCmd(f))
+	cmd.AddCommand(prune.NewCmd(f))
+	cmd.AddCommand(remove.NewCmd(f))
 
 	return cmd
 }

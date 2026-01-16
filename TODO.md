@@ -6,7 +6,7 @@
 
 ## Quality issues
 
-[ ] the big migration to whail and docker clone resulted in some iffy tests due to legacy code conflicts. like setting the -d flag in exec
+[ ] the big migration to whail and docker clone resulted in some iffy tests due to legacy code conflicts. like setting the -d flag in exec. Its due to a global debug flag so we need to remove that and apply it locally to commands that should support it smh...
 [ ] pkg/cmd/run/run.go:75 The short flag -u is used by both run --user and remove --unused commands. While Cobra allows different subcommands to have the same short flags, this creates confusion for users and violates CLI consistency guidelines. Consider changing one of these short flags to avoid ambiguity. Recommendation: Use a different short flag for --unused (perhaps no short flag, or -U if uppercase is acceptable).
 [ ] pkg/cmd/remove/remove.go The --unused --all functionality should include testing for image removal (not just volumes), as documented
   in the command's long description (lines 44-47 in remove.go). The integration tests only verify volume removal with TestRm_UnusedFlag_WithAll_RemovesVolumes but don't test that images are being removed as claimed in the documentation.

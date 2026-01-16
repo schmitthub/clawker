@@ -102,7 +102,7 @@ A.1 → A.2 → A.3 → B → C → D → G → E → F
 | A.3 | Container: exec, attach, cp | 30 min |
 | B | Volume: list, inspect, create, remove, prune | 30 min | ✅ |
 | C | Network: list, inspect, create, remove, prune | 30 min | ✅ |
-| D | Image: list, inspect, remove, build, prune | 30 min |
+| D | Image: list, inspect, remove, build, prune | 30 min | ✅ |
 | G | Documentation update | 30 min |
 | E | Missing whail methods | 30 min |
 | F | Container create/run | 45 min |
@@ -215,6 +215,9 @@ Session B: ✅ COMPLETED
 
 Session C: ✅ COMPLETED (2026-01-16)
 - [x] `network list`, `network inspect`, `network create`, `network remove`, `network prune`
+
+Session D: ✅ COMPLETED (2026-01-16)
+- [x] `image list`, `image inspect`, `image remove`, `image build`, `image prune`
 
 Session F (deferred):
 - [ ] `create`, `run`
