@@ -344,8 +344,8 @@ The assistant should:
 
 ### Task 3.9: Full Test Suite
 
-- [ ] `go test ./...`
-- [ ] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
+- [x] `go test ./...`
+- [x] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 
 ---
 
@@ -386,14 +386,13 @@ The assistant should:
 
 ### Task 5.2: Update ARCHITECTURE.md
 
-- [ ] Document `pkg/whail` API
-- [ ] Document `internal/docker` usage
-- [ ] Update diagrams
+- [ ] Update doc with concise high level abstract overview of the architecture without going deep into implemenation details
 
 ### Task 5.3: Update DESIGN.md
 
 - [ ] Mark implementation complete
 - [ ] Add implementation notes
+- [ ]
 
 ### Task 5.4: Update README.md
 
@@ -403,7 +402,7 @@ The assistant should:
 
 - [ ] Update `project_overview`
 - [ ] Update `common_patterns`
-- [ ] Archive `architecture_migration_tasks` or mark complete
+- [ ] Condense `architecture_migration_tasks` and `architecture_migration_stats` with any deferred items or lessons learned into a single memeory named `migratin_post_mortem`. Do not transfer itemized finished tasks, just give a very very brief history of what was done during the migration without going into detail.
 
 ---
 
