@@ -4,9 +4,11 @@ package container
 import (
 	"github.com/schmitthub/clawker/pkg/cmd/container/attach"
 	"github.com/schmitthub/clawker/pkg/cmd/container/cp"
+	"github.com/schmitthub/clawker/pkg/cmd/container/create"
 	"github.com/schmitthub/clawker/pkg/cmd/container/exec"
 	"github.com/schmitthub/clawker/pkg/cmd/container/rename"
 	"github.com/schmitthub/clawker/pkg/cmd/container/restart"
+	containerrun "github.com/schmitthub/clawker/pkg/cmd/container/run"
 	"github.com/schmitthub/clawker/pkg/cmd/container/stats"
 	"github.com/schmitthub/clawker/pkg/cmd/container/top"
 	"github.com/schmitthub/clawker/pkg/cmd/container/update"
@@ -42,6 +44,7 @@ container management commands.`,
 	// Add subcommands
 	cmd.AddCommand(attach.NewCmd(f))
 	cmd.AddCommand(cp.NewCmd(f))
+	cmd.AddCommand(create.NewCmd(f))
 	cmd.AddCommand(exec.NewCmd(f))
 	cmd.AddCommand(NewCmdInspect(f))
 	cmd.AddCommand(NewCmdKill(f))
@@ -51,6 +54,7 @@ container management commands.`,
 	cmd.AddCommand(NewCmdRemove(f))
 	cmd.AddCommand(rename.NewCmd(f))
 	cmd.AddCommand(restart.NewCmd(f))
+	cmd.AddCommand(containerrun.NewCmd(f))
 	cmd.AddCommand(NewCmdStart(f))
 	cmd.AddCommand(stats.NewCmd(f))
 	cmd.AddCommand(NewCmdStop(f))
