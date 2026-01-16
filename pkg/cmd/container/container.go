@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/pkg/cmd/container/rename"
 	"github.com/schmitthub/clawker/pkg/cmd/container/restart"
 	containerrun "github.com/schmitthub/clawker/pkg/cmd/container/run"
+	"github.com/schmitthub/clawker/pkg/cmd/container/start"
 	"github.com/schmitthub/clawker/pkg/cmd/container/stats"
 	"github.com/schmitthub/clawker/pkg/cmd/container/top"
 	"github.com/schmitthub/clawker/pkg/cmd/container/update"
@@ -55,7 +56,7 @@ container management commands.`,
 	cmd.AddCommand(rename.NewCmd(f))
 	cmd.AddCommand(restart.NewCmd(f))
 	cmd.AddCommand(containerrun.NewCmd(f))
-	cmd.AddCommand(NewCmdStart(f))
+	cmd.AddCommand(start.NewCmdStart(f))
 	cmd.AddCommand(stats.NewCmd(f))
 	cmd.AddCommand(NewCmdStop(f))
 	cmd.AddCommand(top.NewCmd(f))
