@@ -310,13 +310,13 @@ The assistant should:
 - [x] `volume remove` (alias: rm)
 - [x] `volume prune` (scaffold with TODO for whail method)
 
-### Task 3.5: Network Commands (Session C - ~30 min)
+### Task 3.5: Network Commands (Session C - ~30 min) - ✅ COMPLETED (2026-01-16)
 
-- [ ] `network list` (alias: ls)
-- [ ] `network inspect`
-- [ ] `network create`
-- [ ] `network remove` (alias: rm)
-- [ ] `network prune` (scaffold with TODO for whail method)
+- [x] `network list` (alias: ls)
+- [x] `network inspect`
+- [x] `network create`
+- [x] `network remove` (alias: rm)
+- [x] `network prune` (uses list+remove workaround like volume prune)
 
 ### Task 3.6: Image Commands (Session D - ~30 min)
 
@@ -431,6 +431,7 @@ After each session if you've learned anything add it to this list, avoid verbosi
   - Subcommands go in their own subpackages (volume/list/list.go not volume/list.go)
   - shlex.Split strips quotes, so test expected values shouldn't include quotes
   - prune workaround: list+remove individual volumes instead of waiting for VolumesPrune
+  - Global flag `-d/--debug` reserves `-d` shorthand; don't reuse it in subcommands
 
 Summarize subtasks and tasks into short summaries after they are complete to keep this file footprint small
 
@@ -443,4 +444,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → C → D → G → E → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → D → G → E → F
