@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	pkgbuild "github.com/schmitthub/clawker/pkg/build"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Builder handles Docker image building for clawker projects.
 type Builder struct {
-	engine  *engine.Engine
+	client  *docker.Client
 	config  *config.Config
 	workDir string
 }
@@ -26,9 +26,9 @@ type Options struct {
 }
 
 // NewBuilder creates a new Builder instance.
-func NewBuilder(eng *engine.Engine, cfg *config.Config, workDir string) *Builder {
+func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder {
 	return &Builder{
-		engine:  eng,
+		client:  cli,
 		config:  cfg,
 		workDir: workDir,
 	}
@@ -37,7 +37,6 @@ func NewBuilder(eng *engine.Engine, cfg *config.Config, workDir string) *Builder
 // EnsureImage ensures an image is available, building if necessary.
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error {
-	imgMgr := engine.NewImageManager(b.engine)
 	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
@@ -55,7 +54,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
 			Tag:        imageTag,
 			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
 			NoCache:    opts.NoCache,
@@ -65,7 +64,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 
 	// Check if image exists and we don't need to rebuild
 	if !opts.ForceBuild {
-		exists, err := b.engine.ImageExists(ctx, imageTag)
+		exists, err := b.client.ImageExists(ctx, imageTag)
 		if err != nil {
 			return err
 		}
@@ -81,7 +80,6 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labels map[string]string) error {
-	imgMgr := engine.NewImageManager(b.engine)
 	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
@@ -98,7 +96,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
 			Tag:        imageTag,
 			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
 			NoCache:    noCache,
@@ -113,7 +111,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
-	return imgMgr.BuildImage(ctx, buildCtx, engine.BuildImageOpts{
+	return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
 		Tag:        imageTag,
 		Dockerfile: "Dockerfile",
 		NoCache:    noCache,

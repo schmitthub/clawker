@@ -519,7 +519,6 @@ func TestIsNetworkManaged(t *testing.T) {
 	}
 }
 
-
 func TestNetworksPrune(t *testing.T) {
 	tests := []struct {
 		name            string

@@ -12,7 +12,7 @@ import (
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/build/registry"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
@@ -89,12 +89,12 @@ type DockerfileInstructions struct {
 
 // DockerfileInject contains raw instruction injection points.
 type DockerfileInject struct {
-	AfterFrom         []string
-	AfterPackages     []string
-	AfterUserSetup    []string
-	AfterUserSwitch   []string
+	AfterFrom          []string
+	AfterPackages      []string
+	AfterUserSetup     []string
+	AfterUserSwitch    []string
 	AfterClaudeInstall []string
-	BeforeEntrypoint  []string
+	BeforeEntrypoint   []string
 }
 
 // CopyInstruction represents a COPY instruction.
@@ -300,10 +300,10 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 		return nil, err
 	}
 
-  // Add settings file json
-  if err := addFileToTar(tw, "claude-settings.json", []byte(SettingsFile)); err != nil {
-      return nil, err
-  }
+	// Add settings file json
+	if err := addFileToTar(tw, "claude-settings.json", []byte(SettingsFile)); err != nil {
+		return nil, err
+	}
 
 	// Add firewall script if enabled
 	if g.config.Security.EnableFirewall {
@@ -405,7 +405,7 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		baseImage = "buildpack-deps:bookworm-scm"
 	}
 
-	isAlpine := engine.IsAlpineImage(baseImage)
+	isAlpine := docker.IsAlpineImage(baseImage)
 
 	// Set editor defaults
 	editor := g.config.Agent.Editor
@@ -431,7 +431,7 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		ExtraEnv:       g.config.Agent.Env,
 		Editor:         editor,
 		Visual:         visual,
-		ImageLabels:    engine.ImageLabels(g.config.Project, g.config.Version),
+		ImageLabels:    docker.ImageLabels(g.config.Project, g.config.Version),
 	}
 
 	// Populate Instructions if present

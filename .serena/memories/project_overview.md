@@ -30,33 +30,63 @@ Clawker supports multiple containers per project using **agents**:
 
 ## Key Packages
 
+### Architecture (Post-Migration)
+```
+cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
+```
+
 - `cmd/clawker/` - Main entry point
-- `pkg/cmd/` - Cobra commands (start, run, stop, ls, rm, sh, logs, etc.)
+- `pkg/cmd/` - Cobra commands organized as:
+  - Top-level shortcuts: `run`, `start`, `init`, `build`, `config`, `monitor`, `generate`
+  - Management commands: `container/*`, `volume/*`, `network/*`, `image/*`
+- `pkg/whail/` - **Reusable** Docker engine library with label-based isolation
+  - `engine.go` - Core Engine with configurable labels
+  - `container.go` - All container operations (Create, Start, Stop, Kill, Pause, etc.)
+  - `volume.go` - Volume operations with label injection
+  - `network.go` - Network operations with label injection
+  - `image.go` - Image operations with label injection
+  - `copy.go` - File copy operations (CopyToContainer, CopyFromContainer)
+  - `errors.go` - Generic Docker errors (22+ types)
+  - `labels.go` - Label utilities
+- `internal/docker/` - **Clawker-specific** thin layer over whail
+  - `client.go` - Client wrapper configuring whail with clawker labels
+  - `labels.go` - Clawker label constants (`com.clawker.*`)
+  - `names.go` - Container/volume naming (`clawker.project.agent`)
+  - `volume.go` - Volume helpers (EnsureVolume, CopyToVolume)
 - `internal/config/` - Viper configuration loading and validation
-- `internal/engine/` - Docker SDK abstractions (all methods take `ctx context.Context` as first param)
-  - `client.go` - Docker client wrapper (~26 methods with context)
-  - `container.go` - ContainerManager (13 methods with context)
-  - `labels.go` - Label constants (`LabelManaged`, `LabelProject`, etc.)
-  - `names.go` - Container/volume naming, `GenerateRandomName()`
-  - `volume.go` - VolumeManager (3 methods with context)
-  - `image.go` - ImageManager (context passed through)
 - `internal/workspace/` - Bind vs Snapshot strategies
+- `internal/build/` - Image building orchestration
 - `internal/credentials/` - .env parsing, EnvBuilder, OTEL injection
 - `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
-- `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
 - `internal/term/` - PTY/terminal handling
+- `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
 - `pkg/logger/` - Zerolog setup
-- `pkg/cmdutil/` - Factory pattern for command dependencies
+- `pkg/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
 
 ## CLI Commands
 
+### Top-Level Shortcuts
 | Command | Purpose |
 |---------|---------|
-| `clawker run --agent <name>` | Run container |
-| `clawker run --remove --agent <name>` | Run ephemeral container |
-| `clawker stop --agent <name>` | Stop specific or all containers |
-| `clawker ls -a -p <project>` | List containers |
-| `clawker rm -n <name> -p <project>` | Remove containers |
-| `clawker logs --agent <name>` | logs for specific agent |
-| `clawker run --agent <name> --shell -s /bin/zsh/ --user <claude/root>` | shell for specific agent |
+| `clawker init` | Initialize project configuration |
+| `clawker build` | Build container image |
+| `clawker run` | Alias for `container run` |
+| `clawker start` | Alias for `container start` |
+| `clawker config check` | Validate configuration |
 | `clawker monitor init/up/down/status` | Manage observability stack |
+| `clawker generate` | Generate versions.json for releases |
+
+### Management Commands (Docker CLI-style)
+| Command | Purpose |
+|---------|---------|
+| `clawker container list` | List containers (aliases: ls, ps) |
+| `clawker container run` | Create and run container |
+| `clawker container create` | Create container without starting |
+| `clawker container start/stop/restart` | Lifecycle management |
+| `clawker container kill/pause/unpause` | Process control |
+| `clawker container logs/inspect/top/stats` | Inspection |
+| `clawker container exec/attach/cp` | Interactive operations |
+| `clawker container remove` | Remove containers (alias: rm) |
+| `clawker volume list/create/inspect/remove/prune` | Volume management |
+| `clawker network list/create/inspect/remove/prune` | Network management |
+| `clawker image list/inspect/remove/build/prune` | Image management |

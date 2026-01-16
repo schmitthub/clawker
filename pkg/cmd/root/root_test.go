@@ -24,12 +24,13 @@ func TestNewCmdRoot(t *testing.T) {
 	subcommands := cmd.Commands()
 	expectedCmds := map[string]bool{
 		// Top-level commands (shortcuts)
-		"init":   false,
-		"build":  false,
-		"run":    false, // Also aliased as 'start'
-		"stop":   false,
-		"logs":   false,
-		"config": false,
+		"init":     false,
+		"build":    false,
+		"run":      false, // Alias for "container run"
+		"start":    false, // Alias for "container start"
+		"config":   false,
+		"monitor":  false,
+		"generate": false,
 		// Management commands
 		"container": false,
 		"image":     false,

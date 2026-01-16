@@ -6,39 +6,39 @@ import (
 
 func TestMergeLabels(t *testing.T) {
 	tests := []struct {
-		name   string
-		maps   []map[string]string
-		want   map[string]string
+		name string
+		maps []map[string]string
+		want map[string]string
 	}{
 		{
-			name:   "empty input",
-			maps:   nil,
-			want:   map[string]string{},
+			name: "empty input",
+			maps: nil,
+			want: map[string]string{},
 		},
 		{
-			name:   "single map",
-			maps:   []map[string]string{{"a": "1", "b": "2"}},
-			want:   map[string]string{"a": "1", "b": "2"},
+			name: "single map",
+			maps: []map[string]string{{"a": "1", "b": "2"}},
+			want: map[string]string{"a": "1", "b": "2"},
 		},
 		{
-			name:   "multiple maps no overlap",
-			maps:   []map[string]string{{"a": "1"}, {"b": "2"}, {"c": "3"}},
-			want:   map[string]string{"a": "1", "b": "2", "c": "3"},
+			name: "multiple maps no overlap",
+			maps: []map[string]string{{"a": "1"}, {"b": "2"}, {"c": "3"}},
+			want: map[string]string{"a": "1", "b": "2", "c": "3"},
 		},
 		{
-			name:   "later maps override",
-			maps:   []map[string]string{{"a": "1", "b": "2"}, {"b": "override"}},
-			want:   map[string]string{"a": "1", "b": "override"},
+			name: "later maps override",
+			maps: []map[string]string{{"a": "1", "b": "2"}, {"b": "override"}},
+			want: map[string]string{"a": "1", "b": "override"},
 		},
 		{
-			name:   "nil maps are skipped",
-			maps:   []map[string]string{{"a": "1"}, nil, {"b": "2"}},
-			want:   map[string]string{"a": "1", "b": "2"},
+			name: "nil maps are skipped",
+			maps: []map[string]string{{"a": "1"}, nil, {"b": "2"}},
+			want: map[string]string{"a": "1", "b": "2"},
 		},
 		{
-			name:   "empty maps are valid",
-			maps:   []map[string]string{{"a": "1"}, {}, {"b": "2"}},
-			want:   map[string]string{"a": "1", "b": "2"},
+			name: "empty maps are valid",
+			maps: []map[string]string{{"a": "1"}, {}, {"b": "2"}},
+			want: map[string]string{"a": "1", "b": "2"},
 		},
 	}
 

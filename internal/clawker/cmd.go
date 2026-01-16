@@ -26,7 +26,7 @@ func Main() int {
 	}
 
 	// Cleanup
-	f.CloseEngine()
+	f.CloseClient()
 
 	return 0
 }

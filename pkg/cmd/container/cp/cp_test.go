@@ -122,10 +122,10 @@ func TestCmd_Properties(t *testing.T) {
 
 func TestParseContainerPath(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		wantContainer string
-		wantPath      string
+		name            string
+		input           string
+		wantContainer   string
+		wantPath        string
 		wantIsContainer bool
 	}{
 		{
@@ -184,10 +184,10 @@ func TestParseContainerPath(t *testing.T) {
 
 func TestCmd_ArgsParsing(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantSrc  string
-		wantDst  string
+		name    string
+		args    []string
+		wantSrc string
+		wantDst string
 	}{
 		{
 			name:    "copy from container",

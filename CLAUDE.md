@@ -34,16 +34,21 @@
 ├── cmd/clawker/              # Main CLI binary
 ├── internal/
 │   ├── build/                 # Image building orchestration
+│   ├── clawker/               # Main application lifecycle
 │   ├── config/                # Viper config loading + validation
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
-│   ├── engine/                # Docker SDK wrappers (legacy, being migrated)
 │   ├── monitor/               # Observability stack (Prometheus, Grafana)
 │   ├── term/                  # PTY/terminal handling
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   ├── build/                 # Dockerfile templates, semver, npm registry
-│   ├── cmd/                   # Cobra commands (start, run, stop, ls, etc.)
+│   ├── cmd/                   # Cobra commands organized as:
+│   │   ├── container/         # Docker CLI-compatible container management
+│   │   ├── volume/            # Volume management
+│   │   ├── network/           # Network management
+│   │   ├── image/             # Image management
+│   │   └── ...                # Top-level shortcuts (run, start, init, build, etc.)
 │   ├── cmdutil/               # Factory, error handling, output utilities
 │   ├── logger/                # Zerolog setup
 │   └── whail/                 # Reusable Docker engine with label-based isolation
@@ -93,30 +98,32 @@ cmd := &cobra.Command{
 
 See @.claude/docs/CLI-VERBS.md for complete command reference.
 
+### Top-Level Shortcuts
 | Command | Description |
 |---------|-------------|
-| `init`, `build`, `run`, `start`, `stop` | Lifecycle |
-| `ls`, `logs` | Inspection |
-| `rm` (alias: `prune`), `rm --unused` | Cleanup |
+| `init`, `build` | Project setup |
+| `run`, `start` | Aliases for `container run`, `container start` |
 | `config check`, `monitor *` | Configuration/observability |
-| `container *` | Docker CLI-compatible container management |
+| `generate` | Generate versions.json for releases |
 
-### Container Commands (Docker CLI Mimicry)
+### Management Commands (Docker CLI-compatible)
 
-The `clawker container` command group provides Docker CLI-compatible subcommands:
+| Command Group | Description |
+|---------------|-------------|
+| `container *` | Container lifecycle, inspection, interaction |
+| `volume *` | Volume management |
+| `network *` | Network management |
+| `image *` | Image management |
 
-| Command | Description |
-|---------|-------------|
-| `container list` (aliases: `ls`, `ps`) | List containers |
-| `container inspect` | Display detailed container info (JSON) |
-| `container logs` | Fetch container logs |
-| `container start` | Start stopped containers |
-| `container stop` | Stop running containers |
-| `container kill` | Kill containers with signal |
-| `container pause` / `unpause` | Pause/unpause containers |
-| `container remove` (alias: `rm`) | Remove containers |
+Example container commands:
+- `clawker container list` (aliases: `ls`, `ps`)
+- `clawker container run/create/start/stop/restart/kill`
+- `clawker container logs/inspect/top/stats`
+- `clawker container exec/attach/cp`
+- `clawker container pause/unpause/rename/wait/update`
+- `clawker container remove` (alias: `rm`)
 
-These commands use positional arguments for container names (e.g., `clawker container stop clawker.myapp.ralph`) rather than `--agent` flags, matching Docker's interface.
+These commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
 
 ## Configuration (clawker.yaml)
 
@@ -184,19 +191,17 @@ func (e *Engine) ContainerStart(ctx context.Context, id string) error {
 }
 ```
 
-All `internal/engine` methods accept `ctx context.Context` as their first parameter:
+All `pkg/whail` and `internal/docker` methods accept `ctx context.Context` as their first parameter:
 
-- `Engine`: `ContainerCreate(ctx, ...)`, `VolumeExists(ctx, ...)`, `ImagePull(ctx, ...)`
-- `ContainerManager`: `Create(ctx, ...)`, `Start(ctx, ...)`, `FindOrCreate(ctx, ...)`
-- `VolumeManager`: `EnsureVolume(ctx, ...)`, `CopyToVolume(ctx, ...)`
-- `ImageManager`: `EnsureImage(ctx, ...)`, `BuildImage(ctx, ...)`
+- `whail.Engine`: `ContainerCreate(ctx, ...)`, `ContainerStart(ctx, ...)`, `ContainerStop(ctx, ...)`, etc.
+- `docker.Client`: Wraps `whail.Engine` with clawker labels, same context pattern
 
 For cleanup in deferred functions, use `context.Background()` since the original context may be cancelled:
 
 ```go
 defer func() {
     cleanupCtx := context.Background()
-    containerMgr.Remove(cleanupCtx, containerID, true)
+    client.ContainerRemove(cleanupCtx, containerID, true)
 }()
 ```
 

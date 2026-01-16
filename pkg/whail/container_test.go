@@ -1523,12 +1523,12 @@ func TestContainerAttach(t *testing.T) {
 				resp, err := testEngine.ContainerCreate(
 					ctx,
 					&container.Config{
-						Image:      testImageTag,
-						Labels:     testEngine.containerLabels(),
-						Cmd:        []string{"sleep", "300"},
-						OpenStdin:  true,
-						Tty:        true,
-						StdinOnce:  false,
+						Image:       testImageTag,
+						Labels:      testEngine.containerLabels(),
+						Cmd:         []string{"sleep", "300"},
+						OpenStdin:   true,
+						Tty:         true,
+						StdinOnce:   false,
 						AttachStdin: true,
 					},
 					nil,

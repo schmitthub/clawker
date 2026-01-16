@@ -6,7 +6,7 @@ import (
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/engine"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
@@ -21,7 +21,7 @@ type SnapshotStrategy struct {
 func NewSnapshotStrategy(cfg Config) *SnapshotStrategy {
 	return &SnapshotStrategy{
 		config:     cfg,
-		volumeName: engine.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace"),
+		volumeName: docker.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace"),
 		created:    false,
 	}
 }
@@ -37,17 +37,15 @@ func (s *SnapshotStrategy) Mode() config.Mode {
 }
 
 // Prepare creates the volume and copies files
-func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) error {
+func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) error {
 	logger.Debug().
 		Str("strategy", s.Name()).
 		Str("volume", s.volumeName).
 		Str("host_path", s.config.HostPath).
 		Msg("preparing snapshot workspace")
 
-	vm := engine.NewVolumeManager(eng)
-
 	// Check if volume already exists
-	exists, err := eng.VolumeExists(ctx, s.volumeName)
+	exists, err := cli.VolumeExists(ctx, s.volumeName)
 	if err != nil {
 		return fmt.Errorf("failed to check volume existence: %w", err)
 	}
@@ -66,7 +64,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 		"clawker.mode":    "snapshot",
 	}
 
-	created, err := vm.EnsureVolume(ctx, s.volumeName, labels)
+	created, err := cli.EnsureVolume(ctx, s.volumeName, labels)
 	if err != nil {
 		return fmt.Errorf("failed to create volume: %w", err)
 	}
@@ -80,7 +78,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 			Str("src", s.config.HostPath).
 			Msg("copying files to snapshot volume")
 
-		if err := vm.CopyToVolume(
+		if err := cli.CopyToVolume(
 			ctx,
 			s.volumeName,
 			s.config.HostPath,
@@ -88,7 +86,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, eng *engine.Engine) erro
 			s.config.IgnorePatterns,
 		); err != nil {
 			// Clean up on failure
-			eng.VolumeRemove(ctx, s.volumeName, true)
+			cli.VolumeRemove(ctx, s.volumeName, true)
 			return fmt.Errorf("failed to copy files to volume: %w", err)
 		}
 
@@ -112,13 +110,13 @@ func (s *SnapshotStrategy) GetMounts() []mount.Mount {
 }
 
 // Cleanup removes the snapshot volume
-func (s *SnapshotStrategy) Cleanup(ctx context.Context, eng *engine.Engine) error {
+func (s *SnapshotStrategy) Cleanup(ctx context.Context, cli *docker.Client) error {
 	logger.Debug().
 		Str("strategy", s.Name()).
 		Str("volume", s.volumeName).
 		Msg("cleaning up snapshot workspace")
 
-	if err := eng.VolumeRemove(ctx, s.volumeName, false); err != nil {
+	if err := cli.VolumeRemove(ctx, s.volumeName, false); err != nil {
 		logger.Warn().
 			Str("volume", s.volumeName).
 			Err(err).

@@ -93,39 +93,38 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
 }
 ```
 
-## Container Command Pattern (Legacy)
+## Management Command Pattern (Docker CLI-style)
 
-For commands still using `internal/engine` (being migrated).
+For Docker CLI-compatible subcommands that operate on resources by name:
 
 ```go
-func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
-    ctx := context.Background()
-    cfg, _ := f.Config()
-    eng, _ := engine.NewEngine(ctx)
-    defer eng.Close()
-
-    var containerID string
-    if opts.Agent != "" {
-        // Specific agent
-        containerName := engine.ContainerName(cfg.Project, opts.Agent)
-        existing, _ := eng.FindContainerByName(ctx, containerName)  // Pass ctx
-        if existing == nil {
-            return fmt.Errorf("container not found")
-        }
-        containerID = existing.ID
-    } else {
-        // Find containers for project
-        containers, _ := eng.ListClawkerContainersByProject(ctx, cfg.Project, true)  // Pass ctx
-        if len(containers) == 0 {
-            return fmt.Errorf("no containers found")
-        }
-        if len(containers) > 1 {
-            // Show available agents, ask user to specify
-            return fmt.Errorf("multiple containers, use --agent")
-        }
-        containerID = containers[0].ID
+func NewCmdXxx(f *cmdutil.Factory) *cobra.Command {
+    cmd := &cobra.Command{
+        Use:     "xxx RESOURCE [RESOURCE...]",
+        Aliases: []string{"alias"},
+        Args:    cobra.MinimumNArgs(1),
+        RunE: func(cmd *cobra.Command, args []string) error {
+            ctx := context.Background()
+            
+            // Create client directly (not from factory - management commands are standalone)
+            client, err := docker.NewClient(ctx)
+            if err != nil {
+                return err
+            }
+            defer client.Close()
+            
+            for _, name := range args {
+                // Operations use whail methods via embedded Engine
+                if err := client.ContainerXxx(ctx, name); err != nil {
+                    fmt.Fprintf(os.Stderr, "Error: %s: %v\n", name, err)
+                    continue
+                }
+                fmt.Printf("%s\n", name)
+            }
+            return nil
+        },
     }
-    // ... operate on containerID
+    return cmd
 }
 ```
 
@@ -377,18 +376,18 @@ func TestCopyToContainer(t *testing.T) {
 
 ## Key Files to Check When Making Changes
 
-**New Architecture (preferred):**
-- Container operations: `pkg/whail/container.go`, `pkg/whail/copy.go`
-- Labels: `pkg/whail/labels.go`, `internal/docker/labels.go`
-- Naming: `internal/docker/names.go`
-- Client: `internal/docker/client.go`
+**Current Architecture (Migration Complete):**
+- Whail Engine (reusable): `pkg/whail/engine.go`, `container.go`, `volume.go`, `network.go`, `image.go`, `copy.go`
+- Whail Labels: `pkg/whail/labels.go`
+- Whail Errors: `pkg/whail/errors.go`
+- Clawker Client: `internal/docker/client.go` (wraps whail with clawker labels)
+- Clawker Labels: `internal/docker/labels.go`
+- Clawker Names: `internal/docker/names.go`
+- Clawker Volume Helpers: `internal/docker/volume.go`
 - Factory: `pkg/cmdutil/factory.go` (use `f.Client(ctx)`)
-- Errors: `pkg/whail/errors.go`
-- Tests: `pkg/whail/container_test.go`, `internal/docker/client_test.go`
+- Command Registration: `pkg/cmd/root/root.go`
+- Workspace Setup: `internal/workspace/strategy.go` (uses `docker.Client`)
+- Build Orchestration: `internal/build/build.go` (uses `docker.Client`)
+- Tests: `pkg/whail/*_test.go`, `internal/docker/*_test.go`
 
-**Legacy (being migrated):**
-- Container operations: `internal/engine/container.go`, `client.go`
-- Naming/labels: `internal/engine/names.go`, `labels.go`
-- Workspace setup: `internal/workspace/strategy.go`
-- Command registration: `pkg/cmd/root/root.go`
-- Tests: `internal/engine/container_test.go`
+**Note:** `internal/engine/` has been **deleted**. All code uses the above paths.

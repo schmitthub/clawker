@@ -11,16 +11,10 @@ import (
 	"github.com/schmitthub/clawker/pkg/cmd/generate"
 	"github.com/schmitthub/clawker/pkg/cmd/image"
 	initcmd "github.com/schmitthub/clawker/pkg/cmd/init"
-	"github.com/schmitthub/clawker/pkg/cmd/list"
-	"github.com/schmitthub/clawker/pkg/cmd/logs"
 	"github.com/schmitthub/clawker/pkg/cmd/monitor"
 	"github.com/schmitthub/clawker/pkg/cmd/network"
-	"github.com/schmitthub/clawker/pkg/cmd/prune"
-	"github.com/schmitthub/clawker/pkg/cmd/remove"
-	"github.com/schmitthub/clawker/pkg/cmd/restart"
 	"github.com/schmitthub/clawker/pkg/cmd/run"
 	"github.com/schmitthub/clawker/pkg/cmd/start"
-	"github.com/schmitthub/clawker/pkg/cmd/stop"
 	"github.com/schmitthub/clawker/pkg/cmd/volume"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -86,16 +80,10 @@ Workspace modes:
 	// Add top-level commands (shortcuts)
 	cmd.AddCommand(initcmd.NewCmdInit(f))
 	cmd.AddCommand(build.NewCmdBuild(f))
-	cmd.AddCommand(run.NewCmdRun(f))   // Alias for "container run"
+	cmd.AddCommand(run.NewCmdRun(f))     // Alias for "container run"
 	cmd.AddCommand(start.NewCmdStart(f)) // Alias for "container start"
-	cmd.AddCommand(stop.NewCmdStop(f))
-	cmd.AddCommand(restart.NewCmdRestart(f))
-	cmd.AddCommand(logs.NewCmdLogs(f))
-	cmd.AddCommand(list.NewCmdList(f))
-	cmd.AddCommand(remove.NewCmdRemove(f))
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
-	cmd.AddCommand(prune.NewCmdPrune(f))
 	cmd.AddCommand(generate.NewCmdGenerate(f))
 
 	// Add management commands
