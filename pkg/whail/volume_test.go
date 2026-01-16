@@ -407,3 +407,75 @@ func TestIsVolumeManaged(t *testing.T) {
 		})
 	}
 }
+
+
+func TestVolumesPrune(t *testing.T) {
+	tests := []struct {
+		name                string
+		setupFunc           func(ctx context.Context, t *testing.T) string
+		cleanupFunc         func(ctx context.Context, t *testing.T, volumeName string)
+		shouldBeRemoved     bool
+		skipUnmanagedCleanup bool
+	}{
+		{
+			name: "should prune managed volumes",
+			setupFunc: func(ctx context.Context, t *testing.T) string {
+				name := generateVolumeName("test-volume-prune-managed")
+				return setupManagedVolume(ctx, t, name)
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
+				// Volume should be pruned, but try cleanup anyway in case test fails
+				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+			},
+			shouldBeRemoved: true,
+		},
+		{
+			name: "should not prune unmanaged volumes",
+			setupFunc: func(ctx context.Context, t *testing.T) string {
+				name := generateVolumeName("test-volume-prune-unmanaged")
+				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
+				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+			},
+			shouldBeRemoved: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			volumeName := tt.setupFunc(ctx, t)
+			defer tt.cleanupFunc(ctx, t, volumeName)
+
+			// Verify volume exists before prune
+			exists, err := testEngine.VolumeExists(ctx, volumeName)
+			if err != nil {
+				t.Fatalf("Failed to check if volume exists before prune: %v", err)
+			}
+			if !exists {
+				t.Fatalf("Volume should exist before prune")
+			}
+
+			// Prune volumes (all=true to include named volumes)
+			_, err = testEngine.VolumesPrune(ctx, true)
+			if err != nil {
+				t.Fatalf("VolumesPrune failed: %v", err)
+			}
+
+			// Check if volume still exists
+			exists, err = testEngine.VolumeExists(ctx, volumeName)
+			if err != nil {
+				t.Fatalf("Failed to check if volume exists after prune: %v", err)
+			}
+
+			if tt.shouldBeRemoved && exists {
+				t.Errorf("Expected managed volume %q to be pruned, but it still exists", volumeName)
+			}
+			if !tt.shouldBeRemoved && !exists {
+				t.Errorf("Expected unmanaged volume %q to NOT be pruned, but it was removed", volumeName)
+			}
+		})
+	}
+}

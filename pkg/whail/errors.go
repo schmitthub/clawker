@@ -525,3 +525,42 @@ func ErrExecResizeFailed(execID string, err error) *DockerError {
 		},
 	}
 }
+
+// ErrVolumesPruneFailed returns an error for when pruning volumes fails.
+func ErrVolumesPruneFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "volumes_prune",
+		Err:     err,
+		Message: "Failed to prune volumes",
+		NextSteps: []string{
+			"Check if Docker daemon is running",
+			"Verify no volumes are in use",
+		},
+	}
+}
+
+// ErrNetworksPruneFailed returns an error for when pruning networks fails.
+func ErrNetworksPruneFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "networks_prune",
+		Err:     err,
+		Message: "Failed to prune networks",
+		NextSteps: []string{
+			"Check if Docker daemon is running",
+			"Verify no networks are in use",
+		},
+	}
+}
+
+// ErrImagesPruneFailed returns an error for when pruning images fails.
+func ErrImagesPruneFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "images_prune",
+		Err:     err,
+		Message: "Failed to prune images",
+		NextSteps: []string{
+			"Check if Docker daemon is running",
+			"Verify no images are in use",
+		},
+	}
+}
