@@ -2,6 +2,11 @@
 package network
 
 import (
+	"github.com/schmitthub/clawker/pkg/cmd/network/create"
+	"github.com/schmitthub/clawker/pkg/cmd/network/inspect"
+	"github.com/schmitthub/clawker/pkg/cmd/network/list"
+	"github.com/schmitthub/clawker/pkg/cmd/network/prune"
+	"github.com/schmitthub/clawker/pkg/cmd/network/remove"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -20,14 +25,22 @@ and monitoring stack integration.`,
   clawker network ls
 
   # Inspect the clawker network
-  clawker network inspect clawker-net`,
+  clawker network inspect clawker-net
+
+  # Create a new network
+  clawker network create mynetwork
+
+  # Remove a network
+  clawker network rm mynetwork`,
 		// No RunE - this is a parent command
 	}
 
 	// Add subcommands
-	// Note: Subcommands will be added in a future task
-	// cmd.AddCommand(NewCmdLs(f))
-	// cmd.AddCommand(NewCmdInspect(f))
+	cmd.AddCommand(create.NewCmd(f))
+	cmd.AddCommand(inspect.NewCmd(f))
+	cmd.AddCommand(list.NewCmd(f))
+	cmd.AddCommand(prune.NewCmd(f))
+	cmd.AddCommand(remove.NewCmd(f))
 
 	return cmd
 }

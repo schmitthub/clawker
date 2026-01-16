@@ -101,7 +101,7 @@ A.1 → A.2 → A.3 → B → C → D → G → E → F
 | A.2 | Container: top, stats, update | 25 min |
 | A.3 | Container: exec, attach, cp | 30 min |
 | B | Volume: list, inspect, create, remove, prune | 30 min | ✅ |
-| C | Network: list, inspect, create, remove, prune | 30 min |
+| C | Network: list, inspect, create, remove, prune | 30 min | ✅ |
 | D | Image: list, inspect, remove, build, prune | 30 min |
 | G | Documentation update | 30 min |
 | E | Missing whail methods | 30 min |
@@ -213,6 +213,9 @@ Session A.3: ✅ COMPLETED
 Session B: ✅ COMPLETED
 - [x] `volume list`, `volume inspect`, `volume create`, `volume remove`, `volume prune`
 
+Session C: ✅ COMPLETED (2026-01-16)
+- [x] `network list`, `network inspect`, `network create`, `network remove`, `network prune`
+
 Session F (deferred):
 - [ ] `create`, `run`
 
@@ -278,6 +281,7 @@ type Client struct {
 13. **Commands use positional args**: Docker-like interface - `clawker container rm NAME` not `clawker container rm --name NAME`
 14. **Parent commands**: Add subcommands alphabetically with `cmd.AddCommand()`, Cobra auto-sorts in help output
 15. **Test expectedSubcommands**: Keep sorted alphabetically to match Cobra's output order
+16. **Global flag shorthand conflict**: Don't use `-d` shorthand in subcommands - it conflicts with the global `--debug` flag
 
 ## How to Resume
 

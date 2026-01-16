@@ -37,12 +37,22 @@ func TestNewCmdNetwork_Subcommands(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdNetwork(f)
 
-	// Currently no subcommands are registered
-	// This test will be expanded when subcommands are added
 	subcommands := cmd.Commands()
 
-	// For now, expect no subcommands
-	if len(subcommands) != 0 {
-		t.Errorf("expected 0 subcommands (none registered yet), got %d", len(subcommands))
+	// Expect 5 subcommands: create, inspect, list, prune, remove
+	if len(subcommands) != 5 {
+		t.Errorf("expected 5 subcommands, got %d", len(subcommands))
+	}
+
+	// Verify subcommand names (sorted alphabetically by Cobra)
+	expectedSubcommands := []string{"create", "inspect", "list", "prune", "remove"}
+	for i, expected := range expectedSubcommands {
+		if i >= len(subcommands) {
+			t.Errorf("missing subcommand: %s", expected)
+			continue
+		}
+		if subcommands[i].Name() != expected {
+			t.Errorf("expected subcommand %d to be '%s', got '%s'", i, expected, subcommands[i].Name())
+		}
 	}
 }
