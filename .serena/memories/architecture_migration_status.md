@@ -104,7 +104,7 @@ A.1 → A.2 → A.3 → B → C → D → E → G → F
 | C | Network subcommands | 30 min | ✅ |
 | D | Image subcommands | 30 min | ✅ |
 | E | Missing whail prune methods | 30 min | ✅ |
-| G | Documentation update | 30 min | ⏳ |
+| G | Documentation update | 30 min | ✅ |
 | F | Container create/run | 45 min | ⏳ |
 
 **Total**: ~4.5 hours across 9 sessions
@@ -239,7 +239,7 @@ Session F (deferred):
 | 3.5 | Network commands | C | ✅ |
 | 3.6 | Image commands | D | ✅ |
 | 3.7 | Missing whail prune methods | E | ✅ |
-| 3.8 | Documentation update | G | ⏳ |
+| 3.8 | Documentation update | G | ✅ |
 | 3.9 | Full test suite | - | ✅ |
 | 3.10 | Container create/run (advanced) | F | ⏳ |
 

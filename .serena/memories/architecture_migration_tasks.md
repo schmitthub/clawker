@@ -336,12 +336,11 @@ The assistant should:
 - [x] Tests: `TestVolumesPrune`, `TestNetworksPrune`, `TestImagesPrune`, `TestImageInspect`
 - [x] Updated prune commands to use new whail methods
 
-### Task 3.8: Documentation Update (Session G - ~30 min)
+### Task 3.8: Documentation Update (Session G - ~30 min) - ✅ COMPLETED (2026-01-16)
 
-- [ ] Update CLI-VERBS.md with all new commands
-- [ ] Update ARCHITECTURE.md with command taxonomy
-- [ ] Update README.md CLI commands table
-- [ ] Update this memory (architecture_migration_tasks)
+- [x] Update ARCHITECTURE.md with command taxonomy (simplified per user preference)
+- [x] README.md updates skipped (user prefers brevity for user-facing docs)
+- [x] Update this memory (architecture_migration_tasks)
 
 ### Task 3.9: Full Test Suite
 
@@ -450,4 +449,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → G → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → ~~G~~ → F
