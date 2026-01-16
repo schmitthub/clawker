@@ -95,7 +95,7 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 
 | Command | Description |
 |---------|-------------|
-| `init`, `build`, `run` (alias: `start`), `stop` | Lifecycle |
+| `init`, `build`, `run`, `start`, `stop` | Lifecycle |
 | `ls`, `logs` | Inspection |
 | `rm` (alias: `prune`), `rm --unused` | Cleanup |
 | `config check`, `monitor *` | Configuration/observability |
@@ -155,13 +155,10 @@ security:
 
 1. Firewall enabled by default
 2. Docker socket disabled by default
-3. Volumes preserved unless `--clean` or `--remove`
-4. `run` is idempotent (reattaches to existing container); `start` is alias
-5. `run` preserves containers by default; use `--remove` for ephemeral
-6. Hierarchical naming: `clawker.project.agent`
-7. Labels (`com.clawker.*`) are authoritative for filtering
-8. stdout for data, stderr for status
-9. Shell path via Viper: CLI flag → `CLAWKER_SHELL` env → config → `/bin/sh`
+3. `run` and `start` are aliases for `container run` (Docker CLI pattern)
+4. Hierarchical naming: `clawker.project.agent`
+5. Labels (`com.clawker.*`) are authoritative for filtering
+6. stdout for data, stderr for status
 
 ## Important Gotchas
 
@@ -227,6 +224,6 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
 | @.claude/rules/TESTING.md | CLI testing guildelines (**only access when writing command tests**) |
-| @README.md | User-facing documentation |
+| @README.md | Marketing doc to give an exciting summary, quick start, etc. This document is not to serve as technical documentation that overwhelms the user with a wall of text, it should be fun and to the point with the bare minimum basics on how to get started fixing the problems clawker solves|
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.

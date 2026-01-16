@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -156,12 +157,12 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string, command []stri
 		return pty.StreamWithResize(ctx, hijacked, resizeFunc)
 	}
 
-	// Non-TTY mode: simple I/O copy
+	// Non-TTY mode: demux the multiplexed stream
 	errCh := make(chan error, 2)
 
-	// Copy output to stdout/stderr
+	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := io.Copy(os.Stdout, hijacked.Reader)
+		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
 		errCh <- err
 	}()
 

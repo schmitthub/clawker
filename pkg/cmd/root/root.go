@@ -19,6 +19,7 @@ import (
 	"github.com/schmitthub/clawker/pkg/cmd/remove"
 	"github.com/schmitthub/clawker/pkg/cmd/restart"
 	"github.com/schmitthub/clawker/pkg/cmd/run"
+	"github.com/schmitthub/clawker/pkg/cmd/start"
 	"github.com/schmitthub/clawker/pkg/cmd/stop"
 	"github.com/schmitthub/clawker/pkg/cmd/volume"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -85,7 +86,8 @@ Workspace modes:
 	// Add top-level commands (shortcuts)
 	cmd.AddCommand(initcmd.NewCmdInit(f))
 	cmd.AddCommand(build.NewCmdBuild(f))
-	cmd.AddCommand(run.NewCmdRun(f)) // Also aliased as "start"
+	cmd.AddCommand(run.NewCmdRun(f))   // Alias for "container run"
+	cmd.AddCommand(start.NewCmdStart(f)) // Alias for "container start"
 	cmd.AddCommand(stop.NewCmdStop(f))
 	cmd.AddCommand(restart.NewCmdRestart(f))
 	cmd.AddCommand(logs.NewCmdLogs(f))

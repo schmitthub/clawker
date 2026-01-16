@@ -46,7 +46,7 @@ func TestNewCmdContainer_Subcommands(t *testing.T) {
 	subcommands := cmd.Commands()
 
 	// Check expected subcommands are registered
-	expectedSubcommands := []string{"attach", "cp", "exec", "inspect", "kill", "list", "logs", "pause", "remove", "rename", "restart", "start", "stats", "stop", "top", "unpause", "update", "wait"}
+	expectedSubcommands := []string{"attach", "cp", "create", "exec", "inspect", "kill", "list", "logs", "pause", "remove", "rename", "restart", "run", "start", "stats", "stop", "top", "unpause", "update", "wait"}
 	if len(subcommands) != len(expectedSubcommands) {
 		t.Errorf("expected %d subcommands, got %d", len(expectedSubcommands), len(subcommands))
 	}

@@ -1,6 +1,6 @@
 # Architecture Migration Task List
 
-**Last Updated**: 2026-01-15
+**Last Updated**: 2026-01-16
 **Current Phase**: Phase 3 - Docker CLI Mimicry (REFOCUSED)
 **Plan File**: `~/.claude/plans/curried-floating-pizza.md`
 
@@ -21,9 +21,9 @@ Phase 3 has been **refocused** to implement Docker CLI command mimicry with clea
    - If whail lacks a method, scaffold with `// TODO: implement in whail`
 
 3. **Canonical vs Shortcut**:
-   - Canonical: `container list`, `container remove`
+   - Canonical: `container list`, `container remove`, `container run`
    - Shortcuts: Cobra aliases (`ls`, `ps`, `rm`) on same command
-   - Top-level project commands CAN BE shortcuts they are documented in @./claude
+   - Top-level `run`/`start` are thin aliases to `container run` (Docker CLI pattern)
 
 **Docker Shortcuts**
 | Shortcut | Canonical Command | Notes |
@@ -297,10 +297,10 @@ The assistant should:
 - [x] `container attach`
 - [x] `container cp`
 
-#### 3.3.5: Advanced Container Commands (Session F - deferred)
+#### 3.3.5: Advanced Container Commands (Session F) - ✅ COMPLETED (2026-01-16)
 
-- [ ] `container create`
-- [ ] `container run` (Docker-style)
+- [x] `container create` - Create containers with Docker CLI-compatible flags
+- [x] `container run` - Create+start+attach with --detach support
 
 ### Task 3.4: Volume Commands (Session B - ~30 min) - ✅ COMPLETED
 
@@ -336,17 +336,24 @@ The assistant should:
 - [x] Tests: `TestVolumesPrune`, `TestNetworksPrune`, `TestImagesPrune`, `TestImageInspect`
 - [x] Updated prune commands to use new whail methods
 
-### Task 3.8: Documentation Update (Session G - ~30 min)
+### Task 3.8: Documentation Update (Session G - ~30 min) - ✅ COMPLETED (2026-01-16)
 
-- [ ] Update CLI-VERBS.md with all new commands
-- [ ] Update ARCHITECTURE.md with command taxonomy
-- [ ] Update README.md CLI commands table
-- [ ] Update this memory (architecture_migration_tasks)
+- [x] Update ARCHITECTURE.md with command taxonomy (simplified per user preference)
+- [x] README.md updates skipped (user prefers brevity for user-facing docs)
+- [x] Update this memory (architecture_migration_tasks)
 
 ### Task 3.9: Full Test Suite
 
-- [ ] `go test ./...`
-- [ ] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
+- [x] `go test ./...`
+- [x] `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
+
+### Task 4: Top-Level Shortcuts - ✅ COMPLETED (2026-01-16)
+
+Made `pkg/cmd/run` a thin alias to `pkg/cmd/container/run`:
+- Replaced 587-line implementation with 17-line alias
+- Deleted old tests (`run_test.go`, `run_integration_test.go`) and `testdata/`
+- Updated CLAUDE.md and README.md documentation
+- `clawker run` and `clawker start` now delegate to `clawker container run`
 
 ---
 
@@ -387,14 +394,13 @@ The assistant should:
 
 ### Task 5.2: Update ARCHITECTURE.md
 
-- [ ] Document `pkg/whail` API
-- [ ] Document `internal/docker` usage
-- [ ] Update diagrams
+- [ ] Update doc with concise high level abstract overview of the architecture without going deep into implemenation details
 
 ### Task 5.3: Update DESIGN.md
 
 - [ ] Mark implementation complete
 - [ ] Add implementation notes
+- [ ]
 
 ### Task 5.4: Update README.md
 
@@ -404,7 +410,7 @@ The assistant should:
 
 - [ ] Update `project_overview`
 - [ ] Update `common_patterns`
-- [ ] Archive `architecture_migration_tasks` or mark complete
+- [ ] Condense `architecture_migration_tasks` and `architecture_migration_stats` with any deferred items or lessons learned into a single memeory named `migratin_post_mortem`. Do not transfer itemized finished tasks, just give a very very brief history of what was done during the migration without going into detail.
 
 ---
 
@@ -438,6 +444,9 @@ After each session if you've learned anything add it to this list, avoid verbosi
   - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
   - Test ordering matters: tests that remove resources affect later tests using same resources
   - TestImageRemove must create its own image, not reuse testImageTag that other tests need
+  - Container create/run reuse buildConfigs for Docker config construction
+  - Run command must handle both TTY and non-TTY I/O with proper channel selection
+  - Test slices: GetStringArray returns empty slice not nil; use helper to compare nil==[]
 
 Summarize subtasks and tasks into short summaries after they are complete to keep this file footprint small
 
@@ -450,4 +459,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → G → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → ~~E~~ → ~~G~~ → ~~F~~ (ALL COMPLETE)
