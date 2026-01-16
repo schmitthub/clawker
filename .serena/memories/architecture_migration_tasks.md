@@ -318,13 +318,13 @@ The assistant should:
 - [x] `network remove` (alias: rm)
 - [x] `network prune` (uses list+remove workaround like volume prune)
 
-### Task 3.6: Image Commands (Session D - ~30 min)
+### Task 3.6: Image Commands (Session D - ~30 min) - ✅ COMPLETED (2026-01-16)
 
-- [ ] `image list` (aliases: ls, images)
-- [ ] `image inspect` (scaffold with TODO for whail method)
-- [ ] `image remove` (aliases: rm, rmi)
-- [ ] `image build` (delegate to top-level)
-- [ ] `image prune` (scaffold with TODO for whail method)
+- [x] `image list` (alias: ls)
+- [x] `image inspect`
+- [x] `image remove` (aliases: rm, rmi)
+- [x] `image build` (delegates to top-level with guidance message)
+- [x] `image prune` (uses list+remove workaround like volume prune)
 
 ### Task 3.7: Missing whail Methods (Session E - ~30 min)
 
@@ -444,4 +444,4 @@ Summarize subtasks and tasks into short summaries after they are complete to kee
 - **Integration tests**: `go test ./pkg/cmd/... -tags=integration -v -timeout 10m`
 - **Plan file**: `~/.claude/plans/curried-floating-pizza.md`
 - **Architecture constraint**: All Docker SDK calls must go through `pkg/whail`
-- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → D → G → E → F
+- **Session order**: ~~A.1~~ → ~~A.2~~ → ~~A.3~~ → ~~B~~ → ~~C~~ → ~~D~~ → G → E → F

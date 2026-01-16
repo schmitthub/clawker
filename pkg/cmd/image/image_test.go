@@ -1,9 +1,11 @@
 package image
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdImage(t *testing.T) {
@@ -11,38 +13,33 @@ func TestNewCmdImage(t *testing.T) {
 	cmd := NewCmdImage(f)
 
 	// Verify command basics
-	if cmd.Use != "image" {
-		t.Errorf("expected Use 'image', got '%s'", cmd.Use)
-	}
-
-	if cmd.Short == "" {
-		t.Error("expected Short description to be set")
-	}
-
-	if cmd.Long == "" {
-		t.Error("expected Long description to be set")
-	}
-
-	if cmd.Example == "" {
-		t.Error("expected Example to be set")
-	}
+	require.Equal(t, "image", cmd.Use)
+	require.NotEmpty(t, cmd.Short)
+	require.NotEmpty(t, cmd.Long)
+	require.NotEmpty(t, cmd.Example)
 
 	// Verify this is a parent command (no RunE)
-	if cmd.RunE != nil {
-		t.Error("expected RunE to be nil for parent command")
-	}
+	require.Nil(t, cmd.RunE)
 }
 
 func TestNewCmdImage_Subcommands(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdImage(f)
 
-	// Currently no subcommands are registered (Task 3.4 will add them)
-	// This test will be expanded when subcommands are added
+	// Get registered subcommands
 	subcommands := cmd.Commands()
 
-	// For now, expect no subcommands
-	if len(subcommands) != 0 {
-		t.Errorf("expected 0 subcommands (none registered yet), got %d", len(subcommands))
+	// Expect 5 subcommands: build, inspect, list, prune, remove
+	require.Len(t, subcommands, 5)
+
+	// Get subcommand names and sort them
+	var names []string
+	for _, sub := range subcommands {
+		names = append(names, sub.Name())
 	}
+	sort.Strings(names)
+
+	// Verify expected subcommands (alphabetically sorted)
+	expected := []string{"build", "inspect", "list", "prune", "remove"}
+	require.Equal(t, expected, names)
 }
