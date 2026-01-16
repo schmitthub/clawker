@@ -14,6 +14,8 @@ Clawker follows the [CLI Guidelines](cli-guidelines.md) with these core principl
 | **Idempotent** | `run` reattaches to existing containers |
 | **Discoverability** | All commands have `Example` fields |
 
+Clawker will mimic a subset of docker cli commands, add additional flags or functionality to a subset of docker commands, or explose its own bespoke commands that don't match docker cli.
+
 ## Command Taxonomy
 
 ```
@@ -36,6 +38,18 @@ clawker
 ├── Configuration Commands
 │   └── config
 │       └── check     Validate clawker.yaml
+│
+├── Container Commands (Docker CLI mimicry)
+│   └── container
+│       ├── list      List containers (aliases: ls, ps)
+│       ├── inspect   Display detailed container info
+│       ├── logs      Fetch container logs
+│       ├── start     Start stopped containers
+│       ├── stop      Stop running containers
+│       ├── kill      Kill containers with signal
+│       ├── pause     Pause running containers
+│       ├── unpause   Unpause paused containers
+│       └── remove    Remove containers (aliases: rm)
 │
 ├── Observability Commands
 │   └── monitor
@@ -569,6 +583,268 @@ clawker generate
 
 ---
 
+## Container Commands
+
+The `clawker container` command group provides Docker CLI-compatible subcommands for direct container management. These commands operate on containers by name (positional arguments) rather than by project/agent flags.
+
+**Design Pattern:** These commands mimic the Docker CLI interface (`docker container ls`, `docker container rm`, etc.) for users familiar with Docker workflows.
+
+### `container list`
+
+**File:** `pkg/cmd/container/list.go`
+**Aliases:** `ls`, `ps`
+
+```
+clawker container list [flags]
+```
+
+Lists clawker-managed containers.
+
+| Short | Long | Type | Default | Description |
+|-------|------|------|---------|-------------|
+| `-a` | `--all` | bool | `false` | Show all containers (including stopped) |
+| `-p` | `--project` | string | `""` | Filter by project name |
+
+**Examples:**
+
+```bash
+# List running containers
+clawker container list
+
+# List all containers (including stopped)
+clawker container ls -a
+
+# Filter by project
+clawker container ps -p myproject
+```
+
+---
+
+### `container inspect`
+
+**File:** `pkg/cmd/container/inspect.go`
+
+```
+clawker container inspect CONTAINER [CONTAINER...]
+```
+
+Displays detailed information about containers in JSON format.
+
+No additional flags.
+
+**Examples:**
+
+```bash
+# Inspect a single container
+clawker container inspect clawker.myapp.ralph
+
+# Inspect multiple containers
+clawker container inspect clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container logs`
+
+**File:** `pkg/cmd/container/logs.go`
+
+```
+clawker container logs [flags] CONTAINER
+```
+
+Fetches logs from a container.
+
+| Short | Long | Type | Default | Description |
+|-------|------|------|---------|-------------|
+| `-f` | `--follow` | bool | `false` | Follow log output |
+| | `--tail` | string | `"all"` | Number of lines to show from end |
+| `-t` | `--timestamps` | bool | `false` | Show timestamps |
+| | `--since` | string | `""` | Show logs since timestamp (e.g., 2024-01-01T00:00:00Z) or relative (e.g., 1h) |
+| | `--until` | string | `""` | Show logs before timestamp |
+
+**Examples:**
+
+```bash
+# Show all logs
+clawker container logs clawker.myapp.ralph
+
+# Follow logs in real-time
+clawker container logs -f clawker.myapp.ralph
+
+# Show last 100 lines with timestamps
+clawker container logs --tail 100 -t clawker.myapp.ralph
+
+# Show logs from the last hour
+clawker container logs --since 1h clawker.myapp.ralph
+```
+
+---
+
+### `container start`
+
+**File:** `pkg/cmd/container/start.go`
+
+```
+clawker container start CONTAINER [CONTAINER...]
+```
+
+Starts one or more stopped containers.
+
+No additional flags.
+
+**Examples:**
+
+```bash
+# Start a single container
+clawker container start clawker.myapp.ralph
+
+# Start multiple containers
+clawker container start clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container stop`
+
+**File:** `pkg/cmd/container/stop.go`
+
+```
+clawker container stop [flags] CONTAINER [CONTAINER...]
+```
+
+Stops one or more running containers.
+
+| Short | Long | Type | Default | Description |
+|-------|------|------|---------|-------------|
+| `-t` | `--time` | int | `10` | Seconds to wait before killing |
+| `-s` | `--signal` | string | `""` | Signal to send (default: SIGTERM, then SIGKILL) |
+
+**Examples:**
+
+```bash
+# Stop a container (graceful, 10s timeout)
+clawker container stop clawker.myapp.ralph
+
+# Stop with custom timeout
+clawker container stop -t 30 clawker.myapp.ralph
+
+# Stop multiple containers
+clawker container stop clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container kill`
+
+**File:** `pkg/cmd/container/kill.go`
+
+```
+clawker container kill [flags] CONTAINER [CONTAINER...]
+```
+
+Kills one or more containers by sending a signal (default: SIGKILL).
+
+| Short | Long | Type | Default | Description |
+|-------|------|------|---------|-------------|
+| `-s` | `--signal` | string | `SIGKILL` | Signal to send to the container |
+
+**Examples:**
+
+```bash
+# Kill a container (SIGKILL)
+clawker container kill clawker.myapp.ralph
+
+# Kill with SIGTERM
+clawker container kill -s SIGTERM clawker.myapp.ralph
+
+# Kill multiple containers
+clawker container kill clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container pause`
+
+**File:** `pkg/cmd/container/pause.go`
+
+```
+clawker container pause CONTAINER [CONTAINER...]
+```
+
+Pauses all processes within one or more containers.
+
+No additional flags.
+
+**Examples:**
+
+```bash
+# Pause a container
+clawker container pause clawker.myapp.ralph
+
+# Pause multiple containers
+clawker container pause clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container unpause`
+
+**File:** `pkg/cmd/container/pause.go`
+
+```
+clawker container unpause CONTAINER [CONTAINER...]
+```
+
+Unpauses all processes within one or more paused containers.
+
+No additional flags.
+
+**Examples:**
+
+```bash
+# Unpause a container
+clawker container unpause clawker.myapp.ralph
+
+# Unpause multiple containers
+clawker container unpause clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
+### `container remove`
+
+**File:** `pkg/cmd/container/remove.go`
+**Aliases:** `rm`
+
+```
+clawker container remove [flags] CONTAINER [CONTAINER...]
+```
+
+Removes one or more containers.
+
+| Short | Long | Type | Default | Description |
+|-------|------|------|---------|-------------|
+| `-f` | `--force` | bool | `false` | Force remove running containers |
+| `-v` | `--volumes` | bool | `false` | Remove anonymous volumes associated with container |
+
+**Examples:**
+
+```bash
+# Remove a stopped container
+clawker container rm clawker.myapp.ralph
+
+# Force remove a running container
+clawker container rm -f clawker.myapp.ralph
+
+# Remove container and its volumes
+clawker container rm -v clawker.myapp.ralph
+
+# Remove multiple containers
+clawker container rm clawker.myapp.ralph clawker.myapp.writer
+```
+
+---
+
 ## Flag Conventions
 
 ### Standard Flags
@@ -764,11 +1040,19 @@ func runMyCommand(f *cmdutil.Factory, opts *Options) error {
 | `ps` | `list` |
 | `rm` | `remove` |
 | `prune` | `remove --unused` |
+| `container ls` | `container list` |
+| `container ps` | `container list` |
+| `container rm` | `container remove` |
 
 ---
 
 ## Version History
 
+- **v1.2**: Docker CLI mimicry - Container commands (2026-01)
+  - Added `clawker container` parent command
+  - Added 9 subcommands: `list`, `inspect`, `logs`, `start`, `stop`, `kill`, `pause`, `unpause`, `remove`
+  - Subcommands use positional arguments for container names (Docker-compatible interface)
+  - Commands use `internal/docker.Client` which wraps `pkg/whail.Engine`
 - **v1.1**: CLI verb consolidation (2026-01)
   - Merged `start` into `run` (start is now alias)
   - Removed standalone `shell` command (use `run --shell`)

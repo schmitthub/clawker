@@ -1,7 +1,3 @@
-Usage:  docker [OPTIONS] COMMAND
-
-A self-sufficient runtime for containers
-
 Common Commands:
   run         Create and run a new container from an image
   exec        Execute a command in a running container
@@ -40,7 +36,3 @@ Commands:
 Global Options:
   -D, --debug              Enable debug mode
   -l, --log-level string   Set the logging level ("debug", "info", "warn", "error", "fatal") (default "info")
-
-Run 'docker COMMAND --help' for more information on a command.
-
-For more help on how to use Docker, head to <https://docs.docker.com/go/guides/>
