@@ -65,14 +65,14 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(networks) == 0 {
+	if len(networks.Items) == 0 {
 		fmt.Fprintln(os.Stderr, "No clawker networks found.")
 		return nil
 	}
 
 	// Quiet mode - just print names
 	if opts.Quiet {
-		for _, n := range networks {
+		for _, n := range networks.Items {
 			fmt.Println(n.Name)
 		}
 		return nil
@@ -82,7 +82,7 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NETWORK ID\tNAME\tDRIVER\tSCOPE")
 
-	for _, n := range networks {
+	for _, n := range networks.Items {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncateID(n.ID),
 			n.Name,

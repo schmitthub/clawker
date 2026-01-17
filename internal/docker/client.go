@@ -9,10 +9,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -52,11 +51,9 @@ func (c *Client) Close() error {
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	// Use raw API client to bypass managed label filtering
 	// since monitoring containers aren't clawker-managed
-	containers, err := c.APIClient.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(
-			filters.Arg("name", "otel-collector"),
-			filters.Arg("status", "running"),
-		),
+	f := client.Filters{}.Add("name", "otel-collector").Add("status", "running")
+	result, err := c.APIClient.ContainerList(ctx, client.ContainerListOptions{
+		Filters: f,
 	})
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to check monitoring status")
@@ -64,7 +61,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	}
 
 	// Check if any otel-collector container is running on clawker-net
-	for _, ctr := range containers {
+	for _, ctr := range result.Items {
 		if ctr.NetworkSettings != nil {
 			for netName := range ctr.NetworkSettings.Networks {
 				if netName == "clawker-net" {
@@ -82,9 +79,9 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 // Returns true if the image exists, false if not found.
 // Note: This bypasses whail's label filtering since images may or may not be managed.
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
-	_, _, err := c.APIClient.ImageInspectWithRaw(ctx, imageRef)
+	_, err := c.APIClient.ImageInspect(ctx, imageRef)
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return false, nil
 		}
 		return false, err
@@ -104,7 +101,7 @@ type BuildImageOpts struct {
 // BuildImage builds a Docker image from a build context.
 // It processes the build output and logs progress.
 func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
-	options := types.ImageBuildOptions{
+	options := client.ImageBuildOptions{
 		Tags:       []string{opts.Tag},
 		Dockerfile: opts.Dockerfile,
 		Remove:     true,
@@ -181,38 +178,38 @@ type Container struct {
 
 // ListContainers returns all clawker-managed containers.
 func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Container, error) {
-	opts := container.ListOptions{
+	opts := client.ContainerListOptions{
 		All:     includeAll,
 		Filters: ClawkerFilter(),
 	}
 
-	containers, err := c.ContainerList(ctx, opts)
+	result, err := c.ContainerList(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseContainers(containers), nil
+	return parseContainers(result.Items), nil
 }
 
 // ListContainersByProject returns containers for a specific project.
 func (c *Client) ListContainersByProject(ctx context.Context, project string, includeAll bool) ([]Container, error) {
-	opts := container.ListOptions{
+	opts := client.ContainerListOptions{
 		All:     includeAll,
 		Filters: ProjectFilter(project),
 	}
 
-	containers, err := c.ContainerList(ctx, opts)
+	result, err := c.ContainerList(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseContainers(containers), nil
+	return parseContainers(result.Items), nil
 }
 
 // FindContainerByAgent finds a container by project and agent name.
 // Returns the container name, container details, and any error.
 // Returns (name, nil, nil) if container not found.
-func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (string, *types.Container, error) {
+func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (string, *container.Summary, error) {
 	containerName := ContainerName(project, agent)
 	ctr, err := c.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -237,13 +234,13 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 		return err
 	}
 
-	project := info.Config.Labels[LabelProject]
-	agent := info.Config.Labels[LabelAgent]
+	project := info.Container.Config.Labels[LabelProject]
+	agent := info.Container.Config.Labels[LabelAgent]
 
 	// Stop container if running
-	if info.State.Running {
+	if info.Container.State.Running {
 		timeout := 10
-		if err := c.ContainerStop(ctx, containerID, &timeout); err != nil {
+		if _, err := c.ContainerStop(ctx, containerID, &timeout); err != nil {
 			if !force {
 				return err
 			}
@@ -253,7 +250,7 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 	}
 
 	// Remove container
-	if err := c.ContainerRemove(ctx, containerID, force); err != nil {
+	if _, err := c.ContainerRemove(ctx, containerID, force); err != nil {
 		return err
 	}
 
@@ -286,9 +283,9 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 		logger.Warn().Err(err).Msg("failed to list volumes for cleanup, trying fallback")
 		// Continue to fallback - don't return yet
 	} else {
-		// Only iterate if VolumeList succeeded (volumes.Volumes is valid)
-		for _, vol := range volumes.Volumes {
-			if err := c.VolumeRemove(ctx, vol.Name, force); err != nil {
+		// Only iterate if VolumeList succeeded (volumes.Items is valid)
+		for _, vol := range volumes.Items {
+			if _, err := c.VolumeRemove(ctx, vol.Name, force); err != nil {
 				// Check if it's a "not found" error (shouldn't happen but be safe)
 				if !isNotFoundError(err) {
 					logger.Warn().Err(err).Str("volume", vol.Name).Msg("failed to remove volume")
@@ -311,7 +308,7 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 		if removedByLabel[volName] {
 			continue // Already removed via label lookup
 		}
-		if err := c.VolumeRemove(ctx, volName, force); err != nil {
+		if _, err := c.VolumeRemove(ctx, volName, force); err != nil {
 			// Only report errors that aren't "not found"
 			if !isNotFoundError(err) {
 				logger.Warn().Err(err).Str("volume", volName).Msg("failed to remove volume")
@@ -343,7 +340,7 @@ func isNotFoundError(err error) bool {
 }
 
 // parseContainers converts Docker container list to Container slice.
-func parseContainers(containers []types.Container) []Container {
+func parseContainers(containers []container.Summary) []Container {
 	var result = make([]Container, 0, len(containers))
 	for _, c := range containers {
 		// Extract container name (remove leading slash)
@@ -362,7 +359,7 @@ func parseContainers(containers []types.Container) []Container {
 			Agent:   c.Labels[LabelAgent],
 			Image:   c.Labels[LabelImage],
 			Workdir: c.Labels[LabelWorkdir],
-			Status:  c.State,
+			Status:  string(c.State),
 			Created: c.Created,
 		})
 	}

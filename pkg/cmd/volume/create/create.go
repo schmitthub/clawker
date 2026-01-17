@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types/volume"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -69,7 +69,7 @@ func run(_ *cmdutil.Factory, opts *Options, name string) error {
 	defer client.Close()
 
 	// Build create options
-	createOpts := volume.CreateOptions{
+	createOpts := dockerclient.VolumeCreateOptions{
 		Name:       name,
 		Driver:     opts.Driver,
 		DriverOpts: parseDriverOpts(opts.DriverOpts),
@@ -84,7 +84,7 @@ func run(_ *cmdutil.Factory, opts *Options, name string) error {
 	}
 
 	// Print the volume name
-	fmt.Println(vol.Name)
+	fmt.Println(vol.Volume.Name)
 	return nil
 }
 

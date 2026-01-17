@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -124,21 +124,21 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 	}
 
 	// Get tar archive from container
-	reader, stat, err := client.CopyFromContainer(ctx, c.ID, srcPath)
+	copyResult, err := client.CopyFromContainer(ctx, c.ID, dockerclient.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer reader.Close()
+	defer copyResult.Content.Close()
 
 	// If destination is stdout, just copy the tar
 	if dstPath == "-" {
-		_, err := io.Copy(os.Stdout, reader)
+		_, err := io.Copy(os.Stdout, copyResult.Content)
 		return err
 	}
 
 	// Extract tar to destination
-	return extractTar(reader, dstPath, stat.Name, opts)
+	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
 func copyToContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
@@ -153,11 +153,14 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 
 	// If source is stdin, read tar directly
 	if srcPath == "-" {
-		copyOpts := container.CopyToContainerOptions{
+		copyOpts := dockerclient.CopyToContainerOptions{
+			DestinationPath:           dstPath,
+			Content:                   os.Stdin,
 			AllowOverwriteDirWithFile: true,
 			CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 		}
-		return client.CopyToContainer(ctx, c.ID, dstPath, os.Stdin, copyOpts)
+		_, err := client.CopyToContainer(ctx, c.ID, copyOpts)
+		return err
 	}
 
 	// Create tar archive from source
@@ -167,11 +170,14 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 	}
 
 	// Copy to container
-	copyOpts := container.CopyToContainerOptions{
+	copyOpts := dockerclient.CopyToContainerOptions{
+		DestinationPath:           dstPath,
+		Content:                   tarReader,
 		AllowOverwriteDirWithFile: true,
 		CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 	}
-	return client.CopyToContainer(ctx, c.ID, dstPath, tarReader, copyOpts)
+	_, err = client.CopyToContainer(ctx, c.ID, copyOpts)
+	return err
 }
 
 // extractTar extracts a tar archive to a local path.

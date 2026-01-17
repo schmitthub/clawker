@@ -72,5 +72,6 @@ func unpauseContainer(ctx context.Context, client *docker.Client, name string) e
 	}
 
 	// Unpause the container
-	return client.ContainerUnpause(ctx, c.ID)
+	_, err = client.ContainerUnpause(ctx, c.ID)
+	return err
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // Test network helper functions
@@ -22,7 +22,7 @@ import (
 // setupManagedNetwork creates a managed network for testing.
 func setupManagedNetwork(ctx context.Context, t *testing.T, name string, extraLabels ...map[string]string) string {
 	t.Helper()
-	resp, err := testEngine.NetworkCreate(ctx, name, network.CreateOptions{}, extraLabels...)
+	resp, err := testEngine.NetworkCreate(ctx, name, client.NetworkCreateOptions{}, extraLabels...)
 	if err != nil {
 		t.Fatalf("Failed to create managed network %q: %v", name, err)
 	}
@@ -32,7 +32,7 @@ func setupManagedNetwork(ctx context.Context, t *testing.T, name string, extraLa
 // setupUnmanagedNetwork creates an unmanaged network for testing.
 func setupUnmanagedNetwork(ctx context.Context, t *testing.T, name string, labels map[string]string) string {
 	t.Helper()
-	resp, err := testEngine.APIClient.NetworkCreate(ctx, name, network.CreateOptions{
+	resp, err := testEngine.APIClient.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: labels,
 	})
@@ -45,7 +45,7 @@ func setupUnmanagedNetwork(ctx context.Context, t *testing.T, name string, label
 // cleanupManagedNetwork removes a managed network.
 func cleanupManagedNetwork(ctx context.Context, t *testing.T, name string) {
 	t.Helper()
-	if err := testEngine.NetworkRemove(ctx, name); err != nil {
+	if _, err := testEngine.NetworkRemove(ctx, name); err != nil {
 		t.Logf("Warning: Failed to cleanup managed network %q: %v", name, err)
 	}
 }
@@ -53,7 +53,7 @@ func cleanupManagedNetwork(ctx context.Context, t *testing.T, name string) {
 // cleanupUnmanagedNetwork removes an unmanaged network.
 func cleanupUnmanagedNetwork(ctx context.Context, t *testing.T, name string) {
 	t.Helper()
-	if err := testEngine.APIClient.NetworkRemove(ctx, name); err != nil {
+	if _, err := testEngine.APIClient.NetworkRemove(ctx, name, client.NetworkRemoveOptions{}); err != nil {
 		t.Logf("Warning: Failed to cleanup unmanaged network %q: %v", name, err)
 	}
 }
@@ -82,7 +82,7 @@ func TestNetworkCreate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			resp, err := testEngine.NetworkCreate(ctx, tt.networkName, network.CreateOptions{}, tt.extraLabels)
+			resp, err := testEngine.NetworkCreate(ctx, tt.networkName, client.NetworkCreateOptions{}, tt.extraLabels)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -99,19 +99,21 @@ func TestNetworkCreate(t *testing.T) {
 			}
 
 			// Verify labels applied
-			inspect, err := testEngine.APIClient.NetworkInspect(ctx, tt.networkName, network.InspectOptions{})
+			inspect, err := testEngine.APIClient.NetworkInspect(ctx, tt.networkName, client.NetworkInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect created network: %v", err)
 			}
 
 			// Cleanup
-			defer testEngine.APIClient.NetworkRemove(ctx, tt.networkName)
+			defer func() {
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, tt.networkName, client.NetworkRemoveOptions{})
+			}()
 
 			// Check managed label
 			networkLabels := testEngine.networkLabels(tt.extraLabels)
 			for k, v := range networkLabels {
-				if inspect.Labels[k] != v {
-					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Labels[k])
+				if inspect.Network.Labels[k] != v {
+					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Network.Labels[k])
 				}
 			}
 		})
@@ -130,7 +132,7 @@ func TestNetworkRemove(t *testing.T) {
 			name:        "should remove managed network",
 			networkName: "test-network-remove-managed",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
-				resp, err := testEngine.NetworkCreate(ctx, name, network.CreateOptions{})
+				resp, err := testEngine.NetworkCreate(ctx, name, client.NetworkCreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -144,7 +146,7 @@ func TestNetworkRemove(t *testing.T) {
 			networkName: "test-network-remove-unmanaged",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				// Create unmanaged network directly with API client
-				resp, err := testEngine.APIClient.NetworkCreate(ctx, name, network.CreateOptions{
+				resp, err := testEngine.APIClient.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 					Driver: "bridge",
 					Labels: map[string]string{"other.label": "value"},
 				})
@@ -155,7 +157,7 @@ func TestNetworkRemove(t *testing.T) {
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, name string) {
 				// Cleanup unmanaged network
-				testEngine.APIClient.NetworkRemove(ctx, name)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 			},
 			shouldErr: true,
 		},
@@ -171,7 +173,7 @@ func TestNetworkRemove(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, tt.networkName)
 
-			err := testEngine.NetworkRemove(ctx, tt.networkName)
+			_, err := testEngine.NetworkRemove(ctx, tt.networkName)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -206,7 +208,7 @@ func TestNetworkInspect(t *testing.T) {
 			name:        "should inspect managed network",
 			networkName: "test-network-inspect-managed",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
-				resp, err := testEngine.NetworkCreate(ctx, name, network.CreateOptions{})
+				resp, err := testEngine.NetworkCreate(ctx, name, client.NetworkCreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -221,7 +223,7 @@ func TestNetworkInspect(t *testing.T) {
 			name:        "should not inspect unmanaged network",
 			networkName: "test-network-inspect-unmanaged",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
-				resp, err := testEngine.APIClient.NetworkCreate(ctx, name, network.CreateOptions{
+				resp, err := testEngine.APIClient.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 					Driver: "bridge",
 					Labels: map[string]string{"other.label": "value"},
 				})
@@ -231,7 +233,7 @@ func TestNetworkInspect(t *testing.T) {
 				return resp.ID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, name string) {
-				testEngine.APIClient.NetworkRemove(ctx, name)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 			},
 			shouldErr: true,
 		},
@@ -247,7 +249,7 @@ func TestNetworkInspect(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, tt.networkName)
 
-			info, err := testEngine.NetworkInspect(ctx, tt.networkName, network.InspectOptions{})
+			info, err := testEngine.NetworkInspect(ctx, tt.networkName, client.NetworkInspectOptions{})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -258,8 +260,8 @@ func TestNetworkInspect(t *testing.T) {
 				t.Fatalf("NetworkInspect failed: %v", err)
 			}
 
-			if info.ID != networkID {
-				t.Errorf("Expected network ID %q, got %q", networkID, info.ID)
+			if info.Network.ID != networkID {
+				t.Errorf("Expected network ID %q, got %q", networkID, info.Network.ID)
 			}
 		})
 	}
@@ -277,7 +279,7 @@ func TestNetworkExists(t *testing.T) {
 			name:        "should return true for existing network",
 			networkName: "test-network-exists",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) {
-				_, err := testEngine.NetworkCreate(ctx, name, network.CreateOptions{})
+				_, err := testEngine.NetworkCreate(ctx, name, client.NetworkCreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -326,7 +328,7 @@ func TestNetworkList(t *testing.T) {
 		{
 			name: "should return managed networks",
 			setupFunc: func(ctx context.Context, t *testing.T) string {
-				_, err := testEngine.NetworkCreate(ctx, "test-network-list-managed", network.CreateOptions{}, map[string]string{"test.filter": "managed"})
+				_, err := testEngine.NetworkCreate(ctx, "test-network-list-managed", client.NetworkCreateOptions{}, map[string]string{"test.filter": "managed"})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -341,7 +343,7 @@ func TestNetworkList(t *testing.T) {
 		{
 			name: "should not return unmanaged networks",
 			setupFunc: func(ctx context.Context, t *testing.T) string {
-				_, err := testEngine.APIClient.NetworkCreate(ctx, "test-network-list-unmanaged", network.CreateOptions{
+				_, err := testEngine.APIClient.NetworkCreate(ctx, "test-network-list-unmanaged", client.NetworkCreateOptions{
 					Driver: "bridge",
 					Labels: map[string]string{"other.label": "value"},
 				})
@@ -351,7 +353,7 @@ func TestNetworkList(t *testing.T) {
 				return "test-network-list-unmanaged"
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
-				testEngine.APIClient.NetworkRemove(ctx, networkName)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{})
 			},
 			extraFilters:  map[string]string{},
 			shouldBeFound: false,
@@ -371,7 +373,7 @@ func TestNetworkList(t *testing.T) {
 			}
 
 			found := false
-			for _, net := range networks {
+			for _, net := range networks.Items {
 				if net.Name == networkName {
 					found = true
 					break
@@ -406,7 +408,7 @@ func TestEnsureNetwork(t *testing.T) {
 			name:        "should return existing network if it exists",
 			networkName: "test-ensure-network-existing",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) {
-				_, err := testEngine.NetworkCreate(ctx, name, network.CreateOptions{})
+				_, err := testEngine.NetworkCreate(ctx, name, client.NetworkCreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -425,7 +427,7 @@ func TestEnsureNetwork(t *testing.T) {
 			tt.setupFunc(ctx, t, tt.networkName)
 			defer tt.cleanupFunc(ctx, t, tt.networkName)
 
-			networkID, err := testEngine.EnsureNetwork(ctx, tt.networkName, network.CreateOptions{}, false)
+			networkID, err := testEngine.EnsureNetwork(ctx, tt.networkName, client.NetworkCreateOptions{}, false)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -462,7 +464,7 @@ func TestIsNetworkManaged(t *testing.T) {
 		{
 			name: "should return true for managed network",
 			setupFunc: func(ctx context.Context, t *testing.T) string {
-				_, err := testEngine.NetworkCreate(ctx, "test-network-managed-check", network.CreateOptions{})
+				_, err := testEngine.NetworkCreate(ctx, "test-network-managed-check", client.NetworkCreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create network: %v", err)
 				}
@@ -476,7 +478,7 @@ func TestIsNetworkManaged(t *testing.T) {
 		{
 			name: "should return false for unmanaged network",
 			setupFunc: func(ctx context.Context, t *testing.T) string {
-				_, err := testEngine.APIClient.NetworkCreate(ctx, "test-network-unmanaged-check", network.CreateOptions{
+				_, err := testEngine.APIClient.NetworkCreate(ctx, "test-network-unmanaged-check", client.NetworkCreateOptions{
 					Driver: "bridge",
 					Labels: map[string]string{"other.label": "value"},
 				})
@@ -486,7 +488,7 @@ func TestIsNetworkManaged(t *testing.T) {
 				return "test-network-unmanaged-check"
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
-				testEngine.APIClient.NetworkRemove(ctx, networkName)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{})
 			},
 			expected: false,
 		},
@@ -534,7 +536,7 @@ func TestNetworksPrune(t *testing.T) {
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
 				// Network should be pruned, but try cleanup anyway in case test fails
-				testEngine.APIClient.NetworkRemove(ctx, networkName)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{})
 			},
 			shouldBeRemoved: true,
 		},
@@ -545,7 +547,7 @@ func TestNetworksPrune(t *testing.T) {
 				return setupUnmanagedNetwork(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, networkName string) {
-				testEngine.APIClient.NetworkRemove(ctx, networkName)
+				_, _ = testEngine.APIClient.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{})
 			},
 			shouldBeRemoved: false,
 		},

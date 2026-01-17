@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/docker/docker/api/types"
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
@@ -63,7 +63,7 @@ func (p *PTYHandler) Restore() error {
 }
 
 // Stream handles bidirectional I/O between local terminal and container
-func (p *PTYHandler) Stream(ctx context.Context, hijacked types.HijackedResponse) error {
+func (p *PTYHandler) Stream(ctx context.Context, hijacked client.HijackedResponse) error {
 	defer hijacked.Close()
 
 	outputDone := make(chan struct{})
@@ -104,7 +104,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked types.HijackedResponse
 // StreamWithResize handles bidirectional I/O with terminal resize support
 func (p *PTYHandler) StreamWithResize(
 	ctx context.Context,
-	hijacked types.HijackedResponse,
+	hijacked client.HijackedResponse,
 	resizeFunc func(height, width uint) error,
 ) error {
 	defer hijacked.Close()

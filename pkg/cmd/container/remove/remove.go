@@ -98,5 +98,6 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	}
 
 	// Otherwise just remove the container
-	return client.ContainerRemove(ctx, container.ID, opts.Force)
+	_, err = client.ContainerRemove(ctx, container.ID, opts.Force)
+	return err
 }

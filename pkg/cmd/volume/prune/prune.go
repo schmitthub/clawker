@@ -75,16 +75,16 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(report.VolumesDeleted) == 0 {
+	if len(report.Report.VolumesDeleted) == 0 {
 		fmt.Fprintln(os.Stderr, "No unused clawker volumes to remove.")
 		return nil
 	}
 
-	for _, name := range report.VolumesDeleted {
+	for _, name := range report.Report.VolumesDeleted {
 		fmt.Fprintf(os.Stderr, "Deleted: %s\n", name)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.SpaceReclaimed)))
+	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
 
 	return nil
 }

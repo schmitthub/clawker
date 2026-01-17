@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/docker/docker/api/types/image"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -67,7 +67,7 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	defer client.Close()
 
 	// List images
-	listOpts := image.ListOptions{
+	listOpts := dockerclient.ImageListOptions{
 		All: opts.All,
 	}
 	images, err := client.ImageList(ctx, listOpts)
@@ -76,14 +76,14 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(images) == 0 {
+	if len(images.Items) == 0 {
 		fmt.Fprintln(os.Stderr, "No clawker images found.")
 		return nil
 	}
 
 	// Quiet mode - just print IDs
 	if opts.Quiet {
-		for _, img := range images {
+		for _, img := range images.Items {
 			fmt.Println(truncateID(img.ID))
 		}
 		return nil
@@ -93,7 +93,7 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE")
 
-	for _, img := range images {
+	for _, img := range images.Items {
 		// Handle images with multiple tags or no tags
 		if len(img.RepoTags) == 0 {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",

@@ -226,6 +226,20 @@ func ErrNetworkCreateFailed(name string, err error) *DockerError {
 	}
 }
 
+// ErrNetworkRemoveFailed returns an error for when network removal fails.
+func ErrNetworkRemoveFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_remove",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to remove network '%s'", name),
+		NextSteps: []string{
+			"Check if the network is in use by containers",
+			"Stop containers using this network first",
+			"Verify the network exists: docker network ls",
+		},
+	}
+}
+
 // ErrContainerStopFailed returns an error for when a container fails to stop.
 func ErrContainerStopFailed(name string, err error) *DockerError {
 	return &DockerError{

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -79,14 +79,14 @@ func waitContainer(ctx context.Context, client *docker.Client, name string) (int
 	}
 
 	// Wait for the container to stop
-	statusCh, errCh := client.ContainerWait(ctx, c.ID, container.WaitConditionNotRunning)
+	waitResult := client.ContainerWait(ctx, c.ID, container.WaitConditionNotRunning)
 
 	select {
-	case err := <-errCh:
+	case err := <-waitResult.Error:
 		if err != nil {
 			return 0, err
 		}
-	case status := <-statusCh:
+	case status := <-waitResult.Result:
 		return status.StatusCode, nil
 	}
 

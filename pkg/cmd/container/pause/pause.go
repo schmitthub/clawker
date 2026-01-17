@@ -74,5 +74,6 @@ func pauseContainer(ctx context.Context, client *docker.Client, name string) err
 	}
 
 	// Pause the container
-	return client.ContainerPause(ctx, c.ID)
+	_, err = client.ContainerPause(ctx, c.ID)
+	return err
 }

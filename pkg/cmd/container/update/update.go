@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -83,15 +83,15 @@ func run(_ *cmdutil.Factory, opts *Options, containers []string) error {
 	}
 	defer client.Close()
 
-	// Build update config
-	updateConfig, err := buildUpdateConfig(opts)
+	// Build update resources
+	resources, restartPolicy, err := buildUpdateResources(opts)
 	if err != nil {
 		return err
 	}
 
 	var errs []error
 	for _, name := range containers {
-		if err := updateContainer(ctx, client, name, updateConfig); err != nil {
+		if err := updateContainer(ctx, client, name, resources, restartPolicy); err != nil {
 			errs = append(errs, err)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		} else {
@@ -105,7 +105,7 @@ func run(_ *cmdutil.Factory, opts *Options, containers []string) error {
 	return nil
 }
 
-func updateContainer(ctx context.Context, client *docker.Client, name string, updateConfig container.UpdateConfig) error {
+func updateContainer(ctx context.Context, client *docker.Client, name string, resources *container.Resources, restartPolicy *container.RestartPolicy) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -116,7 +116,7 @@ func updateContainer(ctx context.Context, client *docker.Client, name string, up
 	}
 
 	// Update the container
-	resp, err := client.ContainerUpdate(ctx, c.ID, updateConfig)
+	resp, err := client.ContainerUpdate(ctx, c.ID, resources, restartPolicy)
 	if err != nil {
 		return err
 	}
@@ -129,62 +129,63 @@ func updateContainer(ctx context.Context, client *docker.Client, name string, up
 	return nil
 }
 
-func buildUpdateConfig(opts *Options) (container.UpdateConfig, error) {
-	var config container.UpdateConfig
+func buildUpdateResources(opts *Options) (*container.Resources, *container.RestartPolicy, error) {
+	resources := &container.Resources{}
 
 	// CPU settings
 	if opts.CPUs > 0 {
 		// Convert CPUs to NanoCPUs (1 CPU = 1e9 NanoCPUs)
-		config.NanoCPUs = int64(opts.CPUs * 1e9)
+		resources.NanoCPUs = int64(opts.CPUs * 1e9)
 	}
 	if opts.CPUShares > 0 {
-		config.CPUShares = opts.CPUShares
+		resources.CPUShares = opts.CPUShares
 	}
 	if opts.CPUsetCPUs != "" {
-		config.CpusetCpus = opts.CPUsetCPUs
+		resources.CpusetCpus = opts.CPUsetCPUs
 	}
 	if opts.CPUsetMems != "" {
-		config.CpusetMems = opts.CPUsetMems
+		resources.CpusetMems = opts.CPUsetMems
 	}
 
 	// Memory settings
 	if opts.Memory != "" {
 		mem, err := parseMemorySize(opts.Memory)
 		if err != nil {
-			return config, fmt.Errorf("invalid memory value %q: %w", opts.Memory, err)
+			return nil, nil, fmt.Errorf("invalid memory value %q: %w", opts.Memory, err)
 		}
-		config.Memory = mem
+		resources.Memory = mem
 	}
 	if opts.MemoryReservation != "" {
 		mem, err := parseMemorySize(opts.MemoryReservation)
 		if err != nil {
-			return config, fmt.Errorf("invalid memory-reservation value %q: %w", opts.MemoryReservation, err)
+			return nil, nil, fmt.Errorf("invalid memory-reservation value %q: %w", opts.MemoryReservation, err)
 		}
-		config.MemoryReservation = mem
+		resources.MemoryReservation = mem
 	}
 	if opts.MemorySwap != "" {
 		if opts.MemorySwap == "-1" {
-			config.MemorySwap = -1
+			resources.MemorySwap = -1
 		} else {
 			mem, err := parseMemorySize(opts.MemorySwap)
 			if err != nil {
-				return config, fmt.Errorf("invalid memory-swap value %q: %w", opts.MemorySwap, err)
+				return nil, nil, fmt.Errorf("invalid memory-swap value %q: %w", opts.MemorySwap, err)
 			}
-			config.MemorySwap = mem
+			resources.MemorySwap = mem
 		}
 	}
 
 	// PIDs limit
 	if opts.PidsLimit != 0 {
-		config.PidsLimit = &opts.PidsLimit
+		resources.PidsLimit = &opts.PidsLimit
 	}
 
 	// Block IO weight
 	if opts.BlkioWeight > 0 {
-		config.BlkioWeight = opts.BlkioWeight
+		resources.BlkioWeight = opts.BlkioWeight
 	}
 
-	return config, nil
+	// No restart policy changes in this command
+	return resources, nil, nil
 }
 
 // parseMemorySize parses a human-readable memory size (e.g., "512m", "1g", "1024k")

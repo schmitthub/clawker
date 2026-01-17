@@ -3,13 +3,13 @@ package whail
 import (
 	"context"
 
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/client"
 )
 
 // NetworkCreate creates a new network with managed labels automatically applied.
 // The provided labels are merged with the engine's configured labels.
-func (e *Engine) NetworkCreate(ctx context.Context, name string, options network.CreateOptions, extraLabels ...map[string]string) (network.CreateResponse, error) {
+func (e *Engine) NetworkCreate(ctx context.Context, name string, options client.NetworkCreateOptions, extraLabels ...map[string]string) (client.NetworkCreateResult, error) {
 	labels := e.networkLabels(extraLabels...)
 	// Merge labels into options instead of ignoring them
 	if options.Labels == nil {
@@ -25,34 +25,42 @@ func (e *Engine) NetworkCreate(ctx context.Context, name string, options network
 
 	resp, err := e.APIClient.NetworkCreate(ctx, name, options)
 	if err != nil {
-		return network.CreateResponse{}, ErrNetworkCreateFailed(name, err)
+		return client.NetworkCreateResult{}, ErrNetworkCreateFailed(name, err)
 	}
 	return resp, nil
 }
 
 // NetworkRemove removes a network.
-func (e *Engine) NetworkRemove(ctx context.Context, name string) error {
+func (e *Engine) NetworkRemove(ctx context.Context, name string) (client.NetworkRemoveResult, error) {
 	isManaged, err := e.IsNetworkManaged(ctx, name)
 	if err != nil || !isManaged {
-		return ErrNetworkNotFound(name, err)
+		return client.NetworkRemoveResult{}, ErrNetworkNotFound(name, err)
 	}
-	return e.APIClient.NetworkRemove(ctx, name)
+	result, err := e.APIClient.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	if err != nil {
+		return client.NetworkRemoveResult{}, ErrNetworkRemoveFailed(name, err)
+	}
+	return result, nil
 }
 
 // NetworkInspect inspects a network.
-func (e *Engine) NetworkInspect(ctx context.Context, name string, options network.InspectOptions) (network.Inspect, error) {
+func (e *Engine) NetworkInspect(ctx context.Context, name string, options client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
 	isManaged, err := e.IsNetworkManaged(ctx, name)
 	if err != nil || !isManaged {
-		return network.Inspect{}, ErrNetworkNotFound(name, err)
+		return client.NetworkInspectResult{}, ErrNetworkNotFound(name, err)
 	}
-	return e.APIClient.NetworkInspect(ctx, name, options)
+	result, err := e.APIClient.NetworkInspect(ctx, name, options)
+	if err != nil {
+		return client.NetworkInspectResult{}, ErrNetworkNotFound(name, err)
+	}
+	return result, nil
 }
 
 // NetworkExists checks if a network exists.
 func (e *Engine) NetworkExists(ctx context.Context, name string) (bool, error) {
-	_, err := e.APIClient.NetworkInspect(ctx, name, network.InspectOptions{})
+	_, err := e.APIClient.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return false, nil
 		}
 		return false, err
@@ -62,32 +70,36 @@ func (e *Engine) NetworkExists(ctx context.Context, name string) (bool, error) {
 
 // NetworkList lists networks matching the filter.
 // The managed label filter is automatically injected.
-func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]string) ([]network.Summary, error) {
+func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]string) (client.NetworkListResult, error) {
 	f := e.newManagedFilter()
 	for _, labels := range extraFilters {
 		for k, v := range labels {
-			f.Add("label", k+"="+v)
+			f = f.Add("label", k+"="+v)
 		}
 	}
-	return e.APIClient.NetworkList(ctx, network.ListOptions{Filters: f})
+	result, err := e.APIClient.NetworkList(ctx, client.NetworkListOptions{Filters: f})
+	if err != nil {
+		return client.NetworkListResult{}, err
+	}
+	return result, nil
 }
 
 // EnsureNetwork creates a network if it doesn't exist.
 // Returns the network ID.
-func (e *Engine) EnsureNetwork(ctx context.Context, name string, options network.CreateOptions, verbose bool, extraLabels ...map[string]string) (string, error) {
+func (e *Engine) EnsureNetwork(ctx context.Context, name string, options client.NetworkCreateOptions, verbose bool, extraLabels ...map[string]string) (string, error) {
 	exists, err := e.NetworkExists(ctx, name)
 	if err != nil {
 		return "", err
 	}
 	if exists {
-		info, err := e.NetworkInspect(ctx, name, network.InspectOptions{
+		info, err := e.NetworkInspect(ctx, name, client.NetworkInspectOptions{
 			Verbose: verbose,
 			Scope:   options.Scope,
 		})
 		if err != nil {
 			return "", err
 		}
-		return info.ID, nil
+		return info.Network.ID, nil
 	}
 	resp, err := e.NetworkCreate(ctx, name, options, extraLabels...)
 	if err != nil {
@@ -98,26 +110,26 @@ func (e *Engine) EnsureNetwork(ctx context.Context, name string, options network
 
 // IsNetworkManaged checks if a network has the managed label.
 func (e *Engine) IsNetworkManaged(ctx context.Context, name string) (bool, error) {
-	info, err := e.APIClient.NetworkInspect(ctx, name, network.InspectOptions{})
+	result, err := e.APIClient.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return false, nil
 		}
 		return false, err
 	}
 
-	val, ok := info.Labels[e.managedLabelKey]
+	val, ok := result.Network.Labels[e.managedLabelKey]
 	return ok && val == e.managedLabelValue, nil
 }
 
 // NetworksPrune removes all unused managed networks.
 // The managed label filter is automatically injected to ensure only
 // managed networks are affected.
-func (e *Engine) NetworksPrune(ctx context.Context) (network.PruneReport, error) {
+func (e *Engine) NetworksPrune(ctx context.Context) (client.NetworkPruneResult, error) {
 	f := e.newManagedFilter()
-	report, err := e.APIClient.NetworksPrune(ctx, f)
+	result, err := e.APIClient.NetworkPrune(ctx, client.NetworkPruneOptions{Filters: f})
 	if err != nil {
-		return network.PruneReport{}, ErrNetworksPruneFailed(err)
+		return client.NetworkPruneResult{}, ErrNetworksPruneFailed(err)
 	}
-	return report, nil
+	return result, nil
 }

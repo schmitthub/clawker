@@ -5,7 +5,7 @@ package docker
 import (
 	"time"
 
-	"github.com/docker/docker/api/types/filters"
+	"github.com/moby/moby/client"
 )
 
 // Clawker label keys for managed resources.
@@ -81,26 +81,22 @@ func NetworkLabels() map[string]string {
 	}
 }
 
-// ClawkerFilter returns Docker filter args for listing all clawker resources.
-func ClawkerFilter() filters.Args {
-	return filters.NewArgs(
-		filters.Arg("label", LabelManaged+"="+ManagedLabelValue),
-	)
+// ClawkerFilter returns Docker filter for listing all clawker resources.
+func ClawkerFilter() client.Filters {
+	return client.Filters{}.Add("label", LabelManaged+"="+ManagedLabelValue)
 }
 
-// ProjectFilter returns Docker filter args for a specific project.
-func ProjectFilter(project string) filters.Args {
-	return filters.NewArgs(
-		filters.Arg("label", LabelManaged+"="+ManagedLabelValue),
-		filters.Arg("label", LabelProject+"="+project),
-	)
+// ProjectFilter returns Docker filter for a specific project.
+func ProjectFilter(project string) client.Filters {
+	return client.Filters{}.
+		Add("label", LabelManaged+"="+ManagedLabelValue).
+		Add("label", LabelProject+"="+project)
 }
 
-// AgentFilter returns Docker filter args for a specific agent within a project.
-func AgentFilter(project, agent string) filters.Args {
-	return filters.NewArgs(
-		filters.Arg("label", LabelManaged+"="+ManagedLabelValue),
-		filters.Arg("label", LabelProject+"="+project),
-		filters.Arg("label", LabelAgent+"="+agent),
-	)
+// AgentFilter returns Docker filter for a specific agent within a project.
+func AgentFilter(project, agent string) client.Filters {
+	return client.Filters{}.
+		Add("label", LabelManaged+"="+ManagedLabelValue).
+		Add("label", LabelProject+"="+project).
+		Add("label", LabelAgent+"="+agent)
 }

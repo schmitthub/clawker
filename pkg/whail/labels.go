@@ -6,7 +6,7 @@ package whail
 import (
 	"maps"
 
-	"github.com/docker/docker/api/types/filters"
+	"github.com/moby/moby/client"
 )
 
 // LabelConfig defines labels to apply to different resource types.
@@ -62,35 +62,33 @@ func (c *LabelConfig) ImageLabels(extra ...map[string]string) map[string]string 
 	return MergeLabels(all...)
 }
 
-// LabelFilter creates a Docker filter argument for a single label key=value.
+// LabelFilter creates a Docker filter for a single label key=value.
 // The key should include the prefix (e.g., "com.myapp.managed").
-func LabelFilter(key, value string) filters.Args {
-	return filters.NewArgs(
-		filters.Arg("label", key+"="+value),
-	)
+func LabelFilter(key, value string) client.Filters {
+	return client.Filters{}.Add("label", key+"="+value)
 }
 
 // LabelFilterMultiple creates a Docker filter from multiple label key=value pairs.
 // All labels must match (AND logic).
-func LabelFilterMultiple(labels map[string]string) filters.Args {
-	args := filters.NewArgs()
+func LabelFilterMultiple(labels map[string]string) client.Filters {
+	f := client.Filters{}
 	for k, v := range labels {
-		args.Add("label", k+"="+v)
+		f = f.Add("label", k+"="+v)
 	}
-	return args
+	return f
 }
 
-// AddLabelFilter adds a label filter to an existing filters.Args.
-func AddLabelFilter(args filters.Args, key, value string) filters.Args {
-	args.Add("label", key+"="+value)
-	return args
+// AddLabelFilter adds a label filter to an existing client.Filters.
+// Returns a new Filters (immutable pattern).
+func AddLabelFilter(f client.Filters, key, value string) client.Filters {
+	return f.Add("label", key+"="+value)
 }
 
-// MergeLabelFilters merges label filters into an existing filters.Args.
-// Preserves any existing filters in args.
-func MergeLabelFilters(args filters.Args, labels map[string]string) filters.Args {
+// MergeLabelFilters merges label filters into an existing client.Filters.
+// Returns a new Filters (immutable pattern).
+func MergeLabelFilters(f client.Filters, labels map[string]string) client.Filters {
 	for k, v := range labels {
-		args.Add("label", k+"="+v)
+		f = f.Add("label", k+"="+v)
 	}
-	return args
+	return f
 }

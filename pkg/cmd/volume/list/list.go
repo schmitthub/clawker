@@ -67,14 +67,14 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(resp.Volumes) == 0 {
+	if len(resp.Items) == 0 {
 		fmt.Fprintln(os.Stderr, "No clawker volumes found.")
 		return nil
 	}
 
 	// Quiet mode - just print names
 	if opts.Quiet {
-		for _, v := range resp.Volumes {
+		for _, v := range resp.Items {
 			fmt.Println(v.Name)
 		}
 		return nil
@@ -84,7 +84,7 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "VOLUME NAME\tDRIVER\tMOUNTPOINT")
 
-	for _, v := range resp.Volumes {
+	for _, v := range resp.Items {
 		fmt.Fprintf(w, "%s\t%s\t%s\n",
 			v.Name,
 			v.Driver,

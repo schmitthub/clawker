@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types/image"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -66,7 +66,7 @@ func run(_ *cmdutil.Factory, opts *Options, images []string) error {
 	}
 	defer client.Close()
 
-	removeOpts := image.RemoveOptions{
+	removeOpts := dockerclient.ImageRemoveOptions{
 		Force:         opts.Force,
 		PruneChildren: !opts.NoPrune,
 	}
@@ -81,7 +81,7 @@ func run(_ *cmdutil.Factory, opts *Options, images []string) error {
 		}
 
 		// Print what was removed
-		for _, resp := range responses {
+		for _, resp := range responses.Items {
 			if resp.Untagged != "" {
 				fmt.Fprintf(os.Stderr, "Untagged: %s\n", resp.Untagged)
 			}

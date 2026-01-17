@@ -91,12 +91,12 @@ func run(cmd *cobra.Command, _ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(report.ImagesDeleted) == 0 {
+	if len(report.Report.ImagesDeleted) == 0 {
 		fmt.Fprintln(os.Stderr, "No unused clawker images to remove.")
 		return nil
 	}
 
-	for _, img := range report.ImagesDeleted {
+	for _, img := range report.Report.ImagesDeleted {
 		if img.Untagged != "" {
 			fmt.Fprintf(os.Stderr, "Untagged: %s\n", img.Untagged)
 		}
@@ -105,7 +105,7 @@ func run(cmd *cobra.Command, _ *cmdutil.Factory, opts *Options) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.SpaceReclaimed)))
+	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
 
 	return nil
 }

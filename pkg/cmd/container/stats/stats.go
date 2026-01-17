@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -197,9 +197,9 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 				}
 				return
 			}
-			defer reader.Close()
+			defer reader.Body.Close()
 
-			decoder := json.NewDecoder(reader)
+			decoder := json.NewDecoder(reader.Body)
 			for {
 				var stats container.StatsResponse
 				if err := decoder.Decode(&stats); err != nil {

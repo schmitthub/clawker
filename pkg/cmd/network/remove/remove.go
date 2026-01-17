@@ -62,7 +62,7 @@ func run(_ *cmdutil.Factory, _ *Options, networks []string) error {
 
 	var errs []error
 	for _, name := range networks {
-		if err := client.NetworkRemove(ctx, name); err != nil {
+		if _, err := client.NetworkRemove(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove network %q: %w", name, err))
 			cmdutil.HandleError(err)
 		} else {

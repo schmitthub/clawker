@@ -141,18 +141,19 @@ func TestLabelConfig_ImageLabels(t *testing.T) {
 func TestLabelFilter(t *testing.T) {
 	args := LabelFilter("com.example.key", "value")
 
-	// Verify filter was added
-	if !args.Contains("label") {
+	// Verify filter was added (Filters is map[string]map[string]bool)
+	labelFilters, ok := args["label"]
+	if !ok {
 		t.Error("LabelFilter() should contain label filter")
 	}
 
 	// Check the filter value
-	filters := args.Get("label")
-	if len(filters) != 1 {
-		t.Errorf("LabelFilter() should have 1 filter, got %d", len(filters))
+	if len(labelFilters) != 1 {
+		t.Errorf("LabelFilter() should have 1 filter, got %d", len(labelFilters))
 	}
-	if filters[0] != "com.example.key=value" {
-		t.Errorf("LabelFilter() = %q, want %q", filters[0], "com.example.key=value")
+	expectedFilter := "com.example.key=value"
+	if _, exists := labelFilters[expectedFilter]; !exists {
+		t.Errorf("LabelFilter() missing expected filter %q", expectedFilter)
 	}
 }
 
@@ -164,13 +165,13 @@ func TestLabelFilterMultiple(t *testing.T) {
 	args := LabelFilterMultiple(labels)
 
 	// Verify filters were added
-	if !args.Contains("label") {
+	labelFilters, ok := args["label"]
+	if !ok {
 		t.Error("LabelFilterMultiple() should contain label filter")
 	}
 
-	filters := args.Get("label")
-	if len(filters) != 2 {
-		t.Errorf("LabelFilterMultiple() should have 2 filters, got %d", len(filters))
+	if len(labelFilters) != 2 {
+		t.Errorf("LabelFilterMultiple() should have 2 filters, got %d", len(labelFilters))
 	}
 }
 
@@ -178,8 +179,8 @@ func TestAddLabelFilter(t *testing.T) {
 	args := LabelFilter("key1", "value1")
 	args = AddLabelFilter(args, "key2", "value2")
 
-	filters := args.Get("label")
-	if len(filters) != 2 {
-		t.Errorf("AddLabelFilter() should have 2 filters, got %d", len(filters))
+	labelFilters := args["label"]
+	if len(labelFilters) != 2 {
+		t.Errorf("AddLabelFilter() should have 2 filters, got %d", len(labelFilters))
 	}
 }
