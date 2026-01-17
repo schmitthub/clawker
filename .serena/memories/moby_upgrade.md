@@ -2,13 +2,63 @@
 
 ## Tasks
 
-## Lessons Learned
+### Completed
+- [x] Fixed `ContainerLogs` return type: `io.ReadCloser` → `client.ContainerLogsResult`
+  - Changed in `pkg/whail/container.go`
+  - All dependents compatible (ContainerLogsResult embeds io.ReadCloser)
+  - Commit: `c855b3e`
+- [x] Verified ALL whail wrapper methods match moby/moby client v0.2.1 return types
+  - Verified on: 2026-01-17
 
-## Patterns
+### Verification Summary (All ✅)
+| Method | Return Type | Status |
+|--------|-------------|--------|
+| ContainerCreate | (ContainerCreateResult, error) | ✅ |
+| ContainerStart | (ContainerStartResult, error) | ✅ |
+| ContainerStop | (ContainerStopResult, error) | ✅ |
+| ContainerRemove | (ContainerRemoveResult, error) | ✅ |
+| ContainerList | (ContainerListResult, error) | ✅ |
+| ContainerInspect | (ContainerInspectResult, error) | ✅ |
+| ContainerAttach | (ContainerAttachResult, error) | ✅ |
+| ContainerWait | ContainerWaitResult | ✅ |
+| ContainerLogs | (ContainerLogsResult, error) | ✅ |
+| ContainerKill | (ContainerKillResult, error) | ✅ |
+| ContainerPause | (ContainerPauseResult, error) | ✅ |
+| ContainerUnpause | (ContainerUnpauseResult, error) | ✅ |
+| ContainerRestart | (ContainerRestartResult, error) | ✅ |
+| ContainerRename | (ContainerRenameResult, error) | ✅ |
+| ContainerTop | (ContainerTopResult, error) | ✅ |
+| ContainerStats | (ContainerStatsResult, error) | ✅ |
+| ContainerResize | (ContainerResizeResult, error) | ✅ |
+| ContainerUpdate | (ContainerUpdateResult, error) | ✅ |
+| ContainerExecCreate | (ExecCreateResult, error) | ✅ |
+| ContainerExecAttach | (ExecAttachResult, error) | ✅ |
+| ContainerExecResize | (ExecResizeResult, error) | ✅ |
+| VolumeCreate | (VolumeCreateResult, error) | ✅ |
+| VolumeRemove | (VolumeRemoveResult, error) | ✅ |
+| VolumeInspect | (VolumeInspectResult, error) | ✅ |
+| VolumeList | (VolumeListResult, error) | ✅ |
+| VolumesPrune | (VolumePruneResult, error) | ✅ |
+| NetworkCreate | (NetworkCreateResult, error) | ✅ |
+| NetworkRemove | (NetworkRemoveResult, error) | ✅ |
+| NetworkInspect | (NetworkInspectResult, error) | ✅ |
+| NetworkList | (NetworkListResult, error) | ✅ |
+| NetworksPrune | (NetworkPruneResult, error) | ✅ |
+| ImageBuild | (ImageBuildResult, error) | ✅ |
+| ImageRemove | (ImageRemoveResult, error) | ✅ |
+| ImageList | (ImageListResult, error) | ✅ |
+| ImageInspect | (ImageInspectResult, error) | ✅ |
+| ImagesPrune | (ImagePruneResult, error) | ✅ |
+| CopyToContainer | (CopyToContainerResult, error) | ✅ |
+| CopyFromContainer | (CopyFromContainerResult, error) | ✅ |
+| ContainerStatPath | (ContainerStatPathResult, error) | ✅ |
 
-## Research and Planning
+## Status
 
-Plan file: @/Users/andrew/.claude/plans/cheerful-beaming-kettle.md
+**UPGRADE COMPLETE** - All whail wrapper methods verified to match moby/moby client v0.2.1 signatures.
+- All tests pass (`go test ./...`)
+- Wrapper signatures allow additional parameters (per PROMPT.md guidelines)
+- All return types match moby/moby exactly
 
 ## Target Versions
 - `github.com/moby/moby/client v0.2.1` - Go client (proper Go module)
