@@ -58,7 +58,7 @@ Open `clawker.yaml` and customize the project image, packages, and agent setting
 
 ### Optional: Start monitoring stack
 
-Start the monitoring stack to keep track of resource usage and agent activity across all clawker projects on your system. This is optional but recommended for better visibility. You can view the monitoring dashboard at `http://localhost:3000`.
+Start the monitoring stack to keep track of resource usage and agent activity across all clawker projects and containers on your system. This is optional but recommended for better visibility. You can view the monitoring dashboard at `http://localhost:3000`.
 
 ```bash
 clawker monitor start
@@ -66,15 +66,15 @@ clawker monitor start
 
 ### Option 1: Start claude agent in container and enjoy a safe Claude Code experience
 
-Your workspace files will be bind mounted into the container by default, allowing Claude to access your code without nuking your system.
+Your workspace files will be bind mounted into the container by default, allowing Claude Code to directly modify your project files only. The rest of your system is isolated from Claude Code.
 
 ```bash
 clawker start --agent ralph
 ```
 
-### Option 2: Start claude agent in container with a snapshot of your workspace
+### Option 2: Start claude agent in container with a snapshot of your project
 
-This mode creates a snapshot of your workspace files and mounts it into the container, providing an isolated environment for Claude to work in without affecting your actual files. This is useful for testing changes or experiments without risking your real codebase, especially when using YOLO mode. Use git to push and pull changes back to your project as needed.
+This mode creates a snapshot (ie a copy) of your project files, providing an fully isolated environment for Claude to work in without affecting your actual files. Use git to push and pull changes back to your project as needed.
 
 ```bash
 clawker start --agent ralph --mode snapshot
@@ -85,7 +85,7 @@ clawker start --agent ralph --mode snapshot
 Run individual Claude commands in the container without starting an interactive agent session. Claude code commands and flags are passed directly to the container's claude-code CLI. This is useful for quick tasks or scripts, but lacks the persistence as the container and its volumes are removed after the command completes.
 
 ```bash
-clawker run --p "Fix the bugs in my README.md"
+clawker run -it --rm --p "Fix the bugs in my README.md"
 ```
 
 ## Configuration
