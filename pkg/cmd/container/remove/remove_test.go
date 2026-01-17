@@ -1,20 +1,21 @@
-package container
+package remove
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdInspect(t *testing.T) {
+func TestNewCmdRemove(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     InspectOptions
+		output     RemoveOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -22,37 +23,43 @@ func TestNewCmdInspect(t *testing.T) {
 			name:   "single container",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{},
+			output: RemoveOptions{},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: InspectOptions{},
+			output: RemoveOptions{},
 		},
 		{
-			name:   "with format flag",
-			input:  "--format {{.State.Status}}",
+			name:   "with force flag",
+			input:  "--force",
 			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Format: "{{.State.Status}}"},
+			output: RemoveOptions{Force: true},
 		},
 		{
-			name:   "with shorthand format flag",
-			input:  "-f {{.State.Status}}",
+			name:   "with shorthand force flag",
+			input:  "-f",
 			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Format: "{{.State.Status}}"},
+			output: RemoveOptions{Force: true},
 		},
 		{
-			name:   "with size flag",
-			input:  "--size",
+			name:   "with volumes flag",
+			input:  "--volumes",
 			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Size: true},
+			output: RemoveOptions{Volumes: true},
 		},
 		{
-			name:   "with shorthand size flag",
-			input:  "-s",
+			name:   "with shorthand volumes flag",
+			input:  "-v",
 			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Size: true},
+			output: RemoveOptions{Volumes: true},
+		},
+		{
+			name:   "with force and volumes flags",
+			input:  "-f -v",
+			args:   []string{"clawker.myapp.ralph"},
+			output: RemoveOptions{Force: true, Volumes: true},
 		},
 		{
 			name:       "no container specified",
@@ -67,14 +74,14 @@ func TestNewCmdInspect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *InspectOptions
-			cmd := NewCmdInspect(f)
+			var cmdOpts *RemoveOptions
+			cmd := NewCmdRemove(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &InspectOptions{}
-				cmdOpts.Format, _ = cmd.Flags().GetString("format")
-				cmdOpts.Size, _ = cmd.Flags().GetBool("size")
+				cmdOpts = &RemoveOptions{}
+				cmdOpts.Force, _ = cmd.Flags().GetBool("force")
+				cmdOpts.Volumes, _ = cmd.Flags().GetBool("volumes")
 				return nil
 			}
 
@@ -84,7 +91,7 @@ func TestNewCmdInspect(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(splitArgs(tt.input), tt.args...)
+				argv = append(testutil.SplitArgs(tt.input), tt.args...)
 			}
 
 			cmd.SetArgs(argv)
@@ -100,28 +107,29 @@ func TestNewCmdInspect(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Format, cmdOpts.Format)
-			require.Equal(t, tt.output.Size, cmdOpts.Size)
+			require.Equal(t, tt.output.Force, cmdOpts.Force)
+			require.Equal(t, tt.output.Volumes, cmdOpts.Volumes)
 		})
 	}
 }
 
-func TestCmdInspect_Properties(t *testing.T) {
+func TestCmdRemove_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdInspect(f)
+	cmd := NewCmdRemove(f)
 
 	// Test command basics
-	require.Equal(t, "inspect CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "remove CONTAINER [CONTAINER...]", cmd.Use)
+	require.Contains(t, cmd.Aliases, "rm")
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("format"))
-	require.NotNil(t, cmd.Flags().Lookup("size"))
+	require.NotNil(t, cmd.Flags().Lookup("force"))
+	require.NotNil(t, cmd.Flags().Lookup("volumes"))
 
 	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
+	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
 }

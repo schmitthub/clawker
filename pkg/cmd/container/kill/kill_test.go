@@ -1,20 +1,21 @@
-package container
+package kill
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdRemove(t *testing.T) {
+func TestNewCmdKill(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     RemoveOptions
+		output     KillOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -22,43 +23,25 @@ func TestNewCmdRemove(t *testing.T) {
 			name:   "single container",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{},
+			output: KillOptions{Signal: "SIGKILL"},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: RemoveOptions{},
+			output: KillOptions{Signal: "SIGKILL"},
 		},
 		{
-			name:   "with force flag",
-			input:  "--force",
+			name:   "with signal flag",
+			input:  "--signal SIGTERM",
 			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{Force: true},
+			output: KillOptions{Signal: "SIGTERM"},
 		},
 		{
-			name:   "with shorthand force flag",
-			input:  "-f",
+			name:   "with shorthand signal flag",
+			input:  "-s SIGINT",
 			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{Force: true},
-		},
-		{
-			name:   "with volumes flag",
-			input:  "--volumes",
-			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{Volumes: true},
-		},
-		{
-			name:   "with shorthand volumes flag",
-			input:  "-v",
-			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{Volumes: true},
-		},
-		{
-			name:   "with force and volumes flags",
-			input:  "-f -v",
-			args:   []string{"clawker.myapp.ralph"},
-			output: RemoveOptions{Force: true, Volumes: true},
+			output: KillOptions{Signal: "SIGINT"},
 		},
 		{
 			name:       "no container specified",
@@ -73,14 +56,13 @@ func TestNewCmdRemove(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *RemoveOptions
-			cmd := NewCmdRemove(f)
+			var cmdOpts *KillOptions
+			cmd := NewCmdKill(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &RemoveOptions{}
-				cmdOpts.Force, _ = cmd.Flags().GetBool("force")
-				cmdOpts.Volumes, _ = cmd.Flags().GetBool("volumes")
+				cmdOpts = &KillOptions{}
+				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
 				return nil
 			}
 
@@ -90,7 +72,7 @@ func TestNewCmdRemove(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(splitArgs(tt.input), tt.args...)
+				argv = append(testutil.SplitArgs(tt.input), tt.args...)
 			}
 
 			cmd.SetArgs(argv)
@@ -106,29 +88,29 @@ func TestNewCmdRemove(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Force, cmdOpts.Force)
-			require.Equal(t, tt.output.Volumes, cmdOpts.Volumes)
+			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
 		})
 	}
 }
 
-func TestCmdRemove_Properties(t *testing.T) {
+func TestCmdKill_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdRemove(f)
+	cmd := NewCmdKill(f)
 
 	// Test command basics
-	require.Equal(t, "remove CONTAINER [CONTAINER...]", cmd.Use)
-	require.Contains(t, cmd.Aliases, "rm")
+	require.Equal(t, "kill CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("force"))
-	require.NotNil(t, cmd.Flags().Lookup("volumes"))
+	require.NotNil(t, cmd.Flags().Lookup("signal"))
 
 	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
+	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
+
+	// Test default signal
+	signal, _ := cmd.Flags().GetString("signal")
+	require.Equal(t, "SIGKILL", signal)
 }

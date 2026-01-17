@@ -1,20 +1,21 @@
-package container
+package stop
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdKill(t *testing.T) {
+func TestNewCmdStop(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     KillOptions
+		output     StopOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -22,25 +23,37 @@ func TestNewCmdKill(t *testing.T) {
 			name:   "single container",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph"},
-			output: KillOptions{Signal: "SIGKILL"},
+			output: StopOptions{Timeout: 10},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: KillOptions{Signal: "SIGKILL"},
+			output: StopOptions{Timeout: 10},
+		},
+		{
+			name:   "with timeout flag",
+			input:  "--time 20",
+			args:   []string{"clawker.myapp.ralph"},
+			output: StopOptions{Timeout: 20},
+		},
+		{
+			name:   "with shorthand timeout flag",
+			input:  "-t 30",
+			args:   []string{"clawker.myapp.ralph"},
+			output: StopOptions{Timeout: 30},
 		},
 		{
 			name:   "with signal flag",
-			input:  "--signal SIGTERM",
+			input:  "--signal SIGKILL",
 			args:   []string{"clawker.myapp.ralph"},
-			output: KillOptions{Signal: "SIGTERM"},
+			output: StopOptions{Timeout: 10, Signal: "SIGKILL"},
 		},
 		{
 			name:   "with shorthand signal flag",
 			input:  "-s SIGINT",
 			args:   []string{"clawker.myapp.ralph"},
-			output: KillOptions{Signal: "SIGINT"},
+			output: StopOptions{Timeout: 10, Signal: "SIGINT"},
 		},
 		{
 			name:       "no container specified",
@@ -55,12 +68,13 @@ func TestNewCmdKill(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *KillOptions
-			cmd := NewCmdKill(f)
+			var cmdOpts *StopOptions
+			cmd := NewCmdStop(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &KillOptions{}
+				cmdOpts = &StopOptions{}
+				cmdOpts.Timeout, _ = cmd.Flags().GetInt("time")
 				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
 				return nil
 			}
@@ -71,7 +85,7 @@ func TestNewCmdKill(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(splitArgs(tt.input), tt.args...)
+				argv = append(testutil.SplitArgs(tt.input), tt.args...)
 			}
 
 			cmd.SetArgs(argv)
@@ -87,29 +101,32 @@ func TestNewCmdKill(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Timeout, cmdOpts.Timeout)
 			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
 		})
 	}
 }
 
-func TestCmdKill_Properties(t *testing.T) {
+func TestCmdStop_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdKill(f)
+	cmd := NewCmdStop(f)
 
 	// Test command basics
-	require.Equal(t, "kill CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "stop CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
+	require.NotNil(t, cmd.Flags().Lookup("time"))
 	require.NotNil(t, cmd.Flags().Lookup("signal"))
 
 	// Test shorthand flags
+	require.NotNil(t, cmd.Flags().ShorthandLookup("t"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
 
-	// Test default signal
-	signal, _ := cmd.Flags().GetString("signal")
-	require.Equal(t, "SIGKILL", signal)
+	// Test default timeout
+	timeout, _ := cmd.Flags().GetInt("time")
+	require.Equal(t, 10, timeout)
 }

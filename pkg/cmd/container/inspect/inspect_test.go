@@ -1,20 +1,21 @@
-package container
+package inspect
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdStop(t *testing.T) {
+func TestNewCmdInspect(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     StopOptions
+		output     InspectOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -22,37 +23,37 @@ func TestNewCmdStop(t *testing.T) {
 			name:   "single container",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10},
+			output: InspectOptions{},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: StopOptions{Timeout: 10},
+			output: InspectOptions{},
 		},
 		{
-			name:   "with timeout flag",
-			input:  "--time 20",
+			name:   "with format flag",
+			input:  "--format {{.State.Status}}",
 			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 20},
+			output: InspectOptions{Format: "{{.State.Status}}"},
 		},
 		{
-			name:   "with shorthand timeout flag",
-			input:  "-t 30",
+			name:   "with shorthand format flag",
+			input:  "-f {{.State.Status}}",
 			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 30},
+			output: InspectOptions{Format: "{{.State.Status}}"},
 		},
 		{
-			name:   "with signal flag",
-			input:  "--signal SIGKILL",
+			name:   "with size flag",
+			input:  "--size",
 			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10, Signal: "SIGKILL"},
+			output: InspectOptions{Size: true},
 		},
 		{
-			name:   "with shorthand signal flag",
-			input:  "-s SIGINT",
+			name:   "with shorthand size flag",
+			input:  "-s",
 			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10, Signal: "SIGINT"},
+			output: InspectOptions{Size: true},
 		},
 		{
 			name:       "no container specified",
@@ -67,14 +68,14 @@ func TestNewCmdStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *StopOptions
-			cmd := NewCmdStop(f)
+			var cmdOpts *InspectOptions
+			cmd := NewCmdInspect(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &StopOptions{}
-				cmdOpts.Timeout, _ = cmd.Flags().GetInt("time")
-				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
+				cmdOpts = &InspectOptions{}
+				cmdOpts.Format, _ = cmd.Flags().GetString("format")
+				cmdOpts.Size, _ = cmd.Flags().GetBool("size")
 				return nil
 			}
 
@@ -84,7 +85,7 @@ func TestNewCmdStop(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(splitArgs(tt.input), tt.args...)
+				argv = append(testutil.SplitArgs(tt.input), tt.args...)
 			}
 
 			cmd.SetArgs(argv)
@@ -100,32 +101,28 @@ func TestNewCmdStop(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Timeout, cmdOpts.Timeout)
-			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
+			require.Equal(t, tt.output.Format, cmdOpts.Format)
+			require.Equal(t, tt.output.Size, cmdOpts.Size)
 		})
 	}
 }
 
-func TestCmdStop_Properties(t *testing.T) {
+func TestCmdInspect_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdStop(f)
+	cmd := NewCmdInspect(f)
 
 	// Test command basics
-	require.Equal(t, "stop CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "inspect CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
-	require.NotNil(t, cmd.Flags().Lookup("time"))
-	require.NotNil(t, cmd.Flags().Lookup("signal"))
+	require.NotNil(t, cmd.Flags().Lookup("format"))
+	require.NotNil(t, cmd.Flags().Lookup("size"))
 
 	// Test shorthand flags
-	require.NotNil(t, cmd.Flags().ShorthandLookup("t"))
+	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
-
-	// Test default timeout
-	timeout, _ := cmd.Flags().GetInt("time")
-	require.Equal(t, 10, timeout)
 }

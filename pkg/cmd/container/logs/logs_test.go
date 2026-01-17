@@ -1,9 +1,10 @@
-package container
+package logs
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -113,7 +114,7 @@ func TestNewCmdLogs(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(splitArgs(tt.input), tt.args...)
+				argv = append(testutil.SplitArgs(tt.input), tt.args...)
 			}
 
 			cmd.SetArgs(argv)
