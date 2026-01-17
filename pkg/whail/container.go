@@ -2,7 +2,6 @@ package whail
 
 import (
 	"context"
-	"io"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -218,7 +217,7 @@ func (e *Engine) ContainerWait(ctx context.Context, containerID string, conditio
 
 // ContainerLogs streams container logs.
 // Only returns logs for managed containers.
-func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options client.ContainerLogsOptions) (io.ReadCloser, error) {
+func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
 		return nil, ErrContainerLogsFailed(containerID, err)

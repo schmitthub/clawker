@@ -3,6 +3,7 @@ module github.com/schmitthub/clawker
 go 1.25
 
 require (
+	github.com/containerd/errdefs v1.0.0
 	github.com/docker/go-connections v0.6.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/moby/moby/api v1.52.0
@@ -18,7 +19,6 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
