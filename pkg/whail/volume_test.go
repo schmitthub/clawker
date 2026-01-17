@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // Test volume helper functions
@@ -21,30 +21,30 @@ import (
 // setupManagedVolume creates a managed volume for testing.
 func setupManagedVolume(ctx context.Context, t *testing.T, name string, extraLabels ...map[string]string) string {
 	t.Helper()
-	vol, err := testEngine.VolumeCreate(ctx, volume.CreateOptions{Name: name}, extraLabels...)
+	vol, err := testEngine.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name}, extraLabels...)
 	if err != nil {
 		t.Fatalf("Failed to create managed volume %q: %v", name, err)
 	}
-	return vol.Name
+	return vol.Volume.Name
 }
 
 // setupUnmanagedVolume creates an unmanaged volume for testing.
 func setupUnmanagedVolume(ctx context.Context, t *testing.T, name string, labels map[string]string) string {
 	t.Helper()
-	vol, err := testEngine.APIClient.VolumeCreate(ctx, volume.CreateOptions{
+	result, err := testEngine.APIClient.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name:   name,
 		Labels: labels,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create unmanaged volume %q: %v", name, err)
 	}
-	return vol.Name
+	return result.Volume.Name
 }
 
 // cleanupManagedVolume removes a managed volume.
 func cleanupManagedVolume(ctx context.Context, t *testing.T, name string) {
 	t.Helper()
-	if err := testEngine.VolumeRemove(ctx, name, true); err != nil {
+	if _, err := testEngine.VolumeRemove(ctx, name, true); err != nil {
 		t.Logf("Warning: Failed to cleanup managed volume %q: %v", name, err)
 	}
 }
@@ -52,7 +52,7 @@ func cleanupManagedVolume(ctx context.Context, t *testing.T, name string) {
 // cleanupUnmanagedVolume removes an unmanaged volume.
 func cleanupUnmanagedVolume(ctx context.Context, t *testing.T, name string) {
 	t.Helper()
-	if err := testEngine.APIClient.VolumeRemove(ctx, name, true); err != nil {
+	if _, err := testEngine.APIClient.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}); err != nil {
 		t.Logf("Warning: Failed to cleanup unmanaged volume %q: %v", name, err)
 	}
 }
@@ -81,7 +81,7 @@ func TestVolumeCreate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			vol, err := testEngine.VolumeCreate(ctx, volume.CreateOptions{Name: tt.volumeName}, tt.extraLabels)
+			vol, err := testEngine.VolumeCreate(ctx, client.VolumeCreateOptions{Name: tt.volumeName}, tt.extraLabels)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -93,15 +93,17 @@ func TestVolumeCreate(t *testing.T) {
 			}
 
 			// Verify volume was created
-			if vol.Name == "" {
+			if vol.Volume.Name == "" {
 				t.Fatalf("Expected volume name, got empty string")
 			}
 
 			// Cleanup
-			defer testEngine.APIClient.VolumeRemove(ctx, vol.Name, true)
+			defer func() {
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, vol.Volume.Name, client.VolumeRemoveOptions{Force: true})
+			}()
 
 			// Verify labels applied
-			inspect, err := testEngine.APIClient.VolumeInspect(ctx, vol.Name)
+			inspect, err := testEngine.APIClient.VolumeInspect(ctx, vol.Volume.Name, client.VolumeInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect created volume: %v", err)
 			}
@@ -109,8 +111,8 @@ func TestVolumeCreate(t *testing.T) {
 			// Check managed label
 			volumeLabels := testEngine.volumeLabels(tt.extraLabels)
 			for k, v := range volumeLabels {
-				if inspect.Labels[k] != v {
-					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Labels[k])
+				if inspect.Volume.Labels[k] != v {
+					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Volume.Labels[k])
 				}
 			}
 		})
@@ -143,7 +145,7 @@ func TestVolumeRemove(t *testing.T) {
 				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, name string) {
-				testEngine.APIClient.VolumeRemove(ctx, name, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -159,7 +161,7 @@ func TestVolumeRemove(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, volumeName)
 
-			err := testEngine.VolumeRemove(ctx, volumeName, true)
+			_, err := testEngine.VolumeRemove(ctx, volumeName, true)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -208,7 +210,7 @@ func TestVolumeInspect(t *testing.T) {
 				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, name string) {
-				testEngine.APIClient.VolumeRemove(ctx, name, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -235,8 +237,8 @@ func TestVolumeInspect(t *testing.T) {
 				t.Fatalf("VolumeInspect failed: %v", err)
 			}
 
-			if info.Name != volumeName {
-				t.Errorf("Expected volume name %q, got %q", volumeName, info.Name)
+			if info.Volume.Name != volumeName {
+				t.Errorf("Expected volume name %q, got %q", volumeName, info.Volume.Name)
 			}
 		})
 	}
@@ -316,7 +318,7 @@ func TestVolumeList(t *testing.T) {
 				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
-				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, volumeName, client.VolumeRemoveOptions{Force: true})
 			},
 			extraFilters:  map[string]string{},
 			shouldBeFound: false,
@@ -336,7 +338,7 @@ func TestVolumeList(t *testing.T) {
 			}
 
 			found := false
-			for _, vol := range resp.Volumes {
+			for _, vol := range resp.Items {
 				if vol.Name == volumeName {
 					found = true
 					break
@@ -375,7 +377,7 @@ func TestIsVolumeManaged(t *testing.T) {
 				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
-				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, volumeName, client.VolumeRemoveOptions{Force: true})
 			},
 			expected: false,
 		},
@@ -424,7 +426,7 @@ func TestVolumesPrune(t *testing.T) {
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
 				// Volume should be pruned, but try cleanup anyway in case test fails
-				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, volumeName, client.VolumeRemoveOptions{Force: true})
 			},
 			shouldBeRemoved: true,
 		},
@@ -435,7 +437,7 @@ func TestVolumesPrune(t *testing.T) {
 				return setupUnmanagedVolume(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, volumeName string) {
-				testEngine.APIClient.VolumeRemove(ctx, volumeName, true)
+				_, _ = testEngine.APIClient.VolumeRemove(ctx, volumeName, client.VolumeRemoveOptions{Force: true})
 			},
 			shouldBeRemoved: false,
 		},

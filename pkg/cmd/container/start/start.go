@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -97,6 +97,7 @@ func startContainer(ctx context.Context, client *docker.Client, name string, _ *
 	// Start the container
 	// Note: --attach and --interactive would require additional implementation
 	// to properly attach to container streams
-	startOpts := container.StartOptions{}
-	return client.ContainerStart(ctx, c.ID, startOpts)
+	startOpts := dockerclient.ContainerStartOptions{}
+	_, err = client.ContainerStart(ctx, c.ID, startOpts)
+	return err
 }

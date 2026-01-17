@@ -120,36 +120,28 @@ func TestClawkerFilter(t *testing.T) {
 	f := ClawkerFilter()
 
 	// Should contain the managed label filter
-	labels := f.Get("label")
-	if len(labels) != 1 {
-		t.Errorf("expected 1 label filter, got %d", len(labels))
+	labelFilters := f["label"]
+	if len(labelFilters) != 1 {
+		t.Errorf("expected 1 label filter, got %d", len(labelFilters))
 	}
 
 	expected := LabelManaged + "=" + ManagedLabelValue
-	if labels[0] != expected {
-		t.Errorf("filter = %q, want %q", labels[0], expected)
+	if _, ok := labelFilters[expected]; !ok {
+		t.Errorf("filter missing expected label %q", expected)
 	}
 }
 
 func TestProjectFilter(t *testing.T) {
 	f := ProjectFilter("myproject")
 
-	labels := f.Get("label")
-	if len(labels) != 2 {
-		t.Errorf("expected 2 label filters, got %d", len(labels))
+	labelFilters := f["label"]
+	if len(labelFilters) != 2 {
+		t.Errorf("expected 2 label filters, got %d", len(labelFilters))
 	}
 
 	// Check for both filters
-	hasManaged := false
-	hasProject := false
-	for _, l := range labels {
-		if l == LabelManaged+"="+ManagedLabelValue {
-			hasManaged = true
-		}
-		if l == LabelProject+"=myproject" {
-			hasProject = true
-		}
-	}
+	_, hasManaged := labelFilters[LabelManaged+"="+ManagedLabelValue]
+	_, hasProject := labelFilters[LabelProject+"=myproject"]
 
 	if !hasManaged {
 		t.Error("ProjectFilter should include managed label")
@@ -162,26 +154,15 @@ func TestProjectFilter(t *testing.T) {
 func TestAgentFilter(t *testing.T) {
 	f := AgentFilter("myproject", "myagent")
 
-	labels := f.Get("label")
-	if len(labels) != 3 {
-		t.Errorf("expected 3 label filters, got %d", len(labels))
+	labelFilters := f["label"]
+	if len(labelFilters) != 3 {
+		t.Errorf("expected 3 label filters, got %d", len(labelFilters))
 	}
 
 	// Check for all three filters
-	hasManaged := false
-	hasProject := false
-	hasAgent := false
-	for _, l := range labels {
-		if l == LabelManaged+"="+ManagedLabelValue {
-			hasManaged = true
-		}
-		if l == LabelProject+"=myproject" {
-			hasProject = true
-		}
-		if l == LabelAgent+"=myagent" {
-			hasAgent = true
-		}
-	}
+	_, hasManaged := labelFilters[LabelManaged+"="+ManagedLabelValue]
+	_, hasProject := labelFilters[LabelProject+"=myproject"]
+	_, hasAgent := labelFilters[LabelAgent+"=myagent"]
 
 	if !hasManaged {
 		t.Error("AgentFilter should include managed label")

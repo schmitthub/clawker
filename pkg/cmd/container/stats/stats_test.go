@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/pkg/cmd/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"

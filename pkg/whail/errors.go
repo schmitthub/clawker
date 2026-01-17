@@ -226,6 +226,20 @@ func ErrNetworkCreateFailed(name string, err error) *DockerError {
 	}
 }
 
+// ErrNetworkRemoveFailed returns an error for when network removal fails.
+func ErrNetworkRemoveFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_remove",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to remove network '%s'", name),
+		NextSteps: []string{
+			"Check if the network is in use by containers",
+			"Stop containers using this network first",
+			"Verify the network exists: docker network ls",
+		},
+	}
+}
+
 // ErrContainerStopFailed returns an error for when a container fails to stop.
 func ErrContainerStopFailed(name string, err error) *DockerError {
 	return &DockerError{
@@ -561,6 +575,58 @@ func ErrImagesPruneFailed(err error) *DockerError {
 		NextSteps: []string{
 			"Check if Docker daemon is running",
 			"Verify no images are in use",
+		},
+	}
+}
+
+// ErrImageListFailed returns an error for when listing images fails.
+func ErrImageListFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "image_list",
+		Err:     err,
+		Message: "Failed to list images",
+		NextSteps: []string{
+			"Verify Docker daemon is running: docker info",
+			"Check Docker socket permissions",
+		},
+	}
+}
+
+// ErrVolumeListFailed returns an error for when listing volumes fails.
+func ErrVolumeListFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "volume_list",
+		Err:     err,
+		Message: "Failed to list volumes",
+		NextSteps: []string{
+			"Verify Docker daemon is running: docker info",
+			"Check Docker socket permissions",
+		},
+	}
+}
+
+// ErrNetworkListFailed returns an error for when listing networks fails.
+func ErrNetworkListFailed(err error) *DockerError {
+	return &DockerError{
+		Op:      "network_list",
+		Err:     err,
+		Message: "Failed to list networks",
+		NextSteps: []string{
+			"Verify Docker daemon is running: docker info",
+			"Check Docker socket permissions",
+		},
+	}
+}
+
+// ErrNetworkEnsureFailed returns an error for when ensuring a network exists fails.
+func ErrNetworkEnsureFailed(name string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_ensure",
+		Err:     err,
+		Message: fmt.Sprintf("Cannot ensure network exists: %s", name),
+		NextSteps: []string{
+			"Verify Docker daemon is running: docker info",
+			"Check if network already exists: docker network ls",
 		},
 	}
 }

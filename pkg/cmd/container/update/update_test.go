@@ -263,7 +263,7 @@ func TestParseMemorySize(t *testing.T) {
 	}
 }
 
-func TestBuildUpdateConfig(t *testing.T) {
+func TestBuildUpdateResources(t *testing.T) {
 	tests := []struct {
 		name        string
 		opts        *Options
@@ -308,21 +308,21 @@ func TestBuildUpdateConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config, err := buildUpdateConfig(tt.opts)
+			resources, _, err := buildUpdateResources(tt.opts)
 			if tt.expectError {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 			if tt.expectCPUs > 0 {
-				require.Equal(t, tt.expectCPUs, config.NanoCPUs)
+				require.Equal(t, tt.expectCPUs, resources.NanoCPUs)
 			}
 			if tt.expectMem > 0 {
-				require.Equal(t, tt.expectMem, config.Memory)
+				require.Equal(t, tt.expectMem, resources.Memory)
 			}
 			if tt.expectPids != nil {
-				require.NotNil(t, config.PidsLimit)
-				require.Equal(t, *tt.expectPids, *config.PidsLimit)
+				require.NotNil(t, resources.PidsLimit)
+				require.Equal(t, *tt.expectPids, *resources.PidsLimit)
 			}
 		})
 	}

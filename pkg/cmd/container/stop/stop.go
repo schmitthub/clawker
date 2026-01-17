@@ -90,10 +90,12 @@ func stopContainer(ctx context.Context, client *docker.Client, name string, opts
 
 	// If signal specified, send that signal instead of using stop
 	if opts.Signal != "" {
-		return client.ContainerKill(ctx, container.ID, opts.Signal)
+		_, err = client.ContainerKill(ctx, container.ID, opts.Signal)
+		return err
 	}
 
 	// Stop the container with timeout
 	timeout := opts.Timeout
-	return client.ContainerStop(ctx, container.ID, &timeout)
+	_, err = client.ContainerStop(ctx, container.ID, &timeout)
+	return err
 }

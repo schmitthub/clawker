@@ -2,12 +2,11 @@ package whail
 
 import (
 	"context"
-	"io"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -22,7 +21,7 @@ func (e *Engine) ContainerCreate(
 	platform *ocispec.Platform,
 	name string,
 	extraLabels ...map[string]string,
-) (container.CreateResponse, error) {
+) (client.ContainerCreateResult, error) {
 	// Copy the config to avoid mutating caller's struct.
 	// Listen, pal - context is sacred. You don't touch what isn't yours.
 	configCopy := *config
@@ -33,175 +32,192 @@ func (e *Engine) ContainerCreate(
 		config.Labels,
 	)
 
-	resp, err := e.APIClient.ContainerCreate(ctx, &configCopy, hostConfig, networkingConfig, platform, name)
+	opts := client.ContainerCreateOptions{
+		Name:             name,
+		Config:           &configCopy,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkingConfig,
+		Platform:         platform,
+	}
+	resp, err := e.APIClient.ContainerCreate(ctx, opts)
 	if err != nil {
-		return container.CreateResponse{}, ErrContainerCreateFailed(err)
+		return client.ContainerCreateResult{}, ErrContainerCreateFailed(err)
 	}
 	return resp, nil
 }
 
 // ContainerStart overrides to check if container is managed before starting.
-func (e *Engine) ContainerStart(ctx context.Context, containerID string, opts container.StartOptions) error {
+func (e *Engine) ContainerStart(ctx context.Context, containerID string, opts client.ContainerStartOptions) (client.ContainerStartResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerStartFailed(containerID, err)
+		return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerStartResult{}, ErrContainerNotFound(containerID)
 	}
-	err = e.APIClient.ContainerStart(ctx, containerID, opts)
+	result, err := e.APIClient.ContainerStart(ctx, containerID, opts)
 	if err != nil {
-		return ErrContainerStartFailed(containerID, err)
+		return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerStop stops a container with an optional timeout.
 // If timeout is nil, the Docker default is used.
 // Only stops managed containers.
-func (e *Engine) ContainerStop(ctx context.Context, containerID string, timeout *int) error {
+func (e *Engine) ContainerStop(ctx context.Context, containerID string, timeout *int) (client.ContainerStopResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerStopFailed(containerID, err)
+		return client.ContainerStopResult{}, ErrContainerStopFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerStopResult{}, ErrContainerNotFound(containerID)
 	}
-	var stopOptions container.StopOptions
+	stopOptions := client.ContainerStopOptions{}
 	if timeout != nil {
 		stopOptions.Timeout = timeout
 	}
-	if err := e.APIClient.ContainerStop(ctx, containerID, stopOptions); err != nil {
-		return ErrContainerStopFailed(containerID, err)
+	result, err := e.APIClient.ContainerStop(ctx, containerID, stopOptions)
+	if err != nil {
+		return client.ContainerStopResult{}, ErrContainerStopFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerRemove overrides to only remove managed containers.
-func (e *Engine) ContainerRemove(ctx context.Context, containerID string, force bool) error {
+func (e *Engine) ContainerRemove(ctx context.Context, containerID string, force bool) (client.ContainerRemoveResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerRemoveFailed(containerID, err)
+		return client.ContainerRemoveResult{}, ErrContainerRemoveFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerRemoveResult{}, ErrContainerNotFound(containerID)
 	}
-	if err := e.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	result, err := e.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
 		Force:         force,
 		RemoveVolumes: false,
-	}); err != nil {
-		return ErrContainerRemoveFailed(containerID, err)
+	})
+	if err != nil {
+		return client.ContainerRemoveResult{}, ErrContainerRemoveFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerList lists containers matching the filter.
 // The managed label filter is automatically injected.
-func (e *Engine) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
+func (e *Engine) ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error) {
 	options.Filters = e.injectManagedFilter(options.Filters)
-	containers, err := e.APIClient.ContainerList(ctx, options)
+	result, err := e.APIClient.ContainerList(ctx, options)
 	if err != nil {
-		return nil, ErrContainerListFailed(err)
+		return client.ContainerListResult{}, ErrContainerListFailed(err)
 	}
-	return containers, nil
+	return result, nil
 }
 
 // ContainerListAll lists all containers (including stopped) with the managed filter.
-func (e *Engine) ContainerListAll(ctx context.Context) ([]types.Container, error) {
-	return e.ContainerList(ctx, container.ListOptions{All: true})
+func (e *Engine) ContainerListAll(ctx context.Context) ([]container.Summary, error) {
+	result, err := e.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
 }
 
 // ContainerListRunning lists only running containers with the managed filter.
-func (e *Engine) ContainerListRunning(ctx context.Context) ([]types.Container, error) {
-	return e.ContainerList(ctx, container.ListOptions{All: false})
+func (e *Engine) ContainerListRunning(ctx context.Context) ([]container.Summary, error) {
+	result, err := e.ContainerList(ctx, client.ContainerListOptions{All: false})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
 }
 
 // ContainerListByLabels lists containers matching additional label filters.
 // The managed label filter is automatically injected.
-func (e *Engine) ContainerListByLabels(ctx context.Context, labels map[string]string, all bool) ([]types.Container, error) {
+func (e *Engine) ContainerListByLabels(ctx context.Context, labels map[string]string, all bool) ([]container.Summary, error) {
 	f := e.newManagedFilter()
 	for k, v := range labels {
-		f.Add("label", k+"="+v)
+		f = f.Add("label", k+"="+v)
 	}
-	containers, err := e.APIClient.ContainerList(ctx, container.ListOptions{
+	result, err := e.APIClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     all,
 		Filters: f,
 	})
 	if err != nil {
 		return nil, ErrContainerListFailed(err)
 	}
-	return containers, nil
+	return result.Items, nil
 }
 
 // ContainerInspect inspects a container.
 // Only inspects managed containers.
-func (e *Engine) ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+func (e *Engine) ContainerInspect(ctx context.Context, containerID string) (client.ContainerInspectResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return types.ContainerJSON{}, ErrContainerInspectFailed(containerID, err)
+		return client.ContainerInspectResult{}, ErrContainerInspectFailed(containerID, err)
 	}
 	if !isManaged {
-		return types.ContainerJSON{}, ErrContainerNotFound(containerID)
+		return client.ContainerInspectResult{}, ErrContainerNotFound(containerID)
 	}
-	result, err := e.APIClient.ContainerInspect(ctx, containerID)
+	result, err := e.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
-		return types.ContainerJSON{}, ErrContainerInspectFailed(containerID, err)
+		return client.ContainerInspectResult{}, ErrContainerInspectFailed(containerID, err)
 	}
 	return result, nil
 }
 
 // ContainerAttach attaches to a container's TTY.
 // Only attaches to managed containers.
-func (e *Engine) ContainerAttach(ctx context.Context, containerID string, options container.AttachOptions) (types.HijackedResponse, error) {
+func (e *Engine) ContainerAttach(ctx context.Context, containerID string, options client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return types.HijackedResponse{}, ErrAttachFailed(err)
+		return client.ContainerAttachResult{}, ErrAttachFailed(err)
 	}
 	if !isManaged {
-		return types.HijackedResponse{}, ErrContainerNotFound(containerID)
+		return client.ContainerAttachResult{}, ErrContainerNotFound(containerID)
 	}
-	resp, err := e.APIClient.ContainerAttach(ctx, containerID, options)
+	result, err := e.APIClient.ContainerAttach(ctx, containerID, options)
 	if err != nil {
-		return types.HijackedResponse{}, ErrAttachFailed(err)
+		return client.ContainerAttachResult{}, ErrAttachFailed(err)
 	}
-	return resp, nil
+	return result, nil
 }
 
 // ContainerWait waits for a container to exit.
 // Only waits for managed containers.
-func (e *Engine) ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+func (e *Engine) ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) client.ContainerWaitResult {
 	errCh := make(chan error, 1)
 
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
 		errCh <- ErrContainerWaitFailed(containerID, err)
 		close(errCh)
-		return nil, errCh
+		return client.ContainerWaitResult{Result: nil, Error: errCh}
 	}
 	if !isManaged {
 		errCh <- ErrContainerNotFound(containerID)
 		close(errCh)
-		return nil, errCh
+		return client.ContainerWaitResult{Result: nil, Error: errCh}
 	}
 
-	// Get channels from Docker SDK
-	waitCh, rawErrCh := e.APIClient.ContainerWait(ctx, containerID, condition)
+	// Get result from Docker SDK - new API returns a ContainerWaitResult with Result and Error channels
+	waitResult := e.APIClient.ContainerWait(ctx, containerID, client.ContainerWaitOptions{Condition: condition})
 
 	// Wrap errors from the SDK to provide consistent user-friendly messages
 	wrappedErrCh := make(chan error, 1)
 	go func() {
 		defer close(wrappedErrCh)
-		if err := <-rawErrCh; err != nil {
+		if err := <-waitResult.Error; err != nil {
 			wrappedErrCh <- ErrContainerWaitFailed(containerID, err)
 		}
 	}()
 
-	return waitCh, wrappedErrCh
+	return client.ContainerWaitResult{Result: waitResult.Result, Error: wrappedErrCh}
 }
 
 // ContainerLogs streams container logs.
 // Only returns logs for managed containers.
-func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
 		return nil, ErrContainerLogsFailed(containerID, err)
@@ -218,67 +234,69 @@ func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options 
 
 // ContainerResize resizes a container's TTY.
 // Only resizes managed containers.
-func (e *Engine) ContainerResize(ctx context.Context, containerID string, height, width uint) error {
+func (e *Engine) ContainerResize(ctx context.Context, containerID string, height, width uint) (client.ContainerResizeResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerResizeFailed(containerID, err)
+		return client.ContainerResizeResult{}, ErrContainerResizeFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerResizeResult{}, ErrContainerNotFound(containerID)
 	}
-	if err := e.APIClient.ContainerResize(ctx, containerID, container.ResizeOptions{
+	result, err := e.APIClient.ContainerResize(ctx, containerID, client.ContainerResizeOptions{
 		Height: height,
 		Width:  width,
-	}); err != nil {
-		return ErrContainerResizeFailed(containerID, err)
+	})
+	if err != nil {
+		return client.ContainerResizeResult{}, ErrContainerResizeFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerExecCreate creates an exec instance.
 // Only creates exec instances for managed containers.
-func (e *Engine) ContainerExecCreate(ctx context.Context, containerID string, opts container.ExecOptions) (types.IDResponse, error) {
+func (e *Engine) ContainerExecCreate(ctx context.Context, containerID string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return types.IDResponse{}, ErrContainerExecFailed(containerID, err)
+		return client.ExecCreateResult{}, ErrContainerExecFailed(containerID, err)
 	}
 	if !isManaged {
-		return types.IDResponse{}, ErrContainerNotFound(containerID)
+		return client.ExecCreateResult{}, ErrContainerNotFound(containerID)
 	}
-	resp, err := e.APIClient.ContainerExecCreate(ctx, containerID, opts)
+	resp, err := e.APIClient.ExecCreate(ctx, containerID, opts)
 	if err != nil {
-		return types.IDResponse{}, ErrContainerExecFailed(containerID, err)
+		return client.ExecCreateResult{}, ErrContainerExecFailed(containerID, err)
 	}
 	return resp, nil
 }
 
 // ContainerExecAttach attaches to an exec instance.
-func (e *Engine) ContainerExecAttach(ctx context.Context, execID string, opts container.ExecStartOptions) (types.HijackedResponse, error) {
-	resp, err := e.APIClient.ContainerExecAttach(ctx, execID, opts)
+func (e *Engine) ContainerExecAttach(ctx context.Context, execID string, opts client.ExecAttachOptions) (client.ExecAttachResult, error) {
+	result, err := e.APIClient.ExecAttach(ctx, execID, opts)
 	if err != nil {
-		return types.HijackedResponse{}, ErrExecAttachFailed(execID, err)
+		return client.ExecAttachResult{}, ErrExecAttachFailed(execID, err)
 	}
-	return resp, nil
+	return result, nil
 }
 
 // ContainerExecResize resizes an exec instance's TTY.
-func (e *Engine) ContainerExecResize(ctx context.Context, execID string, height, width uint) error {
-	if err := e.APIClient.ContainerExecResize(ctx, execID, container.ResizeOptions{
+func (e *Engine) ContainerExecResize(ctx context.Context, execID string, height, width uint) (client.ExecResizeResult, error) {
+	result, err := e.APIClient.ExecResize(ctx, execID, client.ExecResizeOptions{
 		Height: height,
 		Width:  width,
-	}); err != nil {
-		return ErrExecResizeFailed(execID, err)
+	})
+	if err != nil {
+		return client.ExecResizeResult{}, ErrExecResizeFailed(execID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // FindContainerByName finds a managed container by exact name.
 // Returns ErrContainerNotFound if not found. Only returns containers with the managed label.
-func (e *Engine) FindContainerByName(ctx context.Context, name string) (*types.Container, error) {
+func (e *Engine) FindContainerByName(ctx context.Context, name string) (*container.Summary, error) {
 	f := e.newManagedFilter()
-	f.Add("name", name)
+	f = f.Add("name", name)
 
-	containers, err := e.APIClient.ContainerList(ctx, container.ListOptions{
+	result, err := e.APIClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
@@ -287,7 +305,7 @@ func (e *Engine) FindContainerByName(ctx context.Context, name string) (*types.C
 	}
 
 	// Find exact match
-	for _, c := range containers {
+	for _, c := range result.Items {
 		for _, cname := range c.Names {
 			if cname == "/"+name || cname == name {
 				return &c, nil
@@ -300,120 +318,125 @@ func (e *Engine) FindContainerByName(ctx context.Context, name string) (*types.C
 
 // IsContainerManaged checks if a container has the managed label.
 func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bool, error) {
-	info, err := e.APIClient.ContainerInspect(ctx, containerID)
+	info, err := e.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return false, nil
 		}
 		// Wrap non-NotFound errors for consistent user-friendly messaging
 		return false, ErrContainerInspectFailed(containerID, err)
 	}
 
-	val, ok := info.Config.Labels[e.managedLabelKey]
+	val, ok := info.Container.Config.Labels[e.managedLabelKey]
 	return ok && val == e.managedLabelValue, nil
 }
 
 // ContainerKill sends a signal to a container.
 // Only kills managed containers. Default signal is SIGKILL.
-func (e *Engine) ContainerKill(ctx context.Context, containerID, signal string) error {
+func (e *Engine) ContainerKill(ctx context.Context, containerID, signal string) (client.ContainerKillResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerKillFailed(containerID, err)
+		return client.ContainerKillResult{}, ErrContainerKillFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerKillResult{}, ErrContainerNotFound(containerID)
 	}
 	if signal == "" {
 		signal = "SIGKILL"
 	}
-	if err := e.APIClient.ContainerKill(ctx, containerID, signal); err != nil {
-		return ErrContainerKillFailed(containerID, err)
+	result, err := e.APIClient.ContainerKill(ctx, containerID, client.ContainerKillOptions{Signal: signal})
+	if err != nil {
+		return client.ContainerKillResult{}, ErrContainerKillFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerPause pauses a running container.
 // Only pauses managed containers.
-func (e *Engine) ContainerPause(ctx context.Context, containerID string) error {
+func (e *Engine) ContainerPause(ctx context.Context, containerID string) (client.ContainerPauseResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerPauseFailed(containerID, err)
+		return client.ContainerPauseResult{}, ErrContainerPauseFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerPauseResult{}, ErrContainerNotFound(containerID)
 	}
-	if err := e.APIClient.ContainerPause(ctx, containerID); err != nil {
-		return ErrContainerPauseFailed(containerID, err)
+	result, err := e.APIClient.ContainerPause(ctx, containerID, client.ContainerPauseOptions{})
+	if err != nil {
+		return client.ContainerPauseResult{}, ErrContainerPauseFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerUnpause unpauses a paused container.
 // Only unpauses managed containers.
-func (e *Engine) ContainerUnpause(ctx context.Context, containerID string) error {
+func (e *Engine) ContainerUnpause(ctx context.Context, containerID string) (client.ContainerUnpauseResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerUnpauseFailed(containerID, err)
+		return client.ContainerUnpauseResult{}, ErrContainerUnpauseFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerUnpauseResult{}, ErrContainerNotFound(containerID)
 	}
-	if err := e.APIClient.ContainerUnpause(ctx, containerID); err != nil {
-		return ErrContainerUnpauseFailed(containerID, err)
+	result, err := e.APIClient.ContainerUnpause(ctx, containerID, client.ContainerUnpauseOptions{})
+	if err != nil {
+		return client.ContainerUnpauseResult{}, ErrContainerUnpauseFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerRestart restarts a container with an optional timeout.
 // If timeout is nil, the Docker default is used.
 // Only restarts managed containers.
-func (e *Engine) ContainerRestart(ctx context.Context, containerID string, timeout *int) error {
+func (e *Engine) ContainerRestart(ctx context.Context, containerID string, timeout *int) (client.ContainerRestartResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerRestartFailed(containerID, err)
+		return client.ContainerRestartResult{}, ErrContainerRestartFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerRestartResult{}, ErrContainerNotFound(containerID)
 	}
-	var stopOptions container.StopOptions
+	restartOpts := client.ContainerRestartOptions{}
 	if timeout != nil {
-		stopOptions.Timeout = timeout
+		restartOpts.Timeout = timeout
 	}
-	if err := e.APIClient.ContainerRestart(ctx, containerID, stopOptions); err != nil {
-		return ErrContainerRestartFailed(containerID, err)
+	result, err := e.APIClient.ContainerRestart(ctx, containerID, restartOpts)
+	if err != nil {
+		return client.ContainerRestartResult{}, ErrContainerRestartFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerRename renames a container.
 // Only renames managed containers.
-func (e *Engine) ContainerRename(ctx context.Context, containerID, newName string) error {
+func (e *Engine) ContainerRename(ctx context.Context, containerID, newName string) (client.ContainerRenameResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return ErrContainerRenameFailed(containerID, err)
+		return client.ContainerRenameResult{}, ErrContainerRenameFailed(containerID, err)
 	}
 	if !isManaged {
-		return ErrContainerNotFound(containerID)
+		return client.ContainerRenameResult{}, ErrContainerNotFound(containerID)
 	}
-	if err := e.APIClient.ContainerRename(ctx, containerID, newName); err != nil {
-		return ErrContainerRenameFailed(containerID, err)
+	result, err := e.APIClient.ContainerRename(ctx, containerID, client.ContainerRenameOptions{NewName: newName})
+	if err != nil {
+		return client.ContainerRenameResult{}, ErrContainerRenameFailed(containerID, err)
 	}
-	return nil
+	return result, nil
 }
 
 // ContainerTop returns the running processes in a container.
 // Only returns processes for managed containers.
-func (e *Engine) ContainerTop(ctx context.Context, containerID string, args []string) (container.ContainerTopOKBody, error) {
+func (e *Engine) ContainerTop(ctx context.Context, containerID string, args []string) (client.ContainerTopResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return container.ContainerTopOKBody{}, ErrContainerTopFailed(containerID, err)
+		return client.ContainerTopResult{}, ErrContainerTopFailed(containerID, err)
 	}
 	if !isManaged {
-		return container.ContainerTopOKBody{}, ErrContainerNotFound(containerID)
+		return client.ContainerTopResult{}, ErrContainerNotFound(containerID)
 	}
-	top, err := e.APIClient.ContainerTop(ctx, containerID, args)
+	top, err := e.APIClient.ContainerTop(ctx, containerID, client.ContainerTopOptions{Arguments: args})
 	if err != nil {
-		return container.ContainerTopOKBody{}, ErrContainerTopFailed(containerID, err)
+		return client.ContainerTopResult{}, ErrContainerTopFailed(containerID, err)
 	}
 	return top, nil
 }
@@ -421,52 +444,60 @@ func (e *Engine) ContainerTop(ctx context.Context, containerID string, args []st
 // ContainerStats returns resource usage statistics for a container.
 // If stream is true, stats are streamed until the context is cancelled.
 // Only returns stats for managed containers.
-func (e *Engine) ContainerStats(ctx context.Context, containerID string, stream bool) (io.ReadCloser, error) {
+func (e *Engine) ContainerStats(ctx context.Context, containerID string, stream bool) (client.ContainerStatsResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return nil, ErrContainerStatsFailed(containerID, err)
+		return client.ContainerStatsResult{}, ErrContainerStatsFailed(containerID, err)
 	}
 	if !isManaged {
-		return nil, ErrContainerNotFound(containerID)
+		return client.ContainerStatsResult{}, ErrContainerNotFound(containerID)
 	}
-	stats, err := e.APIClient.ContainerStats(ctx, containerID, stream)
+	result, err := e.APIClient.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: stream})
 	if err != nil {
-		return nil, ErrContainerStatsFailed(containerID, err)
+		return client.ContainerStatsResult{}, ErrContainerStatsFailed(containerID, err)
 	}
-	return stats.Body, nil
+	return result, nil
 }
 
 // ContainerStatsOneShot returns a single snapshot of container stats.
-// The caller is responsible for closing the Body in the returned StatsResponseReader.
+// The caller is responsible for closing the Body in the returned io.ReadCloser.
 // Only returns stats for managed containers.
-func (e *Engine) ContainerStatsOneShot(ctx context.Context, containerID string) (container.StatsResponseReader, error) {
+func (e *Engine) ContainerStatsOneShot(ctx context.Context, containerID string) (client.ContainerStatsResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return container.StatsResponseReader{}, ErrContainerStatsFailed(containerID, err)
+		return client.ContainerStatsResult{}, ErrContainerStatsFailed(containerID, err)
 	}
 	if !isManaged {
-		return container.StatsResponseReader{}, ErrContainerNotFound(containerID)
+		return client.ContainerStatsResult{}, ErrContainerNotFound(containerID)
 	}
-	stats, err := e.APIClient.ContainerStatsOneShot(ctx, containerID)
+	// Use non-streaming mode with IncludePreviousSample for one-shot behavior
+	result, err := e.APIClient.ContainerStats(ctx, containerID, client.ContainerStatsOptions{
+		Stream:                false,
+		IncludePreviousSample: true,
+	})
 	if err != nil {
-		return container.StatsResponseReader{}, ErrContainerStatsFailed(containerID, err)
+		return client.ContainerStatsResult{}, ErrContainerStatsFailed(containerID, err)
 	}
-	return stats, nil
+	return result, nil
 }
 
 // ContainerUpdate updates a container's resource constraints.
 // Only updates managed containers.
-func (e *Engine) ContainerUpdate(ctx context.Context, containerID string, updateConfig container.UpdateConfig) (container.ContainerUpdateOKBody, error) {
+func (e *Engine) ContainerUpdate(ctx context.Context, containerID string, resources *container.Resources, restartPolicy *container.RestartPolicy) (client.ContainerUpdateResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return container.ContainerUpdateOKBody{}, ErrContainerUpdateFailed(containerID, err)
+		return client.ContainerUpdateResult{}, ErrContainerUpdateFailed(containerID, err)
 	}
 	if !isManaged {
-		return container.ContainerUpdateOKBody{}, ErrContainerNotFound(containerID)
+		return client.ContainerUpdateResult{}, ErrContainerNotFound(containerID)
 	}
-	resp, err := e.APIClient.ContainerUpdate(ctx, containerID, updateConfig)
+	opts := client.ContainerUpdateOptions{
+		Resources:     resources,
+		RestartPolicy: restartPolicy,
+	}
+	resp, err := e.APIClient.ContainerUpdate(ctx, containerID, opts)
 	if err != nil {
-		return container.ContainerUpdateOKBody{}, ErrContainerUpdateFailed(containerID, err)
+		return client.ContainerUpdateResult{}, ErrContainerUpdateFailed(containerID, err)
 	}
 	return resp, nil
 }

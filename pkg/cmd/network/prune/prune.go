@@ -78,12 +78,12 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	if len(report.NetworksDeleted) == 0 {
+	if len(report.Report.NetworksDeleted) == 0 {
 		fmt.Fprintln(os.Stderr, "No unused clawker networks to remove.")
 		return nil
 	}
 
-	for _, name := range report.NetworksDeleted {
+	for _, name := range report.Report.NetworksDeleted {
 		fmt.Fprintf(os.Stderr, "Deleted: %s\n", name)
 	}
 

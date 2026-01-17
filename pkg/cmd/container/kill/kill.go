@@ -88,5 +88,6 @@ func killContainer(ctx context.Context, client *docker.Client, name, signal stri
 	}
 
 	// Kill the container with signal
-	return client.ContainerKill(ctx, c.ID, signal)
+	_, err = client.ContainerKill(ctx, c.ID, signal)
+	return err
 }

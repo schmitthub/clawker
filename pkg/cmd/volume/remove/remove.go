@@ -62,7 +62,7 @@ func run(_ *cmdutil.Factory, opts *Options, volumes []string) error {
 
 	var errs []error
 	for _, name := range volumes {
-		if err := client.VolumeRemove(ctx, name, opts.Force); err != nil {
+		if _, err := client.VolumeRemove(ctx, name, opts.Force); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove volume %q: %w", name, err))
 			cmdutil.HandleError(err)
 		} else {

@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -85,7 +85,7 @@ func runLogs(_ *cmdutil.Factory, opts *LogsOptions, containerName string) error 
 	}
 
 	// Build log options
-	logOpts := container.LogsOptions{
+	logOpts := dockerclient.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     opts.Follow,

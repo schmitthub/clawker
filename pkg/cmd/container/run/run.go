@@ -5,14 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/strslice"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	dockerclient "github.com/moby/moby/client"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/strslice"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -178,7 +180,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Start the container
-	if err := client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := client.ContainerStart(ctx, containerID, dockerclient.ContainerStartOptions{}); err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
@@ -196,7 +198,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 // attachAndWait attaches to a running container and waits for it to exit.
 func attachAndWait(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
 	// Create attach options
-	attachOpts := container.AttachOptions{
+	attachOpts := dockerclient.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  opts.Stdin,
 		Stdout: true,
@@ -222,26 +224,27 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 	defer hijacked.Close()
 
 	// Set up wait channel for container exit
-	waitCh, errCh := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 
 	// Handle I/O
 	if opts.TTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			return client.ContainerResize(ctx, containerID, height, width)
+			_, err := client.ContainerResize(ctx, containerID, height, width)
+			return err
 		}
 
 		// Run streaming in a goroutine so we can also wait for container exit
 		streamDone := make(chan error, 1)
 		go func() {
-			streamDone <- pty.StreamWithResize(ctx, hijacked, resizeFunc)
+			streamDone <- pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
 		}()
 
 		// Wait for either stream to end or container to exit
 		select {
 		case err := <-streamDone:
 			return err
-		case result := <-waitCh:
+		case result := <-waitResult.Result:
 			if result.Error != nil {
 				return fmt.Errorf("container exit error: %s", result.Error.Message)
 			}
@@ -249,7 +252,7 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 				return fmt.Errorf("container exited with status %d", result.StatusCode)
 			}
 			return nil
-		case err := <-errCh:
+		case err := <-waitResult.Error:
 			return err
 		}
 	}
@@ -276,19 +279,19 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 	case <-outputDone:
 		// Output closed, check container status
 		select {
-		case result := <-waitCh:
+		case result := <-waitResult.Result:
 			if result.Error != nil {
 				return fmt.Errorf("container exit error: %s", result.Error.Message)
 			}
 			if result.StatusCode != 0 {
 				return fmt.Errorf("container exited with status %d", result.StatusCode)
 			}
-		case err := <-errCh:
+		case err := <-waitResult.Error:
 			return err
 		default:
 		}
 		return nil
-	case result := <-waitCh:
+	case result := <-waitResult.Result:
 		if result.Error != nil {
 			return fmt.Errorf("container exit error: %s", result.Error.Message)
 		}
@@ -296,7 +299,7 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 			return fmt.Errorf("container exited with status %d", result.StatusCode)
 		}
 		return nil
-	case err := <-errCh:
+	case err := <-waitResult.Error:
 		return err
 	}
 }
@@ -351,20 +354,10 @@ func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *net
 
 	// Parse port mappings
 	if len(opts.Publish) > 0 {
-		exposedPorts := make(nat.PortSet)
-		portBindings := make(nat.PortMap)
-
-		for _, p := range opts.Publish {
-			portMapping, err := nat.ParsePortSpec(p)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid port mapping %q: %w", p, err)
-			}
-			for _, pm := range portMapping {
-				exposedPorts[pm.Port] = struct{}{}
-				portBindings[pm.Port] = append(portBindings[pm.Port], pm.Binding)
-			}
+		exposedPorts, portBindings, err := parsePortMappings(opts.Publish)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-
 		cfg.ExposedPorts = exposedPorts
 		hostCfg.PortBindings = portBindings
 	}
@@ -380,4 +373,44 @@ func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *net
 	}
 
 	return cfg, hostCfg, networkCfg, nil
+}
+
+// parsePortMappings converts port mapping specs (e.g., "8080:80/tcp") to network types.
+func parsePortMappings(specs []string) (network.PortSet, network.PortMap, error) {
+	exposedPorts := make(network.PortSet)
+	portBindings := make(network.PortMap)
+
+	for _, spec := range specs {
+		portMappings, err := nat.ParsePortSpec(spec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid port mapping %q: %w", spec, err)
+		}
+		for _, pm := range portMappings {
+			// Convert nat.Port to network.Port
+			// nat.Port is a string like "80/tcp"
+			netPort, err := network.ParsePort(string(pm.Port))
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid port %q: %w", pm.Port, err)
+			}
+
+			exposedPorts[netPort] = struct{}{}
+
+			// Convert nat.PortBinding to network.PortBinding
+			// HostIP needs to be netip.Addr; HostPort stays as string
+			var hostIP netip.Addr
+			if pm.Binding.HostIP != "" {
+				hostIP, err = netip.ParseAddr(pm.Binding.HostIP)
+				if err != nil {
+					return nil, nil, fmt.Errorf("invalid host IP %q: %w", pm.Binding.HostIP, err)
+				}
+			}
+			binding := network.PortBinding{
+				HostIP:   hostIP,
+				HostPort: pm.Binding.HostPort,
+			}
+			portBindings[netPort] = append(portBindings[netPort], binding)
+		}
+	}
+
+	return exposedPorts, portBindings, nil
 }

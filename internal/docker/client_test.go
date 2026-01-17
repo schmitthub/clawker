@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // Note: These tests require Docker to be running.
@@ -99,7 +100,7 @@ func TestClientContainerLifecycle(t *testing.T) {
 	}
 
 	// Start container
-	if err := client.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
+	if _, err := client.ContainerStart(ctx, createResp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		t.Fatalf("ContainerStart() error = %v", err)
 	}
 

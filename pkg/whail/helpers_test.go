@@ -8,9 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 const (
@@ -37,7 +35,7 @@ func TestMain(m *testing.M) {
 	}
 	defer cli.Close()
 
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
 		fmt.Fprintf(os.Stderr, "Skipping tests: Docker not running: %v\n", err)
 		os.Exit(0)
 	}
@@ -67,7 +65,7 @@ func setup(ctx context.Context, cli *client.Client) error {
 	var err error
 
 	// Pull base image
-	reader, err := cli.ImagePull(ctx, testImageBase, image.PullOptions{})
+	reader, err := cli.ImagePull(ctx, testImageBase, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull base image: %w", err)
 	}
@@ -109,7 +107,7 @@ func setup(ctx context.Context, cli *client.Client) error {
 
 func buildTestImage(ctx context.Context, cli *client.Client, tag string, labels map[string]string) (string, error) {
 	dockerfile := "FROM " + testImageBase + "\nCMD [\"echo\", \"test\"]\n"
-	buildOpts := types.ImageBuildOptions{
+	buildOpts := client.ImageBuildOptions{
 		Tags:       []string{tag},
 		Labels:     labels,
 		Dockerfile: "Dockerfile",
@@ -130,7 +128,7 @@ func buildTestImage(ctx context.Context, cli *client.Client, tag string, labels 
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(resp.Body)
 
-	inspect, _, err := cli.ImageInspectWithRaw(ctx, tag)
+	inspect, err := cli.ImageInspect(ctx, tag)
 	if err != nil {
 		return "", err
 	}
@@ -178,12 +176,12 @@ func cleanup(ctx context.Context, cli *client.Client) {
 	}
 
 	if managedImageID != "" {
-		cli.ImageRemove(ctx, managedImageID, image.RemoveOptions{Force: true, PruneChildren: true})
+		_, _ = cli.ImageRemove(ctx, managedImageID, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 	}
 	if unmanagedImageID != "" {
-		cli.ImageRemove(ctx, unmanagedImageID, image.RemoveOptions{Force: true, PruneChildren: true})
+		_, _ = cli.ImageRemove(ctx, unmanagedImageID, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 	}
 
-	cli.ImageRemove(ctx, testImageTag, image.RemoveOptions{Force: true, PruneChildren: true})
-	cli.ImageRemove(ctx, unmanagedTag, image.RemoveOptions{Force: true, PruneChildren: true})
+	_, _ = cli.ImageRemove(ctx, testImageTag, client.ImageRemoveOptions{Force: true, PruneChildren: true})
+	_, _ = cli.ImageRemove(ctx, unmanagedTag, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types/mount"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -116,7 +116,7 @@ func (s *SnapshotStrategy) Cleanup(ctx context.Context, cli *docker.Client) erro
 		Str("volume", s.volumeName).
 		Msg("cleaning up snapshot workspace")
 
-	if err := cli.VolumeRemove(ctx, s.volumeName, false); err != nil {
+	if _, err := cli.VolumeRemove(ctx, s.volumeName, false); err != nil {
 		logger.Warn().
 			Str("volume", s.volumeName).
 			Err(err).

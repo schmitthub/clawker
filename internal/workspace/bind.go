@@ -3,7 +3,7 @@ package workspace
 import (
 	"context"
 
-	"github.com/docker/docker/api/types/mount"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"

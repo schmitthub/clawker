@@ -6,9 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 func TestImageBuild(t *testing.T) {
@@ -28,7 +26,7 @@ func TestImageBuild(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			dockerfile := "FROM " + testImageBase + "\nCMD [\"echo\", \"test\"]\n"
-			buildOpts := types.ImageBuildOptions{
+			buildOpts := client.ImageBuildOptions{
 				Tags:       []string{"test-build-image:latest"},
 				Labels:     imageLabels,
 				Dockerfile: "Dockerfile",
@@ -47,7 +45,7 @@ func TestImageBuild(t *testing.T) {
 			defer resp.Body.Close()
 
 			// verify labels applied
-			inspect, _, err := testEngine.APIClient.ImageInspectWithRaw(ctx, "test-build-image:latest")
+			inspect, err := testEngine.APIClient.ImageInspect(ctx, "test-build-image:latest")
 			if err != nil {
 				t.Fatalf("Failed to inspect built image: %v", err)
 			}
@@ -93,16 +91,16 @@ func TestImageList(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			images, err := testEngine.ImageList(ctx, image.ListOptions{})
-			if len(images) == 0 {
-				t.Fatalf("No images found, ensure test setup is correct")
-			}
+			images, err := testEngine.ImageList(ctx, client.ImageListOptions{})
 			if err != nil {
 				t.Fatalf("ImageList failed: %v", err)
 			}
+			if len(images.Items) == 0 {
+				t.Fatalf("No images found, ensure test setup is correct")
+			}
 
 			found := false
-			for _, img := range images {
+			for _, img := range images.Items {
 				if slices.Contains(img.RepoTags, tt.searchTag) {
 					found = true
 				}
@@ -129,7 +127,7 @@ func TestImageRemove(t *testing.T) {
 		t.Fatalf("Failed to create build context: %v", err)
 	}
 
-	buildOpts := types.ImageBuildOptions{
+	buildOpts := client.ImageBuildOptions{
 		Tags:       []string{removeTestTag},
 		Labels:     testEngine.imageLabels(),
 		Dockerfile: "Dockerfile",
@@ -165,7 +163,7 @@ func TestImageRemove(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := testEngine.ImageRemove(ctx, tt.imageTag, image.RemoveOptions{Force: true})
+			_, err := testEngine.ImageRemove(ctx, tt.imageTag, client.ImageRemoveOptions{Force: true})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -177,7 +175,7 @@ func TestImageRemove(t *testing.T) {
 			}
 
 			// Verify removal
-			_, _, err = testEngine.APIClient.ImageInspectWithRaw(ctx, tt.imageTag)
+			_, err = testEngine.APIClient.ImageInspect(ctx, tt.imageTag)
 			if err == nil {
 				t.Fatalf("Expected image to be removed, but it still exists")
 			}
@@ -198,7 +196,7 @@ func TestImagesPrune(t *testing.T) {
 		t.Fatalf("Failed to create build context: %v", err)
 	}
 
-	buildOpts := types.ImageBuildOptions{
+	buildOpts := client.ImageBuildOptions{
 		Tags:       []string{pruneImageTag},
 		Labels:     testEngine.imageLabels(),
 		Dockerfile: "Dockerfile",
@@ -215,7 +213,7 @@ func TestImagesPrune(t *testing.T) {
 	resp1.Body.Close()
 
 	// Get the first image's ID before it becomes dangling
-	firstImageInfo, _, err := testEngine.APIClient.ImageInspectWithRaw(ctx, pruneImageTag)
+	firstImageInfo, err := testEngine.APIClient.ImageInspect(ctx, pruneImageTag)
 	if err != nil {
 		t.Fatalf("Failed to inspect first image: %v", err)
 	}
@@ -239,15 +237,14 @@ func TestImagesPrune(t *testing.T) {
 	resp2.Body.Close()
 
 	// Verify the first image is now dangling (exists but untagged)
-	danglingFilter := filters.NewArgs()
-	danglingFilter.Add("dangling", "true")
-	danglingImages, err := testEngine.APIClient.ImageList(ctx, image.ListOptions{Filters: danglingFilter})
+	danglingFilter := client.Filters{}.Add("dangling", "true")
+	danglingImages, err := testEngine.APIClient.ImageList(ctx, client.ImageListOptions{Filters: danglingFilter})
 	if err != nil {
 		t.Fatalf("Failed to list dangling images: %v", err)
 	}
 
 	var foundDangling bool
-	for _, img := range danglingImages {
+	for _, img := range danglingImages.Items {
 		if img.ID == firstImageID {
 			foundDangling = true
 			t.Logf("Confirmed first image is now dangling: %s", img.ID)
@@ -264,28 +261,28 @@ func TestImagesPrune(t *testing.T) {
 		t.Fatalf("ImagesPrune failed: %v", err)
 	}
 
-	t.Logf("Pruned %d images, reclaimed %d bytes", len(report.ImagesDeleted), report.SpaceReclaimed)
+	t.Logf("Pruned %d images, reclaimed %d bytes", len(report.Report.ImagesDeleted), report.Report.SpaceReclaimed)
 
 	// Verify the dangling image was pruned
-	_, _, err = testEngine.APIClient.ImageInspectWithRaw(ctx, firstImageID)
+	_, err = testEngine.APIClient.ImageInspect(ctx, firstImageID)
 	if err == nil {
 		t.Errorf("Expected first image to be pruned, but it still exists")
 	}
 
 	// Verify the second (tagged) image still exists
-	_, _, err = testEngine.APIClient.ImageInspectWithRaw(ctx, pruneImageTag)
+	_, err = testEngine.APIClient.ImageInspect(ctx, pruneImageTag)
 	if err != nil {
 		t.Errorf("Second image should still exist but got error: %v", err)
 	}
 
 	// Verify unmanaged image still exists
-	_, _, err = testEngine.APIClient.ImageInspectWithRaw(ctx, unmanagedTag)
+	_, err = testEngine.APIClient.ImageInspect(ctx, unmanagedTag)
 	if err != nil {
 		t.Errorf("Unmanaged image should not be pruned but got error: %v", err)
 	}
 
 	// Cleanup: remove the second test image
-	testEngine.APIClient.ImageRemove(ctx, pruneImageTag, image.RemoveOptions{Force: true})
+	testEngine.APIClient.ImageRemove(ctx, pruneImageTag, client.ImageRemoveOptions{Force: true})
 }
 
 func TestImageInspect(t *testing.T) {

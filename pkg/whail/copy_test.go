@@ -7,7 +7,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // createTarContent creates a tar archive with a single file.
@@ -49,14 +49,14 @@ func TestCopyToContainer(t *testing.T) {
 			containerName: generateContainerName("test-copy-to-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for copy test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -65,14 +65,14 @@ func TestCopyToContainer(t *testing.T) {
 			containerName: generateContainerName("test-copy-to-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for copy test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -94,7 +94,10 @@ func TestCopyToContainer(t *testing.T) {
 				t.Fatalf("Failed to create tar content: %v", err)
 			}
 
-			err = testEngine.CopyToContainer(ctx, containerID, "/tmp", tarContent, container.CopyToContainerOptions{})
+			_, err = testEngine.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+				DestinationPath: "/tmp",
+				Content:         tarContent,
+			})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -121,14 +124,14 @@ func TestCopyFromContainer(t *testing.T) {
 			containerName: generateContainerName("test-copy-from-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for copy test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -137,14 +140,14 @@ func TestCopyFromContainer(t *testing.T) {
 			containerName: generateContainerName("test-copy-from-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for copy test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -161,7 +164,7 @@ func TestCopyFromContainer(t *testing.T) {
 			defer tt.cleanupFunc(ctx, t, containerID)
 
 			// Copy /etc/hostname which should exist in alpine
-			reader, stat, err := testEngine.CopyFromContainer(ctx, containerID, "/etc/hostname")
+			result, err := testEngine.CopyFromContainer(ctx, containerID, client.CopyFromContainerOptions{SourcePath: "/etc/hostname"})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -171,15 +174,15 @@ func TestCopyFromContainer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CopyFromContainer failed: %v", err)
 			}
-			defer reader.Close()
+			defer result.Content.Close()
 
 			// Verify we got valid stat info
-			if stat.Name == "" {
+			if result.Stat.Name == "" {
 				t.Errorf("Expected non-empty stat name")
 			}
 
 			// Read some content to verify the reader works
-			content, err := io.ReadAll(reader)
+			content, err := io.ReadAll(result.Content)
 			if err != nil {
 				t.Fatalf("Failed to read from container: %v", err)
 			}
@@ -205,14 +208,14 @@ func TestContainerStatPath(t *testing.T) {
 			path:          "/etc/hostname",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stat test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -222,14 +225,14 @@ func TestContainerStatPath(t *testing.T) {
 			path:          "/etc/hostname",
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stat test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -245,7 +248,7 @@ func TestContainerStatPath(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			stat, err := testEngine.ContainerStatPath(ctx, containerID, tt.path)
+			result, err := testEngine.ContainerStatPath(ctx, containerID, client.ContainerStatPathOptions{Path: tt.path})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -257,7 +260,7 @@ func TestContainerStatPath(t *testing.T) {
 			}
 
 			// Verify we got valid stat info
-			if stat.Name == "" {
+			if result.Stat.Name == "" {
 				t.Errorf("Expected non-empty stat name")
 			}
 		})

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -92,13 +92,15 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, o
 
 	// If signal specified, kill with that signal first, then start
 	if opts.Signal != "" {
-		if err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
+		if _, err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
 			return err
 		}
-		return client.ContainerStart(ctx, c.ID, container.StartOptions{})
+		_, err = client.ContainerStart(ctx, c.ID, dockerclient.ContainerStartOptions{})
+		return err
 	}
 
 	// Restart the container with timeout
 	timeout := opts.Timeout
-	return client.ContainerRestart(ctx, c.ID, &timeout)
+	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
+	return err
 }

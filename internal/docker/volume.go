@@ -11,10 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
@@ -30,7 +29,7 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 		return false, nil
 	}
 
-	opts := volume.CreateOptions{
+	opts := client.VolumeCreateOptions{
 		Name:   name,
 		Labels: labels,
 	}
@@ -76,28 +75,42 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	// Pull busybox if needed
 	exists, _ := c.ImageExists(ctx, "busybox:latest")
 	if !exists {
-		reader, err := c.APIClient.ImagePull(ctx, "busybox:latest", image.PullOptions{})
+		pullResp, err := c.APIClient.ImagePull(ctx, "busybox:latest", client.ImagePullOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to pull busybox: %w", err)
 		}
-		io.Copy(io.Discard, reader)
-		reader.Close()
+		if _, err := io.Copy(io.Discard, pullResp); err != nil {
+			pullResp.Close()
+			return fmt.Errorf("failed to drain image pull response: %w", err)
+		}
+		pullResp.Close()
 	}
 
 	// Create temporary container (bypass whail's label checks for temp container)
-	resp, err := c.APIClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	createOpts := client.ContainerCreateOptions{
+		Config:     containerConfig,
+		HostConfig: hostConfig,
+	}
+	resp, err := c.APIClient.ContainerCreate(ctx, createOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create temp container: %w", err)
 	}
-	defer c.APIClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer func() {
+		// Use background context since original may be cancelled
+		cleanupCtx := context.Background()
+		if _, err := c.APIClient.ContainerRemove(cleanupCtx, resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+			logger.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
+		}
+	}()
 
 	// Copy tar archive to container
-	err = c.APIClient.CopyToContainer(
+	_, err = c.APIClient.CopyToContainer(
 		ctx,
 		resp.ID,
-		destPath,
-		tarBuffer,
-		container.CopyToContainerOptions{},
+		client.CopyToContainerOptions{
+			DestinationPath: destPath,
+			Content:         tarBuffer,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to copy to container: %w", err)

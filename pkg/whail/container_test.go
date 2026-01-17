@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // Test container helper functions
@@ -44,18 +45,14 @@ func setupManagedContainer(ctx context.Context, t *testing.T, name string, extra
 // Uses unmanagedTag (image without managed labels) to avoid label inheritance.
 func setupUnmanagedContainer(ctx context.Context, t *testing.T, name string, labels map[string]string) string {
 	t.Helper()
-	resp, err := testEngine.APIClient.ContainerCreate(
-		ctx,
-		&container.Config{
+	resp, err := testEngine.APIClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name: name,
+		Config: &container.Config{
 			Image:  unmanagedTag, // Use unmanaged image to avoid inheriting managed labels
 			Labels: labels,
 			Cmd:    []string{"sleep", "300"},
 		},
-		nil,
-		nil,
-		nil,
-		name,
-	)
+	})
 	if err != nil {
 		t.Fatalf("Failed to create unmanaged container %q: %v", name, err)
 	}
@@ -65,7 +62,7 @@ func setupUnmanagedContainer(ctx context.Context, t *testing.T, name string, lab
 // cleanupManagedContainer removes a managed container.
 func cleanupManagedContainer(ctx context.Context, t *testing.T, containerID string) {
 	t.Helper()
-	if err := testEngine.ContainerRemove(ctx, containerID, true); err != nil {
+	if _, err := testEngine.ContainerRemove(ctx, containerID, true); err != nil {
 		t.Logf("Warning: Failed to cleanup managed container %q: %v", containerID, err)
 	}
 }
@@ -73,7 +70,7 @@ func cleanupManagedContainer(ctx context.Context, t *testing.T, containerID stri
 // cleanupUnmanagedContainer removes an unmanaged container.
 func cleanupUnmanagedContainer(ctx context.Context, t *testing.T, containerID string) {
 	t.Helper()
-	if err := testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		t.Logf("Warning: Failed to cleanup unmanaged container %q: %v", containerID, err)
 	}
 }
@@ -130,10 +127,12 @@ func TestContainerCreate(t *testing.T) {
 			}
 
 			// Cleanup
-			defer testEngine.APIClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer func() {
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			}()
 
 			// Verify labels applied
-			inspect, err := testEngine.APIClient.ContainerInspect(ctx, resp.ID)
+			inspect, err := testEngine.APIClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect created container: %v", err)
 			}
@@ -141,8 +140,8 @@ func TestContainerCreate(t *testing.T) {
 			// Check managed label
 			containerLabels := testEngine.containerLabels(tt.extraLabels)
 			for k, v := range containerLabels {
-				if inspect.Config.Labels[k] != v {
-					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Config.Labels[k])
+				if inspect.Container.Config.Labels[k] != v {
+					t.Errorf("Expected label %q=%q, got %q", k, v, inspect.Container.Config.Labels[k])
 				}
 			}
 		})
@@ -164,8 +163,8 @@ func TestContainerStart(t *testing.T) {
 				return setupManagedContainer(ctx, t, name)
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -176,8 +175,8 @@ func TestContainerStart(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -193,7 +192,7 @@ func TestContainerStart(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			err := testEngine.ContainerStart(ctx, containerID, container.StartOptions{})
+			_, err := testEngine.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -221,13 +220,13 @@ func TestContainerStop(t *testing.T) {
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
 				// Start the container so we can stop it
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stop test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -237,14 +236,14 @@ func TestContainerStop(t *testing.T) {
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 				// Start the container
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stop test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				_, _ = testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				_, _ = testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -260,7 +259,7 @@ func TestContainerStop(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			err := testEngine.ContainerStop(ctx, containerID, nil)
+			_, err := testEngine.ContainerStop(ctx, containerID, nil)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -300,7 +299,7 @@ func TestContainerRemove(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -316,7 +315,7 @@ func TestContainerRemove(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			err := testEngine.ContainerRemove(ctx, containerID, true)
+			_, err := testEngine.ContainerRemove(ctx, containerID, true)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -328,7 +327,7 @@ func TestContainerRemove(t *testing.T) {
 			}
 
 			// Verify removal
-			_, err = testEngine.APIClient.ContainerInspect(ctx, containerID)
+			_, err = testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err == nil {
 				t.Fatalf("Expected container to be removed, but it still exists")
 			}
@@ -351,7 +350,7 @@ func TestContainerInspect(t *testing.T) {
 				return setupManagedContainer(ctx, t, name)
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -362,7 +361,7 @@ func TestContainerInspect(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -389,8 +388,8 @@ func TestContainerInspect(t *testing.T) {
 				t.Fatalf("ContainerInspect failed: %v", err)
 			}
 
-			if info.ID != containerID {
-				t.Errorf("Expected container ID %q, got %q", containerID, info.ID)
+			if info.Container.ID != containerID {
+				t.Errorf("Expected container ID %q, got %q", containerID, info.Container.ID)
 			}
 		})
 	}
@@ -410,7 +409,7 @@ func TestContainerList(t *testing.T) {
 				return setupManagedContainer(ctx, t, name, map[string]string{"test.filter": "managed"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldBeFound: true,
 		},
@@ -421,7 +420,7 @@ func TestContainerList(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldBeFound: false,
 		},
@@ -434,13 +433,13 @@ func TestContainerList(t *testing.T) {
 			containerID := tt.setupFunc(ctx, t)
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			containers, err := testEngine.ContainerList(ctx, container.ListOptions{All: true})
+			containers, err := testEngine.ContainerList(ctx, client.ContainerListOptions{All: true})
 			if err != nil {
 				t.Fatalf("ContainerList failed: %v", err)
 			}
 
 			found := false
-			for _, c := range containers {
+			for _, c := range containers.Items {
 				if c.ID == containerID {
 					found = true
 					break
@@ -468,14 +467,14 @@ func TestContainerLogs(t *testing.T) {
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
 				// Start the container to generate logs
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for logs test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -485,14 +484,14 @@ func TestContainerLogs(t *testing.T) {
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 				// Start the container
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for logs test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -508,7 +507,7 @@ func TestContainerLogs(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			reader, err := testEngine.ContainerLogs(ctx, containerID, container.LogsOptions{
+			reader, err := testEngine.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
 			})
@@ -540,7 +539,7 @@ func TestIsContainerManaged(t *testing.T) {
 				return setupManagedContainer(ctx, t, name)
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			expected: true,
 		},
@@ -551,7 +550,7 @@ func TestIsContainerManaged(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			expected: false,
 		},
@@ -597,13 +596,13 @@ func TestContainerKill(t *testing.T) {
 			containerName: generateContainerName("test-container-kill-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for kill test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -612,14 +611,14 @@ func TestContainerKill(t *testing.T) {
 			containerName: generateContainerName("test-container-kill-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for kill test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerKill(ctx, containerID, "SIGKILL")
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerKill(ctx, containerID, client.ContainerKillOptions{Signal: "SIGKILL"})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -635,7 +634,7 @@ func TestContainerKill(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			err := testEngine.ContainerKill(ctx, containerID, "SIGKILL")
+			_, err := testEngine.ContainerKill(ctx, containerID, "SIGKILL")
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -662,15 +661,15 @@ func TestContainerPauseUnpause(t *testing.T) {
 			containerName: generateContainerName("test-container-pause-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for pause test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerUnpause(ctx, containerID)
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerUnpause(ctx, containerID, client.ContainerUnpauseOptions{})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -679,14 +678,14 @@ func TestContainerPauseUnpause(t *testing.T) {
 			containerName: generateContainerName("test-container-pause-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for pause test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -703,7 +702,7 @@ func TestContainerPauseUnpause(t *testing.T) {
 			defer tt.cleanupFunc(ctx, t, containerID)
 
 			// Test pause
-			err := testEngine.ContainerPause(ctx, containerID)
+			_, err := testEngine.ContainerPause(ctx, containerID)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("ContainerPause: Expected error but got none")
@@ -715,26 +714,26 @@ func TestContainerPauseUnpause(t *testing.T) {
 			}
 
 			// Verify paused
-			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID)
+			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect container: %v", err)
 			}
-			if !info.State.Paused {
+			if !info.Container.State.Paused {
 				t.Errorf("Expected container to be paused")
 			}
 
 			// Test unpause
-			err = testEngine.ContainerUnpause(ctx, containerID)
+			_, err = testEngine.ContainerUnpause(ctx, containerID)
 			if err != nil {
 				t.Fatalf("ContainerUnpause failed: %v", err)
 			}
 
 			// Verify unpaused
-			info, err = testEngine.APIClient.ContainerInspect(ctx, containerID)
+			info, err = testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect container: %v", err)
 			}
-			if info.State.Paused {
+			if info.Container.State.Paused {
 				t.Errorf("Expected container to be unpaused")
 			}
 		})
@@ -754,14 +753,14 @@ func TestContainerRestart(t *testing.T) {
 			containerName: generateContainerName("test-container-restart-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for restart test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -770,14 +769,14 @@ func TestContainerRestart(t *testing.T) {
 			containerName: generateContainerName("test-container-restart-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for restart test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -794,7 +793,7 @@ func TestContainerRestart(t *testing.T) {
 			defer tt.cleanupFunc(ctx, t, containerID)
 
 			timeout := 5
-			err := testEngine.ContainerRestart(ctx, containerID, &timeout)
+			_, err := testEngine.ContainerRestart(ctx, containerID, &timeout)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -806,11 +805,11 @@ func TestContainerRestart(t *testing.T) {
 			}
 
 			// Verify container is running after restart
-			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID)
+			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect container: %v", err)
 			}
-			if !info.State.Running {
+			if !info.Container.State.Running {
 				t.Errorf("Expected container to be running after restart")
 			}
 		})
@@ -834,7 +833,7 @@ func TestContainerRename(t *testing.T) {
 				return setupManagedContainer(ctx, t, name)
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID, cleanupName string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -846,7 +845,7 @@ func TestContainerRename(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID, cleanupName string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -866,7 +865,7 @@ func TestContainerRename(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID, cleanupName)
 
-			err := testEngine.ContainerRename(ctx, containerID, tt.newName)
+			_, err := testEngine.ContainerRename(ctx, containerID, tt.newName)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -878,12 +877,12 @@ func TestContainerRename(t *testing.T) {
 			}
 
 			// Verify new name
-			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID)
+			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatalf("Failed to inspect container: %v", err)
 			}
-			if info.Name != "/"+tt.newName {
-				t.Errorf("Expected container name %q, got %q", "/"+tt.newName, info.Name)
+			if info.Container.Name != "/"+tt.newName {
+				t.Errorf("Expected container name %q, got %q", "/"+tt.newName, info.Container.Name)
 			}
 		})
 	}
@@ -902,14 +901,14 @@ func TestContainerTop(t *testing.T) {
 			containerName: generateContainerName("test-container-top-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for top test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -918,14 +917,14 @@ func TestContainerTop(t *testing.T) {
 			containerName: generateContainerName("test-container-top-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for top test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -973,14 +972,14 @@ func TestContainerStats(t *testing.T) {
 			containerName: generateContainerName("test-container-stats-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stats test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -989,14 +988,14 @@ func TestContainerStats(t *testing.T) {
 			containerName: generateContainerName("test-container-stats-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stats test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -1023,7 +1022,7 @@ func TestContainerStats(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ContainerStats failed: %v", err)
 			}
-			defer reader.Close()
+			defer reader.Body.Close()
 		})
 	}
 }
@@ -1041,14 +1040,14 @@ func TestContainerStatsOneShot(t *testing.T) {
 			containerName: generateContainerName("test-container-stats-oneshot-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stats test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -1057,14 +1056,14 @@ func TestContainerStatsOneShot(t *testing.T) {
 			containerName: generateContainerName("test-container-stats-oneshot-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for stats test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -1108,14 +1107,14 @@ func TestContainerUpdate(t *testing.T) {
 			containerName: generateContainerName("test-container-update-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupManagedContainer(ctx, t, name)
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for update test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -1124,14 +1123,14 @@ func TestContainerUpdate(t *testing.T) {
 			containerName: generateContainerName("test-container-update-unmanaged"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container for update test: %v", err)
 				}
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -1148,7 +1147,7 @@ func TestContainerUpdate(t *testing.T) {
 			defer tt.cleanupFunc(ctx, t, containerID)
 
 			// Update with minimal config change
-			_, err := testEngine.ContainerUpdate(ctx, containerID, container.UpdateConfig{})
+			_, err := testEngine.ContainerUpdate(ctx, containerID, nil, nil)
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -1168,7 +1167,7 @@ func TestContainerListAll(t *testing.T) {
 	// Create a managed container (stopped)
 	name := generateContainerName("test-container-listall")
 	containerID := setupManagedContainer(ctx, t, name)
-	defer testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 
 	// List all (including stopped)
 	containers, err := testEngine.ContainerListAll(ctx)
@@ -1197,11 +1196,11 @@ func TestContainerListRunning(t *testing.T) {
 	name := generateContainerName("test-container-listrunning")
 	containerID := setupManagedContainer(ctx, t, name)
 	defer func() {
-		testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-		testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+		testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 	}()
 
-	if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("Failed to start container: %v", err)
 	}
 
@@ -1232,7 +1231,7 @@ func TestContainerListByLabels(t *testing.T) {
 	name := generateContainerName("test-container-listbylabels")
 	extraLabels := map[string]string{"test.filter.label": "unique-value"}
 	containerID := setupManagedContainer(ctx, t, name, extraLabels)
-	defer testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 
 	// List by the extra label
 	containers, err := testEngine.ContainerListByLabels(ctx, extraLabels, true)
@@ -1269,7 +1268,7 @@ func TestFindContainerByName(t *testing.T) {
 				return setupManagedContainer(ctx, t, name)
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -1280,7 +1279,7 @@ func TestFindContainerByName(t *testing.T) {
 				return setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -1328,14 +1327,14 @@ func TestContainerKillDefaultSignal(t *testing.T) {
 	// Create and start a managed container
 	name := generateContainerName("test-container-kill-default")
 	containerID := setupManagedContainer(ctx, t, name)
-	defer testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 
-	if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("Failed to start container: %v", err)
 	}
 
 	// Test with empty signal (should default to SIGKILL)
-	err := testEngine.ContainerKill(ctx, containerID, "")
+	_, err := testEngine.ContainerKill(ctx, containerID, "")
 	if err != nil {
 		t.Fatalf("ContainerKill with empty signal failed: %v", err)
 	}
@@ -1348,26 +1347,25 @@ func TestContainerRestartNilTimeout(t *testing.T) {
 	name := generateContainerName("test-container-restart-nil")
 	containerID := setupManagedContainer(ctx, t, name)
 	defer func() {
-		testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-		testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+		testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 	}()
 
-	if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("Failed to start container: %v", err)
 	}
 
 	// Test with nil timeout (should use Docker default)
-	err := testEngine.ContainerRestart(ctx, containerID, nil)
-	if err != nil {
+	if _, err := testEngine.ContainerRestart(ctx, containerID, nil); err != nil {
 		t.Fatalf("ContainerRestart with nil timeout failed: %v", err)
 	}
 
 	// Verify container is running after restart
-	info, err := testEngine.APIClient.ContainerInspect(ctx, containerID)
+	info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("Failed to inspect container: %v", err)
 	}
-	if !info.State.Running {
+	if !info.Container.State.Running {
 		t.Errorf("Expected container to be running after restart")
 	}
 }
@@ -1404,7 +1402,7 @@ func TestContainerWait(t *testing.T) {
 				return resp.ID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr:    false,
 			checkNilWait: false,
@@ -1417,7 +1415,7 @@ func TestContainerWait(t *testing.T) {
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr:    true,
 			checkNilWait: true,
@@ -1436,21 +1434,21 @@ func TestContainerWait(t *testing.T) {
 
 			// Start container for the managed case
 			if !tt.shouldErr {
-				if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+				if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 					t.Fatalf("Failed to start container: %v", err)
 				}
 			}
 
-			waitCh, errCh := testEngine.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+			waitResult := testEngine.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 
 			if tt.shouldErr {
-				// For unmanaged containers, waitCh should be nil
-				if tt.checkNilWait && waitCh != nil {
-					t.Errorf("Expected nil wait channel for unmanaged container, got non-nil")
+				// For unmanaged containers, Result channel should be nil
+				if tt.checkNilWait && waitResult.Result != nil {
+					t.Errorf("Expected nil Result channel for unmanaged container, got non-nil")
 				}
 				// Error channel should contain an error
 				select {
-				case err := <-errCh:
+				case err := <-waitResult.Error:
 					if err == nil {
 						t.Fatalf("Expected error in error channel but got nil")
 					}
@@ -1467,11 +1465,11 @@ func TestContainerWait(t *testing.T) {
 
 			// Wait for container to exit
 			select {
-			case result := <-waitCh:
+			case result := <-waitResult.Result:
 				if result.StatusCode != 0 {
 					t.Errorf("Expected exit code 0, got %d", result.StatusCode)
 				}
-			case err := <-errCh:
+			case err := <-waitResult.Error:
 				if err != nil {
 					t.Fatalf("ContainerWait failed: %v", err)
 				}
@@ -1542,8 +1540,8 @@ func TestContainerAttach(t *testing.T) {
 				return resp.ID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerStop(ctx, containerID, container.StopOptions{})
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: false,
 		},
@@ -1555,7 +1553,7 @@ func TestContainerAttach(t *testing.T) {
 				return containerID
 			},
 			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
-				testEngine.APIClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
 			},
 			shouldErr: true,
 		},
@@ -1572,12 +1570,12 @@ func TestContainerAttach(t *testing.T) {
 			defer tt.cleanupFunc(ctx, t, containerID)
 
 			// Start container for attach
-			if err := testEngine.APIClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 				t.Fatalf("Failed to start container: %v", err)
 			}
 
 			// Test ContainerAttach
-			attachOpts := container.AttachOptions{
+			attachOpts := client.ContainerAttachOptions{
 				Stream: true,
 				Stdin:  true,
 				Stdout: true,
@@ -1601,6 +1599,188 @@ func TestContainerAttach(t *testing.T) {
 			if resp.Conn == nil {
 				t.Errorf("Expected non-nil connection in attach response")
 			}
+		})
+	}
+}
+
+func TestContainerExecCreate(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+		setupFunc     func(ctx context.Context, t *testing.T, name string) string
+		cleanupFunc   func(ctx context.Context, t *testing.T, containerID string)
+		shouldErr     bool
+	}{
+		{
+			name:          "should create exec in managed container",
+			containerName: generateContainerName("test-container-exec-managed"),
+			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
+				containerID := setupManagedContainer(ctx, t, name)
+				return containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+			},
+			shouldErr: false,
+		},
+		{
+			name:          "should not create exec in unmanaged container",
+			containerName: generateContainerName("test-container-exec-unmanaged"),
+			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
+				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
+				return containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			containerID := tt.setupFunc(ctx, t, tt.containerName)
+			if containerID == "" {
+				t.Fatalf("Setup failed: container ID is empty")
+			}
+			defer tt.cleanupFunc(ctx, t, containerID)
+
+			// Start container for exec
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Test ContainerExecCreate
+			execOpts := client.ExecCreateOptions{
+				Cmd: []string{"echo", "test"},
+			}
+			resp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Verify we got a valid exec ID
+			if resp.ID == "" {
+				t.Errorf("Expected non-empty exec ID")
+			}
+		})
+	}
+}
+
+func TestContainerExecAttach(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+	}{
+		{
+			name:          "should attach to exec instance",
+			containerName: generateContainerName("test-container-exec-attach"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create and start managed container
+			containerID := setupManagedContainer(ctx, t, tt.containerName)
+			defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Create exec instance first
+			execOpts := client.ExecCreateOptions{
+				Cmd:          []string{"echo", "test"},
+				AttachStdout: true,
+				AttachStderr: true,
+			}
+			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Test ContainerExecAttach
+			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+			if err != nil {
+				t.Fatalf("ContainerExecAttach failed: %v", err)
+			}
+			defer attachResp.Close()
+
+			// Verify we got a valid response
+			if attachResp.Conn == nil {
+				t.Errorf("Expected non-nil connection in exec attach response")
+			}
+		})
+	}
+}
+
+func TestContainerExecResize(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+		height        uint
+		width         uint
+	}{
+		{
+			name:          "should resize exec TTY",
+			containerName: generateContainerName("test-container-exec-resize"),
+			height:        40,
+			width:         120,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create and start managed container
+			containerID := setupManagedContainer(ctx, t, tt.containerName)
+			defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Create exec instance with TTY
+			execOpts := client.ExecCreateOptions{
+				Cmd:          []string{"sh"},
+				AttachStdin:  true,
+				AttachStdout: true,
+				AttachStderr: true,
+				TTY:          true,
+			}
+			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Start the exec first (attach to it)
+			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+				TTY: true,
+			})
+			if err != nil {
+				t.Fatalf("ContainerExecAttach failed: %v", err)
+			}
+			defer attachResp.Close()
+
+			// Test ContainerExecResize
+			_, err = testEngine.ContainerExecResize(ctx, execResp.ID, tt.height, tt.width)
+			if err != nil {
+				t.Fatalf("ContainerExecResize failed: %v", err)
+			}
+			// Resize returns empty struct on success, so no additional verification needed
 		})
 	}
 }

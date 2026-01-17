@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // EngineOptions configures the behavior of the Engine.
@@ -50,25 +49,13 @@ func New(ctx context.Context) (*Engine, error) {
 // NewWithOptions creates a new Engine with the given options.
 // It connects to the Docker daemon and verifies the connection.
 func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
-	clientOpts := []client.Opt{
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	}
-
-	// if opts.Host != "" {
-	// 	clientOpts = append(clientOpts, client.WithHost(opts.Host))
-	// }
-	// if opts.APIVersion != "" {
-	// 	clientOpts = append(clientOpts, client.WithVersion(opts.APIVersion))
-	// }
-
 	// Apply defaults
 	if opts.ManagedLabel == "" {
 		opts.ManagedLabel = DefaultManagedLabel
 	}
 
-	// Create the underlying Docker client
-	realClient, err := client.NewClientWithOpts(clientOpts...)
+	// Create the underlying Docker client using moby/moby v0.2.1 API
+	realClient, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
@@ -106,7 +93,7 @@ func NewFromExisting(c client.APIClient) *Engine {
 
 // HealthCheck verifies the Docker daemon is reachable.
 func (e *Engine) HealthCheck(ctx context.Context) error {
-	_, err := e.Ping(ctx)
+	_, err := e.Ping(ctx, client.PingOptions{})
 	if err != nil {
 		return ErrDockerNotRunning(err)
 	}
@@ -130,31 +117,21 @@ func (e *Engine) ManagedLabelValue() string {
 
 // injectManagedFilter adds the managed label filter to existing filters.
 // This ensures all list operations only return managed resources.
-// Returns a new filters.Args - does not mutate the input.
-func (e *Engine) injectManagedFilter(existing filters.Args) filters.Args {
+// Returns a new client.Filters - does not mutate the input.
+func (e *Engine) injectManagedFilter(existing client.Filters) client.Filters {
 	// Always create a fresh filter to avoid mutating caller's filters.
 	// Context is everything, kid - you don't touch another man's state.
-	result := filters.NewArgs()
-
-	// Copy existing filter entries if present
-	if existing.Len() > 0 {
-		for _, key := range existing.Keys() {
-			for _, value := range existing.Get(key) {
-				result.Add(key, value)
-			}
-		}
-	}
+	// client.Filters.Add returns a new Filters (immutable pattern).
+	result := existing.Clone()
 
 	// Add managed filter to the copy
-	result.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
+	result = result.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
 	return result
 }
 
 // newManagedFilter creates a new filter with just the managed label.
-func (e *Engine) newManagedFilter() filters.Args {
-	return filters.NewArgs(
-		filters.Arg("label", e.managedLabelKey+"="+e.managedLabelValue),
-	)
+func (e *Engine) newManagedFilter() client.Filters {
+	return client.Filters{}.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
 }
 
 // managedLabels returns the base labels that mark a resource as managed.

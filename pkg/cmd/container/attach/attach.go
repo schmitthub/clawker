@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -89,10 +89,10 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string) error {
 		return fmt.Errorf("failed to inspect container: %w", err)
 	}
 
-	hasTTY := info.Config.Tty
+	hasTTY := info.Container.Config.Tty
 
 	// Create attach options
-	attachOpts := container.AttachOptions{
+	attachOpts := dockerclient.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  !opts.NoStdin,
 		Stdout: true,
@@ -121,9 +121,10 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string) error {
 	if hasTTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			return client.ContainerResize(ctx, c.ID, height, width)
+			_, err := client.ContainerResize(ctx, c.ID, height, width)
+			return err
 		}
-		return pty.StreamWithResize(ctx, hijacked, resizeFunc)
+		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream

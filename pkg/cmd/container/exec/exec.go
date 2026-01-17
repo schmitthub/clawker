@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -98,11 +98,11 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Create exec configuration
-	execConfig := container.ExecOptions{
+	execConfig := dockerclient.ExecCreateOptions{
 		AttachStdin:  opts.Interactive,
 		AttachStdout: true,
 		AttachStderr: true,
-		Tty:          opts.TTY,
+		TTY:          opts.TTY,
 		Cmd:          command,
 		Env:          opts.Env,
 		WorkingDir:   opts.Workdir,
@@ -137,11 +137,11 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Attach to exec
-	startOpts := container.ExecStartOptions{
-		Tty: opts.TTY,
+	attachOpts := dockerclient.ExecAttachOptions{
+		TTY: opts.TTY,
 	}
 
-	hijacked, err := client.ContainerExecAttach(ctx, execResp.ID, startOpts)
+	hijacked, err := client.ContainerExecAttach(ctx, execResp.ID, attachOpts)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -152,9 +152,10 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string, command []stri
 	if opts.TTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			return client.ContainerExecResize(ctx, execResp.ID, height, width)
+			_, err := client.ContainerExecResize(ctx, execResp.ID, height, width)
+			return err
 		}
-		return pty.StreamWithResize(ctx, hijacked, resizeFunc)
+		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream

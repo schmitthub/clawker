@@ -55,7 +55,7 @@ func run(_ *cmdutil.Factory, containerName, newName string) error {
 	}
 
 	// Rename the container
-	if err := client.ContainerRename(ctx, c.ID, newName); err != nil {
+	if _, err := client.ContainerRename(ctx, c.ID, newName); err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
