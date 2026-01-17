@@ -79,7 +79,7 @@ func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]str
 	}
 	result, err := e.APIClient.NetworkList(ctx, client.NetworkListOptions{Filters: f})
 	if err != nil {
-		return client.NetworkListResult{}, err
+		return client.NetworkListResult{}, ErrNetworkListFailed(err)
 	}
 	return result, nil
 }
@@ -89,7 +89,7 @@ func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]str
 func (e *Engine) EnsureNetwork(ctx context.Context, name string, options client.NetworkCreateOptions, verbose bool, extraLabels ...map[string]string) (string, error) {
 	exists, err := e.NetworkExists(ctx, name)
 	if err != nil {
-		return "", err
+		return "", ErrNetworkEnsureFailed(name, err)
 	}
 	if exists {
 		info, err := e.NetworkInspect(ctx, name, client.NetworkInspectOptions{
@@ -97,13 +97,13 @@ func (e *Engine) EnsureNetwork(ctx context.Context, name string, options client.
 			Scope:   options.Scope,
 		})
 		if err != nil {
-			return "", err
+			return "", ErrNetworkEnsureFailed(name, err)
 		}
 		return info.Network.ID, nil
 	}
 	resp, err := e.NetworkCreate(ctx, name, options, extraLabels...)
 	if err != nil {
-		return "", err
+		return "", ErrNetworkEnsureFailed(name, err)
 	}
 	return resp.ID, nil
 }

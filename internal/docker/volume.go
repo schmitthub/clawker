@@ -79,7 +79,10 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		if err != nil {
 			return fmt.Errorf("failed to pull busybox: %w", err)
 		}
-		io.Copy(io.Discard, pullResp)
+		if _, err := io.Copy(io.Discard, pullResp); err != nil {
+			pullResp.Close()
+			return fmt.Errorf("failed to drain image pull response: %w", err)
+		}
 		pullResp.Close()
 	}
 
@@ -92,7 +95,13 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	if err != nil {
 		return fmt.Errorf("failed to create temp container: %w", err)
 	}
-	defer c.APIClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+	defer func() {
+		// Use background context since original may be cancelled
+		cleanupCtx := context.Background()
+		if _, err := c.APIClient.ContainerRemove(cleanupCtx, resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+			logger.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
+		}
+	}()
 
 	// Copy tar archive to container
 	_, err = c.APIClient.CopyToContainer(

@@ -83,7 +83,7 @@ func (e *Engine) VolumeList(ctx context.Context, extraFilters ...map[string]stri
 	}
 	result, err := e.APIClient.VolumeList(ctx, client.VolumeListOptions{Filters: f})
 	if err != nil {
-		return client.VolumeListResult{}, err
+		return client.VolumeListResult{}, ErrVolumeListFailed(err)
 	}
 	return result, nil
 }

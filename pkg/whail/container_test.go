@@ -1602,3 +1602,185 @@ func TestContainerAttach(t *testing.T) {
 		})
 	}
 }
+
+func TestContainerExecCreate(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+		setupFunc     func(ctx context.Context, t *testing.T, name string) string
+		cleanupFunc   func(ctx context.Context, t *testing.T, containerID string)
+		shouldErr     bool
+	}{
+		{
+			name:          "should create exec in managed container",
+			containerName: generateContainerName("test-container-exec-managed"),
+			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
+				containerID := setupManagedContainer(ctx, t, name)
+				return containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+			},
+			shouldErr: false,
+		},
+		{
+			name:          "should not create exec in unmanaged container",
+			containerName: generateContainerName("test-container-exec-unmanaged"),
+			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
+				containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
+				return containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, containerID string) {
+				testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			containerID := tt.setupFunc(ctx, t, tt.containerName)
+			if containerID == "" {
+				t.Fatalf("Setup failed: container ID is empty")
+			}
+			defer tt.cleanupFunc(ctx, t, containerID)
+
+			// Start container for exec
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Test ContainerExecCreate
+			execOpts := client.ExecCreateOptions{
+				Cmd: []string{"echo", "test"},
+			}
+			resp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Verify we got a valid exec ID
+			if resp.ID == "" {
+				t.Errorf("Expected non-empty exec ID")
+			}
+		})
+	}
+}
+
+func TestContainerExecAttach(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+	}{
+		{
+			name:          "should attach to exec instance",
+			containerName: generateContainerName("test-container-exec-attach"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create and start managed container
+			containerID := setupManagedContainer(ctx, t, tt.containerName)
+			defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Create exec instance first
+			execOpts := client.ExecCreateOptions{
+				Cmd:          []string{"echo", "test"},
+				AttachStdout: true,
+				AttachStderr: true,
+			}
+			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Test ContainerExecAttach
+			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+			if err != nil {
+				t.Fatalf("ContainerExecAttach failed: %v", err)
+			}
+			defer attachResp.Close()
+
+			// Verify we got a valid response
+			if attachResp.Conn == nil {
+				t.Errorf("Expected non-nil connection in exec attach response")
+			}
+		})
+	}
+}
+
+func TestContainerExecResize(t *testing.T) {
+	tests := []struct {
+		name          string
+		containerName string
+		height        uint
+		width         uint
+	}{
+		{
+			name:          "should resize exec TTY",
+			containerName: generateContainerName("test-container-exec-resize"),
+			height:        40,
+			width:         120,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create and start managed container
+			containerID := setupManagedContainer(ctx, t, tt.containerName)
+			defer testEngine.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+
+			if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+				t.Fatalf("Failed to start container: %v", err)
+			}
+
+			// Create exec instance with TTY
+			execOpts := client.ExecCreateOptions{
+				Cmd:          []string{"sh"},
+				AttachStdin:  true,
+				AttachStdout: true,
+				AttachStderr: true,
+				TTY:          true,
+			}
+			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			if err != nil {
+				t.Fatalf("ContainerExecCreate failed: %v", err)
+			}
+
+			// Start the exec first (attach to it)
+			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+				TTY: true,
+			})
+			if err != nil {
+				t.Fatalf("ContainerExecAttach failed: %v", err)
+			}
+			defer attachResp.Close()
+
+			// Test ContainerExecResize
+			_, err = testEngine.ContainerExecResize(ctx, execResp.ID, tt.height, tt.width)
+			if err != nil {
+				t.Fatalf("ContainerExecResize failed: %v", err)
+			}
+			// Resize returns empty struct on success, so no additional verification needed
+		})
+	}
+}

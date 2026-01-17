@@ -10,14 +10,14 @@ import (
 // ImageBuild builds an image from a build context.
 // Labels are applied via the build options.
 func (e *Engine) ImageBuild(ctx context.Context, buildContext io.Reader, options client.ImageBuildOptions) (client.ImageBuildResult, error) {
-	// Merge labels: base managed + config + user-provided
-	// TODO: will this mutation be problematic if options is reused?
-	options.Labels = MergeLabels(
+	// Copy options to avoid mutating caller's struct
+	optsCopy := options
+	optsCopy.Labels = MergeLabels(
 		e.imageLabels(),
 		options.Labels,
 	)
 
-	resp, err := e.APIClient.ImageBuild(ctx, buildContext, options)
+	resp, err := e.APIClient.ImageBuild(ctx, buildContext, optsCopy)
 	if err != nil {
 		return client.ImageBuildResult{}, ErrImageBuildFailed(err)
 	}
@@ -40,11 +40,10 @@ func (e *Engine) ImageRemove(ctx context.Context, imageID string, options client
 // ImageList lists images matching the filter.
 // The managed label filter is automatically injected.
 func (e *Engine) ImageList(ctx context.Context, options client.ImageListOptions) (client.ImageListResult, error) {
-	// TODO: this seems sloppy. overwriting users filters without merging them. prob need a copy to preserve options
-	options.Filters = e.newManagedFilter()
+	options.Filters = e.injectManagedFilter(options.Filters)
 	result, err := e.APIClient.ImageList(ctx, options)
 	if err != nil {
-		return client.ImageListResult{}, err
+		return client.ImageListResult{}, ErrImageListFailed(err)
 	}
 	return result, nil
 }
