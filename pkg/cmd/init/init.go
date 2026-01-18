@@ -65,6 +65,21 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
+	// Ensure user settings file exists
+	settingsLoader, err := config.NewSettingsLoader()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to create settings loader")
+		fmt.Fprintf(os.Stderr, "Note: Could not access user settings: %v\n", err)
+	} else {
+		created, err := settingsLoader.EnsureExists()
+		if err != nil {
+			logger.Debug().Err(err).Msg("failed to ensure settings file exists")
+			fmt.Fprintf(os.Stderr, "Note: Could not create settings file: %v\n", err)
+		} else if created {
+			logger.Info().Str("file", settingsLoader.Path()).Msg("created user settings file")
+		}
+	}
+
 	// Check if configuration already exists
 	loader := config.NewLoader(f.WorkDir)
 	if loader.Exists() && !opts.Force {
@@ -93,6 +108,16 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
 		}
 		logger.Info().Str("file", ignorePath).Msg("created ignore file")
+	}
+
+	// Register project in user settings
+	if settingsLoader != nil {
+		if err := settingsLoader.AddProject(f.WorkDir); err != nil {
+			logger.Debug().Err(err).Msg("failed to register project in settings")
+			fmt.Fprintf(os.Stderr, "Note: Could not register project in settings: %v\n", err)
+		} else {
+			logger.Info().Str("dir", f.WorkDir).Msg("registered project in user settings")
+		}
 	}
 
 	// Success output

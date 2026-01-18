@@ -53,6 +53,7 @@ input=$(cat)
 # Dim gray: \033[2m (for less important info)
 # White: \033[0m (default terminal white)
 # Reset: \033[0m
+DARK_GRAY='\033[90m'
 ORANGE='\033[38;5;214m'
 GRAY='\033[2m'
 WHITE='\033[1m'
@@ -62,11 +63,13 @@ YELLOW='\x1b[38;5;226m'
 NC='\033[0m' # No Color
 
 # ICONS
+BULLET_POINT='•'
 GIT=''  # Git branch icon (requires a powerline font)
 DISK_LOW='⛀'  # Single disk slice icon
 DISK_LOW_FULL='⛂'  # Single disk slice full icon
 DISK_MEDIUM='⛁'  # Double disk slice icon
 DISK_HIGH='⛃'  # Triple disk slice icon
+DOT='⏺'
 
 # Helper functions for common extractions
 get_model_name() { echo "$input" | jq -r '.model.display_name'; }
@@ -132,6 +135,28 @@ vim=$(echo "$input" | jq -r '.vim.mode // empty')
 # Build status line - plain text with minimal color
 output=""
 
+# Output style - only if not default, dim
+if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
+    output+=$(printf " ${GRAY}[%s]${NC}" "$STYLE")
+fi
+
+# Version - dim gray
+VERSION=$(get_version)
+output+=$(printf "${DARK_GRAY}v%s${NC}" "$VERSION")
+
+# Model - orange
+output+=$(printf " ${ORANGE}%s${NC}" "$MODEL")
+
+# Context window - orange accent when > 10%
+if [ -n "$ctx" ]; then
+    output+=$(printf " %s" "$ctx")
+else
+    output+=$(printf " ${GRAY}%s${NC}" "${DISK_LOW} ?%")
+fi
+
+# separator icon - dim gray
+output+=$(printf " ${GRAY}%s${NC} " ">")
+
 # Directory - white, bold
 output+=$(printf "%s/" "$(basename "$DIR")")
 
@@ -143,18 +168,6 @@ fi
 # Lines added/removed
 if [ -n "$lines" ]; then
     output+=$(printf " %s" "$lines")
-fi
-
-# Model - orange
-output+=$(printf " ${ORANGE}%s${NC}" "$MODEL")
-# Output style - only if not default, dim
-if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
-    output+=$(printf " ${GRAY}[%s]${NC}" "$STYLE")
-fi
-
-# Context window - orange accent when > 10%
-if [ -n "$ctx" ]; then
-    output+=$(printf " %s" "$ctx")
 fi
 
 # Vim mode - orange accent

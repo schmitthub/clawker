@@ -28,6 +28,24 @@ Clawker supports multiple containers per project using **agents**:
 - Docker labels (`com.clawker.*`) enable reliable filtering and identification
 - Random agent names generated if `--agent` flag not specified
 
+## Configuration
+
+### User Settings (~/.local/clawker/settings.yaml)
+User-level settings that apply across all projects:
+- `project.default_image` - Default image for container create/run
+- `projects` - List of registered project directories (managed by `clawker init`)
+
+### Project Config (clawker.yaml)
+Project-specific configuration. Local project config takes precedence over user settings.
+- `default_image` - Project-specific default image (overrides user settings)
+
+### Image Resolution Order
+For `container create` and `container run`, image is resolved in this order:
+1. Explicit IMAGE argument from CLI
+2. `default_image` from project's clawker.yaml
+3. `default_image` from user settings
+4. Project image with :latest tag (by label lookup)
+
 ## Key Packages
 
 ### Architecture (Post-Migration)

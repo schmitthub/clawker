@@ -134,11 +134,10 @@ func TestNewCmdRun(t *testing.T) {
 			output: Options{TTY: true, Stdin: true, Detach: true, AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
 		},
 		{
-			name:       "missing image",
-			input:      "",
-			args:       []string{},
-			wantErr:    true,
-			wantErrMsg: "requires at least 1 arg",
+			name:   "no image (optional)",
+			input:  "",
+			args:   []string{},
+			output: Options{}, // Image is now optional, will be resolved at runtime
 		},
 	}
 
@@ -222,7 +221,7 @@ func TestCmdRun_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "run [OPTIONS] IMAGE [COMMAND] [ARG...]", cmd.Use)
+	require.Equal(t, "run [OPTIONS] [IMAGE] [COMMAND] [ARG...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

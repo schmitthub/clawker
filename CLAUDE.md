@@ -125,7 +125,19 @@ Example container commands:
 
 These commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
 
-## Configuration (clawker.yaml)
+## Configuration
+
+### User Settings (~/.local/clawker/settings.yaml)
+
+User-level defaults that apply across all projects:
+
+```yaml
+project:
+  default_image: "node:20-slim"  # Default image for container create/run
+projects: []  # Managed by 'clawker init'
+```
+
+### Project Config (clawker.yaml)
 
 ```yaml
 version: "1"
