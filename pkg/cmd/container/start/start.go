@@ -84,7 +84,9 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 	// Ensure host proxy is running for container-to-host communication (if enabled)
 	if cfg == nil || cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
-			logger.Debug().Err(err).Msg("failed to start host proxy server")
+			logger.Warn().Err(err).Msg("failed to start host proxy server")
+			cmdutil.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
+			cmdutil.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		}
 	}
 

@@ -8,13 +8,18 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
+	"time"
 
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // DefaultPort is the default port for the host proxy server.
 const DefaultPort = 18374
+
+// maxRequestBodySize limits request body size to prevent DoS via memory exhaustion.
+const maxRequestBodySize = 1 << 20 // 1MB
 
 // Server is an HTTP server that handles requests from containers to perform
 // host-side actions.
@@ -54,12 +59,20 @@ func (s *Server) Start() error {
 	}
 
 	s.listener = listener
-	s.server = &http.Server{Handler: mux}
+	s.server = &http.Server{
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 	s.running = true
 
 	go func() {
 		logger.Debug().Str("addr", addr).Msg("host proxy server starting")
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			s.mu.Lock()
+			s.running = false
+			s.mu.Unlock()
 			logger.Error().Err(err).Msg("host proxy server error")
 		}
 	}()
@@ -107,6 +120,9 @@ type openURLResponse struct {
 
 // handleOpenURL handles POST /open/url requests to open a URL in the host browser.
 func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	// Limit request body size to prevent DoS
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
 	var req openURLRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeJSON(w, http.StatusBadRequest, openURLResponse{
@@ -120,6 +136,23 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusBadRequest, openURLResponse{
 			Success: false,
 			Error:   "url field is required",
+		})
+		return
+	}
+
+	// Validate URL scheme to prevent opening dangerous protocols
+	parsedURL, err := url.Parse(req.URL)
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, openURLResponse{
+			Success: false,
+			Error:   "invalid URL format",
+		})
+		return
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		s.writeJSON(w, http.StatusBadRequest, openURLResponse{
+			Success: false,
+			Error:   "only http and https URLs are allowed",
 		})
 		return
 	}
@@ -144,13 +177,15 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 
 // healthResponse is the JSON response body for the /health endpoint.
 type healthResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Service string `json:"service"`
 }
 
 // handleHealth handles GET /health requests for health checking.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.writeJSON(w, http.StatusOK, healthResponse{
-		Status: "ok",
+		Status:  "ok",
+		Service: "clawker-host-proxy",
 	})
 }
 

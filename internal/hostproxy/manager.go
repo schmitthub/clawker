@@ -2,6 +2,7 @@ package hostproxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -90,7 +91,9 @@ func (m *Manager) ProxyURL() string {
 	return fmt.Sprintf("http://host.docker.internal:%d", DefaultPort)
 }
 
-// isPortInUse checks if the default port is already in use by another process.
+// isPortInUse checks if the default port is already in use by a clawker host proxy.
+// It verifies both the status code and service identifier to avoid mistaking
+// another service for the clawker host proxy.
 func (m *Manager) isPortInUse() bool {
 	client := &http.Client{
 		Timeout: 500 * time.Millisecond,
@@ -102,7 +105,17 @@ func (m *Manager) isPortInUse() bool {
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	// Verify it's actually a clawker host proxy by checking the service identifier
+	var health healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return false
+	}
+
+	return health.Service == "clawker-host-proxy"
 }
 
 // healthCheck verifies the server is responding to requests.

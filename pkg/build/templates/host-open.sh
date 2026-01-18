@@ -15,10 +15,13 @@ if [ -z "$CLAWKER_HOST_PROXY" ]; then
     exit 1
 fi
 
+# Escape the URL for JSON (handle quotes and backslashes)
+escaped_url=$(printf '%s' "$URL" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
 # Send request to host proxy to open the URL
 response=$(curl -sf -X POST "$CLAWKER_HOST_PROXY/open/url" \
     -H "Content-Type: application/json" \
-    -d "{\"url\": \"$URL\"}" 2>&1)
+    -d "{\"url\": \"$escaped_url\"}" 2>&1)
 
 if [ $? -ne 0 ]; then
     echo "Failed to open URL via host proxy" >&2

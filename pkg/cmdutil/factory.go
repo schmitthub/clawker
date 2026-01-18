@@ -146,6 +146,9 @@ func (f *Factory) StopHostProxy(ctx context.Context) error {
 
 // HostProxyEnvVar returns the environment variable string for containers
 // to connect to the host proxy, or empty string if proxy is not running.
+// Note: There's a small race between IsRunning() and ProxyURL() checks.
+// This is accepted as the failure mode is benign - container would get
+// a URL to a non-running server, and curl would fail gracefully.
 func (f *Factory) HostProxyEnvVar() string {
 	if f.hostProxyManager == nil || !f.hostProxyManager.IsRunning() {
 		return ""
