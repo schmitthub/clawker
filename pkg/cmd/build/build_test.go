@@ -1,46 +1,110 @@
 package build
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdBuild(t *testing.T) {
 	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdBuild(f)
 
-	if cmd.Use != "build" {
-		t.Errorf("expected Use 'build', got '%s'", cmd.Use)
-	}
+	require.Equal(t, "build", cmd.Use)
+	require.NotEmpty(t, cmd.Short)
+	require.NotEmpty(t, cmd.Long)
+	require.NotEmpty(t, cmd.Example)
+	require.NotNil(t, cmd.RunE)
 
-	// Check flags exist
-	flags := []struct {
+	// Verify examples use top-level command
+	require.Contains(t, cmd.Example, "clawker build")
+	require.NotContains(t, cmd.Example, "clawker image build")
+}
+
+func TestNewCmdBuild_HasSameFlagsAsImageBuild(t *testing.T) {
+	f := cmdutil.New("1.0.0", "abc123")
+	cmd := NewCmdBuild(f)
+
+	// Check all Docker CLI-compatible flags exist
+	expectedFlags := []struct {
 		name      string
 		shorthand string
 	}{
+		{"file", "f"},
+		{"tag", "t"},
 		{"no-cache", ""},
-		{"dockerfile", ""},
+		{"pull", ""},
+		{"build-arg", ""},
+		{"label", ""},
+		{"target", ""},
+		{"quiet", "q"},
+		{"progress", ""},
+		{"network", ""},
 	}
 
-	for _, fl := range flags {
-		flag := cmd.Flags().Lookup(fl.name)
-		if flag == nil {
-			t.Errorf("expected --%s flag to exist", fl.name)
-		}
-		if fl.shorthand != "" && flag.Shorthand != fl.shorthand {
-			t.Errorf("expected --%s shorthand '%s', got '%s'", fl.name, fl.shorthand, flag.Shorthand)
-		}
+	for _, fl := range expectedFlags {
+		t.Run(fl.name, func(t *testing.T) {
+			flag := cmd.Flags().Lookup(fl.name)
+			require.NotNil(t, flag, "expected --%s flag to exist", fl.name)
+			if fl.shorthand != "" {
+				require.Equal(t, fl.shorthand, flag.Shorthand,
+					"expected --%s shorthand -%s", fl.name, fl.shorthand)
+			}
+		})
+	}
+}
+
+func TestNewCmdBuild_FlagParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{
+			name: "no flags",
+			args: []string{},
+		},
+		{
+			name: "file flag",
+			args: []string{"-f", "Dockerfile.dev"},
+		},
+		{
+			name: "tag flag",
+			args: []string{"-t", "myapp:latest"},
+		},
+		{
+			name: "multiple flags",
+			args: []string{"-f", "Dockerfile", "-t", "myapp:latest", "--no-cache", "-q"},
+		},
 	}
 
-	// Check default values
-	noCacheFlag := cmd.Flags().Lookup("no-cache")
-	if noCacheFlag.DefValue != "false" {
-		t.Errorf("expected --no-cache default 'false', got '%s'", noCacheFlag.DefValue)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := cmdutil.New("1.0.0", "abc123")
+			cmd := NewCmdBuild(f)
 
-	dockerfileFlag := cmd.Flags().Lookup("dockerfile")
-	if dockerfileFlag.DefValue != "" {
-		t.Errorf("expected --dockerfile default '', got '%s'", dockerfileFlag.DefValue)
+			// Override RunE to prevent actual execution
+			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+				return nil
+			}
+
+			// Cobra hack-around for help flag
+			cmd.Flags().BoolP("help", "x", false, "")
+
+			cmd.SetArgs(tt.args)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+
+			_, err := cmd.ExecuteC()
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }

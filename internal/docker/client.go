@@ -91,23 +91,31 @@ func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error)
 
 // BuildImageOpts contains options for building an image.
 type BuildImageOpts struct {
-	Tag        string
-	Dockerfile string
-	BuildArgs  map[string]*string
-	NoCache    bool
-	Labels     map[string]string
+	Tags           []string           // -t, --tag (multiple allowed)
+	Dockerfile     string             // -f, --file
+	BuildArgs      map[string]*string // --build-arg KEY=VALUE
+	NoCache        bool               // --no-cache
+	Labels         map[string]string  // --label KEY=VALUE (merged with clawker labels)
+	Target         string             // --target
+	Pull           bool               // --pull (maps to PullParent)
+	SuppressOutput bool               // -q, --quiet
+	NetworkMode    string             // --network
 }
 
 // BuildImage builds a Docker image from a build context.
 // It processes the build output and logs progress.
 func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
 	options := client.ImageBuildOptions{
-		Tags:       []string{opts.Tag},
-		Dockerfile: opts.Dockerfile,
-		Remove:     true,
-		NoCache:    opts.NoCache,
-		BuildArgs:  opts.BuildArgs,
-		Labels:     opts.Labels,
+		Tags:           opts.Tags,
+		Dockerfile:     opts.Dockerfile,
+		Remove:         true,
+		NoCache:        opts.NoCache,
+		BuildArgs:      opts.BuildArgs,
+		Labels:         opts.Labels,
+		Target:         opts.Target,
+		PullParent:     opts.Pull,
+		SuppressOutput: opts.SuppressOutput,
+		NetworkMode:    opts.NetworkMode,
 	}
 
 	resp, err := c.ImageBuild(ctx, buildContext, options)
@@ -117,25 +125,43 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 	defer resp.Body.Close()
 
 	// Process the build output
+	// Even with SuppressOutput, we must still check for errors
+	if opts.SuppressOutput {
+		return c.processBuildOutputQuiet(resp.Body)
+	}
 	return c.processBuildOutput(resp.Body)
+}
+
+// buildEvent represents a Docker build stream event.
+type buildEvent struct {
+	Stream      string `json:"stream"`
+	Error       string `json:"error"`
+	ErrorDetail struct {
+		Message string `json:"message"`
+	} `json:"errorDetail"`
 }
 
 // processBuildOutput processes and displays Docker build output.
 func (c *Client) processBuildOutput(reader io.Reader) error {
 	scanner := bufio.NewScanner(reader)
+	var parseErrors int
 
 	for scanner.Scan() {
-		var event struct {
-			Stream      string `json:"stream"`
-			Error       string `json:"error"`
-			ErrorDetail struct {
-				Message string `json:"message"`
-			} `json:"errorDetail"`
-		}
+		var event buildEvent
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			parseErrors++
+			logger.Debug().
+				Err(err).
+				Str("raw", string(scanner.Bytes())).
+				Msg("failed to parse build output event")
+			// After many consecutive failures, consider this an error condition
+			if parseErrors > 10 {
+				return fmt.Errorf("build output stream appears corrupted: %d consecutive parse failures", parseErrors)
+			}
 			continue
 		}
+		parseErrors = 0 // Reset on successful parse
 
 		if event.Error != "" {
 			return fmt.Errorf("build error: %s", event.Error)
@@ -161,6 +187,44 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 	}
 
 	logger.Info().Msg("image build complete")
+	return nil
+}
+
+// processBuildOutputQuiet processes Docker build output without displaying it,
+// but still returns any build errors. Used for quiet/suppressed output modes.
+func (c *Client) processBuildOutputQuiet(reader io.Reader) error {
+	scanner := bufio.NewScanner(reader)
+	var parseErrors int
+
+	for scanner.Scan() {
+		var event buildEvent
+
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			parseErrors++
+			logger.Debug().
+				Err(err).
+				Str("raw", string(scanner.Bytes())).
+				Msg("failed to parse build output event")
+			if parseErrors > 10 {
+				return fmt.Errorf("build output stream appears corrupted: %d consecutive parse failures", parseErrors)
+			}
+			continue
+		}
+		parseErrors = 0
+
+		if event.Error != "" {
+			return fmt.Errorf("build error: %s", event.Error)
+		}
+
+		if event.ErrorDetail.Message != "" {
+			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading build output: %w", err)
+	}
+
 	return nil
 }
 
