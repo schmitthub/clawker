@@ -17,6 +17,7 @@ import (
 
 // Options holds options for the exec command.
 type Options struct {
+	Agent       string // Agent name to resolve container
 	Interactive bool
 	TTY         bool
 	Detach      bool
@@ -31,12 +32,15 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "exec [OPTIONS] CONTAINER COMMAND [ARG...]",
+		Use:   "exec [OPTIONS] [CONTAINER] COMMAND [ARG...]",
 		Short: "Execute a command in a running container",
 		Long: `Execute a command in a running clawker container.
 
 This creates a new process inside the container and connects to it.
 Use -it flags for an interactive shell session.
+
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
 
 Container name can be:
   - Full name: clawker.myproject.myagent
@@ -44,8 +48,14 @@ Container name can be:
 		Example: `  # Run a command
   clawker container exec clawker.myapp.ralph ls -la
 
+  # Run a command using agent name (resolves via project config)
+  clawker container exec --agent ralph ls -la
+
   # Run an interactive shell
   clawker container exec -it clawker.myapp.ralph /bin/bash
+
+  # Run an interactive shell using agent name
+  clawker container exec -it --agent ralph /bin/bash
 
   # Run with environment variable
   clawker container exec -e FOO=bar clawker.myapp.ralph env
@@ -55,12 +65,38 @@ Container name can be:
 
   # Run in a specific directory
   clawker container exec -w /tmp clawker.myapp.ralph pwd`,
-		Args: cobra.MinimumNArgs(2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			agentFlag, _ := cmd.Flags().GetString("agent")
+			if agentFlag != "" {
+				// With --agent, only need COMMAND (min 1 arg)
+				if len(args) == 0 {
+					return fmt.Errorf("requires at least 1 command argument when using --agent")
+				}
+			} else {
+				// Without --agent, need CONTAINER COMMAND (min 2 args)
+				if len(args) < 2 {
+					return fmt.Errorf("requires at least 2 arg(s), only received %d", len(args))
+				}
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args[0], args[1:])
+			var containerName string
+			var command []string
+			if opts.Agent != "" {
+				// Use all args as command
+				containerName = "" // Will be resolved from agent
+				command = args
+			} else {
+				// First arg is container, rest are command
+				containerName = args[0]
+				command = args[1:]
+			}
+			return run(f, opts, containerName, command)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Keep STDIN open even if not attached")
 	cmd.Flags().BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Detached mode: run command in the background")
@@ -72,7 +108,7 @@ Container name can be:
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, containerName string, command []string) error {
+func run(f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
@@ -82,6 +118,20 @@ func run(_ *cmdutil.Factory, opts *Options, containerName string, command []stri
 		return err
 	}
 	defer client.Close()
+
+	// Resolve container name if using --agent
+	if opts.Agent != "" {
+		cfg, err := f.Config()
+		if err != nil {
+			cmdutil.PrintError("Failed to load config: %v", err)
+			cmdutil.PrintNextSteps(
+				"Run 'clawker init' to create a configuration",
+				"Or ensure you're in a directory with clawker.yaml",
+			)
+			return err
+		}
+		containerName = docker.ContainerName(cfg.Project, opts.Agent)
+	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)

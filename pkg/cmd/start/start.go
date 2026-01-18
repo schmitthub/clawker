@@ -11,6 +11,6 @@ import (
 // This follows Docker's pattern where `docker start` is an alias for `docker container start`.
 func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
 	cmd := start.NewCmdStart(f)
-	cmd.Use = "start CONTAINER [CONTAINER...]"
+	cmd.Use = "start [CONTAINER...]"
 	return cmd
 }
