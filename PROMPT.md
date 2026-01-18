@@ -1,0 +1,8 @@
+Add `--agent` flag to the `clawker start` and `clawker exec` command. This flag provides a specfic name to use in the container name suffix, and what to put in the container label using the key `LabelAgent` from @internal/docker/labels.go
+  * Check `exec_start` serena memory to see if a plan and research / discovery insights exist before doing anything else. If no file or insights found, write a plan and any research with implementation steps to this file, but do NOT track any futher progress you make during the implementation steps. If implementation steps exist, you MUST scrutinize them before starting work. They may have been written by a very junior engineer and could be low quality or even incorrect. Once you are confident begin work.
+  * Review past code changes for current state. If changes were made related to this work review and scrutinize them carefully. Search for silent errors, unreachable code, immutability issues, bad patterns, error handling inconsistencies, and poor test cases. They may have been written or overseen by a very junior engineer and could be low quality or even incorrect.
+  * Begin implementing your own opinionted code changes to add the `--agent` flag to the `clawker start` and `clawker exec` commands. Ensure that the container name suffix and container label are set correctly based on the provided flag.
+  * Existing testing logic can only be modified to add the agent flag. Don't create new tests unless there is a case that can't be covered by modifying existing tests.
+  * All tests must pass in the entire project
+  * Commit changes but DO NOT push them
+  * Output <promise>DONE</promise> after changes are commited.
