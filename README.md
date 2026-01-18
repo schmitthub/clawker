@@ -4,7 +4,19 @@ Tired of Claude Code YOLO mode nuking your system from orbit? Resorting to compl
 
 Clawker (claude + docker) provides docker resource management and automation of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in safe, reproducible, monitored, isolated Docker containers using a familiar "docker-like" command line interface.
 
-At its core clawker uses a reusable package, `whail` (whale jail), that decorates a [docker client](https://github.com/moby/moby) to apply management labels during resource creation, and perform management label checks during resource state changes and lookups. This prevents clawker from being able to operate on unrelated docker resources from other projects. The idea is that `whail` might be viable to streamline building clawker-like tools for other AI coding agents.
+At its core clawker uses a reusable package, `whail` (whale jail), that decorates a [docker client](https://github.com/moby/moby) to apply management labels during resource creation, and perform management label checks during resource state changes and lookups. This prevents clawker from being able to operate on docker resources it didn't create. The idea is that `whail` might be viable to streamline building clawker-like tools for other AI coding agents.
+
+ex
+```bash
+[~/Code/clawker]$ docker image list
+IMAGE                         ID             DISK USAGE   CONTENT SIZE   EXTRA
+buildpack-deps:bookworm-scm   9be56c3e5291        371MB             0B
+clawker-clawker:latest        83a204a19dcb       1.95GB             0B
+
+[~/Code/clawker]$ clawker image list
+REPOSITORY       TAG     IMAGE ID      CREATED       SIZE
+clawker-clawker  latest  83a204a19dcb  1 minute ago  1.81GB
+```
 
 If you want to use docker proper without clawker's management, check out `clawker-generate` to generate dockerfiles using clode code npm build tags. Tweak and then `docker build` it yourself. ex `clawker-generate -o dockerfiles/ latest next stable 2.1 1.1`
 
