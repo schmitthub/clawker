@@ -9,6 +9,7 @@
 - All errors/warnings go to stderr via `cmdutil.PrintError()` / `cmdutil.PrintWarning()`
 - Use `cmdutil.PrintStatus(quiet, ...)` for status messages that respect `--quiet` flag
 - Use `cmdutil.OutputJSON(data)` for JSON output when `--json` flag is set
+- Docker client API methods must only be wrapped with managed label checks in @pkg/whail if they directly read, update, create, or delete Docker resources (containers, images, volumes, networks). Do NOT wrap lower-level methods that are used internally by these higher-level methods because the checks and added methods will be redundant. The whail client otherwise implements the Docker client interface so the unwrapped methods will be available for use as needed. For example `client.ExecStart` does not need to be wrapped because it only receives an ExecID that was created by `client.ExecCreate`, which is wrapped in whail with the managed label check.
 
 ## Logging
 
