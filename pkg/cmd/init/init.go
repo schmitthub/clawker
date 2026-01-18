@@ -69,10 +69,12 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 	settingsLoader, err := config.NewSettingsLoader()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to create settings loader")
+		fmt.Fprintf(os.Stderr, "Note: Could not access user settings: %v\n", err)
 	} else {
 		created, err := settingsLoader.EnsureExists()
 		if err != nil {
 			logger.Debug().Err(err).Msg("failed to ensure settings file exists")
+			fmt.Fprintf(os.Stderr, "Note: Could not create settings file: %v\n", err)
 		} else if created {
 			logger.Info().Str("file", settingsLoader.Path()).Msg("created user settings file")
 		}
@@ -112,6 +114,7 @@ func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
 	if settingsLoader != nil {
 		if err := settingsLoader.AddProject(f.WorkDir); err != nil {
 			logger.Debug().Err(err).Msg("failed to register project in settings")
+			fmt.Fprintf(os.Stderr, "Note: Could not register project in settings: %v\n", err)
 		} else {
 			logger.Info().Str("dir", f.WorkDir).Msg("registered project in user settings")
 		}

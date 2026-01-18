@@ -83,7 +83,7 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 	if cfg != nil && cfg.Project != "" {
 		projectImage, err := FindProjectImage(ctx, dockerClient, cfg.Project)
 		if err != nil {
-			// Log error but don't fail - just means we couldn't find an image
+			// Don't fail - just means we couldn't find an image automatically
 			return "", nil
 		}
 		if projectImage != "" {

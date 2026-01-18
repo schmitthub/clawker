@@ -108,7 +108,10 @@ func (f *Factory) Settings() (*config.Settings, error) {
 	return f.settingsData, f.settingsErr
 }
 
-// ResetSettings clears the cached settings, forcing a reload on next access.
+// ResetSettings clears the cached settings data, forcing a reload on next Settings() call.
+// Note: This does NOT reset the SettingsLoader - the loader path is immutable once created.
+// This is intentional since the loader path is derived from environment/home directory
+// which doesn't change during a CLI invocation.
 func (f *Factory) ResetSettings() {
 	f.settingsData = nil
 	f.settingsErr = nil

@@ -36,9 +36,15 @@ func (l *SettingsLoader) Path() string {
 }
 
 // Exists checks if the settings file exists.
+// Returns false for "file not found", returns false for other errors (permission denied, etc.).
 func (l *SettingsLoader) Exists() bool {
 	_, err := os.Stat(l.path)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	// Both "file not found" and other errors (permission denied, etc.) return false.
+	// Other errors are unusual but we treat as "not exists" since we can't read it anyway.
+	return false
 }
 
 // Load reads and parses the settings file.

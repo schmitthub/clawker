@@ -14,6 +14,7 @@ import (
 	"github.com/moby/moby/api/types/strslice"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -126,7 +127,10 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Load user settings for defaults
-	settings, _ := f.Settings() // Ignore error, settings are optional
+	settings, err := f.Settings()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
+	}
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)
