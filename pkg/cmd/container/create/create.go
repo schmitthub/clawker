@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +78,9 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 
   # Create an interactive container with TTY
   clawker container create -it --agent shell alpine sh`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -113,26 +115,8 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
+func run(_ *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
-
-	// Check if running outside a project directory
-	dir, err := os.Getwd()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to get working directory")
-		return err
-	}
-
-	// Load settings to check registered projects
-	settings, _ := f.Settings() // Ignore error - nil settings is handled
-
-	// Check for project root (clawker.yaml or registered project)
-	projectRoot := cmdutil.FindProjectRoot(dir, settings)
-	if projectRoot == "" {
-		if !cmdutil.ConfirmExternalProjectOperation(cmd.InOrStdin(), dir, "'container create'") {
-			return nil
-		}
-	}
 
 	// Load config for project name
 	cfg, err := f.Config()
@@ -145,7 +129,8 @@ func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	// If settings weren't loaded earlier, use defaults
+	// Load settings for image resolution
+	settings, _ := f.Settings()
 	if settings == nil {
 		settings = config.DefaultSettings()
 	}

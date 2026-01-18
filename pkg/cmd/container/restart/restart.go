@@ -41,6 +41,9 @@ Container names can be:
 
   # Restart with a custom timeout (20 seconds)
   clawker container restart --time 20 clawker.myapp.ralph`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)

@@ -1,6 +1,7 @@
 package root
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -61,6 +62,16 @@ Workspace modes:
 				Str("build-output-dir", f.BuildOutputDir).
 				Bool("debug", f.Debug).
 				Msg("clawker starting")
+
+			// Check project context for commands that require it
+			if cmdutil.CommandRequiresProject(cmd) {
+				if err := cmdutil.CheckProjectContext(cmd, f); err != nil {
+					if errors.Is(err, cmdutil.ErrAborted) {
+						return nil // Silent exit, message already printed
+					}
+					return err
+				}
+			}
 
 			return nil
 		},

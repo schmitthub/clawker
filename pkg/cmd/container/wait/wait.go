@@ -30,6 +30,9 @@ Container names can be:
 
   # Wait for multiple containers
   clawker container wait clawker.myapp.ralph clawker.myapp.writer`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, args)

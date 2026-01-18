@@ -44,6 +44,9 @@ Container names can be:
 
   # Start and attach to container output
   clawker container start --attach clawker.myapp.ralph`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			agentFlag, _ := cmd.Flags().GetString("agent")
 			if agentFlag != "" && len(args) > 0 {

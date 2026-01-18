@@ -68,6 +68,9 @@ Build-time variables can be passed using --build-arg.`,
 
   # Always pull base image
   clawker image build --pull`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBuild(f, opts)
 		},

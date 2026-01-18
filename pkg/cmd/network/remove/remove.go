@@ -38,6 +38,9 @@ Note: Only clawker-managed networks can be removed with this command.`,
 
   # Force remove (future: disconnect containers first)
   clawker network remove --force mynetwork`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)

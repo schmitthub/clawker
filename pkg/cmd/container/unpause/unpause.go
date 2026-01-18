@@ -25,6 +25,9 @@ Container names can be:
 
   # Unpause multiple containers
   clawker container unpause clawker.myapp.ralph clawker.myapp.writer`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUnpause(f, args)

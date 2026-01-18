@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,7 +9,33 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/spf13/cobra"
 )
+
+// AnnotationRequiresProject is the annotation key for commands that require project context.
+const AnnotationRequiresProject = "clawker.requiresProject"
+
+// ErrAborted is returned when user cancels an operation.
+var ErrAborted = errors.New("operation aborted by user")
+
+// CommandRequiresProject checks if a command has the requiresProject annotation.
+func CommandRequiresProject(cmd *cobra.Command) bool {
+	return cmd.Annotations[AnnotationRequiresProject] == "true"
+}
+
+// CheckProjectContext verifies we're in a project directory or prompts for confirmation.
+// Returns nil to proceed, ErrAborted if user declines, or other errors.
+func CheckProjectContext(cmd *cobra.Command, f *Factory) error {
+	settings, _ := f.Settings()
+	projectRoot := FindProjectRoot(f.WorkDir, settings)
+
+	if projectRoot == "" {
+		if !ConfirmExternalProjectOperation(cmd.InOrStdin(), f.WorkDir, cmd.Name()) {
+			return ErrAborted
+		}
+	}
+	return nil
+}
 
 // IsProjectDir checks if dir contains clawker.yaml or is a registered project.
 // If settings is nil, only checks for clawker.yaml file presence.

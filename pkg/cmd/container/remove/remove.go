@@ -43,6 +43,9 @@ Container names can be:
 
   # Remove container and its volumes
   clawker container remove --volumes clawker.myapp.ralph`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRemove(f, opts, args)

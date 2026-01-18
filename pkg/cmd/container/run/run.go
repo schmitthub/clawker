@@ -91,6 +91,9 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 
   # Run and automatically remove on exit
   clawker container run --rm -it alpine sh`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
