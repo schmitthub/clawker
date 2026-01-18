@@ -13,6 +13,7 @@ import (
 	initcmd "github.com/schmitthub/clawker/pkg/cmd/init"
 	"github.com/schmitthub/clawker/pkg/cmd/monitor"
 	"github.com/schmitthub/clawker/pkg/cmd/network"
+	"github.com/schmitthub/clawker/pkg/cmd/ps"
 	"github.com/schmitthub/clawker/pkg/cmd/run"
 	"github.com/schmitthub/clawker/pkg/cmd/start"
 	"github.com/schmitthub/clawker/pkg/cmd/volume"
@@ -78,12 +79,16 @@ Workspace modes:
 	cmd.SetVersionTemplate(fmt.Sprintf("clawker %s (commit: %s)\n", f.Version, f.Commit))
 
 	// Add top-level commands (shortcuts)
+
+	// TODO: Dynamically register top level aliases from subcommands instead of hardcoding
+
 	cmd.AddCommand(initcmd.NewCmdInit(f))
-	cmd.AddCommand(build.NewCmdBuild(f))
+	cmd.AddCommand(build.NewCmdBuild(f)) // Alias for "image build"
 	cmd.AddCommand(run.NewCmdRun(f))     // Alias for "container run"
 	cmd.AddCommand(start.NewCmdStart(f)) // Alias for "container start"
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
+	cmd.AddCommand(ps.NewCmdPs(f)) // Alias for "container ps"
 	cmd.AddCommand(generate.NewCmdGenerate(f))
 
 	// Add management commands
