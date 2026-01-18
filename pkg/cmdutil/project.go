@@ -1,6 +1,8 @@
 package cmdutil
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,4 +98,16 @@ func IsChildOfProject(dir string, settings *config.Settings) string {
 	}
 
 	return ""
+}
+
+// ConfirmExternalProjectOperation prompts user to confirm operation outside project.
+// Returns true if user confirms, false otherwise.
+func ConfirmExternalProjectOperation(in io.Reader, projectPath, operation string) bool {
+	message := fmt.Sprintf("You are running %s in '%s', which is outside of a project directory.\nDo you want to continue?", operation, projectPath)
+	if !PromptForConfirmation(in, message) {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		PrintNextSteps("Run 'clawker init' in the project root to initialize a new project")
+		return false
+	}
+	return true
 }

@@ -87,7 +87,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 			if len(args) > 1 {
 				opts.Command = args[1:]
 			}
-			return run(f, opts)
+			return run(cmd, f, opts)
 		},
 	}
 
@@ -113,8 +113,26 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
+
+	// Check if running outside a project directory
+	dir, err := os.Getwd()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to get working directory")
+		return err
+	}
+
+	// Load settings to check registered projects
+	settings, _ := f.Settings() // Ignore error - nil settings is handled
+
+	// Check for project root (clawker.yaml or registered project)
+	projectRoot := cmdutil.FindProjectRoot(dir, settings)
+	if projectRoot == "" {
+		if !cmdutil.ConfirmExternalProjectOperation(cmd.InOrStdin(), dir, "'container create'") {
+			return nil
+		}
+	}
 
 	// Load config for project name
 	cfg, err := f.Config()
@@ -127,10 +145,8 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	// Load user settings for defaults
-	settings, err := f.Settings()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
+	// If settings weren't loaded earlier, use defaults
+	if settings == nil {
 		settings = config.DefaultSettings()
 	}
 
