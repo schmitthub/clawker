@@ -6,7 +6,7 @@ Clawker (claude + docker) provides docker resource management and automation of 
 
 At its core clawker uses a reusable package, `whail` (whale jail), that decorates a [docker client](https://github.com/moby/moby) to apply management labels during resource creation, and perform management label checks during resource state changes and lookups. This prevents clawker from being able to operate on unrelated docker resources from other projects. The idea is that `whail` might be viable to streamline building clawker-like tools for other AI coding agents.
 
-If you want to user docker proper without clawker's management, check out `clawker-generate` to generate a dockerfiles using clode code npm build tags you supply it, tweak, and then `docker build` it yourself. ex `clawker-generate -o dockerfiles/ latest next stable 2.1 1.1`
+If you want to use docker proper without clawker's management, check out `clawker-generate` to generate dockerfiles using clode code npm build tags. Tweak and then `docker build` it yourself. ex `clawker-generate -o dockerfiles/ latest next stable 2.1 1.1`
 
 **Disclaimer** `clawker` is currently a WIP I have been building for myself ad-hoc to suit my personal needs. Currently only tested on MacOS. Feel free to report issues, feature requests, or make contributions. If enough people are enjoying `clawker` I'll give it more time and setup proper releases, OS support, and features.
 
