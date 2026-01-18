@@ -3,10 +3,14 @@ package start
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	dockerclient "github.com/moby/moby/client"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -63,14 +67,6 @@ Container names can be:
 func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error {
 	ctx := context.Background()
 
-	// Warn about unimplemented flags
-	if opts.Attach {
-		fmt.Fprintln(os.Stderr, "Warning: --attach flag is not yet implemented")
-	}
-	if opts.Interactive {
-		fmt.Fprintln(os.Stderr, "Warning: --interactive flag is not yet implemented")
-	}
-
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)
 	if err != nil {
@@ -85,12 +81,18 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 		return err
 	}
 
+	// Attach mode only works with a single container
+	if opts.Attach && len(containerNames) > 1 {
+		return fmt.Errorf("you cannot attach to multiple containers at once")
+	}
+
 	var errs []error
 	for _, name := range containerNames {
 		if err := startContainer(ctx, client, name, opts); err != nil {
 			errs = append(errs, err)
 			cmdutil.HandleError(err)
-		} else {
+		} else if !opts.Attach {
+			// Only print container name if not attaching
 			fmt.Println(name)
 		}
 	}
@@ -101,7 +103,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 	return nil
 }
 
-func startContainer(ctx context.Context, client *docker.Client, name string, _ *StartOptions) error {
+func startContainer(ctx context.Context, client *docker.Client, name string, opts *StartOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -109,9 +111,154 @@ func startContainer(ctx context.Context, client *docker.Client, name string, _ *
 	}
 
 	// Start the container
-	// Note: --attach and --interactive would require additional implementation
-	// to properly attach to container streams
 	startOpts := dockerclient.ContainerStartOptions{}
 	_, err = client.ContainerStart(ctx, c.ID, startOpts)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// If attach mode, attach to the container
+	if opts.Attach {
+		// Re-check container state after start
+		c, err = client.FindContainerByName(ctx, name)
+		if err != nil {
+			return err
+		}
+		if c.State != "running" {
+			return fmt.Errorf("container %q exited immediately after start", name)
+		}
+		return attachAfterStart(ctx, client, c.ID, opts)
+	}
+
+	return nil
+}
+
+
+// attachAfterStart attaches to a container after it has been started.
+// For TTY containers with interactive mode, it sets up raw terminal mode with resize support.
+// For non-TTY containers, it demultiplexes the Docker stream using stdcopy.
+// Returns when the container exits or the output stream closes.
+func attachAfterStart(ctx context.Context, client *docker.Client, containerID string, opts *StartOptions) error {
+	// Inspect container to check if it has TTY
+	info, err := client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	hasTTY := info.Container.Config.Tty
+
+	// Create attach options
+	attachOpts := dockerclient.ContainerAttachOptions{
+		Stream: true,
+		Stdin:  opts.Interactive,
+		Stdout: true,
+		Stderr: true,
+	}
+
+	// Set up TTY if the container has it and we're interactive
+	var pty *term.PTYHandler
+	if hasTTY && opts.Interactive {
+		pty = term.NewPTYHandler()
+		if err := pty.Setup(); err != nil {
+			return fmt.Errorf("failed to set up terminal: %w", err)
+		}
+		defer pty.Restore()
+	}
+
+	// Attach to container
+	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
+	if err != nil {
+		return err
+	}
+	defer hijacked.Close()
+
+	// Set up wait channel for container exit
+	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+
+	// Handle I/O
+	if hasTTY && pty != nil {
+		// Use PTY handler for TTY mode with resize support
+		resizeFunc := func(height, width uint) error {
+			_, err := client.ContainerResize(ctx, containerID, height, width)
+			return err
+		}
+
+		// Run streaming in a goroutine so we can also wait for container exit
+		streamDone := make(chan error, 1)
+		go func() {
+			streamDone <- pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+		}()
+
+		// Wait for either stream to end or container to exit
+		select {
+		case err := <-streamDone:
+			return err
+		case result := <-waitResult.Result:
+			if result.Error != nil {
+				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
+			}
+			if result.StatusCode != 0 {
+				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+			}
+			return nil
+		case err := <-waitResult.Error:
+			return err
+		}
+	}
+
+	// Non-TTY mode: demux the multiplexed stream
+	errCh := make(chan error, 2)
+	outputDone := make(chan struct{})
+
+	// Copy output using stdcopy to demultiplex stdout/stderr
+	go func() {
+		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		if err != nil && err != io.EOF {
+			errCh <- err
+		}
+		close(outputDone)
+	}()
+
+	// Copy stdin to container if interactive.
+	// NOTE: This goroutine is intentionally not awaited - stdin.Read() may block
+	// indefinitely, and we exit when output closes or container exits.
+	if opts.Interactive {
+		go func() {
+			_, err := io.Copy(hijacked.Conn, os.Stdin)
+			hijacked.CloseWrite()
+			if err != nil && err != io.EOF {
+				errCh <- err
+			}
+		}()
+	}
+
+	// Wait for output to complete or error
+	select {
+	case <-outputDone:
+		// Output closed - container has exited. Wait for exit status.
+		select {
+		case result := <-waitResult.Result:
+			if result.Error != nil {
+				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
+			}
+			if result.StatusCode != 0 {
+				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+			}
+			return nil
+		case err := <-waitResult.Error:
+			return err
+		}
+	case err := <-errCh:
+		return err
+	case result := <-waitResult.Result:
+		// Container exited before output fully read (unusual but possible)
+		if result.Error != nil {
+			return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
+		}
+		if result.StatusCode != 0 {
+			return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+		}
+		return nil
+	case err := <-waitResult.Error:
+		return err
+	}
 }

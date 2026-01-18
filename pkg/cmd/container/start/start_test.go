@@ -81,6 +81,12 @@ func TestNewCmdStart(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
 		},
+		{
+			name:   "combined flags shorthand",
+			input:  "-ai",
+			args:   []string{"clawker.myapp.ralph"},
+			output: StartOptions{Attach: true, Interactive: true},
+		},
 	}
 
 	for _, tt := range tests {
