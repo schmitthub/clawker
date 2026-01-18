@@ -85,8 +85,13 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 			s.config.RemotePath,
 			s.config.IgnorePatterns,
 		); err != nil {
-			// Clean up on failure
-			cli.VolumeRemove(ctx, s.volumeName, true)
+			// Clean up on failure - log but don't override the original error
+			if _, cleanupErr := cli.VolumeRemove(ctx, s.volumeName, true); cleanupErr != nil {
+				logger.Warn().
+					Str("volume", s.volumeName).
+					Err(cleanupErr).
+					Msg("failed to clean up volume after copy failure")
+			}
 			return fmt.Errorf("failed to copy files to volume: %w", err)
 		}
 

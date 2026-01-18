@@ -10,10 +10,12 @@ import (
 
 	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/strslice"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
@@ -37,6 +39,9 @@ type Options struct {
 	Network    string   // Network connection
 	Labels     []string // Additional labels
 	AutoRemove bool     // Auto-remove on exit
+
+	// Workspace mode
+	Mode string // Workspace mode: "bind" or "snapshot" (empty = use config default)
 
 	// Internal (set after parsing positional args)
 	Image   string
@@ -110,6 +115,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	cmd.Flags().StringVar(&opts.Network, "network", "", "Connect container to a network")
 	cmd.Flags().StringArrayVarP(&opts.Labels, "label", "l", nil, "Set metadata on container")
 	cmd.Flags().BoolVar(&opts.AutoRemove, "rm", false, "Automatically remove container when it exits")
+	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
 
 	cmd.MarkFlagsMutuallyExclusive("agent", "name")
 
@@ -175,8 +181,18 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		containerName = docker.ContainerName(cfg.Project, agent)
 	}
 
+	// Setup workspace mounts
+	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+		ModeOverride: opts.Mode,
+		Config:       cfg,
+		AgentName:    agent,
+	})
+	if err != nil {
+		return err
+	}
+
 	// Build configs
-	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts)
+	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)
 	if err != nil {
 		cmdutil.PrintError("Invalid configuration: %v", err)
 		return err
@@ -208,7 +224,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 }
 
 // buildConfigs builds Docker container, host, and network configurations from options.
-func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+func buildConfigs(opts *Options, mounts []mount.Mount) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
 	// Container config
 	cfg := &container.Config{
 		Image:        opts.Image,
@@ -248,9 +264,10 @@ func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *net
 	// Host config
 	hostCfg := &container.HostConfig{
 		AutoRemove: opts.AutoRemove,
+		Mounts:     mounts,
 	}
 
-	// Parse volumes
+	// Parse user-provided volumes (via -v flag) as Binds
 	if len(opts.Volumes) > 0 {
 		hostCfg.Binds = opts.Volumes
 	}
