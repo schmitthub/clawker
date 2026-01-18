@@ -219,7 +219,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	if opts.TTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			_, err := client.ExecResize(ctx, execResp.ID, dockerclient.ExecResizeOptions{
+			_, err := client.ExecResize(ctx, execID, dockerclient.ExecResizeOptions{
 				Height: height,
 				Width:  width,
 			})
