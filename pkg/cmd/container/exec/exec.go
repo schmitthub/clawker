@@ -181,7 +181,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 
 	// If detached, just start and return
 	if opts.Detach {
-		_, err := client.ExecStart(ctx, execResp.ID, dockerclient.ExecStartOptions{
+		_, err := client.ExecStart(ctx, execID, dockerclient.ExecStartOptions{
 			Detach: true,
 			TTY:    opts.TTY,
 		})
@@ -189,7 +189,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 			cmdutil.HandleError(err)
 			return err
 		}
-		fmt.Println(execResp.ID)
+		fmt.Println(execID)
 		return nil
 	}
 
@@ -208,7 +208,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 		TTY: opts.TTY,
 	}
 
-	hijacked, err := client.ExecAttach(ctx, execResp.ID, attachOpts)
+	hijacked, err := client.ExecAttach(ctx, execID, attachOpts)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -220,8 +220,8 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
 			_, err := client.ExecResize(ctx, execResp.ID, dockerclient.ExecResizeOptions{
-				Height: uint(height),
-				Width:  uint(width),
+				Height: height,
+				Width:  width,
 			})
 			return err
 		}
