@@ -1,6 +1,7 @@
 package root
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -66,5 +67,60 @@ func TestNewCmdRoot_GlobalFlags(t *testing.T) {
 	workdirFlag := cmd.PersistentFlags().Lookup("workdir")
 	if workdirFlag == nil {
 		t.Error("expected --workdir flag to exist")
+	}
+}
+
+func TestStateChangingCommandsRequireProject(t *testing.T) {
+	// Hardcoded list of commands that MUST require project context.
+	// If a command is accidentally removed from protection, this test will fail.
+	requiredCommands := [][]string{
+		// Container commands (state-modifying)
+		{"container", "create"},
+		{"container", "run"},
+		{"container", "start"},
+		{"container", "stop"},
+		{"container", "restart"},
+		{"container", "kill"},
+		{"container", "pause"},
+		{"container", "unpause"},
+		{"container", "remove"},
+		{"container", "exec"},
+		{"container", "attach"},
+		{"container", "cp"},
+		{"container", "rename"},
+		{"container", "update"},
+		{"container", "wait"},
+		// Image commands (state-modifying)
+		{"image", "build"},
+		{"image", "remove"},
+		{"image", "prune"},
+		// Volume commands (state-modifying)
+		{"volume", "create"},
+		{"volume", "remove"},
+		{"volume", "prune"},
+		// Network commands (state-modifying)
+		{"network", "create"},
+		{"network", "remove"},
+		{"network", "prune"},
+	}
+
+	f := cmdutil.New("1.0.0", "abc123")
+	root := NewCmdRoot(f)
+
+	for _, path := range requiredCommands {
+		name := strings.Join(path, "/")
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := root.Find(path)
+			if err != nil {
+				t.Fatalf("command %s should exist: %v", name, err)
+			}
+			if cmd == nil {
+				t.Fatalf("command %s should not be nil", name)
+			}
+
+			if !cmdutil.CommandRequiresProject(cmd) {
+				t.Errorf("command %s should have requiresProject annotation", name)
+			}
+		})
 	}
 }
