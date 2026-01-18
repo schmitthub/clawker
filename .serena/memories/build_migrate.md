@@ -53,3 +53,19 @@ Advanced buildx flags (`--platform`, `--push`, `--load`, `--secret`, `--ssh`, `-
 9.  Committed (34abdc6) - includes tests for mergeTags
 
 ## E2E Verification Results
+
+### Test Date: 2026-01-17
+
+| Test Case | Status | Notes |
+|-----------|--------|-------|
+| `build` and `image build` identical output | ✅ PASS | Same flags, same behavior, same labels |
+| Labels applied correctly | ✅ PASS | `com.clawker.managed`, `com.clawker.project`, `com.clawker.version`, `com.clawker.created` |
+| User labels merged | ✅ PASS | User `--label` merged, clawker labels take precedence |
+| Custom Dockerfile (-f) | ✅ PASS | `-f/--file` flag works as expected |
+| Multiple tags (-t) | ✅ PASS | `-t test:v1 -t test:v2` creates both tags |
+| Quiet mode (-q) | ✅ PASS | Suppresses build output |
+| Build uses clawker.yaml | ✅ PASS | Generates Dockerfile from config when no -f specified |
+| No-cache flag | ✅ PASS | `--no-cache` passed through to Docker |
+| Pull flag | ✅ PASS | `--pull` passed through to Docker |
+
+All PROMPT.md requirements verified and complete.
