@@ -34,6 +34,8 @@ func TestBuildAlias(t *testing.T) {
 	cmd, _, err := root.Find([]string{"build"})
 	require.NoError(t, err)
 
+	// Verify Use field is set correctly
+	require.Equal(t, "build [OPTIONS]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
@@ -178,4 +180,23 @@ func TestPsAlias(t *testing.T) {
 	require.Equal(t, "ps [OPTIONS]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotNil(t, cmd.RunE)
+}
+
+func TestAliasExampleOverride(t *testing.T) {
+	f := cmdutil.New("1.0.0", "abc123")
+	root := &cobra.Command{Use: "clawker"}
+
+	registerAliases(root, f)
+
+	// Build alias has custom Example - should NOT contain "clawker image build"
+	buildCmd, _, err := root.Find([]string{"build"})
+	require.NoError(t, err)
+	require.Contains(t, buildCmd.Example, "clawker build")
+	require.NotContains(t, buildCmd.Example, "clawker image build",
+		"build alias should have custom Example that references top-level command")
+
+	// Run alias has no custom Example - inherits from target command
+	runCmd, _, err := root.Find([]string{"run"})
+	require.NoError(t, err)
+	require.NotEmpty(t, runCmd.Example, "run alias should inherit Example from target command")
 }

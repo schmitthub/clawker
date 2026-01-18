@@ -1,6 +1,8 @@
 package root
 
 import (
+	"fmt"
+
 	containerlist "github.com/schmitthub/clawker/pkg/cmd/container/list"
 	containerrun "github.com/schmitthub/clawker/pkg/cmd/container/run"
 	containerstart "github.com/schmitthub/clawker/pkg/cmd/container/start"
@@ -11,10 +13,12 @@ import (
 
 // Alias defines a top-level command alias to a subcommand.
 // This follows Docker's pattern where `docker run` is an alias for `docker container run`.
+// Each alias creates a new command instance from the factory, overriding only Use and
+// optionally Example, while inheriting all other properties (flags, RunE, etc.).
 type Alias struct {
-	// Use overrides the command's Use field
+	// Use sets the command's Use field (required)
 	Use string
-	// Example optionally overrides the command's Example field
+	// Example optionally replaces the command's Example field (empty preserves original)
 	Example string
 	// Command is a factory function that creates the target command
 	Command func(*cmdutil.Factory) *cobra.Command
@@ -42,9 +46,20 @@ var topLevelAliases = []Alias{
 }
 
 // registerAliases adds all top-level aliases to the root command.
+// Each alias gets a fresh command instance from its factory, ensuring
+// flags, RunE, and other properties are inherited automatically.
 func registerAliases(root *cobra.Command, f *cmdutil.Factory) {
 	for _, alias := range topLevelAliases {
+		if alias.Use == "" {
+			panic("alias has empty Use field")
+		}
+		if alias.Command == nil {
+			panic(fmt.Sprintf("alias %q has nil Command factory", alias.Use))
+		}
 		cmd := alias.Command(f)
+		if cmd == nil {
+			panic(fmt.Sprintf("alias %q factory returned nil command", alias.Use))
+		}
 		cmd.Use = alias.Use
 		if alias.Example != "" {
 			cmd.Example = alias.Example
