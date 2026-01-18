@@ -100,10 +100,18 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				opts.Image = args[0]
-			}
-			if len(args) > 1 {
-				opts.Command = args[1:]
+				// Determine if first arg is an image name or a container command/flag.
+				// - With IMAGE: clawker run alpine --version (args[0]="alpine", args[1:]="--version")
+				// - With -- separator: clawker run --agent x -- --flag (args[0]="--flag", starts with "-")
+				// When args[0] starts with "-", treat all args as container command; resolve image from defaults.
+				if strings.HasPrefix(args[0], "-") {
+					opts.Command = args
+				} else {
+					opts.Image = args[0]
+					if len(args) > 1 {
+						opts.Command = args[1:]
+					}
+				}
 			}
 			return run(f, opts)
 		},
@@ -132,6 +140,14 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
 
 	cmd.MarkFlagsMutuallyExclusive("agent", "name")
+
+	// Stop parsing flags after the first positional argument (IMAGE).
+	// This allows flags after IMAGE to be passed to the container command.
+	// Example: clawker run -it alpine --version
+	//   - "-it" are clawker flags (parsed)
+	//   - "alpine" is IMAGE
+	//   - "--version" is passed to the container (not parsed as clawker flag)
+	cmd.Flags().SetInterspersed(false)
 
 	return cmd
 }
