@@ -20,9 +20,14 @@ type Builder struct {
 
 // Options contains options for build operations.
 type Options struct {
-	ForceBuild bool              // Force rebuild even if image exists
-	NoCache    bool              // Build without Docker cache
-	Labels     map[string]string // Labels to apply to the built image
+	ForceBuild     bool               // Force rebuild even if image exists
+	NoCache        bool               // Build without Docker cache
+	Labels         map[string]string  // Labels to apply to the built image
+	Target         string             // Multi-stage build target
+	Pull           bool               // Always pull base image
+	SuppressOutput bool               // Suppress build output
+	NetworkMode    string             // Network mode for build
+	BuildArgs      map[string]*string // Build-time variables
 }
 
 // NewBuilder creates a new Builder instance.
@@ -55,10 +60,15 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 		}
 
 		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-			Tag:        imageTag,
-			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
-			NoCache:    opts.NoCache,
-			Labels:     opts.Labels,
+			Tags:           []string{imageTag},
+			Dockerfile:     filepath.Base(gen.GetCustomDockerfilePath()),
+			NoCache:        opts.NoCache,
+			Labels:         opts.Labels,
+			Target:         opts.Target,
+			Pull:           opts.Pull,
+			SuppressOutput: opts.SuppressOutput,
+			NetworkMode:    opts.NetworkMode,
+			BuildArgs:      opts.BuildArgs,
 		})
 	}
 
@@ -75,11 +85,11 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 	}
 
 	// Generate and build Dockerfile
-	return b.Build(ctx, imageTag, opts.NoCache, opts.Labels)
+	return b.Build(ctx, imageTag, opts)
 }
 
 // Build unconditionally builds the Docker image.
-func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labels map[string]string) error {
+func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error {
 	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
@@ -97,10 +107,15 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 		}
 
 		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-			Tag:        imageTag,
-			Dockerfile: filepath.Base(gen.GetCustomDockerfilePath()),
-			NoCache:    noCache,
-			Labels:     labels,
+			Tags:           []string{imageTag},
+			Dockerfile:     filepath.Base(gen.GetCustomDockerfilePath()),
+			NoCache:        opts.NoCache,
+			Labels:         opts.Labels,
+			Target:         opts.Target,
+			Pull:           opts.Pull,
+			SuppressOutput: opts.SuppressOutput,
+			NetworkMode:    opts.NetworkMode,
+			BuildArgs:      opts.BuildArgs,
 		})
 	}
 
@@ -112,9 +127,14 @@ func (b *Builder) Build(ctx context.Context, imageTag string, noCache bool, labe
 	}
 
 	return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-		Tag:        imageTag,
-		Dockerfile: "Dockerfile",
-		NoCache:    noCache,
-		Labels:     labels,
+		Tags:           []string{imageTag},
+		Dockerfile:     "Dockerfile",
+		NoCache:        opts.NoCache,
+		Labels:         opts.Labels,
+		Target:         opts.Target,
+		Pull:           opts.Pull,
+		SuppressOutput: opts.SuppressOutput,
+		NetworkMode:    opts.NetworkMode,
+		BuildArgs:      opts.BuildArgs,
 	})
 }

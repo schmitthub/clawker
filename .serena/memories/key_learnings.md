@@ -27,3 +27,9 @@
   - Container create/run reuse buildConfigs for Docker config construction
   - Run command must handle both TTY and non-TTY I/O with proper channel selection
   - Test slices: GetStringArray returns empty slice not nil; use helper to compare nil==[]
+  - Docker SDK ImageBuildOptions does not have Platform field; SDK version determines available fields
+  - Alias pattern for Cobra: create thin wrapper that calls underlying command and overrides Examples
+  - StringArray flags for multi-value inputs (--tag, --build-arg, --label) need parsing to maps
+  - Label merging: user labels first, then clawker labels (clawker takes precedence)
+  - Build args support KEY without value (nil pointer) for env passthrough
+  - Deprecated flags: use MarkHidden + MarkDeprecated for backward compatibility
