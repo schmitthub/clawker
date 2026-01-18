@@ -61,7 +61,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 		}
 
 		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-			Tags:           []string{imageTag},
+			Tags:           mergeTags(imageTag, opts.Tags),
 			Dockerfile:     filepath.Base(gen.GetCustomDockerfilePath()),
 			NoCache:        opts.NoCache,
 			Labels:         opts.Labels,

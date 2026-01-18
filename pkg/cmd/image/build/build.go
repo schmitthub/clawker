@@ -177,7 +177,12 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	}
 
 	if !opts.Quiet {
-		fmt.Fprintf(os.Stderr, "Successfully built image: %s\n", imageTag)
+		if len(opts.Tags) > 0 {
+			allTags := append([]string{imageTag}, opts.Tags...)
+			fmt.Fprintf(os.Stderr, "Successfully built image with tags: %s\n", strings.Join(allTags, ", "))
+		} else {
+			fmt.Fprintf(os.Stderr, "Successfully built image: %s\n", imageTag)
+		}
 	}
 	return nil
 }
