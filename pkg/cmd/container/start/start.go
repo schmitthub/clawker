@@ -119,6 +119,14 @@ func startContainer(ctx context.Context, client *docker.Client, name string, opt
 
 	// If attach mode, attach to the container
 	if opts.Attach {
+		// Re-check container state after start
+		c, err = client.FindContainerByName(ctx, name)
+		if err != nil {
+			return err
+		}
+		if c.State != "running" {
+			return fmt.Errorf("container %q exited immediately after start", name)
+		}
 		return attachAfterStart(ctx, client, c.ID, opts)
 	}
 
@@ -127,12 +135,13 @@ func startContainer(ctx context.Context, client *docker.Client, name string, opt
 
 
 // attachAfterStart attaches to a container after it has been started.
-// It handles both TTY and non-TTY modes based on the container's configuration.
+// For TTY containers with interactive mode, it sets up raw terminal mode with resize support.
+// For non-TTY containers, it demultiplexes the Docker stream using stdcopy.
+// Returns when the container exits or the output stream closes.
 func attachAfterStart(ctx context.Context, client *docker.Client, containerID string, opts *StartOptions) error {
 	// Inspect container to check if it has TTY
 	info, err := client.ContainerInspect(ctx, containerID)
 	if err != nil {
-		cmdutil.HandleError(err)
 		return err
 	}
 	hasTTY := info.Container.Config.Tty
@@ -158,7 +167,6 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 	// Attach to container
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		cmdutil.HandleError(err)
 		return err
 	}
 	defer hijacked.Close()
@@ -186,10 +194,10 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 			return err
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
+				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
+				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
 			}
 			return nil
 		case err := <-waitResult.Error:
@@ -198,45 +206,56 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
+	errCh := make(chan error, 2)
 	outputDone := make(chan struct{})
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		if err != nil && err != io.EOF {
+			errCh <- err
+		}
 		close(outputDone)
 	}()
 
-	// Copy stdin to container if interactive
+	// Copy stdin to container if interactive.
+	// NOTE: This goroutine is intentionally not awaited - stdin.Read() may block
+	// indefinitely, and we exit when output closes or container exits.
 	if opts.Interactive {
 		go func() {
-			io.Copy(hijacked.Conn, os.Stdin)
+			_, err := io.Copy(hijacked.Conn, os.Stdin)
 			hijacked.CloseWrite()
+			if err != nil && err != io.EOF {
+				errCh <- err
+			}
 		}()
 	}
 
-	// Wait for container to exit
+	// Wait for output to complete or error
 	select {
 	case <-outputDone:
-		// Output closed, check container status
+		// Output closed - container has exited. Wait for exit status.
 		select {
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
+				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
+				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
 			}
+			return nil
 		case err := <-waitResult.Error:
 			return err
-		default:
 		}
-		return nil
+	case err := <-errCh:
+		return err
 	case result := <-waitResult.Result:
+		// Container exited before output fully read (unusual but possible)
 		if result.Error != nil {
-			return fmt.Errorf("container exit error: %s", result.Error.Message)
+			return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 		}
 		if result.StatusCode != 0 {
-			return fmt.Errorf("container exited with status %d", result.StatusCode)
+			return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
 		}
 		return nil
 	case err := <-waitResult.Error:
