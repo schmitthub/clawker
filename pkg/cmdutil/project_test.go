@@ -3,9 +3,11 @@ package cmdutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func TestIsProjectDir(t *testing.T) {
@@ -252,5 +254,207 @@ func TestIsChildOfProject_RealPaths(t *testing.T) {
 	got := IsChildOfProject(childDir, settings)
 	if got != projectDir {
 		t.Errorf("IsChildOfProject() = %q, want %q", got, projectDir)
+	}
+}
+
+func TestCommandRequiresProject(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{
+			name:        "annotation set to true",
+			annotations: map[string]string{AnnotationRequiresProject: "true"},
+			want:        true,
+		},
+		{
+			name:        "annotation set to false",
+			annotations: map[string]string{AnnotationRequiresProject: "false"},
+			want:        false,
+		},
+		{
+			name:        "annotation set to empty string",
+			annotations: map[string]string{AnnotationRequiresProject: ""},
+			want:        false,
+		},
+		{
+			name:        "annotation key present with wrong value",
+			annotations: map[string]string{AnnotationRequiresProject: "yes"},
+			want:        false,
+		},
+		{
+			name:        "no annotation present",
+			annotations: map[string]string{"other.key": "value"},
+			want:        false,
+		},
+		{
+			name:        "nil annotations map",
+			annotations: nil,
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{
+				Use:         "test",
+				Annotations: tt.annotations,
+			}
+			got := CommandRequiresProject(cmd)
+			if got != tt.want {
+				t.Errorf("CommandRequiresProject() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckProjectContext(t *testing.T) {
+	// Create temp directories for testing
+	tmpDir, err := os.MkdirTemp("", "clawker-project-context-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a directory with clawker.yaml (project dir)
+	projectDir := filepath.Join(tmpDir, "myproject")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+	configPath := filepath.Join(projectDir, config.ConfigFileName)
+	if err := os.WriteFile(configPath, []byte("version: '1'"), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Create a directory without clawker.yaml (non-project dir)
+	nonProjectDir := filepath.Join(tmpDir, "nonproject")
+	if err := os.MkdirAll(nonProjectDir, 0755); err != nil {
+		t.Fatalf("failed to create non-project dir: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		workDir   string
+		input     string // stdin input for confirmation prompt
+		wantErr   error
+		wantAbort bool
+	}{
+		{
+			name:      "inside project dir - no prompt needed",
+			workDir:   projectDir,
+			input:     "", // no input needed
+			wantErr:   nil,
+			wantAbort: false,
+		},
+		{
+			name:      "outside project - user confirms",
+			workDir:   nonProjectDir,
+			input:     "y\n",
+			wantErr:   nil,
+			wantAbort: false,
+		},
+		{
+			name:      "outside project - user declines",
+			workDir:   nonProjectDir,
+			input:     "n\n",
+			wantErr:   ErrAborted,
+			wantAbort: true,
+		},
+		{
+			name:      "outside project - EOF (no input)",
+			workDir:   nonProjectDir,
+			input:     "",
+			wantErr:   ErrAborted,
+			wantAbort: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a factory with the test workdir
+			f := &Factory{
+				WorkDir: tt.workDir,
+			}
+
+			// Create a command with stdin set to our test input
+			cmd := &cobra.Command{Use: "testcmd"}
+			cmd.SetIn(strings.NewReader(tt.input))
+
+			err := CheckProjectContext(cmd, f)
+
+			if tt.wantAbort {
+				if err != ErrAborted {
+					t.Errorf("CheckProjectContext() error = %v, want ErrAborted", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("CheckProjectContext() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConfirmExternalProjectOperation(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		projectPath string
+		operation   string
+		want        bool
+	}{
+		{
+			name:        "user confirms with y",
+			input:       "y\n",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        true,
+		},
+		{
+			name:        "user confirms with Y",
+			input:       "Y\n",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        true,
+		},
+		{
+			name:        "user declines with n",
+			input:       "n\n",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        false,
+		},
+		{
+			name:        "user declines with N",
+			input:       "N\n",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        false,
+		},
+		{
+			name:        "EOF treated as decline",
+			input:       "",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        false,
+		},
+		{
+			name:        "empty input treated as decline",
+			input:       "\n",
+			projectPath: "/some/path",
+			operation:   "stop",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := strings.NewReader(tt.input)
+			got := ConfirmExternalProjectOperation(reader, tt.projectPath, tt.operation)
+			if got != tt.want {
+				t.Errorf("ConfirmExternalProjectOperation() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -32,6 +32,9 @@ Use with caution as this will permanently delete data.`,
 
   # Remove without confirmation prompt
   clawker volume prune --force`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts)
 		},

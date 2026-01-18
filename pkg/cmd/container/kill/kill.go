@@ -39,6 +39,9 @@ Container names can be:
   # Send specific signal
   clawker container kill --signal SIGTERM clawker.myapp.ralph
   clawker container kill -s SIGINT clawker.myapp.ralph`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runKill(f, opts, args)

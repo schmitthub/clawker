@@ -25,6 +25,9 @@ Container names can be:
   - Container ID: abc123...`,
 		Example: `  # Rename a container
   clawker container rename clawker.myapp.ralph clawker.myapp.newname`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, args[0], args[1])

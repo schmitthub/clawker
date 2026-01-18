@@ -52,6 +52,9 @@ Local path format: PATH`,
 
   # Stream tar from container to stdout
   clawker container cp clawker.myapp.ralph:/app - > backup.tar`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args[0], args[1])

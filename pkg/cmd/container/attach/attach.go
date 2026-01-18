@@ -45,6 +45,9 @@ Container name can be:
 
   # Attach with custom detach keys
   clawker container attach --detach-keys="ctrl-c" clawker.myapp.ralph`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args[0])

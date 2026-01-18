@@ -1,12 +1,45 @@
 package cmdutil
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/spf13/cobra"
 )
+
+// AnnotationRequiresProject is the annotation key for commands that require project context.
+const AnnotationRequiresProject = "clawker.requiresProject"
+
+// ErrAborted is returned when user cancels an operation.
+var ErrAborted = errors.New("operation aborted by user")
+
+// CommandRequiresProject checks if a command has the requiresProject annotation.
+func CommandRequiresProject(cmd *cobra.Command) bool {
+	return cmd.Annotations[AnnotationRequiresProject] == "true"
+}
+
+// CheckProjectContext verifies we're in a project directory or prompts for confirmation.
+// Returns nil to proceed, or ErrAborted if user declines.
+func CheckProjectContext(cmd *cobra.Command, f *Factory) error {
+	settings, err := f.Settings()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to load settings for project context check")
+	}
+	projectRoot := FindProjectRoot(f.WorkDir, settings)
+
+	if projectRoot == "" {
+		if !ConfirmExternalProjectOperation(cmd.InOrStdin(), f.WorkDir, cmd.Name()) {
+			return ErrAborted
+		}
+	}
+	return nil
+}
 
 // IsProjectDir checks if dir contains clawker.yaml or is a registered project.
 // If settings is nil, only checks for clawker.yaml file presence.
@@ -96,4 +129,17 @@ func IsChildOfProject(dir string, settings *config.Settings) string {
 	}
 
 	return ""
+}
+
+// ConfirmExternalProjectOperation prompts user to confirm operation outside project.
+// Returns true if user confirms, false otherwise.
+// On decline, prints "Aborted." and guidance to stderr.
+func ConfirmExternalProjectOperation(in io.Reader, projectPath, operation string) bool {
+	message := fmt.Sprintf("You are running %s in '%s', which is outside of a project directory.\nDo you want to continue?", operation, projectPath)
+	if !PromptForConfirmation(in, message) {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		PrintNextSteps("Run 'clawker init' in the project root to initialize a new project")
+		return false
+	}
+	return true
 }

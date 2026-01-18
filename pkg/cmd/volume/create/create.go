@@ -40,6 +40,9 @@ The volume will be labeled as a clawker-managed resource.`,
 
   # Create a volume with labels
   clawker volume create --label env=test --label project=myapp myvolume`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string

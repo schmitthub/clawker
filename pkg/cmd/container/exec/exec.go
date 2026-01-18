@@ -65,6 +65,9 @@ Container name can be:
 
   # Run in a specific directory
   clawker container exec -w /tmp clawker.myapp.ralph pwd`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			agentFlag, _ := cmd.Flags().GetString("agent")
 			if agentFlag != "" {

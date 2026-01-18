@@ -79,8 +79,11 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 
   # Create an interactive container with TTY
   clawker container create -it --agent shell alpine sh`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.Image = args[0]
 			}
@@ -127,10 +130,12 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	// Load user settings for defaults
+	// Load settings for image resolution
 	settings, err := f.Settings()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
+	}
+	if settings == nil {
 		settings = config.DefaultSettings()
 	}
 

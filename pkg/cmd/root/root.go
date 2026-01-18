@@ -1,6 +1,7 @@
 package root
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -61,6 +62,19 @@ Workspace modes:
 				Str("build-output-dir", f.BuildOutputDir).
 				Bool("debug", f.Debug).
 				Msg("clawker starting")
+
+			// Check project context for commands that require it
+			if cmdutil.CommandRequiresProject(cmd) {
+				if err := cmdutil.CheckProjectContext(cmd, f); err != nil {
+					if errors.Is(err, cmdutil.ErrAborted) {
+						// User declined - silence Cobra's error output but return error
+						// for non-zero exit code (operation was not completed)
+						cmd.SilenceErrors = true
+						return err
+					}
+					return err
+				}
+			}
 
 			return nil
 		},

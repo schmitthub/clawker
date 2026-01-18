@@ -38,6 +38,9 @@ Note: Only clawker-managed volumes can be removed with this command.`,
 
   # Force remove a volume
   clawker volume remove --force clawker.myapp.ralph-workspace`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)

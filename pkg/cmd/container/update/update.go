@@ -53,6 +53,9 @@ Container names can be:
 
   # Update multiple containers
   clawker container update --memory 256m container1 container2`,
+		Annotations: map[string]string{
+			cmdutil.AnnotationRequiresProject: "true",
+		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)
