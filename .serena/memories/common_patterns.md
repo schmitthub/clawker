@@ -152,26 +152,77 @@ containerMgr := engine.NewContainerManager(eng)
 containerID, _ := containerMgr.Create(ctx, containerCfg)  // Pass ctx
 ```
 
-## Workspace Strategy Pattern
+## Workspace Strategy Pattern (Used in container run/create)
 
-**Pass `ctx` to Prepare and EnsureConfigVolumes:**
+**Container commands use workspace mounts automatically:**
 
 ```go
-// Setup workspace (bind or snapshot mode)
-wsConfig := workspace.Config{
-    HostPath:       workDir,
-    RemotePath:     cfg.Workspace.RemotePath,
-    ProjectName:    cfg.Project,
-    AgentName:      agentName,  // Required for volume naming
-    IgnorePatterns: ignorePatterns,
-}
-strategy, _ := workspace.NewStrategy(mode, wsConfig)
-strategy.Prepare(ctx, eng)  // ctx passed through
-mounts := strategy.GetMounts()
+// In run() function after resolving containerName:
 
-// Ensure config volumes exist
-workspace.EnsureConfigVolumes(ctx, eng, cfg.Project, agentName)  // Pass ctx
+// Setup workspace mounts
+var workspaceMounts []mount.Mount
+
+// Get host path (current working directory)
+hostPath, err := os.Getwd()
+if err != nil {
+    return fmt.Errorf("failed to get working directory: %w", err)
+}
+
+// Determine workspace mode (CLI flag overrides config default)
+modeStr := opts.Mode
+if modeStr == "" {
+    modeStr = cfg.Workspace.DefaultMode
+}
+
+mode, err := config.ParseMode(modeStr)
+if err != nil {
+    cmdutil.PrintError("Invalid workspace mode: %v", err)
+    return err
+}
+
+// Create workspace strategy
+wsCfg := workspace.Config{
+    HostPath:    hostPath,
+    RemotePath:  cfg.Workspace.RemotePath,
+    ProjectName: cfg.Project,
+    AgentName:   agent,
+}
+
+strategy, err := workspace.NewStrategy(mode, wsCfg)
+if err != nil {
+    return err
+}
+
+// Prepare workspace resources (important for snapshot mode)
+if err := strategy.Prepare(ctx, client); err != nil {
+    cmdutil.PrintError("Failed to prepare workspace: %v", err)
+    return err
+}
+
+// Get workspace mount
+workspaceMounts = append(workspaceMounts, strategy.GetMounts()...)
+
+// Ensure and get config volumes
+if err := workspace.EnsureConfigVolumes(ctx, client, cfg.Project, agent); err != nil {
+    cmdutil.PrintError("Failed to create config volumes: %v", err)
+    return err
+}
+workspaceMounts = append(workspaceMounts, workspace.GetConfigVolumeMounts(cfg.Project, agent)...)
+
+// Add docker socket mount if enabled
+if cfg.Security.DockerSocket {
+    workspaceMounts = append(workspaceMounts, workspace.GetDockerSocketMount())
+}
+
+// Pass mounts to buildConfigs
+containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)
 ```
+
+**Key points:**
+- `--mode` flag overrides `workspace.default_mode` from config
+- Default is "bind" mode if not specified
+- Config volumes (claude config and history) always created
+- buildConfigs() accepts mounts parameter: `func buildConfigs(opts *Options, mounts []mount.Mount)`
 
 ## Exit Code Handling Pattern
 

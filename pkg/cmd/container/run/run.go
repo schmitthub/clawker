@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/mount"
 	dockerclient "github.com/moby/moby/client"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -18,6 +19,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
@@ -43,7 +45,8 @@ type Options struct {
 	AutoRemove bool     // Auto-remove on exit
 
 	// Run-specific options
-	Detach bool // Run in background
+	Detach bool   // Run in background
+	Mode   string // Workspace mode: "bind" or "snapshot" (empty = use config default)
 
 	// Internal (set after parsing positional args)
 	Image   string
@@ -126,6 +129,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background and print container ID")
+	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
 
 	cmd.MarkFlagsMutuallyExclusive("agent", "name")
 
@@ -189,8 +193,68 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		containerName = docker.ContainerName(cfg.Project, agent)
 	}
 
+	// Setup workspace mounts
+	var workspaceMounts []mount.Mount
+
+	// Get host path (current working directory)
+	hostPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Determine workspace mode (CLI flag overrides config default)
+	modeStr := opts.Mode
+	if modeStr == "" {
+		modeStr = cfg.Workspace.DefaultMode
+	}
+
+	mode, err := config.ParseMode(modeStr)
+	if err != nil {
+		cmdutil.PrintError("Invalid workspace mode: %v", err)
+		return err
+	}
+
+	// Create workspace strategy
+	wsCfg := workspace.Config{
+		HostPath:   hostPath,
+		RemotePath: cfg.Workspace.RemotePath,
+		ProjectName: cfg.Project,
+		AgentName:  agent,
+	}
+
+	strategy, err := workspace.NewStrategy(mode, wsCfg)
+	if err != nil {
+		return err
+	}
+
+	logger.Debug().
+		Str("mode", string(mode)).
+		Str("strategy", strategy.Name()).
+		Msg("using workspace strategy")
+
+	// Prepare workspace resources (important for snapshot mode)
+	if err := strategy.Prepare(ctx, client); err != nil {
+		cmdutil.PrintError("Failed to prepare workspace: %v", err)
+		return err
+	}
+
+	// Get workspace mount
+	workspaceMounts = append(workspaceMounts, strategy.GetMounts()...)
+
+	// Ensure and get config volumes
+	if err := workspace.EnsureConfigVolumes(ctx, client, cfg.Project, agent); err != nil {
+		cmdutil.PrintError("Failed to create config volumes: %v", err)
+		return err
+	}
+	workspaceMounts = append(workspaceMounts, workspace.GetConfigVolumeMounts(cfg.Project, agent)...)
+
+	// Add docker socket mount if enabled
+	if cfg.Security.DockerSocket {
+		workspaceMounts = append(workspaceMounts, workspace.GetDockerSocketMount())
+	}
+
 	// Build configs
-	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts)
+	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)
 	if err != nil {
 		cmdutil.PrintError("Invalid configuration: %v", err)
 		return err
@@ -344,7 +408,7 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 }
 
 // buildConfigs builds Docker container, host, and network configurations from options.
-func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+func buildConfigs(opts *Options, mounts []mount.Mount) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
 	// Container config
 	cfg := &container.Config{
 		Image:        opts.Image,
@@ -384,9 +448,10 @@ func buildConfigs(opts *Options) (*container.Config, *container.HostConfig, *net
 	// Host config
 	hostCfg := &container.HostConfig{
 		AutoRemove: opts.AutoRemove,
+		Mounts:     mounts,
 	}
 
-	// Parse volumes
+	// Parse user-provided volumes (via -v flag) as Binds
 	if len(opts.Volumes) > 0 {
 		hostCfg.Binds = opts.Volumes
 	}

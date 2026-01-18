@@ -171,6 +171,7 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 | `--file` | `-f` | Dockerfile path (in `build` commands) |
 | `--all` | `-a` | Include all resources |
 | `--agent` | | Agent name shortcut for container commands |
+| `--mode` | | Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy) |
 | `--debug` | | Enable debug logging |
 
 **Note:** The `-f` shorthand has different meanings depending on context:
@@ -242,6 +243,46 @@ When using `--agent` with `cp`, there are two path syntaxes:
 - `name:PATH` - resolves `name` as an agent (overrides `--agent` flag)
 
 This allows copying files from different agents in a single command while still benefiting from the agent name resolution.
+
+---
+
+## The `--mode` Flag
+
+The `container run` and `container create` commands support the `--mode` flag to control how the workspace is mounted into the container.
+
+**Available modes:**
+
+| Mode | Description |
+|------|-------------|
+| `bind` | Live sync - Host files are bind-mounted into the container. Changes in the container immediately affect the host filesystem. This is the default. |
+| `snapshot` | Isolated copy - A snapshot of the workspace is created as a Docker volume. Changes in the container do not affect the host filesystem. Use git to push/pull changes. |
+
+**Behavior:**
+
+- If `--mode` is not specified, the default from `workspace.default_mode` in `clawker.yaml` is used
+- If no config default is set, `bind` mode is used
+- The mode determines which workspace strategy is used for mounting files
+
+**Examples:**
+
+```bash
+# Run with bind mode (default - live sync)
+clawker container run -it --agent dev alpine sh
+
+# Run with snapshot mode (isolated copy)
+clawker container run -it --agent sandbox --mode=snapshot alpine sh
+
+# Create a container with snapshot mode
+clawker container create --agent test --mode=snapshot alpine
+```
+
+**Workspace mounts created:**
+
+Both modes automatically create the following mounts:
+- Workspace mount at `workspace.remote_path` (default: `/workspace`)
+- Config volume at `/home/claude/.claude`
+- History volume at `/commandhistory`
+- Docker socket mount (if `security.docker_socket: true`)
 
 ---
 
