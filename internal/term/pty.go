@@ -112,12 +112,17 @@ func (p *PTYHandler) StreamWithResize(
 	outputDone := make(chan struct{})
 	errCh := make(chan error, 2)
 
-	// Initial resize
+	// Initial resize and set up SIGWINCH monitoring
 	if p.rawMode.IsTerminal() {
 		width, height, err := p.rawMode.GetSize()
 		if err == nil && resizeFunc != nil {
 			resizeFunc(uint(height), uint(width))
 		}
+
+		// Start monitoring for window resize events (SIGWINCH)
+		resizeHandler := NewResizeHandler(resizeFunc, p.GetSize)
+		resizeHandler.Start()
+		defer resizeHandler.Stop()
 	}
 
 	// Copy container output to stdout
