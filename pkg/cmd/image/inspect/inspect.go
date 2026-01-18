@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -41,16 +40,15 @@ Outputs detailed image information in JSON format.`,
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, _ *Options, images []string) error {
+func run(f *cmdutil.Factory, _ *Options, images []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	var results []any
 	var errs []error

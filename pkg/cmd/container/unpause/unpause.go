@@ -61,12 +61,11 @@ func runUnpause(f *cmdutil.Factory, opts *Options, args []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	var errs []error
 	for _, name := range containers {

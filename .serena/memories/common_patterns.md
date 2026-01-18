@@ -49,17 +49,20 @@
 
 For commands that operate on containers. Use `internal/docker.Client` (wraps `pkg/whail.Engine`).
 
+**CRITICAL:** Always use `f.Client(ctx)` from the Factory. Never call `docker.NewClient(ctx)` directly.
+
 ```go
 func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
     ctx := context.Background()
     cfg, _ := f.Config()
     
-    // Use the new docker.Client
+    // ALWAYS use Factory's Client method
     client, err := f.Client(ctx)
     if err != nil {
+        cmdutil.HandleError(err)
         return err
     }
-    defer f.CloseClient()
+    // Do NOT call defer client.Close() - Factory manages lifecycle via CloseClient() in main
 
     var containerID string
     if opts.Agent != "" {
@@ -106,12 +109,13 @@ func NewCmdXxx(f *cmdutil.Factory) *cobra.Command {
         RunE: func(cmd *cobra.Command, args []string) error {
             ctx := context.Background()
             
-            // Create client directly (not from factory - management commands are standalone)
-            client, err := docker.NewClient(ctx)
+            // ALWAYS use Factory's Client method - never docker.NewClient directly
+            client, err := f.Client(ctx)
             if err != nil {
+                cmdutil.HandleError(err)
                 return err
             }
-            defer client.Close()
+            // Note: Do NOT call defer client.Close() - Factory manages client lifecycle
             
             for _, name := range args {
                 // Operations use whail methods via embedded Engine
@@ -127,6 +131,11 @@ func NewCmdXxx(f *cmdutil.Factory) *cobra.Command {
     return cmd
 }
 ```
+
+**IMPORTANT:** Never use `docker.NewClient(ctx)` directly in command files. Always use `f.Client(ctx)` from the Factory, which provides:
+- Lazy initialization with `sync.Once` caching
+- Consistent client lifecycle management
+- Centralized connection handling
 
 ## Creating Containers with Labels
 

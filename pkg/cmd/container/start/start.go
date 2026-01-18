@@ -68,12 +68,11 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Resolve container names
 	containerNames, err := cmdutil.ResolveContainerNames(f, opts.Agent, containers)

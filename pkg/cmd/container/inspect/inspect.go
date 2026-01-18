@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -72,12 +71,11 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 	}
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	var results []any
 	var errs []error

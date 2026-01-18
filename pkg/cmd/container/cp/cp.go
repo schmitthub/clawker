@@ -179,12 +179,11 @@ func run(f *cmdutil.Factory, opts *Options, src, dst string) error {
 	}
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	if srcIsContainer {
 		return copyFromContainer(ctx, client, srcContainer, srcPath, dstPath, opts)
