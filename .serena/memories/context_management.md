@@ -83,26 +83,31 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 
 ## CLI Command Pattern
 
+**CRITICAL:** Always use `f.Client(ctx)` from the Factory. Never call `docker.NewClient(ctx)` directly in command files.
+
 ```go
 func runCommand(f *cmdutil.Factory, opts *Options) error {
     ctx := context.Background()  // Or use term.SetupSignalContext for cancellation
-    
-    // Use docker.NewClient for clawker-specific operations
-    client, err := docker.NewClient(ctx)
+
+    // ALWAYS use Factory's Client method - never docker.NewClient directly
+    client, err := f.Client(ctx)
     if err != nil {
+        cmdutil.HandleError(err)
         return err
     }
-    defer client.Close()
-    
+    // Do NOT call defer client.Close() or defer f.CloseClient()
+    // Factory manages client lifecycle via CloseClient() in internal/clawker/cmd.go
+
     // Pass ctx to all client operations
     containers, err := client.ListContainers(ctx, true)
     client.ContainerStart(ctx, containerID)
-    
-    // Or use f.Client(ctx) for factory-managed client
-    client, err := f.Client(ctx)
-    defer f.CloseClient()
 }
 ```
+
+The Factory provides:
+- Lazy initialization with `sync.Once` caching (only one Docker connection per CLI invocation)
+- Centralized client lifecycle management
+- Consistent connection handling across all commands
 
 ## Cleanup Context Pattern
 
