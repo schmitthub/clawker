@@ -234,6 +234,10 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
     chmod 0440 /etc/sudoers.d/${USERNAME}-firewall
 {{end}}
 
+# Host proxy client for opening URLs on the host machine
+COPY host-open.sh /usr/local/bin/host-open
+RUN chmod +x /usr/local/bin/host-open
+
 # Switch to non-root user
 USER ${USERNAME}
 
@@ -242,6 +246,8 @@ ENV SHELL={{.Shell}}
 ENV EDITOR={{.Editor}}
 ENV VISUAL={{.Visual}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
+# Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
+ENV BROWSER=/usr/local/bin/host-open
 
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}

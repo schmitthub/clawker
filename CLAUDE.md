@@ -38,6 +38,7 @@
 │   ├── config/                # Viper config loading + validation
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── hostproxy/             # Host proxy server for container-to-host communication
 │   ├── monitor/               # Observability stack (Prometheus, Grafana)
 │   ├── term/                  # PTY/terminal handling
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -73,6 +74,7 @@ go test ./...                             # Run tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
+| `hostproxy.Manager` | Host proxy server for container-to-host actions (e.g., opening URLs) |
 
 See @.claude/docs/ARCHITECTURE.md for detailed abstractions.
 

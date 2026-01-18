@@ -152,8 +152,37 @@ security:
   enable_firewall: true
   # Docker socket access (disabled for security)
   docker_socket: false
+  # Host proxy for browser auth (enabled by default)
+  # enable_host_proxy: true
   # Allowed domains when firewall enabled
   # allowed_domains:
   #   - "api.github.com"
   #   - "registry.npmjs.org"
+```
+
+## Host Proxy
+
+Clawker runs a lightweight HTTP proxy on the host that enables containers to perform host-side actions, such as opening URLs in your browser. This is essential for Claude Code's subscription authentication flow.
+
+**How it works:**
+- When you run or start a container, clawker automatically starts a host proxy server on port 18374
+- The container receives the `CLAWKER_HOST_PROXY` environment variable pointing to the proxy
+- The `BROWSER` environment variable is set to `/usr/local/bin/host-open`, which calls the proxy
+- When Claude Code needs to open a URL for authentication, it uses the host browser
+
+**Disable host proxy:**
+
+If you don't need browser authentication (e.g., using API keys only), you can disable the host proxy:
+
+```yaml
+security:
+  enable_host_proxy: false
+```
+
+**Manual URL opening:**
+
+From inside a container, you can manually open URLs on the host:
+
+```bash
+host-open https://example.com
 ```

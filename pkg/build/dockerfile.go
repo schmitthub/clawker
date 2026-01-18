@@ -37,6 +37,9 @@ var StatuslineScript string
 //go:embed templates/claude-settings.json
 var SettingsFile string
 
+//go:embed templates/host-open.sh
+var HostOpenScript string
+
 // Default values for container configuration
 const (
 	DefaultClaudeCodeVersion = "latest"
@@ -310,6 +313,11 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 		if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
 			return nil, err
 		}
+	}
+
+	// Add host-open script for opening URLs on host machine
+	if err := addFileToTar(tw, "host-open.sh", []byte(HostOpenScript)); err != nil {
+		return nil, err
 	}
 
 	// Add any include files from agent config

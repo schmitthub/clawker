@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 )
 
 // Factory provides shared dependencies for CLI commands.
@@ -34,6 +35,9 @@ type Factory struct {
 	settingsLoader *config.SettingsLoader
 	settingsData   *config.Settings
 	settingsErr    error
+
+	hostProxyOnce    sync.Once
+	hostProxyManager *hostproxy.Manager
 }
 
 // New creates a new Factory with the given version information.
@@ -114,4 +118,37 @@ func (f *Factory) Settings() (*config.Settings, error) {
 func (f *Factory) InvalidateSettingsCache() {
 	f.settingsData = nil
 	f.settingsErr = nil
+}
+
+// HostProxy returns the host proxy manager (lazily initialized).
+// The manager handles the lifecycle of the host proxy server that allows
+// containers to perform actions on the host machine.
+func (f *Factory) HostProxy() *hostproxy.Manager {
+	f.hostProxyOnce.Do(func() {
+		f.hostProxyManager = hostproxy.NewManager()
+	})
+	return f.hostProxyManager
+}
+
+// EnsureHostProxy starts the host proxy server if it's not already running.
+// Returns an error if the server fails to start.
+func (f *Factory) EnsureHostProxy() error {
+	return f.HostProxy().EnsureRunning()
+}
+
+// StopHostProxy gracefully stops the host proxy server.
+func (f *Factory) StopHostProxy(ctx context.Context) error {
+	if f.hostProxyManager == nil {
+		return nil
+	}
+	return f.hostProxyManager.Stop(ctx)
+}
+
+// HostProxyEnvVar returns the environment variable string for containers
+// to connect to the host proxy, or empty string if proxy is not running.
+func (f *Factory) HostProxyEnvVar() string {
+	if f.hostProxyManager == nil || !f.hostProxyManager.IsRunning() {
+		return ""
+	}
+	return "CLAWKER_HOST_PROXY=" + f.hostProxyManager.ProxyURL()
 }

@@ -33,3 +33,7 @@
   - Label merging: user labels first, then clawker labels (clawker takes precedence)
   - Build args support KEY without value (nil pointer) for env passthrough
   - Deprecated flags: use MarkHidden + MarkDeprecated for backward compatibility
+  - Host proxy pattern: HTTP server on localhost, containers connect via host.docker.internal
+  - Host proxy enables container-to-host actions like opening URLs in browser
+  - Factory pattern for hostproxy: lazy init with sync.Once, EnsureRunning() before container commands
+  - BROWSER env var set to /usr/local/bin/host-open so CLI tools use host proxy automatically

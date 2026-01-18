@@ -77,6 +77,7 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 - `internal/credentials/` - .env parsing, EnvBuilder, OTEL injection
 - `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
 - `internal/term/` - PTY/terminal handling
+- `internal/hostproxy/` - Host proxy server for container-to-host communication (browser opening)
 - `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
 - `pkg/logger/` - Zerolog setup
 - `pkg/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client

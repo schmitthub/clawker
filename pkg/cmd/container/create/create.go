@@ -206,6 +206,18 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
+	// Start host proxy server for container-to-host communication (if enabled)
+	if cfg.Security.HostProxyEnabled() {
+		if err := f.EnsureHostProxy(); err != nil {
+			logger.Debug().Err(err).Msg("failed to start host proxy server")
+		} else {
+			// Inject host proxy URL into container environment
+			if envVar := f.HostProxyEnvVar(); envVar != "" {
+				opts.Env = append(opts.Env, envVar)
+			}
+		}
+	}
+
 	// Build configs
 	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)
 	if err != nil {
