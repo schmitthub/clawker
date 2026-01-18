@@ -18,17 +18,16 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	File       string   // -f, --file (Dockerfile path)
-	Tags       []string // -t, --tag (multiple allowed)
-	NoCache    bool     // --no-cache
-	Pull       bool     // --pull
-	BuildArgs  []string // --build-arg KEY=VALUE
-	Labels     []string // --label KEY=VALUE (user labels)
-	Target     string   // --target
-	Quiet      bool     // -q, --quiet
-	Progress   string   // --progress (output formatting)
-	Network    string   // --network
-	Dockerfile string   // --dockerfile (deprecated, hidden)
+	File      string   // -f, --file (Dockerfile path)
+	Tags      []string // -t, --tag (multiple allowed)
+	NoCache   bool     // --no-cache
+	Pull      bool     // --pull
+	BuildArgs []string // --build-arg KEY=VALUE
+	Labels    []string // --label KEY=VALUE (user labels)
+	Target    string   // --target
+	Quiet     bool     // -q, --quiet
+	Progress  string   // --progress (output formatting)
+	Network   string   // --network
 }
 
 // NewCmd creates the image build command.
@@ -86,11 +85,6 @@ Build-time variables can be passed using --build-arg.`,
 	cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
 
-	// Deprecated flag for backward compatibility
-	cmd.Flags().StringVar(&opts.Dockerfile, "dockerfile", "", "Path to custom Dockerfile (deprecated: use -f/--file)")
-	_ = cmd.Flags().MarkHidden("dockerfile")
-	_ = cmd.Flags().MarkDeprecated("dockerfile", "use -f/--file instead")
-
 	return cmd
 }
 
@@ -120,13 +114,9 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		return err
 	}
 
-	// Handle Dockerfile path (prefer -f/--file, fall back to deprecated --dockerfile)
-	dockerfilePath := opts.File
-	if dockerfilePath == "" && opts.Dockerfile != "" {
-		dockerfilePath = opts.Dockerfile
-	}
-	if dockerfilePath != "" {
-		cfg.Build.Dockerfile = dockerfilePath
+	// Handle Dockerfile path from -f/--file flag
+	if opts.File != "" {
+		cfg.Build.Dockerfile = opts.File
 	}
 
 	logger.Debug().

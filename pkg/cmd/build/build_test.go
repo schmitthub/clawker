@@ -43,7 +43,6 @@ func TestNewCmdBuild_HasSameFlagsAsImageBuild(t *testing.T) {
 		{"quiet", "q"},
 		{"progress", ""},
 		{"network", ""},
-		{"dockerfile", ""}, // deprecated but should still exist
 	}
 
 	for _, fl := range expectedFlags {

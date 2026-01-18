@@ -38,7 +38,6 @@ func TestCmd_Flags(t *testing.T) {
 		{"quiet flag", "quiet", "q", "false"},
 		{"progress flag", "progress", "", "auto"},
 		{"network flag", "network", "", ""},
-		{"deprecated dockerfile flag", "dockerfile", "", ""},
 	}
 
 	f := &cmdutil.Factory{}
@@ -58,16 +57,6 @@ func TestCmd_Flags(t *testing.T) {
 				"flag --%s should have default value %q", tt.flag, tt.defValue)
 		})
 	}
-}
-
-func TestCmd_DeprecatedDockerfileFlag(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
-
-	// Dockerfile flag should be hidden (deprecated)
-	flag := cmd.Flags().Lookup("dockerfile")
-	require.NotNil(t, flag)
-	require.True(t, flag.Hidden, "deprecated --dockerfile flag should be hidden")
 }
 
 func TestParseBuildArgs(t *testing.T) {
@@ -286,10 +275,6 @@ func TestCmd_FlagParsing(t *testing.T) {
 			args: []string{"--network", "host"},
 		},
 		{
-			name: "deprecated dockerfile flag",
-			args: []string{"--dockerfile", "Dockerfile.old"},
-		},
-		{
 			name: "combined flags",
 			args: []string{"-f", "Dockerfile", "-t", "myapp:latest", "--no-cache", "--pull", "-q"},
 		},
@@ -416,13 +401,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 			},
 		},
 		{
-			name: "deprecated dockerfile value",
-			args: []string{"--dockerfile", "Dockerfile.old"},
-			verify: func(t *testing.T, opts *BuildOptions) {
-				require.Equal(t, "Dockerfile.old", opts.Dockerfile)
-			},
-		},
-		{
 			name: "combined flags preserve all values",
 			args: []string{"-f", "Custom.dockerfile", "-t", "app:v1", "-t", "app:latest", "--no-cache", "--pull", "-q", "--target", "prod"},
 			verify: func(t *testing.T, opts *BuildOptions) {
@@ -448,14 +426,13 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				// Get the opts pointer from command flags
 				opts := &BuildOptions{
-					File:       cmd.Flags().Lookup("file").Value.String(),
-					NoCache:    cmd.Flags().Lookup("no-cache").Value.String() == "true",
-					Pull:       cmd.Flags().Lookup("pull").Value.String() == "true",
-					Target:     cmd.Flags().Lookup("target").Value.String(),
-					Quiet:      cmd.Flags().Lookup("quiet").Value.String() == "true",
-					Progress:   cmd.Flags().Lookup("progress").Value.String(),
-					Network:    cmd.Flags().Lookup("network").Value.String(),
-					Dockerfile: cmd.Flags().Lookup("dockerfile").Value.String(),
+					File:     cmd.Flags().Lookup("file").Value.String(),
+					NoCache:  cmd.Flags().Lookup("no-cache").Value.String() == "true",
+					Pull:     cmd.Flags().Lookup("pull").Value.String() == "true",
+					Target:   cmd.Flags().Lookup("target").Value.String(),
+					Quiet:    cmd.Flags().Lookup("quiet").Value.String() == "true",
+					Progress: cmd.Flags().Lookup("progress").Value.String(),
+					Network:  cmd.Flags().Lookup("network").Value.String(),
 				}
 				// Handle StringArrayVar flags
 				if tagFlag := cmd.Flags().Lookup("tag"); tagFlag != nil {
@@ -490,76 +467,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 			require.NotNil(t, capturedOpts)
 
 			tt.verify(t, capturedOpts)
-		})
-	}
-}
-
-// TestCmd_DockerfileFallback verifies that -f/--file takes precedence over deprecated --dockerfile.
-func TestCmd_DockerfileFallback(t *testing.T) {
-	tests := []struct {
-		name           string
-		args           []string
-		expectFile     string
-		expectDeprecated string
-	}{
-		{
-			name:           "only -f flag",
-			args:           []string{"-f", "Dockerfile.new"},
-			expectFile:     "Dockerfile.new",
-			expectDeprecated: "",
-		},
-		{
-			name:           "only --dockerfile flag",
-			args:           []string{"--dockerfile", "Dockerfile.old"},
-			expectFile:     "",
-			expectDeprecated: "Dockerfile.old",
-		},
-		{
-			name:           "-f takes precedence over --dockerfile",
-			args:           []string{"-f", "Dockerfile.new", "--dockerfile", "Dockerfile.old"},
-			expectFile:     "Dockerfile.new",
-			expectDeprecated: "Dockerfile.old",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-			cmd := NewCmd(f)
-
-			var fileVal, dockerfileVal string
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				fileVal = cmd.Flags().Lookup("file").Value.String()
-				dockerfileVal = cmd.Flags().Lookup("dockerfile").Value.String()
-				return nil
-			}
-
-			cmd.Flags().BoolP("help", "x", false, "")
-			cmd.SetArgs(tt.args)
-			cmd.SetIn(&bytes.Buffer{})
-			cmd.SetOut(&bytes.Buffer{})
-			cmd.SetErr(&bytes.Buffer{})
-
-			_, err := cmd.ExecuteC()
-			require.NoError(t, err)
-
-			require.Equal(t, tt.expectFile, fileVal, "file flag value mismatch")
-			require.Equal(t, tt.expectDeprecated, dockerfileVal, "dockerfile flag value mismatch")
-
-			// Verify the fallback logic would work correctly:
-			// In runBuild: dockerfilePath := opts.File; if dockerfilePath == "" && opts.Dockerfile != "" { dockerfilePath = opts.Dockerfile }
-			effectivePath := fileVal
-			if effectivePath == "" && dockerfileVal != "" {
-				effectivePath = dockerfileVal
-			}
-
-			if tt.name == "only -f flag" {
-				require.Equal(t, "Dockerfile.new", effectivePath)
-			} else if tt.name == "only --dockerfile flag" {
-				require.Equal(t, "Dockerfile.old", effectivePath)
-			} else if tt.name == "-f takes precedence over --dockerfile" {
-				require.Equal(t, "Dockerfile.new", effectivePath, "-f should take precedence")
-			}
 		})
 	}
 }

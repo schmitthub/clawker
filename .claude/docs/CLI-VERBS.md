@@ -29,7 +29,6 @@ clawker build [flags]
 | `--quiet` | `-q` | bool | false | Suppress the build output |
 | `--progress` | | string | auto | Set type of progress output (currently only `none` suppresses output; `auto`, `plain`, `tty` produce default output) |
 | `--network` | | string | | Set the networking mode for the RUN instructions during build |
-| `--dockerfile` | | string | | (deprecated) Path to custom Dockerfile - use -f/--file instead |
 
 **Examples:**
 ```bash
