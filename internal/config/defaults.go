@@ -68,6 +68,19 @@ security:
   #   - "registry.npmjs.org"
 `
 
+// DefaultSettingsYAML returns the default settings template for new users
+const DefaultSettingsYAML = `# Clawker User Settings
+# Documentation: https://github.com/schmitthub/clawker
+
+# Project defaults (merged with local clawker.yaml, local takes precedence)
+project:
+  # Default image to use when not specified in project config or CLI
+  # default_image: "node:20-slim"
+
+# Project directories (managed by 'clawker init')
+projects: []
+`
+
 // DefaultIgnoreFile returns the default .clawkerignore content
 const DefaultIgnoreFile = `# Clawker Ignore File
 # Files matching these patterns will not be copied in snapshot mode

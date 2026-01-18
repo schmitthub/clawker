@@ -46,7 +46,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
+		Use:   "create [OPTIONS] [IMAGE] [COMMAND] [ARG...]",
 		Short: "Create a new container",
 		Long: `Create a new clawker container from the specified image.
 
@@ -54,9 +54,17 @@ The container is created but not started. Use 'clawker container start' to start
 Container names follow clawker conventions: clawker.project.agent
 
 When --agent is provided, the container is named clawker.<project>.<agent> where
-project comes from clawker.yaml. When --name is provided, it overrides this.`,
+project comes from clawker.yaml. When --name is provided, it overrides this.
+
+If IMAGE is not specified, clawker will use (in order of precedence):
+1. default_image from clawker.yaml
+2. default_image from user settings (~/.local/clawker/settings.yaml)
+3. The project's built image with :latest tag`,
 		Example: `  # Create a container with a specific agent name
   clawker container create --agent myagent alpine
+
+  # Create a container using default image from config
+  clawker container create --agent myagent
 
   # Create a container with a command
   clawker container create --agent worker alpine echo "hello world"
@@ -69,9 +77,11 @@ project comes from clawker.yaml. When --name is provided, it overrides this.`,
 
   # Create an interactive container with TTY
   clawker container create -it --agent shell alpine sh`,
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Image = args[0]
+			if len(args) > 0 {
+				opts.Image = args[0]
+			}
 			if len(args) > 1 {
 				opts.Command = args[1:]
 			}
@@ -115,6 +125,9 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
+	// Load user settings for defaults
+	settings, _ := f.Settings() // Ignore error, settings are optional
+
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)
 	if err != nil {
@@ -122,6 +135,24 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 	defer client.Close()
+
+	// Resolve image if not explicitly provided
+	image, err := cmdutil.ResolveImage(ctx, client, cfg, settings, opts.Image)
+	if err != nil {
+		cmdutil.PrintError("Failed to resolve image: %v", err)
+		return err
+	}
+	if image == "" {
+		cmdutil.PrintError("No image specified and no default image configured")
+		cmdutil.PrintNextSteps(
+			"Specify an image: clawker container create --agent myagent IMAGE",
+			"Set default_image in clawker.yaml",
+			"Set default_image in ~/.local/clawker/settings.yaml",
+			"Build a project image: clawker build",
+		)
+		return fmt.Errorf("no image specified")
+	}
+	opts.Image = image
 
 	// Resolve container name
 	agent := opts.Agent

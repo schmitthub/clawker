@@ -8,8 +8,8 @@ import (
 const (
 	// ClawkerHomeEnv is the environment variable for the clawker home directory
 	ClawkerHomeEnv = "CLAWKER_HOME"
-	// DefaultClawkerDir is the default directory name under user home
-	DefaultClawkerDir = ".clawker"
+	// DefaultClawkerDir is the default directory path under user home
+	DefaultClawkerDir = ".local/clawker"
 	// MonitorSubdir is the subdirectory for monitoring stack configuration
 	MonitorSubdir = "monitor"
 	// BuildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
