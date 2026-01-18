@@ -5,7 +5,7 @@
 # forwards it to the local HTTP server (Claude Code's callback listener).
 #
 # Environment variables:
-#   CLAWKER_HOST_PROXY: Host proxy URL (required)
+#   CLAWKER_HOST_PROXY: Host proxy URL (default: http://host.docker.internal:18374)
 #   CALLBACK_SESSION: Session ID to poll for (required)
 #   CALLBACK_PORT: Local port to forward callback to (required)
 #
@@ -109,20 +109,25 @@ while [ $(date +%s) -lt $DEADLINE ]; do
     fi
 
     # Forward the callback
+    forward_success=true
     if [ -n "$body" ]; then
         forward_response=$(curl -sf -X "$method" "$local_url" -d "$body" 2>&1) || {
             echo "Error forwarding callback to $local_url" >&2
-            # Don't exit with error - callback was captured
+            forward_success=false
         }
     else
         forward_response=$(curl -sf -X "$method" "$local_url" 2>&1) || {
             echo "Error forwarding callback to $local_url" >&2
-            # Don't exit with error - callback was captured
+            forward_success=false
         }
     fi
 
     if [ "$VERBOSE" = true ]; then
-        echo "Callback forwarded successfully" >&2
+        if [ "$forward_success" = true ]; then
+            echo "Callback forwarded successfully" >&2
+        else
+            echo "Callback forward failed" >&2
+        fi
     fi
 
     # Cleanup session
@@ -130,7 +135,11 @@ while [ $(date +%s) -lt $DEADLINE ]; do
         curl -sf -X DELETE "$DELETE_URL" >/dev/null 2>&1 || true
     fi
 
-    exit 0
+    if [ "$forward_success" = true ]; then
+        exit 0
+    else
+        exit 1
+    fi
 done
 
 echo "Timeout waiting for OAuth callback" >&2

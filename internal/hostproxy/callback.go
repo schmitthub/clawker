@@ -1,10 +1,18 @@
 package hostproxy
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
+
+	"github.com/schmitthub/clawker/pkg/logger"
 )
+
+// ErrCallbackAlreadyReceived is returned when attempting to capture a callback
+// for a session that has already received one.
+var ErrCallbackAlreadyReceived = errors.New("callback already received")
 
 // CallbackSessionType is the session type identifier for callback sessions.
 const CallbackSessionType = "callback"
@@ -76,10 +84,9 @@ func (c *CallbackChannel) Capture(sessionID string, r *http.Request) error {
 		return fmt.Errorf("invalid session type: %s", session.Type)
 	}
 
-	// Check if already received
-	received, _ := session.GetMetadata(metadataReceived)
-	if received == true {
-		return fmt.Errorf("callback already received for session: %s", sessionID)
+	// Atomically check and set received flag to prevent race conditions
+	if !session.CaptureOnce(metadataReceived) {
+		return ErrCallbackAlreadyReceived
 	}
 
 	// Capture relevant headers (skip sensitive ones)
@@ -100,7 +107,10 @@ func (c *CallbackChannel) Capture(sessionID string, r *http.Request) error {
 	if r.Body != nil {
 		// Limit body read to 64KB for safety
 		bodyBytes := make([]byte, 64*1024)
-		n, _ := r.Body.Read(bodyBytes)
+		n, err := r.Body.Read(bodyBytes)
+		if err != nil && err != io.EOF {
+			logger.Debug().Err(err).Msg("error reading callback request body")
+		}
 		if n > 0 {
 			body = string(bodyBytes[:n])
 		}
@@ -115,7 +125,6 @@ func (c *CallbackChannel) Capture(sessionID string, r *http.Request) error {
 		ReceivedAt: time.Now(),
 	}
 
-	session.SetMetadata(metadataReceived, true)
 	session.SetMetadata(metadataData, data)
 
 	return nil

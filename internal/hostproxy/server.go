@@ -5,6 +5,7 @@ package hostproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -244,6 +245,7 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 
 	var req callbackRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Debug().Err(err).Msg("failed to decode callback register request")
 		s.writeJSON(w, http.StatusBadRequest, callbackRegisterResponse{
 			Success: false,
 			Error:   "invalid JSON request body",
@@ -375,17 +377,30 @@ func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
 
-		// Check what kind of error
+		// Distinguish between different error types
+		if errors.Is(err, ErrCallbackAlreadyReceived) {
+			// OAuth worked, this is just a duplicate request - show success
+			s.writeCallbackSuccessPage(w)
+			return
+		}
+
+		// Check if session doesn't exist
 		if s.sessionStore.Get(sessionID) == nil {
 			http.Error(w, "Session not found or expired", http.StatusNotFound)
 			return
 		}
 
-		// Session exists but callback already captured (single-use)
-		// Still return success to the browser since the OAuth flow succeeded
+		// Some other error - show error page
+		s.writeCallbackErrorPage(w, "An error occurred. Please try again.")
+		return
 	}
 
 	// Return a user-friendly HTML page indicating success
+	s.writeCallbackSuccessPage(w)
+}
+
+// writeCallbackSuccessPage writes an HTML success page for OAuth callbacks.
+func (s *Server) writeCallbackSuccessPage(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`<!DOCTYPE html>
@@ -422,6 +437,49 @@ func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
         <div class="checkmark">✓</div>
         <h1>Authentication Complete</h1>
         <p>You can close this tab and return to Claude Code.</p>
+    </div>
+</body>
+</html>`))
+}
+
+// writeCallbackErrorPage writes an HTML error page for OAuth callbacks.
+func (s *Server) writeCallbackErrorPage(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Error</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px 60px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        .error-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+        h1 { color: #333; margin: 0 0 8px 0; }
+        p { color: #666; margin: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-icon">✗</div>
+        <h1>Authentication Error</h1>
+        <p>` + message + `</p>
     </div>
 </body>
 </html>`))

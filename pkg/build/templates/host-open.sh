@@ -123,7 +123,7 @@ rewrite_oauth_url() {
     # Try both encoded and unencoded versions
     local new_url="$original_url"
     new_url=$(echo "$new_url" | sed "s|redirect_uri=$old_encoded|redirect_uri=$new_encoded|g")
-    new_url=$(echo "$new_url" | sed "s|redirect_uri=$(url_encode "$old_callback")|redirect_uri=$new_encoded|g")
+    new_url=$(echo "$new_url" | sed "s|redirect_uri=$old_callback|redirect_uri=$new_encoded|g")
 
     echo "$new_url"
 }
@@ -155,11 +155,17 @@ main() {
         local proxy_base=$(echo "$registered" | cut -d' ' -f2)
 
         if [ -z "$session_id" ]; then
-            # Registration failed, fall through to regular handling
-            # The user will see an error in the browser
-            echo "Warning: Failed to register OAuth callback proxy" >&2
-            open_url "$URL"
-            return $?
+            echo "Error: Failed to register OAuth callback session with host proxy" >&2
+            echo "" >&2
+            echo "The authentication callback cannot be intercepted." >&2
+            echo "Possible causes:" >&2
+            echo "  - Host proxy is not running" >&2
+            echo "  - Host proxy is unreachable from container" >&2
+            echo "" >&2
+            echo "Try:" >&2
+            echo "  1. Restart the container" >&2
+            echo "  2. Use API key authentication instead" >&2
+            exit 1
         fi
 
         # Build new callback URL pointing to proxy
@@ -172,6 +178,9 @@ main() {
         # Spawn callback-forwarder in background
         if command -v callback-forwarder >/dev/null 2>&1; then
             CALLBACK_SESSION="$session_id" CALLBACK_PORT="$port" callback-forwarder &
+        else
+            echo "Error: callback-forwarder not found in PATH" >&2
+            echo "OAuth callback will not be forwarded. Authentication may fail." >&2
         fi
 
         # Open the rewritten URL

@@ -42,6 +42,24 @@ func (s *Session) SetMetadata(key string, value any) {
 	s.Metadata[key] = value
 }
 
+// CaptureOnce atomically checks if capture happened and marks it if not.
+// Returns true if this call captured (was first), false if already captured.
+func (s *Session) CaptureOnce(receivedKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.Metadata == nil {
+		s.Metadata = make(map[string]any)
+	}
+
+	if val, ok := s.Metadata[receivedKey]; ok && val == true {
+		return false
+	}
+
+	s.Metadata[receivedKey] = true
+	return true
+}
+
 // IsExpired returns true if the session has passed its expiration time.
 func (s *Session) IsExpired() bool {
 	return time.Now().After(s.ExpiresAt)

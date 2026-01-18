@@ -70,7 +70,10 @@ func (m *Manager) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	return m.server.Stop(ctx)
+	server := m.server
+	m.server = nil // Clear reference before stopping
+
+	return server.Stop(ctx)
 }
 
 // IsRunning returns whether the host proxy server is running.
