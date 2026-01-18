@@ -6,7 +6,7 @@
 
 ## Quality issues
 
-[ ] Moby upgrade missed migrating `ContainerExec...` method wrappers to the new `Exec...` method.
+[ ] Moby upgrade missed migrating `ContainerExec...` method wrappers to the new `Exec...` method. I cleaned up most but make sure.
 [ ] the big migration to whail and docker clone resulted in some iffy tests due to legacy code conflicts. like setting the -d flag in exec. Its due to a global debug flag so we need to remove that and apply it locally to commands that should support it smh...
 [ ] pkg/cmd/run/run.go:75 The short flag -u is used by both run --user and remove --unused commands. While Cobra allows different subcommands to have the same short flags, this creates confusion for users and violates CLI consistency guidelines. Consider changing one of these short flags to avoid ambiguity. Recommendation: Use a different short flag for --unused (perhaps no short flag, or -U if uppercase is acceptable).
 [ ] pkg/cmd/remove/remove.go The --unused --all functionality should include testing for image removal (not just volumes), as documented
