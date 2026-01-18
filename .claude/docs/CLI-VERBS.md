@@ -207,7 +207,7 @@ When `--agent` is provided, the container name is resolved as `clawker.<project>
 | `top` | View processes by agent name |
 | `stats` | View stats by agent name |
 | `rename` | With --agent, only NEW_NAME is required |
-| `cp` | Use `:PATH` syntax instead of `CONTAINER:PATH` |
+| `cp` | `:PATH` uses --agent flag; `name:PATH` resolves name as agent |
 
 **Examples:**
 
@@ -221,8 +221,11 @@ clawker container stop --agent ralph
 # View logs
 clawker container logs --agent ralph --follow
 
-# Copy files (use :PATH with --agent)
+# Copy files: :PATH uses the --agent flag value
 clawker container cp --agent ralph :/app/config.json ./config.json
+
+# Copy files: name:PATH resolves name as agent (overrides --agent)
+clawker container cp --agent ralph writer:/app/output.txt ./output.txt
 
 # Rename (only NEW_NAME required with --agent)
 clawker container rename --agent ralph clawker.myproject.newname
@@ -231,6 +234,14 @@ clawker container rename --agent ralph clawker.myproject.newname
 **Mutual exclusivity:**
 
 The `--agent` flag and positional container arguments are mutually exclusive. You cannot use both together.
+
+**Special case for `cp` command:**
+
+When using `--agent` with `cp`, there are two path syntaxes:
+- `:PATH` - uses the agent from the `--agent` flag value
+- `name:PATH` - resolves `name` as an agent (overrides `--agent` flag)
+
+This allows copying files from different agents in a single command while still benefiting from the agent name resolution.
 
 ---
 

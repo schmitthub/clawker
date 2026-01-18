@@ -55,6 +55,21 @@ func TestNewCmd(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "accepts 2 arg(s), received 1",
 		},
+		{
+			name:     "agent flag with colon path",
+			input:    "--agent ralph :/app/file.txt ./file.txt",
+			wantOpts: Options{Agent: "ralph"},
+		},
+		{
+			name:     "agent flag with named container path",
+			input:    "--agent ralph writer:/app/file.txt ./file.txt",
+			wantOpts: Options{Agent: "ralph"},
+		},
+		{
+			name:     "agent flag with destination colon path",
+			input:    "--agent ralph ./file.txt :/app/file.txt",
+			wantOpts: Options{Agent: "ralph"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -67,6 +82,7 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
+				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Archive, _ = cmd.Flags().GetBool("archive")
 				cmdOpts.FollowLink, _ = cmd.Flags().GetBool("follow-link")
 				cmdOpts.CopyUIDGID, _ = cmd.Flags().GetBool("copy-uidgid")
@@ -92,6 +108,7 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.wantOpts.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.wantOpts.Archive, cmdOpts.Archive)
 			require.Equal(t, tt.wantOpts.FollowLink, cmdOpts.FollowLink)
 			require.Equal(t, tt.wantOpts.CopyUIDGID, cmdOpts.CopyUIDGID)
@@ -111,6 +128,7 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
+	require.NotNil(t, cmd.Flags().Lookup("agent"))
 	require.NotNil(t, cmd.Flags().Lookup("archive"))
 	require.NotNil(t, cmd.Flags().Lookup("follow-link"))
 	require.NotNil(t, cmd.Flags().Lookup("copy-uidgid"))
@@ -169,6 +187,20 @@ func TestParseContainerPath(t *testing.T) {
 			wantContainer:   "",
 			wantPath:        "-",
 			wantIsContainer: false,
+		},
+		{
+			name:            "colon path syntax for agent flag",
+			input:           ":/app/file.txt",
+			wantContainer:   "",
+			wantPath:        "/app/file.txt",
+			wantIsContainer: true,
+		},
+		{
+			name:            "colon path with root",
+			input:           ":/",
+			wantContainer:   "",
+			wantPath:        "/",
+			wantIsContainer: true,
 		},
 	}
 

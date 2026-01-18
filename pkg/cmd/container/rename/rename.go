@@ -73,9 +73,6 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 		containerName = containers[0]
 		newName = args[0]
 	} else {
-		if len(args) < 2 {
-			return fmt.Errorf("requires CONTAINER and NEW_NAME arguments")
-		}
 		containerName = args[0]
 		newName = args[1]
 	}

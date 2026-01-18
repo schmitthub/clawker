@@ -37,17 +37,23 @@ Use '-' as the destination to write a tar archive of the container source
 to stdout. Use '-' as the source to read a tar archive from stdin and
 extract it to a directory destination in a container.
 
-When --agent is provided, use :PATH syntax instead of CONTAINER:PATH.
-The agent name is resolved as clawker.<project>.<agent> using the project
+When --agent is provided:
+  - :PATH syntax uses the agent from the --agent flag value
+  - name:PATH syntax resolves 'name' as an agent (overrides --agent flag)
+
+Agent names are resolved as clawker.<project>.<agent> using the project
 from your clawker.yaml configuration.
 
-Container path format: CONTAINER:PATH (or :PATH with --agent)
+Container path format: CONTAINER:PATH (or :PATH / name:PATH with --agent)
 Local path format: PATH`,
-		Example: `  # Copy file from container using agent name
+		Example: `  # Copy file from container using agent name (:PATH uses --agent flag)
   clawker container cp --agent ralph :/app/config.json ./config.json
 
   # Copy file to container using agent name
   clawker container cp --agent ralph ./config.json :/app/config.json
+
+  # Copy from different agent (name:PATH overrides --agent flag)
+  clawker container cp --agent ralph writer:/app/output.txt ./output.txt
 
   # Copy file from container by full name
   clawker container cp clawker.myapp.ralph:/app/config.json ./config.json
@@ -103,37 +109,73 @@ func run(f *cmdutil.Factory, opts *Options, src, dst string) error {
 	srcContainer, srcPath, srcIsContainer := parseContainerPath(src)
 	dstContainer, dstPath, dstIsContainer := parseContainerPath(dst)
 
-	// If --agent is provided, resolve the agent name and apply it to paths starting with ":"
+	// If --agent is provided, resolve agent names for container paths
 	if opts.Agent != "" {
-		containerName, err := cmdutil.ResolveContainerName(f, opts.Agent)
-		if err != nil {
-			cmdutil.PrintError("Failed to resolve agent name: %v", err)
-			cmdutil.PrintNextSteps(
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return err
-		}
-
-		// Check for :PATH syntax (container path without container name)
+		// Handle source path: :PATH uses --agent, name:PATH resolves name as agent
 		if strings.HasPrefix(src, ":") {
+			// :PATH syntax - use --agent flag value
+			containerName, err := cmdutil.ResolveContainerName(f, opts.Agent)
+			if err != nil {
+				cmdutil.PrintError("Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(
+					"Run 'clawker init' to create a configuration",
+					"Or ensure you're in a directory with clawker.yaml",
+				)
+				return err
+			}
 			srcContainer = containerName
 			srcPath = src[1:] // Remove leading ":"
 			srcIsContainer = true
+		} else if srcIsContainer {
+			// name:PATH syntax - resolve name as agent (overrides --agent flag)
+			containerName, err := cmdutil.ResolveContainerName(f, srcContainer)
+			if err != nil {
+				cmdutil.PrintError("Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(
+					"Run 'clawker init' to create a configuration",
+					"Or ensure you're in a directory with clawker.yaml",
+				)
+				return err
+			}
+			srcContainer = containerName
 		}
+
+		// Handle destination path: :PATH uses --agent, name:PATH resolves name as agent
 		if strings.HasPrefix(dst, ":") {
+			// :PATH syntax - use --agent flag value
+			containerName, err := cmdutil.ResolveContainerName(f, opts.Agent)
+			if err != nil {
+				cmdutil.PrintError("Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(
+					"Run 'clawker init' to create a configuration",
+					"Or ensure you're in a directory with clawker.yaml",
+				)
+				return err
+			}
 			dstContainer = containerName
 			dstPath = dst[1:] // Remove leading ":"
 			dstIsContainer = true
+		} else if dstIsContainer {
+			// name:PATH syntax - resolve name as agent (overrides --agent flag)
+			containerName, err := cmdutil.ResolveContainerName(f, dstContainer)
+			if err != nil {
+				cmdutil.PrintError("Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(
+					"Run 'clawker init' to create a configuration",
+					"Or ensure you're in a directory with clawker.yaml",
+				)
+				return err
+			}
+			dstContainer = containerName
 		}
 	}
 
 	// Validate that exactly one of src/dst is a container path
 	if srcIsContainer && dstIsContainer {
-		return fmt.Errorf("copying between containers is not supported")
+		return fmt.Errorf("copying between containers is not supported (with --agent, use :PATH for one side)")
 	}
 	if !srcIsContainer && !dstIsContainer {
-		return fmt.Errorf("one of source or destination must be a container path (CONTAINER:PATH)")
+		return fmt.Errorf("one of source or destination must be a container path (CONTAINER:PATH or :PATH with --agent)")
 	}
 
 	// Connect to Docker

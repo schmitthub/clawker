@@ -80,9 +80,6 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 		containerName = containers[0]
 		psArgs = args // All args are ps options
 	} else {
-		if len(args) == 0 {
-			return fmt.Errorf("container name required")
-		}
 		containerName = args[0]
 		psArgs = args[1:]
 	}
