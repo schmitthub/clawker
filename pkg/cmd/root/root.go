@@ -67,7 +67,10 @@ Workspace modes:
 			if cmdutil.CommandRequiresProject(cmd) {
 				if err := cmdutil.CheckProjectContext(cmd, f); err != nil {
 					if errors.Is(err, cmdutil.ErrAborted) {
-						return nil // Silent exit, message already printed
+						// User declined - silence Cobra's error output but return error
+						// for non-zero exit code (operation was not completed)
+						cmd.SilenceErrors = true
+						return err
 					}
 					return err
 				}
