@@ -318,7 +318,7 @@ clawker run -it --rm -e FOO=bar alpine sh -c "echo hello"
 When using `--agent` without specifying an IMAGE (relying on defaults), you must use `--` to stop flag parsing:
 
 ```bash
-# Without --, this fails (clawker tries to parse --allow-dangerously-skip-permissions)
+# Without --, fails with "unknown flag: --allow-dangerously-skip-permissions"
 clawker run -it --rm --agent ralph --allow-dangerously-skip-permissions  # ERROR
 
 # Use -- to stop clawker flag parsing

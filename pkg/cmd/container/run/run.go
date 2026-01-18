@@ -100,8 +100,10 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				// If first arg starts with "-", it's a flag for the container command,
-				// not an image name. This allows: clawker run --agent x -- --flag
+				// Determine if first arg is an image name or a container command/flag.
+				// - With IMAGE: clawker run alpine --version (args[0]="alpine", args[1:]="--version")
+				// - With -- separator: clawker run --agent x -- --flag (args[0]="--flag", starts with "-")
+				// When args[0] starts with "-", treat all args as container command; resolve image from defaults.
 				if strings.HasPrefix(args[0], "-") {
 					opts.Command = args
 				} else {

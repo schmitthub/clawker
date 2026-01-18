@@ -169,6 +169,18 @@ func TestNewCmdCreate(t *testing.T) {
 			args:   []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
 			output: Options{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
 		},
+		{
+			name:   "arg starting with dash treated as command after -- separator",
+			input:  "-it --rm --",
+			args:   []string{"-unusual-image:v1"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Command: []string{"-unusual-image:v1"}},
+		},
+		{
+			name:   "multiple flag-value pairs after image",
+			input:  "-it --rm",
+			args:   []string{"alpine", "--flag1", "value1", "--flag2", "value2"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--flag1", "value1", "--flag2", "value2"}},
+		},
 	}
 
 	for _, tt := range tests {
