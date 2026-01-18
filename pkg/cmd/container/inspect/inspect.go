@@ -13,6 +13,7 @@ import (
 
 // InspectOptions holds options for the inspect command.
 type InspectOptions struct {
+	Agent  string
 	Format string
 	Size   bool
 }
@@ -22,40 +23,53 @@ func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
 	opts := &InspectOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "inspect CONTAINER [CONTAINER...]",
+		Use:   "inspect [CONTAINER...]",
 		Short: "Display detailed information on one or more containers",
 		Long: `Returns low-level information about clawker containers.
 
 By default, outputs JSON. Use --format to extract specific fields.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Inspect a container
+		Example: `  # Inspect a container using agent name
+  clawker container inspect --agent ralph
+
+  # Inspect a container by full name
   clawker container inspect clawker.myapp.ralph
 
   # Inspect multiple containers
   clawker container inspect clawker.myapp.ralph clawker.myapp.writer
 
   # Get specific field using Go template
-  clawker container inspect --format '{{.State.Status}}' clawker.myapp.ralph
+  clawker container inspect --format '{{.State.Status}}' --agent ralph
 
   # Get container IP address
-  clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' clawker.myapp.ralph`,
-		Args: cobra.MinimumNArgs(1),
+  clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent ralph`,
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInspect(f, opts, args)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "", "Format output using a Go template")
 	cmd.Flags().BoolVarP(&opts.Size, "size", "s", false, "Display total file sizes")
 
 	return cmd
 }
 
-func runInspect(_ *cmdutil.Factory, opts *InspectOptions, containers []string) error {
+func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 	ctx := context.Background()
+
+	// Resolve container names
+	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
+	if err != nil {
+		return err
+	}
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)

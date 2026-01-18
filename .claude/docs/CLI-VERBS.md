@@ -170,11 +170,78 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 | `--force` | `-f` | Force operation (in `remove`, `prune` commands) |
 | `--file` | `-f` | Dockerfile path (in `build` commands) |
 | `--all` | `-a` | Include all resources |
+| `--agent` | | Agent name shortcut for container commands |
 | `--debug` | | Enable debug logging |
 
 **Note:** The `-f` shorthand has different meanings depending on context:
 - In build commands: `-f` means `--file` (Dockerfile path) - matches Docker CLI convention
 - In remove/prune commands: `-f` means `--force`
+
+---
+
+## The `--agent` Flag
+
+Most container commands support the `--agent` flag as a convenient shortcut for specifying containers by agent name instead of the full container name.
+
+**How it works:**
+
+When `--agent` is provided, the container name is resolved as `clawker.<project>.<agent>` using the project name from your `clawker.yaml` configuration.
+
+**Supported commands:**
+
+| Command | Notes |
+|---------|-------|
+| `start` | Start container by agent name |
+| `stop` | Stop container by agent name |
+| `kill` | Kill container by agent name |
+| `restart` | Restart container by agent name |
+| `logs` | View logs by agent name |
+| `exec` | Execute command in container by agent name |
+| `attach` | Attach to container by agent name |
+| `inspect` | Inspect container by agent name |
+| `pause` | Pause container by agent name |
+| `unpause` | Unpause container by agent name |
+| `remove` | Remove container by agent name |
+| `wait` | Wait for container by agent name |
+| `update` | Update container by agent name |
+| `top` | View processes by agent name |
+| `stats` | View stats by agent name |
+| `rename` | With --agent, only NEW_NAME is required |
+| `cp` | `:PATH` uses --agent flag; `name:PATH` resolves name as agent |
+
+**Examples:**
+
+```bash
+# Instead of:
+clawker container stop clawker.myproject.ralph
+
+# You can use:
+clawker container stop --agent ralph
+
+# View logs
+clawker container logs --agent ralph --follow
+
+# Copy files: :PATH uses the --agent flag value
+clawker container cp --agent ralph :/app/config.json ./config.json
+
+# Copy files: name:PATH resolves name as agent (overrides --agent)
+clawker container cp --agent ralph writer:/app/output.txt ./output.txt
+
+# Rename (only NEW_NAME required with --agent)
+clawker container rename --agent ralph clawker.myproject.newname
+```
+
+**Mutual exclusivity:**
+
+The `--agent` flag and positional container arguments are mutually exclusive. You cannot use both together.
+
+**Special case for `cp` command:**
+
+When using `--agent` with `cp`, there are two path syntaxes:
+- `:PATH` - uses the agent from the `--agent` flag value
+- `name:PATH` - resolves `name` as an agent (overrides `--agent` flag)
+
+This allows copying files from different agents in a single command while still benefiting from the agent name resolution.
 
 ---
 

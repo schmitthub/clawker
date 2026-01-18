@@ -47,16 +47,7 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" && len(args) > 0 {
-				return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
-			}
-			if agentFlag == "" && len(args) == 0 {
-				return fmt.Errorf("requires at least 1 container argument or --agent flag")
-			}
-			return nil
-		},
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStart(f, opts, args)
 		},
@@ -89,28 +80,9 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 	defer client.Close()
 
 	// Resolve container names
-	var containerNames []string
-	if opts.Agent != "" {
-		// Load config for project name
-		cfg, err := f.Config()
-		if err != nil {
-			cmdutil.PrintError("Failed to load config: %v", err)
-			cmdutil.PrintNextSteps(
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return err
-		}
-		if cfg.Project == "" {
-			cmdutil.PrintError("Project name not configured in clawker.yaml")
-			cmdutil.PrintNextSteps(
-				"Add 'project: <name>' to your clawker.yaml",
-			)
-			return fmt.Errorf("project name not configured")
-		}
-		containerNames = []string{docker.ContainerName(cfg.Project, opts.Agent)}
-	} else {
-		containerNames = containers
+	containerNames, err := cmdutil.ResolveContainerNames(f, opts.Agent, containers)
+	if err != nil {
+		return err
 	}
 
 	var errs []error

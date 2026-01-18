@@ -18,6 +18,7 @@ import (
 
 // Options defines the options for the stats command.
 type Options struct {
+	Agent    string
 	NoStream bool
 	NoTrunc  bool
 }
@@ -33,11 +34,17 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 
 When no containers are specified, shows stats for all running clawker containers.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Show live stats for all running containers
   clawker container stats
+
+  # Show stats using agent name
+  clawker container stats --agent ralph
 
   # Show stats for specific containers
   clawker container stats clawker.myapp.ralph clawker.myapp.writer
@@ -46,20 +53,40 @@ Container names can be:
   clawker container stats --no-stream
 
   # Show stats once for a specific container
-  clawker container stats --no-stream clawker.myapp.ralph`,
+  clawker container stats --no-stream --agent ralph`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			agentFlag, _ := cmd.Flags().GetString("agent")
+			if agentFlag != "" && len(args) > 0 {
+				return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVar(&opts.NoStream, "no-stream", false, "Disable streaming stats and only pull the first result")
 	cmd.Flags().BoolVar(&opts.NoTrunc, "no-trunc", false, "Do not truncate output")
 
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, containers []string) error {
+func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	ctx := context.Background()
+
+	// Resolve container names if --agent provided
+	var containers []string
+	if opts.Agent != "" {
+		resolved, err := cmdutil.ResolveContainerNames(f, opts.Agent, nil)
+		if err != nil {
+			return err
+		}
+		containers = resolved
+	} else {
+		containers = args
+	}
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)

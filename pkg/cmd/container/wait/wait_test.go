@@ -29,7 +29,7 @@ func TestNewCmd(t *testing.T) {
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 arg(s), only received 0",
+			wantErrMsg: "requires at least 1 container argument or --agent flag",
 		},
 	}
 
@@ -75,7 +75,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "wait CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "wait [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

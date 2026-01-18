@@ -78,14 +78,14 @@ func TestNewCmdLogs(t *testing.T) {
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "accepts 1 arg(s), received 0",
+			wantErrMsg: "requires exactly 1 container argument or --agent flag",
 		},
 		{
 			name:       "too many containers",
 			input:      "",
 			args:       []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
 			wantErr:    true,
-			wantErrMsg: "accepts 1 arg(s), received 2",
+			wantErrMsg: "requires exactly 1 container argument or --agent flag",
 		},
 	}
 
@@ -145,7 +145,7 @@ func TestCmdLogs_Properties(t *testing.T) {
 	cmd := NewCmdLogs(f)
 
 	// Test command basics
-	require.Equal(t, "logs CONTAINER", cmd.Use)
+	require.Equal(t, "logs [CONTAINER]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

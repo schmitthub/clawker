@@ -48,7 +48,7 @@ func TestNewCmdKill(t *testing.T) {
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 arg(s), only received 0",
+			wantErrMsg: "requires at least 1 container argument or --agent flag",
 		},
 	}
 
@@ -98,7 +98,7 @@ func TestCmdKill_Properties(t *testing.T) {
 	cmd := NewCmdKill(f)
 
 	// Test command basics
-	require.Equal(t, "kill CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "kill [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

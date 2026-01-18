@@ -44,6 +44,22 @@ func TestNewCmd(t *testing.T) {
 			input:  "--no-stream container1 container2",
 			output: Options{NoStream: true, NoTrunc: false},
 		},
+		{
+			name:   "with agent flag",
+			input:  "--agent ralph",
+			output: Options{Agent: "ralph", NoStream: false, NoTrunc: false},
+		},
+		{
+			name:   "with agent and no-stream flags",
+			input:  "--agent ralph --no-stream",
+			output: Options{Agent: "ralph", NoStream: true, NoTrunc: false},
+		},
+		{
+			name:       "agent and container mutually exclusive",
+			input:      "--agent ralph container1",
+			wantErr:    true,
+			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
+		},
 	}
 
 	for _, tt := range tests {
@@ -56,6 +72,7 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
+				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.NoStream, _ = cmd.Flags().GetBool("no-stream")
 				cmdOpts.NoTrunc, _ = cmd.Flags().GetBool("no-trunc")
 				return nil
@@ -80,6 +97,7 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.NoStream, cmdOpts.NoStream)
 			require.Equal(t, tt.output.NoTrunc, cmdOpts.NoTrunc)
 		})

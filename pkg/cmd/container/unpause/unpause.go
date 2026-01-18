@@ -10,17 +10,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Options holds options for the unpause command.
+type Options struct {
+	Agent string
+}
+
 // NewCmdUnpause creates the container unpause command.
 func NewCmdUnpause(f *cmdutil.Factory) *cobra.Command {
+	opts := &Options{}
+
 	cmd := &cobra.Command{
-		Use:   "unpause CONTAINER [CONTAINER...]",
+		Use:   "unpause [CONTAINER...]",
 		Short: "Unpause all processes within one or more containers",
 		Long: `Unpauses all processes within one or more paused clawker containers.
+
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
 
 Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Unpause a container
+		Example: `  # Unpause a container using agent name
+  clawker container unpause --agent ralph
+
+  # Unpause a container by full name
   clawker container unpause clawker.myapp.ralph
 
   # Unpause multiple containers
@@ -28,16 +41,23 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cobra.MinimumNArgs(1),
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUnpause(f, args)
+			return runUnpause(f, opts, args)
 		},
 	}
+
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 
 	return cmd
 }
 
-func runUnpause(_ *cmdutil.Factory, containers []string) error {
+func runUnpause(f *cmdutil.Factory, opts *Options, args []string) error {
+	// Resolve container names
+	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Connect to Docker

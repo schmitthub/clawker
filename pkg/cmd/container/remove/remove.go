@@ -12,6 +12,7 @@ import (
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
+	Agent   string
 	Force   bool
 	Volumes bool
 }
@@ -21,7 +22,7 @@ func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 	opts := &RemoveOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "remove CONTAINER [CONTAINER...]",
+		Use:     "remove [CONTAINER...]",
 		Aliases: []string{"rm"},
 		Short:   "Remove one or more containers",
 		Long: `Removes one or more clawker containers.
@@ -29,37 +30,50 @@ func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 By default, only stopped containers can be removed. Use --force to remove
 running containers.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Remove a stopped container
+		Example: `  # Remove a container using agent name
+  clawker container remove --agent ralph
+
+  # Remove a stopped container by full name
   clawker container remove clawker.myapp.ralph
 
   # Remove multiple containers
   clawker container rm clawker.myapp.ralph clawker.myapp.writer
 
   # Force remove a running container
-  clawker container remove --force clawker.myapp.ralph
+  clawker container remove --force --agent ralph
 
   # Remove container and its volumes
-  clawker container remove --volumes clawker.myapp.ralph`,
+  clawker container remove --volumes --agent ralph`,
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cobra.MinimumNArgs(1),
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRemove(f, opts, args)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force remove running containers")
 	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove associated volumes")
 
 	return cmd
 }
 
-func runRemove(_ *cmdutil.Factory, opts *RemoveOptions, containers []string) error {
+func runRemove(f *cmdutil.Factory, opts *RemoveOptions, args []string) error {
 	ctx := context.Background()
+
+	// Resolve container names
+	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
+	if err != nil {
+		return err
+	}
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)

@@ -16,6 +16,7 @@ import (
 
 // Options defines the options for the update command.
 type Options struct {
+	Agent             string
 	CPUs              float64
 	CPUShares         int64
 	CPUsetCPUs        string
@@ -32,36 +33,43 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "update [OPTIONS] CONTAINER [CONTAINER...]",
+		Use:   "update [OPTIONS] [CONTAINER...]",
 		Short: "Update configuration of one or more containers",
 		Long: `Update configuration of one or more containers.
 
 This command updates the resource limits of containers that are already running
 or have been created but not yet started.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Update memory limit
+		Example: `  # Update memory limit using agent name
+  clawker container update --memory 512m --agent ralph
+
+  # Update memory limit by full name
   clawker container update --memory 512m clawker.myapp.ralph
 
   # Update CPU limit
-  clawker container update --cpus 2 clawker.myapp.ralph
+  clawker container update --cpus 2 --agent ralph
 
   # Update multiple resources
-  clawker container update --cpus 1.5 --memory 1g clawker.myapp.ralph
+  clawker container update --cpus 1.5 --memory 1g --agent ralph
 
   # Update multiple containers
   clawker container update --memory 256m container1 container2`,
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cobra.MinimumNArgs(1),
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().Float64Var(&opts.CPUs, "cpus", 0, "Number of CPUs")
 	cmd.Flags().Int64Var(&opts.CPUShares, "cpu-shares", 0, "CPU shares (relative weight)")
 	cmd.Flags().StringVar(&opts.CPUsetCPUs, "cpuset-cpus", "", "CPUs in which to allow execution (0-3, 0,1)")
@@ -75,8 +83,14 @@ Container names can be:
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, containers []string) error {
+func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	ctx := context.Background()
+
+	// Resolve container names
+	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
+	if err != nil {
+		return err
+	}
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)

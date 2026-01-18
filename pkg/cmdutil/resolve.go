@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/spf13/cobra"
 )
 
 // ResolveDefaultImage returns the default_image from merged config/settings.
@@ -94,4 +95,73 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 	}
 
 	return "", nil
+}
+
+// AgentArgsValidator creates a Cobra Args validator for commands with --agent flag.
+// When --agent is provided, no positional arguments are allowed (mutually exclusive).
+// When --agent is not provided, at least minArgs positional arguments are required.
+func AgentArgsValidator(minArgs int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		agentFlag, _ := cmd.Flags().GetString("agent")
+		if agentFlag != "" && len(args) > 0 {
+			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+		}
+		if agentFlag == "" && len(args) < minArgs {
+			if minArgs == 1 {
+				return fmt.Errorf("requires at least 1 container argument or --agent flag")
+			}
+			return fmt.Errorf("requires at least %d container arguments or --agent flag", minArgs)
+		}
+		return nil
+	}
+}
+
+// AgentArgsValidatorExact creates a Cobra Args validator for commands with --agent flag
+// that require exactly N positional arguments when --agent is not provided.
+func AgentArgsValidatorExact(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		agentFlag, _ := cmd.Flags().GetString("agent")
+		if agentFlag != "" && len(args) > 0 {
+			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+		}
+		if agentFlag == "" && len(args) != n {
+			if n == 1 {
+				return fmt.Errorf("requires exactly 1 container argument or --agent flag")
+			}
+			return fmt.Errorf("requires exactly %d container arguments or --agent flag", n)
+		}
+		return nil
+	}
+}
+
+// ResolveContainerName resolves an agent name to a full container name using the project config.
+// Returns the full container name in format: clawker.<project>.<agent>
+func ResolveContainerName(f *Factory, agentName string) (string, error) {
+	cfg, err := f.Config()
+	if err != nil {
+		return "", fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg.Project == "" {
+		return "", fmt.Errorf("project name not configured in clawker.yaml")
+	}
+	return docker.ContainerName(cfg.Project, agentName), nil
+}
+
+// ResolveContainerNames resolves container names based on --agent flag or positional args.
+// If agentName is provided, it returns a single-element slice with the resolved container name.
+// Otherwise, it returns the containerArgs as-is.
+func ResolveContainerNames(f *Factory, agentName string, containerArgs []string) ([]string, error) {
+	if agentName != "" {
+		containerName, err := ResolveContainerName(f, agentName)
+		if err != nil {
+			PrintError("Failed to resolve agent name: %v", err)
+			PrintNextSteps(
+				"Run 'clawker init' to create a configuration",
+				"Or ensure you're in a directory with clawker.yaml",
+			)
+			return nil, err
+		}
+		return []string{containerName}, nil
+	}
+	return containerArgs, nil
 }
