@@ -170,6 +170,19 @@ Clawker runs a lightweight HTTP proxy on the host that enables containers to per
 - The `BROWSER` environment variable is set to `/usr/local/bin/host-open`, which calls the proxy
 - When Claude Code needs to open a URL for authentication, it uses the host browser
 
+### OAuth Callback Proxy
+
+The host proxy includes automatic OAuth callback handling. When Claude Code starts an OAuth authentication flow:
+
+1. `host-open` detects the OAuth URL with a localhost callback
+2. It registers a callback session with the host proxy
+3. The callback URL is rewritten to point to the proxy instead of localhost
+4. The browser opens the rewritten OAuth URL
+5. After authentication, the browser redirects to the proxy
+6. The proxy captures the callback and `callback-forwarder` delivers it to Claude Code
+
+This allows OAuth flows to complete transparently, even though the container's localhost is different from the host's localhost.
+
 **Disable host proxy:**
 
 If you don't need browser authentication (e.g., using API keys only), you can disable the host proxy:

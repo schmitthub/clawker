@@ -236,7 +236,8 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 
 # Host proxy client for opening URLs on the host machine
 COPY host-open.sh /usr/local/bin/host-open
-RUN chmod +x /usr/local/bin/host-open
+COPY callback-forwarder.sh /usr/local/bin/callback-forwarder
+RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder
 
 # Switch to non-root user
 USER ${USERNAME}

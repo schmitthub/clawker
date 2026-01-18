@@ -40,6 +40,9 @@ var SettingsFile string
 //go:embed templates/host-open.sh
 var HostOpenScript string
 
+//go:embed templates/callback-forwarder.sh
+var CallbackForwarderScript string
+
 // Default values for container configuration
 const (
 	DefaultClaudeCodeVersion = "latest"
@@ -317,6 +320,11 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 
 	// Add host-open script for opening URLs on host machine
 	if err := addFileToTar(tw, "host-open.sh", []byte(HostOpenScript)); err != nil {
+		return nil, err
+	}
+
+	// Add callback-forwarder script for OAuth callback proxying
+	if err := addFileToTar(tw, "callback-forwarder.sh", []byte(CallbackForwarderScript)); err != nil {
 		return nil, err
 	}
 
