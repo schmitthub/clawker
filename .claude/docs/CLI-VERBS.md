@@ -23,11 +23,11 @@ clawker build [flags]
 | `--tag` | `-t` | stringArray | | Name and optionally a tag (format: name:tag) |
 | `--no-cache` | | bool | false | Do not use cache when building the image |
 | `--pull` | | bool | false | Always attempt to pull a newer version of the base image |
-| `--build-arg` | | stringArray | | Set build-time variables (format: KEY=VALUE) |
+| `--build-arg` | | stringArray | | Set build-time variables (format: KEY=VALUE or KEY to pass through from environment) |
 | `--label` | | stringArray | | Set metadata for the image (format: KEY=VALUE) |
 | `--target` | | string | | Set the target build stage to build |
 | `--quiet` | `-q` | bool | false | Suppress the build output |
-| `--progress` | | string | auto | Set type of progress output (auto, plain, tty, none) |
+| `--progress` | | string | auto | Set type of progress output (currently only `none` suppresses output; `auto`, `plain`, `tty` produce default output) |
 | `--network` | | string | | Set the networking mode for the RUN instructions during build |
 | `--dockerfile` | | string | | (deprecated) Path to custom Dockerfile - use -f/--file instead |
 
@@ -162,15 +162,20 @@ clawker start [flags]
 
 ## Flag Conventions
 
-Standard flag names used across commands:
+Standard flag names used across commands. Note that shorthand meanings are context-dependent:
 
 | Flag | Shorthand | Description |
 |------|-----------|-------------|
 | `--help` | `-h` | Display help for command |
 | `--quiet` | `-q` | Suppress output |
-| `--force` | `-f` | Force operation |
+| `--force` | `-f` | Force operation (in `remove`, `prune` commands) |
+| `--file` | `-f` | Dockerfile path (in `build` commands) |
 | `--all` | `-a` | Include all resources |
 | `--debug` | | Enable debug logging |
+
+**Note:** The `-f` shorthand has different meanings depending on context:
+- In build commands: `-f` means `--file` (Dockerfile path) - matches Docker CLI convention
+- In remove/prune commands: `-f` means `--force`
 
 ---
 

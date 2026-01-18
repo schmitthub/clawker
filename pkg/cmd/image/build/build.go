@@ -176,6 +176,13 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	}
 
 	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
+		cmdutil.HandleError(err)
+		cmdutil.PrintNextSteps(
+			"Check your Dockerfile for syntax errors",
+			"Ensure the base image exists and is accessible",
+			"Run 'clawker build --no-cache' to rebuild from scratch",
+			"Use '--progress=plain' for detailed build output",
+		)
 		return err
 	}
 
@@ -205,16 +212,25 @@ func parseBuildArgs(args []string) map[string]*string {
 }
 
 // parseKeyValuePairs parses KEY=VALUE pairs into a string map.
+// Labels without '=' are logged as warnings and ignored.
 func parseKeyValuePairs(pairs []string) map[string]string {
 	if len(pairs) == 0 {
 		return nil
 	}
 	result := make(map[string]string)
+	var warnings []string
 	for _, pair := range pairs {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) == 2 {
 			result[parts[0]] = parts[1]
+		} else {
+			warnings = append(warnings, pair)
 		}
+	}
+	if len(warnings) > 0 {
+		logger.Warn().
+			Strs("invalid_labels", warnings).
+			Msg("labels without '=' were ignored, use format KEY=VALUE")
 	}
 	return result
 }
