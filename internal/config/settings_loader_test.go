@@ -97,6 +97,46 @@ func TestSettingsLoader_Load_MissingFile(t *testing.T) {
 	}
 }
 
+func TestSettingsLoader_Load_EmptyFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-settings-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldHome := os.Getenv(ClawkerHomeEnv)
+	os.Setenv(ClawkerHomeEnv, tmpDir)
+	defer os.Setenv(ClawkerHomeEnv, oldHome)
+
+	loader, err := NewSettingsLoader()
+	if err != nil {
+		t.Fatalf("NewSettingsLoader() returned error: %v", err)
+	}
+
+	// Create empty settings file
+	if err := os.WriteFile(loader.Path(), []byte(""), 0644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	// Load should return zero-value settings for empty file (YAML parses empty as zero value)
+	settings, err := loader.Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	if settings == nil {
+		t.Fatal("Load() returned nil settings for empty file")
+	}
+
+	// Should have zero values (not default values from DefaultSettings())
+	if settings.Project.DefaultImage != "" {
+		t.Errorf("settings.Project.DefaultImage = %q, want empty", settings.Project.DefaultImage)
+	}
+	if settings.Projects != nil {
+		t.Errorf("settings.Projects = %v, want nil for empty YAML", settings.Projects)
+	}
+}
+
 func TestSettingsLoader_Load_ValidFile(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-settings-test-*")
 	if err != nil {

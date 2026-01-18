@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/strslice"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -130,6 +131,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	settings, err := f.Settings()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
+		settings = config.DefaultSettings()
 	}
 
 	// Connect to Docker

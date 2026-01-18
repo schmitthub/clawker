@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/pkg/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,25 +38,28 @@ func (l *SettingsLoader) Path() string {
 
 // Exists checks if the settings file exists.
 // Returns false for "file not found", returns false for other errors (permission denied, etc.).
+// Note: Non-ENOENT errors (permission denied, symlink errors, etc.) are logged for debugging
+// since they represent unexpected conditions that may indicate configuration issues.
 func (l *SettingsLoader) Exists() bool {
 	_, err := os.Stat(l.path)
 	if err == nil {
 		return true
 	}
-	// Both "file not found" and other errors (permission denied, etc.) return false.
-	// Other errors are unusual but we treat as "not exists" since we can't read it anyway.
+	if !os.IsNotExist(err) {
+		// Permission denied, symlink errors, etc. - log for debugging
+		logger.Debug().Err(err).Str("path", l.path).Msg("unexpected error checking settings file")
+	}
 	return false
 }
 
 // Load reads and parses the settings file.
-// If the file doesn't exist, returns empty settings (not an error).
+// If the file doesn't exist, returns default settings (not an error).
 func (l *SettingsLoader) Load() (*Settings, error) {
-	if !l.Exists() {
-		return DefaultSettings(), nil
-	}
-
 	data, err := os.ReadFile(l.path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return DefaultSettings(), nil
+		}
 		return nil, fmt.Errorf("failed to read settings file: %w", err)
 	}
 

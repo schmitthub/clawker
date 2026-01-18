@@ -8,6 +8,7 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // ResolveDefaultImage returns the default_image from merged config/settings.
@@ -83,7 +84,8 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 	if cfg != nil && cfg.Project != "" {
 		projectImage, err := FindProjectImage(ctx, dockerClient, cfg.Project)
 		if err != nil {
-			// Don't fail - just means we couldn't find an image automatically
+			// Log for debugging but don't fail - fallback means no auto-detect
+			logger.Debug().Err(err).Str("project", cfg.Project).Msg("failed to auto-detect project image")
 			return "", nil
 		}
 		if projectImage != "" {
