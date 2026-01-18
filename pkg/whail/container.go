@@ -223,7 +223,7 @@ func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options 
 		return nil, ErrContainerLogsFailed(containerID, err)
 	}
 	if !isManaged {
-		return nil, ErrContainerNotFound(containerID)
+		return nil, ErrContainerNotManaged(containerID)
 	}
 	logs, err := e.APIClient.ContainerLogs(ctx, containerID, options)
 	if err != nil {
@@ -240,7 +240,7 @@ func (e *Engine) ContainerResize(ctx context.Context, containerID string, height
 		return client.ContainerResizeResult{}, ErrContainerResizeFailed(containerID, err)
 	}
 	if !isManaged {
-		return client.ContainerResizeResult{}, ErrContainerNotFound(containerID)
+		return client.ContainerResizeResult{}, ErrContainerNotManaged(containerID)
 	}
 	result, err := e.APIClient.ContainerResize(ctx, containerID, client.ContainerResizeOptions{
 		Height: height,
@@ -252,42 +252,21 @@ func (e *Engine) ContainerResize(ctx context.Context, containerID string, height
 	return result, nil
 }
 
-// ContainerExecCreate creates an exec instance.
+// ExecCreate creates an exec instance.
 // Only creates exec instances for managed containers.
-func (e *Engine) ContainerExecCreate(ctx context.Context, containerID string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
+func (e *Engine) ExecCreate(ctx context.Context, containerID string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
-		return client.ExecCreateResult{}, ErrContainerExecFailed(containerID, err)
+		return client.ExecCreateResult{}, ErrExecCreateFailed(containerID, err)
 	}
 	if !isManaged {
-		return client.ExecCreateResult{}, ErrContainerNotFound(containerID)
+		return client.ExecCreateResult{}, ErrContainerNotManaged(containerID)
 	}
 	resp, err := e.APIClient.ExecCreate(ctx, containerID, opts)
 	if err != nil {
-		return client.ExecCreateResult{}, ErrContainerExecFailed(containerID, err)
+		return client.ExecCreateResult{}, ErrExecCreateFailed(containerID, err)
 	}
 	return resp, nil
-}
-
-// ContainerExecAttach attaches to an exec instance.
-func (e *Engine) ContainerExecAttach(ctx context.Context, execID string, opts client.ExecAttachOptions) (client.ExecAttachResult, error) {
-	result, err := e.APIClient.ExecAttach(ctx, execID, opts)
-	if err != nil {
-		return client.ExecAttachResult{}, ErrExecAttachFailed(execID, err)
-	}
-	return result, nil
-}
-
-// ContainerExecResize resizes an exec instance's TTY.
-func (e *Engine) ContainerExecResize(ctx context.Context, execID string, height, width uint) (client.ExecResizeResult, error) {
-	result, err := e.APIClient.ExecResize(ctx, execID, client.ExecResizeOptions{
-		Height: height,
-		Width:  width,
-	})
-	if err != nil {
-		return client.ExecResizeResult{}, ErrExecResizeFailed(execID, err)
-	}
-	return result, nil
 }
 
 // FindContainerByName finds a managed container by exact name.

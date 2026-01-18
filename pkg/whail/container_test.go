@@ -1652,11 +1652,11 @@ func TestContainerExecCreate(t *testing.T) {
 				t.Fatalf("Failed to start container: %v", err)
 			}
 
-			// Test ContainerExecCreate
+			// Test ExecCreate
 			execOpts := client.ExecCreateOptions{
 				Cmd: []string{"echo", "test"},
 			}
-			resp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			resp, err := testEngine.ExecCreate(ctx, containerID, execOpts)
 
 			if tt.shouldErr {
 				if err == nil {
@@ -1666,7 +1666,7 @@ func TestContainerExecCreate(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Fatalf("ContainerExecCreate failed: %v", err)
+				t.Fatalf("ExecCreate failed: %v", err)
 			}
 
 			// Verify we got a valid exec ID
@@ -1706,15 +1706,15 @@ func TestContainerExecAttach(t *testing.T) {
 				AttachStdout: true,
 				AttachStderr: true,
 			}
-			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			execResp, err := testEngine.ExecCreate(ctx, containerID, execOpts)
 			if err != nil {
-				t.Fatalf("ContainerExecCreate failed: %v", err)
+				t.Fatalf("ExecCreate failed: %v", err)
 			}
 
-			// Test ContainerExecAttach
-			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+			// Test ExecAttach
+			attachResp, err := testEngine.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 			if err != nil {
-				t.Fatalf("ContainerExecAttach failed: %v", err)
+				t.Fatalf("ExecAttach failed: %v", err)
 			}
 			defer attachResp.Close()
 
@@ -1761,24 +1761,27 @@ func TestContainerExecResize(t *testing.T) {
 				AttachStderr: true,
 				TTY:          true,
 			}
-			execResp, err := testEngine.ContainerExecCreate(ctx, containerID, execOpts)
+			execResp, err := testEngine.ExecCreate(ctx, containerID, execOpts)
 			if err != nil {
-				t.Fatalf("ContainerExecCreate failed: %v", err)
+				t.Fatalf("ExecCreate failed: %v", err)
 			}
 
 			// Start the exec first (attach to it)
-			attachResp, err := testEngine.ContainerExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+			attachResp, err := testEngine.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
 				TTY: true,
 			})
 			if err != nil {
-				t.Fatalf("ContainerExecAttach failed: %v", err)
+				t.Fatalf("ExecAttach failed: %v", err)
 			}
 			defer attachResp.Close()
 
-			// Test ContainerExecResize
-			_, err = testEngine.ContainerExecResize(ctx, execResp.ID, tt.height, tt.width)
+			// Test ExecResize
+			_, err = testEngine.ExecResize(ctx, execResp.ID, client.ExecResizeOptions{
+				Height: tt.height,
+				Width:  tt.width,
+			})
 			if err != nil {
-				t.Fatalf("ContainerExecResize failed: %v", err)
+				t.Fatalf("ExecResize failed: %v", err)
 			}
 			// Resize returns empty struct on success, so no additional verification needed
 		})

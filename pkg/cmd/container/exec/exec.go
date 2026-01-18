@@ -130,16 +130,21 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 			)
 			return err
 		}
+		if cfg.Project == "" {
+			cmdutil.PrintError("Project name not configured in clawker.yaml")
+			cmdutil.PrintNextSteps(
+				"Add 'project: <name>' to your clawker.yaml",
+			)
+			return fmt.Errorf("project name not configured")
+		}
 		containerName = docker.ContainerName(cfg.Project, opts.Agent)
 	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		return fmt.Errorf("failed to find container %q: %w", containerName, err)
-	}
-	if c == nil {
-		return fmt.Errorf("container %q not found", containerName)
+		cmdutil.HandleError(err)
+		return err
 	}
 
 	// Check if container is running
@@ -161,7 +166,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Create exec instance
-	execResp, err := client.ContainerExecCreate(ctx, c.ID, execConfig)
+	execResp, err := client.ExecCreate(ctx, c.ID, execConfig)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -169,10 +174,15 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 
 	// If detached, just start and return
 	if opts.Detach {
-		// Note: For detached exec, we use ExecStart instead of ExecAttach
-		// The whail package uses ExecAttach which doesn't support detach directly
-		// We'll just print the exec ID for now
-		fmt.Fprintf(os.Stderr, "Started exec: %s\n", execResp.ID)
+		_, err := client.ExecStart(ctx, execResp.ID, dockerclient.ExecStartOptions{
+			Detach: true,
+			TTY:    opts.TTY,
+		})
+		if err != nil {
+			cmdutil.HandleError(err)
+			return err
+		}
+		fmt.Println(execResp.ID)
 		return nil
 	}
 
@@ -191,7 +201,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 		TTY: opts.TTY,
 	}
 
-	hijacked, err := client.ContainerExecAttach(ctx, execResp.ID, attachOpts)
+	hijacked, err := client.ExecAttach(ctx, execResp.ID, attachOpts)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -202,7 +212,10 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	if opts.TTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			_, err := client.ContainerExecResize(ctx, execResp.ID, height, width)
+			_, err := client.ExecResize(ctx, execResp.ID, dockerclient.ExecResizeOptions{
+				Height: uint(height),
+				Width:  uint(width),
+			})
 			return err
 		}
 		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)

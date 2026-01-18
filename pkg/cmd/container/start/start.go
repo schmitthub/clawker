@@ -98,6 +98,13 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 			)
 			return err
 		}
+		if cfg.Project == "" {
+			cmdutil.PrintError("Project name not configured in clawker.yaml")
+			cmdutil.PrintNextSteps(
+				"Add 'project: <name>' to your clawker.yaml",
+			)
+			return fmt.Errorf("project name not configured")
+		}
 		containerNames = []string{docker.ContainerName(cfg.Project, opts.Agent)}
 	} else {
 		containerNames = containers
@@ -107,7 +114,7 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 	for _, name := range containerNames {
 		if err := startContainer(ctx, client, name, opts); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			cmdutil.HandleError(err)
 		} else {
 			fmt.Println(name)
 		}
@@ -123,10 +130,7 @@ func startContainer(ctx context.Context, client *docker.Client, name string, _ *
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
-		return fmt.Errorf("failed to find container %q: %w", name, err)
-	}
-	if c == nil {
-		return fmt.Errorf("container %q not found", name)
+		return err
 	}
 
 	// Start the container
