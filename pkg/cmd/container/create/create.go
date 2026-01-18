@@ -140,12 +140,11 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Resolve image if not explicitly provided
 	image, err := cmdutil.ResolveImage(ctx, client, cfg, settings, opts.Image)

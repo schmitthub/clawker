@@ -7,7 +7,6 @@ import (
 	"os"
 
 	dockerclient "github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -58,16 +57,15 @@ Note: Only clawker-managed images can be removed with this command.`,
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, images []string) error {
+func run(f *cmdutil.Factory, opts *Options, images []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	removeOpts := dockerclient.ImageRemoveOptions{
 		Force:         opts.Force,

@@ -43,6 +43,7 @@
 
 ## Important Gotchas
 
+- **Always use `f.Client(ctx)` from Factory** - never call `docker.NewClient(ctx)` directly in command files. The Factory provides lazy initialization with `sync.Once` caching and manages client lifecycle via `CloseClient()` in `internal/clawker/cmd.go`.
 - `os.Exit()` does NOT run deferred functions - use `ExitError` type with named returns to allow cleanup before exit
 - In raw terminal mode, Ctrl+C does NOT generate SIGINT - input goes directly to the container
 - PTY streaming returns immediately when output closes - never wait for stdin goroutine (may be blocked on Read())

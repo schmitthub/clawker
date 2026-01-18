@@ -108,7 +108,13 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 		fmt.Fprintln(os.Stderr, "To stop the stack: clawker monitor down")
 
 		// Check for running clawker containers that need restart
-		checkRunningContainers()
+		ctx := context.Background()
+		client, err := f.Client(ctx)
+		if err != nil {
+			logger.Debug().Err(err).Msg("failed to connect to docker for container check")
+		} else {
+			checkRunningContainers(ctx, client)
+		}
 	}
 
 	return nil
@@ -116,16 +122,8 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 
 // checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers() {
-	ctx := context.Background()
-	cli, err := docker.NewClient(ctx)
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to connect to docker for container check")
-		return
-	}
-	defer cli.Close()
-
-	containers, err := cli.ListContainers(ctx, false)
+func checkRunningContainers(ctx context.Context, client *docker.Client) {
+	containers, err := client.ListContainers(ctx, false)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")
 		return

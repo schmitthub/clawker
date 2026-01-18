@@ -93,12 +93,11 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	}
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Build update resources
 	resources, restartPolicy, err := buildUpdateResources(opts)

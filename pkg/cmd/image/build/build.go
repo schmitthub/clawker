@@ -131,12 +131,11 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		Msg("starting build")
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Determine image tag(s)
 	imageTag := docker.ImageTag(cfg.Project)

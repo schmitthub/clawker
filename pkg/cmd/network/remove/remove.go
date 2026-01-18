@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -52,16 +51,15 @@ Note: Only clawker-managed networks can be removed with this command.`,
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, _ *Options, networks []string) error {
+func run(f *cmdutil.Factory, _ *Options, networks []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	var errs []error
 	for _, name := range networks {

@@ -7,7 +7,6 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -47,16 +46,15 @@ integration. The primary network is clawker-net.`,
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options) error {
+func run(f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// List networks
 	networks, err := client.NetworkList(ctx)

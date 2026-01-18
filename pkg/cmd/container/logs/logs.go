@@ -7,7 +7,6 @@ import (
 	"os"
 
 	dockerclient "github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -83,12 +82,11 @@ func runLogs(f *cmdutil.Factory, opts *LogsOptions, args []string) error {
 	containerName := containers[0]
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)

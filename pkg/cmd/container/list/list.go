@@ -50,16 +50,15 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runList(_ *cmdutil.Factory, opts *ListOptions) error {
+func runList(f *cmdutil.Factory, opts *ListOptions) error {
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// List containers
 	var containers []docker.Container

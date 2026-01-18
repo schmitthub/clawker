@@ -115,12 +115,11 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	ctx := context.Background()
 
 	// Connect to Docker
-	client, err := docker.NewClient(ctx)
+	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
-	defer client.Close()
 
 	// Resolve container name if using --agent
 	if opts.Agent != "" {
