@@ -154,7 +154,7 @@ else
     output+=$(printf " ${GRAY}%s${NC}" "${DISK_LOW} ?%")
 fi
 
-# sperator icon - dim gray
+# separator icon - dim gray
 output+=$(printf " ${GRAY}%s${NC} " ">")
 
 # Directory - white, bold
