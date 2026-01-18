@@ -14,8 +14,8 @@ buildpack-deps:bookworm-scm   9be56c3e5291        371MB             0B
 clawker-clawker:latest        83a204a19dcb       1.95GB             0B
 
 [~/Code/clawker]$ clawker image list
-REPOSITORY       TAG     IMAGE ID      CREATED       SIZE
-clawker-clawker  latest  83a204a19dcb  1 minute ago  1.81GB
+IMAGE                   ID            CREATED         SIZE
+clawker-clawker:latest  83a204a19dcb  10 minutes ago  1.81GB
 ```
 
 If you want to use docker proper without clawker's management, check out `clawker-generate` to generate dockerfiles using clode code npm build tags. Tweak and then `docker build` it yourself. ex `clawker-generate -o dockerfiles/ latest next stable 2.1 1.1`

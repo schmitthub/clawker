@@ -91,12 +91,12 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 
 	// Print table
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE")
+	fmt.Fprintln(w, "IMAGE\tID\tCREATED\tSIZE")
 
 	for _, img := range images.Items {
 		// Handle images with multiple tags or no tags
 		if len(img.RepoTags) == 0 {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s:%s\t%s\t%s\t%s\n",
 				"<none>",
 				"<none>",
 				truncateID(img.ID),
@@ -108,7 +108,7 @@ func run(_ *cmdutil.Factory, opts *Options) error {
 
 		for _, tag := range img.RepoTags {
 			repo, tagName := parseRepoTag(tag)
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s:%s\t%s\t%s\t%s\n",
 				repo,
 				tagName,
 				truncateID(img.ID),
