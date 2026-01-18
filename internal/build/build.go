@@ -28,6 +28,7 @@ type Options struct {
 	SuppressOutput bool               // Suppress build output
 	NetworkMode    string             // Network mode for build
 	BuildArgs      map[string]*string // Build-time variables
+	Tags           []string           // Additional tags for the image (merged with imageTag)
 }
 
 // NewBuilder creates a new Builder instance.
@@ -92,6 +93,9 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error {
 	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
 
+	// Merge tags: primary tag + any additional tags from options
+	tags := mergeTags(imageTag, opts.Tags)
+
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
 		logger.Info().
@@ -107,7 +111,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 		}
 
 		return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-			Tags:           []string{imageTag},
+			Tags:           tags,
 			Dockerfile:     filepath.Base(gen.GetCustomDockerfilePath()),
 			NoCache:        opts.NoCache,
 			Labels:         opts.Labels,
@@ -127,7 +131,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 	}
 
 	return b.client.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
-		Tags:           []string{imageTag},
+		Tags:           tags,
 		Dockerfile:     "Dockerfile",
 		NoCache:        opts.NoCache,
 		Labels:         opts.Labels,
@@ -137,4 +141,19 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 		NetworkMode:    opts.NetworkMode,
 		BuildArgs:      opts.BuildArgs,
 	})
+}
+
+// mergeTags combines the primary tag with additional tags, avoiding duplicates.
+func mergeTags(primary string, additional []string) []string {
+	seen := make(map[string]bool)
+	result := []string{primary}
+	seen[primary] = true
+
+	for _, tag := range additional {
+		if !seen[tag] {
+			result = append(result, tag)
+			seen[tag] = true
+		}
+	}
+	return result
 }

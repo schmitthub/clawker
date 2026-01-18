@@ -172,6 +172,7 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		SuppressOutput: opts.Quiet || opts.Progress == "none",
 		NetworkMode:    opts.Network,
 		BuildArgs:      buildArgs,
+		Tags:           opts.Tags,
 	}
 
 	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
