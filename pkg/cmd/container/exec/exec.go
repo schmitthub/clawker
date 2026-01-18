@@ -172,6 +172,13 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 		return err
 	}
 
+	execID := execResp.ID
+	if execID == "" {
+		err := fmt.Errorf("exec ID is empty")
+		cmdutil.HandleError(err)
+		return err
+	}
+
 	// If detached, just start and return
 	if opts.Detach {
 		_, err := client.ExecStart(ctx, execResp.ID, dockerclient.ExecStartOptions{
