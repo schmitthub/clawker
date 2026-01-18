@@ -103,10 +103,16 @@ func (h *ResizeHandler) Start() {
 func (h *ResizeHandler) Stop() {
 	signal.Stop(h.sigChan)
 	close(h.done)
+	close(h.sigChan)
 }
 
 // handle processes resize signals
 func (h *ResizeHandler) handle() {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error().Interface("panic", r).Msg("panic in resize handler - terminal resize disabled")
+		}
+	}()
 	for {
 		select {
 		case <-h.done:
@@ -119,7 +125,12 @@ func (h *ResizeHandler) handle() {
 
 // doResize performs the actual resize operation
 func (h *ResizeHandler) doResize() {
-	if h.getSize == nil || h.resizeFunc == nil {
+	if h.getSize == nil {
+		logger.Debug().Msg("resize handler has nil getSize function")
+		return
+	}
+	if h.resizeFunc == nil {
+		logger.Debug().Msg("resize handler has nil resizeFunc")
 		return
 	}
 

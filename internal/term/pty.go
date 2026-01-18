@@ -115,8 +115,12 @@ func (p *PTYHandler) StreamWithResize(
 	// Initial resize and set up SIGWINCH monitoring
 	if p.rawMode.IsTerminal() {
 		width, height, err := p.rawMode.GetSize()
-		if err == nil && resizeFunc != nil {
-			resizeFunc(uint(height), uint(width))
+		if err != nil {
+			logger.Debug().Err(err).Msg("failed to get initial terminal size")
+		} else if resizeFunc != nil {
+			if err := resizeFunc(uint(height), uint(width)); err != nil {
+				logger.Debug().Err(err).Msg("failed to set initial container TTY size")
+			}
 		}
 
 		// Start monitoring for window resize events (SIGWINCH)
