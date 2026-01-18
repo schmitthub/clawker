@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -24,9 +25,12 @@ func CommandRequiresProject(cmd *cobra.Command) bool {
 }
 
 // CheckProjectContext verifies we're in a project directory or prompts for confirmation.
-// Returns nil to proceed, ErrAborted if user declines, or other errors.
+// Returns nil to proceed, or ErrAborted if user declines.
 func CheckProjectContext(cmd *cobra.Command, f *Factory) error {
-	settings, _ := f.Settings()
+	settings, err := f.Settings()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to load settings for project context check")
+	}
 	projectRoot := FindProjectRoot(f.WorkDir, settings)
 
 	if projectRoot == "" {
@@ -129,6 +133,7 @@ func IsChildOfProject(dir string, settings *config.Settings) string {
 
 // ConfirmExternalProjectOperation prompts user to confirm operation outside project.
 // Returns true if user confirms, false otherwise.
+// On decline, prints "Aborted." and guidance to stderr.
 func ConfirmExternalProjectOperation(in io.Reader, projectPath, operation string) bool {
 	message := fmt.Sprintf("You are running %s in '%s', which is outside of a project directory.\nDo you want to continue?", operation, projectPath)
 	if !PromptForConfirmation(in, message) {

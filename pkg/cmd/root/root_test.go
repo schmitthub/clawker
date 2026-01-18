@@ -72,6 +72,8 @@ func TestNewCmdRoot_GlobalFlags(t *testing.T) {
 
 func TestStateChangingCommandsRequireProject(t *testing.T) {
 	// Hardcoded list of commands that MUST require project context.
+	// Without this annotation, these commands could modify Docker resources
+	// when run outside a project directory, potentially affecting unrelated containers.
 	// If a command is accidentally removed from protection, this test will fail.
 	requiredCommands := [][]string{
 		// Container commands (state-modifying)
@@ -120,6 +122,49 @@ func TestStateChangingCommandsRequireProject(t *testing.T) {
 
 			if !cmdutil.CommandRequiresProject(cmd) {
 				t.Errorf("command %s should have requiresProject annotation", name)
+			}
+		})
+	}
+}
+
+func TestReadOnlyCommandsDoNotRequireProject(t *testing.T) {
+	// Read-only commands should NOT require project context.
+	// If a read-only command accidentally gets the annotation, users will be
+	// unnecessarily prompted when just listing or inspecting resources.
+	readOnlyCommands := [][]string{
+		// Container read-only commands
+		{"container", "list"},
+		{"container", "logs"},
+		{"container", "inspect"},
+		{"container", "top"},
+		{"container", "stats"},
+		// Image read-only commands
+		{"image", "list"},
+		{"image", "inspect"},
+		// Volume read-only commands
+		{"volume", "list"},
+		{"volume", "inspect"},
+		// Network read-only commands
+		{"network", "list"},
+		{"network", "inspect"},
+	}
+
+	f := cmdutil.New("1.0.0", "abc123")
+	root := NewCmdRoot(f)
+
+	for _, path := range readOnlyCommands {
+		name := strings.Join(path, "/")
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := root.Find(path)
+			if err != nil {
+				t.Fatalf("command %s should exist: %v", name, err)
+			}
+			if cmd == nil {
+				t.Fatalf("command %s should not be nil", name)
+			}
+
+			if cmdutil.CommandRequiresProject(cmd) {
+				t.Errorf("read-only command %s should NOT have requiresProject annotation", name)
 			}
 		})
 	}

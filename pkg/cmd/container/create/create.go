@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -82,14 +83,14 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.Image = args[0]
 			}
 			if len(args) > 1 {
 				opts.Command = args[1:]
 			}
-			return run(cmd, f, opts)
+			return run(f, opts)
 		},
 	}
 
@@ -115,7 +116,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(_ *cobra.Command, f *cmdutil.Factory, opts *Options) error {
+func run(f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
 
 	// Load config for project name
@@ -130,7 +131,10 @@ func run(_ *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Load settings for image resolution
-	settings, _ := f.Settings()
+	settings, err := f.Settings()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
+	}
 	if settings == nil {
 		settings = config.DefaultSettings()
 	}
