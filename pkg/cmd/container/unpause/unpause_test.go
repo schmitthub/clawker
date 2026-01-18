@@ -28,7 +28,7 @@ func TestNewCmdUnpause(t *testing.T) {
 			name:       "no container specified",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 arg(s), only received 0",
+			wantErrMsg: "requires at least 1 container argument or --agent flag",
 		},
 	}
 
@@ -68,7 +68,7 @@ func TestCmdUnpause_Properties(t *testing.T) {
 	cmd := NewCmdUnpause(f)
 
 	// Test command basics
-	require.Equal(t, "unpause CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "unpause [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

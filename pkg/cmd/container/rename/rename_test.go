@@ -25,19 +25,19 @@ func TestNewCmd(t *testing.T) {
 			name:       "missing new name",
 			input:      "oldname",
 			wantErr:    true,
-			wantErrMsg: "accepts 2 arg(s), received 1",
+			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
 		},
 		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "accepts 2 arg(s), received 0",
+			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
 		},
 		{
 			name:       "too many arguments",
 			input:      "one two three",
 			wantErr:    true,
-			wantErrMsg: "accepts 2 arg(s), received 3",
+			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
 		},
 	}
 
@@ -83,7 +83,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "rename CONTAINER NEW_NAME", cmd.Use)
+	require.Equal(t, "rename [CONTAINER] NEW_NAME", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

@@ -13,36 +13,76 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Options holds options for the top command.
+type Options struct {
+	Agent string
+}
+
 // NewCmd creates a new top command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
+	opts := &Options{}
+
 	cmd := &cobra.Command{
-		Use:   "top CONTAINER [ps OPTIONS]",
+		Use:   "top [CONTAINER] [ps OPTIONS]",
 		Short: "Display the running processes of a container",
 		Long: `Display the running processes of a clawker container.
 
 Additional arguments are passed directly to ps as options.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container name can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Show processes in a container
+		Example: `  # Show processes using agent name
+  clawker container top --agent ralph
+
+  # Show processes by full container name
   clawker container top clawker.myapp.ralph
 
   # Show processes with custom ps options
-  clawker container top clawker.myapp.ralph aux
+  clawker container top --agent ralph aux
 
   # Show all processes with extended info
-  clawker container top clawker.myapp.ralph -ef`,
-		Args: cobra.MinimumNArgs(1),
+  clawker container top --agent ralph -ef`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			agentFlag, _ := cmd.Flags().GetString("agent")
+			if agentFlag != "" {
+				// With --agent, all args are ps options
+				return nil
+			}
+			if len(args) < 1 {
+				return fmt.Errorf("requires at least 1 container argument or --agent flag")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, args[0], args[1:])
+			return run(f, opts, args)
 		},
 	}
+
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, containerName string, psArgs []string) error {
+func run(f *cmdutil.Factory, opts *Options, args []string) error {
+	var containerName string
+	var psArgs []string
+
+	if opts.Agent != "" {
+		// Resolve agent name
+		containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, nil)
+		if err != nil {
+			return err
+		}
+		containerName = containers[0]
+		psArgs = args // All args are ps options
+	} else {
+		containerName = args[0]
+		psArgs = args[1:]
+	}
 	ctx := context.Background()
 
 	// Connect to Docker

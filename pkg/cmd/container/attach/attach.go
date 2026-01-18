@@ -17,6 +17,7 @@ import (
 
 // Options holds options for the attach command.
 type Options struct {
+	Agent      string
 	NoStdin    bool
 	SigProxy   bool
 	DetachKeys string
@@ -27,33 +28,40 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "attach [OPTIONS] CONTAINER",
+		Use:   "attach [OPTIONS] [CONTAINER]",
 		Short: "Attach local standard input, output, and error streams to a running container",
 		Long: `Attach local standard input, output, and error streams to a running container.
 
 Use ctrl-p, ctrl-q to detach from the container and leave it running.
 To stop a container, use clawker container stop.
 
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
 Container name can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
-		Example: `  # Attach to a container
+		Example: `  # Attach to a container using agent name
+  clawker container attach --agent ralph
+
+  # Attach to a container by full name
   clawker container attach clawker.myapp.ralph
 
   # Attach without stdin (output only)
-  clawker container attach --no-stdin clawker.myapp.ralph
+  clawker container attach --no-stdin --agent ralph
 
   # Attach with custom detach keys
-  clawker container attach --detach-keys="ctrl-c" clawker.myapp.ralph`,
+  clawker container attach --detach-keys="ctrl-c" --agent ralph`,
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cobra.ExactArgs(1),
+		Args: cmdutil.AgentArgsValidatorExact(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args[0])
+			return run(f, opts, args)
 		},
 	}
 
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVar(&opts.NoStdin, "no-stdin", false, "Do not attach STDIN")
 	cmd.Flags().BoolVar(&opts.SigProxy, "sig-proxy", true, "Proxy all received signals to the process")
 	cmd.Flags().StringVar(&opts.DetachKeys, "detach-keys", "", "Override the key sequence for detaching a container")
@@ -61,8 +69,15 @@ Container name can be:
 	return cmd
 }
 
-func run(_ *cmdutil.Factory, opts *Options, containerName string) error {
+func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	ctx := context.Background()
+
+	// Resolve container name
+	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
+	if err != nil {
+		return err
+	}
+	containerName := containers[0]
 
 	// Connect to Docker
 	client, err := docker.NewClient(ctx)
