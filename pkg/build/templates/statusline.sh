@@ -140,9 +140,20 @@ if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
     output+=$(printf " ${GRAY}[%s]${NC}" "$STYLE")
 fi
 
+# Clawker info
+output=$(printf "${GRAY}Clawker v%s |${NC}" "${CLAWKER_VERSION:-0.1.0}")
+
+PROJECT="${CLAWKER_PROJECT:-clawker}"
+AGENT="${CLAWKER_AGENT:-}"
+if [ -n "$AGENT" ]; then
+    output+=$(printf " ${ORANGE}%s:%s${NC}" "$PROJECT" "$AGENT")
+else
+    output+=$(printf " ${ORANGE}%s${NC}" "$PROJECT")
+fi
+
 # Version - dim gray
 VERSION=$(get_version)
-output+=$(printf "${DARK_GRAY}v%s${NC}" "$VERSION")
+output+=$(printf " ${DARK_GRAY}cc: v%s${NC}" "$VERSION")
 
 # Model - orange
 output+=$(printf " ${ORANGE}%s${NC}" "$MODEL")

@@ -139,6 +139,24 @@ func TestNewCmdRun(t *testing.T) {
 			args:   []string{},
 			output: Options{}, // Image is now optional, will be resolved at runtime
 		},
+		{
+			name:   "with mode bind",
+			input:  "--agent dev --mode=bind",
+			args:   []string{"alpine"},
+			output: Options{Agent: "dev", Mode: "bind", Image: "alpine"},
+		},
+		{
+			name:   "with mode snapshot",
+			input:  "--agent dev --mode=snapshot",
+			args:   []string{"alpine"},
+			output: Options{Agent: "dev", Mode: "snapshot", Image: "alpine"},
+		},
+		{
+			name:   "with mode and other flags",
+			input:  "-it --agent sandbox --mode=snapshot --rm",
+			args:   []string{"alpine", "sh"},
+			output: Options{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -154,6 +172,7 @@ func TestNewCmdRun(t *testing.T) {
 				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Name, _ = cmd.Flags().GetString("name")
 				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
+				cmdOpts.Mode, _ = cmd.Flags().GetString("mode")
 				cmdOpts.Env, _ = cmd.Flags().GetStringArray("env")
 				cmdOpts.Volumes, _ = cmd.Flags().GetStringArray("volume")
 				cmdOpts.Publish, _ = cmd.Flags().GetStringArray("publish")
@@ -199,6 +218,7 @@ func TestNewCmdRun(t *testing.T) {
 			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.Name, cmdOpts.Name)
 			require.Equal(t, tt.output.Detach, cmdOpts.Detach)
+			require.Equal(t, tt.output.Mode, cmdOpts.Mode)
 			require.Equal(t, tt.output.Image, cmdOpts.Image)
 			require.Equal(t, tt.output.Command, cmdOpts.Command)
 			requireSliceEqual(t, tt.output.Env, cmdOpts.Env)
@@ -231,6 +251,7 @@ func TestCmdRun_Properties(t *testing.T) {
 	require.NotNil(t, cmd.Flags().Lookup("agent"))
 	require.NotNil(t, cmd.Flags().Lookup("name"))
 	require.NotNil(t, cmd.Flags().Lookup("detach"))
+	require.NotNil(t, cmd.Flags().Lookup("mode"))
 	require.NotNil(t, cmd.Flags().Lookup("env"))
 	require.NotNil(t, cmd.Flags().Lookup("volume"))
 	require.NotNil(t, cmd.Flags().Lookup("publish"))
@@ -352,7 +373,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, netCfg, err := buildConfigs(tt.opts)
+			cfg, hostCfg, netCfg, err := buildConfigs(tt.opts, nil)
 
 			if tt.wantErr {
 				require.Error(t, err)
