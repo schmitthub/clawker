@@ -96,11 +96,20 @@ clawker start --agent ralph --mode snapshot
 
 ### Option 3: Run ad-hoc claude commands in container
 
-Run individual Claude commands in the container without starting an interactive agent session. Claude code commands and flags are passed directly to the container's claude-code CLI. This is useful for quick tasks or scripts, but lacks the persistence as the container and its volumes are removed after the command completes.
+Run individual Claude commands in the container without starting an interactive agent session. Claude Code commands and flags are passed directly to the container after the image name. This is useful for quick tasks or scripts, but lacks persistence as the container and its volumes are removed after the command completes.
 
 ```bash
-clawker run -it --rm --p "Fix the bugs in my README.md"
+# Run a prompt (specify image to pass claude's -p flag)
+clawker run -it --rm clawker-myproject:latest -p "Fix the bugs in my README.md"
+
+# Run with --allow-dangerously-skip-permissions
+clawker run -it --rm clawker-myproject:latest --allow-dangerously-skip-permissions
+
+# Using --agent with default image? Use -- to pass flags to container
+clawker run -it --rm --agent ralph -- -p "Fix the bugs"
 ```
+
+**Note:** Clawker's `-p` flag is for port publishing (like Docker). To use Claude Code's `-p` (prompt) flag, either specify the image name first, or use `--` to stop clawker flag parsing.
 
 ## Configuration
 

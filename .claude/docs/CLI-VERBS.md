@@ -288,6 +288,60 @@ Both modes automatically create the following mounts:
 
 ---
 
+## Flag Passthrough Behavior
+
+The `container run` and `container create` commands support passing flags to the container by placing them after the IMAGE argument.
+
+**How it works:**
+
+Clawker stops parsing its own flags after the first positional argument (IMAGE). All subsequent arguments, including flags, are passed directly to the container command.
+
+```bash
+clawker run [CLAWKER_FLAGS] IMAGE [CONTAINER_COMMAND_AND_FLAGS]
+```
+
+**Examples:**
+
+```bash
+# Clawker flags before image, container flags after
+clawker run -it --rm alpine --version
+
+# Pass Claude Code flags to the container
+clawker run -it --rm clawker-myapp:latest --allow-dangerously-skip-permissions -p "Fix bugs"
+
+# Mix clawker flags with container command
+clawker run -it --rm -e FOO=bar alpine sh -c "echo hello"
+```
+
+**Using `--agent` without IMAGE:**
+
+When using `--agent` without specifying an IMAGE (relying on defaults), you must use `--` to stop flag parsing:
+
+```bash
+# Without --, this fails (clawker tries to parse --allow-dangerously-skip-permissions)
+clawker run -it --rm --agent ralph --allow-dangerously-skip-permissions  # ERROR
+
+# Use -- to stop clawker flag parsing
+clawker run -it --rm --agent ralph -- --allow-dangerously-skip-permissions -p "Fix bugs"
+```
+
+**Flag conflict: `-p`**
+
+Clawker uses `-p` as shorthand for `--publish` (port mapping), while Claude Code uses `-p` for `--prompt`. Since clawker flags are parsed first, you must either specify the image or use `--`:
+
+```bash
+# This fails - clawker parses -p as port mapping
+clawker run -it --rm -p "Fix bugs"  # ERROR: invalid port format
+
+# Option 1: Specify image first, then Claude's -p is passed through
+clawker run -it --rm clawker-myapp:latest -p "Fix bugs"
+
+# Option 2: Use -- with --agent
+clawker run -it --rm --agent ralph -- -p "Fix bugs"
+```
+
+---
+
 ## Configuration Commands
 
 ### `clawker config check`

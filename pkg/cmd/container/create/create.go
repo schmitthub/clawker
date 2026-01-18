@@ -90,10 +90,16 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				opts.Image = args[0]
-			}
-			if len(args) > 1 {
-				opts.Command = args[1:]
+				// If first arg starts with "-", it's a flag for the container command,
+				// not an image name. This allows: clawker create --agent x -- --flag
+				if strings.HasPrefix(args[0], "-") {
+					opts.Command = args
+				} else {
+					opts.Image = args[0]
+					if len(args) > 1 {
+						opts.Command = args[1:]
+					}
+				}
 			}
 			return run(f, opts)
 		},
@@ -118,6 +124,13 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
 
 	cmd.MarkFlagsMutuallyExclusive("agent", "name")
+
+	// Stop parsing flags after the first positional argument (IMAGE).
+	// This allows flags after IMAGE to be passed to the container command.
+	// Example: clawker create alpine --version
+	//   - "alpine" is IMAGE
+	//   - "--version" is passed to the container (not parsed as clawker flag)
+	cmd.Flags().SetInterspersed(false)
 
 	return cmd
 }

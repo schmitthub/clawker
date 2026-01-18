@@ -157,6 +157,30 @@ func TestNewCmdRun(t *testing.T) {
 			args:   []string{"alpine", "sh"},
 			output: Options{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
 		},
+		{
+			name:   "flags after image passed as command",
+			input:  "-it --rm",
+			args:   []string{"alpine", "--version"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--version"}},
+		},
+		{
+			name:   "mixed clawker and container flags",
+			input:  "-it --rm -e FOO=bar",
+			args:   []string{"alpine", "-p", "prompt"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Env: []string{"FOO=bar"}, Image: "alpine", Command: []string{"-p", "prompt"}},
+		},
+		{
+			name:   "claude flags passthrough",
+			input:  "-it --rm",
+			args:   []string{"clawker-image:latest", "--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "clawker-image:latest", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+		},
+		{
+			name:   "flags only as command with -- separator",
+			input:  "-it --rm --agent ralph --",
+			args:   []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
+			output: Options{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -185,10 +209,16 @@ func TestNewCmdRun(t *testing.T) {
 				cmdOpts.Labels, _ = cmd.Flags().GetStringArray("label")
 				cmdOpts.AutoRemove, _ = cmd.Flags().GetBool("rm")
 				if len(args) > 0 {
-					cmdOpts.Image = args[0]
-				}
-				if len(args) > 1 {
-					cmdOpts.Command = args[1:]
+					// Match the actual command logic: if first arg starts with "-",
+					// it's a container command, not an image name
+					if strings.HasPrefix(args[0], "-") {
+						cmdOpts.Command = args
+					} else {
+						cmdOpts.Image = args[0]
+						if len(args) > 1 {
+							cmdOpts.Command = args[1:]
+						}
+					}
 				}
 				return nil
 			}
