@@ -26,6 +26,12 @@ func TestNewCmdStart(t *testing.T) {
 			output: StartOptions{},
 		},
 		{
+			name:   "with agent flag",
+			input:  "--agent ralph",
+			args:   []string{},
+			output: StartOptions{Agent: "ralph"},
+		},
+		{
 			name:   "multiple containers",
 			input:  "",
 			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
@@ -66,7 +72,14 @@ func TestNewCmdStart(t *testing.T) {
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 arg(s), only received 0",
+			wantErrMsg: "requires at least 1 container argument or --agent flag",
+		},
+		{
+			name:       "agent and container mutually exclusive",
+			input:      "--agent ralph",
+			args:       []string{"clawker.myapp.ralph"},
+			wantErr:    true,
+			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
 		},
 	}
 
@@ -80,6 +93,7 @@ func TestNewCmdStart(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &StartOptions{}
+				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Attach, _ = cmd.Flags().GetBool("attach")
 				cmdOpts.Interactive, _ = cmd.Flags().GetBool("interactive")
 				return nil
@@ -107,6 +121,7 @@ func TestNewCmdStart(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.Attach, cmdOpts.Attach)
 			require.Equal(t, tt.output.Interactive, cmdOpts.Interactive)
 		})
@@ -118,13 +133,14 @@ func TestCmdStart_Properties(t *testing.T) {
 	cmd := NewCmdStart(f)
 
 	// Test command basics
-	require.Equal(t, "start CONTAINER [CONTAINER...]", cmd.Use)
+	require.Equal(t, "start [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
+	require.NotNil(t, cmd.Flags().Lookup("agent"))
 	require.NotNil(t, cmd.Flags().Lookup("attach"))
 	require.NotNil(t, cmd.Flags().Lookup("interactive"))
 

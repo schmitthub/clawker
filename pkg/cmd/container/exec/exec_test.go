@@ -69,6 +69,16 @@ func TestNewCmd(t *testing.T) {
 			wantOpts: Options{Privileged: true},
 		},
 		{
+			name:     "with agent flag",
+			input:    "--agent ralph ls",
+			wantOpts: Options{Agent: "ralph"},
+		},
+		{
+			name:     "agent with interactive and tty",
+			input:    "-it --agent ralph /bin/bash",
+			wantOpts: Options{Agent: "ralph", Interactive: true, TTY: true},
+		},
+		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
@@ -79,6 +89,12 @@ func TestNewCmd(t *testing.T) {
 			input:      "mycontainer",
 			wantErr:    true,
 			wantErrMsg: "requires at least 2 arg(s), only received 1",
+		},
+		{
+			name:       "agent without command",
+			input:      "--agent ralph",
+			wantErr:    true,
+			wantErrMsg: "requires at least 1 command argument when using --agent",
 		},
 	}
 
@@ -92,6 +108,7 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
+				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Interactive, _ = cmd.Flags().GetBool("interactive")
 				cmdOpts.TTY, _ = cmd.Flags().GetBool("tty")
 				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
@@ -121,6 +138,7 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.wantOpts.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.wantOpts.Interactive, cmdOpts.Interactive)
 			require.Equal(t, tt.wantOpts.TTY, cmdOpts.TTY)
 			require.Equal(t, tt.wantOpts.Detach, cmdOpts.Detach)
@@ -142,13 +160,14 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "exec [OPTIONS] CONTAINER COMMAND [ARG...]", cmd.Use)
+	require.Equal(t, "exec [OPTIONS] [CONTAINER] COMMAND [ARG...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
 	// Test flags exist
+	require.NotNil(t, cmd.Flags().Lookup("agent"))
 	require.NotNil(t, cmd.Flags().Lookup("interactive"))
 	require.NotNil(t, cmd.Flags().Lookup("tty"))
 	require.NotNil(t, cmd.Flags().Lookup("detach"))

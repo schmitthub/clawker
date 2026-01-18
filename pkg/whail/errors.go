@@ -101,6 +101,19 @@ func ErrContainerNotFound(name string) *DockerError {
 	}
 }
 
+func ErrContainerNotManaged(name string) *DockerError {
+	return &DockerError{
+		Op:      "managed_check",
+		Err:     nil,
+		Message: fmt.Sprintf("Container '%s' is not managed by this tool", name),
+		NextSteps: []string{
+			"Ensure the container was created using this tool",
+			"Check running containers: docker ps",
+			"Check all containers: docker ps -a",
+		},
+	}
+}
+
 // ErrContainerStartFailed returns an error for when a container fails to start.
 func ErrContainerStartFailed(name string, err error) *DockerError {
 	return &DockerError{
@@ -462,28 +475,15 @@ func ErrContainerStatPathFailed(name string, err error) *DockerError {
 	}
 }
 
-// ErrContainerExecFailed returns an error for when exec operations fail.
-func ErrContainerExecFailed(name string, err error) *DockerError {
+// ErrExecCreateFailed returns an error for when exec create fails.
+func ErrExecCreateFailed(name string, err error) *DockerError {
 	return &DockerError{
-		Op:      "exec",
+		Op:      "exec_create",
 		Err:     err,
-		Message: fmt.Sprintf("Failed to execute command in container '%s'", name),
+		Message: fmt.Sprintf("Failed to create exec instance in container '%s'", name),
 		NextSteps: []string{
 			"Check if the container is running: docker ps",
 			"Verify the command exists in the container",
-		},
-	}
-}
-
-// ErrContainerResizeFailed returns an error for when resizing a container TTY fails.
-func ErrContainerResizeFailed(name string, err error) *DockerError {
-	return &DockerError{
-		Op:      "resize",
-		Err:     err,
-		Message: fmt.Sprintf("Failed to resize TTY for container '%s'", name),
-		NextSteps: []string{
-			"Check if the container is running: docker ps",
-			"Verify the container has a TTY attached",
 		},
 	}
 }
@@ -527,15 +527,28 @@ func ErrExecAttachFailed(execID string, err error) *DockerError {
 	}
 }
 
-// ErrExecResizeFailed returns an error for when resizing an exec instance TTY fails.
-func ErrExecResizeFailed(execID string, err error) *DockerError {
+// ErrContainerResizeFailed returns an error for when resizing a container TTY fails.
+func ErrContainerResizeFailed(containerID string, err error) *DockerError {
 	return &DockerError{
-		Op:      "exec_resize",
+		Op:      "container_resize",
 		Err:     err,
-		Message: fmt.Sprintf("Failed to resize exec TTY '%s'", execID),
+		Message: fmt.Sprintf("Failed to resize container '%s'", containerID),
+		NextSteps: []string{
+			"Check if the container is still running",
+			"Verify the container has a TTY attached",
+		},
+	}
+}
+
+// ErrExecStartFailed returns an error for when starting an exec instance fails.
+func ErrExecStartFailed(execID string, err error) *DockerError {
+	return &DockerError{
+		Op:      "exec_start",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to start exec instance '%s'", execID),
 		NextSteps: []string{
 			"Check if the exec instance is still valid",
-			"Verify the exec has a TTY attached",
+			"Verify the container is still running",
 		},
 	}
 }
