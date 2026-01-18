@@ -10,12 +10,12 @@ import (
 	"strings"
 
 	"github.com/docker/go-connections/nat"
-	"github.com/moby/moby/api/types/mount"
-	dockerclient "github.com/moby/moby/client"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/strslice"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
@@ -194,63 +194,13 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Setup workspace mounts
-	var workspaceMounts []mount.Mount
-
-	// Get host path (current working directory)
-	hostPath, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	// Determine workspace mode (CLI flag overrides config default)
-	modeStr := opts.Mode
-	if modeStr == "" {
-		modeStr = cfg.Workspace.DefaultMode
-	}
-
-	mode, err := config.ParseMode(modeStr)
-	if err != nil {
-		cmdutil.PrintError("Invalid workspace mode: %v", err)
-		return err
-	}
-
-	// Create workspace strategy
-	wsCfg := workspace.Config{
-		HostPath:   hostPath,
-		RemotePath: cfg.Workspace.RemotePath,
-		ProjectName: cfg.Project,
-		AgentName:  agent,
-	}
-
-	strategy, err := workspace.NewStrategy(mode, wsCfg)
+	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+		ModeOverride: opts.Mode,
+		Config:       cfg,
+		AgentName:    agent,
+	})
 	if err != nil {
 		return err
-	}
-
-	logger.Debug().
-		Str("mode", string(mode)).
-		Str("strategy", strategy.Name()).
-		Msg("using workspace strategy")
-
-	// Prepare workspace resources (important for snapshot mode)
-	if err := strategy.Prepare(ctx, client); err != nil {
-		cmdutil.PrintError("Failed to prepare workspace: %v", err)
-		return err
-	}
-
-	// Get workspace mount
-	workspaceMounts = append(workspaceMounts, strategy.GetMounts()...)
-
-	// Ensure and get config volumes
-	if err := workspace.EnsureConfigVolumes(ctx, client, cfg.Project, agent); err != nil {
-		cmdutil.PrintError("Failed to create config volumes: %v", err)
-		return err
-	}
-	workspaceMounts = append(workspaceMounts, workspace.GetConfigVolumeMounts(cfg.Project, agent)...)
-
-	// Add docker socket mount if enabled
-	if cfg.Security.DockerSocket {
-		workspaceMounts = append(workspaceMounts, workspace.GetDockerSocketMount())
 	}
 
 	// Build configs

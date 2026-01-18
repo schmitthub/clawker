@@ -280,6 +280,8 @@ clawker container create --agent test --mode=snapshot alpine
 
 Both modes automatically create the following mounts:
 - Workspace mount at `workspace.remote_path` (default: `/workspace`)
+  - **Bind mode**: Direct bind mount from host working directory; changes immediately affect host
+  - **Snapshot mode**: Docker volume with copy of workspace files; changes isolated from host
 - Config volume at `/home/claude/.claude`
 - History volume at `/commandhistory`
 - Docker socket mount (if `security.docker_socket: true`)

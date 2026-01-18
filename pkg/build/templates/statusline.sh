@@ -140,11 +140,11 @@ if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
     output+=$(printf " ${GRAY}[%s]${NC}" "$STYLE")
 fi
 
-# Claucker info
-output=$(printf "${GRAY}Claucker v%s |${NC}" "${CLAUCKER_VERSION:-0.1.0}")
+# Clawker info
+output=$(printf "${GRAY}Clawker v%s |${NC}" "${CLAWKER_VERSION:-0.1.0}")
 
-PROJECT="${CLAUCKER_PROJECT:-claucker}"
-AGENT="${CLAUCKER_AGENT:-}"
+PROJECT="${CLAWKER_PROJECT:-clawker}"
+AGENT="${CLAWKER_AGENT:-}"
 if [ -n "$AGENT" ]; then
     output+=$(printf " ${ORANGE}%s:%s${NC}" "$PROJECT" "$AGENT")
 else
