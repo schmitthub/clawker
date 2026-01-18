@@ -3,10 +3,25 @@ package root
 import (
 	"fmt"
 
+	containerAttach "github.com/schmitthub/clawker/pkg/cmd/container/attach"
+	containerCp "github.com/schmitthub/clawker/pkg/cmd/container/cp"
+	containerCreate "github.com/schmitthub/clawker/pkg/cmd/container/create"
+	containerKill "github.com/schmitthub/clawker/pkg/cmd/container/kill"
 	containerlist "github.com/schmitthub/clawker/pkg/cmd/container/list"
+	containerLogs "github.com/schmitthub/clawker/pkg/cmd/container/logs"
+	containerPause "github.com/schmitthub/clawker/pkg/cmd/container/pause"
+	containerRemove "github.com/schmitthub/clawker/pkg/cmd/container/remove"
+	containerRename "github.com/schmitthub/clawker/pkg/cmd/container/rename"
+	containerRestart "github.com/schmitthub/clawker/pkg/cmd/container/restart"
 	containerrun "github.com/schmitthub/clawker/pkg/cmd/container/run"
 	containerstart "github.com/schmitthub/clawker/pkg/cmd/container/start"
+	containerStats "github.com/schmitthub/clawker/pkg/cmd/container/stats"
+	containerStop "github.com/schmitthub/clawker/pkg/cmd/container/stop"
+	containerTop "github.com/schmitthub/clawker/pkg/cmd/container/top"
+	containerUnpause "github.com/schmitthub/clawker/pkg/cmd/container/unpause"
+	containerWait "github.com/schmitthub/clawker/pkg/cmd/container/wait"
 	imagebuild "github.com/schmitthub/clawker/pkg/cmd/image/build"
+	imageRemove "github.com/schmitthub/clawker/pkg/cmd/image/remove"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -27,9 +42,49 @@ type Alias struct {
 // topLevelAliases defines all top-level shortcuts to subcommands.
 var topLevelAliases = []Alias{
 	{
+		Use:     "attach CONTAINER",
+		Command: containerAttach.NewCmd,
+	},
+	{
 		Use:     "build [OPTIONS]",
 		Example: buildExample,
 		Command: imagebuild.NewCmd,
+	},
+	{
+		Use:     "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
+		Command: containerCreate.NewCmd,
+	},
+	{
+		Use:     "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH|-\ncp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH",
+		Command: containerCp.NewCmd,
+	},
+	{
+		Use:     "kill [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerKill.NewCmdKill,
+	},
+	{
+		Use:     "logs [OPTIONS] CONTAINER",
+		Command: containerLogs.NewCmdLogs,
+	},
+	{
+		Use:     "pause [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerPause.NewCmdPause,
+	},
+	{
+		Use:     "ps [OPTIONS]",
+		Command: containerlist.NewCmdList,
+	},
+	{
+		Use:     "rename CONTAINER NEW_NAME",
+		Command: containerRename.NewCmd,
+	},
+	{
+		Use:     "restart [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerRestart.NewCmd,
+	},
+	{
+		Use:     "rm [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerRemove.NewCmdRemove,
 	},
 	{
 		Use:     "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
@@ -40,8 +95,28 @@ var topLevelAliases = []Alias{
 		Command: containerstart.NewCmdStart,
 	},
 	{
-		Use:     "ps [OPTIONS]",
-		Command: containerlist.NewCmdList,
+		Use:     "stats [OPTIONS] [CONTAINER...]",
+		Command: containerStats.NewCmd,
+	},
+	{
+		Use:     "stop [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerStop.NewCmdStop,
+	},
+	{
+		Use:     "rmi [OPTIONS]",
+		Command: imageRemove.NewCmd,
+	},
+	{
+		Use:     "top [OPTIONS] CONTAINER",
+		Command: containerTop.NewCmd,
+	},
+	{
+		Use:     "unpause [OPTIONS] CONTAINER [CONTAINER...]",
+		Command: containerUnpause.NewCmdUnpause,
+	},
+	{
+		Use:     "wait CONTAINER [CONTAINER...]",
+		Command: containerWait.NewCmd,
 	},
 }
 
