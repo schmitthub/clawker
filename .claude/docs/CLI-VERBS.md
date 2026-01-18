@@ -196,6 +196,7 @@ When `--agent` is provided, the container name is resolved as `clawker.<project>
 | `kill` | Kill container by agent name |
 | `restart` | Restart container by agent name |
 | `logs` | View logs by agent name |
+| `exec` | Execute command in container by agent name |
 | `attach` | Attach to container by agent name |
 | `inspect` | Inspect container by agent name |
 | `pause` | Pause container by agent name |

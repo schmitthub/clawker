@@ -14,6 +14,7 @@ func TestNewCmd(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
+		wantAgent  string
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -39,6 +40,23 @@ func TestNewCmd(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
 		},
+		{
+			name:      "with agent flag and new name",
+			input:     "--agent ralph newname",
+			wantAgent: "ralph",
+		},
+		{
+			name:       "with agent flag missing new name",
+			input:      "--agent ralph",
+			wantErr:    true,
+			wantErrMsg: "with --agent, requires exactly 1 argument: NEW_NAME",
+		},
+		{
+			name:       "with agent flag too many arguments",
+			input:      "--agent ralph one two",
+			wantErr:    true,
+			wantErrMsg: "with --agent, requires exactly 1 argument: NEW_NAME",
+		},
 	}
 
 	for _, tt := range tests {
@@ -47,8 +65,10 @@ func TestNewCmd(t *testing.T) {
 
 			cmd := NewCmd(f)
 
-			// Override RunE to not actually execute
+			var capturedAgent string
+			// Override RunE to capture agent and not actually execute
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+				capturedAgent, _ = cmd.Flags().GetString("agent")
 				return nil
 			}
 
@@ -74,6 +94,7 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.wantAgent, capturedAgent)
 		})
 	}
 }

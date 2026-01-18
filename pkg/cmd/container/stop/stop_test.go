@@ -62,6 +62,19 @@ func TestNewCmdStop(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "requires at least 1 container argument or --agent flag",
 		},
+		{
+			name:   "with agent flag",
+			input:  "--agent ralph",
+			args:   []string{},
+			output: StopOptions{Agent: "ralph", Timeout: 10},
+		},
+		{
+			name:       "agent and container mutually exclusive",
+			input:      "--agent ralph",
+			args:       []string{"container1"},
+			wantErr:    true,
+			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
+		},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +87,7 @@ func TestNewCmdStop(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &StopOptions{}
+				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Timeout, _ = cmd.Flags().GetInt("time")
 				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
 				return nil
@@ -101,6 +115,7 @@ func TestNewCmdStop(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.Timeout, cmdOpts.Timeout)
 			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
 		})

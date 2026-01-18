@@ -54,6 +54,13 @@ Container names can be:
 
   # Show stats once for a specific container
   clawker container stats --no-stream --agent ralph`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			agentFlag, _ := cmd.Flags().GetString("agent")
+			if agentFlag != "" && len(args) > 0 {
+				return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)
 		},
