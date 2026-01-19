@@ -74,23 +74,15 @@ func (p *PTYHandler) Restore() error {
 	return nil
 }
 
-// ResetVisualState sends escape sequences to reset terminal visual state.
-// This should be called after streaming ends to ensure the terminal is
-// in a clean state (cursor visible, no alternate screen, default colors).
-// Safe to call on non-terminals (no-op).
-func (p *PTYHandler) ResetVisualState() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.resetVisualStateUnlocked()
-}
-
 // resetVisualStateUnlocked sends reset sequences without locking.
 // Must be called with p.mu held.
 func (p *PTYHandler) resetVisualStateUnlocked() {
 	if !p.rawMode.IsTerminal() {
 		return
 	}
-	p.stdout.WriteString(resetSequence)
+	if _, err := p.stdout.WriteString(resetSequence); err != nil {
+		logger.Warn().Err(err).Msg("failed to write terminal reset sequence")
+	}
 }
 
 // Stream handles bidirectional I/O between local terminal and container
