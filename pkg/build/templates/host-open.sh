@@ -71,10 +71,11 @@ parse_localhost_url() {
     local url="$1"
 
     # Extract port: match localhost:PORT or 127.0.0.1:PORT
-    local port=$(echo "$url" | sed -n 's|http://\(localhost\|127\.0\.0\.1\):\([0-9]*\).*|\2|p')
+    # Note: Use # as delimiter since | is used for regex alternation
+    local port=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):([0-9]+).*#\2#p')
 
     # Extract path: everything after the port
-    local path=$(echo "$url" | sed -n 's|http://\(localhost\|127\.0\.0\.1\):[0-9]*\(/[^?]*\).*|\2|p')
+    local path=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):[0-9]+(/[^?]*).*#\2#p')
 
     # Default to /callback if no path
     if [ -z "$path" ]; then
@@ -85,6 +86,8 @@ parse_localhost_url() {
 }
 
 # Register callback with host proxy
+# This tells the host proxy to start a dynamic listener on the specified port
+# to capture the OAuth callback when the browser redirects.
 register_callback() {
     local port="$1"
     local path="$2"
@@ -94,19 +97,18 @@ register_callback() {
         -d "{\"port\": $port, \"path\": \"$path\", \"timeout_seconds\": 300}" 2>&1)
 
     if [ $? -ne 0 ]; then
-        echo "" ""
+        echo ""
         return 1
     fi
 
     local session_id=$(echo "$response" | jq -r '.session_id // empty')
-    local proxy_base=$(echo "$response" | jq -r '.proxy_callback_base // empty')
 
-    if [ -z "$session_id" ] || [ -z "$proxy_base" ]; then
-        echo "" ""
+    if [ -z "$session_id" ]; then
+        echo ""
         return 1
     fi
 
-    echo "$session_id $proxy_base"
+    echo "$session_id"
 }
 
 # Rewrite URL with new callback
@@ -135,7 +137,7 @@ main() {
 
     if [ -n "$original_callback" ]; then
         # This is an OAuth URL with a localhost callback
-        # We need to intercept the callback
+        # We need to intercept the callback via dynamic port listener
 
         local parsed
         parsed=$(parse_localhost_url "$original_callback")
@@ -148,11 +150,11 @@ main() {
             return $?
         fi
 
-        # Register callback session
+        # Register callback session - this starts a dynamic listener on the host
+        # on the same port that Claude Code expects
         local registered
         registered=$(register_callback "$port" "$path")
         local session_id=$(echo "$registered" | cut -d' ' -f1)
-        local proxy_base=$(echo "$registered" | cut -d' ' -f2)
 
         if [ -z "$session_id" ]; then
             echo "Error: Failed to register OAuth callback session with host proxy" >&2
@@ -161,6 +163,7 @@ main() {
             echo "Possible causes:" >&2
             echo "  - Host proxy is not running" >&2
             echo "  - Host proxy is unreachable from container" >&2
+            echo "  - Port $port is already in use on the host" >&2
             echo "" >&2
             echo "Try:" >&2
             echo "  1. Restart the container" >&2
@@ -168,14 +171,7 @@ main() {
             exit 1
         fi
 
-        # Build new callback URL pointing to proxy
-        local new_callback="${proxy_base}${path}"
-
-        # Rewrite the OAuth URL
-        local rewritten_url
-        rewritten_url=$(rewrite_oauth_url "$URL" "$original_callback" "$new_callback")
-
-        # Spawn callback-forwarder in background
+        # Spawn callback-forwarder in background to poll and forward the callback
         if command -v callback-forwarder >/dev/null 2>&1; then
             CALLBACK_SESSION="$session_id" CALLBACK_PORT="$port" callback-forwarder &
         else
@@ -183,8 +179,10 @@ main() {
             echo "OAuth callback will not be forwarded. Authentication may fail." >&2
         fi
 
-        # Open the rewritten URL
-        open_url "$rewritten_url"
+        # Open the ORIGINAL URL - no rewriting needed!
+        # The host proxy now listens on the same port that the OAuth
+        # redirect_uri points to, so the browser callback will be captured directly.
+        open_url "$URL"
         return $?
     fi
 

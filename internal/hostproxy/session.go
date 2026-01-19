@@ -72,6 +72,15 @@ type SessionStore struct {
 	mu       sync.RWMutex
 	stopCh   chan struct{}
 	stopped  bool
+	onDelete func(session *Session) // Optional callback when session is deleted
+}
+
+// SetOnDelete sets a callback function that will be called when a session is deleted.
+// The callback receives the session before it is removed from the store.
+func (s *SessionStore) SetOnDelete(fn func(session *Session)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onDelete = fn
 }
 
 // NewSessionStore creates a new session store and starts the background
@@ -134,8 +143,17 @@ func (s *SessionStore) Get(id string) *Session {
 // Delete removes a session by ID.
 func (s *SessionStore) Delete(id string) {
 	s.mu.Lock()
-	delete(s.sessions, id)
+	session, exists := s.sessions[id]
+	if exists {
+		delete(s.sessions, id)
+	}
+	onDelete := s.onDelete
 	s.mu.Unlock()
+
+	// Call onDelete callback outside the lock to prevent deadlocks
+	if exists && onDelete != nil {
+		onDelete(session)
+	}
 }
 
 // Count returns the number of active sessions.
@@ -176,12 +194,21 @@ func (s *SessionStore) cleanupLoop() {
 // cleanup removes all expired sessions.
 func (s *SessionStore) cleanup() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	now := time.Now()
+	var expired []*Session
 	for id, session := range s.sessions {
 		if now.After(session.ExpiresAt) {
+			expired = append(expired, session)
 			delete(s.sessions, id)
+		}
+	}
+	onDelete := s.onDelete
+	s.mu.Unlock()
+
+	// Call onDelete callbacks outside the lock to prevent deadlocks
+	if onDelete != nil {
+		for _, session := range expired {
+			onDelete(session)
 		}
 	}
 }

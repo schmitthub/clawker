@@ -4,12 +4,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+// getFreePort returns an available TCP port on localhost.
+func getFreePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
 
 func TestServerHealthEndpoint(t *testing.T) {
 	s := &Server{}
@@ -171,7 +185,15 @@ func TestServerOpenURLBodySizeLimit(t *testing.T) {
 
 func TestServerCallbackRegister(t *testing.T) {
 	s := NewServer(18374)
-	defer s.Stop(context.Background())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	})
+
+	// Get free ports for tests that will actually start listeners
+	port1 := getFreePort(t)
+	port2 := getFreePort(t)
 
 	tests := []struct {
 		name       string
@@ -182,7 +204,7 @@ func TestServerCallbackRegister(t *testing.T) {
 	}{
 		{
 			name:       "valid registration",
-			body:       `{"port": 8080, "path": "/callback"}`,
+			body:       fmt.Sprintf(`{"port": %d, "path": "/callback"}`, port1),
 			wantStatus: http.StatusOK,
 			wantErr:    false,
 			checkResp: func(t *testing.T, resp callbackRegisterResponse) {
@@ -192,9 +214,6 @@ func TestServerCallbackRegister(t *testing.T) {
 				if resp.SessionID == "" {
 					t.Error("expected session_id")
 				}
-				if !strings.Contains(resp.ProxyCallbackBase, "/cb/") {
-					t.Error("expected proxy_callback_base to contain /cb/")
-				}
 				if resp.ExpiresAt == "" {
 					t.Error("expected expires_at")
 				}
@@ -202,7 +221,7 @@ func TestServerCallbackRegister(t *testing.T) {
 		},
 		{
 			name:       "valid registration with timeout",
-			body:       `{"port": 8080, "timeout_seconds": 120}`,
+			body:       fmt.Sprintf(`{"port": %d, "timeout_seconds": 120}`, port2),
 			wantStatus: http.StatusOK,
 			wantErr:    false,
 		},

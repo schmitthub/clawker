@@ -14,13 +14,20 @@ import (
 // Manager manages the lifecycle of the host proxy server.
 // It provides lazy initialization and ensures only one server runs at a time.
 type Manager struct {
+	port   int
 	server *Server
 	mu     sync.Mutex
 }
 
-// NewManager creates a new host proxy manager.
+// NewManager creates a new host proxy manager using the default port.
 func NewManager() *Manager {
-	return &Manager{}
+	return &Manager{port: DefaultPort}
+}
+
+// NewManagerWithPort creates a new host proxy manager using a custom port.
+// This is primarily useful for testing.
+func NewManagerWithPort(port int) *Manager {
+	return &Manager{port: port}
 }
 
 // EnsureRunning starts the host proxy server if it's not already running.
@@ -36,12 +43,12 @@ func (m *Manager) EnsureRunning() error {
 
 	// Check if another instance is already running on the port
 	if m.isPortInUse() {
-		logger.Debug().Int("port", DefaultPort).Msg("host proxy already running on port")
+		logger.Debug().Int("port", m.port).Msg("host proxy already running on port")
 		return nil
 	}
 
 	// Start new server
-	m.server = NewServer(DefaultPort)
+	m.server = NewServer(m.port)
 	if err := m.server.Start(); err != nil {
 		return fmt.Errorf("failed to start host proxy server: %w", err)
 	}
@@ -85,16 +92,16 @@ func (m *Manager) IsRunning() bool {
 
 // Port returns the port the host proxy server is configured to use.
 func (m *Manager) Port() int {
-	return DefaultPort
+	return m.port
 }
 
 // ProxyURL returns the URL containers should use to reach the host proxy.
 // This uses host.docker.internal which Docker automatically resolves to the host.
 func (m *Manager) ProxyURL() string {
-	return fmt.Sprintf("http://host.docker.internal:%d", DefaultPort)
+	return fmt.Sprintf("http://host.docker.internal:%d", m.port)
 }
 
-// isPortInUse checks if the default port is already in use by a clawker host proxy.
+// isPortInUse checks if the configured port is already in use by a clawker host proxy.
 // It verifies both the status code and service identifier to avoid mistaking
 // another service for the clawker host proxy.
 func (m *Manager) isPortInUse() bool {
@@ -102,7 +109,7 @@ func (m *Manager) isPortInUse() bool {
 		Timeout: 500 * time.Millisecond,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", DefaultPort))
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", m.port))
 	if err != nil {
 		return false
 	}
@@ -127,7 +134,7 @@ func (m *Manager) healthCheck() error {
 		Timeout: 2 * time.Second,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", DefaultPort))
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", m.port))
 	if err != nil {
 		return err
 	}

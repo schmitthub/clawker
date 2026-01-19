@@ -22,26 +22,57 @@ const DefaultPort = 18374
 // maxRequestBodySize limits request body size to prevent DoS via memory exhaustion.
 const maxRequestBodySize = 1 << 20 // 1MB
 
+// dynamicListener tracks a temporary HTTP listener for OAuth callbacks.
+type dynamicListener struct {
+	port      int
+	sessionID string
+	listener  net.Listener
+	server    *http.Server
+}
+
 // Server is an HTTP server that handles requests from containers to perform
 // host-side actions.
 type Server struct {
-	port            int
-	listener        net.Listener
-	server          *http.Server
-	mu              sync.RWMutex
-	running         bool
-	sessionStore    *SessionStore
-	callbackChannel *CallbackChannel
+	port             int
+	listener         net.Listener
+	server           *http.Server
+	mu               sync.RWMutex
+	running          bool
+	sessionStore     *SessionStore
+	callbackChannel  *CallbackChannel
+	dynamicListeners map[int]*dynamicListener // port -> listener
+	portToSession    map[int]string           // port -> sessionID for lookups
 }
 
 // NewServer creates a new host proxy server on the specified port.
 func NewServer(port int) *Server {
 	sessionStore := NewSessionStore()
-	return &Server{
-		port:            port,
-		sessionStore:    sessionStore,
-		callbackChannel: NewCallbackChannel(sessionStore),
+	s := &Server{
+		port:             port,
+		sessionStore:     sessionStore,
+		callbackChannel:  NewCallbackChannel(sessionStore),
+		dynamicListeners: make(map[int]*dynamicListener),
+		portToSession:    make(map[int]string),
 	}
+
+	// Set up cleanup callback for when sessions are deleted
+	sessionStore.SetOnDelete(func(session *Session) {
+		if session.Type != CallbackSessionType {
+			return
+		}
+		// Get the port from session metadata
+		portVal, ok := session.GetMetadata(metadataPort)
+		if !ok {
+			return
+		}
+		port, ok := portVal.(int)
+		if !ok {
+			return
+		}
+		s.closeDynamicListener(port)
+	})
+
+	return s
 }
 
 // Start starts the HTTP server in a goroutine.
@@ -96,24 +127,146 @@ func (s *Server) Start() error {
 // Stop gracefully shuts down the server and cleans up resources.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if !s.running || s.server == nil {
 		// Still clean up session store even if server wasn't running
 		if s.sessionStore != nil {
 			s.sessionStore.Stop()
 		}
+		s.mu.Unlock()
 		return nil
 	}
 
 	s.running = false
+
+	// Close all dynamic listeners
+	for port := range s.dynamicListeners {
+		s.closeDynamicListenerLocked(port)
+	}
 
 	// Stop the session store cleanup goroutine
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
 	}
 
-	return s.server.Shutdown(ctx)
+	server := s.server
+	s.mu.Unlock()
+
+	return server.Shutdown(ctx)
+}
+
+// startDynamicListener starts a temporary HTTP listener on the specified port
+// to capture OAuth callbacks.
+func (s *Server) startDynamicListener(port int, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if a listener already exists on this port
+	if _, exists := s.dynamicListeners[port]; exists {
+		return fmt.Errorf("listener already exists on port %d", port)
+	}
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	// Create a handler that captures all requests on this port
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleDynamicCallback(port, w, r)
+	})
+
+	server := &http.Server{
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	dl := &dynamicListener{
+		port:      port,
+		sessionID: sessionID,
+		listener:  listener,
+		server:    server,
+	}
+
+	s.dynamicListeners[port] = dl
+	s.portToSession[port] = sessionID
+
+	go func() {
+		logger.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener starting")
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logger.Error().Err(err).Int("port", port).Msg("dynamic listener error")
+		}
+	}()
+
+	logger.Info().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
+	return nil
+}
+
+// closeDynamicListener closes a dynamic listener on the specified port.
+func (s *Server) closeDynamicListener(port int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeDynamicListenerLocked(port)
+}
+
+// closeDynamicListenerLocked closes a dynamic listener (must hold s.mu).
+func (s *Server) closeDynamicListenerLocked(port int) {
+	dl, exists := s.dynamicListeners[port]
+	if !exists {
+		return
+	}
+
+	logger.Debug().Int("port", port).Msg("closing dynamic listener")
+
+	// Shutdown the server gracefully with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if err := dl.server.Shutdown(ctx); err != nil {
+		// Timeout during cleanup is expected - just force close
+		logger.Debug().Int("port", port).Msg("force closing dynamic listener")
+		dl.listener.Close()
+	}
+
+	delete(s.dynamicListeners, port)
+	delete(s.portToSession, port)
+}
+
+// handleDynamicCallback handles incoming requests on a dynamic listener port.
+func (s *Server) handleDynamicCallback(port int, w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	sessionID, exists := s.portToSession[port]
+	s.mu.RUnlock()
+
+	if !exists {
+		logger.Error().Int("port", port).Msg("no session found for dynamic listener port")
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	logger.Debug().
+		Int("port", port).
+		Str("session_id", sessionID).
+		Str("path", r.URL.Path).
+		Str("query", r.URL.RawQuery).
+		Msg("received callback on dynamic listener")
+
+	err := s.callbackChannel.Capture(sessionID, r)
+	if err != nil {
+		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
+
+		if errors.Is(err, ErrCallbackAlreadyReceived) {
+			s.writeCallbackSuccessPage(w)
+			return
+		}
+
+		s.writeCallbackErrorPage(w, "An error occurred. Please try again.")
+		return
+	}
+
+	s.writeCallbackSuccessPage(w)
 }
 
 // IsRunning returns whether the server is currently running.
@@ -239,7 +392,8 @@ type callbackRegisterResponse struct {
 }
 
 // handleCallbackRegister handles POST /callback/register requests.
-// It creates a new callback session for OAuth flow interception.
+// It creates a new callback session and starts a dynamic listener on the
+// specified port to capture OAuth callbacks.
 func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
@@ -281,19 +435,30 @@ func (s *Server) handleCallbackRegister(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	proxyBase := fmt.Sprintf("http://localhost:%d/cb/%s", s.port, session.ID)
+	// Start a dynamic listener on the callback port
+	// This allows the host to capture OAuth callbacks on the same port
+	// that Claude Code expects, without rewriting the redirect_uri
+	if err := s.startDynamicListener(req.Port, session.ID); err != nil {
+		logger.Error().Err(err).Int("port", req.Port).Msg("failed to start dynamic listener")
+		// Clean up the session since we couldn't start the listener
+		s.callbackChannel.Delete(session.ID)
+		s.writeJSON(w, http.StatusInternalServerError, callbackRegisterResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to start listener on port %d: %v", req.Port, err),
+		})
+		return
+	}
 
 	logger.Debug().
 		Str("session_id", session.ID).
 		Int("port", req.Port).
 		Str("path", path).
-		Msg("registered callback session")
+		Msg("registered callback session with dynamic listener")
 
 	s.writeJSON(w, http.StatusOK, callbackRegisterResponse{
-		Success:           true,
-		SessionID:         session.ID,
-		ProxyCallbackBase: proxyBase,
-		ExpiresAt:         session.ExpiresAt.Format(time.RFC3339),
+		Success:   true,
+		SessionID: session.ID,
+		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 	})
 }
 

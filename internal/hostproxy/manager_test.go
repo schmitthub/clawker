@@ -2,57 +2,78 @@ package hostproxy
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"testing"
 	"time"
 )
 
+// getFreeMgrPort returns an available TCP port for manager tests.
+func getFreeMgrPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
 func TestManagerProxyURL(t *testing.T) {
-	m := NewManager()
-	expected := "http://host.docker.internal:18374"
+	m := NewManagerWithPort(12345)
+	expected := "http://host.docker.internal:12345"
 	if m.ProxyURL() != expected {
 		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
 	}
 }
 
 func TestManagerPort(t *testing.T) {
-	m := NewManager()
-	if m.Port() != DefaultPort {
-		t.Errorf("expected port %d, got %d", DefaultPort, m.Port())
+	m := NewManagerWithPort(12345)
+	if m.Port() != 12345 {
+		t.Errorf("expected port %d, got %d", 12345, m.Port())
 	}
 }
 
 func TestManagerIsRunningInitially(t *testing.T) {
-	m := NewManager()
+	m := NewManagerWithPort(getFreeMgrPort(t))
 	if m.IsRunning() {
 		t.Error("expected manager to not be running initially")
 	}
 }
 
 func TestManagerEnsureRunning(t *testing.T) {
-	m := NewManager()
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = m.Stop(ctx)
+	})
 
 	err := m.EnsureRunning()
 	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed, got error: %v", err)
+		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
 	}
 
 	if !m.IsRunning() {
 		t.Error("expected manager to be running after EnsureRunning")
 	}
-
-	// Cleanup
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = m.Stop(ctx)
 }
 
 func TestManagerEnsureRunningIdempotent(t *testing.T) {
-	m := NewManager()
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = m.Stop(ctx)
+	})
 
 	// First call
 	err := m.EnsureRunning()
 	if err != nil {
-		t.Fatalf("expected first EnsureRunning to succeed, got error: %v", err)
+		t.Fatalf("expected first EnsureRunning to succeed on port %d, got error: %v", port, err)
 	}
 
 	// Second call should also succeed (idempotent)
@@ -64,20 +85,16 @@ func TestManagerEnsureRunningIdempotent(t *testing.T) {
 	if !m.IsRunning() {
 		t.Error("expected manager to still be running after second EnsureRunning")
 	}
-
-	// Cleanup
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = m.Stop(ctx)
 }
 
 func TestManagerStop(t *testing.T) {
-	m := NewManager()
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
 
 	// Start the server
 	err := m.EnsureRunning()
 	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed, got error: %v", err)
+		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
 	}
 
 	// Stop the server
@@ -95,12 +112,13 @@ func TestManagerStop(t *testing.T) {
 }
 
 func TestManagerStopIsIdempotent(t *testing.T) {
-	m := NewManager()
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
 
 	// Start the server
 	err := m.EnsureRunning()
 	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed, got error: %v", err)
+		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -120,12 +138,13 @@ func TestManagerStopIsIdempotent(t *testing.T) {
 }
 
 func TestManagerStopClearsServerReference(t *testing.T) {
-	m := NewManager()
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
 
 	// Start the server
 	err := m.EnsureRunning()
 	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed, got error: %v", err)
+		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -150,4 +169,15 @@ func TestManagerStopClearsServerReference(t *testing.T) {
 
 	// Cleanup
 	_ = m.Stop(ctx)
+}
+
+func TestManagerDefaultPort(t *testing.T) {
+	m := NewManager()
+	if m.Port() != DefaultPort {
+		t.Errorf("expected default port %d, got %d", DefaultPort, m.Port())
+	}
+	expected := fmt.Sprintf("http://host.docker.internal:%d", DefaultPort)
+	if m.ProxyURL() != expected {
+		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
+	}
 }
