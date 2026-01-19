@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
 
@@ -1770,4 +1771,270 @@ func TestContainerExecResize(t *testing.T) {
 			// Resize returns empty struct on success, so no additional verification needed
 		})
 	}
+}
+
+func TestContainerCreateWithEnsureNetwork(t *testing.T) {
+	tests := []struct {
+		name               string
+		containerName      string
+		networkName        string
+		preCreateNetwork   bool // whether to create network before container
+		shouldErr          bool
+		verifyNetworkConn  bool // whether to verify container is connected to network
+	}{
+		{
+			name:              "should create container and connect to new network",
+			containerName:     generateContainerName("test-create-ensure-net-new"),
+			networkName:       generateNetworkName("test-ensure-net-new"),
+			preCreateNetwork:  false,
+			shouldErr:         false,
+			verifyNetworkConn: true,
+		},
+		{
+			name:              "should create container and connect to existing network",
+			containerName:     generateContainerName("test-create-ensure-net-existing"),
+			networkName:       generateNetworkName("test-ensure-net-existing"),
+			preCreateNetwork:  true,
+			shouldErr:         false,
+			verifyNetworkConn: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Optionally pre-create the network
+			if tt.preCreateNetwork {
+				_, err := testEngine.NetworkCreate(ctx, tt.networkName, client.NetworkCreateOptions{})
+				if err != nil {
+					t.Fatalf("Failed to pre-create network: %v", err)
+				}
+			}
+			defer func() {
+				testEngine.NetworkRemove(ctx, tt.networkName)
+			}()
+
+			// Create container with EnsureNetwork
+			resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+				Config: &container.Config{
+					Image: testImageTag,
+					Cmd:   []string{"sleep", "300"},
+				},
+				Name: tt.containerName,
+				EnsureNetwork: &EnsureNetworkOptions{
+					Name: tt.networkName,
+				},
+			})
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ContainerCreate with EnsureNetwork failed: %v", err)
+			}
+
+			defer func() {
+				testEngine.APIClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			}()
+
+			// Verify container is connected to network
+			if tt.verifyNetworkConn {
+				inspect, err := testEngine.APIClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+				if err != nil {
+					t.Fatalf("Failed to inspect container: %v", err)
+				}
+
+				if inspect.Container.NetworkSettings == nil || inspect.Container.NetworkSettings.Networks == nil {
+					t.Fatalf("Container has no network settings")
+				}
+
+				if _, ok := inspect.Container.NetworkSettings.Networks[tt.networkName]; !ok {
+					t.Errorf("Container is not connected to network %q, connected to: %v",
+						tt.networkName, getNetworkNames(inspect.Container.NetworkSettings.Networks))
+				}
+			}
+		})
+	}
+}
+
+func TestContainerCreateEnsureNetworkDoesNotMutateCaller(t *testing.T) {
+	ctx := context.Background()
+
+	networkName := generateNetworkName("test-ensure-net-nomutate")
+	containerName := generateContainerName("test-create-ensure-net-nomutate")
+
+	// Create a NetworkingConfig with existing entries
+	existingNetworkName := generateNetworkName("test-existing-net")
+	_, err := testEngine.NetworkCreate(ctx, existingNetworkName, client.NetworkCreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create existing network: %v", err)
+	}
+	defer testEngine.NetworkRemove(ctx, existingNetworkName)
+
+	originalConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			existingNetworkName: {},
+		},
+	}
+	originalMapLen := len(originalConfig.EndpointsConfig)
+
+	// Create container with EnsureNetwork and existing NetworkingConfig
+	resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+		Config: &container.Config{
+			Image: testImageTag,
+			Cmd:   []string{"sleep", "300"},
+		},
+		NetworkingConfig: originalConfig,
+		Name:             containerName,
+		EnsureNetwork: &EnsureNetworkOptions{
+			Name: networkName,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContainerCreate failed: %v", err)
+	}
+	defer func() {
+		testEngine.APIClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+		testEngine.NetworkRemove(ctx, networkName)
+	}()
+
+	// Verify that the original config was NOT mutated
+	if len(originalConfig.EndpointsConfig) != originalMapLen {
+		t.Errorf("Original NetworkingConfig was mutated: expected %d entries, got %d",
+			originalMapLen, len(originalConfig.EndpointsConfig))
+	}
+
+	// Verify the new network is NOT in the original config
+	if _, ok := originalConfig.EndpointsConfig[networkName]; ok {
+		t.Errorf("Original NetworkingConfig should not contain %q", networkName)
+	}
+}
+
+func TestContainerStartWithEnsureNetwork(t *testing.T) {
+	tests := []struct {
+		name              string
+		containerName     string
+		networkName       string
+		preCreateNetwork  bool
+		preConnectNetwork bool // whether to connect container to network before start
+		shouldErr         bool
+	}{
+		{
+			name:              "should start container and connect to new network",
+			containerName:     generateContainerName("test-start-ensure-net-new"),
+			networkName:       generateNetworkName("test-start-net-new"),
+			preCreateNetwork:  false,
+			preConnectNetwork: false,
+			shouldErr:         false,
+		},
+		{
+			name:              "should start container and connect to existing network",
+			containerName:     generateContainerName("test-start-ensure-net-existing"),
+			networkName:       generateNetworkName("test-start-net-existing"),
+			preCreateNetwork:  true,
+			preConnectNetwork: false,
+			shouldErr:         false,
+		},
+		{
+			name:              "should handle already connected container gracefully",
+			containerName:     generateContainerName("test-start-ensure-net-connected"),
+			networkName:       generateNetworkName("test-start-net-connected"),
+			preCreateNetwork:  true,
+			preConnectNetwork: true, // Container already connected
+			shouldErr:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Optionally pre-create the network
+			var networkID string
+			if tt.preCreateNetwork {
+				resp, err := testEngine.NetworkCreate(ctx, tt.networkName, client.NetworkCreateOptions{})
+				if err != nil {
+					t.Fatalf("Failed to pre-create network: %v", err)
+				}
+				networkID = resp.ID
+			}
+			defer func() {
+				testEngine.NetworkRemove(ctx, tt.networkName)
+			}()
+
+			// Create container (without EnsureNetwork initially)
+			containerResp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+				Config: &container.Config{
+					Image: testImageTag,
+					Cmd:   []string{"sleep", "300"},
+				},
+				Name: tt.containerName,
+			})
+			if err != nil {
+				t.Fatalf("Failed to create container: %v", err)
+			}
+			defer func() {
+				testEngine.APIClient.ContainerStop(ctx, containerResp.ID, client.ContainerStopOptions{})
+				testEngine.APIClient.ContainerRemove(ctx, containerResp.ID, client.ContainerRemoveOptions{Force: true})
+			}()
+
+			// Optionally pre-connect container to network
+			if tt.preConnectNetwork && networkID != "" {
+				_, err := testEngine.APIClient.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+					Container: containerResp.ID,
+				})
+				if err != nil {
+					t.Fatalf("Failed to pre-connect container to network: %v", err)
+				}
+			}
+
+			// Start container with EnsureNetwork
+			_, err = testEngine.ContainerStart(ctx, ContainerStartOptions{
+				ContainerID: containerResp.ID,
+				EnsureNetwork: &EnsureNetworkOptions{
+					Name: tt.networkName,
+				},
+			})
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ContainerStart with EnsureNetwork failed: %v", err)
+			}
+
+			// Verify container is running and connected to network
+			inspect, err := testEngine.APIClient.ContainerInspect(ctx, containerResp.ID, client.ContainerInspectOptions{})
+			if err != nil {
+				t.Fatalf("Failed to inspect container: %v", err)
+			}
+
+			if !inspect.Container.State.Running {
+				t.Errorf("Container is not running after start")
+			}
+
+			if inspect.Container.NetworkSettings == nil || inspect.Container.NetworkSettings.Networks == nil {
+				t.Fatalf("Container has no network settings")
+			}
+
+			if _, ok := inspect.Container.NetworkSettings.Networks[tt.networkName]; !ok {
+				t.Errorf("Container is not connected to network %q after start, connected to: %v",
+					tt.networkName, getNetworkNames(inspect.Container.NetworkSettings.Networks))
+			}
+		})
+	}
+}
+
+// getNetworkNames extracts network names from NetworkSettings for error messages
+func getNetworkNames(networks map[string]*network.EndpointSettings) []string {
+	names := make([]string, 0, len(networks))
+	for name := range networks {
+		names = append(names, name)
+	}
+	return names
 }

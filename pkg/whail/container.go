@@ -2,7 +2,6 @@ package whail
 
 import (
 	"context"
-	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -71,14 +70,17 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 
 		// Add the network to NetworkingConfig
 		if networkingConfig == nil {
-			networkingConfig = &network.NetworkingConfig{}
+			networkingConfig = &network.NetworkingConfig{
+				EndpointsConfig: make(map[string]*network.EndpointSettings),
+			}
 		} else {
-			// Copy to avoid mutating caller's struct
+			// Deep copy to avoid mutating caller's struct and map
 			nc := *networkingConfig
+			nc.EndpointsConfig = make(map[string]*network.EndpointSettings, len(networkingConfig.EndpointsConfig)+1)
+			for k, v := range networkingConfig.EndpointsConfig {
+				nc.EndpointsConfig[k] = v
+			}
 			networkingConfig = &nc
-		}
-		if networkingConfig.EndpointsConfig == nil {
-			networkingConfig.EndpointsConfig = make(map[string]*network.EndpointSettings)
 		}
 		networkingConfig.EndpointsConfig[opts.EnsureNetwork.Name] = &network.EndpointSettings{
 			NetworkID: networkID,
@@ -152,13 +154,9 @@ func (e *Engine) ContainerStart(ctx context.Context, opts ContainerStartOptions)
 }
 
 // isAlreadyConnectedError checks if the error indicates the container is already connected to the network.
+// Docker returns "endpoint with name X already exists in network Y" as an AlreadyExists error.
 func isAlreadyConnectedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Docker returns an error like "endpoint with name X already exists in network Y"
-	errStr := err.Error()
-	return strings.Contains(errStr, "already exists in network") || strings.Contains(errStr, "endpoint with name")
+	return cerrdefs.IsAlreadyExists(err)
 }
 
 // ContainerStop stops a container with an optional timeout.
