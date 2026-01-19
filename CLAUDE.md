@@ -38,6 +38,7 @@
 │   ├── config/                # Viper config loading + validation
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── hostproxy/             # Host proxy server for container-to-host communication
 │   ├── monitor/               # Observability stack (Prometheus, Grafana)
 │   ├── term/                  # PTY/terminal handling
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -73,8 +74,70 @@ go test ./...                             # Run tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
+| `hostproxy.Manager` | Host proxy server for container-to-host actions (e.g., opening URLs) |
+| `hostproxy.SessionStore` | Generic session management for proxy channels |
+| `hostproxy.CallbackChannel` | OAuth callback interception and forwarding |
 
 See @.claude/docs/ARCHITECTURE.md for detailed abstractions.
+
+## Host Proxy Architecture
+
+The host proxy (`internal/hostproxy`) is a service mesh that mediates interactions between containers and the host.
+
+### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `Server` | `server.go` | HTTP server handling proxy requests |
+| `SessionStore` | `session.go` | Generic session management with TTL and cleanup |
+| `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
+| `Manager` | `manager.go` | Lifecycle management of the proxy server |
+
+### OAuth Callback Flow
+
+```
+CONTAINER                              HOST PROXY (:18374)                    BROWSER
+    │                                         │                                  │
+    │ 1. Claude Code starts auth server       │                                  │
+    │                                         │                                  │
+    │ 2. host-open detects OAuth URL ────────►│                                  │
+    │    POST /callback/register              │                                  │
+    │         │                               │                                  │
+    │         │◄────────────────────────────── │ Returns session_id              │
+    │         │                               │                                  │
+    │    Rewrites callback URL ───────────────┼─────────────────────────────────►│
+    │                                         │              3. Opens in browser │
+    │                                         │                                  │
+    │                                         │◄─────────────────────────────────│
+    │                                         │ 4. Redirect to proxy callback    │
+    │                                         │    GET /cb/SESSION/callback      │
+    │                                         │                                  │
+    │    callback-forwarder polls ───────────►│                                  │
+    │    GET /callback/SESSION/data           │                                  │
+    │         │                               │                                  │
+    │         │◄────────────────────────────── │ Returns callback data           │
+    │         │                               │                                  │
+    │ 5. Forwards to localhost:PORT           │                                  │
+    │    Claude Code receives callback!       │                                  │
+```
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/open/url` | POST | Open URL in host browser |
+| `/health` | GET | Health check |
+| `/callback/register` | POST | Register OAuth callback session |
+| `/callback/{session}/data` | GET | Poll for captured callback data |
+| `/callback/{session}` | DELETE | Cleanup session |
+| `/cb/{session}/{path...}` | GET | Receive OAuth callbacks from browser |
+
+### Container Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `host-open` | Opens URLs, detects OAuth flows, rewrites callbacks |
+| `callback-forwarder` | Polls proxy and forwards callbacks to local server |
 
 ## Code Style
 

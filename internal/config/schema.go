@@ -101,10 +101,20 @@ type WorkspaceConfig struct {
 
 // SecurityConfig defines optional security hardening settings
 type SecurityConfig struct {
-	EnableFirewall bool     `yaml:"enable_firewall" mapstructure:"enable_firewall"`
-	DockerSocket   bool     `yaml:"docker_socket" mapstructure:"docker_socket"`
-	AllowedDomains []string `yaml:"allowed_domains,omitempty" mapstructure:"allowed_domains"`
-	CapAdd         []string `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
+	EnableFirewall  bool     `yaml:"enable_firewall" mapstructure:"enable_firewall"`
+	DockerSocket    bool     `yaml:"docker_socket" mapstructure:"docker_socket"`
+	AllowedDomains  []string `yaml:"allowed_domains,omitempty" mapstructure:"allowed_domains"`
+	CapAdd          []string `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
+	EnableHostProxy *bool    `yaml:"enable_host_proxy,omitempty" mapstructure:"enable_host_proxy"` // defaults to true
+}
+
+// HostProxyEnabled returns whether the host proxy should be enabled.
+// Returns true if not explicitly set (defaults to enabled).
+func (s *SecurityConfig) HostProxyEnabled() bool {
+	if s.EnableHostProxy == nil {
+		return true // Default to enabled
+	}
+	return *s.EnableHostProxy
 }
 
 // Mode represents the workspace mode

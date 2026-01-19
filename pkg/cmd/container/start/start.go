@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -67,11 +68,26 @@ Container names can be:
 func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error {
 	ctx := context.Background()
 
+	// Load config to check host proxy setting
+	cfg, err := f.Config()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to load config, using defaults for host proxy")
+	}
+
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
+	}
+
+	// Ensure host proxy is running for container-to-host communication (if enabled)
+	if cfg == nil || cfg.Security.HostProxyEnabled() {
+		if err := f.EnsureHostProxy(); err != nil {
+			logger.Warn().Err(err).Msg("failed to start host proxy server")
+			cmdutil.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
+			cmdutil.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+		}
 	}
 
 	// Resolve container names
