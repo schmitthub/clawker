@@ -20,8 +20,9 @@ const dockerDesktopSSHPath = "/run/host-services/ssh-auth.sock"
 func IsSSHAgentAvailable() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		// Docker Desktop provides SSH agent forwarding via magic socket
-		// The socket is always available when Docker Desktop is running
+		// Docker Desktop always provides the SSH agent socket path when running.
+		// We can't verify the socket from the host since it only exists inside containers.
+		// If Docker Desktop is not running, container creation will fail anyway.
 		return true
 	case "linux":
 		sock := os.Getenv("SSH_AUTH_SOCK")

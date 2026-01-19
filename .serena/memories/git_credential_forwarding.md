@@ -64,12 +64,24 @@ Container git credential forwarding following VSCode DevContainers pattern. Exte
 
 ## Lessons Learned
 
-(To be updated during implementation)
+1. **Use jq for JSON in shell scripts** - sed-based JSON parsing fails on escaped quotes and special chars
+2. **Check curl exit codes AND HTTP status** - silent failures cause hard-to-debug issues
+3. **Exit non-zero on credential lookup failure** - git expects exit 1 when creds not found
+4. **Add scanner.Err() after loops** - bufio.Scanner can have scanning errors
+5. **Extract duplicated setup code** - git credential setup was copied between run.go and create.go, now in workspace/git.go
 
 ## Testing Checklist
 
 - [ ] HTTPS clone private repo
 - [ ] SSH clone private repo
 - [ ] Graceful fallback when SSH agent not running
-- [ ] Unit tests for credential parsing
-- [ ] Integration tests for run command
+- [x] Unit tests for credential parsing (parseGitCredentialOutput has scanner.Err() check)
+- [x] Integration tests for run command (all tests pass)
+
+## PR #50 Fixes Applied
+
+- **git-credential-clawker.sh**: Rewritten with jq for JSON, proper curl error handling, exit 1 on failure
+- **internal/workspace/git.go**: New shared helper to eliminate code duplication in run/create commands
+- **entrypoint.sh**: Added warnings for silent failures (firewall, gitconfig, credential helper)
+- **git_credential.go**: Added scanner.Err() check, improved action mapping comment
+- **ssh.go**: Improved macOS SSH check comment

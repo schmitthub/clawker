@@ -86,7 +86,8 @@ func (s *Server) handleGitCredential(w http.ResponseWriter, r *http.Request) {
 	// Convert to git credential protocol format
 	input := formatGitCredentialInput(req)
 
-	// Map action to git credential subcommand
+	// Map user-friendly action names to git credential subcommands.
+	// Git uses different terminology: "fill" retrieves, "approve" stores, "reject" erases.
 	var gitAction string
 	switch req.Action {
 	case "get":
@@ -222,6 +223,10 @@ func parseGitCredentialOutput(output string) gitCredentials {
 		case "password":
 			creds.Password = value
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.Debug().Err(err).Msg("error scanning git credential output")
 	}
 
 	return creds

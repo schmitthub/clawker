@@ -37,51 +37,58 @@ while IFS= read -r line; do
     esac
 done
 
-# Build JSON request - escape special characters for safety
-escape_json() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
-}
+# Build JSON request using jq for proper escaping
+json_req=$(jq -n \
+    --arg action "$ACTION" \
+    --arg protocol "$protocol" \
+    --arg host "$host" \
+    --arg path "$path" \
+    --arg username "$username" \
+    --arg password "$password" \
+    '{action: $action, protocol: $protocol, host: $host, path: $path, username: $username, password: $password}')
 
-json_req=$(cat <<EOF
-{
-    "action": "$(escape_json "$ACTION")",
-    "protocol": "$(escape_json "$protocol")",
-    "host": "$(escape_json "$host")",
-    "path": "$(escape_json "$path")",
-    "username": "$(escape_json "$username")",
-    "password": "$(escape_json "$password")"
-}
-EOF
-)
+# POST to host proxy with proper error handling
+curl_stderr=$(mktemp)
+trap 'rm -f "$curl_stderr"' EXIT
 
-# POST to host proxy
-response=$(curl -s -X POST \
+response=$(curl -s -w '\n%{http_code}' -X POST \
     -H "Content-Type: application/json" \
     -d "$json_req" \
-    "$CLAWKER_HOST_PROXY/git/credential" 2>/dev/null)
+    "$CLAWKER_HOST_PROXY/git/credential" 2>"$curl_stderr")
+curl_exit=$?
 
-# Check for curl failure
-if [ -z "$response" ]; then
+if [ $curl_exit -ne 0 ]; then
+    echo "error: failed to contact host proxy: $(cat "$curl_stderr")" >&2
+    exit 1
+fi
+
+# Extract HTTP status code (last line) and response body
+http_code=$(printf '%s' "$response" | tail -n1)
+response_body=$(printf '%s' "$response" | sed '$d')
+
+# Check for HTTP errors
+if [ "$http_code" -ge 400 ] 2>/dev/null; then
+    error_msg=$(printf '%s' "$response_body" | jq -r '.error // "request failed"' 2>/dev/null || echo "request failed with status $http_code")
+    echo "error: $error_msg" >&2
     exit 1
 fi
 
 # Parse response based on action
 if [ "$ACTION" = "get" ]; then
-    # Extract credentials from JSON response and output in git credential format
-    # Check if success is true
-    success=$(echo "$response" | grep -o '"success":[^,}]*' | cut -d: -f2 | tr -d ' ')
+    # Check if success is true using jq for proper JSON parsing
+    success=$(printf '%s' "$response_body" | jq -r '.success // empty' 2>/dev/null)
 
     if [ "$success" = "true" ]; then
-        # Extract fields using portable sed - handle escaped quotes in values
-        resp_protocol=$(echo "$response" | sed -n 's/.*"protocol":"\([^"]*\)".*/\1/p')
-        resp_host=$(echo "$response" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')
-        resp_username=$(echo "$response" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')
-        resp_password=$(echo "$response" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p')
-
-        [ -n "$resp_protocol" ] && echo "protocol=$resp_protocol"
-        [ -n "$resp_host" ] && echo "host=$resp_host"
-        [ -n "$resp_username" ] && echo "username=$resp_username"
-        [ -n "$resp_password" ] && echo "password=$resp_password"
+        # Extract fields using jq and output in git credential format
+        printf '%s' "$response_body" | jq -r '
+            to_entries[] |
+            select(.key != "success" and .key != "error" and .value != "" and .value != null) |
+            "\(.key)=\(.value)"' 2>/dev/null
+        exit 0
+    else
+        error=$(printf '%s' "$response_body" | jq -r '.error // "credential lookup failed"' 2>/dev/null)
+        echo "error: $error" >&2
+        exit 1
     fi
 fi
 

@@ -3,7 +3,9 @@ set -e
 
 # Initialize firewall if script exists and we have capabilities
 if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
-    sudo /usr/local/bin/init-firewall.sh 2>/dev/null || true
+    if ! sudo /usr/local/bin/init-firewall.sh 2>&1; then
+        echo "Warning: Firewall initialization failed" >&2
+    fi
 fi
 
 # Initialize config volume with image defaults if missing
@@ -29,9 +31,10 @@ fi
 HOST_GITCONFIG="/tmp/host-gitconfig"
 if [ -f "$HOST_GITCONFIG" ]; then
     # Copy host gitconfig, filtering out credential.helper lines (we configure our own)
-    grep -v '^[[:space:]]*helper[[:space:]]*=' "$HOST_GITCONFIG" 2>/dev/null > "$HOME/.gitconfig.tmp" || true
-    # Also filter [credential] section headers that might be orphaned
-    if [ -s "$HOME/.gitconfig.tmp" ]; then
+    if ! grep -v '^[[:space:]]*helper[[:space:]]*=' "$HOST_GITCONFIG" > "$HOME/.gitconfig.tmp" 2>&1; then
+        echo "Warning: Failed to filter host gitconfig" >&2
+        cp "$HOST_GITCONFIG" "$HOME/.gitconfig" 2>/dev/null || true
+    elif [ -s "$HOME/.gitconfig.tmp" ]; then
         mv "$HOME/.gitconfig.tmp" "$HOME/.gitconfig"
     else
         rm -f "$HOME/.gitconfig.tmp"
@@ -40,7 +43,9 @@ fi
 
 # Configure git credential helper if HTTPS forwarding is enabled
 if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
-    git config --global credential.helper clawker
+    if ! git config --global credential.helper clawker 2>&1; then
+        echo "Warning: Failed to configure git credential helper" >&2
+    fi
 fi
 
 # If first argument starts with "-" or isn't a command, prepend "claude"
