@@ -92,6 +92,8 @@ The host proxy (`internal/hostproxy`) is a service mesh that mediates interactio
 | `SessionStore` | `session.go` | Generic session management with TTL and cleanup |
 | `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
 | `Manager` | `manager.go` | Lifecycle management of the proxy server |
+| `GitCredential` | `git_credential.go` | Git credential forwarding handler |
+| `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler |
 
 ### OAuth Callback Flow
 
@@ -127,6 +129,8 @@ CONTAINER                              HOST PROXY (:18374)                    BR
 |----------|--------|---------|
 | `/open/url` | POST | Open URL in host browser |
 | `/health` | GET | Health check |
+| `/git/credential` | POST | Forward git credential get/store/erase to host |
+| `/ssh/agent` | POST | Forward SSH agent requests to host (macOS) |
 | `/callback/register` | POST | Register OAuth callback session |
 | `/callback/{session}/data` | GET | Poll for captured callback data |
 | `/callback/{session}` | DELETE | Cleanup session |
@@ -138,6 +142,50 @@ CONTAINER                              HOST PROXY (:18374)                    BR
 |--------|---------|
 | `host-open` | Opens URLs, detects OAuth flows, rewrites callbacks |
 | `callback-forwarder` | Polls proxy and forwards callbacks to local server |
+| `git-credential-clawker` | Git credential helper that forwards to host proxy |
+| `ssh-agent-proxy` | SSH agent proxy binary that forwards via host proxy (macOS) |
+
+### Git Credential Forwarding
+
+Git credentials from the host are forwarded to containers via two mechanisms:
+
+**HTTPS Credentials** (via host proxy):
+```
+CONTAINER                          HOST PROXY (:18374)                    HOST
+    │                                     │                                  │
+    │ git clone https://...               │                                  │
+    │    ↓                                │                                  │
+    │ git-credential-clawker get ────────►│ POST /git/credential             │
+    │                                     │    ↓                             │
+    │                                     │ git credential fill ────────────►│
+    │                                     │    ↓                             │
+    │                                     │◄── OS Keychain/Credential Manager│
+    │◄────────────────────────────────────│                                  │
+    │ credentials returned                │                                  │
+```
+
+**SSH Keys** (via agent forwarding):
+- Linux: Bind mount `$SSH_AUTH_SOCK` to `/tmp/ssh-agent.sock`
+- macOS: SSH agent proxy via host proxy (avoids Docker Desktop socket permission issues)
+
+**macOS SSH Agent Flow** (via host proxy):
+```
+CONTAINER                              HOST PROXY (:18374)               HOST
+    │                                         │                             │
+    │ ssh-add -l                              │                             │
+    │    ↓                                    │                             │
+    │ ssh-agent-proxy (Go binary) ───────────►│ POST /ssh/agent            │
+    │ creates ~/.ssh/agent.sock               │    ↓                        │
+    │ (user-owned)                            │ net.Dial(SSH_AUTH_SOCK) ───►│
+    │                                         │    ↓                        │
+    │◄────────────────────────────────────────│◄── Agent response           │
+    │ response returned                       │                             │
+```
+
+**Host Git Config**:
+- Host `~/.gitconfig` mounted read-only to `/tmp/host-gitconfig`
+- Entrypoint copies to container's `~/.gitconfig` (filtering credential.helper)
+- Container's credential.helper configured to use `git-credential-clawker`
 
 ## Code Style
 
@@ -229,9 +277,13 @@ workspace:
 security:
   enable_firewall: true
   docker_socket: false
+  git_credentials:
+    forward_https: true    # Forward HTTPS credentials via host proxy (default: follows host_proxy)
+    forward_ssh: true      # Forward SSH agent for git+ssh (default: true)
+    copy_git_config: true  # Copy host ~/.gitconfig (default: true)
 ```
 
-**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`
+**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`
 
 ## Design Decisions
 

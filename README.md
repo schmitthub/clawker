@@ -154,6 +154,11 @@ security:
   docker_socket: false
   # Host proxy for browser auth (enabled by default)
   # enable_host_proxy: true
+  # Git credential forwarding (all enabled by default)
+  # git_credentials:
+  #   forward_https: true   # Forward HTTPS credentials via host proxy
+  #   forward_ssh: true     # Forward SSH agent for git+ssh
+  #   copy_git_config: true # Copy host ~/.gitconfig
   # Allowed domains when firewall enabled
   # allowed_domains:
   #   - "api.github.com"
@@ -199,3 +204,48 @@ From inside a container, you can manually open URLs on the host:
 ```bash
 host-open https://example.com
 ```
+
+## Git Credential Forwarding
+
+Clawker automatically forwards your host's git credentials to containers, enabling `git clone`, `git push`, and other operations without manual configuration.
+
+### HTTPS Credentials
+
+HTTPS git credentials are forwarded via the host proxy. When git needs credentials inside a container:
+1. Git calls the `git-credential-clawker` helper
+2. The helper forwards the request to the host proxy
+3. The proxy executes `git credential fill` on the host
+4. Credentials from your OS keychain/credential manager are returned
+
+This works seamlessly with GitHub CLI (`gh auth login`), Git Credential Manager, and macOS Keychain.
+
+### SSH Keys
+
+SSH agent forwarding is enabled by default:
+- **macOS**: SSH agent requests are forwarded via the host proxy (avoids Docker Desktop permission issues)
+- **Linux**: Your `SSH_AUTH_SOCK` socket is mounted directly into the container
+
+Your SSH keys remain on the host - the container only has agent access, not the keys themselves.
+
+### Host Git Config
+
+Your `~/.gitconfig` is automatically copied to containers, preserving:
+- `user.name` and `user.email`
+- Aliases and other git settings
+- Delta/diff tool configurations
+
+The credential.helper setting is filtered out since clawker provides its own.
+
+### Configuration
+
+Git credential forwarding is enabled by default. To customize:
+
+```yaml
+security:
+  git_credentials:
+    forward_https: true    # HTTPS credentials via host proxy (default: follows host_proxy)
+    forward_ssh: true      # SSH agent forwarding (default: true)
+    copy_git_config: true  # Copy host ~/.gitconfig (default: true)
+```
+
+**Zero-config**: If your host git is configured (GitHub CLI, Git Credential Manager, SSH keys), containers automatically have access.

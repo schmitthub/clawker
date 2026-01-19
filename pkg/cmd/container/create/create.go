@@ -207,18 +207,25 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Start host proxy server for container-to-host communication (if enabled)
+	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
+			hostProxyRunning = true
 			// Inject host proxy URL into container environment
 			if envVar := f.HostProxyEnvVar(); envVar != "" {
 				opts.Env = append(opts.Env, envVar)
 			}
 		}
 	}
+
+	// Setup git credential forwarding
+	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
+	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
+	opts.Env = append(opts.Env, gitSetup.Env...)
 
 	// Build configs
 	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)

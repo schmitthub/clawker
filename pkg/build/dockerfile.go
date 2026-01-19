@@ -43,6 +43,12 @@ var HostOpenScript string
 //go:embed templates/callback-forwarder.sh
 var CallbackForwarderScript string
 
+//go:embed templates/git-credential-clawker.sh
+var GitCredentialScript string
+
+//go:embed templates/ssh-agent-proxy.go
+var SSHAgentProxySource string
+
 // Default values for container configuration
 const (
 	DefaultClaudeCodeVersion = "latest"
@@ -325,6 +331,16 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 
 	// Add callback-forwarder script for OAuth callback proxying
 	if err := addFileToTar(tw, "callback-forwarder.sh", []byte(CallbackForwarderScript)); err != nil {
+		return nil, err
+	}
+
+	// Add git-credential-clawker script for git credential forwarding
+	if err := addFileToTar(tw, "git-credential-clawker.sh", []byte(GitCredentialScript)); err != nil {
+		return nil, err
+	}
+
+	// Add ssh-agent-proxy source for compilation in multi-stage build
+	if err := addFileToTar(tw, "ssh-agent-proxy.go", []byte(SSHAgentProxySource)); err != nil {
 		return nil, err
 	}
 

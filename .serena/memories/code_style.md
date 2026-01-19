@@ -41,6 +41,10 @@
 - Use `cmd.MarkFlagsOneRequired()` and `cmd.MarkFlagsMutuallyExclusive()` for flag validation
 - Use `cmdutil.HandleError(err)` for Docker errors to get rich formatting
 
+## Configuration
+
+- Always use `yaml.Marshal` when generating user yaml config files or templates off of Go structs (to ensure consistency with struct structure and tags)
+
 ## Important Gotchas
 
 - **Always use `f.Client(ctx)` from Factory** - never call `docker.NewClient(ctx)` directly in command files. The Factory provides lazy initialization with `sync.Once` caching and manages client lifecycle via `CloseClient()` in `internal/clawker/cmd.go`.
