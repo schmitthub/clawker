@@ -10,7 +10,7 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 
 **Clawker** (claude + docker) wraps Claude Code in Docker containers with a familiar CLI. It handles auth seamlessly via a host proxy, forwards your git credentials, and provides optional monitoring - so you can let Claude Code loose without worrying about your system.
 
-> **Status:** Alpha - macOS tested. Contributions welcome.
+> **Status:** Alpha - macOS tested. Please report issues and contributions welcome! If you find clawker useful, please star the repo!
 > **Planned features and fixes:**
 > * Linux support not yet tested but might work
 > * Windows support
