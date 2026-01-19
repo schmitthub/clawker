@@ -356,7 +356,7 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/docs/CLI-VERBS.md | CLI command reference with flags and examples |
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
-| @.claude/rules/TESTING.md | CLI testing guildelines (**only access when writing command tests**) |
+| @.claude/rules/TESTING.md | CLI testing guidelines (**only access when writing command tests**) |
 | @README.md | see @.serena/readme_design_direction.md |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.

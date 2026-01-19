@@ -79,12 +79,12 @@ Management commands (`container`, `image`, `volume`, `network`) support the same
 
 ## Isolation Features
 
-Clawker does not simply just pass through to docker cli, it is a port of docker cli. It adds isolation features to keep your system safe from rogue Claude Code agents, and convenience clawker-only isolation when running docker-like commands
+Clawker is a port of the Docker CLI, not just a passthrough. It adds isolation features to keep your system safe from rogue Claude Code agents, and provides clawker-only isolation when running docker-like commands.
 
 * clawker-only resource isolation when running docker-like commands, you don't have to worry about filters. Clawker only sees its own resources, so you don't accidentally delete or modify other docker resources. This is done via labels under the hood.
 * per-project resource namespacing, so you can have multiple projects on the same host without conflicts. Each project gets its own set of containers, images, volumes, and networks, identified by labels.
 * per-agent containerization, so each agent runs in its own isolated container. You can have multiple agents running simultaneously without interference.
-* Network firewalling, so you can restrict outbound network access from containers. By default, all outbound traffic is blocked except for allowed domains in a firewall init script
+* Network firewalling, so you can restrict outbound network access from containers. By default, all outbound traffic is blocked except for allowed domains in a firewall init script.
 * All clawker resources are added to a docker network `clawker-net` so they can communicate if needed.
 
 ## Authentication & Git

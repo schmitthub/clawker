@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // GenMarkdownTree generates markdown documentation for a command and all its subcommands.
@@ -174,30 +173,4 @@ func getNonHiddenCommands(cmd *cobra.Command) []*cobra.Command {
 		return commands[i].Name() < commands[j].Name()
 	})
 	return commands
-}
-
-// printFlagsMarkdown formats flags as a markdown table.
-func printFlagsMarkdown(w io.Writer, fs *pflag.FlagSet) error {
-	buf := new(bytes.Buffer)
-	buf.WriteString("| Flag | Shorthand | Default | Description |\n")
-	buf.WriteString("|------|-----------|---------|-------------|\n")
-
-	fs.VisitAll(func(f *pflag.Flag) {
-		if f.Hidden {
-			return
-		}
-		shorthand := ""
-		if f.Shorthand != "" {
-			shorthand = "-" + f.Shorthand
-		}
-		defValue := f.DefValue
-		if defValue == "" {
-			defValue = "-"
-		}
-		fmt.Fprintf(buf, "| --%s | %s | %s | %s |\n",
-			f.Name, shorthand, defValue, f.Usage)
-	})
-
-	_, err := buf.WriteTo(w)
-	return err
 }

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // Test command tree for all format tests
@@ -133,25 +132,5 @@ func checkStringOmits(t *testing.T, got, unexpected string) {
 	t.Helper()
 	if strings.Contains(got, unexpected) {
 		t.Errorf("expected output to not contain %q, got:\n%s", unexpected, got)
-	}
-}
-
-// checkFlagInOutput verifies a flag appears in formatted output
-func checkFlagInOutput(t *testing.T, output, flagName, flagUsage string) {
-	t.Helper()
-	if !strings.Contains(output, flagName) {
-		t.Errorf("expected output to contain flag %q", flagName)
-	}
-	if !strings.Contains(output, flagUsage) {
-		t.Errorf("expected output to contain flag usage %q", flagUsage)
-	}
-}
-
-// visitAllFlags iterates over all flags in a command and its children
-func visitAllFlags(cmd *cobra.Command, fn func(*pflag.Flag)) {
-	cmd.Flags().VisitAll(fn)
-	cmd.PersistentFlags().VisitAll(fn)
-	for _, c := range cmd.Commands() {
-		visitAllFlags(c, fn)
 	}
 }
