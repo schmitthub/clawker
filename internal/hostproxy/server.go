@@ -88,6 +88,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /open/url", s.handleOpenURL)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	// Git credential forwarding endpoint
+	mux.HandleFunc("POST /git/credential", s.handleGitCredential)
+
 	// Callback channel endpoints for OAuth flow
 	mux.HandleFunc("POST /callback/register", s.handleCallbackRegister)
 	mux.HandleFunc("GET /callback/{session}/data", s.handleCallbackGetData)

@@ -220,16 +220,50 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Start host proxy server for container-to-host communication (if enabled)
+	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
+			hostProxyRunning = true
 			// Inject host proxy URL into container environment
 			if envVar := f.HostProxyEnvVar(); envVar != "" {
 				opts.Env = append(opts.Env, envVar)
 			}
+		}
+	}
+
+	// Setup git credential forwarding
+	gitCreds := cfg.Security.GitCredentials
+
+	// HTTPS credential forwarding (requires host proxy)
+	if gitCreds.GitHTTPSEnabled(hostProxyRunning) {
+		opts.Env = append(opts.Env, "CLAWKER_GIT_HTTPS=true")
+		logger.Debug().Msg("git HTTPS credential forwarding enabled")
+	}
+
+	// SSH agent forwarding
+	if gitCreds.GitSSHEnabled() {
+		if workspace.IsSSHAgentAvailable() {
+			sshMounts := workspace.GetSSHAgentMounts()
+			workspaceMounts = append(workspaceMounts, sshMounts...)
+			if sshEnv := workspace.GetSSHAgentEnvVar(); sshEnv != "" {
+				opts.Env = append(opts.Env, "SSH_AUTH_SOCK="+sshEnv)
+			}
+			logger.Debug().Msg("SSH agent forwarding enabled")
+		} else {
+			logger.Debug().Msg("SSH agent not available, skipping SSH forwarding")
+		}
+	}
+
+	// Git config forwarding
+	if gitCreds.CopyGitConfigEnabled() {
+		if workspace.GitConfigExists() {
+			gitConfigMounts := workspace.GetGitConfigMount()
+			workspaceMounts = append(workspaceMounts, gitConfigMounts...)
+			logger.Debug().Msg("host gitconfig mount enabled")
 		}
 	}
 

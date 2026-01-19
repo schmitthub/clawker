@@ -234,10 +234,11 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
     chmod 0440 /etc/sudoers.d/${USERNAME}-firewall
 {{end}}
 
-# Host proxy client for opening URLs on the host machine
+# Host proxy client scripts for container-to-host communication
 COPY host-open.sh /usr/local/bin/host-open
 COPY callback-forwarder.sh /usr/local/bin/callback-forwarder
-RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder
+COPY git-credential-clawker.sh /usr/local/bin/git-credential-clawker
+RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/local/bin/git-credential-clawker
 
 # Switch to non-root user
 USER ${USERNAME}

@@ -101,11 +101,12 @@ type WorkspaceConfig struct {
 
 // SecurityConfig defines optional security hardening settings
 type SecurityConfig struct {
-	EnableFirewall  bool     `yaml:"enable_firewall" mapstructure:"enable_firewall"`
-	DockerSocket    bool     `yaml:"docker_socket" mapstructure:"docker_socket"`
-	AllowedDomains  []string `yaml:"allowed_domains,omitempty" mapstructure:"allowed_domains"`
-	CapAdd          []string `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
-	EnableHostProxy *bool    `yaml:"enable_host_proxy,omitempty" mapstructure:"enable_host_proxy"` // defaults to true
+	EnableFirewall  bool                  `yaml:"enable_firewall" mapstructure:"enable_firewall"`
+	DockerSocket    bool                  `yaml:"docker_socket" mapstructure:"docker_socket"`
+	AllowedDomains  []string              `yaml:"allowed_domains,omitempty" mapstructure:"allowed_domains"`
+	CapAdd          []string              `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
+	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" mapstructure:"enable_host_proxy"` // defaults to true
+	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty" mapstructure:"git_credentials"`
 }
 
 // HostProxyEnabled returns whether the host proxy should be enabled.
@@ -118,6 +119,41 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 }
 
 // Mode represents the workspace mode
+
+// GitCredentialsConfig defines git credential forwarding settings
+type GitCredentialsConfig struct {
+	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" mapstructure:"forward_https"`     // Enable HTTPS credential forwarding (default: follows host_proxy)
+	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" mapstructure:"forward_ssh"`         // Enable SSH agent forwarding (default: true)
+	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" mapstructure:"copy_git_config"` // Copy host .gitconfig (default: true)
+}
+
+// GitHTTPSEnabled returns whether HTTPS credential forwarding should be enabled.
+// Returns true if host proxy is enabled and not explicitly disabled.
+func (g *GitCredentialsConfig) GitHTTPSEnabled(hostProxyEnabled bool) bool {
+	if g == nil || g.ForwardHTTPS == nil {
+		return hostProxyEnabled // Default follows host_proxy setting
+	}
+	return *g.ForwardHTTPS && hostProxyEnabled // Requires host proxy
+}
+
+// GitSSHEnabled returns whether SSH agent forwarding should be enabled.
+// Returns true by default.
+func (g *GitCredentialsConfig) GitSSHEnabled() bool {
+	if g == nil || g.ForwardSSH == nil {
+		return true // Default to enabled
+	}
+	return *g.ForwardSSH
+}
+
+// CopyGitConfigEnabled returns whether host .gitconfig should be copied.
+// Returns true by default.
+func (g *GitCredentialsConfig) CopyGitConfigEnabled() bool {
+	if g == nil || g.CopyGitConfig == nil {
+		return true // Default to enabled
+	}
+	return *g.CopyGitConfig
+}
+
 type Mode string
 
 const (

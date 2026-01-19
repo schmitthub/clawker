@@ -25,6 +25,24 @@ if [ -d "$INIT_DIR" ]; then
     fi
 fi
 
+# Setup git configuration from host
+HOST_GITCONFIG="/tmp/host-gitconfig"
+if [ -f "$HOST_GITCONFIG" ]; then
+    # Copy host gitconfig, filtering out credential.helper lines (we configure our own)
+    grep -v '^[[:space:]]*helper[[:space:]]*=' "$HOST_GITCONFIG" 2>/dev/null > "$HOME/.gitconfig.tmp" || true
+    # Also filter [credential] section headers that might be orphaned
+    if [ -s "$HOME/.gitconfig.tmp" ]; then
+        mv "$HOME/.gitconfig.tmp" "$HOME/.gitconfig"
+    else
+        rm -f "$HOME/.gitconfig.tmp"
+    fi
+fi
+
+# Configure git credential helper if HTTPS forwarding is enabled
+if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
+    git config --global credential.helper clawker
+fi
+
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
     set -- claude "$@"
