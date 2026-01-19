@@ -84,7 +84,7 @@ func (s *SessionStore) SetOnDelete(fn func(session *Session)) {
 }
 
 // NewSessionStore creates a new session store and starts the background
-// cleanup goroutine.
+// cleanup goroutine. Callers MUST call Stop() when done to prevent goroutine leaks.
 func NewSessionStore() *SessionStore {
 	store := &SessionStore{
 		sessions: make(map[string]*Session),

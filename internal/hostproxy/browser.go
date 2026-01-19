@@ -21,5 +21,5 @@ func openBrowser(url string) error {
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	return cmd.Run()
 }

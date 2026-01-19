@@ -109,7 +109,7 @@ func (c *CallbackChannel) Capture(sessionID string, r *http.Request) error {
 		bodyBytes := make([]byte, 64*1024)
 		n, err := r.Body.Read(bodyBytes)
 		if err != nil && err != io.EOF {
-			logger.Debug().Err(err).Msg("error reading callback request body")
+			logger.Warn().Err(err).Msg("error reading callback request body")
 		}
 		if n > 0 {
 			body = string(bodyBytes[:n])

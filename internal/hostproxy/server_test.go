@@ -497,3 +497,110 @@ func TestServerStopCleansUpSessions(t *testing.T) {
 	// but we can verify stop is idempotent)
 	s.Stop(context.Background()) // Should not panic
 }
+
+func TestServer_DynamicListenerStartStop(t *testing.T) {
+	s := NewServer(18374)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	})
+
+	// Get a free port for the dynamic listener
+	port := getFreePort(t)
+
+	// Register a callback session which starts a dynamic listener
+	req := httptest.NewRequest(http.MethodPost, "/callback/register", bytes.NewBufferString(fmt.Sprintf(`{"port": %d}`, port)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleCallbackRegister(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var result callbackRegisterResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if !result.Success || result.SessionID == "" {
+		t.Fatalf("expected successful registration, got error: %s", result.Error)
+	}
+
+	// Small delay for listener to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify the listener is actually listening on the port
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 1*time.Second)
+	if err != nil {
+		t.Fatalf("expected dynamic listener to be listening on port %d: %v", port, err)
+	}
+	conn.Close()
+
+	// Delete the session which should stop the listener
+	delReq := httptest.NewRequest(http.MethodDelete, "/callback/"+result.SessionID, nil)
+	delReq.SetPathValue("session", result.SessionID)
+	delW := httptest.NewRecorder()
+	s.handleCallbackDelete(delW, delReq)
+
+	// Small delay for listener to stop
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify the listener has stopped
+	conn, err = net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		t.Errorf("expected dynamic listener to be stopped, but port %d is still open", port)
+	}
+}
+
+func TestServer_DynamicListenerCapture(t *testing.T) {
+	s := NewServer(18374)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	})
+
+	// Get a free port for the dynamic listener
+	port := getFreePort(t)
+
+	// Register a callback session
+	req := httptest.NewRequest(http.MethodPost, "/callback/register", bytes.NewBufferString(fmt.Sprintf(`{"port": %d}`, port)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleCallbackRegister(w, req)
+
+	var result callbackRegisterResponse
+	json.NewDecoder(w.Result().Body).Decode(&result)
+	sessionID := result.SessionID
+
+	// Small delay for listener to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Make a request to the dynamic listener (simulating OAuth callback)
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/callback?code=AUTH_CODE&state=RANDOM_STATE", port)
+	resp, err := http.Get(callbackURL)
+	if err != nil {
+		t.Fatalf("failed to make callback request: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from callback, got %d", resp.StatusCode)
+	}
+
+	// Verify the callback was captured
+	data, received := s.callbackChannel.GetData(sessionID)
+	if !received {
+		t.Error("expected callback to be captured")
+	}
+	if data == nil {
+		t.Fatal("expected callback data")
+	}
+	if !strings.Contains(data.Query, "code=AUTH_CODE") {
+		t.Errorf("expected query to contain 'code=AUTH_CODE', got %q", data.Query)
+	}
+	if !strings.Contains(data.Query, "state=RANDOM_STATE") {
+		t.Errorf("expected query to contain 'state=RANDOM_STATE', got %q", data.Query)
+	}
+}

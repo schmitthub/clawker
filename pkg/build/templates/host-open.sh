@@ -44,7 +44,8 @@ detect_oauth_callback() {
     local url="$1"
 
     # Look for redirect_uri or callback parameters pointing to localhost
-    local redirect_uri=$(get_param "$url" "redirect_uri")
+    local redirect_uri
+    redirect_uri=$(get_param "$url" "redirect_uri")
     if [ -z "$redirect_uri" ]; then
         redirect_uri=$(get_param "$url" "callback")
     fi
@@ -72,10 +73,12 @@ parse_localhost_url() {
 
     # Extract port: match localhost:PORT or 127.0.0.1:PORT
     # Note: Use # as delimiter since | is used for regex alternation
-    local port=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):([0-9]+).*#\2#p')
+    local port
+    port=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):([0-9]+).*#\2#p')
 
     # Extract path: everything after the port
-    local path=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):[0-9]+(/[^?]*).*#\2#p')
+    local path
+    path=$(echo "$url" | sed -nE 's#http://(localhost|127\.0\.0\.1):[0-9]+(/[^?]*).*#\2#p')
 
     # Default to /callback if no path
     if [ -z "$path" ]; then
@@ -176,7 +179,11 @@ main() {
             CALLBACK_SESSION="$session_id" CALLBACK_PORT="$port" callback-forwarder &
         else
             echo "Error: callback-forwarder not found in PATH" >&2
-            echo "OAuth callback will not be forwarded. Authentication may fail." >&2
+            echo "OAuth callback cannot be forwarded. Authentication will fail." >&2
+            echo "" >&2
+            echo "The clawker image may be corrupted. Try rebuilding:" >&2
+            echo "  clawker build --no-cache" >&2
+            exit 1
         fi
 
         # Open the ORIGINAL URL - no rewriting needed!

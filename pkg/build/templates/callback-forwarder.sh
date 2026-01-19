@@ -66,15 +66,24 @@ fi
 START_TIME=$(date +%s)
 DEADLINE=$((START_TIME + TIMEOUT))
 
+# Track consecutive errors for user feedback
+CONSECUTIVE_ERRORS=0
+MAX_SILENT_ERRORS=3
+
 # Poll for callback data
-while [ $(date +%s) -lt $DEADLINE ]; do
+while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     response=$(curl -sf "$DATA_URL" 2>&1) || {
+        CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
         if [ "$VERBOSE" = true ]; then
             echo "Poll error, retrying..." >&2
+        elif [ "$CONSECUTIVE_ERRORS" -eq "$MAX_SILENT_ERRORS" ]; then
+            echo "Warning: multiple poll errors, retrying..." >&2
         fi
-        sleep $POLL_INTERVAL
+        sleep "$POLL_INTERVAL"
         continue
     }
+    # Reset error counter on success
+    CONSECUTIVE_ERRORS=0
 
     # Check for 404 (session not found)
     if echo "$response" | grep -q '"error".*not found'; then
@@ -87,7 +96,7 @@ while [ $(date +%s) -lt $DEADLINE ]; do
 
     if [ "$received" != "true" ]; then
         # No callback yet, keep polling
-        sleep $POLL_INTERVAL
+        sleep "$POLL_INTERVAL"
         continue
     fi
 

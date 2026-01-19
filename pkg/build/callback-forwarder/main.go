@@ -57,7 +57,10 @@ func main() {
 	if *port == 0 {
 		portEnv := os.Getenv("CALLBACK_PORT")
 		if portEnv != "" {
-			fmt.Sscanf(portEnv, "%d", port)
+			if _, err := fmt.Sscanf(portEnv, "%d", port); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid CALLBACK_PORT value '%s': %v\n", portEnv, err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -106,6 +109,13 @@ func main() {
 			continue
 		}
 
+		// Check status code first before decoding
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			fmt.Fprintln(os.Stderr, "Error: session not found or expired")
+			os.Exit(1)
+		}
+
 		var dataResp CallbackDataResponse
 		if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
 			resp.Body.Close()
@@ -116,11 +126,6 @@ func main() {
 			continue
 		}
 		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNotFound {
-			fmt.Fprintln(os.Stderr, "Error: session not found or expired")
-			os.Exit(1)
-		}
 
 		if !dataResp.Received {
 			// No callback yet, keep polling
@@ -144,8 +149,17 @@ func main() {
 
 		// Cleanup session
 		if *cleanup {
-			req, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
-			client.Do(req)
+			req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create cleanup request: %v\n", err)
+			} else {
+				resp, err := client.Do(req)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session: %v\n", err)
+				} else {
+					resp.Body.Close()
+				}
+			}
 		}
 
 		os.Exit(0)

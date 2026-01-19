@@ -272,3 +272,145 @@ func TestSessionStore_StopIsIdempotent(t *testing.T) {
 	store.Stop()
 	store.Stop()
 }
+
+func TestSession_CaptureOnce_Concurrent(t *testing.T) {
+	session := &Session{
+		Metadata: make(map[string]any),
+	}
+
+	const numGoroutines = 100
+	results := make(chan bool, numGoroutines)
+
+	// Start multiple goroutines trying to capture simultaneously
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			results <- session.CaptureOnce("received")
+		}()
+	}
+
+	// Count how many succeeded
+	successCount := 0
+	for i := 0; i < numGoroutines; i++ {
+		if <-results {
+			successCount++
+		}
+	}
+
+	// Only ONE should succeed
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 successful capture, got %d", successCount)
+	}
+
+	// Verify the flag is set
+	val, ok := session.GetMetadata("received")
+	if !ok || val != true {
+		t.Error("expected received=true in metadata")
+	}
+}
+
+func TestSessionStore_ConcurrentAccess(t *testing.T) {
+	store := NewSessionStore()
+	defer store.Stop()
+
+	const numGoroutines = 50
+	done := make(chan struct{}, numGoroutines*3)
+
+	// Start goroutines that create sessions
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer func() { done <- struct{}{} }()
+			_, err := store.Create("test", 5*time.Minute, map[string]any{"id": id})
+			if err != nil {
+				t.Errorf("Create failed: %v", err)
+			}
+		}(i)
+	}
+
+	// Start goroutines that read sessions
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			// Just access the store, may or may not find sessions
+			_ = store.Count()
+		}()
+	}
+
+	// Start goroutines that trigger cleanup
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			store.cleanup()
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < numGoroutines*3; i++ {
+		<-done
+	}
+
+	// Store should still be functional
+	_, err := store.Create("final", 5*time.Minute, nil)
+	if err != nil {
+		t.Errorf("Store not functional after concurrent access: %v", err)
+	}
+}
+
+func TestSessionStore_OnDeleteCallbackFired(t *testing.T) {
+	store := NewSessionStore()
+	defer store.Stop()
+
+	callbackCalled := false
+	var deletedSession *Session
+
+	store.SetOnDelete(func(session *Session) {
+		callbackCalled = true
+		deletedSession = session
+	})
+
+	session, _ := store.Create("test", 5*time.Minute, map[string]any{"key": "value"})
+	sessionID := session.ID
+
+	// Delete the session
+	store.Delete(sessionID)
+
+	if !callbackCalled {
+		t.Error("expected onDelete callback to be called")
+	}
+
+	if deletedSession == nil || deletedSession.ID != sessionID {
+		t.Error("expected callback to receive the deleted session")
+	}
+}
+
+func TestSessionStore_OnDeleteCallbackFiredOnCleanup(t *testing.T) {
+	store := NewSessionStore()
+	defer store.Stop()
+
+	var deletedSessions []*Session
+
+	store.SetOnDelete(func(session *Session) {
+		deletedSessions = append(deletedSessions, session)
+	})
+
+	// Create an expired session directly
+	store.mu.Lock()
+	store.sessions["expired1"] = &Session{
+		ID:        "expired1",
+		Type:      "test",
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	}
+	store.sessions["expired2"] = &Session{
+		ID:        "expired2",
+		Type:      "test",
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	}
+	store.mu.Unlock()
+
+	// Run cleanup
+	store.cleanup()
+
+	// Both expired sessions should trigger callbacks
+	if len(deletedSessions) != 2 {
+		t.Errorf("expected 2 callbacks, got %d", len(deletedSessions))
+	}
+}
