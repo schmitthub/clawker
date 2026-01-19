@@ -249,3 +249,13 @@ security:
 ```
 
 **Zero-config**: If your host git is configured (GitHub CLI, Git Credential Manager, SSH keys), containers automatically have access.
+
+## Known Issues
+
+### Claude Code TUI doesn't redraw after re-attach
+
+When you detach from a container (Ctrl+P, Ctrl+Q) and re-attach, Claude Code's terminal UI may appear blank or frozen. This is a **Claude Code limitation** (its Ink-based React terminal renderer), not a clawker or Docker issue.
+
+**Workaround**: Press any key after re-attaching to trigger a redraw.
+
+This issue has been reported by others in the Claude Code community. Standard terminal apps like vim, htop, etc. redraw correctly on re-attach.
