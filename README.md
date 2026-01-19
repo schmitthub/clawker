@@ -11,6 +11,19 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 **Clawker** (claude + docker) wraps Claude Code in Docker containers with a familiar CLI. It handles auth seamlessly via a host proxy, forwards your git credentials, and provides optional monitoring - so you can let Claude Code loose without worrying about your system.
 
 > **Status:** Alpha - macOS tested. Contributions welcome.
+> **Planned features and fixes:**
+> * Linux support not yet tested but might work
+> * Windows support
+> * Wiggum and worktree example scripts / commands
+> * Versioning and releases with CI/CD integration
+> * File logging
+> * Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling), everything is just raw output that often can conflict with what is already on the terminal, especially Claude's Ink-based TUI (see Known Issues)
+> * Auto pruning to manage disk usage
+> * Man pages and helper docs
+> * Docker MCP Toolkit Support (currently there is a known "feature not a bug" where the mcp plugin inside of a container won't work because it doesn't detect docker desktop)
+> * Host proxy to open browser won't work if you detach and then re-attach before authenticating (low priority)
+> * Grafana pre-built dashboard improvements, right now it's very basic for POC purposes
+> * Improved host claude directory mounting strategy to avoid permission issues and settings
 
 ## Quick Start
 
@@ -22,9 +35,12 @@ git clone https://github.com/schmitthub/clawker.git
 cd clawker && go build -o ./bin/clawker ./cmd/clawker
 export PATH="$PWD/bin:$PATH"
 
+# One-time user setup (creates ~/.local/clawker/settings.yaml)
+clawker init
+
 # Start a project
 cd your-project
-clawker init
+clawker project init  # Creates clawker.yaml
 clawker build
 clawker start --agent ralph
 ```
@@ -63,7 +79,8 @@ Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you 
 
 | Command | Description |
 |---------|-------------|
-| `clawker init` | Initialize project with clawker.yaml |
+| `clawker init` | Set up user settings (~/.local/clawker/settings.yaml) |
+| `clawker project init` | Initialize project with clawker.yaml |
 | `clawker build` | Build container image |
 | `clawker start --agent NAME` | Start a named agent container |
 | `clawker run` | Build and run (one-shot) |
@@ -75,7 +92,7 @@ Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you 
 | `clawker volume ls` | List volumes |
 | `clawker monitor start/stop` | Control monitoring stack |
 
-Management commands (`container`, `image`, `volume`, `network`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
+Management commands (`container`, `image`, `volume`, `network`, `project`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
 
 ## Isolation Features
 
@@ -369,7 +386,11 @@ clawker image list
 
 When you detach from a container (Ctrl+P, Ctrl+Q) and re-attach, Claude Code's terminal UI may appear blank or frozen. This is a **Claude Code limitation** (its Ink-based React terminal renderer), not a clawker or Docker issue.
 
-**Workaround:** Press any key after re-attaching to trigger a redraw.
+**Workaround:** Press any key after re-attaching to trigger a redraw, eventually the terminal will work itself out.
+
+### Docker MCP Gateway doesn't work inside containers
+
+The Docker MCP Gateway doesn't start inside of containers. This is a known "feature not a bug" situation. see: [https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111](https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111)
 
 ## Contributing
 
