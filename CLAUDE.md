@@ -357,6 +357,6 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
 | @.claude/rules/TESTING.md | CLI testing guildelines (**only access when writing command tests**) |
-| @README.md | User-facing Project overview and problem statement and getting started followed by technical features |
+| @README.md | see @.serena/readme_design_direction.md |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.

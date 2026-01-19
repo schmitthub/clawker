@@ -29,13 +29,66 @@ clawker build
 clawker start --agent ralph
 ```
 
-## Seamless Authentication & Git
+## Dockerfile Generation
 
-**The problem:** Containers have their own localhost. When Claude Code opens a browser for OAuth, the callback goes to the wrong place. Git credentials from your keychain don't exist inside containers.
+Want to use Docker directly without clawker's management? The `generate` command creates Dockerfiles for any Claude Code version.
+
+```bash
+# Generate Dockerfiles for latest version
+clawker generate latest
+
+# Generate for multiple versions
+clawker generate latest stable 2.1
+
+# Output to specific directory
+clawker generate --output ./dockerfiles latest
+```
+
+Files are saved to `~/.clawker/build/` by default. Then build with Docker:
+
+```bash
+docker build -t my-claude:latest ~/.clawker/build/latest/
+```
+
+## Commands
+
+Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you know clawker.
+
+| Command | Description |
+|---------|-------------|
+| `clawker init` | Initialize project with clawker.yaml |
+| `clawker build` | Build container image |
+| `clawker start --agent NAME` | Start a named agent container |
+| `clawker run` | Build and run (one-shot) |
+| `clawker container ls` | List containers |
+| `clawker container stop` | Stop container |
+| `clawker container logs` | View logs |
+| `clawker container attach` | Attach to running container |
+| `clawker image ls` | List images |
+| `clawker volume ls` | List volumes |
+| `clawker monitor start/stop` | Control monitoring stack |
+
+Management commands (`container`, `image`, `volume`, `network`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
+
+## Authentication & Git
+
+### API Key Users
+
+Using an API key? Just pass it as an environment variable:
+
+```bash
+clawker run -it --rm -e ANTHROPIC_API_KEY myimage:latest
+```
+
+Or set it in your shell and clawker forwards it automatically.
+
+### Subscription Users
+
+**The problem:** Containers have their own localhost. When Claude Code opens a browser for OAuth, the callback goes to the wrong place.
 
 **The solution:** Clawker runs a lightweight host proxy that bridges the gap.
 
-### Subscription Auth Flow
+**Auth Flow:**
 
 ```
 Container                    Host Proxy (:18374)              Browser
@@ -151,7 +204,24 @@ clawker monitor status   # Check if running
 
 ## Configuration
 
-Clawker uses `clawker.yaml` for project configuration. Run `clawker init` to generate a template.
+### User Settings (~/.local/clawker/settings.yaml)
+
+Global defaults that apply across all projects. Local `clawker.yaml` takes precedence.
+
+```yaml
+project:
+  # Default image when not specified in project config or CLI
+  default_image: "node:20-slim"
+
+# Registered project directories (managed by 'clawker init')
+projects:
+  - /Users/you/Code/project-a
+  - /Users/you/Code/project-b
+```
+
+### Project Config (clawker.yaml)
+
+Project-specific configuration. Run `clawker init` to generate a template.
 
 ```yaml
 version: "1"
@@ -160,13 +230,30 @@ project: "my-app"
 build:
   # Base image for the container
   image: "node:20-slim"
-  # Optional: path to custom Dockerfile
+  # Optional: path to custom Dockerfile (skips generation)
   # dockerfile: "./.devcontainer/Dockerfile"
   # System packages to install
   packages:
     - git
     - curl
     - ripgrep
+  # Build arguments
+  # build_args:
+  #   NODE_VERSION: "20"
+  # Dockerfile instructions
+  instructions:
+    env:
+      NODE_ENV: "production"
+    # copy:
+    #   - { src: "./config.json", dest: "/etc/app/" }
+    # root_run:
+    #   - { cmd: "mkdir -p /opt/app" }
+    # user_run:
+    #   - { cmd: "npm install -g typescript" }
+  # Raw Dockerfile injection (escape hatch)
+  # inject:
+  #   after_from: []
+  #   after_packages: []
 
 agent:
   # Files to include in Claude's context
@@ -176,6 +263,10 @@ agent:
   # Environment variables for Claude
   env:
     NODE_ENV: "development"
+  # Shell, editor, visual settings
+  # shell: "/bin/bash"
+  # editor: "vim"
+  # visual: "vim"
 
 workspace:
   # Container path for your code
@@ -199,6 +290,9 @@ security:
   # allowed_domains:
   #   - "api.github.com"
   #   - "registry.npmjs.org"
+  # Add Linux capabilities
+  # cap_add:
+  #   - NET_ADMIN
 ```
 
 ## Security Defaults
