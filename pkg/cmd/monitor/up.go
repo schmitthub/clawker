@@ -11,6 +11,7 @@ import (
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -66,18 +67,20 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
-	// Check if clawker-net network exists
-	checkNetworkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork)
-	if err := checkNetworkCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Docker network '%s' does not exist\n", config.ClawkerNetwork)
-		fmt.Fprintln(os.Stderr, "  Creating network automatically...")
-
-		createNetworkCmd := exec.Command("docker", "network", "create", config.ClawkerNetwork)
-		if err := createNetworkCmd.Run(); err != nil {
-			return fmt.Errorf("failed to create Docker network: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "  Network '%s' created successfully\n", config.ClawkerNetwork)
+	// Ensure clawker-net network exists (creates with managed labels if needed)
+	ctx := context.Background()
+	client, err := f.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
+	defer client.Close()
+
+	if _, err := client.EnsureNetwork(ctx, whail.EnsureNetworkOptions{
+		Name: config.ClawkerNetwork,
+	}); err != nil {
+		return fmt.Errorf("failed to ensure Docker network '%s': %w", config.ClawkerNetwork, err)
+	}
+	logger.Debug().Str("network", config.ClawkerNetwork).Msg("network ready")
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "up"}

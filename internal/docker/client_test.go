@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // Note: These tests require Docker to be running.
@@ -90,17 +90,20 @@ func TestClientContainerLifecycle(t *testing.T) {
 	// Create container using embedded engine methods with our labels
 	labels := ContainerLabels(project, agent, "test", "alpine:latest", "/test")
 
-	createResp, err := client.ContainerCreate(ctx, &container.Config{
-		Image:  "alpine:latest",
-		Cmd:    []string{"sleep", "300"},
-		Labels: labels,
-	}, nil, nil, nil, containerName)
+	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:  "alpine:latest",
+			Cmd:    []string{"sleep", "300"},
+			Labels: labels,
+		},
+		Name: containerName,
+	})
 	if err != nil {
 		t.Fatalf("ContainerCreate() error = %v", err)
 	}
 
 	// Start container
-	if _, err := client.ContainerStart(ctx, createResp.ID, dockerclient.ContainerStartOptions{}); err != nil {
+	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
 		t.Fatalf("ContainerStart() error = %v", err)
 	}
 

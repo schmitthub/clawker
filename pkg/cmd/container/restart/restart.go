@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -111,7 +111,12 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, o
 		if _, err := client.ContainerKill(ctx, c.ID, opts.Signal); err != nil {
 			return err
 		}
-		_, err = client.ContainerStart(ctx, c.ID, dockerclient.ContainerStartOptions{})
+		_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{
+			ContainerID: c.ID,
+			EnsureNetwork: &whail.EnsureNetworkOptions{
+				Name: docker.NetworkName,
+			},
+		})
 		return err
 	}
 

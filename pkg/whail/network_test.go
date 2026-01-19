@@ -427,7 +427,7 @@ func TestEnsureNetwork(t *testing.T) {
 			tt.setupFunc(ctx, t, tt.networkName)
 			defer tt.cleanupFunc(ctx, t, tt.networkName)
 
-			networkID, err := testEngine.EnsureNetwork(ctx, tt.networkName, client.NetworkCreateOptions{}, false)
+			networkID, err := testEngine.EnsureNetwork(ctx, EnsureNetworkOptions{Name: tt.networkName})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -586,6 +586,170 @@ func TestNetworksPrune(t *testing.T) {
 			}
 			if !tt.shouldBeRemoved && !exists {
 				t.Errorf("Expected unmanaged network %q to NOT be pruned, but it was removed", networkName)
+			}
+		})
+	}
+}
+
+
+func TestNetworkConnect(t *testing.T) {
+	tests := []struct {
+		name          string
+		networkName   string
+		containerName string
+		setupFunc     func(ctx context.Context, t *testing.T) (networkID, containerID string)
+		cleanupFunc   func(ctx context.Context, t *testing.T, networkID, containerID string)
+		shouldErr     bool
+	}{
+		{
+			name:          "should connect container to managed network",
+			networkName:   "test-network-connect-managed",
+			containerName: "test-container-connect-managed",
+			setupFunc: func(ctx context.Context, t *testing.T) (string, string) {
+				networkID := setupManagedNetwork(ctx, t, "test-network-connect-managed")
+				containerID := setupManagedContainer(ctx, t, "test-container-connect-managed")
+				return networkID, containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkID, containerID string) {
+				cleanupManagedContainer(ctx, t, containerID)
+				cleanupManagedNetwork(ctx, t, "test-network-connect-managed")
+			},
+			shouldErr: false,
+		},
+		{
+			name:          "should fail to connect to unmanaged network",
+			networkName:   "test-network-connect-unmanaged",
+			containerName: "test-container-connect-unmanaged",
+			setupFunc: func(ctx context.Context, t *testing.T) (string, string) {
+				networkID := setupUnmanagedNetwork(ctx, t, "test-network-connect-unmanaged", map[string]string{"other": "label"})
+				containerID := setupManagedContainer(ctx, t, "test-container-connect-unmanaged")
+				return networkID, containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkID, containerID string) {
+				cleanupManagedContainer(ctx, t, containerID)
+				cleanupUnmanagedNetwork(ctx, t, "test-network-connect-unmanaged")
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			networkID, containerID := tt.setupFunc(ctx, t)
+			defer tt.cleanupFunc(ctx, t, networkID, containerID)
+
+			_, err := testEngine.NetworkConnect(ctx, tt.networkName, containerID, nil)
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NetworkConnect failed: %v", err)
+			}
+
+			// Verify container is connected to network
+			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+			if err != nil {
+				t.Fatalf("Failed to inspect container: %v", err)
+			}
+
+			_, connected := info.Container.NetworkSettings.Networks[tt.networkName]
+			if !connected {
+				t.Errorf("Expected container to be connected to network %q", tt.networkName)
+			}
+		})
+	}
+}
+
+func TestNetworkDisconnect(t *testing.T) {
+	tests := []struct {
+		name          string
+		networkName   string
+		containerName string
+		setupFunc     func(ctx context.Context, t *testing.T) (networkID, containerID string)
+		cleanupFunc   func(ctx context.Context, t *testing.T, networkID, containerID string)
+		shouldErr     bool
+	}{
+		{
+			name:          "should disconnect container from managed network",
+			networkName:   "test-network-disconnect-managed",
+			containerName: "test-container-disconnect-managed",
+			setupFunc: func(ctx context.Context, t *testing.T) (string, string) {
+				networkID := setupManagedNetwork(ctx, t, "test-network-disconnect-managed")
+				containerID := setupManagedContainer(ctx, t, "test-container-disconnect-managed")
+				// Connect container to network first
+				_, err := testEngine.NetworkConnect(ctx, "test-network-disconnect-managed", containerID, nil)
+				if err != nil {
+					t.Fatalf("Failed to connect container to network: %v", err)
+				}
+				return networkID, containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkID, containerID string) {
+				cleanupManagedContainer(ctx, t, containerID)
+				cleanupManagedNetwork(ctx, t, "test-network-disconnect-managed")
+			},
+			shouldErr: false,
+		},
+		{
+			name:          "should fail to disconnect from unmanaged network",
+			networkName:   "test-network-disconnect-unmanaged",
+			containerName: "test-container-disconnect-unmanaged",
+			setupFunc: func(ctx context.Context, t *testing.T) (string, string) {
+				networkID := setupUnmanagedNetwork(ctx, t, "test-network-disconnect-unmanaged", map[string]string{"other": "label"})
+				containerID := setupManagedContainer(ctx, t, "test-container-disconnect-unmanaged")
+				// Connect container to network using raw API
+				_, err := testEngine.APIClient.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+					Container: containerID,
+				})
+				if err != nil {
+					t.Fatalf("Failed to connect container to network: %v", err)
+				}
+				return networkID, containerID
+			},
+			cleanupFunc: func(ctx context.Context, t *testing.T, networkID, containerID string) {
+				// Disconnect using raw API
+				_, _ = testEngine.APIClient.NetworkDisconnect(ctx, networkID, client.NetworkDisconnectOptions{
+					Container: containerID,
+					Force:     true,
+				})
+				cleanupManagedContainer(ctx, t, containerID)
+				cleanupUnmanagedNetwork(ctx, t, "test-network-disconnect-unmanaged")
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			networkID, containerID := tt.setupFunc(ctx, t)
+			defer tt.cleanupFunc(ctx, t, networkID, containerID)
+
+			_, err := testEngine.NetworkDisconnect(ctx, tt.networkName, containerID, false)
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NetworkDisconnect failed: %v", err)
+			}
+
+			// Verify container is disconnected from network
+			info, err := testEngine.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+			if err != nil {
+				t.Fatalf("Failed to inspect container: %v", err)
+			}
+
+			_, connected := info.Container.NetworkSettings.Networks[tt.networkName]
+			if connected {
+				t.Errorf("Expected container to be disconnected from network %q", tt.networkName)
 			}
 		})
 	}

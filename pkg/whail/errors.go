@@ -643,3 +643,30 @@ func ErrNetworkEnsureFailed(name string, err error) *DockerError {
 		},
 	}
 }
+
+// ErrNetworkConnectFailed returns an error for when connecting a container to a network fails.
+func ErrNetworkConnectFailed(networkID, containerID string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_connect",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to connect container '%s' to network '%s'", containerID, networkID),
+		NextSteps: []string{
+			"Verify the network exists: docker network ls",
+			"Verify the container exists: docker ps -a",
+			"Check if the container is already connected to the network",
+		},
+	}
+}
+
+// ErrNetworkDisconnectFailed returns an error for when disconnecting a container from a network fails.
+func ErrNetworkDisconnectFailed(networkID, containerID string, err error) *DockerError {
+	return &DockerError{
+		Op:      "network_disconnect",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to disconnect container '%s' from network '%s'", containerID, networkID),
+		NextSteps: []string{
+			"Verify the network exists: docker network ls",
+			"Verify the container is connected to the network: docker inspect <container>",
+		},
+	}
+}

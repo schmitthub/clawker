@@ -28,6 +28,17 @@ type LabelConfig struct {
 	Image map[string]string
 }
 
+// Labels represents a collection of label maps to be merged.
+// Each map in the slice is merged in order, with later maps taking precedence.
+// This is the official type for label maps throughout whail.
+type Labels []map[string]string
+
+// Merge merges the Labels into a single map.
+// Later maps take precedence over earlier ones.
+func (l Labels) Merge() map[string]string {
+	return MergeLabels(l...)
+}
+
 // MergeLabels merges multiple label maps, with later maps overriding earlier ones.
 // Returns a new map containing all labels.
 func MergeLabels(labelMaps ...map[string]string) map[string]string {
