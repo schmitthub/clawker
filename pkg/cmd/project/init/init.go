@@ -95,34 +95,68 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 		}
 	}
 
-	// Get default image from user settings if available
-	defaultImage := ""
+	// Get default image from user settings if available (for fallback image, not build base)
+	userDefaultImage := ""
 	settings, err := f.Settings()
 	if err == nil && settings != nil && settings.Project.DefaultImage != "" {
-		defaultImage = settings.Project.DefaultImage
+		userDefaultImage = settings.Project.DefaultImage
 	}
 
-	// Prompt for base image
-	var baseImage string
+	// Prompt for build.image (base Linux flavor for Dockerfile FROM)
+	var buildImage string
 	if opts.Yes || !f.IOStreams.IsInteractive() {
-		if defaultImage == "" {
-			cmdutil.PrintError("No default image configured")
-			cmdutil.PrintNextSteps(
-				"Run 'clawker init' first to set up user defaults and build a base image",
-				"Or run interactively without --yes to specify an image",
-			)
-			return fmt.Errorf("no default image configured; run 'clawker init' first or specify interactively")
-		}
-		baseImage = defaultImage
+		// Non-interactive: use buildpack-deps:bookworm-scm as default
+		buildImage = cmdutil.FlavorToImage("bookworm")
 	} else {
-		// In interactive mode, prompt with default if available, otherwise require input
-		baseImage, err = prompter.String(cmdutil.PromptConfig{
-			Message:  "Base image",
-			Default:  defaultImage, // Empty string means no default shown
-			Required: true,
+		// Interactive: show flavor options + Custom option
+		flavors := cmdutil.DefaultFlavorOptions()
+		selectOptions := make([]cmdutil.SelectOption, len(flavors)+1)
+		for i, opt := range flavors {
+			selectOptions[i] = cmdutil.SelectOption{
+				Label:       opt.Name,
+				Description: opt.Description,
+			}
+		}
+		selectOptions[len(flavors)] = cmdutil.SelectOption{
+			Label:       "Custom",
+			Description: "Enter a custom base image (e.g., node:20, python:3.12)",
+		}
+
+		idx, err := prompter.Select("Base Linux flavor for build", selectOptions, 0)
+		if err != nil {
+			return fmt.Errorf("failed to get base flavor: %w", err)
+		}
+
+		if idx == len(flavors) {
+			// Custom option selected - prompt for custom image
+			customImage, err := prompter.String(cmdutil.PromptConfig{
+				Message:  "Custom base image",
+				Required: true,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to get custom base image: %w", err)
+			}
+			buildImage = customImage
+		} else {
+			// Map flavor name to full image reference
+			buildImage = cmdutil.FlavorToImage(selectOptions[idx].Label)
+		}
+	}
+
+	// Prompt for default_image (pre-built fallback image for clawker run)
+	var defaultImage string
+	if opts.Yes || !f.IOStreams.IsInteractive() {
+		// Non-interactive: use user's default_image from settings (can be empty)
+		defaultImage = userDefaultImage
+	} else {
+		// Interactive: prompt with user's default_image as default, allow override or empty
+		defaultImage, err = prompter.String(cmdutil.PromptConfig{
+			Message:  "Default fallback image (leave empty if none)",
+			Default:  userDefaultImage,
+			Required: false,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to get base image: %w", err)
+			return fmt.Errorf("failed to get default image: %w", err)
 		}
 	}
 
@@ -144,7 +178,8 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 
 	logger.Debug().
 		Str("project", projectName).
-		Str("image", baseImage).
+		Str("build_image", buildImage).
+		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
 		Str("workdir", f.WorkDir).
 		Bool("force", opts.Force).
@@ -176,7 +211,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 	}
 
 	// Generate config content with collected options
-	configContent := generateConfigYAML(projectName, baseImage, workspaceMode)
+	configContent := generateConfigYAML(projectName, buildImage, defaultImage, workspaceMode)
 
 	// Create clawker.yaml
 	configPath := loader.ConfigPath()
@@ -229,10 +264,18 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 }
 
 // generateConfigYAML creates the clawker.yaml content with the given options.
-func generateConfigYAML(projectName, baseImage, workspaceMode string) string {
+// buildImage is the base Linux flavor for Dockerfile FROM (e.g., buildpack-deps:bookworm-scm).
+// defaultImage is the pre-built fallback image for clawker run when no project image exists.
+func generateConfigYAML(projectName, buildImage, defaultImage, workspaceMode string) string {
+	// Only include default_image line if it's set
+	defaultImageLine := ""
+	if defaultImage != "" {
+		defaultImageLine = fmt.Sprintf("default_image: \"%s\"\n", defaultImage)
+	}
+
 	return fmt.Sprintf(`version: "1"
 project: "%s"
-
+%s
 build:
   image: "%s"
   packages:
@@ -269,5 +312,5 @@ security:
   #   copy_git_config: true
   # allowed_domains: []
   # cap_add: []
-`, projectName, baseImage, workspaceMode)
+`, projectName, defaultImageLine, buildImage, workspaceMode)
 }

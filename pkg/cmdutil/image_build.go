@@ -30,6 +30,24 @@ func DefaultFlavorOptions() []FlavorOption {
 	}
 }
 
+// FlavorToImage maps a flavor name to its full Docker image reference.
+// For known flavors, it returns the appropriate base image.
+// For unknown flavors (custom images), it returns the input as-is.
+func FlavorToImage(flavor string) string {
+	switch flavor {
+	case "bookworm":
+		return "buildpack-deps:bookworm-scm"
+	case "trixie":
+		return "buildpack-deps:trixie-scm"
+	case "alpine3.22":
+		return "alpine:3.22"
+	case "alpine3.23":
+		return "alpine:3.23"
+	default:
+		return flavor // Custom image passed through as-is
+	}
+}
+
 // BuildDefaultImage builds the default clawker base image with the given flavor.
 // It resolves the latest Claude Code version from npm, generates a Dockerfile,
 // and builds the image with clawker's managed labels.

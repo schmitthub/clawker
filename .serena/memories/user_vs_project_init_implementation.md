@@ -11,6 +11,15 @@ Both commands interactive by default with `--yes`/`-y` for non-interactive mode.
 
 ## Implementation Status
 
+### COMPLETED (Latest Fix)
+- **Fixed `build.image` vs `default_image` confusion** in `pkg/cmd/project/init/init.go`
+  - `build.image` is now the base Linux flavor for Dockerfile `FROM` (e.g., `buildpack-deps:bookworm-scm`)
+  - `default_image` is the pre-built fallback image for `clawker run` (e.g., `clawker-default:latest`)
+  - Added flavor selection with Custom option for `build.image`
+  - Added separate prompt for `default_image`
+- **Added `FlavorToImage()` helper** in `pkg/cmdutil/image_build.go`
+  - Maps flavor names to full Docker image references
+
 ### COMPLETED
 1. **`pkg/cmdutil/iostreams.go`** - CREATED
    - `IOStreams` struct with `In`, `Out`, `ErrOut` streams
@@ -92,7 +101,14 @@ Setting up clawker project...
 (Press Enter to accept defaults)
 
 Project name [my-app]: _
-Base image [node:20-slim]: _
+Base Linux flavor for build:
+  > 1. bookworm (Debian stable - Recommended)
+    2. trixie (Debian testing)
+    3. alpine3.22 (Alpine Linux 3.22)
+    4. alpine3.23 (Alpine Linux 3.23)
+    5. Custom (Enter a custom base image)
+Enter selection [1]: _
+Default fallback image (leave empty if none) [clawker-default:latest]: _
 Default workspace mode:
   > 1. bind (live sync)
     2. snapshot (isolated copy)
@@ -106,6 +122,10 @@ Next Steps:
   1. Review and customize clawker.yaml
   2. Run 'clawker start' to start Claude in a container
 ```
+
+**Key Distinction:**
+- `build.image`: Base Linux flavor for Dockerfile `FROM` (e.g., `buildpack-deps:bookworm-scm`)
+- `default_image`: Pre-built fallback image for `clawker run` when no project image exists (e.g., `clawker-default:latest`)
 
 ## Notes
 - IOStreams follows GitHub CLI pattern for testability
