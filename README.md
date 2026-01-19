@@ -31,7 +31,7 @@ clawker start --agent ralph
 
 ## Dockerfile Generation
 
-Want to use Docker directly without clawker's management? The `generate` command creates Dockerfiles for any Claude Code version.
+Want to use Docker directly without clawker's management? The `generate` command creates clawker boilerplate Dockerfiles using any Claude Code npm tag or version.
 
 ```bash
 # Generate Dockerfiles for latest version
@@ -48,6 +48,13 @@ Files are saved to `~/.clawker/build/` by default. Then build with Docker:
 
 ```bash
 docker build -t my-claude:latest ~/.clawker/build/latest/
+```
+
+You can also use the standalone `clawker-generate` in `./cmd/clawker-generate/` if all you need is Dockerfile generation.
+
+```bash
+go build -o ./bin/clawker-generate ./cmd/clawker-generate
+./bin/clawker-generate latest next stable 2.1
 ```
 
 ## Commands
