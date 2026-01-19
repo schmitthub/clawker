@@ -44,10 +44,10 @@ clawker generate latest stable 2.1
 clawker generate --output ./dockerfiles latest
 ```
 
-Files are saved to `~/.clawker/build/` by default. Then build with Docker:
+Files are saved to `~/.local/clawker/build/dockerfiles/$claudeCodeVersion-$baseImage.dockerfile` by default. Then build with Docker:
 
 ```bash
-docker build -t my-claude:latest ~/.clawker/build/latest/
+docker build -t my-claude:latest ~/.local/clawker/build/dockerfiles/2.1.12-bookworm.dockerfile
 ```
 
 You can also use the standalone `clawker-generate` in `./cmd/clawker-generate/` if all you need is Dockerfile generation.
