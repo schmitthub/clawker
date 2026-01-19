@@ -169,7 +169,7 @@ else
 fi
 
 # Directory - white, bold
-output+=$(printf "%s/" "$(basename "$DIR")")
+output+=$(printf " %s/" "$(basename "$DIR")")
 
 # Git branch - dim gray
 if [ -n "$branch" ]; then
