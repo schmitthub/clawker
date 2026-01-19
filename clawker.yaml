@@ -89,3 +89,8 @@ security:
   # allowed_domains:
   #   - "api.github.com"
   #   - "registry.npmjs.org"
+
+git_credentials:
+  forward_https: true
+  forward_ssh: true
+  copy_git_config: true
