@@ -18,15 +18,16 @@ The README was overhauled in January 2025 to follow a story-driven structure tha
 3. Quick Start (minimal steps to running)
 4. Clawker Generate overview for dockerfile generation (standalone and integrated)
 5. Commands Overview (most used commands with brief descriptions, explain this is a port of docker CLI for familiarity)
-6. Seamless Authentication (subscription users and API KEY) & Git (host proxy explained with flow diagram)
-7. Workflows (containers, Claude options, detach/reattach, management)
-8. Monitoring (brief, optional)
-9. System Overview (ASCII architecture diagram)
-10. Configuration (full clawker.yaml and ~/.local/clawker/settings.yaml example)
-11. Security Defaults (compact table)
-12. The whail Engine (label isolation explanation with docker vs clawker example)
-13. Known Issues (Claude TUI redraw)
-14. Contributing + License
+6. Isolation / Managed resource overview
+7. Seamless Authentication (subscription users and API KEY) & Git (host proxy explained with flow diagram)
+8. Workflows (containers, Claude options, detach/reattach, management)
+9. Monitoring (brief, optional)
+10. System Overview (ASCII architecture diagram)
+11. Configuration (full clawker.yaml and ~/.local/clawker/settings.yaml example)
+12. Security Defaults (compact table)
+13. The whail Engine (label isolation explanation with docker vs clawker example)
+14. Known Issues (Claude TUI redraw)
+15. Contributing + License
 
 ## Config Schema Reference
 

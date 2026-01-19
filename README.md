@@ -70,6 +70,16 @@ Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you 
 
 Management commands (`container`, `image`, `volume`, `network`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
 
+## Isolation Features
+
+Clawker does not simply just pass through to docker cli, it is a port of docker cli. It adds isolation features to keep your system safe from rogue Claude Code agents, and convenience clawker-only isolation when running docker-like commands
+
+* clawker-only resource isolation when running docker-like commands, you don't have to worry about filters. Clawker only sees its own resources, so you don't accidentally delete or modify other docker resources. This is done via labels under the hood.
+* per-project resource namespacing, so you can have multiple projects on the same host without conflicts. Each project gets its own set of containers, images, volumes, and networks, identified by labels.
+* per-agent containerization, so each agent runs in its own isolated container. You can have multiple agents running simultaneously without interference.
+* Network firewalling, so you can restrict outbound network access from containers. By default, all outbound traffic is blocked except for allowed domains in a firewall init script
+* All clawker resources are added to a docker network `clawker-net` so they can communicate if needed.
+
 ## Authentication & Git
 
 ### API Key Users
@@ -164,6 +174,22 @@ Optional observability stack for tracking resource usage across all your clawker
 clawker monitor start    # Starts Prometheus + Grafana
 clawker monitor stop     # Stops the stack
 clawker monitor status   # Check if running
+```
+
+**Protip** You can also monitor your host's claude sessions with this stack just by setting these env vars:
+
+```bash
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_METRICS_EXPORTER=otlp
+OTEL_RESOURCE_ATTRIBUTES=agent=host.clawker # ie host.project name
+OTEL_LOGS_EXPORT_INTERVAL=5000
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
+OTEL_METRIC_EXPORT_INTERVAL=10000
+OTEL_LOGS_EXPORTER=otlp
+OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+OTEL_METRICS_INCLUDE_SESSION_ID=true
+CLAUDE_CODE_ENABLE_TELEMETRY=1
 ```
 
 **Dashboard:** http://localhost:3000
