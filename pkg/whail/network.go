@@ -153,44 +153,44 @@ func (e *Engine) NetworksPrune(ctx context.Context) (client.NetworkPruneResult, 
 
 // NetworkConnect connects a container to a network.
 // Only connects to managed networks.
-func (e *Engine) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) (client.NetworkConnectResult, error) {
-	isManaged, err := e.IsNetworkManaged(ctx, networkID)
+func (e *Engine) NetworkConnect(ctx context.Context, network, containerID string, config *network.EndpointSettings) (client.NetworkConnectResult, error) {
+	isManaged, err := e.IsNetworkManaged(ctx, network)
 	if err != nil {
-		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(networkID, containerID, err)
+		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(network, containerID, err)
 	}
 	if !isManaged {
-		return client.NetworkConnectResult{}, ErrNetworkNotFound(networkID, nil)
+		return client.NetworkConnectResult{}, ErrNetworkNotFound(network, nil)
 	}
 
 	opts := client.NetworkConnectOptions{
 		Container:      containerID,
 		EndpointConfig: config,
 	}
-	result, err := e.APIClient.NetworkConnect(ctx, networkID, opts)
+	result, err := e.APIClient.NetworkConnect(ctx, network, opts)
 	if err != nil {
-		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(networkID, containerID, err)
+		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(network, containerID, err)
 	}
 	return result, nil
 }
 
 // NetworkDisconnect disconnects a container from a network.
 // Only disconnects from managed networks.
-func (e *Engine) NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) (client.NetworkDisconnectResult, error) {
-	isManaged, err := e.IsNetworkManaged(ctx, networkID)
+func (e *Engine) NetworkDisconnect(ctx context.Context, network, containerID string, force bool) (client.NetworkDisconnectResult, error) {
+	isManaged, err := e.IsNetworkManaged(ctx, network)
 	if err != nil {
-		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(networkID, containerID, err)
+		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(network, containerID, err)
 	}
 	if !isManaged {
-		return client.NetworkDisconnectResult{}, ErrNetworkNotFound(networkID, nil)
+		return client.NetworkDisconnectResult{}, ErrNetworkNotFound(network, nil)
 	}
 
 	opts := client.NetworkDisconnectOptions{
 		Container: containerID,
 		Force:     force,
 	}
-	result, err := e.APIClient.NetworkDisconnect(ctx, networkID, opts)
+	result, err := e.APIClient.NetworkDisconnect(ctx, network, opts)
 	if err != nil {
-		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(networkID, containerID, err)
+		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(network, containerID, err)
 	}
 	return result, nil
 }
