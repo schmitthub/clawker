@@ -28,10 +28,16 @@ if [ -d "$INIT_DIR" ]; then
 fi
 
 # Setup git configuration from host
+# Uses git config commands to selectively copy settings, avoiding credential.helper
 HOST_GITCONFIG="/tmp/host-gitconfig"
 if [ -f "$HOST_GITCONFIG" ]; then
-    # Copy host gitconfig, filtering out credential.helper lines (we configure our own)
-    if ! grep -v '^[[:space:]]*helper[[:space:]]*=' "$HOST_GITCONFIG" > "$HOME/.gitconfig.tmp" 2>&1; then
+    # Copy host gitconfig, filtering out the entire [credential] section
+    # The awk script skips lines from [credential] until the next section header
+    if ! awk '
+        /^\[credential/ { in_cred=1; next }
+        /^\[/ { in_cred=0 }
+        !in_cred { print }
+    ' "$HOST_GITCONFIG" > "$HOME/.gitconfig.tmp" 2>/dev/null; then
         echo "Warning: Failed to filter host gitconfig" >&2
         cp "$HOST_GITCONFIG" "$HOME/.gitconfig" 2>/dev/null || true
     elif [ -s "$HOME/.gitconfig.tmp" ]; then
@@ -50,8 +56,9 @@ fi
 
 # Setup SSH agent forwarding
 # Strategy: Use ssh-agent-proxy via host proxy when direct socket has permission issues
-ssh_agent_setup() {
-    # Setup known hosts for common git hosting services
+
+# Setup SSH known hosts for common git hosting services
+ssh_setup_known_hosts() {
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
     cat >> "$HOME/.ssh/known_hosts" << 'KNOWN_HOSTS'
@@ -68,27 +75,47 @@ KNOWN_HOSTS
     chmod 600 "$HOME/.ssh/known_hosts"
 }
 
+# Start ssh-agent-proxy and verify it started successfully
+# Returns 0 if successful, 1 otherwise
+start_ssh_agent_proxy() {
+    /usr/local/bin/ssh-agent-proxy &
+    proxy_pid=$!
+    sleep 0.3
+    # Verify proxy is running
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+        echo "Warning: SSH agent proxy failed to start" >&2
+        return 1
+    fi
+    # Verify socket was created
+    if [ ! -S "$HOME/.ssh/agent.sock" ]; then
+        echo "Warning: SSH agent proxy socket not created" >&2
+        return 1
+    fi
+    export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+    return 0
+}
+
 # Determine SSH agent forwarding strategy
 if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_SSH_VIA_PROXY" = "true" ]; then
     # Use ssh-agent-proxy to forward via host proxy (macOS Docker Desktop case)
-    ssh_agent_setup
-    /usr/local/bin/ssh-agent-proxy &
-    # Wait briefly for socket to be created
-    sleep 0.2
-    export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+    ssh_setup_known_hosts
+    if ! start_ssh_agent_proxy; then
+        echo "Warning: SSH agent forwarding unavailable" >&2
+    fi
 elif [ -n "$SSH_AUTH_SOCK" ]; then
     # Direct socket mount (Linux case or when proxy not needed)
     if [ -S "$SSH_AUTH_SOCK" ]; then
         # Check if socket is accessible
-        if ! ssh-add -l >/dev/null 2>&1; then
+        if ssh-add -l >/dev/null 2>&1 || [ $? -eq 1 ]; then
+            # Socket is accessible (exit code 1 means no identities, but socket works)
+            ssh_setup_known_hosts
+        elif [ -n "$CLAWKER_HOST_PROXY" ]; then
             # Socket exists but not accessible, try proxy fallback
-            if [ -n "$CLAWKER_HOST_PROXY" ]; then
-                /usr/local/bin/ssh-agent-proxy &
-                sleep 0.2
-                export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+            ssh_setup_known_hosts
+            if ! start_ssh_agent_proxy; then
+                echo "Warning: SSH agent forwarding unavailable" >&2
             fi
         fi
-        ssh_agent_setup
     fi
 fi
 

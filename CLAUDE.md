@@ -32,7 +32,6 @@
 
 ```
 ├── cmd/clawker/              # Main CLI binary
-├── cmd/ssh-agent-proxy/      # SSH agent proxy binary for containers (macOS)
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
@@ -94,7 +93,7 @@ The host proxy (`internal/hostproxy`) is a service mesh that mediates interactio
 | `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
 | `Manager` | `manager.go` | Lifecycle management of the proxy server |
 | `GitCredential` | `git_credential.go` | Git credential forwarding handler |
-| `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler (macOS) |
+| `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler |
 
 ### OAuth Callback Flow
 

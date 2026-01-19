@@ -14,7 +14,7 @@ import (
 // gitCredentialRequest is the JSON request body for POST /git/credential.
 type gitCredentialRequest struct {
 	Action   string `json:"action"`   // "get", "store", or "erase"
-	Protocol string `json:"protocol"` // "https" or "ssh"
+	Protocol string `json:"protocol"` // "https" typically
 	Host     string `json:"host"`     // e.g., "github.com"
 	Path     string `json:"path,omitempty"`
 	Username string `json:"username,omitempty"`

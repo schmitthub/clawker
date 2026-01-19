@@ -145,6 +145,12 @@ func forwardToProxy(client *http.Client, hostProxy string, msgData []byte) ([]by
 	}
 	defer resp.Body.Close()
 
+	// Check HTTP status before attempting to decode JSON
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("host proxy returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	var agentResp sshAgentResponse
 	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)

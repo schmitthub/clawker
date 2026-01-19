@@ -76,14 +76,25 @@ fi
 # Parse response based on action
 if [ "$ACTION" = "get" ]; then
     # Check if success is true using jq for proper JSON parsing
-    success=$(printf '%s' "$response_body" | jq -r '.success // empty' 2>/dev/null)
+    success=$(printf '%s' "$response_body" | jq -r '.success // empty' 2>&1)
+    jq_exit=$?
+    if [ $jq_exit -ne 0 ]; then
+        echo "error: failed to parse credential response: $success" >&2
+        exit 1
+    fi
 
     if [ "$success" = "true" ]; then
         # Extract fields using jq and output in git credential format
-        printf '%s' "$response_body" | jq -r '
+        cred_output=$(printf '%s' "$response_body" | jq -r '
             to_entries[] |
             select(.key != "success" and .key != "error" and .value != "" and .value != null) |
-            "\(.key)=\(.value)"' 2>/dev/null
+            "\(.key)=\(.value)"' 2>&1)
+        jq_exit=$?
+        if [ $jq_exit -ne 0 ]; then
+            echo "error: failed to extract credentials: $cred_output" >&2
+            exit 1
+        fi
+        printf '%s\n' "$cred_output"
         exit 0
     else
         error=$(printf '%s' "$response_body" | jq -r '.error // "credential lookup failed"' 2>/dev/null)

@@ -125,3 +125,150 @@ func TestModeConstants(t *testing.T) {
 		t.Errorf("ModeSnapshot = %q, want %q", ModeSnapshot, "snapshot")
 	}
 }
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func TestGitCredentialsConfig_GitHTTPSEnabled(t *testing.T) {
+	tests := []struct {
+		name             string
+		config           *GitCredentialsConfig
+		hostProxyEnabled bool
+		want             bool
+	}{
+		{
+			name:             "nil config, host proxy enabled",
+			config:           nil,
+			hostProxyEnabled: true,
+			want:             true,
+		},
+		{
+			name:             "nil config, host proxy disabled",
+			config:           nil,
+			hostProxyEnabled: false,
+			want:             false,
+		},
+		{
+			name:             "nil ForwardHTTPS, host proxy enabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: nil},
+			hostProxyEnabled: true,
+			want:             true,
+		},
+		{
+			name:             "nil ForwardHTTPS, host proxy disabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: nil},
+			hostProxyEnabled: false,
+			want:             false,
+		},
+		{
+			name:             "ForwardHTTPS true, host proxy enabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: boolPtr(true)},
+			hostProxyEnabled: true,
+			want:             true,
+		},
+		{
+			name:             "ForwardHTTPS true, host proxy disabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: boolPtr(true)},
+			hostProxyEnabled: false,
+			want:             false,
+		},
+		{
+			name:             "ForwardHTTPS false, host proxy enabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: boolPtr(false)},
+			hostProxyEnabled: true,
+			want:             false,
+		},
+		{
+			name:             "ForwardHTTPS false, host proxy disabled",
+			config:           &GitCredentialsConfig{ForwardHTTPS: boolPtr(false)},
+			hostProxyEnabled: false,
+			want:             false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GitHTTPSEnabled(tt.hostProxyEnabled)
+			if got != tt.want {
+				t.Errorf("GitHTTPSEnabled(%v) = %v, want %v", tt.hostProxyEnabled, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGitCredentialsConfig_GitSSHEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *GitCredentialsConfig
+		want   bool
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   true,
+		},
+		{
+			name:   "nil ForwardSSH",
+			config: &GitCredentialsConfig{ForwardSSH: nil},
+			want:   true,
+		},
+		{
+			name:   "ForwardSSH true",
+			config: &GitCredentialsConfig{ForwardSSH: boolPtr(true)},
+			want:   true,
+		},
+		{
+			name:   "ForwardSSH false",
+			config: &GitCredentialsConfig{ForwardSSH: boolPtr(false)},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GitSSHEnabled()
+			if got != tt.want {
+				t.Errorf("GitSSHEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGitCredentialsConfig_CopyGitConfigEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *GitCredentialsConfig
+		want   bool
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   true,
+		},
+		{
+			name:   "nil CopyGitConfig",
+			config: &GitCredentialsConfig{CopyGitConfig: nil},
+			want:   true,
+		},
+		{
+			name:   "CopyGitConfig true",
+			config: &GitCredentialsConfig{CopyGitConfig: boolPtr(true)},
+			want:   true,
+		},
+		{
+			name:   "CopyGitConfig false",
+			config: &GitCredentialsConfig{CopyGitConfig: boolPtr(false)},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.CopyGitConfigEnabled()
+			if got != tt.want {
+				t.Errorf("CopyGitConfigEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
