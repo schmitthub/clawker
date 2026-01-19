@@ -2,10 +2,22 @@ package whail
 
 import (
 	"context"
+	"errors"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
+
+// EnsureNetworkOptions configures network creation/ensure behavior.
+// Embeds Docker SDK's NetworkCreateOptions for forward compatibility.
+type EnsureNetworkOptions struct {
+	client.NetworkCreateOptions // Embedded: Driver, Options, Labels, Scope, etc.
+
+	Name        string // Network name (required)
+	Verbose     bool   // Verbose output during ensure
+	ExtraLabels Labels // Additional labels to merge with managed labels
+}
 
 // NetworkCreate creates a new network with managed labels automatically applied.
 // The provided labels are merged with the engine's configured labels.
@@ -86,24 +98,29 @@ func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]str
 
 // EnsureNetwork creates a network if it doesn't exist.
 // Returns the network ID.
-func (e *Engine) EnsureNetwork(ctx context.Context, name string, options client.NetworkCreateOptions, verbose bool, extraLabels ...map[string]string) (string, error) {
-	exists, err := e.NetworkExists(ctx, name)
+func (e *Engine) EnsureNetwork(ctx context.Context, opts EnsureNetworkOptions) (string, error) {
+	if opts.Name == "" {
+		return "", errors.New("network name is required")
+	}
+
+	exists, err := e.NetworkExists(ctx, opts.Name)
 	if err != nil {
-		return "", ErrNetworkEnsureFailed(name, err)
+		return "", ErrNetworkEnsureFailed(opts.Name, err)
 	}
 	if exists {
-		info, err := e.NetworkInspect(ctx, name, client.NetworkInspectOptions{
-			Verbose: verbose,
-			Scope:   options.Scope,
+		info, err := e.NetworkInspect(ctx, opts.Name, client.NetworkInspectOptions{
+			Verbose: opts.Verbose,
+			Scope:   opts.Scope,
 		})
 		if err != nil {
-			return "", ErrNetworkEnsureFailed(name, err)
+			return "", ErrNetworkEnsureFailed(opts.Name, err)
 		}
 		return info.Network.ID, nil
 	}
-	resp, err := e.NetworkCreate(ctx, name, options, extraLabels...)
+
+	resp, err := e.NetworkCreate(ctx, opts.Name, opts.NetworkCreateOptions, opts.ExtraLabels...)
 	if err != nil {
-		return "", ErrNetworkEnsureFailed(name, err)
+		return "", ErrNetworkEnsureFailed(opts.Name, err)
 	}
 	return resp.ID, nil
 }
@@ -130,6 +147,50 @@ func (e *Engine) NetworksPrune(ctx context.Context) (client.NetworkPruneResult, 
 	result, err := e.APIClient.NetworkPrune(ctx, client.NetworkPruneOptions{Filters: f})
 	if err != nil {
 		return client.NetworkPruneResult{}, ErrNetworksPruneFailed(err)
+	}
+	return result, nil
+}
+
+// NetworkConnect connects a container to a network.
+// Only connects to managed networks.
+func (e *Engine) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) (client.NetworkConnectResult, error) {
+	isManaged, err := e.IsNetworkManaged(ctx, networkID)
+	if err != nil {
+		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(networkID, containerID, err)
+	}
+	if !isManaged {
+		return client.NetworkConnectResult{}, ErrNetworkNotFound(networkID, nil)
+	}
+
+	opts := client.NetworkConnectOptions{
+		Container:      containerID,
+		EndpointConfig: config,
+	}
+	result, err := e.APIClient.NetworkConnect(ctx, networkID, opts)
+	if err != nil {
+		return client.NetworkConnectResult{}, ErrNetworkConnectFailed(networkID, containerID, err)
+	}
+	return result, nil
+}
+
+// NetworkDisconnect disconnects a container from a network.
+// Only disconnects from managed networks.
+func (e *Engine) NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) (client.NetworkDisconnectResult, error) {
+	isManaged, err := e.IsNetworkManaged(ctx, networkID)
+	if err != nil {
+		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(networkID, containerID, err)
+	}
+	if !isManaged {
+		return client.NetworkDisconnectResult{}, ErrNetworkNotFound(networkID, nil)
+	}
+
+	opts := client.NetworkDisconnectOptions{
+		Container: containerID,
+		Force:     force,
+	}
+	result, err := e.APIClient.NetworkDisconnect(ctx, networkID, opts)
+	if err != nil {
+		return client.NetworkDisconnectResult{}, ErrNetworkDisconnectFailed(networkID, containerID, err)
 	}
 	return result, nil
 }

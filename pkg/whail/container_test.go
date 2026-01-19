@@ -22,19 +22,15 @@ import (
 // setupManagedContainer creates a managed container for testing.
 func setupManagedContainer(ctx context.Context, t *testing.T, name string, extraLabels ...map[string]string) string {
 	t.Helper()
-	resp, err := testEngine.ContainerCreate(
-		ctx,
-		&container.Config{
+	resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+		Config: &container.Config{
 			Image:  testImageTag,
 			Labels: testEngine.containerLabels(extraLabels...),
 			Cmd:    []string{"sleep", "300"},
 		},
-		nil,
-		nil,
-		nil,
-		name,
-		extraLabels...,
-	)
+		Name:        name,
+		ExtraLabels: extraLabels,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create managed container %q: %v", name, err)
 	}
@@ -99,18 +95,14 @@ func TestContainerCreate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			resp, err := testEngine.ContainerCreate(
-				ctx,
-				&container.Config{
+			resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+				Config: &container.Config{
 					Image: testImageTag,
 					Cmd:   []string{"sleep", "300"},
 				},
-				nil,
-				nil,
-				nil,
-				tt.containerName,
-				tt.extraLabels,
-			)
+				Name:        tt.containerName,
+				ExtraLabels: Labels{tt.extraLabels},
+			})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -192,7 +184,7 @@ func TestContainerStart(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			_, err := testEngine.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+			_, err := testEngine.ContainerStart(ctx, ContainerStartOptions{ContainerID: containerID})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
@@ -1384,18 +1376,14 @@ func TestContainerWait(t *testing.T) {
 			containerName: generateContainerName("test-container-wait-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				// Create a container that exits immediately
-				resp, err := testEngine.ContainerCreate(
-					ctx,
-					&container.Config{
+				resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+					Config: &container.Config{
 						Image:  testImageTag,
 						Labels: testEngine.containerLabels(),
 						Cmd:    []string{"true"}, // Exits immediately with 0
 					},
-					nil,
-					nil,
-					nil,
-					name,
-				)
+					Name: name,
+				})
 				if err != nil {
 					t.Fatalf("Failed to create managed container: %v", err)
 				}
@@ -1518,9 +1506,8 @@ func TestContainerAttach(t *testing.T) {
 			containerName: generateContainerName("test-container-attach-managed"),
 			setupFunc: func(ctx context.Context, t *testing.T, name string) string {
 				// Create a container with stdin/tty enabled for attach
-				resp, err := testEngine.ContainerCreate(
-					ctx,
-					&container.Config{
+				resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+					Config: &container.Config{
 						Image:       testImageTag,
 						Labels:      testEngine.containerLabels(),
 						Cmd:         []string{"sleep", "300"},
@@ -1529,11 +1516,8 @@ func TestContainerAttach(t *testing.T) {
 						StdinOnce:   false,
 						AttachStdin: true,
 					},
-					nil,
-					nil,
-					nil,
-					name,
-				)
+					Name: name,
+				})
 				if err != nil {
 					t.Fatalf("Failed to create managed container: %v", err)
 				}

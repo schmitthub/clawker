@@ -2,6 +2,7 @@ package whail
 
 import (
 	"context"
+	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -10,44 +11,112 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// ContainerCreate overrides to add managed labels.
-// The provided labels are merged with the engine's configured labels.
+// ContainerCreateOptions embeds the Docker SDK's options and adds whail-specific fields.
+// Using composition ensures forward compatibility as the SDK evolves.
+type ContainerCreateOptions struct {
+	// Container configuration
+	Config     *container.Config
+	HostConfig *container.HostConfig
+
+	// NetworkingConfig holds container networking configuration.
+	// Note: EnsureNetwork adds to this if specified.
+	NetworkingConfig *network.NetworkingConfig
+
+	// Platform specifies the platform for the container.
+	Platform *ocispec.Platform
+
+	// Name is the container name.
+	Name string
+
+	// ExtraLabels are additional labels merged with the engine's managed labels.
+	ExtraLabels Labels
+
+	// EnsureNetwork, if non-nil, ensures the named network exists (creating it
+	// if necessary) and adds the container to it. The network is added in addition
+	// to any networks already specified in NetworkingConfig.
+	EnsureNetwork *EnsureNetworkOptions
+}
+
+// ContainerStartOptions embeds the Docker SDK's options and adds whail-specific fields.
+type ContainerStartOptions struct {
+	client.ContainerStartOptions // Embedded: CheckpointID, CheckpointDir
+
+	// ContainerID is the container ID or name (required).
+	ContainerID string
+
+	// EnsureNetwork, if non-nil, ensures the named network exists and connects
+	// the container to it before starting. This is useful for connecting
+	// existing containers to networks that may have been removed.
+	EnsureNetwork *EnsureNetworkOptions
+}
+
+// ContainerCreate creates a container with managed labels automatically applied.
+// If EnsureNetwork is specified, the network is created (if needed) and the container is connected to it.
 // Does not mutate the caller's config - creates an internal copy.
-func (e *Engine) ContainerCreate(
-	ctx context.Context,
-	config *container.Config,
-	hostConfig *container.HostConfig,
-	networkingConfig *network.NetworkingConfig,
-	platform *ocispec.Platform,
-	name string,
-	extraLabels ...map[string]string,
-) (client.ContainerCreateResult, error) {
+func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOptions) (client.ContainerCreateResult, error) {
 	// Copy the config to avoid mutating caller's struct.
-	// Listen, pal - context is sacred. You don't touch what isn't yours.
-	configCopy := *config
+	var configCopy *container.Config
+	if opts.Config != nil {
+		c := *opts.Config
+		configCopy = &c
+	}
+
+	// Handle EnsureNetwork if specified - creates network if needed and adds container to it
+	networkingConfig := opts.NetworkingConfig
+	if opts.EnsureNetwork != nil {
+		networkID, err := e.EnsureNetwork(ctx, *opts.EnsureNetwork)
+		if err != nil {
+			return client.ContainerCreateResult{}, err
+		}
+
+		// Add the network to NetworkingConfig
+		if networkingConfig == nil {
+			networkingConfig = &network.NetworkingConfig{}
+		} else {
+			// Copy to avoid mutating caller's struct
+			nc := *networkingConfig
+			networkingConfig = &nc
+		}
+		if networkingConfig.EndpointsConfig == nil {
+			networkingConfig.EndpointsConfig = make(map[string]*network.EndpointSettings)
+		}
+		networkingConfig.EndpointsConfig[opts.EnsureNetwork.Name] = &network.EndpointSettings{
+			NetworkID: networkID,
+		}
+	}
 
 	// Merge labels into the copy: base managed + config + extra + user-provided
-	configCopy.Labels = MergeLabels(
-		e.containerLabels(extraLabels...),
-		config.Labels,
-	)
-
-	opts := client.ContainerCreateOptions{
-		Name:             name,
-		Config:           &configCopy,
-		HostConfig:       hostConfig,
-		NetworkingConfig: networkingConfig,
-		Platform:         platform,
+	if configCopy != nil {
+		configCopy.Labels = MergeLabels(
+			e.containerLabels(opts.ExtraLabels...),
+			opts.Config.Labels,
+		)
 	}
-	resp, err := e.APIClient.ContainerCreate(ctx, opts)
+
+	sdkOpts := client.ContainerCreateOptions{
+		Name:             opts.Name,
+		Config:           configCopy,
+		HostConfig:       opts.HostConfig,
+		NetworkingConfig: networkingConfig,
+		Platform:         opts.Platform,
+	}
+	resp, err := e.APIClient.ContainerCreate(ctx, sdkOpts)
 	if err != nil {
 		return client.ContainerCreateResult{}, ErrContainerCreateFailed(err)
 	}
 	return resp, nil
 }
 
-// ContainerStart overrides to check if container is managed before starting.
-func (e *Engine) ContainerStart(ctx context.Context, containerID string, opts client.ContainerStartOptions) (client.ContainerStartResult, error) {
+// ContainerStart starts a container with managed label verification.
+// If EnsureNetwork is specified, the network is created (if needed) and the container
+// is connected to it before starting. This is useful for reconnecting existing
+// containers to networks that may have been removed.
+func (e *Engine) ContainerStart(ctx context.Context, opts ContainerStartOptions) (client.ContainerStartResult, error) {
+	containerID := opts.ContainerID
+	if containerID == "" {
+		return client.ContainerStartResult{}, ErrContainerStartFailed("", nil)
+	}
+
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
 		return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
@@ -55,11 +124,41 @@ func (e *Engine) ContainerStart(ctx context.Context, containerID string, opts cl
 	if !isManaged {
 		return client.ContainerStartResult{}, ErrContainerNotFound(containerID)
 	}
-	result, err := e.APIClient.ContainerStart(ctx, containerID, opts)
+
+	// Handle EnsureNetwork if specified - creates network if needed and connects container
+	if opts.EnsureNetwork != nil {
+		networkID, err := e.EnsureNetwork(ctx, *opts.EnsureNetwork)
+		if err != nil {
+			return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
+		}
+
+		// Connect container to network (ignore "already connected" errors)
+		_, err = e.NetworkConnect(ctx, opts.EnsureNetwork.Name, containerID, &network.EndpointSettings{
+			NetworkID: networkID,
+		})
+		if err != nil {
+			// Check if the error is "already connected" - this is not a fatal error
+			if !isAlreadyConnectedError(err) {
+				return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
+			}
+		}
+	}
+
+	result, err := e.APIClient.ContainerStart(ctx, containerID, opts.ContainerStartOptions)
 	if err != nil {
 		return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
 	}
 	return result, nil
+}
+
+// isAlreadyConnectedError checks if the error indicates the container is already connected to the network.
+func isAlreadyConnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Docker returns an error like "endpoint with name X already exists in network Y"
+	errStr := err.Error()
+	return strings.Contains(errStr, "already exists in network") || strings.Contains(errStr, "endpoint with name")
 }
 
 // ContainerStop stops a container with an optional timeout.

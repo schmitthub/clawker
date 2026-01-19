@@ -6,13 +6,14 @@ import (
 	"io"
 	"os"
 
-	dockerclient "github.com/moby/moby/client"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -125,9 +126,13 @@ func startContainer(ctx context.Context, client *docker.Client, name string, opt
 		return err
 	}
 
-	// Start the container
-	startOpts := dockerclient.ContainerStartOptions{}
-	_, err = client.ContainerStart(ctx, c.ID, startOpts)
+	// Start the container (ensuring it's connected to clawker-net)
+	_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{
+		ContainerID: c.ID,
+		EnsureNetwork: &whail.EnsureNetworkOptions{
+			Name: docker.NetworkName,
+		},
+	})
 	if err != nil {
 		return err
 	}
