@@ -12,14 +12,13 @@
   - Stats streaming requires goroutines for concurrent container stat collection
   - Memory size parsing needs case-insensitive suffix handling
   - Cobra interprets args starting with `-` as flags; use `--` separator or avoid such test inputs
-  - Global flags like `-d` (--debug) conflict with command-specific flags; avoid reusing shorthands
   - exec command must check container is running before creating exec instance
   - cp command uses tar archives for file transfer; handle both copy directions
   - attach command detects container TTY from ContainerInspect
   - Subcommands go in their own subpackages (volume/list/list.go not volume/list.go)
   - shlex.Split strips quotes, so test expected values shouldn't include quotes
   - prune workaround: list+remove individual volumes instead of waiting for VolumesPrune
-  - Global flag `-d/--debug` reserves `-d` shorthand; don't reuse it in subcommands
+  - Global flag `-D/--debug` reserves `-D` shorthand; don't reuse it in subcommands
   - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
   - Test ordering matters: tests that remove resources affect later tests using same resources
   - TestImageRemove must create its own image, not reuse testImageTag that other tests need

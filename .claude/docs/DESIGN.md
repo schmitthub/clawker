@@ -430,7 +430,7 @@ Container images are built with OTEL environment variables pointing to the colle
 | `-q, --quiet` | Quiet | Minimal output |
 | (default) | Normal | Human-friendly |
 | `-v, --verbose` | Verbose | Detailed output |
-| `-d, --debug` | Debug | Developer diagnostics |
+| `-D, --debug` | Debug | Developer diagnostics |
 
 ### 9.3 Progress Reporting
 
