@@ -10,6 +10,13 @@ import (
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
+// resetSequence contains ANSI escape sequences to reset terminal visual state.
+// - \x1b[?1049l : Leave alternate screen buffer
+// - \x1b[?25h  : Show cursor
+// - \x1b[0m    : Reset text attributes
+// - \x1b(B    : Select ASCII character set
+const resetSequence = "\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B"
+
 // PTYHandler manages the pseudo-terminal connection to a container
 type PTYHandler struct {
 	stdin   *os.File
@@ -49,10 +56,15 @@ func (p *PTYHandler) Setup() error {
 	return nil
 }
 
-// Restore returns the terminal to its original state
+// Restore returns the terminal to its original state.
+// It first resets the terminal visual state (alternate screen, cursor visibility,
+// text attributes) before restoring termios settings.
 func (p *PTYHandler) Restore() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Reset visual state BEFORE restoring termios
+	p.resetVisualStateUnlocked()
 
 	if err := p.rawMode.Restore(); err != nil {
 		return err
@@ -60,6 +72,25 @@ func (p *PTYHandler) Restore() error {
 
 	logger.Debug().Msg("terminal restored")
 	return nil
+}
+
+// ResetVisualState sends escape sequences to reset terminal visual state.
+// This should be called after streaming ends to ensure the terminal is
+// in a clean state (cursor visible, no alternate screen, default colors).
+// Safe to call on non-terminals (no-op).
+func (p *PTYHandler) ResetVisualState() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.resetVisualStateUnlocked()
+}
+
+// resetVisualStateUnlocked sends reset sequences without locking.
+// Must be called with p.mu held.
+func (p *PTYHandler) resetVisualStateUnlocked() {
+	if !p.rawMode.IsTerminal() {
+		return
+	}
+	p.stdout.WriteString(resetSequence)
 }
 
 // Stream handles bidirectional I/O between local terminal and container

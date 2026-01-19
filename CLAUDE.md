@@ -301,6 +301,7 @@ security:
 - Never use `logger.Fatal()` in Cobra hooks - return errors instead
 - Don't wait for stdin goroutine on container exit (may block on Read)
 - Docker hijacked connections need cleanup of both read and write sides
+- Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode - `term.Restore()` handles both by sending escape sequences `\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B` before restoring raw/cooked mode
 
 ## Context Management (Critical)
 

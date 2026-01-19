@@ -56,3 +56,4 @@
 - Cobra's `MarkFlagsOneRequired()` must be called after flags are defined
 - Use `context.Background()` as parent for cleanup contexts (passed context may be cancelled)
 - Do not pass `context.Context` during struct initialization and re-use it for all of its member methods this is an anti-pattern. Do pass `context.Context` to each method individually
+- Terminal visual state reset: When restoring terminal after container detach/exit, `term.Restore()` sends escape sequences BEFORE restoring termios (`\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B`) to leave alternate screen, show cursor, reset colors, and select ASCII charset.
