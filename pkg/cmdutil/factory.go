@@ -21,6 +21,9 @@ type Factory struct {
 	Version string
 	Commit  string
 
+	// IO streams for input/output (for testability)
+	IOStreams *IOStreams
+
 	// Lazy-loaded dependencies
 	clientOnce sync.Once
 	client     *docker.Client
@@ -43,8 +46,9 @@ type Factory struct {
 // New creates a new Factory with the given version information.
 func New(version, commit string) *Factory {
 	return &Factory{
-		Version: version,
-		Commit:  commit,
+		Version:   version,
+		Commit:    commit,
+		IOStreams: NewIOStreams(),
 	}
 }
 
@@ -154,4 +158,10 @@ func (f *Factory) HostProxyEnvVar() string {
 		return ""
 	}
 	return "CLAWKER_HOST_PROXY=" + f.hostProxyManager.ProxyURL()
+}
+
+// Prompter returns a new Prompter using the Factory's IOStreams.
+// Use this for interactive user prompts that respect TTY detection.
+func (f *Factory) Prompter() *Prompter {
+	return NewPrompter(f.IOStreams)
 }

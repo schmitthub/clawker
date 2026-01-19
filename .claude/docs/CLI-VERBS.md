@@ -69,12 +69,95 @@ clawker build --label version=1.0 --label team=backend
 
 ### `clawker init`
 
-Initialize a new clawker project in the current directory.
+Initialize clawker user settings.
 
 **Usage:**
 ```bash
 clawker init [flags]
 ```
+
+Creates or updates the user settings file at `~/.local/clawker/settings.yaml`.
+This sets up user-level defaults that apply across all clawker projects.
+
+In interactive mode (default), you will be prompted to:
+- Build an initial base image (recommended)
+- Select a Linux flavor (Debian or Alpine)
+
+If you choose to build a base image, clawker will:
+1. Fetch the latest Claude Code version from npm
+2. Generate a Dockerfile for your selected flavor
+3. Build the image as `clawker-default:latest`
+4. Set this as your default image in settings
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--yes` | `-y` | bool | false | Non-interactive mode, accept all defaults (skips base image build) |
+
+**Examples:**
+```bash
+# Interactive setup (prompts for options)
+clawker init
+
+# Non-interactive with all defaults (skips base image build)
+clawker init --yes
+```
+
+**Linux Flavors:**
+
+| Flavor | Description |
+|--------|-------------|
+| `bookworm` | Debian stable (Recommended) |
+| `trixie` | Debian testing |
+| `alpine3.22` | Alpine Linux 3.22 |
+| `alpine3.23` | Alpine Linux 3.23 |
+
+**Note:** To initialize a project, use `clawker project init` instead.
+
+---
+
+### `clawker project init`
+
+Initialize a new clawker project in the current directory.
+
+**Usage:**
+```bash
+clawker project init [project-name] [flags]
+```
+
+Creates `clawker.yaml` and `.clawkerignore` in the current directory.
+If no project name is provided, you will be prompted to enter one.
+
+In interactive mode (default), you will be prompted to configure:
+- Project name
+- Base container image (uses default from `clawker init` if available)
+- Default workspace mode (bind or snapshot)
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--force` | `-f` | bool | false | Overwrite existing configuration files |
+| `--yes` | `-y` | bool | false | Non-interactive mode, accept all defaults |
+
+**Examples:**
+```bash
+# Interactive setup (prompts for options)
+clawker project init
+
+# Use "my-project" as project name (still prompts for other options)
+clawker project init my-project
+
+# Non-interactive with all defaults (requires default image from 'clawker init')
+clawker project init --yes
+
+# Overwrite existing configuration
+clawker project init --force
+```
+
+**Note:** When using `--yes`, a default image must be configured via `clawker init`.
+If no default image exists, the command will fail with a helpful error message.
 
 ---
 

@@ -13,6 +13,7 @@ import (
 	initcmd "github.com/schmitthub/clawker/pkg/cmd/init"
 	"github.com/schmitthub/clawker/pkg/cmd/monitor"
 	"github.com/schmitthub/clawker/pkg/cmd/network"
+	"github.com/schmitthub/clawker/pkg/cmd/project"
 	"github.com/schmitthub/clawker/pkg/cmd/volume"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -27,9 +28,10 @@ func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 		Long: `Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
-  clawker init        # Create clawker.yaml in current directory
-  clawker start       # Build and use Claude Code seamlessly in a container
-  clawker stop        # Stop the container
+  clawker init           # Set up user settings (~/.local/clawker/settings.yaml)
+  clawker project init   # Initialize project in current directory (clawker.yaml)
+  clawker start          # Build and start Claude Code in a container
+  clawker stop           # Stop the container
 
 Workspace modes:
   --mode=bind          Live sync with host (default)
@@ -93,6 +95,7 @@ Workspace modes:
 
 	// Add non-alias top-level commands
 	cmd.AddCommand(initcmd.NewCmdInit(f))
+	cmd.AddCommand(project.NewCmdProject(f))
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
 	cmd.AddCommand(generate.NewCmdGenerate(f))
