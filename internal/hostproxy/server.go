@@ -206,6 +206,10 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 		}
 	}()
 
+	// TODO: this is being printed over the claude REPL when its active. We have to
+	// figure out how to print errors without overlaying onto the REPL ui.
+	// either supress the printing of this if claude is active, or find a way to
+	// print above/below the REPL.
 	logger.Info().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
 	return nil
 }
@@ -383,7 +387,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 
 // callbackRegisterRequest is the JSON request body for POST /callback/register.
 type callbackRegisterRequest struct {
-	Port           int `json:"port"`
+	Port           int    `json:"port"`
 	Path           string `json:"path,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
@@ -579,38 +583,93 @@ func (s *Server) writeCallbackSuccessPage(w http.ResponseWriter) {
 <head>
     <title>Authentication Complete</title>
     <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0c0f;
+            --bg-2: #0f1116;
+            --card: #12141b;
+            --ink: #f2f2f2;
+            --muted: #9aa0a6;
+            --accent: #f2a973;
+            --accent-strong: #f6b880;
+            --ring: rgba(242, 169, 115, 0.28);
+            --shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: "Söhne", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background:
+                radial-gradient(900px 500px at 15% 0%, rgba(242, 169, 115, 0.12), transparent 60%),
+                radial-gradient(900px 600px at 85% 10%, rgba(255, 255, 255, 0.06), transparent 65%),
+                linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%);
+            color: var(--ink);
         }
+
         .container {
             text-align: center;
-            background: white;
-            padding: 40px 60px;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            background: var(--card);
+            padding: 40px 56px;
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            min-width: 320px;
         }
+
         .checkmark {
-            font-size: 64px;
-            margin-bottom: 16px;
+            font-size: 52px;
+            margin-bottom: 18px;
+            width: 72px;
+            height: 72px;
+            line-height: 72px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #0b0c0f;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+            box-shadow: 0 10px 24px rgba(242, 169, 115, 0.35);
         }
-        h1 { color: #333; margin: 0 0 8px 0; }
-        p { color: #666; margin: 0; }
+
+        .product {
+            text-transform: uppercase;
+            letter-spacing: 0.24em;
+            font-size: 11px;
+            color: var(--accent);
+            margin: 0 0 8px 0;
+            font-weight: 600;
+        }
+
+        h1 {
+            color: var(--ink);
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            letter-spacing: -0.01em;
+            font-weight: 600;
+        }
+
+        p {
+            color: var(--muted);
+            margin: 0;
+            font-size: 14.5px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="checkmark">✓</div>
+        <div class="product">clawker</div>
         <h1>Authentication Complete</h1>
         <p>You can close this tab and return to Claude Code.</p>
     </div>
 </body>
-</html>`))
+</html>
+`))
 }
 
 // writeCallbackErrorPage writes an HTML error page for OAuth callbacks.
@@ -622,33 +681,87 @@ func (s *Server) writeCallbackErrorPage(w http.ResponseWriter, message string) {
 <head>
     <title>Authentication Error</title>
     <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0c0f;
+            --bg-2: #0f1116;
+            --card: #12141b;
+            --ink: #f2f2f2;
+            --muted: #9aa0a6;
+            --accent: #f2a973;
+            --accent-strong: #f6b880;
+            --ring: rgba(242, 169, 115, 0.28);
+            --shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: "Söhne", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             margin: 0;
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            background:
+                radial-gradient(900px 500px at 15% 0%, rgba(242, 169, 115, 0.12), transparent 60%),
+                radial-gradient(900px 600px at 85% 10%, rgba(255, 255, 255, 0.06), transparent 65%),
+                linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%);
+            color: var(--ink);
         }
+
         .container {
             text-align: center;
-            background: white;
-            padding: 40px 60px;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            background: var(--card);
+            padding: 40px 56px;
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            min-width: 320px;
         }
+
         .error-icon {
-            font-size: 64px;
-            margin-bottom: 16px;
+            font-size: 52px;
+            margin-bottom: 18px;
+            width: 72px;
+            height: 72px;
+            line-height: 72px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #0b0c0f;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+            box-shadow: 0 10px 24px rgba(242, 169, 115, 0.35);
         }
-        h1 { color: #333; margin: 0 0 8px 0; }
-        p { color: #666; margin: 0; }
+
+        .product {
+            text-transform: uppercase;
+            letter-spacing: 0.24em;
+            font-size: 11px;
+            color: var(--accent);
+            margin: 0 0 8px 0;
+            font-weight: 600;
+        }
+
+        h1 {
+            color: var(--ink);
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            letter-spacing: -0.01em;
+            font-weight: 600;
+        }
+
+        p {
+            color: var(--muted);
+            margin: 0;
+            font-size: 14.5px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="error-icon">✗</div>
+        <div class="product">clawker</div>
         <h1>Authentication Error</h1>
         <p>` + message + `</p>
     </div>
