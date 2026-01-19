@@ -207,7 +207,7 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 	}()
 
 	// TODO: this is being printed over the claude REPL when its active. We have to
-	// figure out how to print errors without overlaying onto the REPL ui.
+	// figure out how to print errors without overwriting the REPL ui.
 	// either supress the printing of this if claude is active, or find a way to
 	// print above/below the REPL.
 	logger.Info().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
