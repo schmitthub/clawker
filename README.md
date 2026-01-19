@@ -222,10 +222,10 @@ This works seamlessly with GitHub CLI (`gh auth login`), Git Credential Manager,
 ### SSH Keys
 
 SSH agent forwarding is enabled by default:
-- **macOS**: Docker Desktop automatically provides SSH agent access
-- **Linux**: Your `SSH_AUTH_SOCK` socket is mounted into the container
+- **macOS**: SSH agent requests are forwarded via the host proxy (avoids Docker Desktop permission issues)
+- **Linux**: Your `SSH_AUTH_SOCK` socket is mounted directly into the container
 
-Your SSH keys remain on the host - only the agent socket is shared.
+Your SSH keys remain on the host - the container only has agent access, not the keys themselves.
 
 ### Host Git Config
 

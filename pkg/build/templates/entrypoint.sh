@@ -48,11 +48,12 @@ if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
     fi
 fi
 
-# Setup SSH known hosts for common git hosting services when SSH forwarding is enabled
-if [ -n "$SSH_AUTH_SOCK" ]; then
+# Setup SSH agent forwarding
+# Strategy: Use ssh-agent-proxy via host proxy when direct socket has permission issues
+ssh_agent_setup() {
+    # Setup known hosts for common git hosting services
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    # Add known host keys for common git services (official public keys)
     cat >> "$HOME/.ssh/known_hosts" << 'KNOWN_HOSTS'
 github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
@@ -65,6 +66,30 @@ bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNT
 bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uj/4PXhq0r2tVoBqXJCmLk7k+zpcaoprJBFQDa5A7SjqPQK0pCwBvhOT0hHpF0sWH4AIQHvYAWVTD0tBFPF1yENBxnVJpfL0L2qgGxLbQCWgOG0/1ygM+Gf9n0AIksE1h/uoLERBHQXE30XuP4pHV3n+7kO5+nw5VVFIsMfrQ3oT89Si/NvvmM=
 KNOWN_HOSTS
     chmod 600 "$HOME/.ssh/known_hosts"
+}
+
+# Determine SSH agent forwarding strategy
+if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_SSH_VIA_PROXY" = "true" ]; then
+    # Use ssh-agent-proxy to forward via host proxy (macOS Docker Desktop case)
+    ssh_agent_setup
+    /usr/local/bin/ssh-agent-proxy &
+    # Wait briefly for socket to be created
+    sleep 0.2
+    export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+elif [ -n "$SSH_AUTH_SOCK" ]; then
+    # Direct socket mount (Linux case or when proxy not needed)
+    if [ -S "$SSH_AUTH_SOCK" ]; then
+        # Check if socket is accessible
+        if ! ssh-add -l >/dev/null 2>&1; then
+            # Socket exists but not accessible, try proxy fallback
+            if [ -n "$CLAWKER_HOST_PROXY" ]; then
+                /usr/local/bin/ssh-agent-proxy &
+                sleep 0.2
+                export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+            fi
+        fi
+        ssh_agent_setup
+    fi
 fi
 
 # If first argument starts with "-" or isn't a command, prepend "claude"

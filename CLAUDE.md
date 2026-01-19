@@ -32,6 +32,7 @@
 
 ```
 ├── cmd/clawker/              # Main CLI binary
+├── cmd/ssh-agent-proxy/      # SSH agent proxy binary for containers (macOS)
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
@@ -93,6 +94,7 @@ The host proxy (`internal/hostproxy`) is a service mesh that mediates interactio
 | `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
 | `Manager` | `manager.go` | Lifecycle management of the proxy server |
 | `GitCredential` | `git_credential.go` | Git credential forwarding handler |
+| `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler (macOS) |
 
 ### OAuth Callback Flow
 
@@ -129,6 +131,7 @@ CONTAINER                              HOST PROXY (:18374)                    BR
 | `/open/url` | POST | Open URL in host browser |
 | `/health` | GET | Health check |
 | `/git/credential` | POST | Forward git credential get/store/erase to host |
+| `/ssh/agent` | POST | Forward SSH agent requests to host (macOS) |
 | `/callback/register` | POST | Register OAuth callback session |
 | `/callback/{session}/data` | GET | Poll for captured callback data |
 | `/callback/{session}` | DELETE | Cleanup session |
@@ -141,6 +144,7 @@ CONTAINER                              HOST PROXY (:18374)                    BR
 | `host-open` | Opens URLs, detects OAuth flows, rewrites callbacks |
 | `callback-forwarder` | Polls proxy and forwards callbacks to local server |
 | `git-credential-clawker` | Git credential helper that forwards to host proxy |
+| `ssh-agent-proxy` | SSH agent proxy binary that forwards via host proxy (macOS) |
 
 ### Git Credential Forwarding
 
@@ -161,9 +165,23 @@ CONTAINER                          HOST PROXY (:18374)                    HOST
     │ credentials returned                │                                  │
 ```
 
-**SSH Keys** (via agent socket forwarding):
+**SSH Keys** (via agent forwarding):
 - Linux: Bind mount `$SSH_AUTH_SOCK` to `/tmp/ssh-agent.sock`
-- macOS: Docker Desktop magic path `/run/host-services/ssh-auth.sock`
+- macOS: SSH agent proxy via host proxy (avoids Docker Desktop socket permission issues)
+
+**macOS SSH Agent Flow** (via host proxy):
+```
+CONTAINER                              HOST PROXY (:18374)               HOST
+    │                                         │                             │
+    │ ssh-add -l                              │                             │
+    │    ↓                                    │                             │
+    │ ssh-agent-proxy (Go binary) ───────────►│ POST /ssh/agent            │
+    │ creates ~/.ssh/agent.sock               │    ↓                        │
+    │ (user-owned)                            │ net.Dial(SSH_AUTH_SOCK) ───►│
+    │                                         │    ↓                        │
+    │◄────────────────────────────────────────│◄── Agent response           │
+    │ response returned                       │                             │
+```
 
 **Host Git Config**:
 - Host `~/.gitconfig` mounted read-only to `/tmp/host-gitconfig`

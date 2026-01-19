@@ -11,19 +11,15 @@ import (
 // ContainerSSHAgentPath is the path where the SSH agent socket is mounted in the container
 const ContainerSSHAgentPath = "/tmp/ssh-agent.sock"
 
-// dockerDesktopSSHPath is the magic path Docker Desktop provides for SSH agent forwarding on macOS
-const dockerDesktopSSHPath = "/run/host-services/ssh-auth.sock"
-
 // IsSSHAgentAvailable checks if an SSH agent is available on the host.
 // On Linux, it checks if SSH_AUTH_SOCK is set and the socket exists.
-// On macOS with Docker Desktop, the magic socket is always available if Docker is running.
+// On macOS, we use the host proxy for SSH agent forwarding (avoids permission issues).
 func IsSSHAgentAvailable() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		// Docker Desktop always provides the SSH agent socket path when running.
-		// We can't verify the socket from the host since it only exists inside containers.
-		// If Docker Desktop is not running, container creation will fail anyway.
-		return true
+		// On macOS, SSH agent is available via the host proxy
+		// We don't mount Docker Desktop's socket due to permission issues
+		return os.Getenv("SSH_AUTH_SOCK") != ""
 	case "linux":
 		sock := os.Getenv("SSH_AUTH_SOCK")
 		if sock == "" {
@@ -40,23 +36,26 @@ func IsSSHAgentAvailable() bool {
 	}
 }
 
+// UseSSHAgentProxy returns true if SSH agent should be forwarded via the host proxy
+// instead of direct socket mounting. This is used on macOS where Docker Desktop
+// mounts sockets with root ownership, causing permission issues.
+func UseSSHAgentProxy() bool {
+	return runtime.GOOS == "darwin" && IsSSHAgentAvailable()
+}
+
 // GetSSHAgentMounts returns mount configurations for SSH agent forwarding.
-// Returns nil if SSH agent forwarding is not available on this platform.
+// Returns nil if SSH agent forwarding is not available on this platform
+// or if the host proxy should be used instead (macOS).
 //
 // On Linux, the SSH_AUTH_SOCK socket is bind-mounted into the container.
-// On macOS, Docker Desktop provides a magic socket at /run/host-services/ssh-auth.sock.
+// On macOS, we don't mount anything - the host proxy handles forwarding.
 func GetSSHAgentMounts() []mount.Mount {
 	switch runtime.GOOS {
 	case "darwin":
-		// Docker Desktop magic socket for SSH agent forwarding
-		return []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   dockerDesktopSSHPath,
-				Target:   ContainerSSHAgentPath,
-				ReadOnly: false,
-			},
-		}
+		// On macOS, we use the host proxy for SSH agent forwarding
+		// This avoids permission issues with Docker Desktop's socket mounting
+		logger.Debug().Msg("macOS: using host proxy for SSH agent forwarding")
+		return nil
 	case "linux":
 		sock := os.Getenv("SSH_AUTH_SOCK")
 		if sock == "" {
@@ -83,9 +82,14 @@ func GetSSHAgentMounts() []mount.Mount {
 }
 
 // GetSSHAgentEnvVar returns the SSH_AUTH_SOCK environment variable value
-// to use inside the container. Returns empty string if SSH agent is not available.
+// to use inside the container. Returns empty string if SSH agent is not available
+// or if the host proxy should be used (in which case the entrypoint sets it).
 func GetSSHAgentEnvVar() string {
 	if !IsSSHAgentAvailable() {
+		return ""
+	}
+	// On macOS, the entrypoint will set SSH_AUTH_SOCK after starting the proxy
+	if runtime.GOOS == "darwin" {
 		return ""
 	}
 	return ContainerSSHAgentPath

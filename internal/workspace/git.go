@@ -28,11 +28,18 @@ func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool
 	// SSH agent forwarding
 	if cfg.GitSSHEnabled() {
 		if IsSSHAgentAvailable() {
+			// Add mounts (nil on macOS where we use proxy)
 			result.Mounts = append(result.Mounts, GetSSHAgentMounts()...)
 			if sshEnv := GetSSHAgentEnvVar(); sshEnv != "" {
 				result.Env = append(result.Env, "SSH_AUTH_SOCK="+sshEnv)
 			}
-			logger.Debug().Msg("SSH agent forwarding enabled")
+			// On macOS, tell entrypoint to use host proxy for SSH forwarding
+			if UseSSHAgentProxy() && hostProxyRunning {
+				result.Env = append(result.Env, "CLAWKER_SSH_VIA_PROXY=true")
+				logger.Debug().Msg("SSH agent forwarding enabled via host proxy")
+			} else {
+				logger.Debug().Msg("SSH agent forwarding enabled via socket mount")
+			}
 		} else {
 			logger.Debug().Msg("SSH agent not available, skipping SSH forwarding")
 		}
