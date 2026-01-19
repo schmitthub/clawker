@@ -356,7 +356,7 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/docs/CLI-VERBS.md | CLI command reference with flags and examples |
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
-| @.claude/rules/TESTING.md | CLI testing guildelines (**only access when writing command tests**) |
-| @README.md | Marketing doc to give an exciting summary, quick start, etc. This document is not to serve as technical documentation that overwhelms the user with a wall of text, it should be fun and to the point with the bare minimum basics on how to get started fixing the problems clawker solves|
+| @.claude/rules/TESTING.md | CLI testing guidelines (**only access when writing command tests**) |
+| @README.md | see @.serena/readme_design_direction.md |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.

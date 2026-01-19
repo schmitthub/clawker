@@ -172,7 +172,7 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 | `--all` | `-a` | Include all resources |
 | `--agent` | | Agent name shortcut for container commands |
 | `--mode` | | Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy) |
-| `--debug` | | Enable debug logging |
+| `--debug` | `-D` | Enable debug logging |
 
 **Note:** The `-f` shorthand has different meanings depending on context:
 - In build commands: `-f` means `--file` (Dockerfile path) - matches Docker CLI convention

@@ -82,7 +82,7 @@ Workspace modes:
 	}
 
 	// Global flags bound to Factory
-	cmd.PersistentFlags().BoolVarP(&f.Debug, "debug", "d", false, "Enable debug logging")
+	cmd.PersistentFlags().BoolVarP(&f.Debug, "debug", "D", false, "Enable debug logging")
 	cmd.PersistentFlags().StringVarP(&f.WorkDir, "workdir", "w", "", "Working directory (default: current directory)")
 
 	// Version template

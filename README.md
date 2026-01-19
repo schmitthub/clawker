@@ -1,121 +1,260 @@
 # Clawker
 
-Tired of Claude Code YOLO mode nuking your system from orbit? Resorting to complicated costly cloud setups? Maintaining local backups? Intimitaded by docker? Too lazy to keep creating new dockerfiles for project build dependencies?
+<p align="center">
+  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple" alt="macOS"></a>
+</p>
 
-Clawker (claude + docker) provides docker resource management and automation of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in safe, reproducible, monitored, isolated Docker containers using a familiar "docker-like" command line interface.
+Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manually is tedious - Dockerfiles, volumes, networking. OAuth doesn't work because container localhost isn't host localhost. Git credentials from your keychain don't exist inside containers. And you have no visibility into what's happening.
 
-At its core clawker uses a reusable package, `whail` (whale jail), that decorates a [docker client](https://github.com/moby/moby) to apply management labels during resource creation, and perform management label checks during resource state changes and lookups. This prevents clawker from being able to operate on docker resources it didn't create. The idea is that `whail` might be viable to streamline building clawker-like tools for other AI coding agents.
+**Clawker** (claude + docker) wraps Claude Code in Docker containers with a familiar CLI. It handles auth seamlessly via a host proxy, forwards your git credentials, and provides optional monitoring - so you can let Claude Code loose without worrying about your system.
 
-ex
-```bash
-[~/Code/clawker]$ docker image list
-IMAGE                         ID             DISK USAGE   CONTENT SIZE   EXTRA
-buildpack-deps:bookworm-scm   9be56c3e5291        371MB             0B
-clawker-clawker:latest        83a204a19dcb       1.95GB             0B
-
-[~/Code/clawker]$ clawker image list
-IMAGE                   ID            CREATED         SIZE
-clawker-clawker:latest  83a204a19dcb  10 minutes ago  1.81GB
-```
-
-If you want to use docker proper without clawker's management, check out `clawker-generate` to generate dockerfiles using clode code npm build tags. Tweak and then `docker build` it yourself. ex `clawker-generate -o dockerfiles/ latest next stable 2.1 1.1`
-
-**Disclaimer** `clawker` is currently a WIP I have been building for myself ad-hoc to suit my personal needs. Currently only tested on MacOS. Feel free to report issues, feature requests, or make contributions. If enough people are enjoying `clawker` I'll give it more time and setup proper releases, OS support, and features.
+> **Status:** Alpha - macOS tested. Contributions welcome.
 
 ## Quick Start
 
-### Prerequisites
+**Prerequisites:** Docker running, Go 1.25+
 
-- Docker installed and running
-- Go 1.25+ (for building from source)
-
-### Installation
-
-Currently, there are no pre-built binaries. You can build `clawker` from source:
-
-### Step 1: Clone
-
-```shell
+```bash
+# Install
 git clone https://github.com/schmitthub/clawker.git
-cd clawker
-```
+cd clawker && go build -o ./bin/clawker ./cmd/clawker
+export PATH="$PWD/bin:$PATH"
 
-### Step 2: Build from source
-
-```shell
-# local binary
-go build -o ./bin/clawker ./cmd/clawker
-
-# optional move somewhere in $PATH
-
-# system
-mv ./bin/clawker /usr/local/bin/clawker
-
-# user
-mkdir -p ~/.local/bin
-export PATH="$HOME/.local/bin:$PATH"
-mv ./bin/clawker ~/.local/bin/clawker
-```
-
-## Workflow
-
-### Initialize Project
-
-```bash
-cd my-project
+# Start a project
+cd your-project
 clawker init
-```
-
-### Review Config / Customize Project Image
-
-Open `clawker.yaml` and customize the project image, packages, and agent settings as needed. See the Configuration section below for more details.
-
-### Optional: Start monitoring stack
-
-Start the monitoring stack to keep track of resource usage and agent activity across all clawker projects and containers on your system. This is optional but recommended for better visibility. You can view the monitoring dashboard at `http://localhost:3000`.
-
-```bash
-clawker monitor start
-```
-
-### Option 1: Start claude agent in container and enjoy a safe Claude Code experience
-
-Your workspace files will be bind mounted into the container by default, allowing Claude Code to directly modify your project files only. The rest of your system is isolated from Claude Code.
-
-```bash
+clawker build
 clawker start --agent ralph
 ```
 
-### Option 2: Start claude agent in container with a snapshot of your project
+## Dockerfile Generation
 
-This mode creates a snapshot (ie a copy) of your project files, providing an fully isolated environment for Claude to work in without affecting your actual files. Use git to push and pull changes back to your project as needed.
-
-```bash
-clawker start --agent ralph --mode snapshot
-```
-
-### Option 3: Run ad-hoc claude commands in container
-
-Run individual Claude commands in the container without starting an interactive agent session. Claude Code commands and flags are passed directly to the container after the image name. This is useful for quick tasks or scripts, but lacks persistence as the container and its volumes are removed after the command completes.
+Want to use Docker directly without clawker's management? The `generate` command creates clawker boilerplate Dockerfiles using any Claude Code npm tag or version.
 
 ```bash
-# Run a prompt (specify image to pass claude's -p flag)
-clawker run -it --rm clawker-myproject:latest -p "Fix the bugs in my README.md"
+# Generate Dockerfiles for latest version
+clawker generate latest
 
-# Run with --allow-dangerously-skip-permissions
-clawker run -it --rm clawker-myproject:latest --allow-dangerously-skip-permissions
+# Generate for multiple versions
+clawker generate latest stable 2.1
 
-# Using --agent with default image? Use -- to pass flags to container
-clawker run -it --rm --agent ralph -- -p "Fix the bugs"
+# Output to specific directory
+clawker generate --output ./dockerfiles latest
 ```
 
-**Note:** Clawker's `-p` flag is for port publishing (like Docker). To use Claude Code's `-p` (prompt) flag, either specify the image name first, or use `--` to stop clawker flag parsing.
+Files are saved to `~/.clawker/build/` by default. Then build with Docker:
+
+```bash
+docker build -t my-claude:latest ~/.clawker/build/latest/
+```
+
+You can also use the standalone `clawker-generate` in `./cmd/clawker-generate/` if all you need is Dockerfile generation.
+
+```bash
+go build -o ./bin/clawker-generate ./cmd/clawker-generate
+./bin/clawker-generate latest next stable 2.1
+```
+
+## Commands
+
+Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you know clawker.
+
+| Command | Description |
+|---------|-------------|
+| `clawker init` | Initialize project with clawker.yaml |
+| `clawker build` | Build container image |
+| `clawker start --agent NAME` | Start a named agent container |
+| `clawker run` | Build and run (one-shot) |
+| `clawker container ls` | List containers |
+| `clawker container stop` | Stop container |
+| `clawker container logs` | View logs |
+| `clawker container attach` | Attach to running container |
+| `clawker image ls` | List images |
+| `clawker volume ls` | List volumes |
+| `clawker monitor start/stop` | Control monitoring stack |
+
+Management commands (`container`, `image`, `volume`, `network`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
+
+## Isolation Features
+
+Clawker is a port of the Docker CLI, not just a passthrough. It adds isolation features to keep your system safe from rogue Claude Code agents, and provides clawker-only isolation when running docker-like commands.
+
+* clawker-only resource isolation when running docker-like commands, you don't have to worry about filters. Clawker only sees its own resources, so you don't accidentally delete or modify other docker resources. This is done via labels under the hood.
+* per-project resource namespacing, so you can have multiple projects on the same host without conflicts. Each project gets its own set of containers, images, volumes, and networks, identified by labels.
+* per-agent containerization, so each agent runs in its own isolated container. You can have multiple agents running simultaneously without interference.
+* Network firewalling, so you can restrict outbound network access from containers. By default, all outbound traffic is blocked except for allowed domains in a firewall init script.
+* All clawker resources are added to a docker network `clawker-net` so they can communicate if needed.
+
+## Authentication & Git
+
+### API Key Users
+
+Using an API key? Just pass it as an environment variable:
+
+```bash
+clawker run -it --rm -e ANTHROPIC_API_KEY myimage:latest
+```
+
+Or set it in your shell and clawker forwards it automatically.
+
+### Subscription Users
+
+**The problem:** Containers have their own localhost. When Claude Code opens a browser for OAuth, the callback goes to the wrong place.
+
+**The solution:** Clawker runs a lightweight host proxy that bridges the gap.
+
+**Auth Flow:**
+
+```
+Container                    Host Proxy (:18374)              Browser
+    |                               |                             |
+    | Claude needs auth             |                             |
+    | ---------------------------->| intercepts OAuth URL         |
+    |                              | rewrites callback ---------->|
+    |                              |                  user logs in|
+    |                              |<-------- callback redirect   |
+    |<-- forwards to container     |                             |
+    | Auth complete!               |                             |
+```
+
+### Git Credentials
+
+- **HTTPS**: Forwarded via host proxy (GitHub CLI, macOS Keychain, Git Credential Manager all work)
+- **SSH**: Agent forwarding (your keys never leave the host)
+- **Config**: `~/.gitconfig` copied automatically
+
+**Zero config** - if git works on your host, it works in containers.
+
+## Workflows
+
+### Starting containers
+
+```bash
+# Bind mode (default) - changes sync to host immediately
+clawker start --agent dev
+
+# Snapshot mode - isolated copy, use git to sync
+clawker start --agent sandbox --mode snapshot
+```
+
+### Passing Claude Code options
+
+```bash
+# Run with a prompt
+clawker run -it --rm myimage:latest -p "Fix the tests"
+
+# Skip permission prompts (careful!)
+clawker run -it --rm myimage:latest --dangerously-skip-permissions
+
+# Using --agent? Use -- to separate clawker flags from Claude flags
+clawker run -it --rm --agent ralph -- -p "Refactor auth module"
+```
+
+### Detach and reattach
+
+```bash
+# Detach from running container: Ctrl+P, Ctrl+Q
+
+# Reattach later
+clawker container attach --agent ralph
+# or
+clawker container attach clawker.myproject.ralph
+
+# Note: Press any key after reattach to redraw Claude's TUI
+```
+
+### List and manage containers
+
+```bash
+clawker container ls              # List all clawker containers
+clawker container stop --agent ralph
+clawker container logs --agent ralph --follow
+```
+
+## Monitoring
+
+Optional observability stack for tracking resource usage across all your clawker containers.
+
+```bash
+clawker monitor start    # Starts Prometheus + Grafana
+clawker monitor stop     # Stops the stack
+clawker monitor status   # Check if running
+```
+
+**Protip** You can also monitor your host's claude sessions with this stack just by setting these env vars:
+
+```bash
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_METRICS_EXPORTER=otlp
+OTEL_RESOURCE_ATTRIBUTES=agent=host.clawker # ie host.project name
+OTEL_LOGS_EXPORT_INTERVAL=5000
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
+OTEL_METRIC_EXPORT_INTERVAL=10000
+OTEL_LOGS_EXPORTER=otlp
+OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+OTEL_METRICS_INCLUDE_SESSION_ID=true
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+```
+
+**Dashboard:** http://localhost:3000
+
+## System Overview
+
+```
++---------------------------------------------------------------------+
+|                              HOST                                    |
+|                                                                      |
+|  +--------------+         +--------------------------------------+  |
+|  |              |         |            CONTAINER                  |  |
+|  |  clawker CLI |-------->|  +--------------------------------+  |  |
+|  |              |         |  |         Claude Code            |  |  |
+|  +--------------+         |  +--------------------------------+  |  |
+|         |                 |                                       |  |
+|         |                 |  /workspace (bind or snapshot)        |  |
+|         |                 |  /home/claude/.claude (persisted)     |  |
+|         |                 |  /commandhistory (persisted)          |  |
+|         v                 |                                       |  |
+|  +--------------+         |  Scripts:                             |  |
+|  |  Host Proxy  |<--------|  - host-open (browser URLs)           |  |
+|  |   (:18374)   |         |  - callback-forwarder (OAuth)         |  |
+|  |              |         |  - git-credential-clawker (HTTPS)     |  |
+|  | - OAuth      |         |  - ssh-agent-proxy (SSH keys)         |  |
+|  | - Git creds  |         +--------------------------------------+  |
+|  | - URL open   |                                                    |
+|  +--------------+         +--------------------------------------+  |
+|         |                 |         MONITORING (optional)         |  |
+|         |                 |  Prometheus + Grafana (:3000)         |  |
+|         v                 +--------------------------------------+  |
+|  +--------------+                                                    |
+|  |    Docker    |                                                    |
+|  |    Daemon    |                                                    |
+|  +--------------+                                                    |
++---------------------------------------------------------------------+
+```
 
 ## Configuration
 
-Clawker uses `clawker.yaml` for project configuration. Run `clawker init` to generate a template.
+### User Settings (~/.local/clawker/settings.yaml)
 
-### Full Example
+Global defaults that apply across all projects. Local `clawker.yaml` takes precedence.
+
+```yaml
+project:
+  # Default image when not specified in project config or CLI
+  default_image: "node:20-slim"
+
+# Registered project directories (managed by 'clawker init')
+projects:
+  - /Users/you/Code/project-a
+  - /Users/you/Code/project-b
+```
+
+### Project Config (clawker.yaml)
+
+Project-specific configuration. Run `clawker init` to generate a template.
 
 ```yaml
 version: "1"
@@ -124,13 +263,30 @@ project: "my-app"
 build:
   # Base image for the container
   image: "node:20-slim"
-  # Optional: path to custom Dockerfile
+  # Optional: path to custom Dockerfile (skips generation)
   # dockerfile: "./.devcontainer/Dockerfile"
   # System packages to install
   packages:
     - git
     - curl
     - ripgrep
+  # Build arguments
+  # build_args:
+  #   NODE_VERSION: "20"
+  # Dockerfile instructions
+  instructions:
+    env:
+      NODE_ENV: "production"
+    # copy:
+    #   - { src: "./config.json", dest: "/etc/app/" }
+    # root_run:
+    #   - { cmd: "mkdir -p /opt/app" }
+    # user_run:
+    #   - { cmd: "npm install -g typescript" }
+  # Raw Dockerfile injection (escape hatch)
+  # inject:
+  #   after_from: []
+  #   after_packages: []
 
 agent:
   # Files to include in Claude's context
@@ -140,6 +296,10 @@ agent:
   # Environment variables for Claude
   env:
     NODE_ENV: "development"
+  # Shell, editor, visual settings
+  # shell: "/bin/bash"
+  # editor: "vim"
+  # visual: "vim"
 
 workspace:
   # Container path for your code
@@ -163,92 +323,45 @@ security:
   # allowed_domains:
   #   - "api.github.com"
   #   - "registry.npmjs.org"
+  # Add Linux capabilities
+  # cap_add:
+  #   - NET_ADMIN
 ```
 
-## Host Proxy
+## Security Defaults
 
-Clawker runs a lightweight HTTP proxy on the host that enables containers to perform host-side actions, such as opening URLs in your browser. This is essential for Claude Code's subscription authentication flow.
+| Setting | Default | Why |
+|---------|---------|-----|
+| Firewall | Enabled | Blocks outbound except allowed domains |
+| Docker socket | Disabled | Container can't control Docker |
+| Git credentials | Forwarded | Agent access only - keys stay on host |
 
-**How it works:**
-- When you run or start a container, clawker automatically starts a host proxy server on port 18374
-- The container receives the `CLAWKER_HOST_PROXY` environment variable pointing to the proxy
-- The `BROWSER` environment variable is set to `/usr/local/bin/host-open`, which calls the proxy
-- When Claude Code needs to open a URL for authentication, it uses the host browser
+## The whail Engine
 
-### OAuth Callback Proxy
+Under the hood, clawker uses **whail** (whale jail) - a reusable Go package that decorates the Docker client with label-based resource isolation.
 
-The host proxy includes automatic OAuth callback handling. When Claude Code starts an OAuth authentication flow:
+**What it does:**
+- Applies `com.clawker.managed=true` labels during resource creation
+- Injects label filters on list/inspect operations
+- Refuses to operate on resources it didn't create
 
-1. `host-open` detects the OAuth URL with a localhost callback
-2. It registers a callback session with the host proxy
-3. The callback URL is rewritten to point to the proxy instead of localhost
-4. The browser opens the rewritten OAuth URL
-5. After authentication, the browser redirects to the proxy
-6. The proxy captures the callback and `callback-forwarder` delivers it to Claude Code
-
-This allows OAuth flows to complete transparently, even though the container's localhost is different from the host's localhost.
-
-**Disable host proxy:**
-
-If you don't need browser authentication (e.g., using API keys only), you can disable the host proxy:
-
-```yaml
-security:
-  enable_host_proxy: false
-```
-
-**Manual URL opening:**
-
-From inside a container, you can manually open URLs on the host:
+This means clawker can never accidentally touch your other Docker resources.
 
 ```bash
-host-open https://example.com
+# Docker sees everything
+docker image list
+# IMAGE                         ID             ...
+# buildpack-deps:bookworm-scm   9be56c3e5291   ...
+# clawker-myproject:latest      83a204a19dcb   ...
+# postgres:15                   abc123def456   ...
+
+# Clawker only sees its own resources
+clawker image list
+# IMAGE                    ID            ...
+# clawker-myproject:latest 83a204a19dcb  ...
 ```
 
-## Git Credential Forwarding
-
-Clawker automatically forwards your host's git credentials to containers, enabling `git clone`, `git push`, and other operations without manual configuration.
-
-### HTTPS Credentials
-
-HTTPS git credentials are forwarded via the host proxy. When git needs credentials inside a container:
-1. Git calls the `git-credential-clawker` helper
-2. The helper forwards the request to the host proxy
-3. The proxy executes `git credential fill` on the host
-4. Credentials from your OS keychain/credential manager are returned
-
-This works seamlessly with GitHub CLI (`gh auth login`), Git Credential Manager, and macOS Keychain.
-
-### SSH Keys
-
-SSH agent forwarding is enabled by default:
-- **macOS**: SSH agent requests are forwarded via the host proxy (avoids Docker Desktop permission issues)
-- **Linux**: Your `SSH_AUTH_SOCK` socket is mounted directly into the container
-
-Your SSH keys remain on the host - the container only has agent access, not the keys themselves.
-
-### Host Git Config
-
-Your `~/.gitconfig` is automatically copied to containers, preserving:
-- `user.name` and `user.email`
-- Aliases and other git settings
-- Delta/diff tool configurations
-
-The credential.helper setting is filtered out since clawker provides its own.
-
-### Configuration
-
-Git credential forwarding is enabled by default. To customize:
-
-```yaml
-security:
-  git_credentials:
-    forward_https: true    # HTTPS credentials via host proxy (default: follows host_proxy)
-    forward_ssh: true      # SSH agent forwarding (default: true)
-    copy_git_config: true  # Copy host ~/.gitconfig (default: true)
-```
-
-**Zero-config**: If your host git is configured (GitHub CLI, Git Credential Manager, SSH keys), containers automatically have access.
+`whail` is designed to be reusable for building similar containerized AI agent wrappers.
 
 ## Known Issues
 
@@ -256,6 +369,20 @@ security:
 
 When you detach from a container (Ctrl+P, Ctrl+Q) and re-attach, Claude Code's terminal UI may appear blank or frozen. This is a **Claude Code limitation** (its Ink-based React terminal renderer), not a clawker or Docker issue.
 
-**Workaround**: Press any key after re-attaching to trigger a redraw.
+**Workaround:** Press any key after re-attaching to trigger a redraw.
 
-This issue has been reported by others in the Claude Code community. Standard terminal apps like vim, htop, etc. redraw correctly on re-attach.
+## Contributing
+
+```bash
+# Development setup
+git clone https://github.com/schmitthub/clawker.git
+cd clawker
+go build -o ./bin/clawker ./cmd/clawker
+go test ./...
+```
+
+Issues and PRs welcome at [github.com/schmitthub/clawker](https://github.com/schmitthub/clawker).
+
+## License
+
+MIT
