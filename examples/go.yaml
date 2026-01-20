@@ -1,0 +1,56 @@
+# Go Project Build Configuration
+#
+# This example sets up Go using the official binary distribution.
+# Go has excellent tooling built-in (go mod, go test, gofmt, etc.).
+
+build:
+  # Base image - Debian bookworm with build essentials
+  image: "buildpack-deps:bookworm-scm"
+
+  # System packages
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - ca-certificates
+
+  instructions:
+    # Environment variables for Go
+    env:
+      GO_VERSION: "1.24.1"
+      GOPATH: "/home/claude/go"
+      GOBIN: "/home/claude/go/bin"
+
+    # Install Go as root (system-wide)
+    root_run:
+      - cmd: |
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
+
+    # Configure Go paths for the claude user
+    user_run:
+      # Create Go directories and add to PATH
+      - cmd: |
+          mkdir -p "$GOPATH/bin" "$GOPATH/src" "$GOPATH/pkg"
+
+      # Add Go to shell profile
+      - cmd: |
+          echo 'export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"' >> ~/.bashrc
+
+      # Install common Go tools
+      - cmd: |
+          export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH" && \
+          go install golang.org/x/tools/gopls@latest && \
+          go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Alternative: Use the official Go image as base
+# Simpler but you get the Go version bundled with that image:
+#
+# build:
+#   image: "golang:1.24-bookworm"
+#   packages:
+#     - git
+#     - ripgrep
+#   instructions:
+#     user_run:
+#       - cmd: |
+#           go install golang.org/x/tools/gopls@latest

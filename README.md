@@ -48,6 +48,73 @@ clawker build
 clawker start --agent ralph
 ```
 
+## Customizing Your Build
+
+The default clawker image includes essentials for most projects: git, curl, vim, zsh, ripgrep, and more. But your project likely needs language-specific tools. Here's how to customize your `clawker.yaml`.
+
+### Example: TypeScript/React Project
+
+Let's add Node.js (via nvm) and pnpm to a project:
+
+```yaml
+version: "1"
+project: "my-react-app"
+
+build:
+  # Start with Debian bookworm (has build essentials)
+  image: "buildpack-deps:bookworm-scm"
+
+  # System packages (apt-get install)
+  packages:
+    - git
+    - curl
+    - ripgrep
+
+  instructions:
+    # Environment variables baked into the image
+    env:
+      NVM_DIR: "/home/claude/.nvm"
+      NODE_VERSION: "22"
+
+    # Commands run as the claude user
+    user_run:
+      # Install nvm
+      - cmd: |
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+      # Install Node.js and pnpm
+      - cmd: |
+          . "$NVM_DIR/nvm.sh" && \
+          nvm install $NODE_VERSION && \
+          npm install -g pnpm
+
+      # Add nvm to shell profile
+      - cmd: |
+          echo '. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+```
+
+### Build Properties
+
+| Property | Description |
+|----------|-------------|
+| `build.image` | Base Docker image (e.g., `buildpack-deps:bookworm-scm`, `node:22-bookworm`) |
+| `build.packages` | System packages installed via apt-get |
+| `build.instructions.env` | Environment variables set in the image |
+| `build.instructions.root_run` | Commands run as root (system-level setup) |
+| `build.instructions.user_run` | Commands run as claude user (language tools, global packages) |
+| `build.dockerfile` | Path to custom Dockerfile (skips generation entirely) |
+
+### More Examples
+
+See the [`examples/`](./examples/) directory for complete configurations:
+
+- **[typescript-react.yaml](./examples/typescript-react.yaml)** - Node.js via nvm, pnpm
+- **[python.yaml](./examples/python.yaml)** - Python via uv (fast package manager)
+- **[rust.yaml](./examples/rust.yaml)** - Rust via rustup
+- **[go.yaml](./examples/go.yaml)** - Go with gopls and delve
+- **[csharp.yaml](./examples/csharp.yaml)** - .NET SDK
+- **[php.yaml](./examples/php.yaml)** - PHP with Composer
+
 ## Dockerfile Generation
 
 Want to use Docker directly without clawker's management? The `generate` command creates clawker boilerplate Dockerfiles using any Claude Code npm tag or version.
