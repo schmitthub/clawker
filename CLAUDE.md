@@ -305,6 +305,7 @@ security:
 - Don't wait for stdin goroutine on container exit (may block on Read)
 - Docker hijacked connections need cleanup of both read and write sides
 - Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode - `term.Restore()` handles both by sending escape sequences `\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B` before restoring raw/cooked mode
+- Terminal resize +1/-1 trick: When attaching to containers, first resize to (height+1, width+1) then to actual size. This forces a SIGWINCH event that triggers TUI apps to redraw. Matches Docker CLI's approach in attach.go. Implemented in `StreamWithResize`.
 
 ## Context Management (Critical)
 

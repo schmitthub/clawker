@@ -35,4 +35,4 @@
   - Host proxy enables container-to-host actions like opening URLs in browser
   - Factory pattern for hostproxy: lazy init with sync.Once, EnsureRunning() before container commands
   - BROWSER env var set to /usr/local/bin/host-open so CLI tools use host proxy automatically
-  - Container attach TUI redraw: Claude Code's TUI (Ink-based React renderer) doesn't redraw on re-attach. Tried resize timing, SIGWINCH via exec - nothing works. This is a Claude Code limitation, not Docker. Workaround: press any key to trigger redraw.
+  - Terminal attach TUI redraw: Use Docker CLI's +1/-1 resize trick to force redraw. Resize to (height+1, width+1) then back to (height, width) - this forces SIGWINCH and triggers TUI redraw. See docker/cli attach.go resizeTTY(). Implemented in StreamWithResize.

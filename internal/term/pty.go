@@ -141,8 +141,14 @@ func (p *PTYHandler) StreamWithResize(
 		if err != nil {
 			logger.Debug().Err(err).Msg("failed to get initial terminal size")
 		} else if resizeFunc != nil {
+			// Docker CLI's +1/-1 trick: resize to artificial size first, then actual
+			// This forces a size change event to trigger TUI redraw on re-attach
+			// See: docker/cli/cli/command/container/attach.go resizeTTY()
+			if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
+				logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+			}
 			if err := resizeFunc(uint(height), uint(width)); err != nil {
-				logger.Debug().Err(err).Msg("failed to set initial container TTY size")
+				logger.Debug().Err(err).Msg("failed to set actual container TTY size")
 			}
 		}
 
