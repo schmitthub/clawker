@@ -1,0 +1,51 @@
+## clawker container list
+
+List containers
+
+### Synopsis
+
+Lists all containers created by clawker.
+
+By default, shows only running containers. Use -a to show all containers.
+
+Note: Use 'clawker monitor status' for monitoring stack containers.
+
+```
+clawker container list [flags]
+```
+
+### Aliases
+
+`list`, `ls`, `ps`
+
+### Examples
+
+```
+  # List running containers
+  clawker container list
+
+  # List all containers (including stopped)
+  clawker container ls -a
+
+  # List containers for a specific project
+  clawker container list -p myproject
+```
+
+### Options
+
+```
+  -a, --all              Show all containers (including stopped)
+  -h, --help             help for list
+  -p, --project string   Filter by project name
+```
+
+### Options inherited from parent commands
+
+```
+  -D, --debug            Enable debug logging
+  -w, --workdir string   Working directory (default: current directory)
+```
+
+### See also
+
+* [clawker container](clawker_container.md) - Manage containers
