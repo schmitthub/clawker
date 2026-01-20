@@ -288,6 +288,8 @@ go build -o ./bin/clawker-generate ./cmd/clawker-generate
 
 ## Commands
 
+> **LLM-friendly docs:** Complete command documentation with all flags and examples is available in [`docs/markdown/`](./docs/markdown/) for AI assistants and tooling.
+
 Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you know clawker.
 
 | Command | Description |
