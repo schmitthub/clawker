@@ -133,7 +133,9 @@ iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
 # Allow access to host machine via host.docker.internal (for MCP servers, etc.)
 # Handle both IPv4 (iptables) and IPv6 (ip6tables) addresses
-host_addrs=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}')
+# Note: getent hosts only returns one address (prefers IPv6), so we combine with ahostsv4
+# to ensure we get both IPv4 and IPv6 addresses for Docker Desktop compatibility.
+host_addrs=$( (getent hosts host.docker.internal 2>/dev/null | awk '{print $1}'; getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1}') | sort -u )
 if [ -n "$host_addrs" ]; then
     while read -r host_ip; do
         if [[ "$host_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
