@@ -72,7 +72,7 @@ agent:
   # editor: "vim"    # defaults to "nano" if not set
   # visual: "vim"    # defaults to "nano" if not set
   env:
-    FARTS: "are funny"
+    # FOO: bar
 
 workspace:
   # Container path where your code is mounted

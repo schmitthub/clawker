@@ -63,3 +63,9 @@ func OutputJSON(data any) error {
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
 }
+
+// PrintHelpHint prints a contextual help hint to stderr.
+// cmdPath should be cmd.CommandPath() (e.g., "clawker container stop")
+func PrintHelpHint(cmdPath string) {
+	fmt.Fprintf(os.Stderr, "\nRun '%s --help' for more information.\n", cmdPath)
+}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -390,7 +391,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, netCfg, err := buildConfigs(tt.opts, nil)
+			cfg, hostCfg, netCfg, err := buildConfigs(tt.opts, nil, config.DefaultConfig())
 
 			if tt.wantErr {
 				require.Error(t, err)

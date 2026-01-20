@@ -18,6 +18,8 @@ const (
 	DockerfilesSubdir = "dockerfiles"
 	// ClawkerNetwork is the name of the shared Docker network
 	ClawkerNetwork = "clawker-net"
+	// LogsSubdir is the subdirectory for log files
+	LogsSubdir = "logs"
 )
 
 // ClawkerHome returns the clawker home directory.
@@ -63,4 +65,13 @@ func DockerfilesDir() (string, error) {
 // EnsureDir creates a directory if it doesn't exist
 func EnsureDir(path string) error {
 	return os.MkdirAll(path, 0755)
+}
+
+// LogsDir returns the logs directory (~/.local/clawker/logs)
+func LogsDir() (string, error) {
+	home, err := ClawkerHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, LogsSubdir), nil
 }
