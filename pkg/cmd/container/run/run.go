@@ -222,6 +222,13 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
+	// Enable interactive mode early to suppress INFO logs during TTY sessions.
+	// This prevents host proxy and other startup logs from interfering with the TUI.
+	if !opts.Detach && opts.TTY && opts.Stdin {
+		logger.SetInteractiveMode(true)
+		defer logger.SetInteractiveMode(false)
+	}
+
 	// Start host proxy server for container-to-host communication (if enabled)
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {

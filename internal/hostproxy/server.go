@@ -241,10 +241,6 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 		}
 	}()
 
-	// TODO: this is being printed over the claude REPL when its active. We have to
-	// figure out how to print errors without overwriting the REPL ui.
-	// either supress the printing of this if claude is active, or find a way to
-	// print above/below the REPL.
 	logger.Info().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
 	return nil
 }
@@ -300,13 +296,15 @@ func (s *Server) handleDynamicCallback(port int, w http.ResponseWriter, r *http.
 
 	err := s.callbackChannel.Capture(sessionID, r)
 	if err != nil {
-		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
-
+		// ErrCallbackAlreadyReceived is expected (browsers often send duplicate requests)
+		// Handle it silently by showing success page
 		if errors.Is(err, ErrCallbackAlreadyReceived) {
 			s.writeCallbackSuccessPage(w)
 			return
 		}
 
+		// Log actual errors
+		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
 		s.writeCallbackErrorPage(w, "An error occurred. Please try again.")
 		return
 	}
@@ -585,14 +583,15 @@ func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
 
 	err := s.callbackChannel.Capture(sessionID, r)
 	if err != nil {
-		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
-
-		// Distinguish between different error types
+		// ErrCallbackAlreadyReceived is expected (browsers often send duplicate requests)
+		// Handle it silently by showing success page
 		if errors.Is(err, ErrCallbackAlreadyReceived) {
-			// OAuth worked, this is just a duplicate request - show success
 			s.writeCallbackSuccessPage(w)
 			return
 		}
+
+		// Log actual errors
+		logger.Error().Err(err).Str("session_id", sessionID).Msg("failed to capture callback")
 
 		// Check if session doesn't exist
 		if s.sessionStore.Get(sessionID) == nil {

@@ -70,3 +70,84 @@ func TestLoggerReinitialize(t *testing.T) {
 		t.Error("Logger should return to original level after reinit")
 	}
 }
+
+func TestSetInteractiveMode(t *testing.T) {
+	// Test that SetInteractiveMode can be toggled without panic
+	SetInteractiveMode(true)
+	SetInteractiveMode(false)
+	SetInteractiveMode(true)
+	SetInteractiveMode(false)
+}
+
+func TestInfoSuppressedInInteractiveMode(t *testing.T) {
+	// Initialize logger with Info level (not debug)
+	Init(false)
+	defer SetInteractiveMode(false) // Cleanup
+
+	// Without interactive mode, Info() should return a normal event
+	SetInteractiveMode(false)
+	event := Info()
+	if event == nil {
+		t.Error("Info() should return non-nil event when not in interactive mode")
+	}
+
+	// With interactive mode, Info() should return a disabled/nop event (nil)
+	SetInteractiveMode(true)
+	event = Info()
+	if event != nil {
+		t.Error("Info() should return nil event in interactive mode (suppressed)")
+	}
+}
+
+func TestInfoNotSuppressedInDebugMode(t *testing.T) {
+	// Initialize logger with Debug level
+	Init(true)
+	defer SetInteractiveMode(false) // Cleanup
+
+	// With interactive mode AND debug level, Info() should still log
+	SetInteractiveMode(true)
+	event := Info()
+	if event == nil {
+		t.Error("Info() should return non-nil event in debug mode even with interactive mode")
+	}
+}
+
+func TestWarnSuppressedInInteractiveMode(t *testing.T) {
+	// Initialize logger with Info level (not debug)
+	Init(false)
+	defer SetInteractiveMode(false) // Cleanup
+
+	// Without interactive mode, Warn() should return a normal event
+	SetInteractiveMode(false)
+	event := Warn()
+	if event == nil {
+		t.Error("Warn() should return non-nil event when not in interactive mode")
+	}
+
+	// With interactive mode, Warn() should return a disabled/nop event (nil)
+	SetInteractiveMode(true)
+	event = Warn()
+	if event != nil {
+		t.Error("Warn() should return nil event in interactive mode (suppressed)")
+	}
+}
+
+func TestErrorSuppressedInInteractiveMode(t *testing.T) {
+	// Initialize logger with Info level (not debug)
+	Init(false)
+	defer SetInteractiveMode(false) // Cleanup
+
+	// Without interactive mode, Error() should return a normal event
+	SetInteractiveMode(false)
+	event := Error()
+	if event == nil {
+		t.Error("Error() should return non-nil event when not in interactive mode")
+	}
+
+	// With interactive mode, Error() should return a disabled/nop event (nil)
+	SetInteractiveMode(true)
+	event = Error()
+	if event != nil {
+		t.Error("Error() should return nil event in interactive mode (suppressed)")
+	}
+}
