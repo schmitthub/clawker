@@ -1,51 +1,48 @@
-# Session Status: Base Image Build Feature
+# Session Status: User vs Project Init Feature
 
 ## Branch: `a/user-vs-project-init`
 
-## STATUS: IMPLEMENTATION COMPLETE ✅
+## STATUS: ALL IMPLEMENTATION COMPLETE ✅
 
-All code changes are done. Tests pass. Binary rebuilt.
+All code changes are done. Tests pass. Ready for PR.
 
-## Files Modified
+## What Was Implemented
 
-1. **`pkg/cmd/init/init.go`** - Added base image build prompts and `buildDefaultImage()` function
-2. **`pkg/cmd/project/init/init.go`** - Updated to require default image for `--yes` flag
-3. **`pkg/cmd/init/init_test.go`** - Added tests for new constants and options
-4. **`pkg/build/dockerfile.go`** - Fixed `GenerateDockerfiles` to write all 8 required scripts
-5. **`.claude/docs/CLI-VERBS.md`** - Updated documentation
-6. **`CLAUDE.md`** - Updated init command description
+### 1. Separated init commands:
+- `clawker init` - User-level setup (creates `~/.local/clawker/settings.yaml`)
+- `clawker project init` - Project-level setup (creates `clawker.yaml`)
 
-## What the Feature Does
+### 2. Base image build feature in `clawker init`:
+- Prompts to build initial base image
+- Flavor selection (bookworm, trixie, alpine3.22, alpine3.23)
+- Fetches latest Claude Code version from npm
+- Builds `clawker-default:latest`
+- Saves to settings
 
-`clawker init` now offers to build a base image:
-1. Prompts "Build an initial base image?" (Yes recommended)
-2. If Yes: prompts for Linux flavor (bookworm, trixie, alpine3.22, alpine3.23)
-3. Resolves latest Claude Code from npm
-4. Generates Dockerfile and all scripts
-5. Builds `clawker-default:latest`
-6. Updates settings with the built image
+### 3. Default image resolution & validation:
+- Changed resolution order: explicit → project → default
+- Added validation for default images (prompts to rebuild if missing)
+- Extracted shared build logic to `pkg/cmdutil/image_build.go`
 
-## Bug Fixed This Session
+### 4. IOStreams and Prompter:
+- Created `pkg/cmdutil/iostreams.go` for TTY detection
+- Enhanced `pkg/cmdutil/prompts.go` with interactive prompts
+- Updated Factory with IOStreams support
 
-`GenerateDockerfiles` was only writing 2 of 8 scripts. Fixed to write all:
-- entrypoint.sh, init-firewall.sh, statusline.sh, claude-settings.json
-- host-open.sh, callback-forwarder.sh, git-credential-clawker.sh, ssh-agent-proxy.go
+## Key Files Modified
+- `pkg/cmd/init/init.go` - User init with base image build
+- `pkg/cmd/project/init/init.go` - Project init
+- `pkg/cmdutil/image_build.go` - Shared build logic
+- `pkg/cmdutil/resolve.go` - Image resolution with validation
+- `pkg/cmd/container/run/run.go` - Uses ResolveAndValidateImage
+- `pkg/cmd/container/create/create.go` - Uses ResolveAndValidateImage
+- `.claude/docs/CLI-VERBS.md` - Documentation
+- `README.md` - User docs updated
 
-## To Continue
+## Tests
+All tests pass: `go test ./...`
 
-1. Run `clawker init` to test the feature interactively
-2. If all works, commit the changes
-3. Create PR when ready
-
-## Commands to Test
-
-```bash
-# Rebuild if needed
-go build -o bin/clawker ./cmd/clawker
-
-# Test interactively
-./bin/clawker init
-
-# Run tests
-go test ./...
-```
+## Next Steps
+1. Final review of changes
+2. Create PR to main branch
+3. Consider manual testing of full flow
