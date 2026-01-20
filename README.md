@@ -58,9 +58,9 @@ Create and run some agents. In this example you'll create a main agent for inter
 clawker run -it --agent main
 # authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach. or ctlr+c to stop the container
 
-clawker stop --agent main # stop the main agent when done
+clawker attach --agent main # re-attach to the main agent later if its still running
 
-clawker attach --agent main # re-attach to the main agent later
+clawker stop --agent main # stop the main agent when done
 
 clawker start -a --agent main # start the main agent and attach to it
 
@@ -73,7 +73,7 @@ clawker stop --agent yolo # stop the yolo agent when done
 echo "YOLO this" | clawker start --agent yolo -- -p .
 ```
 
-You now have two created containers that can be attached to or started/stopped as needed for different purposes
+You now have two specialized claude code containers that can be attached to or started/stopped as needed for different purposes
 
 ## Customizing Your Build
 
