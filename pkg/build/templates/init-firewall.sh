@@ -132,10 +132,20 @@ iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
 # Allow access to host machine via host.docker.internal (for MCP servers, etc.)
-if host_ip=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}'); then
-    echo "Allowing host.docker.internal: $host_ip"
-    iptables -A INPUT -s "$host_ip" -j ACCEPT
-    iptables -A OUTPUT -d "$host_ip" -j ACCEPT
+# Handle both IPv4 (iptables) and IPv6 (ip6tables) addresses
+host_addrs=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}')
+if [ -n "$host_addrs" ]; then
+    while read -r host_ip; do
+        if [[ "$host_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Allowing host.docker.internal (IPv4): $host_ip"
+            iptables -A INPUT -s "$host_ip" -j ACCEPT
+            iptables -A OUTPUT -d "$host_ip" -j ACCEPT
+        elif [[ "$host_ip" =~ : ]]; then
+            echo "Allowing host.docker.internal (IPv6): $host_ip"
+            ip6tables -A INPUT -s "$host_ip" -j ACCEPT 2>/dev/null || echo "Note: ip6tables not available, skipping IPv6 rule"
+            ip6tables -A OUTPUT -d "$host_ip" -j ACCEPT 2>/dev/null || true
+        fi
+    done <<< "$host_addrs"
 else
     echo "Note: host.docker.internal not available (not running on Docker Desktop)"
 fi
