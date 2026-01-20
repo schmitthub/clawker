@@ -479,12 +479,6 @@ clawker image list
 
 ## Known Issues
 
-### Claude Code TUI doesn't redraw after re-attach
-
-When you detach from a container (Ctrl+P, Ctrl+Q) and re-attach, Claude Code's terminal UI may appear blank or frozen. This is a **Claude Code limitation** (its Ink-based React terminal renderer), not a clawker or Docker issue.
-
-**Workaround:** Press any key after re-attaching to trigger a redraw, eventually the terminal will work itself out.
-
 ### Docker MCP Gateway doesn't work inside containers
 
 The Docker MCP Gateway doesn't start inside of containers. This is a known "feature not a bug" situation. see: [https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111](https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111)
