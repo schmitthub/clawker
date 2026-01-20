@@ -38,8 +38,8 @@ Workspace modes:
   --mode=snapshot      Isolated copy in Docker volume`,
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize logger with debug flag
-			logger.Init(f.Debug)
+			// Initialize logger with file logging if possible
+			initializeLogger(f.Debug)
 
 			// Set working directory
 			if f.WorkDir == "" {
@@ -108,4 +108,49 @@ Workspace modes:
 	cmd.AddCommand(network.NewCmdNetwork(f))
 
 	return cmd
+}
+
+// initializeLogger sets up the logger with file logging if possible.
+// Falls back to console-only logging on any errors.
+func initializeLogger(debug bool) {
+	// Try to load settings for logging config
+	loader, err := internalconfig.NewSettingsLoader()
+	if err != nil {
+		// Fall back to console-only logging
+		logger.Init(debug)
+		logger.Warn().Err(err).Msg("file logging unavailable: failed to create settings loader")
+		return
+	}
+
+	settings, err := loader.Load()
+	if err != nil {
+		// Fall back to console-only logging
+		logger.Init(debug)
+		logger.Warn().Err(err).Msg("file logging unavailable: failed to load settings")
+		return
+	}
+
+	// Get logs directory
+	logsDir, err := internalconfig.LogsDir()
+	if err != nil {
+		// Fall back to console-only logging
+		logger.Init(debug)
+		logger.Warn().Err(err).Msg("file logging unavailable: failed to get logs directory")
+		return
+	}
+
+	// Convert settings.Logging to logger.LoggingConfig
+	logCfg := &logger.LoggingConfig{
+		FileEnabled: settings.Logging.FileEnabled,
+		MaxSizeMB:   settings.Logging.MaxSizeMB,
+		MaxAgeDays:  settings.Logging.MaxAgeDays,
+		MaxBackups:  settings.Logging.MaxBackups,
+	}
+
+	// Initialize with file logging
+	if err := logger.InitWithFile(debug, logsDir, logCfg); err != nil {
+		// Fall back to console-only on error
+		logger.Init(debug)
+		logger.Warn().Err(err).Msg("file logging unavailable: failed to initialize file writer")
+	}
 }
