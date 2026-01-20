@@ -25,6 +25,18 @@ In `ContainerStart`, before calling `NetworkConnect`, added a pre-check:
 3. Only call `NetworkConnect` if NOT already connected
 4. Keep the `isAlreadyConnectedError` fallback for race conditions
 
+### Additional Fix: `isAlreadyConnectedError` Function
+
+The original `isAlreadyConnectedError` function was using the wrong error type check:
+- **Before:** `cerrdefs.IsAlreadyExists(err)` - WRONG
+- **After:** `cerrdefs.IsPermissionDenied(err)` + `strings.Contains(err.Error(), "already exists in network")` - CORRECT
+
+Docker returns HTTP 403 Forbidden (maps to `PermissionDenied`) for "endpoint already exists in network" errors, NOT `AlreadyExists`. The fallback error handler would have never caught the actual Docker error.
+
+Also added:
+- TODO comment about adding debug logging when whail.Engine has a logger
+- Updated misleading comment to correctly describe Docker's error behavior
+
 ## Test Added
 
 **File: `pkg/whail/container_test.go`**
