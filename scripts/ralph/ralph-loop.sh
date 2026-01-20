@@ -5,7 +5,7 @@
 # Each iteration sees the modified codebase from previous attempts, creating
 # a self-correcting feedback loop through git history and file changes.
 #
-# Usage: ./scripts/ralph-loop.sh <task_number> [agent_name] [max_iterations] [--force]
+# Usage: ./scripts/ralph/ralph-loop.sh <task_number> [agent_name] [max_iterations] [--force]
 
 set -e
 
@@ -132,33 +132,37 @@ echo -e "${YELLOW}Max Iterations:${NC} $MAX_ITERATIONS"
 echo -e "${YELLOW}Prompt File:${NC} $PROMPT_FILE"
 echo ""
 
-# Check if agent container exists
-CONTAINER_EXISTS=false
-if clawker container ls -a --format '{{.Names}}' 2>/dev/null | grep -q "clawker\..*\.$AGENT_NAME$"; then
-    CONTAINER_EXISTS=true
-fi
+# Check if agent container exists by trying to inspect it
+# clawker container inspect --agent uses the naming convention clawker.<project>.<agent>
+CONTAINER_STATE=$(clawker container inspect --agent "$AGENT_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
 
-if [[ "$CONTAINER_EXISTS" != "true" ]]; then
-    echo -e "${YELLOW}Agent container not found. Creating...${NC}"
-    echo -e "${RED}NOTE: Subscription users must authenticate first!${NC}"
+if [[ "$CONTAINER_STATE" == "not_found" ]]; then
+    echo -e "${YELLOW}Agent container not found.${NC}"
+    echo -e "${RED}NOTE: You must set up the agent first!${NC}"
     echo ""
-    echo "Run interactively first to authenticate:"
-    echo "  clawker run -it --agent $AGENT_NAME -- --dangerously-skip-permissions"
+    echo "Run the setup script:"
+    echo "  ./scripts/ralph/ralph-setup.sh $AGENT_NAME"
     echo ""
-    echo "Then re-run this script."
+    echo "This creates a worker container and handles authentication."
     exit 1
 fi
 
-# Get container name
-CONTAINER_NAME=$(clawker container ls -a --format '{{.Names}}' 2>/dev/null | grep "clawker\..*\.$AGENT_NAME$" | head -1)
+# Get container name from inspect (using Name field which includes the leading slash)
+CONTAINER_NAME=$(clawker container inspect --agent "$AGENT_NAME" --format '{{.Name}}' 2>/dev/null | sed 's|^/||')
 echo -e "${CYAN}Container:${NC} $CONTAINER_NAME"
 
 # Start the container if not running
-CONTAINER_STATE=$(clawker container inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
 if [[ "$CONTAINER_STATE" != "running" ]]; then
-    echo -e "${YELLOW}Starting agent container...${NC}"
-    clawker start --agent "$AGENT_NAME"
-    sleep 2
+    echo -e "${YELLOW}Agent is not running.${NC}"
+    echo -e "${RED}The agent must be running with Claude active to accept tasks.${NC}"
+    echo ""
+    echo "Start the agent interactively first:"
+    echo "  clawker start -a -i --agent $AGENT_NAME"
+    echo "  # Authenticate if needed, then detach with Ctrl+P, Ctrl+Q"
+    echo ""
+    echo "Or run setup:"
+    echo "  ./scripts/ralph/ralph-setup.sh $AGENT_NAME"
+    exit 1
 fi
 
 # Mark task as in progress
@@ -189,7 +193,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]] && [[ "$DONE" != "true" ]]; do
 
     # Execute claude with the prompt, capture output
     set +e
-    OUTPUT=$(cat "$PROMPT_FILE" | clawker exec -i --agent "$AGENT_NAME" claude -p - 2>&1 | tee "$LOG_FILE")
+    OUTPUT=$(cat "$PROMPT_FILE" | clawker exec -i --agent "$AGENT_NAME" -- claude --dangerously-skip-permissions -p 2>&1 | tee "$LOG_FILE")
     EXIT_CODE=$?
     set -e
 
@@ -244,7 +248,7 @@ echo ""
 echo -e "${GREEN}Next steps:${NC}"
 if [[ $TASK_NUMBER -lt 5 ]]; then
     NEXT_TASK=$((TASK_NUMBER + 1))
-    echo "  Run next task: ./scripts/ralph-loop.sh $NEXT_TASK $AGENT_NAME"
+    echo "  Run next task: ./scripts/ralph/ralph-loop.sh $NEXT_TASK $AGENT_NAME"
 else
     echo "  All tasks complete! Release automation is ready."
     echo "  Review the changes with: git log --oneline -10"

@@ -4,7 +4,7 @@
 # Displays the current status of all release automation tasks,
 # including completion status, iteration counts, and timestamps.
 #
-# Usage: ./scripts/ralph-status.sh
+# Usage: ./scripts/ralph/ralph-status.sh
 
 PROMPT_DIR="${PROMPT_DIR:-.ralph}"
 PROGRESS_FILE="$PROMPT_DIR/progress.json"
@@ -36,8 +36,8 @@ if [[ ! -f "$PROGRESS_FILE" ]]; then
     echo -e "${YELLOW}No progress file found at: $PROGRESS_FILE${NC}"
     echo ""
     echo "Run ralph-loop.sh to start:"
-    echo "  ./scripts/ralph-setup.sh ralph"
-    echo "  ./scripts/ralph-loop.sh 1 ralph"
+    echo "  ./scripts/ralph/ralph-setup.sh ralph"
+    echo "  ./scripts/ralph/ralph-loop.sh 1 ralph"
     exit 0
 fi
 
@@ -150,7 +150,7 @@ if [[ $FAILED -gt 0 ]]; then
     for i in 1 2 3 4 5; do
         STATUS=$(jq -r --arg t "$i" '.tasks[$t].status // "pending"' "$PROGRESS_FILE")
         if [[ "$STATUS" == "failed" ]]; then
-            echo "  Retry failed task: ./scripts/ralph-loop.sh $i $AGENT --force"
+            echo "  Retry failed task: ./scripts/ralph/ralph-loop.sh $i $AGENT --force"
             break
         fi
     done
@@ -159,7 +159,7 @@ elif [[ $IN_PROGRESS -gt 0 ]]; then
     for i in 1 2 3 4 5; do
         STATUS=$(jq -r --arg t "$i" '.tasks[$t].status // "pending"' "$PROGRESS_FILE")
         if [[ "$STATUS" == "in_progress" ]]; then
-            echo "  Continue task: ./scripts/ralph-loop.sh $i $AGENT"
+            echo "  Continue task: ./scripts/ralph/ralph-loop.sh $i $AGENT"
             break
         fi
     done
@@ -168,7 +168,7 @@ elif [[ $PENDING -gt 0 ]]; then
     for i in 1 2 3 4 5; do
         STATUS=$(jq -r --arg t "$i" '.tasks[$t].status // "pending"' "$PROGRESS_FILE")
         if [[ "$STATUS" == "pending" ]]; then
-            echo "  Start next task: ./scripts/ralph-loop.sh $i $AGENT"
+            echo "  Start next task: ./scripts/ralph/ralph-loop.sh $i $AGENT"
             break
         fi
     done

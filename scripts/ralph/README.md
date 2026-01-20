@@ -25,17 +25,17 @@ Each iteration sees the modified codebase from previous attempts, creating a sel
 
 ```bash
 # 1. Setup the agent (one-time, authenticate interactively)
-./scripts/ralph-setup.sh ralph
+./scripts/ralph/ralph-setup.sh ralph
 
 # Authenticate in browser, then Ctrl+P, Ctrl+Q to detach
 
 # 2. Run individual tasks
-./scripts/ralph-loop.sh 1 ralph    # Task 1
-./scripts/ralph-loop.sh 2 ralph    # Task 2
+./scripts/ralph/ralph-loop.sh 1 ralph    # Task 1
+./scripts/ralph/ralph-loop.sh 2 ralph    # Task 2
 # ... etc
 
 # 3. Check progress anytime
-./scripts/ralph-status.sh
+./scripts/ralph/ralph-status.sh
 ```
 
 ## Usage
@@ -45,7 +45,7 @@ Each iteration sees the modified codebase from previous attempts, creating a sel
 Create and authenticate a new agent for autonomous work.
 
 ```bash
-./scripts/ralph-setup.sh [agent_name]
+./scripts/ralph/ralph-setup.sh [agent_name]
 ```
 
 **Arguments:**
@@ -53,7 +53,7 @@ Create and authenticate a new agent for autonomous work.
 
 **Example:**
 ```bash
-./scripts/ralph-setup.sh worker
+./scripts/ralph/ralph-setup.sh worker
 ```
 
 **Notes:**
@@ -65,7 +65,7 @@ Create and authenticate a new agent for autonomous work.
 Run a task in a loop until it outputs `<promise>DONE</promise>`.
 
 ```bash
-./scripts/ralph-loop.sh <task_number> [agent_name] [max_iterations] [--force]
+./scripts/ralph/ralph-loop.sh <task_number> [agent_name] [max_iterations] [--force]
 ```
 
 **Arguments:**
@@ -84,13 +84,13 @@ Run a task in a loop until it outputs `<promise>DONE</promise>`.
 **Examples:**
 ```bash
 # Run task 1 with default agent
-./scripts/ralph-loop.sh 1
+./scripts/ralph/ralph-loop.sh 1
 
 # Run task 2 with custom agent and more iterations
-./scripts/ralph-loop.sh 2 myagent 20
+./scripts/ralph/ralph-loop.sh 2 myagent 20
 
 # Re-run a completed task
-./scripts/ralph-loop.sh 1 ralph 10 --force
+./scripts/ralph/ralph-loop.sh 1 ralph 10 --force
 ```
 
 ### ralph-all.sh
@@ -98,7 +98,7 @@ Run a task in a loop until it outputs `<promise>DONE</promise>`.
 Run all tasks sequentially. Stops if any task fails.
 
 ```bash
-./scripts/ralph-all.sh [agent_name] [max_iterations_per_task]
+./scripts/ralph/ralph-all.sh [agent_name] [max_iterations_per_task]
 ```
 
 **Arguments:**
@@ -108,10 +108,10 @@ Run all tasks sequentially. Stops if any task fails.
 **Example:**
 ```bash
 # Run all tasks with default settings
-./scripts/ralph-all.sh
+./scripts/ralph/ralph-all.sh
 
 # Run with custom agent and 20 iterations per task
-./scripts/ralph-all.sh worker 20
+./scripts/ralph/ralph-all.sh worker 20
 ```
 
 **Notes:**
@@ -123,7 +123,7 @@ Run all tasks sequentially. Stops if any task fails.
 Display progress of all tasks.
 
 ```bash
-./scripts/ralph-status.sh
+./scripts/ralph/ralph-status.sh
 ```
 
 **Output includes:**
@@ -157,7 +157,7 @@ Tasks:
   [  ]  5. Create First Official Release             pending
 
 Next action:
-  Continue task: ./scripts/ralph-loop.sh 3 ralph
+  Continue task: ./scripts/ralph/ralph-loop.sh 3 ralph
 ```
 
 ## Working Directory
@@ -190,13 +190,13 @@ This directory is gitignored.
 
 1. Check the latest log file in `.ralph/logs/`
 2. Attach to the agent interactively: `clawker attach --agent ralph`
-3. Increase max iterations: `./scripts/ralph-loop.sh 1 ralph 20`
+3. Increase max iterations: `./scripts/ralph/ralph-loop.sh 1 ralph 20`
 
 ### Agent not found
 
 Run setup first:
 ```bash
-./scripts/ralph-setup.sh ralph
+./scripts/ralph/ralph-setup.sh ralph
 ```
 
 ### Authentication issues

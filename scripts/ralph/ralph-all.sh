@@ -4,7 +4,7 @@
 # This script runs all 5 release automation tasks one after another.
 # Each task must complete before the next one starts.
 #
-# Usage: ./scripts/ralph-all.sh [agent_name] [max_iterations_per_task]
+# Usage: ./scripts/ralph/ralph-all.sh [agent_name] [max_iterations_per_task]
 
 set -e
 
@@ -46,7 +46,7 @@ if ! clawker container ls -a --format '{{.Names}}' 2>/dev/null | grep -q "clawke
     echo -e "${RED}Error: Agent '$AGENT_NAME' not found.${NC}"
     echo ""
     echo "Set up the agent first:"
-    echo "  ./scripts/ralph-setup.sh $AGENT_NAME"
+    echo "  ./scripts/ralph/ralph-setup.sh $AGENT_NAME"
     exit 1
 fi
 
@@ -111,10 +111,10 @@ else
     echo -e "Total time before failure: ${MINUTES}m ${SECONDS}s"
     echo ""
     echo -e "${YELLOW}To resume:${NC}"
-    echo "  ./scripts/ralph-loop.sh $FAILED_TASK $AGENT_NAME $MAX_ITERATIONS"
+    echo "  ./scripts/ralph/ralph-loop.sh $FAILED_TASK $AGENT_NAME $MAX_ITERATIONS"
     echo ""
     echo -e "${YELLOW}Or continue from where you left off:${NC}"
-    echo "  ./scripts/ralph-all.sh $AGENT_NAME $MAX_ITERATIONS"
+    echo "  ./scripts/ralph/ralph-all.sh $AGENT_NAME $MAX_ITERATIONS"
     echo "  (completed tasks will be skipped)"
     exit 1
 fi

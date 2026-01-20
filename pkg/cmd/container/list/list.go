@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"text/template"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/docker"
@@ -16,6 +17,7 @@ import (
 type ListOptions struct {
 	All     bool
 	Project string
+	Format  string
 }
 
 // NewCmdList creates the container list command.
@@ -38,7 +40,13 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
   clawker container ls -a
 
   # List containers for a specific project
-  clawker container list -p myproject`,
+  clawker container list -p myproject
+
+  # List container names only
+  clawker container ls -a --format '{{.Names}}'
+
+  # Custom format showing name and status
+  clawker container ls -a --format '{{.Name}} {{.Status}}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList(f, opts)
 		},
@@ -46,6 +54,7 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Show all containers (including stopped)")
 	cmd.Flags().StringVarP(&opts.Project, "project", "p", "", "Filter by project name")
+	cmd.Flags().StringVar(&opts.Format, "format", "", "Format output using a Go template")
 
 	return cmd
 }
@@ -78,6 +87,11 @@ func runList(f *cmdutil.Factory, opts *ListOptions) error {
 			fmt.Fprintln(os.Stderr, "No running clawker containers found. Use -a to show all containers.")
 		}
 		return nil
+	}
+
+	// Output with format if specified
+	if opts.Format != "" {
+		return outputFormatted(opts.Format, containers)
 	}
 
 	// Print table
@@ -135,4 +149,33 @@ func truncateImage(image string) string {
 		return image
 	}
 	return image[:maxLen-3] + "..."
+}
+
+// containerForFormat wraps Container with Docker-compatible field aliases.
+// Docker CLI uses {{.Names}} (plural) while clawker uses {{.Name}} (singular).
+// This wrapper provides both for compatibility.
+type containerForFormat struct {
+	docker.Container
+	Names string // Alias for .Name to match Docker CLI's {{.Names}}
+}
+
+// outputFormatted outputs containers using a Go template format string.
+func outputFormatted(format string, containers []docker.Container) error {
+	tmpl, err := template.New("format").Parse(format)
+	if err != nil {
+		return fmt.Errorf("invalid format template: %w", err)
+	}
+
+	for _, c := range containers {
+		// Wrap with Docker-compatible aliases
+		wrapper := containerForFormat{
+			Container: c,
+			Names:     c.Name,
+		}
+		if err := tmpl.Execute(os.Stdout, wrapper); err != nil {
+			return fmt.Errorf("template execution failed: %w", err)
+		}
+		fmt.Println()
+	}
+	return nil
 }

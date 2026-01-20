@@ -48,6 +48,16 @@ func TestNewCmdList(t *testing.T) {
 			input:  "-a -p myproject",
 			output: ListOptions{All: true, Project: "myproject"},
 		},
+		{
+			name:   "with format flag",
+			input:  "--format '{{.Names}}'",
+			output: ListOptions{Format: "{{.Names}}"},
+		},
+		{
+			name:   "with format and all flags",
+			input:  "-a --format '{{.Name}} {{.Status}}'",
+			output: ListOptions{All: true, Format: "{{.Name}} {{.Status}}"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -62,6 +72,7 @@ func TestNewCmdList(t *testing.T) {
 				cmdOpts = &ListOptions{}
 				cmdOpts.All, _ = cmd.Flags().GetBool("all")
 				cmdOpts.Project, _ = cmd.Flags().GetString("project")
+				cmdOpts.Format, _ = cmd.Flags().GetString("format")
 				return nil
 			}
 
@@ -89,6 +100,7 @@ func TestNewCmdList(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.output.All, cmdOpts.All)
 			require.Equal(t, tt.output.Project, cmdOpts.Project)
+			require.Equal(t, tt.output.Format, cmdOpts.Format)
 		})
 	}
 }
@@ -109,6 +121,7 @@ func TestCmdList_Properties(t *testing.T) {
 	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("all"))
 	require.NotNil(t, cmd.Flags().Lookup("project"))
+	require.NotNil(t, cmd.Flags().Lookup("format"))
 
 	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("a"))
