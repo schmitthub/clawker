@@ -187,13 +187,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Unlock()
 
 	// Shutdown all servers
-	var lastErr error
+	var errs []error
 	for _, server := range servers {
 		if err := server.Shutdown(ctx); err != nil {
-			lastErr = err
+			errs = append(errs, err)
 		}
 	}
-	return lastErr
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // startDynamicListener starts a temporary HTTP listener on the specified port

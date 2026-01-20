@@ -195,6 +195,37 @@ CONTAINER                              HOST PROXY (:18374)               HOST
 - **Errors**: `cmdutil.HandleError(err)` for Docker errors
 - **Cobra**: `PersistentPreRunE` (never `PersistentPreRun`), always include `Example` field
 
+### Logging Details
+
+**File Logging**: Logs are written to `~/.local/clawker/logs/clawker.log` with rotation (default 50MB, 7 days, 3 backups). Configure via `~/.local/clawker/settings.yaml`:
+
+```yaml
+logging:
+  file_enabled: true   # default: true
+  max_size_mb: 50      # default: 50
+  max_age_days: 7      # default: 7
+  max_backups: 3       # default: 3
+```
+
+**Interactive Mode**: During TUI sessions, console logs are suppressed but file logs capture everything. Use `logger.SetInteractiveMode(true)` BEFORE starting operations that log.
+
+**Project/Agent Context**: Add context to logs for multi-container debugging:
+
+```go
+logger.SetContext(projectName, agentName)  // Set context for all subsequent logs
+defer logger.ClearContext()                 // Clear when done
+```
+
+Log output with context:
+```json
+{"level":"info","project":"myapp","agent":"ralph","time":"...","message":"started"}
+```
+
+**Log Functions**:
+- `logger.Debug()` - Never suppressed, for debugging
+- `logger.Info()`, `logger.Warn()`, `logger.Error()` - Suppressed on console in interactive mode, always written to file
+- `logger.Fatal()` - Never suppressed, exits program
+
 ```go
 cmd := &cobra.Command{
     Use:     "mycommand",

@@ -19,6 +19,10 @@ var (
 	// fileWriter is the file output for logging (with rotation)
 	fileWriter *lumberjack.Logger
 
+	// fileOnlyLog is a cached logger that writes only to file (no console).
+	// Used in interactive mode to avoid creating a new logger per log event.
+	fileOnlyLog zerolog.Logger
+
 	// interactiveMode controls whether console logs are suppressed.
 	// When true, ALL console logs (INFO, WARN, ERROR) are suppressed to avoid TUI interference.
 	// File logging (if enabled) is NOT affected by interactive mode.
@@ -195,6 +199,14 @@ func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error {
 		Compress:   false,
 	}
 
+	// Create a cached file-only logger for use in interactive mode.
+	// This avoids allocating a new logger on each suppressed log event.
+	fileOnlyLog = zerolog.New(fileWriter).
+		Level(level).
+		With().
+		Timestamp().
+		Logger()
+
 	// Multi-writer: console + file
 	// Console uses human-readable format, file uses JSON
 	// Interactive mode filtering happens at the log function level (Info, Warn, Error)
@@ -246,9 +258,7 @@ func Info() *zerolog.Event {
 	if shouldSuppress() {
 		// In interactive mode, log to file only (if enabled)
 		if fileWriter != nil {
-			// Create a file-only logger for this event
-			fileLogger := zerolog.New(fileWriter).With().Timestamp().Logger()
-			return addContext(fileLogger.Info())
+			return addContext(fileOnlyLog.Info())
 		}
 		nop := zerolog.Nop()
 		return nop.Info()
@@ -261,9 +271,7 @@ func Warn() *zerolog.Event {
 	if shouldSuppress() {
 		// In interactive mode, log to file only (if enabled)
 		if fileWriter != nil {
-			// Create a file-only logger for this event
-			fileLogger := zerolog.New(fileWriter).With().Timestamp().Logger()
-			return addContext(fileLogger.Warn())
+			return addContext(fileOnlyLog.Warn())
 		}
 		nop := zerolog.Nop()
 		return nop.Warn()
@@ -276,9 +284,7 @@ func Error() *zerolog.Event {
 	if shouldSuppress() {
 		// In interactive mode, log to file only (if enabled)
 		if fileWriter != nil {
-			// Create a file-only logger for this event
-			fileLogger := zerolog.New(fileWriter).With().Timestamp().Logger()
-			return addContext(fileLogger.Error())
+			return addContext(fileOnlyLog.Error())
 		}
 		nop := zerolog.Nop()
 		return nop.Error()

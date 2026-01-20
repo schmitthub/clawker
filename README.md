@@ -18,8 +18,7 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 > - Linux support (untested)
 > - Windows support
 > - Versioning and releases with CI/CD integration
-> - File logging
-> - Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling); current output can conflict with Claude’s Ink-based TUI (see Known Issues)
+> - Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling); current output can conflict with Claude's Ink-based TUI (see Known Issues)
 > - Auto pruning to manage disk usage
 > - Man pages and helper docs
 > - Docker MCP Toolkit support (currently a known “feature-not-a-bug”: MCP plugin inside a container doesn’t detect Docker Desktop)
@@ -65,7 +64,7 @@ clawker run -it --agent main
 # Re-attach to the main agent
 clawker attach --agent main
 
-# Stop the agent with ctrl-c, this is like exiting Claude Code normally. When claude exits the container does
+# Stop the agent with ctrl-c, this is like exiting Claude Code normally. When Claude exits, the container stops.
 
 # Start the main agent and attach to it in interactive mode
 clawker start -a -i --agent main
@@ -248,8 +247,8 @@ git worktree add ../myapp-w1 -b feature/auth
 git worktree add ../myapp-w2 -b feature/tests
 
 # Auth each agent first (one-time, interactive)
-# cd ../myapp-w1 && clawker run -it --agent w1  # then Ctrl+C after OAuth
-# cd ../myapp-w2 && clawker run -it --agent w2  # then Ctrl+C after OAuth
+# cd ../myapp-w1 && clawker run -it --agent w1  # complete OAuth, then exit with Ctrl+C
+# cd ../myapp-w2 && clawker run -it --agent w2  # complete OAuth, then exit with Ctrl+C
 
 # Run tasks in parallel
 cd ../myapp-w1 && echo "Implement user auth" | clawker exec --agent w1 claude -p - &
@@ -435,6 +434,28 @@ project:
 projects:
   - /Users/you/Code/project-a
   - /Users/you/Code/project-b
+
+# Logging configuration (all values shown are defaults)
+logging:
+  file_enabled: true   # Enable file logging
+  max_size_mb: 50      # Max size before rotation
+  max_age_days: 7      # Days to keep old logs
+  max_backups: 3       # Number of rotated files to keep
+```
+
+**Log location:** `~/.local/clawker/logs/clawker.log`
+
+Logs are JSON-formatted and include project/agent context when available, making it easy to filter logs when running multiple containers:
+
+```bash
+# View recent logs
+cat ~/.local/clawker/logs/clawker.log | jq .
+
+# Filter by project
+cat ~/.local/clawker/logs/clawker.log | jq 'select(.project == "myapp")'
+
+# Filter by agent
+cat ~/.local/clawker/logs/clawker.log | jq 'select(.agent == "ralph")'
 ```
 
 ### Project Config (clawker.yaml)

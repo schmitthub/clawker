@@ -526,6 +526,7 @@ func TestContextNotInLogWhenEmpty(t *testing.T) {
 // resetLoggerState resets all global logger state for test isolation
 func resetLoggerState() {
 	fileWriter = nil
+	fileOnlyLog = zerolog.Nop()
 	interactiveMode = false
 	logContext = logContextData{}
 }
