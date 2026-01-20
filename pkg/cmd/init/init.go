@@ -65,10 +65,10 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 		return fmt.Errorf("failed to create settings loader: %w", err)
 	}
 
-	// Load existing settings
-	existingSettings, err := settingsLoader.Load()
+	// Load existing settings or create defaults
+	settings, err := settingsLoader.Load()
 	if err != nil {
-		existingSettings = config.DefaultSettings()
+		settings = config.DefaultSettings()
 	}
 
 	// Ask if user wants to build base image
@@ -105,6 +105,9 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 			return fmt.Errorf("failed to get flavor selection: %w", err)
 		}
 		selectedFlavor = flavors[idx].Name
+
+		// Clear default image when building (will be set after successful build)
+		settings.Project.DefaultImage = ""
 	}
 
 	logger.Debug().
@@ -113,28 +116,18 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 		Msg("initializing user settings")
 
 	// Start build in background if requested
-	var buildErr error
-	var buildDone = make(chan struct{})
+	type buildResult struct {
+		err error
+	}
+	buildResultCh := make(chan buildResult, 1)
 
 	if buildBaseImage {
 		fmt.Fprintln(f.IOStreams.ErrOut)
 		fmt.Fprintln(f.IOStreams.ErrOut, "Starting base image build in background...")
 
 		go func() {
-			defer close(buildDone)
-			buildErr = cmdutil.BuildDefaultImage(ctx, selectedFlavor)
+			buildResultCh <- buildResult{err: cmdutil.BuildDefaultImage(ctx, selectedFlavor)}
 		}()
-	}
-
-	// Create settings (initially without default image if building)
-	settings := &config.Settings{
-		Project: config.ProjectDefaults{
-			DefaultImage: "", // Will be set after successful build
-		},
-	}
-	// Preserve existing projects list if any
-	if existingSettings != nil {
-		settings.Projects = existingSettings.Projects
 	}
 
 	// Save initial settings
@@ -153,11 +146,11 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 		fmt.Fprintln(f.IOStreams.ErrOut)
 		fmt.Fprintf(f.IOStreams.ErrOut, "Building %s... (this may take a few minutes)\n", cmdutil.DefaultImageTag)
 
-		<-buildDone
+		result := <-buildResultCh
 
-		if buildErr != nil {
+		if result.err != nil {
 			fmt.Fprintln(f.IOStreams.ErrOut)
-			cmdutil.PrintError("Base image build failed: %v", buildErr)
+			cmdutil.PrintError("Base image build failed: %v", result.err)
 			cmdutil.PrintNextSteps(
 				"You can manually build later with 'clawker generate latest && docker build ...'",
 				"Or specify images per-project in clawker.yaml",
