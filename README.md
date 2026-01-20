@@ -479,6 +479,10 @@ clawker image list
 
 ## Known Issues
 
+### Exiting a container (ctrl+c) pre-authenticating breaks the terminal
+
+If you start a container and hit ctrl+c to exit before authenticating and accepting use risk warnings, your terminal will break. This seems to be related to Claude Code's Ink-based TUI. You can try running `reset` in your terminal to fix it. This behavior is observed when using docker cli as well.
+
 ### Docker MCP Gateway doesn't work inside containers
 
 The Docker MCP Gateway doesn't start inside of containers. This is a known "feature not a bug" situation. see: [https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111](https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111)
