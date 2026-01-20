@@ -34,8 +34,8 @@ type dynamicListener struct {
 // host-side actions.
 type Server struct {
 	port             int
-	listener         net.Listener
-	server           *http.Server
+	listeners        []net.Listener // IPv4 and optionally IPv6 listeners
+	servers          []*http.Server // One server per listener
 	mu               sync.RWMutex
 	running          bool
 	sessionStore     *SessionStore
@@ -76,6 +76,8 @@ func NewServer(port int) *Server {
 }
 
 // Start starts the HTTP server in a goroutine.
+// It listens on both IPv4 (127.0.0.1) and IPv6 ([::1]) loopback addresses
+// to support containers that resolve host.docker.internal to either protocol.
 func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,33 +102,59 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /callback/{session}", s.handleCallbackDelete)
 	mux.HandleFunc("GET /cb/{session}/{path...}", s.handleCallbackCapture)
 
-	// Bind to localhost only for security
-	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	// Bind to localhost only for security - both IPv4 and IPv6
+	// This is necessary because Docker Desktop's host.docker.internal can
+	// resolve to either IPv4 or IPv6 depending on the system configuration.
+	addresses := []string{
+		fmt.Sprintf("127.0.0.1:%d", s.port),   // IPv4 loopback
+		fmt.Sprintf("[::1]:%d", s.port),       // IPv6 loopback
 	}
 
-	s.listener = listener
-	s.server = &http.Server{
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+	var listeners []net.Listener
+	var servers []*http.Server
+	var listenedAddrs []string
+
+	for _, addr := range addresses {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			// IPv6 may not be available on all systems - log and continue
+			logger.Debug().Str("addr", addr).Err(err).Msg("failed to listen (may be expected if protocol not available)")
+			continue
+		}
+
+		server := &http.Server{
+			Handler:      mux,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+
+		listeners = append(listeners, listener)
+		servers = append(servers, server)
+		listenedAddrs = append(listenedAddrs, addr)
 	}
+
+	if len(listeners) == 0 {
+		return fmt.Errorf("failed to listen on any address (tried %v)", addresses)
+	}
+
+	s.listeners = listeners
+	s.servers = servers
 	s.running = true
 
-	go func() {
-		logger.Debug().Str("addr", addr).Msg("host proxy server starting")
-		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			s.mu.Lock()
-			s.running = false
-			s.mu.Unlock()
-			logger.Error().Err(err).Msg("host proxy server error")
-		}
-	}()
+	// Start a goroutine for each listener
+	for i, listener := range listeners {
+		server := servers[i]
+		addr := listenedAddrs[i]
+		go func(l net.Listener, srv *http.Server, a string) {
+			logger.Debug().Str("addr", a).Msg("host proxy server starting")
+			if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
+				logger.Error().Err(err).Str("addr", a).Msg("host proxy server error")
+			}
+		}(listener, server, addr)
+	}
 
-	logger.Info().Str("addr", addr).Msg("host proxy server started")
+	logger.Info().Strs("addrs", listenedAddrs).Msg("host proxy server started")
 	return nil
 }
 
@@ -134,7 +162,7 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 
-	if !s.running || s.server == nil {
+	if !s.running || len(s.servers) == 0 {
 		// Still clean up session store even if server wasn't running
 		if s.sessionStore != nil {
 			s.sessionStore.Stop()
@@ -155,10 +183,17 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.sessionStore.Stop()
 	}
 
-	server := s.server
+	servers := s.servers
 	s.mu.Unlock()
 
-	return server.Shutdown(ctx)
+	// Shutdown all servers
+	var lastErr error
+	for _, server := range servers {
+		if err := server.Shutdown(ctx); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 // startDynamicListener starts a temporary HTTP listener on the specified port

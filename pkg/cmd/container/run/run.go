@@ -244,7 +244,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	opts.Env = append(opts.Env, gitSetup.Env...)
 
 	// Build configs
-	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts)
+	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts, cfg)
 	if err != nil {
 		cmdutil.PrintError("Invalid configuration: %v", err)
 		return err
@@ -407,7 +407,7 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 }
 
 // buildConfigs builds Docker container, host, and network configurations from options.
-func buildConfigs(opts *Options, mounts []mount.Mount) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+func buildConfigs(opts *Options, mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
 	// Container config
 	cfg := &container.Config{
 		Image:        opts.Image,
@@ -448,6 +448,7 @@ func buildConfigs(opts *Options, mounts []mount.Mount) (*container.Config, *cont
 	hostCfg := &container.HostConfig{
 		AutoRemove: opts.AutoRemove,
 		Mounts:     mounts,
+		CapAdd:     projectCfg.Security.CapAdd,
 	}
 
 	// Parse user-provided volumes (via -v flag) as Binds
