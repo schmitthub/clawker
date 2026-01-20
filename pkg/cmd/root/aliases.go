@@ -6,6 +6,7 @@ import (
 	containerAttach "github.com/schmitthub/clawker/pkg/cmd/container/attach"
 	containerCp "github.com/schmitthub/clawker/pkg/cmd/container/cp"
 	containerCreate "github.com/schmitthub/clawker/pkg/cmd/container/create"
+	containerExec "github.com/schmitthub/clawker/pkg/cmd/container/exec"
 	containerKill "github.com/schmitthub/clawker/pkg/cmd/container/kill"
 	containerlist "github.com/schmitthub/clawker/pkg/cmd/container/list"
 	containerLogs "github.com/schmitthub/clawker/pkg/cmd/container/logs"
@@ -57,6 +58,10 @@ var topLevelAliases = []Alias{
 	{
 		Use:     "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH|-\ncp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH",
 		Command: containerCp.NewCmd,
+	},
+	{
+		Use:     "exec [OPTIONS] CONTAINER COMMAND [ARG...]",
+		Command: containerExec.NewCmd,
 	},
 	{
 		Use:     "kill [OPTIONS] CONTAINER [CONTAINER...]",

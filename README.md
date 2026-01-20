@@ -17,7 +17,6 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 > **Planned features and fixes**
 > - Linux support (untested)
 > - Windows support
-> - Wiggum and worktree example scripts / commands
 > - Versioning and releases with CI/CD integration
 > - File logging
 > - Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling); current output can conflict with Claude’s Ink-based TUI (see Known Issues)
@@ -55,22 +54,37 @@ clawker build
 Create and run some agents. In this example you'll create a main agent for interactive working sessions, and another for YOLO unattended work.
 
 ```bash
+# Create a fresh container, start it, and connect interactively.
+# Use Claude Code as normal, This will feel just like running it on your host.
+# Clawker adds a status line so you know this session is containerized by clawker and which agent you're using.
+# Subscription users will need authenticate via browser.
 clawker run -it --agent main
-# authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach. or ctlr+c to stop the container
 
-clawker attach --agent main # re-attach to the main agent later if its still running
+# hit crtl+p, ctrl+q to detach without stopping the container. You can leave sessions running
 
-clawker stop --agent main # stop the main agent when done
+# Re-attach to the main agent
+clawker attach --agent main
 
-clawker start -a --agent main # start the main agent and attach to it
+# Stop the agent with ctrl-c, this is like exiting Claude Code normally. When claude exits the container does
 
-clawker run -it --agent yolo -- --dangerously-skip-permissions
+# Start the main agent and attach to it in interactive mode
+clawker start -a -i --agent main
+
+# Detach with crtl+p, ctrl+q
+
+# Stop the main agent from the host
+clawker stop --agent main
+
+# Lets start a new agent in interactive mode and give it a modified start command for YOLOing
 # authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach, or ctlr+c to stop the container
+clawker run -it --agent ralph -- --dangerously-skip-permissions
 
-clawker stop --agent yolo # stop the yolo agent when done
+clawker stop --agent ralph # if you detached instead of exiting
 
-# send a prompt to run your yolo agent
-echo "YOLO this" | clawker start --agent yolo -- -p .
+# start up ralph (subscription users need to run interactively first to authenticate like above)
+clawker start --agent ralph
+# send a prompt to run your ralph agent, you can use this in scripts
+echo "hi" | clawker container exec --agent ralph claude -
 ```
 
 You now have two specialized claude code containers that can be attached to or started/stopped as needed for different purposes
@@ -141,6 +155,109 @@ See the [`examples/`](./examples/) directory for complete configurations:
 - **[go.yaml](./examples/go.yaml)** - Go with gopls and delve
 - **[csharp.yaml](./examples/csharp.yaml)** - .NET SDK
 - **[php.yaml](./examples/php.yaml)** - PHP with Composer
+
+## Workflows
+
+### Starting containers
+
+```bash
+# Bind mode (default) - changes workspace sync to host immediately
+clawker start --agent dev
+
+# Snapshot mode - isolated copy, use git to sync changes back to host
+clawker start --agent sandbox --mode snapshot
+```
+
+### Passing Claude Code options
+
+```bash
+# Using --agent to select the container? Use -- to separate clawker flags from Claude flags
+clawker run -it --rm --agent ralph -- --dangerously-skip-permissions
+
+# or give it an explicit image to use
+clawker image list
+clawker run -it --rm clawker-myproject:latest --dangerously-skip-permissions
+```
+
+### Detach and reattach
+
+```bash
+# Detach from running container: Ctrl+P, Ctrl+Q
+
+# Reattach later
+clawker container attach --agent ralph
+# or
+clawker container attach clawker.myproject.ralph
+```
+
+### List and manage containers
+
+```bash
+clawker container ls              # List all clawker containers
+clawker ps                     # Alias for container ls
+clawker container stop --agent ralph
+```
+
+### Scripted Workflows (Wiggum Pattern)
+
+The wiggum pattern runs Claude Code in autonomous loops with scripted prompts.
+
+> **Subscription users:** You must authenticate interactively first. Run
+> `clawker run -it --agent <name>`, complete browser OAuth, then exit. After
+> that, scripted usage works because credentials persist in the config volume.
+
+#### Keep container running and use exec
+
+```bash
+# Create and auth, then detach with Ctrl+P, Ctrl+Q
+clawker run -it --agent ralph -- --dangerously-skip-permissions
+
+# Send prompts via exec (new claude process per task)
+echo "Fix the tests" | clawker exec -i --agent ralph claude -p -
+
+# Stop when done
+clawker stop --agent ralph
+```
+
+#### Continuous loop (wiggum style)
+
+```bash
+#!/bin/bash
+# wiggum.sh - Run Claude in a loop until task complete. Requires prior container creation and auth.
+
+AGENT="worker"
+TASK="Review the codebase and fix any bugs you find"
+
+while true; do
+  echo "$TASK" | clawker exec --agent "$AGENT" claude -p -
+
+  read -p "Continue? [y/N] " -n 1 -r
+  echo
+  [[ ! $REPLY =~ ^[Yy]$ ]] && break
+done
+```
+
+#### Parallel agents with worktrees
+
+```bash
+#!/bin/bash
+# parallel-agents.sh - Run multiple agents on different branches. Requires prior container creation and auth.
+
+# Create worktrees
+git worktree add ../myapp-w1 -b feature/auth
+git worktree add ../myapp-w2 -b feature/tests
+
+# Auth each agent first (one-time, interactive)
+# cd ../myapp-w1 && clawker run -it --agent w1  # then Ctrl+C after OAuth
+# cd ../myapp-w2 && clawker run -it --agent w2  # then Ctrl+C after OAuth
+
+# Run tasks in parallel
+cd ../myapp-w1 && echo "Implement user auth" | clawker exec --agent w1 claude -p - &
+cd ../myapp-w2 && echo "Write integration tests" | clawker exec --agent w2 claude -p - &
+wait
+
+echo "Both agents finished"
+```
 
 ## Dockerfile Generation
 
@@ -240,52 +357,6 @@ Container                    Host Proxy (:18374)              Browser
 - **Config**: `~/.gitconfig` copied automatically
 
 **Zero config** - if git works on your host, it works in containers.
-
-## Workflows
-
-### Starting containers
-
-```bash
-# Bind mode (default) - changes sync to host immediately
-clawker start --agent dev
-
-# Snapshot mode - isolated copy, use git to sync
-clawker start --agent sandbox --mode snapshot
-```
-
-### Passing Claude Code options
-
-```bash
-# Run with a prompt
-clawker run -it --rm myimage:latest -p "Fix the tests"
-
-# Skip permission prompts (careful!)
-clawker run -it --rm myimage:latest --dangerously-skip-permissions
-
-# Using --agent? Use -- to separate clawker flags from Claude flags
-clawker run -it --rm --agent ralph -- -p "Refactor auth module"
-```
-
-### Detach and reattach
-
-```bash
-# Detach from running container: Ctrl+P, Ctrl+Q
-
-# Reattach later
-clawker container attach --agent ralph
-# or
-clawker container attach clawker.myproject.ralph
-
-# Note: Press any key after reattach to redraw Claude's TUI
-```
-
-### List and manage containers
-
-```bash
-clawker container ls              # List all clawker containers
-clawker container stop --agent ralph
-clawker container logs --agent ralph --follow
-```
 
 ## Monitoring
 
