@@ -2038,3 +2038,82 @@ func getNetworkNames(networks map[string]*network.EndpointSettings) []string {
 	}
 	return names
 }
+
+
+// TestContainerStartWithEnsureNetworkAfterCreateWithEnsureNetwork tests the specific scenario
+// where a container is created with EnsureNetwork (which configures NetworkingConfig), then
+// stopped, and then started again with EnsureNetwork. This is the real-world flow where
+// clawker creates containers connected to a network, and later starts them again.
+func TestContainerStartWithEnsureNetworkAfterCreateWithEnsureNetwork(t *testing.T) {
+	ctx := context.Background()
+	containerName := generateContainerName("test-start-after-create-ensure")
+	networkName := generateNetworkName("test-net-create-ensure")
+
+	// Cleanup
+	defer func() {
+		testEngine.ContainerRemove(ctx, containerName, true)
+		testEngine.NetworkRemove(ctx, networkName)
+	}()
+
+	// Step 1: Create container with EnsureNetwork (this sets up NetworkingConfig internally)
+	containerResp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+		Config: &container.Config{
+			Image: testImageTag,
+			Cmd:   []string{"sleep", "300"},
+		},
+		Name: containerName,
+		EnsureNetwork: &EnsureNetworkOptions{
+			Name: networkName,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create container with EnsureNetwork: %v", err)
+	}
+
+	// Step 2: Start the container (first time)
+	_, err = testEngine.ContainerStart(ctx, ContainerStartOptions{
+		ContainerID: containerResp.ID,
+		EnsureNetwork: &EnsureNetworkOptions{
+			Name: networkName,
+		},
+	})
+	if err != nil {
+		t.Fatalf("First ContainerStart failed: %v", err)
+	}
+
+	// Step 3: Stop the container
+	_, err = testEngine.ContainerStop(ctx, containerResp.ID, nil)
+	if err != nil {
+		t.Fatalf("ContainerStop failed: %v", err)
+	}
+
+	// Step 4: Start the container again with EnsureNetwork (this was failing before the fix)
+	_, err = testEngine.ContainerStart(ctx, ContainerStartOptions{
+		ContainerID: containerResp.ID,
+		EnsureNetwork: &EnsureNetworkOptions{
+			Name: networkName,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Second ContainerStart with EnsureNetwork failed (this is the bug scenario): %v", err)
+	}
+
+	// Verify container is running and still connected to network
+	inspect, err := testEngine.APIClient.ContainerInspect(ctx, containerResp.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatalf("Failed to inspect container: %v", err)
+	}
+
+	if !inspect.Container.State.Running {
+		t.Errorf("Container is not running after second start")
+	}
+
+	if inspect.Container.NetworkSettings == nil || inspect.Container.NetworkSettings.Networks == nil {
+		t.Fatalf("Container has no network settings")
+	}
+
+	if _, ok := inspect.Container.NetworkSettings.Networks[networkName]; !ok {
+		t.Errorf("Container is not connected to network %q after second start, connected to: %v",
+			networkName, getNetworkNames(inspect.Container.NetworkSettings.Networks))
+	}
+}

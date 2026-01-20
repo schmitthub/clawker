@@ -2,6 +2,7 @@ package whail
 
 import (
 	"context"
+	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -134,14 +135,30 @@ func (e *Engine) ContainerStart(ctx context.Context, opts ContainerStartOptions)
 			return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
 		}
 
-		// Connect container to network (ignore "already connected" errors)
-		_, err = e.NetworkConnect(ctx, opts.EnsureNetwork.Name, containerID, &network.EndpointSettings{
-			NetworkID: networkID,
-		})
+		// Check if container is already connected to the network
+		info, err := e.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 		if err != nil {
-			// Check if the error is "already connected" - this is not a fatal error
-			if !isAlreadyConnectedError(err) {
-				return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
+			return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
+		}
+
+		alreadyConnected := false
+		if info.Container.NetworkSettings != nil && info.Container.NetworkSettings.Networks != nil {
+			_, alreadyConnected = info.Container.NetworkSettings.Networks[opts.EnsureNetwork.Name]
+		}
+
+		// Only connect if not already connected
+		if !alreadyConnected {
+			_, err = e.NetworkConnect(ctx, opts.EnsureNetwork.Name, containerID, &network.EndpointSettings{
+				NetworkID: networkID,
+			})
+			if err != nil {
+				// Check if the error is "already connected" - this is not a fatal error
+				// (race condition: connection happened between inspect and connect)
+				if !isAlreadyConnectedError(err) {
+					return client.ContainerStartResult{}, ErrContainerStartFailed(containerID, err)
+				}
+				// TODO: Add debug logging here when whail.Engine has a logger
+				// (see engine.go TODO for adding logger support)
 			}
 		}
 	}
@@ -154,9 +171,18 @@ func (e *Engine) ContainerStart(ctx context.Context, opts ContainerStartOptions)
 }
 
 // isAlreadyConnectedError checks if the error indicates the container is already connected to the network.
-// Docker returns "endpoint with name X already exists in network Y" as an AlreadyExists error.
+// Docker returns HTTP 403 Forbidden with message "endpoint with name X already exists in network Y"
+// which maps to PermissionDenied in the containerd error classification system.
 func isAlreadyConnectedError(err error) bool {
-	return cerrdefs.IsAlreadyExists(err)
+	if err == nil {
+		return false
+	}
+	// Docker returns HTTP 403 Forbidden for "endpoint already exists in network"
+	if !cerrdefs.IsPermissionDenied(err) {
+		return false
+	}
+	// Verify this specific permission denied error is about network connection
+	return strings.Contains(err.Error(), "already exists in network")
 }
 
 // ContainerStop stops a container with an optional timeout.
