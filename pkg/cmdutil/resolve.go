@@ -63,38 +63,192 @@ func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project 
 	return "", nil
 }
 
+// ImageSource indicates where an image reference was resolved from.
+type ImageSource string
+
+const (
+	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
+	ImageSourceProject  ImageSource = "project"  // Found via project label search
+	ImageSourceDefault  ImageSource = "default"  // From config/settings default_image
+)
+
+// ResolvedImage contains the result of image resolution with source tracking.
+type ResolvedImage struct {
+	Reference string      // The image reference (name:tag)
+	Source    ImageSource // Where the image was resolved from
+}
+
 // ResolveImage resolves the image to use for container creation.
 // Resolution order:
 // 1. Explicitly provided image (from CLI or opts)
-// 2. Merged default_image from config/settings
-// 3. Project image with :latest tag (by label lookup)
+// 2. Project image with :latest tag (by label lookup)
+// 3. Merged default_image from config/settings
 //
 // Returns the resolved image reference and an error if no image could be resolved.
 func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings, explicitImage string) (string, error) {
+	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings, explicitImage)
+	if err != nil {
+		return "", err
+	}
+	if result == nil {
+		return "", nil
+	}
+	return result.Reference, nil
+}
+
+// ResolveImageWithSource resolves the image with source tracking.
+// See ResolveImage for resolution order details.
+func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings, explicitImage string) (*ResolvedImage, error) {
 	// 1. Explicit image takes precedence
 	if explicitImage != "" {
-		return explicitImage, nil
+		return &ResolvedImage{Reference: explicitImage, Source: ImageSourceExplicit}, nil
 	}
 
-	// 2. Try merged default_image from config/settings
-	if defaultImage := ResolveDefaultImage(cfg, settings); defaultImage != "" {
-		return defaultImage, nil
-	}
-
-	// 3. Try to find a project image with :latest tag
+	// 2. Try to find a project image with :latest tag
 	if cfg != nil && cfg.Project != "" {
 		projectImage, err := FindProjectImage(ctx, dockerClient, cfg.Project)
 		if err != nil {
 			// Log for debugging but don't fail - fallback means no auto-detect
 			logger.Debug().Err(err).Str("project", cfg.Project).Msg("failed to auto-detect project image")
-			return "", nil
-		}
-		if projectImage != "" {
-			return projectImage, nil
+		} else if projectImage != "" {
+			return &ResolvedImage{Reference: projectImage, Source: ImageSourceProject}, nil
 		}
 	}
 
-	return "", nil
+	// 3. Try merged default_image from config/settings
+	if defaultImage := ResolveDefaultImage(cfg, settings); defaultImage != "" {
+		return &ResolvedImage{Reference: defaultImage, Source: ImageSourceDefault}, nil
+	}
+
+	return nil, nil
+}
+
+// ResolveAndValidateImageOptions configures image resolution and validation.
+type ResolveAndValidateImageOptions struct {
+	ExplicitImage string // Explicitly provided image (from CLI or args)
+}
+
+// ResolveAndValidateImage resolves an image and validates it exists (for default images).
+// For explicit and project images, no validation is performed.
+// For default images, checks if the image exists in Docker and prompts to rebuild if missing.
+//
+// Returns an error if:
+// - No image could be resolved
+// - Default image doesn't exist and rebuild fails or is declined
+func ResolveAndValidateImage(
+	ctx context.Context,
+	f *Factory,
+	dockerClient *docker.Client,
+	cfg *config.Config,
+	settings *config.Settings,
+	opts ResolveAndValidateImageOptions,
+) (*ResolvedImage, error) {
+	// Resolve the image
+	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings, opts.ExplicitImage)
+	if err != nil {
+		return nil, err
+	}
+
+	// No image resolved
+	if result == nil {
+		return nil, nil
+	}
+
+	// Only validate default images
+	if result.Source != ImageSourceDefault {
+		return result, nil
+	}
+
+	// Check if the default image exists
+	exists, err := dockerClient.ImageExists(ctx, result.Reference)
+	if err != nil {
+		logger.Debug().Err(err).Str("image", result.Reference).Msg("failed to check if image exists")
+		// Proceed anyway - Docker will error during run if image doesn't exist
+		return result, nil
+	}
+
+	if exists {
+		return result, nil
+	}
+
+	// Default image doesn't exist - prompt to rebuild or error
+	if !f.IOStreams.IsInteractive() {
+		PrintError("Default image %q not found", result.Reference)
+		PrintNextSteps(
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return nil, fmt.Errorf("default image %q not found", result.Reference)
+	}
+
+	// Interactive mode - prompt to rebuild
+	prompter := f.Prompter()
+	options := []SelectOption{
+		{Label: "Yes", Description: "Rebuild the default base image now"},
+		{Label: "No", Description: "Cancel and fix manually"},
+	}
+
+	idx, err := prompter.Select(
+		fmt.Sprintf("Default image %q not found. Rebuild now?", result.Reference),
+		options,
+		0,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prompt for rebuild: %w", err)
+	}
+
+	if idx != 0 {
+		PrintNextSteps(
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return nil, fmt.Errorf("default image %q not found", result.Reference)
+	}
+
+	// User chose to rebuild - get flavor selection
+	flavors := DefaultFlavorOptions()
+	flavorOptions := make([]SelectOption, len(flavors))
+	for i, opt := range flavors {
+		flavorOptions[i] = SelectOption{
+			Label:       opt.Name,
+			Description: opt.Description,
+		}
+	}
+
+	flavorIdx, err := prompter.Select("Select Linux flavor", flavorOptions, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select flavor: %w", err)
+	}
+
+	selectedFlavor := flavors[flavorIdx].Name
+
+	fmt.Fprintf(f.IOStreams.ErrOut, "Building %s...\n", DefaultImageTag)
+
+	if err := BuildDefaultImage(ctx, selectedFlavor); err != nil {
+		PrintError("Failed to build image: %v", err)
+		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
+	}
+
+	fmt.Fprintf(f.IOStreams.ErrOut, "Build complete! Using image: %s\n", DefaultImageTag)
+
+	// Update settings with the built image
+	settingsLoader, err := f.SettingsLoader()
+	if err == nil && settingsLoader != nil {
+		currentSettings, loadErr := settingsLoader.Load()
+		if loadErr != nil {
+			currentSettings = config.DefaultSettings()
+		}
+		currentSettings.Project.DefaultImage = DefaultImageTag
+		if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
+			logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+		}
+		f.InvalidateSettingsCache()
+	}
+
+	// Return the rebuilt image
+	return &ResolvedImage{Reference: DefaultImageTag, Source: ImageSourceDefault}, nil
 }
 
 // AgentArgsValidator creates a Cobra Args validator for commands with --agent flag.

@@ -1,0 +1,57 @@
+# TypeScript/React Project Build Configuration
+#
+# This example sets up a Node.js environment using nvm for version management
+# and pnpm as the package manager. Ideal for React, Next.js, or any TypeScript project.
+
+build:
+  # Base image - Debian bookworm with build essentials
+  image: "buildpack-deps:bookworm-scm"
+
+  # System packages needed for Node.js compilation and common tools
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - ca-certificates
+
+  instructions:
+    # Environment variables for nvm and Node.js
+    env:
+      NVM_DIR: "/home/claude/.nvm"
+      NODE_VERSION: "22"
+
+    # Install nvm and Node.js as the claude user
+    user_run:
+      # Install nvm
+      - cmd: |
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+      # Install Node.js via nvm and set up shell integration
+      - cmd: |
+          . "$NVM_DIR/nvm.sh" && \
+          nvm install $NODE_VERSION && \
+          nvm use $NODE_VERSION && \
+          nvm alias default $NODE_VERSION
+
+      # Install pnpm globally
+      - cmd: |
+          . "$NVM_DIR/nvm.sh" && \
+          npm install -g pnpm
+
+      # Add nvm to shell profile for interactive sessions
+      - cmd: |
+          echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc && \
+          echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.bashrc && \
+          echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.bashrc
+
+# Alternative: Use the official Node.js image as base instead of building from scratch
+# This is simpler but less flexible for version management:
+#
+# build:
+#   image: "node:22-bookworm"
+#   packages:
+#     - git
+#     - ripgrep
+#   instructions:
+#     user_run:
+#       - cmd: "npm install -g pnpm typescript"

@@ -182,21 +182,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 {{end}}
 
-# Install hadolint (Dockerfile linter)
-ARG HADOLINT_VERSION=2.12.0
-{{if .IsAlpine -}}
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64"; \
-    elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
-    wget "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${ARCH}" -O /usr/local/bin/hadolint && \
-    chmod +x /usr/local/bin/hadolint
-{{else -}}
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "amd64" ]; then ARCH="x86_64"; fi && \
-    wget "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${ARCH}" -O /usr/local/bin/hadolint && \
-    chmod +x /usr/local/bin/hadolint
-{{end}}
-
 {{/* COPY instructions (as root, for proper permissions) */}}
 {{- if .Instructions}}
 {{- range .Instructions.Copy}}

@@ -212,7 +212,9 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 ### Top-Level Shortcuts
 | Command | Description |
 |---------|-------------|
-| `init`, `build` | Project setup |
+| `init` | User-level setup with optional base image build |
+| `project init` | Project-level setup (creates `clawker.yaml`) |
+| `build` | Build container image |
 | `run`, `start` | Aliases for `container run`, `container start` |
 | `config check`, `monitor *` | Configuration/observability |
 | `generate` | Generate versions.json for releases |
@@ -225,6 +227,7 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 | `volume *` | Volume management |
 | `network *` | Network management |
 | `image *` | Image management |
+| `project *` | Project management |
 
 Example container commands:
 - `clawker container list` (aliases: `ls`, `ps`)

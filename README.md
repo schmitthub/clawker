@@ -4,13 +4,29 @@
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple" alt="macOS"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
+  <img alt="Vibe coded with love" src="https://img.shields.io/badge/Vibe%20coded%20with-%F0%9F%92%97-1f1f1f?labelColor=ff69b4">
 </p>
 
 Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manually is tedious - Dockerfiles, volumes, networking. OAuth doesn't work because container localhost isn't host localhost. Git credentials from your keychain don't exist inside containers. And you have no visibility into what's happening.
 
 **Clawker** (claude + docker) wraps Claude Code in Docker containers with a familiar CLI. It handles auth seamlessly via a host proxy, forwards your git credentials, and provides optional monitoring - so you can let Claude Code loose without worrying about your system.
 
-> **Status:** Alpha - macOS tested. Contributions welcome.
+> **Status:** Alpha (macOS tested). Issues and PRs welcome — if clawker helps you, please star the repo.
+>
+> **Planned features and fixes**
+> - Linux support (untested)
+> - Windows support
+> - Wiggum and worktree example scripts / commands
+> - Versioning and releases with CI/CD integration
+> - File logging
+> - Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling); current output can conflict with Claude’s Ink-based TUI (see Known Issues)
+> - Auto pruning to manage disk usage
+> - Man pages and helper docs
+> - Docker MCP Toolkit support (currently a known “feature-not-a-bug”: MCP plugin inside a container doesn’t detect Docker Desktop)
+> - Host proxy browser auth: re-attach before authenticating can break the flow (low priority)
+> - Grafana pre-built dashboard improvements (currently basic POC)
+> - Improved host Claude directory mounting strategy to avoid permission issues and settings
 
 ## Quick Start
 
@@ -22,12 +38,109 @@ git clone https://github.com/schmitthub/clawker.git
 cd clawker && go build -o ./bin/clawker ./cmd/clawker
 export PATH="$PWD/bin:$PATH"
 
+# One-time user setup (creates ~/.local/clawker/settings.yaml)
+clawker init
+
 # Start a project
 cd your-project
-clawker init
-clawker build
-clawker start --agent ralph
+clawker project init  # Creates clawker.yaml
 ```
+
+Cuztomize your build in `clawker.yaml` (see below), then build your project's image:
+
+```bash
+clawker build
+```
+
+Create and run some agents. In this example you'll create a main agent for interactive working sessions, and another for YOLO unattended work.
+
+```bash
+clawker run -it --agent main
+# authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach. or ctlr+c to stop the container
+
+clawker attach --agent main # re-attach to the main agent later if its still running
+
+clawker stop --agent main # stop the main agent when done
+
+clawker start -a --agent main # start the main agent and attach to it
+
+clawker run -it --agent yolo -- --dangerously-skip-permissions
+# authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach, or ctlr+c to stop the container
+
+clawker stop --agent yolo # stop the yolo agent when done
+
+# send a prompt to run your yolo agent
+echo "YOLO this" | clawker start --agent yolo -- -p .
+```
+
+You now have two specialized claude code containers that can be attached to or started/stopped as needed for different purposes
+
+## Customizing Your Build
+
+The default clawker image includes essentials for most projects: git, curl, vim, zsh, ripgrep, and more. But your project likely needs language-specific tools. Here's how to customize your `clawker.yaml`.
+
+### Example: TypeScript/React Project
+
+Let's add Node.js (via nvm) and pnpm to a project:
+
+```yaml
+version: "1"
+project: "my-react-app"
+
+build:
+  # Start with Debian bookworm (has build essentials)
+  image: "buildpack-deps:bookworm-scm"
+
+  # System packages (apt-get install)
+  packages:
+    - git
+    - curl
+    - ripgrep
+
+  instructions:
+    # Environment variables baked into the image
+    env:
+      NVM_DIR: "/home/claude/.nvm"
+      NODE_VERSION: "22"
+
+    # Commands run as the claude user
+    user_run:
+      # Install nvm
+      - cmd: |
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+      # Install Node.js and pnpm
+      - cmd: |
+          . "$NVM_DIR/nvm.sh" && \
+          nvm install $NODE_VERSION && \
+          npm install -g pnpm
+
+      # Add nvm to shell profile
+      - cmd: |
+          echo '. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+```
+
+### Build Properties
+
+| Property | Description |
+|----------|-------------|
+| `build.image` | Base Docker image (e.g., `buildpack-deps:bookworm-scm`, `node:22-bookworm`) |
+| `build.packages` | System packages installed via apt-get |
+| `build.instructions.env` | Environment variables set in the image |
+| `build.instructions.root_run` | Commands run as root (system-level setup) |
+| `build.instructions.user_run` | Commands run as claude user (language tools, global packages) |
+| `build.dockerfile` | Path to custom Dockerfile (skips generation entirely) |
+
+### More Examples
+
+See the [`examples/`](./examples/) directory for complete configurations:
+
+- **[typescript-react.yaml](./examples/typescript-react.yaml)** - Node.js via nvm, pnpm
+- **[python.yaml](./examples/python.yaml)** - Python via uv (fast package manager)
+- **[rust.yaml](./examples/rust.yaml)** - Rust via rustup
+- **[go.yaml](./examples/go.yaml)** - Go with gopls and delve
+- **[csharp.yaml](./examples/csharp.yaml)** - .NET SDK
+- **[php.yaml](./examples/php.yaml)** - PHP with Composer
 
 ## Dockerfile Generation
 
@@ -63,7 +176,8 @@ Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you 
 
 | Command | Description |
 |---------|-------------|
-| `clawker init` | Initialize project with clawker.yaml |
+| `clawker init` | Set up user settings (~/.local/clawker/settings.yaml) |
+| `clawker project init` | Initialize project with clawker.yaml |
 | `clawker build` | Build container image |
 | `clawker start --agent NAME` | Start a named agent container |
 | `clawker run` | Build and run (one-shot) |
@@ -75,7 +189,7 @@ Clawker mirrors Docker's CLI structure for familiarity. If you know Docker, you 
 | `clawker volume ls` | List volumes |
 | `clawker monitor start/stop` | Control monitoring stack |
 
-Management commands (`container`, `image`, `volume`, `network`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
+Management commands (`container`, `image`, `volume`, `network`, `project`) support the same verbs as Docker: `ls`, `inspect`, `rm`, `prune`.
 
 ## Isolation Features
 
@@ -369,7 +483,11 @@ clawker image list
 
 When you detach from a container (Ctrl+P, Ctrl+Q) and re-attach, Claude Code's terminal UI may appear blank or frozen. This is a **Claude Code limitation** (its Ink-based React terminal renderer), not a clawker or Docker issue.
 
-**Workaround:** Press any key after re-attaching to trigger a redraw.
+**Workaround:** Press any key after re-attaching to trigger a redraw, eventually the terminal will work itself out.
+
+### Docker MCP Gateway doesn't work inside containers
+
+The Docker MCP Gateway doesn't start inside of containers. This is a known "feature not a bug" situation. see: [https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111](https://github.com/docker/mcp-gateway/issues/112#issuecomment-3263238111)
 
 ## Contributing
 

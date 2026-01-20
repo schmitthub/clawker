@@ -174,6 +174,29 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		return fmt.Errorf("failed to parse Dockerfile template: %w", err)
 	}
 
+	// Write all required scripts to the dockerfiles directory (only once)
+	scripts := []struct {
+		name    string
+		content string
+		mode    os.FileMode
+	}{
+		{"entrypoint.sh", EntrypointScript, 0755},
+		{"init-firewall.sh", FirewallScript, 0755},
+		{"statusline.sh", StatuslineScript, 0755},
+		{"claude-settings.json", SettingsFile, 0644},
+		{"host-open.sh", HostOpenScript, 0755},
+		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"git-credential-clawker.sh", GitCredentialScript, 0755},
+		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
+	}
+
+	for _, script := range scripts {
+		scriptPath := filepath.Join(dockerfilesDir, script.name)
+		if err := os.WriteFile(scriptPath, []byte(script.content), script.mode); err != nil {
+			return fmt.Errorf("failed to write %s: %w", script.name, err)
+		}
+	}
+
 	// Generate Dockerfile for each version/variant combination
 	for _, key := range versions.SortedKeys() {
 		info := (*versions)[key]
@@ -189,16 +212,6 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 
 			if err := os.WriteFile(path, content, 0644); err != nil {
 				return fmt.Errorf("failed to write Dockerfile %s: %w", path, err)
-			}
-
-			firewallScriptPath := filepath.Join(dockerfilesDir, "init-firewall.sh")
-			if err := os.WriteFile(firewallScriptPath, []byte(FirewallScript), 0755); err != nil {
-				return fmt.Errorf("failed to write firewall script %s: %w", firewallScriptPath, err)
-			}
-
-			entrypointScriptPath := filepath.Join(dockerfilesDir, "entrypoint.sh")
-			if err := os.WriteFile(entrypointScriptPath, []byte(EntrypointScript), 0755); err != nil {
-				return fmt.Errorf("failed to write entrypoint script %s: %w", entrypointScriptPath, err)
 			}
 		}
 	}

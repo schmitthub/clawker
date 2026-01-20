@@ -168,13 +168,15 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	// Resolve image if not explicitly provided
-	image, err := cmdutil.ResolveImage(ctx, client, cfg, settings, opts.Image)
+	// Resolve and validate image
+	resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings, cmdutil.ResolveAndValidateImageOptions{
+		ExplicitImage: opts.Image,
+	})
 	if err != nil {
-		cmdutil.PrintError("Failed to resolve image: %v", err)
+		// ResolveAndValidateImage already prints appropriate errors
 		return err
 	}
-	if image == "" {
+	if resolvedImage == nil {
 		cmdutil.PrintError("No image specified and no default image configured")
 		cmdutil.PrintNextSteps(
 			"Specify an image: clawker container create --agent myagent IMAGE",
@@ -184,7 +186,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		)
 		return fmt.Errorf("no image specified")
 	}
-	opts.Image = image
+	opts.Image = resolvedImage.Reference
 
 	// Resolve container name
 	agent := opts.Agent

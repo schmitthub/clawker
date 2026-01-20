@@ -1,9 +1,8 @@
 package init
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -13,129 +12,166 @@ import (
 
 // InitOptions contains the options for the init command.
 type InitOptions struct {
-	Force bool
+	Yes bool // Non-interactive mode
 }
 
-// NewCmdInit creates the init command.
+// NewCmdInit creates the init command for user-level setup.
 func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
 	opts := &InitOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "init [project-name]",
-		Short: "Initialize a new Clawker project",
-		Long: `Creates a clawker.yaml configuration file and .clawkerignore in the current directory.
+		Use:   "init",
+		Short: "Initialize clawker user settings",
+		Long: `Creates or updates the user settings file at ~/.local/clawker/settings.yaml.
 
-If no project name is provided, the current directory name will be used.`,
-		Example: `  # Use current directory name as project
+This command sets up user-level defaults that apply across all clawker projects.
+In interactive mode (default), you will be prompted to:
+  - Build an initial base image (recommended)
+  - Select a Linux flavor (Debian or Alpine)
+
+Use --yes/-y to skip prompts and accept all defaults (skips base image build).
+
+To initialize a project in the current directory, use 'clawker project init' instead.`,
+		Example: `  # Interactive setup (prompts for options)
   clawker init
 
-  # Use "my-project" as project name
-  clawker init my-project
-
-  # Overwrite existing configuration
-  clawker init --force`,
-		Args: cobra.MaximumNArgs(1),
+  # Non-interactive with all defaults
+  clawker init --yes`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(f, opts, args)
+			return runInit(f, opts)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
+	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Non-interactive mode, accept all defaults")
 
 	return cmd
 }
 
-func runInit(f *cmdutil.Factory, opts *InitOptions, args []string) error {
-	// Determine project name
-	projectName := ""
-	if len(args) > 0 {
-		projectName = args[0]
+func runInit(f *cmdutil.Factory, opts *InitOptions) error {
+	ctx := context.Background()
+	prompter := f.Prompter()
+
+	// Print header
+	fmt.Fprintln(f.IOStreams.ErrOut, "Setting up clawker user settings...")
+	if !opts.Yes && f.IOStreams.IsInteractive() {
+		fmt.Fprintln(f.IOStreams.ErrOut, "(Press Enter to accept defaults)")
+	}
+	fmt.Fprintln(f.IOStreams.ErrOut)
+
+	// Ensure settings loader is available
+	settingsLoader, err := config.NewSettingsLoader()
+	if err != nil {
+		return fmt.Errorf("failed to create settings loader: %w", err)
+	}
+
+	// Load existing settings or create defaults
+	settings, err := settingsLoader.Load()
+	if err != nil {
+		settings = config.DefaultSettings()
+	}
+
+	// Ask if user wants to build base image
+	var buildBaseImage bool
+	var selectedFlavor string
+
+	if opts.Yes || !f.IOStreams.IsInteractive() {
+		buildBaseImage = false // Default to no in non-interactive mode
 	} else {
-		// Use current directory name
-		absPath, err := filepath.Abs(f.WorkDir)
-		if err != nil {
-			return fmt.Errorf("failed to get absolute path: %w", err)
+		options := []cmdutil.SelectOption{
+			{Label: "Yes", Description: "Build a clawker-optimized base image (Recommended)"},
+			{Label: "No", Description: "Skip - specify images per-project later"},
 		}
-		projectName = filepath.Base(absPath)
+		idx, err := prompter.Select("Build an initial base image?", options, 0)
+		if err != nil {
+			return fmt.Errorf("failed to get build preference: %w", err)
+		}
+		buildBaseImage = (idx == 0)
+	}
+
+	if buildBaseImage {
+		// Convert flavor options to SelectOption
+		flavors := cmdutil.DefaultFlavorOptions()
+		selectOptions := make([]cmdutil.SelectOption, len(flavors))
+		for i, opt := range flavors {
+			selectOptions[i] = cmdutil.SelectOption{
+				Label:       opt.Name,
+				Description: opt.Description,
+			}
+		}
+
+		idx, err := prompter.Select("Select Linux flavor", selectOptions, 0)
+		if err != nil {
+			return fmt.Errorf("failed to get flavor selection: %w", err)
+		}
+		selectedFlavor = flavors[idx].Name
+
+		// Clear default image when building (will be set after successful build)
+		settings.Project.DefaultImage = ""
 	}
 
 	logger.Debug().
-		Str("project", projectName).
-		Str("workdir", f.WorkDir).
-		Bool("force", opts.Force).
-		Msg("initializing project")
+		Bool("build_base_image", buildBaseImage).
+		Str("flavor", selectedFlavor).
+		Msg("initializing user settings")
 
-	// Ensure user settings file exists
-	settingsLoader, err := config.NewSettingsLoader()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to create settings loader")
-		fmt.Fprintf(os.Stderr, "Note: Could not access user settings: %v\n", err)
-	} else {
-		created, err := settingsLoader.EnsureExists()
-		if err != nil {
-			logger.Debug().Err(err).Msg("failed to ensure settings file exists")
-			fmt.Fprintf(os.Stderr, "Note: Could not create settings file: %v\n", err)
-		} else if created {
-			logger.Info().Str("file", settingsLoader.Path()).Msg("created user settings file")
-		}
+	// Start build in background if requested
+	type buildResult struct {
+		err error
+	}
+	buildResultCh := make(chan buildResult, 1)
+
+	if buildBaseImage {
+		fmt.Fprintln(f.IOStreams.ErrOut)
+		fmt.Fprintln(f.IOStreams.ErrOut, "Starting base image build in background...")
+
+		go func() {
+			buildResultCh <- buildResult{err: cmdutil.BuildDefaultImage(ctx, selectedFlavor)}
+		}()
 	}
 
-	// Check if configuration already exists
-	loader := config.NewLoader(f.WorkDir)
-	if loader.Exists() && !opts.Force {
-		cmdutil.PrintError("%s already exists", config.ConfigFileName)
-		cmdutil.PrintNextSteps(
-			"Use --force to overwrite the existing configuration",
-			"Or edit the existing clawker.yaml manually",
-		)
-		return fmt.Errorf("configuration already exists")
+	// Save initial settings
+	if err := settingsLoader.Save(settings); err != nil {
+		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	// Create clawker.yaml
-	configPath := loader.ConfigPath()
-	configContent := fmt.Sprintf(config.DefaultConfigYAML, projectName)
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", config.ConfigFileName, err)
-	}
-
-	logger.Info().Str("file", configPath).Msg("created configuration file")
-
-	// Create .clawkerignore
-	ignorePath := loader.IgnorePath()
-	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
-		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
-		}
-		logger.Info().Str("file", ignorePath).Msg("created ignore file")
-	}
-
-	// Register project in user settings
-	if settingsLoader != nil {
-		if err := settingsLoader.AddProject(f.WorkDir); err != nil {
-			logger.Debug().Err(err).Msg("failed to register project in settings")
-			fmt.Fprintf(os.Stderr, "Note: Could not register project in settings: %v\n", err)
-		} else {
-			logger.Info().Str("dir", f.WorkDir).Msg("registered project in user settings")
-		}
-	}
+	logger.Info().Str("file", settingsLoader.Path()).Msg("saved user settings")
 
 	// Success output
-	fmt.Fprintln(os.Stderr, "Clawker project initialized!")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.ConfigFileName)
-	fmt.Fprintf(os.Stderr, "  Created: %s\n", config.IgnoreFileName)
-	fmt.Fprintf(os.Stderr, "  Project: %s\n", projectName)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Next Steps:")
-	fmt.Fprintln(os.Stderr, "  1. Review and customize clawker.yaml")
-	fmt.Fprintln(os.Stderr, "  2. Run 'clawker start' to start Claude in a container")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Quick Reference:")
-	fmt.Fprintln(os.Stderr, "  clawker start               # Start Claude (default: bind mode)")
-	fmt.Fprintln(os.Stderr, "  clawker start --mode=snapshot   # Start in isolated snapshot mode")
-	fmt.Fprintln(os.Stderr, "  clawker stop                # Stop the container")
-	fmt.Fprintln(os.Stderr, "  clawker sh                  # Open shell in running container")
+	fmt.Fprintln(f.IOStreams.ErrOut)
+	fmt.Fprintf(f.IOStreams.ErrOut, "Created: %s\n", settingsLoader.Path())
+
+	// Wait for build if started
+	if buildBaseImage {
+		fmt.Fprintln(f.IOStreams.ErrOut)
+		fmt.Fprintf(f.IOStreams.ErrOut, "Building %s... (this may take a few minutes)\n", cmdutil.DefaultImageTag)
+
+		result := <-buildResultCh
+
+		if result.err != nil {
+			fmt.Fprintln(f.IOStreams.ErrOut)
+			cmdutil.PrintError("Base image build failed: %v", result.err)
+			cmdutil.PrintNextSteps(
+				"You can manually build later with 'clawker generate latest && docker build ...'",
+				"Or specify images per-project in clawker.yaml",
+			)
+		} else {
+			fmt.Fprintln(f.IOStreams.ErrOut)
+			fmt.Fprintf(f.IOStreams.ErrOut, "Build complete! Image: %s\n", cmdutil.DefaultImageTag)
+
+			// Update settings with the built image
+			settings.Project.DefaultImage = cmdutil.DefaultImageTag
+			if err := settingsLoader.Save(settings); err != nil {
+				logger.Warn().Err(err).Msg("failed to update settings with default image")
+			}
+		}
+	}
+
+	fmt.Fprintln(f.IOStreams.ErrOut)
+	cmdutil.PrintNextSteps(
+		"Navigate to a project directory",
+		"Run 'clawker project init' to set up the project",
+	)
 
 	return nil
 }

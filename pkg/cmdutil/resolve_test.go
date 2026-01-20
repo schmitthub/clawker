@@ -810,3 +810,198 @@ func TestResolveContainerNames(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveImageWithSource(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name          string
+		cfg           *config.Config
+		settings      *config.Settings
+		explicitImage string
+		wantRef       string
+		wantSource    ImageSource
+		wantNil       bool
+	}{
+		{
+			name:          "explicit image takes precedence",
+			cfg:           &config.Config{DefaultImage: "config-image:latest", Project: "myproject"},
+			settings:      &config.Settings{Project: config.ProjectDefaults{DefaultImage: "settings-image:latest"}},
+			explicitImage: "explicit:v1",
+			wantRef:       "explicit:v1",
+			wantSource:    ImageSourceExplicit,
+			wantNil:       false,
+		},
+		{
+			name:          "explicit image with nil config and settings",
+			cfg:           nil,
+			settings:      nil,
+			explicitImage: "explicit:v2",
+			wantRef:       "explicit:v2",
+			wantSource:    ImageSourceExplicit,
+			wantNil:       false,
+		},
+		{
+			name:          "falls back to default from config",
+			cfg:           &config.Config{DefaultImage: "config-default:latest"},
+			settings:      nil,
+			explicitImage: "",
+			wantRef:       "config-default:latest",
+			wantSource:    ImageSourceDefault,
+			wantNil:       false,
+		},
+		{
+			name:          "falls back to default from settings",
+			cfg:           &config.Config{DefaultImage: ""},
+			settings:      &config.Settings{Project: config.ProjectDefaults{DefaultImage: "settings-default:latest"}},
+			explicitImage: "",
+			wantRef:       "settings-default:latest",
+			wantSource:    ImageSourceDefault,
+			wantNil:       false,
+		},
+		{
+			name:          "config default takes precedence over settings",
+			cfg:           &config.Config{DefaultImage: "config-default:latest"},
+			settings:      &config.Settings{Project: config.ProjectDefaults{DefaultImage: "settings-default:latest"}},
+			explicitImage: "",
+			wantRef:       "config-default:latest",
+			wantSource:    ImageSourceDefault,
+			wantNil:       false,
+		},
+		{
+			name:          "returns nil when no image found",
+			cfg:           nil,
+			settings:      nil,
+			explicitImage: "",
+			wantRef:       "",
+			wantSource:    "",
+			wantNil:       true,
+		},
+		{
+			name: "returns nil when all sources empty",
+			cfg: &config.Config{
+				DefaultImage: "",
+				Project:      "",
+			},
+			settings: &config.Settings{
+				Project: config.ProjectDefaults{
+					DefaultImage: "",
+				},
+			},
+			explicitImage: "",
+			wantRef:       "",
+			wantSource:    "",
+			wantNil:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Note: We pass nil for dockerClient for tests that don't need project image lookup
+			result, err := ResolveImageWithSource(ctx, nil, tt.cfg, tt.settings, tt.explicitImage)
+
+			if err != nil {
+				t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
+			}
+
+			if tt.wantNil {
+				if result != nil {
+					t.Errorf("ResolveImageWithSource() = %+v, want nil", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Fatal("ResolveImageWithSource() returned nil, want non-nil")
+			}
+
+			if result.Reference != tt.wantRef {
+				t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, tt.wantRef)
+			}
+			if result.Source != tt.wantSource {
+				t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, tt.wantSource)
+			}
+		})
+	}
+}
+
+func TestResolveImageWithSource_ProjectImage(t *testing.T) {
+	if !dockerAvailable {
+		t.Skip("Skipping Docker-dependent test: Docker not available")
+	}
+
+	ctx := context.Background()
+
+	t.Run("finds project image with :latest tag", func(t *testing.T) {
+		cfg := &config.Config{
+			Project:      testProjectName,
+			DefaultImage: "fallback:latest",
+		}
+
+		result, err := ResolveImageWithSource(ctx, testDockerClient, cfg, nil, "")
+		if err != nil {
+			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("ResolveImageWithSource() returned nil, expected project image")
+		}
+
+		if result.Source != ImageSourceProject {
+			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, ImageSourceProject)
+		}
+
+		// Should match our test image tag
+		if result.Reference != testLatestImageTag {
+			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, testLatestImageTag)
+		}
+	})
+
+	t.Run("falls back to default when no project image", func(t *testing.T) {
+		cfg := &config.Config{
+			Project:      "nonexistent-project-xyz",
+			DefaultImage: "fallback:latest",
+		}
+
+		result, err := ResolveImageWithSource(ctx, testDockerClient, cfg, nil, "")
+		if err != nil {
+			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("ResolveImageWithSource() returned nil, expected default image")
+		}
+
+		if result.Source != ImageSourceDefault {
+			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, ImageSourceDefault)
+		}
+
+		if result.Reference != "fallback:latest" {
+			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, "fallback:latest")
+		}
+	})
+
+	t.Run("explicit takes precedence over project image", func(t *testing.T) {
+		cfg := &config.Config{
+			Project:      testProjectName,
+			DefaultImage: "fallback:latest",
+		}
+
+		result, err := ResolveImageWithSource(ctx, testDockerClient, cfg, nil, "explicit:override")
+		if err != nil {
+			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
+		}
+
+		if result == nil {
+			t.Fatal("ResolveImageWithSource() returned nil")
+		}
+
+		if result.Source != ImageSourceExplicit {
+			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, ImageSourceExplicit)
+		}
+
+		if result.Reference != "explicit:override" {
+			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, "explicit:override")
+		}
+	})
+}

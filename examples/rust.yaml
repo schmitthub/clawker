@@ -1,0 +1,46 @@
+# Rust Project Build Configuration
+#
+# This example sets up Rust using rustup - the official Rust toolchain installer.
+# Includes cargo and common development tools.
+
+build:
+  # Base image - Debian bookworm with build essentials
+  image: "buildpack-deps:bookworm-scm"
+
+  # System packages needed for Rust compilation
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - ca-certificates
+    - pkg-config
+    - libssl-dev
+
+  instructions:
+    # Environment variables for Rust
+    env:
+      CARGO_HOME: "/home/claude/.cargo"
+      RUSTUP_HOME: "/home/claude/.rustup"
+
+    # Install Rust toolchain as the claude user
+    user_run:
+      # Install rustup and stable toolchain
+      - cmd: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+      # Install common development tools
+      - cmd: |
+          . "$HOME/.cargo/env" && \
+          rustup component add rust-analyzer clippy rustfmt
+
+      # Add cargo to shell profile
+      - cmd: |
+          echo '. "$HOME/.cargo/env"' >> ~/.bashrc
+
+# To add additional toolchains (e.g., nightly):
+#
+#   user_run:
+#     - cmd: |
+#         . "$HOME/.cargo/env" && \
+#         rustup toolchain install nightly && \
+#         rustup component add rust-analyzer clippy rustfmt --toolchain nightly
