@@ -20,8 +20,12 @@ func Main() int {
 	// Create root command
 	rootCmd := root.NewCmdRoot(f)
 
-	// Execute
-	if err := rootCmd.Execute(); err != nil {
+	// Execute - use ExecuteC to get the executed command for contextual hint
+	cmd, err := rootCmd.ExecuteC()
+	if err != nil {
+		// Print contextual help hint (Cobra already printed "Error: ...")
+		cmdutil.PrintHelpHint(cmd.CommandPath())
+		f.CloseClient()
 		return 1
 	}
 

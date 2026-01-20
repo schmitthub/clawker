@@ -36,6 +36,7 @@ Quick start:
 Workspace modes:
   --mode=bind          Live sync with host (default)
   --mode=snapshot      Isolated copy in Docker volume`,
+		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize logger with debug flag
 			logger.Init(f.Debug)

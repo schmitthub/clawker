@@ -15,7 +15,7 @@ func TestTopLevelAliases(t *testing.T) {
 	registerAliases(root, f)
 
 	// Verify we're testing all expected aliases
-	require.Equal(t, 19, len(topLevelAliases), "expected 19 aliases in topLevelAliases")
+	require.Equal(t, 20, len(topLevelAliases), "expected 20 aliases in topLevelAliases")
 
 	for _, alias := range topLevelAliases {
 		// Extract command name from Use field (first word before space)
