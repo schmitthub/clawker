@@ -81,14 +81,29 @@ workspace:
   default_mode: "bind"
 
 security:
-  # Enable network firewall (blocks outbound traffic by default)
-  enable_firewall: true
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: true
   # Domains allowed through firewall (only when enable_firewall: true)
-  # allowed_domains:
-  #   - "api.github.com"
-  #   - "registry.npmjs.org"
+  firewall:
+    # Enable network firewall (blocks outbound traffic by default)
+    enable: true
+    add_domains:
+      - charm.land
+      - code.gitea.io
+      - golang.org
+      - proxy.golang.org
+      - sum.golang.org
+      - gocloud.dev
+      - gopkg.in
+      - software.sslmate.com
+      - cloud.google.com
+      - sigs.k8s.io
+      - google.golang.org
+      - go.opentelemetry.io
+      - go.uber.org
+      - lukechampine.com
+      - go.yaml.in
+      - cel.dev
   # Git credential forwarding
   git_credentials:
     forward_https: true

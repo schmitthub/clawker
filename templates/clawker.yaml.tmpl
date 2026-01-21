@@ -33,11 +33,19 @@ workspace:
   default_mode: "bind"
 
 security:
-  # Enable network firewall (blocks outbound traffic by default)
-  enable_firewall: true
+  # Network firewall configuration
+  firewall:
+    # Enable network firewall (blocks outbound traffic by default)
+    enable: true
+    # Add domains to the default allowed list
+    # add_domains:
+    #   - "api.openai.com"
+    # Remove domains from the default allowed list
+    # remove_domains:
+    #   - "registry.npmjs.org"
+    # Override the entire allowed list (ignores add/remove, skips GitHub IP fetching)
+    # override_domains:
+    #   - "api.anthropic.com"
+    #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
-  # Domains allowed through firewall (only when enable_firewall: true)
-  # allowed_domains:
-  #   - "api.github.com"
-  #   - "registry.npmjs.org"

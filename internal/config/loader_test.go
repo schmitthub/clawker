@@ -95,7 +95,8 @@ workspace:
   remote_path: "/workspace"
   default_mode: "bind"
 security:
-  enable_firewall: true
+  firewall:
+    enable: true
   docker_socket: false
 `
 	configPath := filepath.Join(tmpDir, ConfigFileName)
@@ -123,8 +124,8 @@ security:
 	if cfg.Workspace.RemotePath != "/workspace" {
 		t.Errorf("cfg.Workspace.RemotePath = %q, want %q", cfg.Workspace.RemotePath, "/workspace")
 	}
-	if !cfg.Security.EnableFirewall {
-		t.Error("cfg.Security.EnableFirewall should be true")
+	if !cfg.Security.FirewallEnabled() {
+		t.Error("cfg.Security.FirewallEnabled() should be true")
 	}
 	if cfg.Security.DockerSocket {
 		t.Error("cfg.Security.DockerSocket should be false")
@@ -166,8 +167,8 @@ project: "minimal-project"
 		t.Errorf("cfg.Workspace.DefaultMode should default to 'bind', got %q", cfg.Workspace.DefaultMode)
 	}
 	// Security defaults - firewall enabled
-	if !cfg.Security.EnableFirewall {
-		t.Error("cfg.Security.EnableFirewall should default to true")
+	if !cfg.Security.FirewallEnabled() {
+		t.Error("cfg.Security.FirewallEnabled() should default to true")
 	}
 }
 

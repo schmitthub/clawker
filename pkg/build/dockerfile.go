@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -73,10 +74,13 @@ type DockerfileContext struct {
 	GID            int
 	Shell          string
 	WorkspacePath  string
-	ClaudeVersion  string
-	IsAlpine       bool
-	EnableFirewall bool
-	ExtraEnv       map[string]string
+	ClaudeVersion       string
+	IsAlpine            bool
+	EnableFirewall      bool
+	FirewallDomains     []string // Resolved domain list to pass to container
+	FirewallDomainsJSON string   // JSON-encoded domain list for env var
+	FirewallOverride    bool     // True if using override mode (skips GitHub IP fetching)
+	ExtraEnv            map[string]string
 	Editor         string
 	Visual         string
 	Instructions   *DockerfileInstructions
@@ -204,7 +208,10 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 			filename := fmt.Sprintf("%s-%s.dockerfile", info.FullVersion, variant)
 			path := filepath.Join(dockerfilesDir, filename)
 
-			ctx := m.createContext(info.FullVersion, variant)
+			ctx, err := m.createContext(info.FullVersion, variant)
+			if err != nil {
+				return fmt.Errorf("failed to create context for %s-%s: %w", info.FullVersion, variant, err)
+			}
 			content, err := m.renderDockerfile(tmpl, ctx)
 			if err != nil {
 				return fmt.Errorf("failed to render Dockerfile for %s-%s: %w", info.FullVersion, variant, err)
@@ -220,27 +227,55 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 }
 
 // createContext creates a DockerfileContext for a given version and variant.
-func (m *DockerfileManager) createContext(version, variant string) *DockerfileContext {
+func (m *DockerfileManager) createContext(version, variant string) (*DockerfileContext, error) {
 	isAlpine := m.config.IsAlpine(variant)
 	baseImage := m.variantToBaseImage(variant)
 
-	return &DockerfileContext{
-		BaseImage:      baseImage,
-		Packages:       []string{}, // Base packages are in template
-		Username:       "claude",
-		UID:            1001,
-		GID:            1001,
-		Shell:          "/bin/zsh",
-		WorkspacePath:  "/workspace",
-		ClaudeVersion:  version,
-		IsAlpine:       isAlpine,
-		EnableFirewall: true,
-		ExtraEnv:       map[string]string{},
-		Editor:         "nano",
-		Visual:         "nano",
-		Instructions:   nil,
-		Inject:         nil,
+	// Compute JSON for default domains
+	domainsJSON, err := domainsToJSON(config.DefaultFirewallDomains)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare firewall domains: %w", err)
 	}
+
+	return &DockerfileContext{
+		BaseImage:           baseImage,
+		Packages:            []string{}, // Base packages are in template
+		Username:            "claude",
+		UID:                 1001,
+		GID:                 1001,
+		Shell:               "/bin/zsh",
+		WorkspacePath:       "/workspace",
+		ClaudeVersion:       version,
+		IsAlpine:            isAlpine,
+		EnableFirewall:      true,
+		FirewallDomains:     config.DefaultFirewallDomains, // Use defaults for base image
+		FirewallDomainsJSON: domainsJSON,
+		FirewallOverride:    false, // Base image uses additive mode
+		ExtraEnv:            map[string]string{},
+		Editor:              "nano",
+		Visual:              "nano",
+		Instructions:        nil,
+		Inject:              nil,
+	}, nil
+}
+
+// domainsToJSON converts a slice of domains to a JSON array string.
+// Returns an error if marshaling fails (build should not continue with empty firewall).
+func domainsToJSON(domains []string) (string, error) {
+	if len(domains) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(domains)
+	if err != nil {
+		// Log to file
+		logger.Error().Err(err).
+			Int("domain_count", len(domains)).
+			Msg("failed to marshal firewall domains to JSON")
+		// Print to user (stderr)
+		fmt.Fprintf(os.Stderr, "Error: failed to marshal firewall domains to JSON: %v\n", err)
+		return "", fmt.Errorf("failed to marshal firewall domains: %w", err)
+	}
+	return string(b), nil
 }
 
 // variantToBaseImage converts a variant name to a Docker base image.
@@ -284,7 +319,10 @@ func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator {
 
 // Generate creates a Dockerfile based on the project configuration.
 func (g *ProjectGenerator) Generate() ([]byte, error) {
-	ctx := g.buildContext()
+	ctx, err := g.buildContext()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build context: %w", err)
+	}
 
 	tmpl, err := template.New("Dockerfile").Parse(DockerfileTemplate)
 	if err != nil {
@@ -331,7 +369,7 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 	}
 
 	// Add firewall script if enabled
-	if g.config.Security.EnableFirewall {
+	if g.config.Security.FirewallEnabled() {
 		if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
 			return nil, err
 		}
@@ -444,7 +482,7 @@ func filterBasePackages(packages []string, isAlpine bool) []string {
 }
 
 // buildContext creates the template context from config.
-func (g *ProjectGenerator) buildContext() *DockerfileContext {
+func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	baseImage := g.config.Build.Image
 	if baseImage == "" {
 		baseImage = "buildpack-deps:bookworm-scm"
@@ -462,21 +500,41 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		visual = "nano"
 	}
 
+	// Resolve firewall configuration
+	firewallEnabled := g.config.Security.FirewallEnabled()
+	var firewallDomains []string
+	var firewallOverride bool
+	if firewallEnabled && g.config.Security.Firewall != nil {
+		firewallDomains = g.config.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
+		firewallOverride = g.config.Security.Firewall.IsOverrideMode()
+	} else if firewallEnabled {
+		firewallDomains = config.DefaultFirewallDomains
+	}
+
+	// Marshal firewall domains to JSON
+	firewallDomainsJSON, err := domainsToJSON(firewallDomains)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare firewall domains: %w", err)
+	}
+
 	ctx := &DockerfileContext{
-		BaseImage:      baseImage,
-		Packages:       filterBasePackages(g.config.Build.Packages, isAlpine),
-		Username:       DefaultUsername,
-		UID:            DefaultUID,
-		GID:            DefaultGID,
-		Shell:          DefaultShell,
-		WorkspacePath:  g.config.Workspace.RemotePath,
-		ClaudeVersion:  DefaultClaudeCodeVersion,
-		IsAlpine:       isAlpine,
-		EnableFirewall: g.config.Security.EnableFirewall,
-		ExtraEnv:       g.config.Agent.Env,
-		Editor:         editor,
-		Visual:         visual,
-		ImageLabels:    docker.ImageLabels(g.config.Project, g.config.Version),
+		BaseImage:           baseImage,
+		Packages:            filterBasePackages(g.config.Build.Packages, isAlpine),
+		Username:            DefaultUsername,
+		UID:                 DefaultUID,
+		GID:                 DefaultGID,
+		Shell:               DefaultShell,
+		WorkspacePath:       g.config.Workspace.RemotePath,
+		ClaudeVersion:       DefaultClaudeCodeVersion,
+		IsAlpine:            isAlpine,
+		EnableFirewall:      firewallEnabled,
+		FirewallDomains:     firewallDomains,
+		FirewallDomainsJSON: firewallDomainsJSON,
+		FirewallOverride:    firewallOverride,
+		ExtraEnv:            g.config.Agent.Env,
+		Editor:              editor,
+		Visual:              visual,
+		ImageLabels:         docker.ImageLabels(g.config.Project, g.config.Version),
 	}
 
 	// Populate Instructions if present
@@ -510,7 +568,7 @@ func (g *ProjectGenerator) buildContext() *DockerfileContext {
 		}
 	}
 
-	return ctx
+	return ctx, nil
 }
 
 // Conversion helpers from config types to build types

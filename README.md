@@ -516,8 +516,15 @@ workspace:
   default_mode: "bind"
 
 security:
-  # Network firewall (blocks outbound by default)
-  enable_firewall: true
+  # Network firewall configuration
+  firewall:
+    enable: true              # Enable network firewall (default: true)
+    # add_domains:            # Add to default allowed domains
+    #   - "api.openai.com"
+    # remove_domains:         # Remove from default allowed domains
+    #   - "registry.npmjs.org"
+    # override_domains:       # Replace entire domain list (ignores add/remove)
+    #   - "github.com"
   # Docker socket access (disabled for security)
   docker_socket: false
   # Host proxy for browser auth (enabled by default)
@@ -527,10 +534,6 @@ security:
   #   forward_https: true   # Forward HTTPS credentials via host proxy
   #   forward_ssh: true     # Forward SSH agent for git+ssh
   #   copy_git_config: true # Copy host ~/.gitconfig
-  # Allowed domains when firewall enabled
-  # allowed_domains:
-  #   - "api.github.com"
-  #   - "registry.npmjs.org"
   # Add Linux capabilities
   # cap_add:
   #   - NET_ADMIN

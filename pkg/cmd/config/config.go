@@ -97,6 +97,11 @@ func runConfigCheck(f *cmdutil.Factory) error {
 		return err
 	}
 
+	// Print any warnings
+	for _, warning := range validator.Warnings() {
+		cmdutil.PrintWarning("%s", warning)
+	}
+
 	// Success output
 	fmt.Fprintln(os.Stderr, "Configuration is valid!")
 	fmt.Fprintln(os.Stderr)
@@ -106,7 +111,7 @@ func runConfigCheck(f *cmdutil.Factory) error {
 		fmt.Fprintf(os.Stderr, "  Dockerfile: %s\n", cfg.Build.Dockerfile)
 	}
 	fmt.Fprintf(os.Stderr, "  Mode:       %s\n", cfg.Workspace.DefaultMode)
-	fmt.Fprintf(os.Stderr, "  Firewall:   %t\n", cfg.Security.EnableFirewall)
+	fmt.Fprintf(os.Stderr, "  Firewall:   %t\n", cfg.Security.FirewallEnabled())
 
 	if len(cfg.Build.Packages) > 0 {
 		fmt.Fprintf(os.Stderr, "  Packages:   %v\n", cfg.Build.Packages)

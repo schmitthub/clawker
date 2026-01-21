@@ -37,8 +37,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Test security defaults - firewall should be enabled by default
-	if !cfg.Security.EnableFirewall {
-		t.Error("DefaultConfig().Security.EnableFirewall should be true (security-first)")
+	if !cfg.Security.FirewallEnabled() {
+		t.Error("DefaultConfig().Security.FirewallEnabled() should be true (security-first)")
 	}
 
 	// Docker socket should be disabled by default
@@ -93,8 +93,11 @@ func TestDefaultConfigYAML(t *testing.T) {
 	}
 
 	// Verify security defaults are documented correctly
-	if !strings.Contains(DefaultConfigYAML, "enable_firewall: true") {
-		t.Error("DefaultConfigYAML should document enable_firewall: true as default")
+	if !strings.Contains(DefaultConfigYAML, "firewall:") {
+		t.Error("DefaultConfigYAML should contain firewall: section")
+	}
+	if !strings.Contains(DefaultConfigYAML, "enable: true") {
+		t.Error("DefaultConfigYAML should document enable: true (firewall) as default")
 	}
 	if !strings.Contains(DefaultConfigYAML, "docker_socket: false") {
 		t.Error("DefaultConfigYAML should document docker_socket: false as default")

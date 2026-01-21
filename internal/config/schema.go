@@ -1,5 +1,7 @@
 package config
 
+import "sort"
+
 // Config represents the root configuration structure for clawker.yaml
 type Config struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
@@ -100,10 +102,68 @@ type WorkspaceConfig struct {
 }
 
 // SecurityConfig defines optional security hardening settings
+
+// FirewallConfig defines network firewall settings
+type FirewallConfig struct {
+	Enable          bool     `yaml:"enable" mapstructure:"enable"`
+	AddDomains      []string `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
+	RemoveDomains   []string `yaml:"remove_domains,omitempty" mapstructure:"remove_domains"`
+	OverrideDomains []string `yaml:"override_domains,omitempty" mapstructure:"override_domains"`
+}
+
+// FirewallEnabled returns whether the firewall should be enabled.
+// Returns true only if Firewall config exists and Enable is true.
+func (f *FirewallConfig) FirewallEnabled() bool {
+	return f != nil && f.Enable
+}
+
+// GetFirewallDomains resolves the final domain list based on config mode.
+// If OverrideDomains is set, returns it directly (complete replacement).
+// Otherwise, applies AddDomains and RemoveDomains to the default list.
+func (f *FirewallConfig) GetFirewallDomains(defaults []string) []string {
+	if f == nil {
+		return defaults
+	}
+
+	// Override mode: return override list directly
+	if len(f.OverrideDomains) > 0 {
+		return f.OverrideDomains
+	}
+
+	// Build a set from defaults
+	domainSet := make(map[string]bool)
+	for _, d := range defaults {
+		domainSet[d] = true
+	}
+
+	// Remove domains
+	for _, d := range f.RemoveDomains {
+		delete(domainSet, d)
+	}
+
+	// Add domains
+	for _, d := range f.AddDomains {
+		domainSet[d] = true
+	}
+
+	// Convert back to slice
+	result := make([]string, 0, len(domainSet))
+	for d := range domainSet {
+		result = append(result, d)
+	}
+	sort.Strings(result)
+
+	return result
+}
+
+// IsOverrideMode returns true if using override_domains (complete replacement mode).
+func (f *FirewallConfig) IsOverrideMode() bool {
+	return f != nil && len(f.OverrideDomains) > 0
+}
+
 type SecurityConfig struct {
-	EnableFirewall  bool                  `yaml:"enable_firewall" mapstructure:"enable_firewall"`
+	Firewall        *FirewallConfig       `yaml:"firewall,omitempty" mapstructure:"firewall"`
 	DockerSocket    bool                  `yaml:"docker_socket" mapstructure:"docker_socket"`
-	AllowedDomains  []string              `yaml:"allowed_domains,omitempty" mapstructure:"allowed_domains"`
 	CapAdd          []string              `yaml:"cap_add,omitempty" mapstructure:"cap_add"`
 	EnableHostProxy *bool                 `yaml:"enable_host_proxy,omitempty" mapstructure:"enable_host_proxy"` // defaults to true
 	GitCredentials  *GitCredentialsConfig `yaml:"git_credentials,omitempty" mapstructure:"git_credentials"`
@@ -116,6 +176,12 @@ func (s *SecurityConfig) HostProxyEnabled() bool {
 		return true // Default to enabled
 	}
 	return *s.EnableHostProxy
+}
+
+// FirewallEnabled returns whether the firewall should be enabled.
+// Convenience method that delegates to FirewallConfig.
+func (s *SecurityConfig) FirewallEnabled() bool {
+	return s.Firewall.FirewallEnabled()
 }
 
 // Mode represents the workspace mode
