@@ -1,10 +1,27 @@
 #!/bin/bash
 set -e
 
+# Emit ready signal - called before exec to indicate container is ready
+emit_ready() {
+    mkdir -p /var/run/clawker
+    echo "ts=$(date +%s) pid=$$" > /var/run/clawker/ready
+    echo "[clawker] ready ts=$(date +%s) agent=${CLAWKER_AGENT:-default}"
+}
+
+# Emit error signal and exit
+emit_error() {
+    local component="$1"
+    local msg="$2"
+    echo "[clawker] error component=$component msg=$msg" >&2
+    exit 1
+}
+
 # Initialize firewall if script exists and we have capabilities
 if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
-    if ! sudo /usr/local/bin/init-firewall.sh 2>&1; then
-        echo "Warning: Firewall initialization failed" >&2
+    if ! firewall_output=$(sudo /usr/local/bin/init-firewall.sh 2>&1); then
+        # Sanitize output for JSON safety (remove newlines, escape quotes)
+        sanitized_output=$(echo "$firewall_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 200)
+        emit_error "firewall" "initialization failed: $sanitized_output"
     fi
 fi
 
@@ -123,5 +140,8 @@ fi
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
     set -- claude "$@"
 fi
+
+# Signal readiness before handing off to the main process
+emit_ready
 
 exec "$@"

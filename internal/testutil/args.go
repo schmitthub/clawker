@@ -1,7 +1,20 @@
-// Package testutil provides shared test utilities for CLI command tests.
 package testutil
 
 // SplitArgs splits a command string into arguments, handling quoted strings.
+// Similar to shell word splitting, but simplified for test scenarios.
+// This is useful for parsing CLI arguments in tests.
+//
+// Examples:
+//
+//	SplitArgs("foo bar")          → ["foo", "bar"]
+//	SplitArgs("foo 'bar baz'")    → ["foo", "bar baz"]
+//	SplitArgs(`foo "bar baz"`)    → ["foo", "bar baz"]
+//	SplitArgs("")                 → nil
+//	SplitArgs("  ")               → nil
+//
+// Note: Unlike real shell parsing, this does not handle escape characters,
+// command substitution, or other advanced shell features. Tabs and newlines
+// within unquoted strings are preserved as-is (not treated as word separators).
 func SplitArgs(input string) []string {
 	var args []string
 	var current string

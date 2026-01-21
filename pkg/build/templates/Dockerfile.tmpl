@@ -159,9 +159,9 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 {{- end}}
 {{- end}}
 
-# Create workspace and config directories and set permissions
-RUN mkdir -p /home/${USERNAME}/.claude {{.WorkspacePath}} && \
-    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude
+# Create workspace, config, and runtime directories with proper permissions
+RUN mkdir -p /home/${USERNAME}/.claude {{.WorkspacePath}} /var/run/clawker && \
+    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /var/run/clawker
 
 # Persist bash history
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
@@ -317,9 +317,13 @@ ENV VISUAL={{.Visual}}
 ENV {{$key}}="{{$value}}"
 {{- end}}
 
-{{/* HEALTHCHECK */}}
+{{/* HEALTHCHECK - default checks for ready signal file */}}
 {{- if and .Instructions .Instructions.Healthcheck}}
 HEALTHCHECK {{if .Instructions.Healthcheck.Interval}}--interval={{.Instructions.Healthcheck.Interval}} {{end}}{{if .Instructions.Healthcheck.Timeout}}--timeout={{.Instructions.Healthcheck.Timeout}} {{end}}{{if .Instructions.Healthcheck.Retries}}--retries={{.Instructions.Healthcheck.Retries}} {{end}}{{if .Instructions.Healthcheck.StartPeriod}}--start-period={{.Instructions.Healthcheck.StartPeriod}} {{end}}CMD [{{range $i, $e := .Instructions.Healthcheck.Cmd}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
+{{- else}}
+# Health check for container readiness (checks for ready signal file)
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
+    CMD test -f /var/run/clawker/ready || exit 1
 {{- end}}
 
 # Install Claude Code

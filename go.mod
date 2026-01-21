@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/cpuguy83/go-md2man/v2 v2.0.7
+	github.com/creack/pty v1.1.24
 	github.com/docker/go-connections v0.6.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/moby/moby/api v1.52.0

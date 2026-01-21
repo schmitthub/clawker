@@ -1,6 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
-        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-install cli-clean
+        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-install cli-clean \
+        test test-integration test-e2e test-coverage test-clean golden-update
 
 # Variables
 IMAGE_NAME ?= clawker
@@ -25,11 +26,19 @@ DIST_DIR := dist
 help:
 	@echo "Clawker - Claude Code Docker Images & CLI"
 	@echo ""
+	@echo "Test targets:"
+	@echo "  test                Unit tests only (fast, no Docker)"
+	@echo "  test-integration    Unit + integration tests (requires Docker)"
+	@echo "  test-e2e            All tests including E2E (requires Docker)"
+	@echo "  test-coverage       Unit tests with coverage"
+	@echo "  test-clean          Remove test Docker resources"
+	@echo "  golden-update       Regenerate golden files"
+	@echo ""
 	@echo "CLI targets:"
 	@echo "  cli                 Build the clawker CLI binary"
 	@echo "  cli-generate        Build the standalone clawker-generate binary"
-	@echo "  cli-test            Run CLI tests"
-	@echo "  cli-test-integration Run CLI integration tests (requires Docker)"
+	@echo "  cli-test            Run CLI tests (alias for 'test')"
+	@echo "  cli-test-integration Run CLI integration tests (alias for 'test-integration')"
 	@echo "  cli-lint            Run linter on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
 	@echo "  cli-clean           Remove CLI build artifacts"
@@ -232,3 +241,42 @@ cli-clean:
 	@echo "Cleaning CLI build artifacts..."
 	rm -rf $(BIN_DIR) $(DIST_DIR)
 	rm -f coverage.out coverage.html
+
+# ============================================================================
+# Test Targets
+# ============================================================================
+
+# Unit tests only (fast, no Docker)
+test:
+	@echo "Running unit tests..."
+	$(GO) test -short ./...
+
+# Unit + integration tests (requires Docker)
+test-integration:
+	@echo "Running unit + integration tests..."
+	$(GO) test -tags=integration ./...
+
+# All tests including E2E
+test-e2e:
+	@echo "Running all tests including E2E..."
+	$(GO) test -tags=integration,e2e -timeout 15m ./...
+
+# Unit tests with coverage
+test-coverage:
+	@echo "Running unit tests with coverage..."
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
+
+# Remove test Docker resources
+test-clean:
+	@echo "Cleaning test resources..."
+	@docker rm -f $$(docker ps -aq --filter "label=com.clawker.test=true") 2>/dev/null || true
+	@docker volume rm $$(docker volume ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
+	@docker network rm $$(docker network ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
+	@echo "Test cleanup complete!"
+
+# Regenerate golden files
+golden-update:
+	@echo "Regenerating golden files..."
+	GOLDEN_UPDATE=1 $(GO) test ./...
