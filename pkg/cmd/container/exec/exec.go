@@ -231,25 +231,25 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
-	errCh := make(chan error, 2)
+	outputDone := make(chan error, 1)
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
 		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
-		errCh <- err
+		outputDone <- err
 	}()
 
 	// Copy stdin to container if interactive
+	// This goroutine can finish anytime - we don't wait for it
 	if opts.Interactive {
 		go func() {
-			_, err := io.Copy(hijacked.Conn, os.Stdin)
+			io.Copy(hijacked.Conn, os.Stdin)
 			hijacked.CloseWrite()
-			errCh <- err
 		}()
 	}
 
-	// Wait for output to complete
-	if err := <-errCh; err != nil && err != io.EOF {
+	// Wait for output to complete (stdin finishing early is fine)
+	if err := <-outputDone; err != nil && err != io.EOF {
 		return err
 	}
 

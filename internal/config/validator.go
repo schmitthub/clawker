@@ -12,21 +12,24 @@ import (
 
 // Validator validates a Config for correctness
 type Validator struct {
-	workDir string
-	errors  []error
+	workDir  string
+	errors   []error
+	warnings []string
 }
 
 // NewValidator creates a new validator for the given working directory
 func NewValidator(workDir string) *Validator {
 	return &Validator{
-		workDir: workDir,
-		errors:  []error{},
+		workDir:  workDir,
+		errors:   []error{},
+		warnings: []string{},
 	}
 }
 
 // Validate checks the configuration for errors and returns all found issues
 func (v *Validator) Validate(cfg *Config) error {
 	v.errors = []error{}
+	v.warnings = []string{}
 
 	v.validateVersion(cfg)
 	v.validateProject(cfg)
@@ -47,6 +50,20 @@ func (v *Validator) addError(field, message string, value interface{}) {
 		Message: message,
 		Value:   value,
 	})
+}
+
+func (v *Validator) addWarning(field, message string) {
+	warning := fmt.Sprintf("%s: %s", field, message)
+	v.warnings = append(v.warnings, warning)
+	// Log to file
+	logger.Warn().
+		Str("field", field).
+		Msg(message)
+}
+
+// Warnings returns the list of validation warnings
+func (v *Validator) Warnings() []string {
+	return v.warnings
 }
 
 func (v *Validator) validateVersion(cfg *Config) {
@@ -133,7 +150,7 @@ func (v *Validator) validateWorkspace(cfg *Config) {
 
 func (v *Validator) validateSecurity(cfg *Config) {
 	// Validate that firewall capabilities are present if firewall is enabled
-	if cfg.Security.EnableFirewall {
+	if cfg.Security.FirewallEnabled() {
 		hasNetAdmin := false
 		hasNetRaw := false
 		for _, cap := range cfg.Security.CapAdd {
@@ -145,15 +162,48 @@ func (v *Validator) validateSecurity(cfg *Config) {
 			}
 		}
 		if !hasNetAdmin || !hasNetRaw {
-			// This is a warning, not an error - we'll add the caps automatically
+			logger.Debug().
+				Bool("has_NET_ADMIN", hasNetAdmin).
+				Bool("has_NET_RAW", hasNetRaw).
+				Msg("firewall enabled; required capabilities will be added automatically if missing")
 		}
 	}
 
-	// Validate allowed domains format
-	for i, domain := range cfg.Security.AllowedDomains {
-		if strings.ContainsAny(domain, " \t\n") {
-			v.addError(fmt.Sprintf("security.allowed_domains[%d]", i), "contains whitespace", domain)
+	// Validate firewall domain configuration
+	if cfg.Security.Firewall != nil {
+		fw := cfg.Security.Firewall
+
+		// Warn if override_domains is set alongside add_domains or remove_domains
+		// The behavior is well-defined (override wins), but user should know their add/remove are ignored
+		if len(fw.OverrideDomains) > 0 && (len(fw.AddDomains) > 0 || len(fw.RemoveDomains) > 0) {
+			v.addWarning("security.firewall", "override_domains is set; add_domains and remove_domains will be ignored")
 		}
+
+		// Validate add_domains format
+		for i, domain := range fw.AddDomains {
+			v.validateDomainFormat(fmt.Sprintf("security.firewall.add_domains[%d]", i), domain)
+		}
+
+		// Validate remove_domains format
+		for i, domain := range fw.RemoveDomains {
+			v.validateDomainFormat(fmt.Sprintf("security.firewall.remove_domains[%d]", i), domain)
+		}
+
+		// Validate override_domains format
+		for i, domain := range fw.OverrideDomains {
+			v.validateDomainFormat(fmt.Sprintf("security.firewall.override_domains[%d]", i), domain)
+		}
+	}
+}
+
+// validateDomainFormat checks if a domain string has a valid format
+func (v *Validator) validateDomainFormat(fieldPath, domain string) {
+	if strings.ContainsAny(domain, " \t\n") {
+		v.addError(fieldPath, "contains whitespace", domain)
+	}
+	// Basic hostname pattern check (not exhaustive, but catches obvious errors)
+	if domain == "" {
+		v.addError(fieldPath, "empty domain", domain)
 	}
 }
 

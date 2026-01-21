@@ -58,7 +58,7 @@ func (l *Loader) Load() (*Config, error) {
 	l.viper.SetDefault("build.packages", defaults.Build.Packages)
 	l.viper.SetDefault("workspace.remote_path", defaults.Workspace.RemotePath)
 	l.viper.SetDefault("workspace.default_mode", defaults.Workspace.DefaultMode)
-	l.viper.SetDefault("security.enable_firewall", defaults.Security.EnableFirewall)
+	l.viper.SetDefault("security.firewall.enable", defaults.Security.Firewall.Enable)
 	l.viper.SetDefault("security.docker_socket", defaults.Security.DockerSocket)
 	l.viper.SetDefault("security.cap_add", defaults.Security.CapAdd)
 	l.viper.SetDefault("agent.shell", "/bin/sh")

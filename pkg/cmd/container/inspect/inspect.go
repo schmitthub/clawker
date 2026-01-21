@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"text/template"
 
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -71,18 +73,18 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	dockerClient, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
 
-	var results []any
+	var results []client.ContainerInspectResult
 	var errs []error
 
 	for _, name := range containers {
 		// Find container by name
-		c, err := client.FindContainerByName(ctx, name)
+		c, err := dockerClient.FindContainerByName(ctx, name)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to find container %q: %w", name, err))
 			continue
@@ -93,7 +95,7 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 		}
 
 		// Inspect the container
-		info, err := client.ContainerInspect(ctx, c.ID)
+		info, err := dockerClient.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to inspect container %q: %w", name, err))
 			continue
@@ -105,9 +107,7 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 	// Output results
 	if len(results) > 0 {
 		if opts.Format != "" {
-			// TODO: Implement Go template formatting
-			// For now, just output JSON
-			return outputJSON(results)
+			return outputFormatted(opts.Format, results)
 		}
 		if err := outputJSON(results); err != nil {
 			return err
@@ -128,4 +128,24 @@ func outputJSON(data any) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "    ")
 	return encoder.Encode(data)
+}
+
+// outputFormatted outputs results using a Go template format string.
+// Templates execute against the Container field (InspectResponse) for Docker CLI compatibility.
+// This means templates like '{{.State.Status}}' work as expected.
+func outputFormatted(format string, results []client.ContainerInspectResult) error {
+	tmpl, err := template.New("format").Parse(format)
+	if err != nil {
+		return fmt.Errorf("invalid format template: %w", err)
+	}
+
+	for _, result := range results {
+		// Execute against .Container (InspectResponse) for Docker CLI compatibility
+		// This allows templates like '{{.State.Status}}' instead of '{{.Container.State.Status}}'
+		if err := tmpl.Execute(os.Stdout, result.Container); err != nil {
+			return fmt.Errorf("template execution failed: %w", err)
+		}
+		fmt.Println()
+	}
+	return nil
 }

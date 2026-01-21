@@ -234,9 +234,9 @@ func TestValidatorValidSecurity(t *testing.T) {
 	validator := NewValidator(tmpDir)
 
 	tests := []struct {
-		name           string
-		allowedDomains []string
-		wantErr        bool
+		name       string
+		addDomains []string
+		wantErr    bool
 	}{
 		{"valid domains", []string{"github.com", "registry.npmjs.org"}, false},
 		{"domain with whitespace", []string{"github .com"}, true},
@@ -248,7 +248,10 @@ func TestValidatorValidSecurity(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
-			cfg.Security.AllowedDomains = tt.allowedDomains
+			if cfg.Security.Firewall == nil {
+				cfg.Security.Firewall = &FirewallConfig{Enable: true}
+			}
+			cfg.Security.Firewall.AddDomains = tt.addDomains
 
 			err := validator.Validate(cfg)
 			hasErr := err != nil
@@ -317,10 +320,9 @@ func TestValidatorCompleteConfig(t *testing.T) {
 			DefaultMode: "bind",
 		},
 		Security: SecurityConfig{
-			EnableFirewall: true,
-			DockerSocket:   false,
-			AllowedDomains: []string{"github.com"},
-			CapAdd:         []string{"NET_ADMIN", "NET_RAW"},
+			Firewall:     &FirewallConfig{Enable: true, AddDomains: []string{"github.com"}},
+			DockerSocket: false,
+			CapAdd:       []string{"NET_ADMIN", "NET_RAW"},
 		},
 	}
 

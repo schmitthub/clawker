@@ -117,6 +117,11 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		return err
 	}
 
+	// Print any warnings
+	for _, warning := range validator.Warnings() {
+		cmdutil.PrintWarning("%s", warning)
+	}
+
 	// Handle Dockerfile path from -f/--file flag
 	if opts.File != "" {
 		cfg.Build.Dockerfile = opts.File

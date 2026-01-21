@@ -219,6 +219,9 @@ VOLUME {{.}}
 
 # Copy and set up firewall script
 {{if .EnableFirewall -}}
+# Firewall domain configuration (passed as JSON environment variable)
+ENV CLAWKER_FIREWALL_DOMAINS='{{.FirewallDomainsJSON}}'
+ENV CLAWKER_FIREWALL_OVERRIDE='{{.FirewallOverride}}'
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
     echo "${USERNAME} ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/${USERNAME}-firewall && \

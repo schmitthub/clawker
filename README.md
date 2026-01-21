@@ -83,7 +83,7 @@ clawker stop --agent ralph # if you detached instead of exiting
 # start up ralph (subscription users need to run interactively first to authenticate like above)
 clawker start --agent ralph
 # send a prompt to run your ralph agent, you can use this in scripts
-echo "hi" | clawker container exec --agent ralph claude -
+echo "hi" | clawker container exec --agent ralph claude -p
 ```
 
 You now have two specialized claude code containers that can be attached to or started/stopped as needed for different purposes
@@ -212,7 +212,7 @@ The wiggum pattern runs Claude Code in autonomous loops with scripted prompts.
 clawker run -it --agent ralph -- --dangerously-skip-permissions
 
 # Send prompts via exec (new claude process per task)
-echo "Fix the tests" | clawker exec -i --agent ralph claude -p -
+echo "Fix the tests" | clawker exec -i --agent ralph claude -p
 
 # Stop when done
 clawker stop --agent ralph
@@ -228,7 +228,7 @@ AGENT="worker"
 TASK="Review the codebase and fix any bugs you find"
 
 while true; do
-  echo "$TASK" | clawker exec --agent "$AGENT" claude -p -
+  echo "$TASK" | clawker exec --agent "$AGENT" claude -p
 
   read -p "Continue? [y/N] " -n 1 -r
   echo
@@ -251,8 +251,8 @@ git worktree add ../myapp-w2 -b feature/tests
 # cd ../myapp-w2 && clawker run -it --agent w2  # complete OAuth, then exit with Ctrl+C
 
 # Run tasks in parallel
-cd ../myapp-w1 && echo "Implement user auth" | clawker exec --agent w1 claude -p - &
-cd ../myapp-w2 && echo "Write integration tests" | clawker exec --agent w2 claude -p - &
+cd ../myapp-w1 && echo "Implement user auth" | clawker exec --agent w1 claude -p &
+cd ../myapp-w2 && echo "Write integration tests" | clawker exec --agent w2 claude -p &
 wait
 
 echo "Both agents finished"
@@ -516,8 +516,15 @@ workspace:
   default_mode: "bind"
 
 security:
-  # Network firewall (blocks outbound by default)
-  enable_firewall: true
+  # Network firewall configuration
+  firewall:
+    enable: true              # Enable network firewall (default: true)
+    # add_domains:            # Add to default allowed domains
+    #   - "api.openai.com"
+    # remove_domains:         # Remove from default allowed domains
+    #   - "registry.npmjs.org"
+    # override_domains:       # Replace entire domain list (ignores add/remove)
+    #   - "github.com"
   # Docker socket access (disabled for security)
   docker_socket: false
   # Host proxy for browser auth (enabled by default)
@@ -527,10 +534,6 @@ security:
   #   forward_https: true   # Forward HTTPS credentials via host proxy
   #   forward_ssh: true     # Forward SSH agent for git+ssh
   #   copy_git_config: true # Copy host ~/.gitconfig
-  # Allowed domains when firewall enabled
-  # allowed_domains:
-  #   - "api.github.com"
-  #   - "registry.npmjs.org"
   # Add Linux capabilities
   # cap_add:
   #   - NET_ADMIN
@@ -575,7 +578,7 @@ clawker image list
 
 ### Exiting a container (ctrl+c) pre-authenticating breaks input
 
-If you start a container and try to exit it with ctrl+c before authenticating and accepting use risk warnings, claude code will hijack the input, not letting you actually exit. Workaround is to detach with ctrl+p, ctrl+q instead, then stop the container with `clawker container stop --agent NAME`.
+If you start a container and try to exit it with ctrl+c before authenticating and accepting use risk warnings, claude code will sometimes hijack the input, not letting you actually exit. Workaround is to detach with ctrl+p, ctrl+q instead, then stop the container with `clawker container stop --agent NAME`.
 
 ### Docker MCP Gateway doesn't work inside containers
 

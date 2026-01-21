@@ -75,3 +75,6 @@ go.work.sum
 .serena/cache
 .serena/logs
 .claude/settings.local.json
+
+# ralph loop working directory
+.ralph/

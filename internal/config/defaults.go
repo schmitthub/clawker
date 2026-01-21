@@ -1,5 +1,21 @@
 package config
 
+// DefaultFirewallDomains is the default list of domains allowed through the firewall.
+// These are essential for Claude Code and common development tools.
+var DefaultFirewallDomains = []string{
+	"registry.npmjs.org",
+	"api.anthropic.com",
+	"sentry.io",
+	"statsig.anthropic.com",
+	"statsig.com",
+	"marketplace.visualstudio.com",
+	"vscode.blob.core.windows.net",
+	"update.code.visualstudio.com",
+	"registry-1.docker.io",
+	"production.cloudflare.docker.com",
+	"docker.io",
+}
+
 // DefaultConfig returns a Config with sensible default values
 func DefaultConfig() *Config {
 	return &Config{
@@ -17,12 +33,17 @@ func DefaultConfig() *Config {
 			DefaultMode: "bind",
 		},
 		Security: SecurityConfig{
-			EnableFirewall: true,  // Enabled by default for safety
-			DockerSocket:   false, // Disabled by default, opt-in
-			CapAdd:         []string{"NET_ADMIN", "NET_RAW"},
+			Firewall: &FirewallConfig{
+				Enable: true, // Enabled by default for safety
+			},
+			DockerSocket: false, // Disabled by default, opt-in
+			CapAdd:       []string{"NET_ADMIN", "NET_RAW"},
 		},
 	}
 }
+
+// TODO: making these dynamically generated while still maintaining commented
+// sections is tricky. For now, we use static strings with placeholders.
 
 // DefaultConfigYAML returns the default configuration as YAML for scaffolding
 const DefaultConfigYAML = `# Clawker Configuration
@@ -58,14 +79,22 @@ workspace:
   default_mode: "bind"
 
 security:
-  # Enable network firewall (blocks outbound traffic by default)
-  enable_firewall: true
+  # Network firewall configuration
+  firewall:
+    # Enable network firewall (blocks outbound traffic by default)
+    enable: true
+    # Add domains to the default allowed list
+    # add_domains:
+    #   - "api.openai.com"
+    # Remove domains from the default allowed list
+    # remove_domains:
+    #   - "registry.npmjs.org"
+    # Override the entire allowed list (ignores add/remove, skips GitHub IP fetching)
+    # override_domains:
+    #   - "api.anthropic.com"
+    #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
-  # Domains allowed through firewall (only when enable_firewall: true)
-  # allowed_domains:
-  #   - "api.github.com"
-  #   - "registry.npmjs.org"
 `
 
 // DefaultSettingsYAML returns the default settings template for new users

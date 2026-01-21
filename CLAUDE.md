@@ -309,7 +309,14 @@ workspace:
   default_mode: "snapshot"
 
 security:
-  enable_firewall: true
+  firewall:
+    enable: true           # Enable network firewall (default: true)
+    # add_domains:         # Add to default allowed domains
+    #   - "api.openai.com"
+    # remove_domains:      # Remove from default allowed domains
+    #   - "registry.npmjs.org"
+    # override_domains:    # Replace entire domain list (ignores add/remove)
+    #   - "github.com"
   docker_socket: false
   git_credentials:
     forward_https: true    # Forward HTTPS credentials via host proxy (default: follows host_proxy)
@@ -317,7 +324,7 @@ security:
     copy_git_config: true  # Copy host ~/.gitconfig (default: true)
 ```
 
-**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`
+**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`
 
 ## Design Decisions
 

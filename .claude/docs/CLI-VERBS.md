@@ -252,6 +252,7 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 | `--quiet` | `-q` | Suppress output |
 | `--force` | `-f` | Force operation (in `remove`, `prune` commands) |
 | `--file` | `-f` | Dockerfile path (in `build` commands) |
+| `--format` | `-f` | Go template format string (in `inspect` commands) |
 | `--all` | `-a` | Include all resources |
 | `--agent` | | Agent name shortcut for container commands |
 | `--mode` | | Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy) |
@@ -260,6 +261,7 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 **Note:** The `-f` shorthand has different meanings depending on context:
 - In build commands: `-f` means `--file` (Dockerfile path) - matches Docker CLI convention
 - In remove/prune commands: `-f` means `--force`
+- In inspect commands: `-f` means `--format` (Go template)
 
 ---
 
@@ -368,6 +370,56 @@ Both modes automatically create the following mounts:
 - Config volume at `/home/claude/.claude`
 - History volume at `/commandhistory`
 - Docker socket mount (if `security.docker_socket: true`)
+
+---
+
+## The `--format` Flag
+
+The `container list` and `container inspect` commands support the `--format` flag to customize output using Go templates.
+
+**Supported commands:**
+
+| Command | Format Target |
+|---------|---------------|
+| `container list` | `docker.Container` with `.Names` alias |
+| `container inspect` | Docker `InspectResponse` (same as Docker CLI) |
+
+**Common template fields for `container list`:**
+
+| Field | Description |
+|-------|-------------|
+| `{{.Name}}` | Container name |
+| `{{.Names}}` | Container name (Docker CLI compatibility alias) |
+| `{{.Status}}` | Container status (e.g., "running", "exited") |
+| `{{.Project}}` | Clawker project name |
+| `{{.Agent}}` | Clawker agent name |
+| `{{.Image}}` | Image name |
+| `{{.ID}}` | Container ID |
+
+**Common template fields for `container inspect`:**
+
+| Field | Description |
+|-------|-------------|
+| `{{.State.Status}}` | Container state (running, exited, etc.) |
+| `{{.Name}}` | Container name (includes leading `/`) |
+| `{{.Config.Image}}` | Image name |
+| `{{.NetworkSettings.IPAddress}}` | Container IP address |
+
+**Examples:**
+
+```bash
+# List container names only
+clawker container ls -a --format '{{.Names}}'
+
+# List with custom format
+clawker container ls -a --format '{{.Name}} {{.Status}}'
+
+# Get container state
+clawker container inspect --agent ralph --format '{{.State.Status}}'
+
+# Get container IP
+clawker container inspect --agent ralph --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+```
 
 ---
 

@@ -47,75 +47,64 @@ iptables -A OUTPUT -o lo -j ACCEPT
 # Create ipset with CIDR support
 ipset create allowed-domains hash:net
 
+# Check if in override mode (skips GitHub IP fetching)
+OVERRIDE_MODE="${CLAWKER_FIREWALL_OVERRIDE:-false}"
+
 # Fetch GitHub meta information and aggregate + add their IP ranges
-echo "Fetching GitHub IP ranges..."
-gh_ranges=$(curl -s https://api.github.com/meta)
-if [ -z "$gh_ranges" ]; then
-    echo "ERROR: Failed to fetch GitHub IP ranges"
-    exit 1
-fi
-
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages and .pages and .importer and .actions and .domains' >/dev/null; then
-    echo "ERROR: GitHub API response missing required fields"
-    exit 1
-fi
-
-echo "Processing GitHub IPs..."
-while read -r cidr; do
-    if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
-        exit 1
-    fi
-    echo "Adding GitHub range $cidr"
-    if ! ipset add allowed-domains "$cidr" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
-        # Ignore "already added" errors, but fail on others
-        error_msg=$(ipset add allowed-domains "$cidr" 2>&1 || true)
-        if [[ ! "$error_msg" =~ "already added" ]]; then
-            echo "ERROR: Failed to add $cidr: $error_msg"
-            exit 1
-        fi
-    fi
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' | aggregate -q)
-
-# Resolve and add other allowed domains
-for domain in \
-    "registry.npmjs.org" \
-    "api.anthropic.com" \
-    "sentry.io" \
-    "statsig.anthropic.com" \
-    "statsig.com" \
-    "marketplace.visualstudio.com" \
-    "vscode.blob.core.windows.net" \
-    "update.code.visualstudio.com" \
-    "registry-1.docker.io" \
-    "production.cloudflare.docker.com" \
-    "proxy.golang.org" \
-    "sum.golang.org" \
-    "docker.io"; do
-    echo "Resolving $domain..."
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
-    if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
+# Only do this if NOT in override mode (override mode is for complete control)
+if [ "$OVERRIDE_MODE" != "true" ]; then
+    echo "Fetching GitHub IP ranges..."
+    gh_ranges=$(curl -s https://api.github.com/meta)
+    if [ -z "$gh_ranges" ]; then
+        echo "ERROR: Failed to fetch GitHub IP ranges"
         exit 1
     fi
 
-    while read -r ip; do
-        if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "ERROR: Invalid IP from DNS for $domain: $ip"
+    if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages and .pages and .importer and .actions and .domains' >/dev/null; then
+        echo "ERROR: GitHub API response missing required fields"
+        exit 1
+    fi
+
+    echo "Processing GitHub IPs..."
+    while read -r cidr; do
+        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
             exit 1
         fi
-        echo "Adding $ip for $domain"
-        if ! ipset add allowed-domains "$ip" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
-            echo "INFO: $ip for $domain is already in the set, skipping"
-            # Ignore "already added" errors, but fail on others
-            error_msg=$(ipset add allowed-domains "$ip" 2>&1 || true)
-            if [[ ! "$error_msg" =~ "already added" ]]; then
-                echo "ERROR: Failed to add $ip: $error_msg"
-                exit 1
+        echo "Adding GitHub range $cidr"
+        ipset add allowed-domains "$cidr" -exist 2>/dev/null || true
+    done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' | aggregate -q)
+else
+    echo "Override mode: skipping GitHub IP fetching"
+fi
+
+# Read configured domains from environment variable (JSON array)
+# CLAWKER_FIREWALL_DOMAINS is set during Docker build from clawker.yaml config
+if [ -n "${CLAWKER_FIREWALL_DOMAINS:-}" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]; then
+    echo "Processing configured firewall domains..."
+    while read -r domain; do
+        if [ -z "$domain" ]; then
+            continue
+        fi
+        echo "Resolving $domain..."
+        ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
+        if [ -z "$ips" ]; then
+            echo "WARNING: Failed to resolve $domain, skipping"
+            continue
+        fi
+
+        while read -r ip; do
+            if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                echo "WARNING: Invalid IP from DNS for $domain: $ip, skipping"
+                continue
             fi
-        fi
-    done < <(echo "$ips")
-done
+            echo "Adding $ip for $domain"
+            ipset add allowed-domains "$ip" -exist 2>/dev/null || true
+        done < <(echo "$ips")
+    done < <(echo "$CLAWKER_FIREWALL_DOMAINS" | jq -r '.[]')
+else
+    echo "No custom firewall domains configured"
+fi
 
 # Get host IP from default route
 HOST_IP=$(ip route | grep default | cut -d" " -f3)
@@ -187,10 +176,12 @@ else
     echo "Firewall verification passed - unable to reach https://example.com as expected"
 fi
 
-# Verify GitHub API access
-if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
-    echo "ERROR: Firewall verification failed - unable to reach https://api.github.com"
-    exit 1
-else
-    echo "Firewall verification passed - able to reach https://api.github.com as expected"
+# Verify GitHub API access (only if not in override mode, since override might not include GitHub)
+if [ "$OVERRIDE_MODE" != "true" ]; then
+    if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
+        echo "ERROR: Firewall verification failed - unable to reach https://api.github.com"
+        exit 1
+    else
+        echo "Firewall verification passed - able to reach https://api.github.com as expected"
+    fi
 fi

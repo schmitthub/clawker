@@ -92,10 +92,9 @@ func TestConfigStructure(t *testing.T) {
 			DefaultMode: "snapshot",
 		},
 		Security: SecurityConfig{
-			EnableFirewall: true,
-			DockerSocket:   false,
-			AllowedDomains: []string{"github.com"},
-			CapAdd:         []string{"NET_ADMIN"},
+			Firewall:     &FirewallConfig{Enable: true, AddDomains: []string{"github.com"}},
+			DockerSocket: false,
+			CapAdd:       []string{"NET_ADMIN"},
 		},
 	}
 
@@ -109,8 +108,8 @@ func TestConfigStructure(t *testing.T) {
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("Config.Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")
 	}
-	if !cfg.Security.EnableFirewall {
-		t.Error("Config.Security.EnableFirewall should be true")
+	if !cfg.Security.FirewallEnabled() {
+		t.Error("Config.Security.FirewallEnabled() should be true")
 	}
 	if cfg.Security.DockerSocket {
 		t.Error("Config.Security.DockerSocket should be false")
