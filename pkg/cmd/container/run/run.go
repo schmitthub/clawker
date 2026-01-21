@@ -15,14 +15,12 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/strslice"
-	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -266,13 +264,13 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Create container (whail injects managed labels and auto-connects to clawker-net)
-	resp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkConfig,
 		Name:             containerName,
-		ExtraLabels:      whail.Labels{extraLabels},
-		EnsureNetwork: &whail.EnsureNetworkOptions{
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
 			Name: docker.NetworkName,
 		},
 	})
@@ -289,7 +287,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Start the container
-	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		cmdutil.HandleError(err)
 		return err
 	}
@@ -307,7 +305,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 // attachAndWait attaches to a running container and waits for it to exit.
 func attachAndWait(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
 	// Create attach options
-	attachOpts := dockerclient.ContainerAttachOptions{
+	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  opts.Stdin,
 		Stdout: true,

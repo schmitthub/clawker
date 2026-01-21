@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -155,7 +154,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Create exec configuration
-	execConfig := dockerclient.ExecCreateOptions{
+	execConfig := docker.ExecCreateOptions{
 		AttachStdin:  opts.Interactive,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -183,7 +182,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 
 	// If detached, just start and return
 	if opts.Detach {
-		_, err := client.ExecStart(ctx, execID, dockerclient.ExecStartOptions{
+		_, err := client.ExecStart(ctx, execID, docker.ExecStartOptions{
 			Detach: true,
 			TTY:    opts.TTY,
 		})
@@ -206,7 +205,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	}
 
 	// Attach to exec
-	attachOpts := dockerclient.ExecAttachOptions{
+	attachOpts := docker.ExecAttachOptions{
 		TTY: opts.TTY,
 	}
 
@@ -221,7 +220,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	if opts.TTY && pty != nil {
 		// Use PTY handler for TTY mode with resize support
 		resizeFunc := func(height, width uint) error {
-			_, err := client.ExecResize(ctx, execID, dockerclient.ExecResizeOptions{
+			_, err := client.ExecResize(ctx, execID, docker.ExecResizeOptions{
 				Height: height,
 				Width:  width,
 			})

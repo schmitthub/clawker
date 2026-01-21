@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
 )
 
@@ -86,7 +86,7 @@ func (p *PTYHandler) resetVisualStateUnlocked() {
 }
 
 // Stream handles bidirectional I/O between local terminal and container
-func (p *PTYHandler) Stream(ctx context.Context, hijacked client.HijackedResponse) error {
+func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedResponse) error {
 	defer hijacked.Close()
 
 	outputDone := make(chan struct{})
@@ -127,7 +127,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked client.HijackedRespons
 // StreamWithResize handles bidirectional I/O with terminal resize support
 func (p *PTYHandler) StreamWithResize(
 	ctx context.Context,
-	hijacked client.HijackedResponse,
+	hijacked docker.HijackedResponse,
 	resizeFunc func(height, width uint) error,
 ) error {
 	defer hijacked.Close()

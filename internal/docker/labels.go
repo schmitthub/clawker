@@ -5,7 +5,7 @@ package docker
 import (
 	"time"
 
-	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // Clawker label keys for managed resources.
@@ -82,20 +82,20 @@ func NetworkLabels() map[string]string {
 }
 
 // ClawkerFilter returns Docker filter for listing all clawker resources.
-func ClawkerFilter() client.Filters {
-	return client.Filters{}.Add("label", LabelManaged+"="+ManagedLabelValue)
+func ClawkerFilter() whail.Filters {
+	return whail.Filters{}.Add("label", LabelManaged+"="+ManagedLabelValue)
 }
 
 // ProjectFilter returns Docker filter for a specific project.
-func ProjectFilter(project string) client.Filters {
-	return client.Filters{}.
+func ProjectFilter(project string) whail.Filters {
+	return whail.Filters{}.
 		Add("label", LabelManaged+"="+ManagedLabelValue).
 		Add("label", LabelProject+"="+project)
 }
 
 // AgentFilter returns Docker filter for a specific agent within a project.
-func AgentFilter(project, agent string) client.Filters {
-	return client.Filters{}.
+func AgentFilter(project, agent string) whail.Filters {
+	return whail.Filters{}.
 		Add("label", LabelManaged+"="+ManagedLabelValue).
 		Add("label", LabelProject+"="+project).
 		Add("label", LabelAgent+"="+agent)

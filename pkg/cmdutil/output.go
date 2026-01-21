@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/schmitthub/clawker/internal/docker"
 )
 
 // HandleError prints an error to stderr with user-friendly formatting.
@@ -16,7 +16,7 @@ func HandleError(err error) {
 		return
 	}
 
-	if dockerErr, ok := err.(*whail.DockerError); ok {
+	if dockerErr, ok := err.(*docker.DockerError); ok {
 		fmt.Fprint(os.Stderr, dockerErr.FormatUserError())
 		return
 	}

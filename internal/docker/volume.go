@@ -13,8 +13,8 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // EnsureVolume creates a volume if it doesn't exist, returns true if created.
@@ -29,7 +29,7 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 		return false, nil
 	}
 
-	opts := client.VolumeCreateOptions{
+	opts := whail.VolumeCreateOptions{
 		Name:   name,
 		Labels: labels,
 	}
@@ -75,7 +75,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	// Pull busybox if needed
 	exists, _ := c.ImageExists(ctx, "busybox:latest")
 	if !exists {
-		pullResp, err := c.APIClient.ImagePull(ctx, "busybox:latest", client.ImagePullOptions{})
+		pullResp, err := c.APIClient.ImagePull(ctx, "busybox:latest", whail.ImagePullOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to pull busybox: %w", err)
 		}
@@ -87,7 +87,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	}
 
 	// Create temporary container (bypass whail's label checks for temp container)
-	createOpts := client.ContainerCreateOptions{
+	createOpts := whail.SDKContainerCreateOptions{
 		Config:     containerConfig,
 		HostConfig: hostConfig,
 	}
@@ -98,7 +98,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	defer func() {
 		// Use background context since original may be cancelled
 		cleanupCtx := context.Background()
-		if _, err := c.APIClient.ContainerRemove(cleanupCtx, resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+		if _, err := c.APIClient.ContainerRemove(cleanupCtx, resp.ID, whail.ContainerRemoveOptions{Force: true}); err != nil {
 			logger.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
 		}
 	}()
@@ -107,7 +107,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	_, err = c.APIClient.CopyToContainer(
 		ctx,
 		resp.ID,
-		client.CopyToContainerOptions{
+		whail.CopyToContainerOptions{
 			DestinationPath: destPath,
 			Content:         tarBuffer,
 		},

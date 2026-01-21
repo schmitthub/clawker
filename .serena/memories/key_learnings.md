@@ -6,7 +6,7 @@
   - Once subcommands are added, they move to "Available Commands"
   - Commands use positional args for container names (Docker-like)
   - Helper function `splitArgs` shared across test files in same package
-  - Commands use `internal/docker.Client` instead of legacy `internal/engine`
+  - Commands MUST USE `internal/docker.Client` instead of legacy `internal/engine` or `github.com/moby/moby/client.Client`
   - Terminal visual state (alternate screen buffer, cursor visibility, text attributes) is separate from termios mode. `term.Restore()` sends ANSI escape sequences (`\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B`) to reset visual state before restoring termios after container detach/exit.
   - Never bypass whail - scaffold with TODO if method missing
   - Stats streaming requires goroutines for concurrent container stat collection

@@ -7,7 +7,7 @@ import (
 	"os"
 	"text/template"
 
-	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -79,7 +79,7 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 		return err
 	}
 
-	var results []client.ContainerInspectResult
+	var results []docker.ContainerInspectResult
 	var errs []error
 
 	for _, name := range containers {
@@ -133,7 +133,7 @@ func outputJSON(data any) error {
 // outputFormatted outputs results using a Go template format string.
 // Templates execute against the Container field (InspectResponse) for Docker CLI compatibility.
 // This means templates like '{{.State.Status}}' work as expected.
-func outputFormatted(format string, results []client.ContainerInspectResult) error {
+func outputFormatted(format string, results []docker.ContainerInspectResult) error {
 	tmpl, err := template.New("format").Parse(format)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)

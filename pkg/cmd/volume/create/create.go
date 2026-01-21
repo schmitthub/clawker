@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -70,7 +70,7 @@ func run(f *cmdutil.Factory, opts *Options, name string) error {
 	}
 
 	// Build create options
-	createOpts := dockerclient.VolumeCreateOptions{
+	createOpts := docker.VolumeCreateOptions{
 		Name:       name,
 		Driver:     opts.Driver,
 		DriverOpts: parseDriverOpts(opts.DriverOpts),

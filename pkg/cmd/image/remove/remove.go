@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +67,7 @@ func run(f *cmdutil.Factory, opts *Options, images []string) error {
 		return err
 	}
 
-	removeOpts := dockerclient.ImageRemoveOptions{
+	removeOpts := docker.ImageRemoveOptions{
 		Force:         opts.Force,
 		PruneChildren: !opts.NoPrune,
 	}

@@ -8,12 +8,10 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
-	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -134,9 +132,9 @@ func startContainer(ctx context.Context, client *docker.Client, name string, opt
 	}
 
 	// Start the container (ensuring it's connected to clawker-net)
-	_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{
+	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
 		ContainerID: c.ID,
-		EnsureNetwork: &whail.EnsureNetworkOptions{
+		EnsureNetwork: &docker.EnsureNetworkOptions{
 			Name: docker.NetworkName,
 		},
 	})
@@ -174,7 +172,7 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 	hasTTY := info.Container.Config.Tty
 
 	// Create attach options
-	attachOpts := dockerclient.ContainerAttachOptions{
+	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  opts.Interactive,
 		Stdout: true,
