@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -63,7 +63,7 @@ func run(f *cmdutil.Factory, opts *Options, networks []string) error {
 
 	for _, name := range networks {
 		// Inspect the network
-		net, err := client.NetworkInspect(ctx, name, dockerclient.NetworkInspectOptions{
+		net, err := client.NetworkInspect(ctx, name, docker.NetworkInspectOptions{
 			Verbose: opts.Verbose,
 		})
 		if err != nil {

@@ -190,6 +190,8 @@ CONTAINER                              HOST PROXY (:18374)               HOST
 ## Code Style
 
 - **Logging**: `zerolog` only (never `fmt.Print` for debug)
+- **Whail Client Enforcement**: No go package should be using the `github.com/moby/moby/client` library directly except for `@pkg/whail`. And no go package should be using `@pkg/whail` directly except for `@internal/docker`
+- **Whail Client is a Decorator**: `@pkg/whail` decorates `github.com/moby/moby/client` and exposes the same interface so higher-level code can remain agnostic. All of the methods offered through `github.com/moby/moby/client` are available through `@pkg/whail` regardless of whether they are explicitly defined in `@pkg/whail` or not.
 - **User output**: `cmdutil.PrintError()`, `cmdutil.PrintNextSteps()` to stderr
 - **Data output**: stdout only for scripting (e.g., `ls` table)
 - **Errors**: `cmdutil.HandleError(err)` for Docker errors

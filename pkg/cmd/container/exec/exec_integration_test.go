@@ -391,9 +391,9 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		containerName := h.ContainerName(agentName)
 
 		// Create and start a container
-		resp, err := rawClient.ContainerCreate(ctx, container.CreateOptions{
+		resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 			Name: containerName,
-			ContainerConfig: &container.Config{
+			Config: &container.Config{
 				Image: imageTag,
 				Cmd:   []string{"sleep", "300"},
 				Labels: testutil.AddClawkerLabels(map[string]string{
@@ -402,7 +402,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			},
 		})
 		require.NoError(t, err, "failed to create container")
-		err = rawClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+		_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 		require.NoError(t, err, "failed to start container")
 
 		// Wait for container to be ready
@@ -439,9 +439,9 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		containerName := h.ContainerName(agentName)
 
 		// Create a container but don't start it
-		_, err := rawClient.ContainerCreate(ctx, container.CreateOptions{
+		_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 			Name: containerName,
-			ContainerConfig: &container.Config{
+			Config: &container.Config{
 				Image: imageTag,
 				Cmd:   []string{"sleep", "300"},
 				Labels: testutil.AddClawkerLabels(map[string]string{
@@ -513,9 +513,9 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	containerName := h.ContainerName(agentName)
 
 	// Create and start a container
-	resp, err := rawClient.ContainerCreate(ctx, container.CreateOptions{
+	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
-		ContainerConfig: &container.Config{
+		Config: &container.Config{
 			Image: imageTag,
 			Cmd:   []string{"sleep", "300"},
 			Labels: testutil.AddClawkerLabels(map[string]string{
@@ -524,7 +524,7 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 		},
 	})
 	require.NoError(t, err, "failed to create container")
-	err = rawClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be ready
@@ -548,7 +548,7 @@ chmod +x /tmp/test-script.sh`}
 	}
 	execResp, err := rawClient.ExecCreate(ctx, resp.ID, execConfig)
 	require.NoError(t, err)
-	err = rawClient.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
+	_, err = rawClient.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
 	require.NoError(t, err)
 
 	tests := []struct {

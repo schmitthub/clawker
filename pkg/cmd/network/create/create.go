@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +72,7 @@ func run(f *cmdutil.Factory, opts *Options, name string) error {
 	}
 
 	// Build create options
-	createOpts := dockerclient.NetworkCreateOptions{
+	createOpts := docker.NetworkCreateOptions{
 		Driver:     opts.Driver,
 		Options:    parseDriverOpts(opts.DriverOpts),
 		Labels:     parseLabels(opts.Labels),

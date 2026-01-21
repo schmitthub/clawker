@@ -11,7 +11,6 @@ import (
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -75,7 +74,7 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 	}
 	defer client.Close()
 
-	if _, err := client.EnsureNetwork(ctx, whail.EnsureNetworkOptions{
+	if _, err := client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{
 		Name: config.ClawkerNetwork,
 	}); err != nil {
 		return fmt.Errorf("failed to ensure Docker network '%s': %w", config.ClawkerNetwork, err)

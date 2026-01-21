@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -202,7 +201,7 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 	}
 
 	// Get tar archive from container
-	copyResult, err := client.CopyFromContainer(ctx, c.ID, dockerclient.CopyFromContainerOptions{SourcePath: srcPath})
+	copyResult, err := client.CopyFromContainer(ctx, c.ID, docker.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
@@ -231,7 +230,7 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 
 	// If source is stdin, read tar directly
 	if srcPath == "-" {
-		copyOpts := dockerclient.CopyToContainerOptions{
+		copyOpts := docker.CopyToContainerOptions{
 			DestinationPath:           dstPath,
 			Content:                   os.Stdin,
 			AllowOverwriteDirWithFile: true,
@@ -248,7 +247,7 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 	}
 
 	// Copy to container
-	copyOpts := dockerclient.CopyToContainerOptions{
+	copyOpts := docker.CopyToContainerOptions{
 		DestinationPath:           dstPath,
 		Content:                   tarReader,
 		AllowOverwriteDirWithFile: true,

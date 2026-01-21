@@ -11,7 +11,6 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -51,8 +50,8 @@ func (c *Client) Close() error {
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	// Use raw API client to bypass managed label filtering
 	// since monitoring containers aren't clawker-managed
-	f := client.Filters{}.Add("name", "otel-collector").Add("status", "running")
-	result, err := c.APIClient.ContainerList(ctx, client.ContainerListOptions{
+	f := whail.Filters{}.Add("name", "otel-collector").Add("status", "running")
+	result, err := c.APIClient.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
 	if err != nil {
@@ -105,7 +104,7 @@ type BuildImageOpts struct {
 // BuildImage builds a Docker image from a build context.
 // It processes the build output and logs progress.
 func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
-	options := client.ImageBuildOptions{
+	options := whail.ImageBuildOptions{
 		Tags:           opts.Tags,
 		Dockerfile:     opts.Dockerfile,
 		Remove:         true,
@@ -242,7 +241,7 @@ type Container struct {
 
 // ListContainers returns all clawker-managed containers.
 func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Container, error) {
-	opts := client.ContainerListOptions{
+	opts := whail.ContainerListOptions{
 		All:     includeAll,
 		Filters: ClawkerFilter(),
 	}
@@ -257,7 +256,7 @@ func (c *Client) ListContainers(ctx context.Context, includeAll bool) ([]Contain
 
 // ListContainersByProject returns containers for a specific project.
 func (c *Client) ListContainersByProject(ctx context.Context, project string, includeAll bool) ([]Container, error) {
-	opts := client.ContainerListOptions{
+	opts := whail.ContainerListOptions{
 		All:     includeAll,
 		Filters: ProjectFilter(project),
 	}

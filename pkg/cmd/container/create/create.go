@@ -18,7 +18,6 @@ import (
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/schmitthub/clawker/pkg/logger"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -246,13 +245,13 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Create container (whail injects managed labels and auto-connects to clawker-net)
-	resp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkConfig,
 		Name:             containerName,
-		ExtraLabels:      whail.Labels{extraLabels},
-		EnsureNetwork: &whail.EnsureNetworkOptions{
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
 			Name: docker.NetworkName,
 		},
 	})

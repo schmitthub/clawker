@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -65,7 +65,7 @@ func run(f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// List images
-	listOpts := dockerclient.ImageListOptions{
+	listOpts := docker.ImageListOptions{
 		All: opts.All,
 	}
 	images, err := client.ImageList(ctx, listOpts)

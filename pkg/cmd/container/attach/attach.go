@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -108,7 +108,7 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	hasTTY := info.Container.Config.Tty
 
 	// Create attach options
-	attachOpts := dockerclient.ContainerAttachOptions{
+	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  !opts.NoStdin,
 		Stdout: true,

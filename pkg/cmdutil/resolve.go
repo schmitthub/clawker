@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/logger"
@@ -39,11 +38,11 @@ func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project 
 
 	// Build filter for project label
 	// Images built by clawker have com.clawker.project=<project>
-	f := client.Filters{}.
+	f := docker.Filters{}.
 		Add("label", docker.LabelManaged+"="+docker.ManagedLabelValue).
 		Add("label", docker.LabelProject+"="+project)
 
-	result, err := dockerClient.ImageList(ctx, client.ImageListOptions{
+	result, err := dockerClient.ImageList(ctx, docker.ImageListOptions{
 		Filters: f,
 	})
 	if err != nil {
