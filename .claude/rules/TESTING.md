@@ -135,8 +135,3 @@ func TestNewCmdToken(t *testing.T) {
  }
 }
 ```
-
-### 11.3 Manual Testing
-
-**test requiring builds**
-- Builds (ie: `go build ...`) always go in the project root's binary directory `./bin/`, never in the project root, to avoid polluting the working directory.

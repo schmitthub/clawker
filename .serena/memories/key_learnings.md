@@ -21,7 +21,6 @@
   - Global flag `-D/--debug` reserves `-D` shorthand; don't reuse it in subcommands
   - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
   - Test ordering matters: tests that remove resources affect later tests using same resources
-  - TestImageRemove must create its own image, not reuse testImageTag that other tests need
   - Container create/run reuse buildConfigs for Docker config construction
   - Run command must handle both TTY and non-TTY I/O with proper channel selection
   - Test slices: GetStringArray returns empty slice not nil; use helper to compare nil==[]

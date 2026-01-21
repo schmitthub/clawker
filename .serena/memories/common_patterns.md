@@ -55,7 +55,7 @@ For commands that operate on containers. Use `internal/docker.Client` (wraps `pk
 func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
     ctx := context.Background()
     cfg, _ := f.Config()
-    
+
     // ALWAYS use Factory's Client method
     client, err := f.Client(ctx)
     if err != nil {
@@ -89,7 +89,7 @@ func runCmd(f *cmdutil.Factory, opts *CmdOptions) error {
         }
         containerID = containers[0].ID
     }
-    
+
     // Use whail methods directly via embedded Engine
     err = client.ContainerStop(ctx, containerID, nil)
     // ... or client.ContainerKill, ContainerRestart, etc.
@@ -108,7 +108,7 @@ func NewCmdXxx(f *cmdutil.Factory) *cobra.Command {
         Args:    cobra.MinimumNArgs(1),
         RunE: func(cmd *cobra.Command, args []string) error {
             ctx := context.Background()
-            
+
             // ALWAYS use Factory's Client method - never docker.NewClient directly
             client, err := f.Client(ctx)
             if err != nil {
@@ -116,7 +116,7 @@ func NewCmdXxx(f *cmdutil.Factory) *cobra.Command {
                 return err
             }
             // Note: Do NOT call defer client.Close() - Factory manages client lifecycle
-            
+
             for _, name := range args {
                 // Operations use whail methods via embedded Engine
                 if err := client.ContainerXxx(ctx, name); err != nil {
@@ -301,16 +301,15 @@ if opts.Detach && opts.Remove {
 # Build
 go build -o bin/clawker ./cmd/clawker
 
-# Run all tests
+# Run all tests (short mode)
 go test ./...
 
 # Run specific package tests
-go test -v ./internal/engine/...
+go test -v ./pkg/whail/...
 
 # Static analysis
 go vet ./...
 go fmt ./...
-```
 
 ## Whail Engine Method Pattern
 
@@ -327,7 +326,7 @@ func (e *Engine) ContainerXxx(ctx context.Context, containerID string, ...) erro
     if !isManaged {
         return ErrContainerNotFound(containerID)
     }
-    
+
     // 2. Perform the operation
     if err := e.APIClient.ContainerXxx(ctx, containerID, ...); err != nil {
         return ErrContainerXxxFailed(containerID, err)

@@ -387,7 +387,6 @@ go test ./...
 
 # Integration tests (requires Docker)
 go test ./pkg/cmd/... -tags=integration -v -timeout 10m
-```
 
 See @.claude/rules/TESTING.md for detailed testing guidelines.
 
