@@ -386,8 +386,18 @@ See `context_management` memory for detailed patterns and examples.
 go test ./...
 
 # Integration tests (requires Docker)
-go test ./pkg/cmd/... -tags=integration -v -timeout 10m
+go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+
+# E2E tests (requires Docker, builds binary)
+go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
 ```
+
+**Test Utilities:** The `internal/testutil` package provides:
+- `Harness` - Isolated test environments with automatic cleanup
+- `ConfigBuilder` - Fluent API for test configs
+- `NewTestClient` / `NewRawDockerClient` - Docker client helpers
+- `WaitForReadyFile` / `WaitForHealthy` - Container readiness detection
+- `CleanupProjectResources` - Resource cleanup with error collection
 
 See @.claude/rules/TESTING.md for detailed testing guidelines.
 

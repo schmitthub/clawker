@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/schmitthub/clawker/pkg/cmd/testutil"
+	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"

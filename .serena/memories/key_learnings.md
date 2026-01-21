@@ -21,7 +21,6 @@
   - Global flag `-D/--debug` reserves `-D` shorthand; don't reuse it in subcommands
   - VolumesPrune needs `all=true` filter to prune named volumes (Docker default only prunes anonymous)
   - Test ordering matters: tests that remove resources affect later tests using same resources
-  - TestImageRemove must create its own image, not reuse testImageTag that other tests need
   - Container create/run reuse buildConfigs for Docker config construction
   - Run command must handle both TTY and non-TTY I/O with proper channel selection
   - Test slices: GetStringArray returns empty slice not nil; use helper to compare nil==[]
@@ -36,3 +35,17 @@
   - Factory pattern for hostproxy: lazy init with sync.Once, EnsureRunning() before container commands
   - BROWSER env var set to /usr/local/bin/host-open so CLI tools use host proxy automatically
   - Terminal attach TUI redraw: Use Docker CLI's +1/-1 resize trick to force redraw. Resize to (height+1, width+1) then back to (height, width) - this forces SIGWINCH and triggers TUI redraw. See docker/cli attach.go resizeTTY(). Implemented in StreamWithResize.
+
+## Testing Infrastructure Learnings
+
+- **Build tags for test isolation**: Use `//go:build integration` and `//go:build e2e` to separate tests by Docker requirement
+- **Test naming**: `*_integration_test.go` for Docker tests, `*_e2e_test.go` for binary execution tests
+- **Never silent discard errors in cleanup**: Use `errors.Join()` to aggregate, or `t.Logf()` for warnings
+- **Cleanup context**: Always use `context.Background()` in `t.Cleanup()` since original context may be cancelled
+- **Agent name uniqueness**: Include timestamp + random suffix for parallel test safety: `fmt.Sprintf("test-%s-%d", time.Now().Format("150405"), rand.Intn(10000))`
+- **Container readiness fail-fast**: Check container state in readiness loops - return error immediately if container exited
+- **Log streaming connection errors**: Connection reset/broken pipe indicates container died, not transient error
+- **Both invocation patterns**: Always test `--agent flag` AND `container name` patterns for all container commands
+- **FindProjectRoot utility**: Use `testutil.FindProjectRoot()` instead of duplicating - uses `runtime.Caller()` for reliability
+- **Test image cleanup**: `BuildTestImage` automatically registers `t.Cleanup()` for image removal
+- **Readiness timeout constants**: `DefaultReadyTimeout` (60s local), `CIReadyTimeout` (120s CI), `E2EReadyTimeout` (180s E2E)
