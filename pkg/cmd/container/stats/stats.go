@@ -18,9 +18,10 @@ import (
 
 // Options defines the options for the stats command.
 type Options struct {
-	Agent    string
-	NoStream bool
-	NoTrunc  bool
+	Agent      bool // if set to true, treat arguments as agent name
+	NoStream   bool
+	NoTrunc    bool
+	containers []string
 }
 
 // NewCmd creates a new stats command.
@@ -54,38 +55,29 @@ Container names can be:
 
   # Show stats once for a specific container
   clawker container stats --no-stream --agent ralph`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" && len(args) > 0 {
-				return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
-			}
-			return nil
-		},
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.containers = args
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVar(&opts.NoStream, "no-stream", false, "Disable streaming stats and only pull the first result")
 	cmd.Flags().BoolVar(&opts.NoTrunc, "no-trunc", false, "Do not truncate output")
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Resolve container names if --agent provided
-	var containers []string
-	if opts.Agent != "" {
-		resolved, err := cmdutil.ResolveContainerNames(f, opts.Agent, nil)
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
-		containers = resolved
-	} else {
-		containers = args
 	}
 
 	// Connect to Docker

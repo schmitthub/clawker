@@ -11,7 +11,9 @@ import (
 
 // Options defines the options for the rename command.
 type Options struct {
-	Agent string
+	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
+	container string
+	newName   string
 }
 
 // NewCmd creates a new rename command.
@@ -19,7 +21,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "rename [CONTAINER] NEW_NAME",
+		Use:   "rename CONTAINER NEW_NAME",
 		Short: "Rename a container",
 		Long: `Renames a clawker container.
 
@@ -37,45 +39,30 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" {
-				if len(args) != 1 {
-					return fmt.Errorf("with --agent, requires exactly 1 argument: NEW_NAME")
-				}
-				return nil
-			}
-			if len(args) != 2 {
-				return fmt.Errorf("requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME")
-			}
-			return nil
-		},
+		Args: cmdutil.RequiresMinArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.container = args[0]
+			opts.newName = args[1]
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat first argument as agent name (resolves to clawker.<project>.<agent>)")
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	var containerName, newName string
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	oldName := opts.container
+	newName := opts.newName
 
-	if opts.Agent != "" {
-		// Resolve agent name
-		containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, nil)
+	if opts.Agent {
+		var err error
+		oldName, err = cmdutil.ResolveContainerName(f, oldName)
 		if err != nil {
 			return err
 		}
-		containerName = containers[0]
-		newName = args[0]
-	} else {
-		containerName = args[0]
-		newName = args[1]
 	}
-	ctx := context.Background()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -85,12 +72,12 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	}
 
 	// Find container by name
-	c, err := client.FindContainerByName(ctx, containerName)
+	c, err := client.FindContainerByName(ctx, oldName)
 	if err != nil {
-		return fmt.Errorf("failed to find container %q: %w", containerName, err)
+		return fmt.Errorf("failed to find container %q: %w", oldName, err)
 	}
 	if c == nil {
-		return fmt.Errorf("container %q not found", containerName)
+		return fmt.Errorf("container %q not found", oldName)
 	}
 
 	// Rename the container

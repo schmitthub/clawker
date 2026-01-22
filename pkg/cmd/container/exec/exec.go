@@ -16,7 +16,7 @@ import (
 
 // Options holds options for the exec command.
 type Options struct {
-	Agent       string // Agent name to resolve container
+	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
 	TTY         bool
 	Detach      bool
@@ -67,38 +67,26 @@ Container name can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" {
-				// With --agent, only need COMMAND (min 1 arg)
-				if len(args) == 0 {
-					return fmt.Errorf("requires at least 1 command argument when using --agent")
-				}
-			} else {
-				// Without --agent, need CONTAINER COMMAND (min 2 args)
-				if len(args) < 2 {
-					return fmt.Errorf("requires at least 2 arg(s), only received %d", len(args))
+		Args: cmdutil.RequiresMinArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			containerName := args[0]
+			if opts.Agent {
+				var err error
+				containerName, err = cmdutil.ResolveContainerName(f, args[0])
+				if err != nil {
+					return err
 				}
 			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var containerName string
+
 			var command []string
-			if opts.Agent != "" {
-				// Use all args as command
-				containerName = "" // Will be resolved from agent
-				command = args
-			} else {
-				// First arg is container, rest are command
-				containerName = args[0]
+			if len(args) > 1 {
 				command = args[1:]
 			}
-			return run(f, opts, containerName, command)
+			return run(cmd.Context(), f, opts, containerName, command)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name as first argument (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Keep STDIN open even if not attached")
 	cmd.Flags().BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Detached mode: run command in the background")
@@ -110,35 +98,12 @@ Container name can be:
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
-	}
-
-	// Resolve container name if using --agent
-	if opts.Agent != "" {
-		cfg, err := f.Config()
-		if err != nil {
-			cmdutil.PrintError("Failed to load config: %v", err)
-			cmdutil.PrintNextSteps(
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return err
-		}
-		if cfg.Project == "" {
-			cmdutil.PrintError("Project name not configured in clawker.yaml")
-			cmdutil.PrintNextSteps(
-				"Add 'project: <name>' to your clawker.yaml",
-			)
-			return fmt.Errorf("project name not configured")
-		}
-		containerName = docker.ContainerName(cfg.Project, opts.Agent)
 	}
 
 	// Find container by name

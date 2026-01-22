@@ -208,7 +208,7 @@ func TestRunIntegration_Labels(t *testing.T) {
 	require.Equal(t, agentName, container.Agent)
 
 	// Use ContainerInspect to check full labels including custom ones
-	info, err := client.ContainerInspect(ctx, container.ID)
+	info, err := client.ContainerInspect(ctx, container.ID, docker.ContainerInspectOptions{})
 	require.NoError(t, err, "failed to inspect container")
 
 	labels := info.Container.Config.Labels

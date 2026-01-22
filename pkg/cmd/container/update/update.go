@@ -5,10 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
-	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -16,16 +13,25 @@ import (
 
 // Options defines the options for the update command.
 type Options struct {
-	Agent             string
-	CPUs              float64
-	CPUShares         int64
-	CPUsetCPUs        string
-	CPUsetMems        string
-	Memory            string
-	MemoryReservation string
-	MemorySwap        string
-	PidsLimit         int64
-	BlkioWeight       uint16
+	Agent              bool
+	blkioWeight        uint16
+	cpuPeriod          int64
+	cpuQuota           int64
+	cpuRealtimePeriod  int64
+	cpuRealtimeRuntime int64
+	cpusetCpus         string
+	cpusetMems         string
+	cpuShares          int64
+	memory             docker.MemBytes
+	memoryReservation  docker.MemBytes
+	memorySwap         docker.MemSwapBytes
+	restartPolicy      string
+	pidsLimit          int64
+	cpus               docker.NanoCPUs
+
+	nFlag int
+
+	containers []string
 }
 
 // NewCmd creates a new update command.
@@ -65,31 +71,49 @@ Container names can be:
 		},
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.containers = args
+			opts.nFlag = cmd.Flags().NFlag()
+			return run(cmd.Context(), f, opts, args)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
-	cmd.Flags().Float64Var(&opts.CPUs, "cpus", 0, "Number of CPUs")
-	cmd.Flags().Int64Var(&opts.CPUShares, "cpu-shares", 0, "CPU shares (relative weight)")
-	cmd.Flags().StringVar(&opts.CPUsetCPUs, "cpuset-cpus", "", "CPUs in which to allow execution (0-3, 0,1)")
-	cmd.Flags().StringVar(&opts.CPUsetMems, "cpuset-mems", "", "MEMs in which to allow execution (0-3, 0,1)")
-	cmd.Flags().StringVarP(&opts.Memory, "memory", "m", "", "Memory limit (e.g., 512m, 1g)")
-	cmd.Flags().StringVar(&opts.MemoryReservation, "memory-reservation", "", "Memory soft limit (e.g., 256m)")
-	cmd.Flags().StringVar(&opts.MemorySwap, "memory-swap", "", "Swap limit equal to memory plus swap: -1 to enable unlimited swap")
-	cmd.Flags().Int64Var(&opts.PidsLimit, "pids-limit", 0, "Tune container pids limit (set -1 for unlimited)")
-	cmd.Flags().Uint16Var(&opts.BlkioWeight, "blkio-weight", 0, "Block IO (relative weight), between 10 and 1000, or 0 to disable")
+	flags := cmd.Flags()
+	flags.BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
+
+	flags.Uint16Var(&opts.blkioWeight, "blkio-weight", 0, `Block IO (relative weight), between 10 and 1000, or 0 to disable (default 0)`)
+	flags.Int64Var(&opts.cpuPeriod, "cpu-period", 0, "Limit CPU CFS (Completely Fair Scheduler) period")
+	flags.Int64Var(&opts.cpuQuota, "cpu-quota", 0, "Limit CPU CFS (Completely Fair Scheduler) quota")
+	flags.Int64Var(&opts.cpuRealtimePeriod, "cpu-rt-period", 0, "Limit the CPU real-time period in microseconds")
+	_ = flags.SetAnnotation("cpu-rt-period", "version", []string{"1.25"})
+	flags.Int64Var(&opts.cpuRealtimeRuntime, "cpu-rt-runtime", 0, "Limit the CPU real-time runtime in microseconds")
+	_ = flags.SetAnnotation("cpu-rt-runtime", "version", []string{"1.25"})
+	flags.StringVar(&opts.cpusetCpus, "cpuset-cpus", "", "CPUs in which to allow execution (0-3, 0,1)")
+	flags.StringVar(&opts.cpusetMems, "cpuset-mems", "", "MEMs in which to allow execution (0-3, 0,1)")
+	flags.Int64VarP(&opts.cpuShares, "cpu-shares", "c", 0, "CPU shares (relative weight)")
+	flags.VarP(&opts.memory, "memory", "m", "Memory limit")
+	flags.Var(&opts.memoryReservation, "memory-reservation", "Memory soft limit")
+	flags.Var(&opts.memorySwap, "memory-swap", `Swap limit equal to memory plus swap: -1 to enable unlimited swap`)
+
+	flags.StringVar(&opts.restartPolicy, "restart", "", "Restart policy to apply when a container exits")
+	flags.Int64Var(&opts.pidsLimit, "pids-limit", 0, `Tune container pids limit (set -1 for unlimited)`)
+	_ = flags.SetAnnotation("pids-limit", "version", []string{"1.40"})
+
+	flags.Var(&opts.cpus, "cpus", "Number of CPUs")
+	_ = flags.SetAnnotation("cpus", "version", []string{"1.29"})
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options, _ []string) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	// When opts.Agent is true, all items in opts.containers are agent names
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker
@@ -100,10 +124,7 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	}
 
 	// Build update resources
-	resources, restartPolicy, err := buildUpdateResources(opts)
-	if err != nil {
-		return err
-	}
+	resources, restartPolicy := buildUpdateResources(opts)
 
 	var errs []error
 	for _, name := range containers {
@@ -121,7 +142,7 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	return nil
 }
 
-func updateContainer(ctx context.Context, client *docker.Client, name string, resources *container.Resources, restartPolicy *container.RestartPolicy) error {
+func updateContainer(ctx context.Context, client *docker.Client, name string, resources *docker.Resources, restartPolicy *docker.RestartPolicy) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -145,103 +166,44 @@ func updateContainer(ctx context.Context, client *docker.Client, name string, re
 	return nil
 }
 
-func buildUpdateResources(opts *Options) (*container.Resources, *container.RestartPolicy, error) {
-	resources := &container.Resources{}
+func buildUpdateResources(opts *Options) (*docker.Resources, *docker.RestartPolicy) {
+	resources := &docker.Resources{}
 
-	// CPU settings
-	if opts.CPUs > 0 {
-		// Convert CPUs to NanoCPUs (1 CPU = 1e9 NanoCPUs)
-		resources.NanoCPUs = int64(opts.CPUs * 1e9)
+	// CPU settings - cpus is a NanoCPUs type which is already in nanoseconds
+	if opts.cpus.Value() > 0 {
+		resources.NanoCPUs = opts.cpus.Value()
 	}
-	if opts.CPUShares > 0 {
-		resources.CPUShares = opts.CPUShares
+	if opts.cpuShares > 0 {
+		resources.CPUShares = opts.cpuShares
 	}
-	if opts.CPUsetCPUs != "" {
-		resources.CpusetCpus = opts.CPUsetCPUs
+	if opts.cpusetCpus != "" {
+		resources.CpusetCpus = opts.cpusetCpus
 	}
-	if opts.CPUsetMems != "" {
-		resources.CpusetMems = opts.CPUsetMems
+	if opts.cpusetMems != "" {
+		resources.CpusetMems = opts.cpusetMems
 	}
 
-	// Memory settings
-	if opts.Memory != "" {
-		mem, err := parseMemorySize(opts.Memory)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid memory value %q: %w", opts.Memory, err)
-		}
-		resources.Memory = mem
+	// Memory settings - memory types are already int64 bytes
+	if opts.memory.Value() > 0 {
+		resources.Memory = opts.memory.Value()
 	}
-	if opts.MemoryReservation != "" {
-		mem, err := parseMemorySize(opts.MemoryReservation)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid memory-reservation value %q: %w", opts.MemoryReservation, err)
-		}
-		resources.MemoryReservation = mem
+	if opts.memoryReservation.Value() > 0 {
+		resources.MemoryReservation = opts.memoryReservation.Value()
 	}
-	if opts.MemorySwap != "" {
-		if opts.MemorySwap == "-1" {
-			resources.MemorySwap = -1
-		} else {
-			mem, err := parseMemorySize(opts.MemorySwap)
-			if err != nil {
-				return nil, nil, fmt.Errorf("invalid memory-swap value %q: %w", opts.MemorySwap, err)
-			}
-			resources.MemorySwap = mem
-		}
+	if opts.memorySwap.Value() != 0 {
+		resources.MemorySwap = opts.memorySwap.Value()
 	}
 
 	// PIDs limit
-	if opts.PidsLimit != 0 {
-		resources.PidsLimit = &opts.PidsLimit
+	if opts.pidsLimit != 0 {
+		resources.PidsLimit = &opts.pidsLimit
 	}
 
 	// Block IO weight
-	if opts.BlkioWeight > 0 {
-		resources.BlkioWeight = opts.BlkioWeight
+	if opts.blkioWeight > 0 {
+		resources.BlkioWeight = opts.blkioWeight
 	}
 
 	// No restart policy changes in this command
-	return resources, nil, nil
-}
-
-// parseMemorySize parses a human-readable memory size (e.g., "512m", "1g", "1024k")
-// and returns the size in bytes.
-func parseMemorySize(s string) (int64, error) {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return 0, fmt.Errorf("empty value")
-	}
-
-	// Check for suffix
-	var multiplier int64 = 1
-	suffix := s[len(s)-1]
-	switch suffix {
-	case 'b':
-		multiplier = 1
-		s = s[:len(s)-1]
-	case 'k':
-		multiplier = 1024
-		s = s[:len(s)-1]
-	case 'm':
-		multiplier = 1024 * 1024
-		s = s[:len(s)-1]
-	case 'g':
-		multiplier = 1024 * 1024 * 1024
-		s = s[:len(s)-1]
-	case 't':
-		multiplier = 1024 * 1024 * 1024 * 1024
-		s = s[:len(s)-1]
-	default:
-		// No suffix, assume bytes
-		if suffix < '0' || suffix > '9' {
-			return 0, fmt.Errorf("unknown suffix %q", string(suffix))
-		}
-	}
-
-	value, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-
-	return value * multiplier, nil
+	return resources, nil
 }

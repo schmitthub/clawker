@@ -16,6 +16,7 @@ Cleaned up Docker client import violations to enforce the architectural layering
 - ExecCreateOptions, ExecStartOptions, ExecAttachOptions, ExecResizeOptions
 - CopyToContainerOptions, CopyFromContainerOptions
 - ImageListOptions, ImageRemoveOptions, ImageBuildOptions, ImagePullOptions
+- **ImageListResult, ImageSummary** (added for mock testing - use these in tests, NOT moby types)
 - VolumeCreateOptions, NetworkCreateOptions, NetworkInspectOptions
 - HijackedResponse
 
@@ -46,10 +47,27 @@ Note: `SDKContainerCreateOptions` is for raw SDK API bypass (e.g., in volume.go 
 - `pkg/cmdutil/output.go` - docker.DockerError
 - `internal/term/pty.go` - docker.HijackedResponse
 
-### Test Files Exception
-Test files (e.g., `*_integration_test.go`) may import `github.com/moby/moby/client` directly
-when using `testutil.NewRawDockerClient()`, which returns a raw `*client.Client`. This is
-acceptable because tests need low-level access for setup/fixtures.
+### Test Files - Use whail Types for Mocks
+
+**IMPORTANT:** When using `testutil.NewMockDockerClient()` in unit tests, always use `pkg/whail` type aliases:
+
+```go
+// CORRECT - use whail types
+import "github.com/schmitthub/clawker/pkg/whail"
+
+m.Mock.EXPECT().
+    ImageList(gomock.Any(), gomock.Any()).
+    Return(whail.ImageListResult{
+        Items: []whail.ImageSummary{{RepoTags: []string{"image:tag"}}},
+    }, nil)
+
+// WRONG - do NOT import moby types directly in test files
+import "github.com/moby/moby/client"  // NO!
+import "github.com/moby/moby/api/types/image"  // NO!
+```
+
+**Exception:** Integration tests using `testutil.NewRawDockerClient()` may import moby types
+directly when needed for low-level Docker API access.
 
 ## Verification Commands
 ```bash

@@ -2,7 +2,11 @@
 // This allows higher-level packages to use these types without importing moby/client directly.
 package whail
 
-import "github.com/moby/moby/client"
+import (
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
+)
 
 // Type aliases for Docker SDK types.
 // These allow packages to use whail as their single import for Docker interactions.
@@ -20,7 +24,8 @@ type (
 	SDKContainerCreateOptions = client.ContainerCreateOptions
 
 	// Container result types.
-	ContainerInspectResult = client.ContainerInspectResult
+	ContainerInspectOptions = client.ContainerInspectOptions
+	ContainerInspectResult  = client.ContainerInspectResult
 
 	// Exec operation options.
 	ExecCreateOptions = client.ExecCreateOptions
@@ -38,6 +43,10 @@ type (
 	ImageBuildOptions  = client.ImageBuildOptions
 	ImagePullOptions   = client.ImagePullOptions
 
+	// Image result types.
+	ImageListResult = client.ImageListResult
+	ImageSummary    = image.Summary
+
 	// Volume operation options.
 	VolumeCreateOptions = client.VolumeCreateOptions
 
@@ -47,4 +56,20 @@ type (
 
 	// Connection types.
 	HijackedResponse = client.HijackedResponse
+
+	// Wait Condition
+	WaitCondition = container.WaitCondition
+
+	// Container configuration types.
+	Resources       = container.Resources
+	RestartPolicy   = container.RestartPolicy
+	UpdateConfig    = container.UpdateConfig
+	ContainerUpdateResult = client.ContainerUpdateResult
+)
+
+const (
+	// WaitConditionNotRunning is used to wait until a container is not running.
+	WaitConditionNotRunning = container.WaitConditionNotRunning
+	WaitConditionNextExit   = container.WaitConditionNextExit
+	WaitConditionRemoved    = container.WaitConditionRemoved
 )

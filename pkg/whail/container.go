@@ -194,7 +194,7 @@ func (e *Engine) ContainerStop(ctx context.Context, containerID string, timeout 
 		return client.ContainerStopResult{}, ErrContainerStopFailed(containerID, err)
 	}
 	if !isManaged {
-		return client.ContainerStopResult{}, ErrContainerNotFound(containerID)
+		return client.ContainerStopResult{}, ErrContainerNotManaged(containerID)
 	}
 	stopOptions := client.ContainerStopOptions{}
 	if timeout != nil {
@@ -214,7 +214,7 @@ func (e *Engine) ContainerRemove(ctx context.Context, containerID string, force 
 		return client.ContainerRemoveResult{}, ErrContainerRemoveFailed(containerID, err)
 	}
 	if !isManaged {
-		return client.ContainerRemoveResult{}, ErrContainerNotFound(containerID)
+		return client.ContainerRemoveResult{}, ErrContainerNotManaged(containerID)
 	}
 	result, err := e.APIClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
 		Force:         force,
@@ -274,15 +274,15 @@ func (e *Engine) ContainerListByLabels(ctx context.Context, labels map[string]st
 
 // ContainerInspect inspects a container.
 // Only inspects managed containers.
-func (e *Engine) ContainerInspect(ctx context.Context, containerID string) (client.ContainerInspectResult, error) {
+func (e *Engine) ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)
 	if err != nil {
 		return client.ContainerInspectResult{}, ErrContainerInspectFailed(containerID, err)
 	}
 	if !isManaged {
-		return client.ContainerInspectResult{}, ErrContainerNotFound(containerID)
+		return client.ContainerInspectResult{}, ErrContainerNotManaged(containerID)
 	}
-	result, err := e.APIClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	result, err := e.APIClient.ContainerInspect(ctx, containerID, options)
 	if err != nil {
 		return client.ContainerInspectResult{}, ErrContainerInspectFailed(containerID, err)
 	}
@@ -297,7 +297,7 @@ func (e *Engine) ContainerAttach(ctx context.Context, containerID string, option
 		return client.ContainerAttachResult{}, ErrAttachFailed(err)
 	}
 	if !isManaged {
-		return client.ContainerAttachResult{}, ErrContainerNotFound(containerID)
+		return client.ContainerAttachResult{}, ErrContainerNotManaged(containerID)
 	}
 	result, err := e.APIClient.ContainerAttach(ctx, containerID, options)
 	if err != nil {
@@ -318,7 +318,7 @@ func (e *Engine) ContainerWait(ctx context.Context, containerID string, conditio
 		return client.ContainerWaitResult{Result: nil, Error: errCh}
 	}
 	if !isManaged {
-		errCh <- ErrContainerNotFound(containerID)
+		errCh <- ErrContainerNotManaged(containerID)
 		close(errCh)
 		return client.ContainerWaitResult{Result: nil, Error: errCh}
 	}

@@ -12,9 +12,11 @@ import (
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
-	Agent   string
+	Agent   bool
 	Timeout int
 	Signal  string
+
+	containers []string
 }
 
 // NewCmdStop creates the container stop command.
@@ -29,7 +31,7 @@ func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
 The container is sent a SIGTERM signal, then after a timeout period (default 10s),
 it is sent SIGKILL if still running.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -49,28 +51,30 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidator(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStop(f, opts, args)
+			opts.containers = args
+			return runStop(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().IntVarP(&opts.Timeout, "time", "t", 10, "Seconds to wait before killing the container")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "", "Signal to send (default: SIGTERM)")
 
 	return cmd
 }
 
-func runStop(f *cmdutil.Factory, opts *StopOptions, args []string) error {
-	ctx := context.Background()
-
+func runStop(ctx context.Context, f *cmdutil.Factory, opts *StopOptions) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
-
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {

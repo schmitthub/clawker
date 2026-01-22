@@ -24,8 +24,9 @@ import (
 // Options holds options for the create command.
 type Options struct {
 	// Naming
-	Agent string // Agent name for clawker naming (mutually exclusive with Name)
-	Name  string // Full container name (overrides agent)
+	Agent     string
+	AgentName string // Agent name for clawker naming (mutually exclusive with Name)
+	Name      string // Full container name (overrides agent)
 
 	// Container configuration
 	Env        []string // Environment variables
@@ -53,7 +54,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "create [OPTIONS] [IMAGE] [COMMAND] [ARG...]",
+		Use:   "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
 		Short: "Create a new container",
 		Long: `Create a new clawker container from the specified image.
 
@@ -63,7 +64,7 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.<project>.<agent> where
 project comes from clawker.yaml. When --name is provided, it overrides this.
 
-If IMAGE is not specified, clawker will use (in order of precedence):
+If IMAGE is "@", clawker will use (in order of precedence):
 1. default_image from clawker.yaml
 2. default_image from user settings (~/.local/clawker/settings.yaml)
 3. The project's built image with :latest tag`,
@@ -71,7 +72,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
   clawker container create --agent myagent alpine
 
   # Create a container using default image from config
-  clawker container create --agent myagent
+  clawker container create --agent myagent @
 
   # Create a container with a command
   clawker container create --agent worker alpine echo "hello world"
@@ -87,29 +88,19 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cobra.ArbitraryArgs,
-		RunE: func(_ *cobra.Command, args []string) error {
-			if len(args) > 0 {
-				// Determine if first arg is an image name or a container command/flag.
-				// - With IMAGE: clawker create alpine --version (args[0]="alpine", args[1:]="--version")
-				// - With -- separator: clawker create --agent x -- --flag (args[0]="--flag", starts with "-")
-				// When args[0] starts with "-", treat all args as container command; resolve image from defaults.
-				if strings.HasPrefix(args[0], "-") {
-					opts.Command = args
-				} else {
-					opts.Image = args[0]
-					if len(args) > 1 {
-						opts.Command = args[1:]
-					}
-				}
+		Args: cmdutil.RequiresMinArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.Image = args[0]
+			if len(args) > 1 {
+				opts.Command = args[1:]
 			}
-			return run(f, opts)
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
 	// Naming flags
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for container (uses clawker.<project>.<agent> naming)")
-	cmd.Flags().StringVar(&opts.Name, "name", "", "Full container name (overrides --agent)")
+	cmd.Flags().StringVar(&opts.AgentName, "agent", "", "Agent name for container (uses clawker.<project>.<agent> naming)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "Same as --agent; provided for Docker CLI familiarity (mutually exclusive with --agent)")
 
 	// Container configuration flags
 	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "Set environment variables")
@@ -137,9 +128,7 @@ If IMAGE is not specified, clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Load config for project name
 	cfg, err := f.Config()
 	if err != nil {
@@ -167,36 +156,39 @@ func run(f *cmdutil.Factory, opts *Options) error {
 		return err
 	}
 
-	// Resolve and validate image
-	resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings, cmdutil.ResolveAndValidateImageOptions{
-		ExplicitImage: opts.Image,
-	})
-	if err != nil {
-		// ResolveAndValidateImage already prints appropriate errors
-		return err
+	// Resolve image name
+	if opts.Image == "@" {
+		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
+		if err != nil {
+			// ResolveAndValidateImage already prints appropriate errors
+			return err
+		}
+		if resolvedImage == nil {
+			cmdutil.PrintError("No image specified and no default image configured")
+			cmdutil.PrintNextSteps(
+				"Specify an image: clawker container run IMAGE",
+				"Set default_image in clawker.yaml",
+				"Set default_image in ~/.local/clawker/settings.yaml",
+				"Build a project image: clawker build",
+			)
+			return fmt.Errorf("no image specified")
+		}
+		opts.Image = resolvedImage.Reference
 	}
-	if resolvedImage == nil {
-		cmdutil.PrintError("No image specified and no default image configured")
-		cmdutil.PrintNextSteps(
-			"Specify an image: clawker container create --agent myagent IMAGE",
-			"Set default_image in clawker.yaml",
-			"Set default_image in ~/.local/clawker/settings.yaml",
-			"Build a project image: clawker build",
-		)
-		return fmt.Errorf("no image specified")
-	}
-	opts.Image = resolvedImage.Reference
 
-	// Resolve container name
-	agent := opts.Agent
-	if agent == "" && opts.Name == "" {
+	// If agent or name set, set AgentName
+	opts.AgentName = opts.Agent
+	if opts.AgentName == "" && opts.Name != "" {
+		opts.AgentName = opts.Name
+	}
+	var containerName string
+	var agent string
+	if opts.AgentName == "" {
 		agent = docker.GenerateRandomName()
+	} else {
+		agent = opts.AgentName
 	}
-
-	containerName := opts.Name
-	if containerName == "" {
-		containerName = docker.ContainerName(cfg.Project, agent)
-	}
+	containerName = docker.ContainerName(cfg.Project, agent)
 
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{

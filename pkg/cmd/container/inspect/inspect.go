@@ -14,9 +14,11 @@ import (
 
 // InspectOptions holds options for the inspect command.
 type InspectOptions struct {
-	Agent  string
+	Agent  bool
 	Format string
 	Size   bool
+
+	containers []string
 }
 
 // NewCmdInspect creates the container inspect command.
@@ -24,7 +26,7 @@ func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
 	opts := &InspectOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "inspect [CONTAINER...]",
+		Use:   "inspect [OPTIONS] CONTAINER [CONTAINER...]",
 		Short: "Display detailed information on one or more containers",
 		Long: `Returns low-level information about clawker containers.
 
@@ -52,24 +54,27 @@ Container names can be:
   clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent ralph`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInspect(f, opts, args)
+			opts.containers = args
+			return runInspect(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().StringVarP(&opts.Format, "format", "f", "", "Format output using a Go template")
 	cmd.Flags().BoolVarP(&opts.Size, "size", "s", false, "Display total file sizes")
 
 	return cmd
 }
 
-func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
-	ctx := context.Background()
-
+func runInspect(ctx context.Context, f *cmdutil.Factory, opts *InspectOptions) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker
@@ -95,7 +100,7 @@ func runInspect(f *cmdutil.Factory, opts *InspectOptions, args []string) error {
 		}
 
 		// Inspect the container
-		info, err := dockerClient.ContainerInspect(ctx, c.ID)
+		info, err := dockerClient.ContainerInspect(ctx, c.ID, docker.ContainerInspectOptions{})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to inspect container %q: %w", name, err))
 			continue

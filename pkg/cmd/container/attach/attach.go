@@ -16,10 +16,11 @@ import (
 
 // Options holds options for the attach command.
 type Options struct {
-	Agent      string
+	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
 	SigProxy   bool
 	DetachKeys string
+	container  string
 }
 
 // NewCmd creates a new attach command.
@@ -27,7 +28,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "attach [OPTIONS] [CONTAINER]",
+		Use:   "attach [OPTIONS] CONTAINER",
 		Short: "Attach local standard input, output, and error streams to a running container",
 		Long: `Attach local standard input, output, and error streams to a running container.
 
@@ -54,13 +55,14 @@ Container name can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidatorExact(1),
+		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.container = args[0]
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat argument as agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVar(&opts.NoStdin, "no-stdin", false, "Do not attach STDIN")
 	cmd.Flags().BoolVar(&opts.SigProxy, "sig-proxy", true, "Proxy all received signals to the process")
 	cmd.Flags().StringVar(&opts.DetachKeys, "detach-keys", "", "Override the key sequence for detaching a container")
@@ -68,16 +70,15 @@ Container name can be:
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	ctx := context.Background()
-
-	// Resolve container name
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	container := opts.container
+	if opts.Agent {
+		var err error
+		container, err = cmdutil.ResolveContainerName(f, container)
+		if err != nil {
+			return err
+		}
 	}
-	containerName := containers[0]
-
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
@@ -86,21 +87,21 @@ func run(f *cmdutil.Factory, opts *Options, args []string) error {
 	}
 
 	// Find container by name
-	c, err := client.FindContainerByName(ctx, containerName)
+	c, err := client.FindContainerByName(ctx, container)
 	if err != nil {
-		return fmt.Errorf("failed to find container %q: %w", containerName, err)
+		return fmt.Errorf("failed to find container %q: %w", container, err)
 	}
 	if c == nil {
-		return fmt.Errorf("container %q not found", containerName)
+		return fmt.Errorf("container %q not found", container)
 	}
 
 	// Check if container is running
 	if c.State != "running" {
-		return fmt.Errorf("container %q is not running", containerName)
+		return fmt.Errorf("container %q is not running", container)
 	}
 
 	// Get container info to determine if it has a TTY
-	info, err := client.ContainerInspect(ctx, c.ID)
+	info, err := client.ContainerInspect(ctx, c.ID, docker.ContainerInspectOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to inspect container: %w", err)
 	}

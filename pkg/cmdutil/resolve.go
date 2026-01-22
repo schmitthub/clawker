@@ -84,8 +84,8 @@ type ResolvedImage struct {
 // 3. Merged default_image from config/settings
 //
 // Returns the resolved image reference and an error if no image could be resolved.
-func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings, explicitImage string) (string, error) {
-	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings, explicitImage)
+func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings) (string, error) {
+	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings)
 	if err != nil {
 		return "", err
 	}
@@ -97,11 +97,7 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 
 // ResolveImageWithSource resolves the image with source tracking.
 // See ResolveImage for resolution order details.
-func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings, explicitImage string) (*ResolvedImage, error) {
-	// 1. Explicit image takes precedence
-	if explicitImage != "" {
-		return &ResolvedImage{Reference: explicitImage, Source: ImageSourceExplicit}, nil
-	}
+func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings) (*ResolvedImage, error) {
 
 	// 2. Try to find a project image with :latest tag
 	if cfg != nil && cfg.Project != "" {
@@ -122,11 +118,6 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 	return nil, nil
 }
 
-// ResolveAndValidateImageOptions configures image resolution and validation.
-type ResolveAndValidateImageOptions struct {
-	ExplicitImage string // Explicitly provided image (from CLI or args)
-}
-
 // ResolveAndValidateImage resolves an image and validates it exists (for default images).
 // For explicit and project images, no validation is performed.
 // For default images, checks if the image exists in Docker and prompts to rebuild if missing.
@@ -140,10 +131,9 @@ func ResolveAndValidateImage(
 	dockerClient *docker.Client,
 	cfg *config.Config,
 	settings *config.Settings,
-	opts ResolveAndValidateImageOptions,
 ) (*ResolvedImage, error) {
 	// Resolve the image
-	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings, opts.ExplicitImage)
+	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -301,11 +291,11 @@ func ResolveContainerName(f *Factory, agentName string) (string, error) {
 }
 
 // ResolveContainerNames resolves container names based on --agent flag or positional args.
-// If agentName is provided, it returns a single-element slice with the resolved container name.
-// Otherwise, it returns the containerArgs as-is.
+// If agentName is non-empty, it resolves it to a container name and returns a single-element slice.
+// Otherwise, it returns the containerArgs as-is (they're expected to be full container names).
 func ResolveContainerNames(f *Factory, agentName string, containerArgs []string) ([]string, error) {
 	if agentName != "" {
-		containerName, err := ResolveContainerName(f, agentName)
+		container, err := ResolveContainerName(f, agentName)
 		if err != nil {
 			PrintError("Failed to resolve agent name: %v", err)
 			PrintNextSteps(
@@ -314,7 +304,29 @@ func ResolveContainerNames(f *Factory, agentName string, containerArgs []string)
 			)
 			return nil, err
 		}
-		return []string{containerName}, nil
+		return []string{container}, nil
 	}
 	return containerArgs, nil
+}
+
+// ResolveContainerNamesFromAgents resolves a slice of agent names to container names.
+// If no agents are provided, returns an empty slice.
+func ResolveContainerNamesFromAgents(f *Factory, agents []string) ([]string, error) {
+	if len(agents) == 0 {
+		return agents, nil
+	}
+	var containers []string
+	for _, agent := range agents {
+		container, err := ResolveContainerName(f, agent)
+		if err != nil {
+			PrintError("Failed to resolve agent name: %v", err)
+			PrintNextSteps(
+				"Run 'clawker init' to create a configuration",
+				"Or ensure you're in a directory with clawker.yaml",
+			)
+			return nil, err
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
 }
