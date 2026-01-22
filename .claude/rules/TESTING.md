@@ -48,8 +48,8 @@ The `internal/testutil` package provides reusable test infrastructure.
 | File | Purpose |
 |------|---------|
 | `harness.go` | Test harness with project/config setup |
-| `docker.go` | Docker client helpers and cleanup |
-| `ready.go` | Container readiness detection |
+| `docker.go` | Docker client helpers, cleanup, and container state waiting (`WaitForContainerRunning`) |
+| `ready.go` | Application readiness detection (ready file, logs, health checks) |
 | `config_builder.go` | Fluent config construction |
 | `golden.go` | Golden file comparison |
 | `hash.go` | Template hashing for cache invalidation |
@@ -213,9 +213,23 @@ t.Cleanup(func() {
 })
 ```
 
+### Container State Waiting
+
+For tests that need to wait for container state changes:
+
+```go
+// Wait for container to be running (use after ContainerStart, before exec/attach)
+err := testutil.WaitForContainerRunning(ctx, rawClient, containerID)
+
+// Wait for container to exit with code 0 (for short-lived containers)
+err := testutil.WaitForContainerExit(ctx, rawClient, containerID)
+```
+
+**IMPORTANT**: Never write local wait functions in test files. Always use the testutil versions - they have better error messages and use efficient ticker-based polling.
+
 ### Readiness Detection
 
-For tests that need to wait for containers to be ready:
+For tests that need to wait for application readiness (clawker images with entrypoint):
 
 ```go
 // Wait for ready file (written by entrypoint)
@@ -498,6 +512,7 @@ agentName := fmt.Sprintf("test-%s-%s-%d",
 6. **Resource leaks**: Always use `t.Cleanup()` for resource cleanup
 7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
 8. **Log streaming**: Connection errors indicate container death, not transient issues
+9. **Don't duplicate testutil functions**: Always check `internal/testutil` before writing wait/helper functions - use `WaitForContainerRunning`, not local implementations
 
 ---
 
@@ -508,15 +523,25 @@ agentName := fmt.Sprintf("test-%s-%s-%d",
 testutil.RequireDocker(t)
 h := testutil.NewHarness(t, testutil.WithProject("test"))
 client := testutil.NewTestClient(t)
+rawClient := testutil.NewRawDockerClient(t)
 
-// Create resources
-containerID := createTestContainer(t, client, h)
+// Create and start container
+resp, err := rawClient.ContainerCreate(ctx, createOpts)
+require.NoError(t, err)
+_, err = rawClient.ContainerStart(ctx, resp.ID, startOpts)
+require.NoError(t, err)
 
-// Wait for ready
-err := testutil.WaitForReadyFile(ctx, rawClient, containerID)
+// Wait for container to be running (ALWAYS use testutil, never local functions)
+readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+defer cancel()
+err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+require.NoError(t, err)
+
+// For clawker images, also wait for application readiness
+err = testutil.WaitForReadyFile(ctx, rawClient, containerID)
 
 // Verify
-require.True(t, testutil.ContainerIsRunning(t, client, containerID))
+require.True(t, testutil.ContainerIsRunning(ctx, client, containerID))
 
 // Cleanup (automatic via t.Cleanup in NewHarness)
 ```

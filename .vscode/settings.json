@@ -1,0 +1,38 @@
+{
+  // Go settings
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["--fast"],
+  "go.lintOnSave": "package",
+
+  // Use staticcheck via golangci-lint (already included in config)
+  "go.vetOnSave": "package",
+
+  // Format on save
+  "go.formatTool": "goimports",
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "golang.go"
+  },
+  "[go.mod]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "golang.go"
+  },
+
+  // Test settings
+  "go.testFlags": ["-v"],
+  "go.testTimeout": "120s",
+
+  // Build tags for integration tests (optional, uncomment to enable)
+  // "go.buildTags": "integration",
+
+  // Gopls settings
+  "gopls": {
+    "ui.semanticTokens": true,
+    "ui.completion.usePlaceholders": true,
+    "ui.diagnostic.staticcheck": false,
+    "formatting.gofumpt": false
+  }
+}

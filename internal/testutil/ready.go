@@ -176,6 +176,38 @@ func WaitForContainerCompletion(ctx context.Context, cli *client.Client, contain
 	}
 }
 
+// WaitForContainerExit waits for a container to exit with code 0.
+// This is a simpler wait function for vanilla containers that don't emit ready signals.
+// Use this for integration tests with alpine:latest or other non-clawker images.
+func WaitForContainerExit(ctx context.Context, cli *client.Client, containerID string) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for container exit: %w", ctx.Err())
+		case <-ticker.C:
+			info, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to inspect container: %w", err)
+			}
+
+			if info.Container.State.Running {
+				// Container still running, continue polling
+				continue
+			}
+
+			// Container has exited - check exit code
+			if info.Container.State.ExitCode != 0 {
+				return fmt.Errorf("container exited with code %d", info.Container.State.ExitCode)
+			}
+
+			return nil
+		}
+	}
+}
+
 // WaitForHealthy waits for the container to be healthy using Docker's HEALTHCHECK.
 // Returns nil when healthy, or an error if timeout is reached.
 func WaitForHealthy(ctx context.Context, cli *client.Client, containerID string) error {

@@ -1,0 +1,133 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Additional linters
+    - bodyclose        # Check HTTP response body is closed
+    - contextcheck     # Check context.Context is passed correctly
+    - durationcheck    # Check for two durations multiplied together
+    - errname          # Check error names follow Go conventions
+    - errorlint        # Find code that will cause issues with Go 1.13+ error wrapping
+    - exhaustive       # Check exhaustiveness of enum switch statements
+    - copyloopvar      # Check for pointers to loop variables (replaces exportloopref)
+    - gocritic         # Highly extensible Go linter
+    - gofmt            # Check code is formatted
+    - goimports        # Check imports are formatted and organized
+    - gosec            # Security checker
+    - misspell         # Find commonly misspelled English words
+    - nilerr           # Find code returning nil error after checking error is not nil
+    - noctx            # Find HTTP requests without context.Context
+    - prealloc         # Find slice declarations that could be preallocated
+    - predeclared      # Find code shadowing predeclared identifiers
+    - revive           # Fast, configurable linter (replacement for golint)
+    - unconvert        # Remove unnecessary type conversions
+    - unparam          # Find unused function parameters
+    - whitespace       # Check for unnecessary whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    exclude-functions:
+      - (io.Closer).Close
+      - (net/http.ResponseWriter).Write
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - hugeParam       # Allow large params (common with Docker types)
+      - rangeValCopy    # Allow range value copies
+
+  goimports:
+    local-prefixes: github.com/schmitthub/clawker
+
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (handled by errcheck)
+      - G304  # File path provided as taint input (common in CLI tools)
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Don't enforce struct field alignment
+
+  misspell:
+    locale: US
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: var-declaration
+      - name: var-naming
+
+  staticcheck:
+    checks:
+      - all
+
+  unparam:
+    check-exported: false
+
+issues:
+  exclude-rules:
+    # Ignore long lines in generated files
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+
+    # Allow dot imports in test files for testify
+    - path: _test\.go
+      text: "dot-imports"
+
+    # Ignore certain patterns in mock files
+    - path: mocks/
+      linters:
+        - revive
+        - gocritic
+        - unparam
+
+    # Allow unused parameters in interface implementations
+    - linters:
+        - unparam
+      text: "always receives"
+
+  max-issues-per-linter: 50
+  max-same-issues: 10
+  new: false

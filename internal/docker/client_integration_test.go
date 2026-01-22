@@ -1,14 +1,18 @@
+//go:build integration
+
 package docker
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
-// Note: These tests require Docker to be running.
+// Integration tests for docker client - these require Docker to be running.
 
 // testCleanup removes all test containers and volumes
 func testCleanup(ctx context.Context, t *testing.T, c *Client) {
@@ -29,7 +33,7 @@ func testCleanup(ctx context.Context, t *testing.T, c *Client) {
 	}
 }
 
-func TestNewClient(t *testing.T) {
+func TestNewClient_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	client, err := NewClient(ctx)
@@ -54,7 +58,7 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
-func TestListContainersEmpty(t *testing.T) {
+func TestListContainersEmpty_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	client, err := NewClient(ctx)
@@ -73,7 +77,7 @@ func TestListContainersEmpty(t *testing.T) {
 	_ = containers
 }
 
-func TestClientContainerLifecycle(t *testing.T) {
+func TestClientContainerLifecycle_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	client, err := NewClient(ctx)
@@ -82,6 +86,15 @@ func TestClientContainerLifecycle(t *testing.T) {
 	}
 	defer client.Close()
 	defer testCleanup(ctx, t, client)
+
+	// Pull alpine image first to ensure it's available
+	pullReader, err := client.ImagePull(ctx, "alpine:latest", dockerclient.ImagePullOptions{})
+	if err != nil {
+		t.Fatalf("ImagePull() error = %v", err)
+	}
+	// Drain the reader to complete the pull
+	io.Copy(io.Discard, pullReader)
+	pullReader.Close()
 
 	project := "clienttest"
 	agent := "lifecycle"
@@ -156,7 +169,7 @@ func TestClientContainerLifecycle(t *testing.T) {
 	}
 }
 
-func TestFindContainerByAgentNotFound(t *testing.T) {
+func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	client, err := NewClient(ctx)

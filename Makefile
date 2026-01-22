@@ -1,6 +1,6 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
-        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-install cli-clean \
+        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-staticcheck cli-install cli-clean \
         test test-integration test-e2e test-coverage test-clean golden-update \
         generate-mocks
 
@@ -24,6 +24,18 @@ LDFLAGS := -s -w \
 BIN_DIR := bin
 DIST_DIR := dist
 
+# Test runner configuration
+# Use gotestsum if available for human-friendly output, fall back to go test
+GOTESTSUM := $(shell command -v gotestsum 2>/dev/null)
+ifdef GOTESTSUM
+	# gotestsum with human-friendly format: icons, colors, package names
+	TEST_CMD = gotestsum --format testdox --
+	TEST_CMD_VERBOSE = gotestsum --format standard-verbose --
+else
+	TEST_CMD = $(GO) test
+	TEST_CMD_VERBOSE = $(GO) test -v
+endif
+
 help:
 	@echo "Clawker - Claude Code Docker Images & CLI"
 	@echo ""
@@ -40,7 +52,8 @@ help:
 	@echo "  cli-generate        Build the standalone clawker-generate binary"
 	@echo "  cli-test            Run CLI tests (alias for 'test')"
 	@echo "  cli-test-integration Run CLI integration tests (alias for 'test-integration')"
-	@echo "  cli-lint            Run linter on CLI code"
+	@echo "  cli-lint            Run golangci-lint on CLI code"
+	@echo "  cli-staticcheck     Run staticcheck on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
 	@echo "  cli-clean           Remove CLI build artifacts"
 	@echo ""
@@ -193,23 +206,32 @@ cli-build-windows:
 # Run CLI tests
 cli-test:
 	@echo "Running CLI tests..."
-	$(GO) test -v ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) ./...
 
 # Run CLI integration tests
 cli-test-integration:
 	@echo "Running CLI integration tests (requires Docker)..."
-	$(GO) test ./pkg/cmd/... -tags=integration -v -timeout 10m
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -tags=integration -timeout 10m ./pkg/cmd/...
 
 # Run CLI tests with coverage
 cli-test-coverage:
 	@echo "Running CLI tests with coverage..."
-	$(GO) test -coverprofile=coverage.out ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD) -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 # Run short tests (skip integration tests)
 cli-test-short:
 	@echo "Running short CLI tests..."
-	$(GO) test -short -v ./...
+	$(TEST_CMD) -short ./...
 
 # Run linter
 cli-lint:
@@ -218,6 +240,17 @@ cli-lint:
 		golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not installed, skipping..."; \
+		echo "(tip: install with: brew install golangci-lint)"; \
+	fi
+
+# Run staticcheck
+cli-staticcheck:
+	@echo "Running staticcheck..."
+	@if command -v staticcheck >/dev/null 2>&1; then \
+		staticcheck ./...; \
+	else \
+		echo "staticcheck not installed, skipping..."; \
+		echo "(tip: install with: go install honnef.co/go/tools/cmd/staticcheck@latest)"; \
 	fi
 
 # Format code
@@ -253,22 +286,34 @@ cli-clean:
 # Unit tests only (fast, no Docker)
 test:
 	@echo "Running unit tests..."
-	$(GO) test -short ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD) -short ./...
 
 # Unit + integration tests (requires Docker)
 test-integration:
 	@echo "Running unit + integration tests..."
-	$(GO) test -tags=integration ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -tags=integration ./...
 
 # All tests including E2E
 test-e2e:
 	@echo "Running all tests including E2E..."
-	$(GO) test -tags=integration,e2e -timeout 15m ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -tags=integration,e2e -timeout 15m ./...
 
 # Unit tests with coverage
 test-coverage:
 	@echo "Running unit tests with coverage..."
-	$(GO) test -coverprofile=coverage.out ./...
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD) -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
@@ -283,7 +328,7 @@ test-clean:
 # Regenerate golden files
 golden-update:
 	@echo "Regenerating golden files..."
-	GOLDEN_UPDATE=1 $(GO) test ./...
+	GOLDEN_UPDATE=1 $(TEST_CMD) ./...
 
 # ============================================================================
 # Code Generation Targets

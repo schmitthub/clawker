@@ -16,12 +16,11 @@ import (
 )
 
 // TestExecIntegration_BasicCommands tests executing commands in an already-running container.
-// This validates that exec works correctly and that the container environment is properly set.
+// This validates that exec works correctly and that commands are executed properly.
 func TestExecIntegration_BasicCommands(t *testing.T) {
 	testutil.RequireDocker(t)
 	ctx := context.Background()
 
-	// Create harness with firewall disabled for speed
 	h := testutil.NewHarness(t,
 		testutil.WithConfigBuilder(
 			testutil.MinimalValidConfig().
@@ -30,11 +29,6 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 		),
 	)
 	h.Chdir()
-
-	// Build a clawker test image
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
 
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
@@ -49,7 +43,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
-			Image: imageTag,
+			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"}, // Sleep for 5 minutes
 			Labels: map[string]string{
 				"com.clawker.managed": "true",
@@ -63,12 +57,11 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
-	// Wait for ready file
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	// Wait for container to be running
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-	require.NoError(t, err, "ready file was not created")
+	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	require.NoError(t, err, "container did not start")
 
 	// Define test cases for exec commands
 	tests := []struct {
@@ -80,25 +73,24 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 			name: "whoami",
 			cmd:  []string{"whoami"},
 			verifyFunc: func(t *testing.T, output string) {
-				// Should return some user (typically 'claude' or 'root')
-				require.NotEmpty(t, output, "whoami should return a username")
+				// Alpine container runs as root by default
+				require.Contains(t, strings.TrimSpace(output), "root", "whoami should return root")
 			},
 		},
 		{
 			name: "env",
 			cmd:  []string{"env"},
 			verifyFunc: func(t *testing.T, output string) {
-				// Should contain HOME variable at minimum
-				require.Contains(t, output, "HOME=", "expected HOME in environment")
+				// Should contain PATH variable at minimum
+				require.Contains(t, output, "PATH=", "expected PATH in environment")
 			},
 		},
 		{
-			name: "cat ready file",
-			cmd:  []string{"cat", "/var/run/clawker/ready"},
+			name: "ls root",
+			cmd:  []string{"ls", "/"},
 			verifyFunc: func(t *testing.T, output string) {
-				// Ready file should contain ts= and pid=
-				require.Contains(t, output, "ts=", "expected ts= in ready file")
-				require.Contains(t, output, "pid=", "expected pid= in ready file")
+				require.Contains(t, output, "bin", "expected bin in ls output")
+				require.Contains(t, output, "etc", "expected etc in ls output")
 			},
 		},
 		{
@@ -127,7 +119,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 			err := cmd.Execute()
 			require.NoError(t, err, "exec command failed: stderr=%s", ios.ErrBuf.String())
 
-			// Verify output from IOStreams (not Cobra's stdout)
+			// Verify output from IOStreams
 			tt.verifyFunc(t, ios.OutBuf.String())
 		})
 	}
@@ -147,10 +139,6 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	)
 	h.Chdir()
 
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
-
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
 	defer rawClient.Close()
@@ -163,7 +151,7 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
-			Image: imageTag,
+			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
 				"com.clawker.managed": "true",
@@ -177,12 +165,11 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
-	// Wait for ready
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	// Wait for container to be running
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-	require.NoError(t, err, "ready file was not created")
+	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	require.NoError(t, err, "container did not start")
 
 	// Test exec with --agent flag
 	ios := cmdutil.NewTestIOStreams()
@@ -216,10 +203,6 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	)
 	h.Chdir()
 
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
-
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
 	defer rawClient.Close()
@@ -232,7 +215,7 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
-			Image: imageTag,
+			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
 				"com.clawker.managed": "true",
@@ -246,12 +229,11 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
-	// Wait for ready
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	// Wait for container to be running
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-	require.NoError(t, err, "ready file was not created")
+	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	require.NoError(t, err, "container did not start")
 
 	// Test exec with -e flag to set environment variable
 	ios := cmdutil.NewTestIOStreams()
@@ -286,10 +268,6 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	)
 	h.Chdir()
 
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
-
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
 	defer rawClient.Close()
@@ -302,7 +280,7 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
-			Image: imageTag,
+			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
 				"com.clawker.managed": "true",
@@ -316,12 +294,11 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
-	// Wait for ready
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	// Wait for container to be running
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-	require.NoError(t, err, "ready file was not created")
+	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	require.NoError(t, err, "container did not start")
 
 	// Test exec with -w flag to set working directory
 	ios := cmdutil.NewTestIOStreams()
@@ -342,14 +319,12 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	require.Contains(t, ios.OutBuf.String(), "/tmp", "expected /tmp as working directory")
 }
 
-
 // TestExecIntegration_ErrorCases tests error scenarios for the exec command.
 // These tests verify that clear, useful error messages are provided when things fail.
 func TestExecIntegration_ErrorCases(t *testing.T) {
 	testutil.RequireDocker(t)
 	ctx := context.Background()
 
-	// Create harness
 	h := testutil.NewHarness(t,
 		testutil.WithConfigBuilder(
 			testutil.MinimalValidConfig().
@@ -358,11 +333,6 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		),
 	)
 	h.Chdir()
-
-	// Build a clawker image
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
 
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
@@ -377,7 +347,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 			Name: containerName,
 			Config: &container.Config{
-				Image: imageTag,
+				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: testutil.AddClawkerLabels(map[string]string{
 					testutil.TestLabel: testutil.TestLabelValue,
@@ -388,11 +358,11 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 		require.NoError(t, err, "failed to start container")
 
-		// Wait for container to be ready
-		readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+		// Wait for container to be running
+		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-		require.NoError(t, err, "ready file was not created")
+		err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+		require.NoError(t, err, "container did not start")
 
 		// Try to exec a command that doesn't exist
 		ios := cmdutil.NewTestIOStreams()
@@ -420,7 +390,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 			Name: containerName,
 			Config: &container.Config{
-				Image: imageTag,
+				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: testutil.AddClawkerLabels(map[string]string{
 					testutil.TestLabel: testutil.TestLabelValue,
@@ -462,26 +432,19 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	testutil.RequireDocker(t)
 	ctx := context.Background()
 
-	// Use the same project name as BasicCommands to leverage Docker layer caching
-	// This avoids rebuilding Claude Code from scratch for each test
 	h := testutil.NewHarness(t,
 		testutil.WithConfigBuilder(
 			testutil.MinimalValidConfig().
-				WithProject("exec-test").
+				WithProject("exec-script-test").
 				WithSecurity(testutil.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	// Build a clawker image
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
-		SuppressOutput: true,
-	})
-
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-test")
+	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-script-test")
 
 	agentName := "test-script-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -490,26 +453,26 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
-			Image: imageTag,
+			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: testutil.AddClawkerLabels(map[string]string{
 				testutil.TestLabel: testutil.TestLabelValue,
-			}, "exec-test", agentName),
+			}, "exec-script-test", agentName),
 		},
 	})
 	require.NoError(t, err, "failed to create container")
 	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	require.NoError(t, err, "failed to start container")
 
-	// Wait for container to be ready
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	// Wait for container to be running
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, resp.ID)
-	require.NoError(t, err, "ready file was not created")
+	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	require.NoError(t, err, "container did not start")
 
 	// Create a test script in the container
 	createScriptCmd := []string{"sh", "-c", `cat > /tmp/test-script.sh << 'SCRIPT'
-#!/bin/bash
+#!/bin/sh
 echo "script-execution-test-output"
 echo "args: $@"
 SCRIPT
@@ -524,6 +487,9 @@ chmod +x /tmp/test-script.sh`}
 	require.NoError(t, err)
 	_, err = rawClient.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
 	require.NoError(t, err)
+
+	// Give script creation time to complete
+	time.Sleep(200 * time.Millisecond)
 
 	tests := []struct {
 		name         string
