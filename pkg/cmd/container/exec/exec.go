@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -95,6 +95,10 @@ Container name can be:
 	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "Username or UID (format: <name|uid>[:<group|gid>])")
 	cmd.Flags().BoolVar(&opts.Privileged, "privileged", false, "Give extended privileges to the command")
 
+	// Stop parsing flags after the first positional argument (CONTAINER)
+	// so that command flags like "sh -c" are passed to the command, not Cobra
+	cmd.Flags().SetInterspersed(false)
+
 	return cmd
 }
 
@@ -116,6 +120,13 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", containerName)
+	}
+
+	// Enable interactive mode early to suppress INFO logs during TTY sessions.
+	// This prevents host proxy and other startup logs from interfering with the TUI.
+	if !opts.Detach && opts.TTY && opts.Interactive {
+		logger.SetInteractiveMode(true)
+		defer logger.SetInteractiveMode(false)
 	}
 
 	// Create exec configuration
@@ -155,7 +166,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 			cmdutil.HandleError(err)
 			return err
 		}
-		fmt.Println(execID)
+		fmt.Fprintln(f.IOStreams.Out, execID)
 		return nil
 	}
 
@@ -191,7 +202,11 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 			})
 			return err
 		}
-		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+		if err := pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc); err != nil {
+			return err
+		}
+		// Check exit code after TTY mode completes
+		return checkExecExitCode(ctx, client, execID)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
@@ -199,7 +214,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
 		outputDone <- err
 	}()
 
@@ -207,7 +222,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 	// This goroutine can finish anytime - we don't wait for it
 	if opts.Interactive {
 		go func() {
-			io.Copy(hijacked.Conn, os.Stdin)
+			io.Copy(hijacked.Conn, f.IOStreams.In)
 			hijacked.CloseWrite()
 		}()
 	}
@@ -217,5 +232,20 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 		return err
 	}
 
+	// Check exit code
+	return checkExecExitCode(ctx, client, execID)
+}
+
+// checkExecExitCode inspects the exec and returns an error if exit code is non-zero.
+func checkExecExitCode(ctx context.Context, client *docker.Client, execID string) error {
+	inspect, err := client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})
+	if err != nil {
+		// If we can't inspect, don't fail - the command may have completed
+		logger.Debug().Err(err).Str("execID", execID).Msg("failed to inspect exec")
+		return nil
+	}
+	if inspect.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d", inspect.ExitCode)
+	}
 	return nil
 }

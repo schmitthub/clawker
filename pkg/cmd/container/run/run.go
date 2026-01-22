@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"os"
 	"strings"
 
 	"github.com/docker/go-connections/nat"
@@ -279,7 +278,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Print warnings if any
 	for _, warning := range resp.Warnings {
-		fmt.Fprintln(os.Stderr, "Warning:", warning)
+		fmt.Fprintln(f.IOStreams.ErrOut, "Warning:", warning)
 	}
 
 	// Start the container
@@ -290,16 +289,16 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// If detached, print container ID and exit
 	if opts.Detach {
-		fmt.Println(containerID[:12])
+		fmt.Fprintln(f.IOStreams.Out, containerID[:12])
 		return nil
 	}
 
 	// Attach to container
-	return attachAndWait(ctx, client, containerID, opts)
+	return attachAndWait(ctx, f, client, containerID, opts)
 }
 
 // attachAndWait attaches to a running container and waits for it to exit.
-func attachAndWait(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
+func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
 	// Create attach options
 	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
@@ -365,14 +364,14 @@ func attachAndWait(ctx context.Context, client *docker.Client, containerID strin
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
 		close(outputDone)
 	}()
 
 	// Copy stdin to container if enabled
 	if opts.Stdin {
 		go func() {
-			io.Copy(hijacked.Conn, os.Stdin)
+			io.Copy(hijacked.Conn, f.IOStreams.In)
 			hijacked.CloseWrite()
 		}()
 	}

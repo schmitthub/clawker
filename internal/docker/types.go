@@ -30,11 +30,13 @@ type (
 	EnsureNetworkOptions  = whail.EnsureNetworkOptions
 	Labels                = whail.Labels
 
-	// Exec operation options.
-	ExecCreateOptions = whail.ExecCreateOptions
-	ExecStartOptions  = whail.ExecStartOptions
-	ExecAttachOptions = whail.ExecAttachOptions
-	ExecResizeOptions = whail.ExecResizeOptions
+	// Exec operation options and results.
+	ExecCreateOptions  = whail.ExecCreateOptions
+	ExecStartOptions   = whail.ExecStartOptions
+	ExecAttachOptions  = whail.ExecAttachOptions
+	ExecResizeOptions  = whail.ExecResizeOptions
+	ExecInspectOptions = whail.ExecInspectOptions
+	ExecInspectResult  = whail.ExecInspectResult
 
 	// Copy operation options.
 	CopyToContainerOptions   = whail.CopyToContainerOptions

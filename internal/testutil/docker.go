@@ -1,9 +1,12 @@
 package testutil
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -341,4 +344,127 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 	})
 
 	return imageTag
+}
+
+
+// BuildSimpleTestImageOptions configures simple image building for tests.
+type BuildSimpleTestImageOptions struct {
+	// SuppressOutput suppresses build output (default: true for cleaner test output)
+	SuppressOutput bool
+	// NoCache disables Docker build cache (default: false)
+	NoCache bool
+	// Project is the project name for labeling (optional)
+	Project string
+}
+
+// BuildSimpleTestImage builds a simple test image from a Dockerfile string.
+// This is useful for tests that don't need the full clawker infrastructure (Claude Code, etc.).
+// The image is tagged uniquely and automatically cleaned up when the test completes.
+func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestImageOptions) string {
+	t.Helper()
+	RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	// Create a unique tag for this test run
+	timestamp := time.Now().Format("150405.000000")
+	project := opts.Project
+	if project == "" {
+		project = "simple-test"
+	}
+	imageTag := fmt.Sprintf("clawker-simple-%s:%s", project, timestamp)
+
+	// Get raw Docker client
+	rawClient := NewRawDockerClient(t)
+
+	// Create tar archive with just the Dockerfile
+	buildCtx, err := createSimpleBuildContext(dockerfile)
+	if err != nil {
+		t.Fatalf("failed to create build context: %v", err)
+	}
+
+	// Build labels
+	labels := map[string]string{
+		TestLabel:           TestLabelValue,
+		ClawkerManagedLabel: "true",
+	}
+	if opts.Project != "" {
+		labels["com.clawker.project"] = opts.Project
+	}
+
+	// Build options
+	buildOpts := client.ImageBuildOptions{
+		Tags:        []string{imageTag},
+		Dockerfile:  "Dockerfile",
+		NoCache:     opts.NoCache,
+		Labels:      labels,
+		Remove:      true,
+		ForceRemove: true,
+	}
+
+	t.Logf("Building simple test image: %s", imageTag)
+	resp, err := rawClient.ImageBuild(ctx, buildCtx, buildOpts)
+	if err != nil {
+		t.Fatalf("failed to build simple test image: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Process build output
+	if opts.SuppressOutput {
+		// Consume output to allow build to complete
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatalf("failed to read build output: %v", err)
+		}
+	} else {
+		// Stream output to test log
+		if _, err := io.Copy(&testLogWriter{t: t}, resp.Body); err != nil {
+			t.Fatalf("failed to read build output: %v", err)
+		}
+	}
+
+	// Register cleanup
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := rawClient.ImageRemove(cleanupCtx, imageTag, client.ImageRemoveOptions{Force: true}); err != nil {
+			t.Logf("WARNING: failed to cleanup simple test image %s: %v", imageTag, err)
+		}
+	})
+
+	return imageTag
+}
+
+// createSimpleBuildContext creates a minimal tar archive containing just a Dockerfile.
+func createSimpleBuildContext(dockerfile string) (io.Reader, error) {
+	buf := new(bytes.Buffer)
+	tw := tar.NewWriter(buf)
+
+	// Add Dockerfile
+	header := &tar.Header{
+		Name: "Dockerfile",
+		Mode: 0644,
+		Size: int64(len(dockerfile)),
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write([]byte(dockerfile)); err != nil {
+		return nil, err
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
+// testLogWriter adapts *testing.T to io.Writer for build output.
+type testLogWriter struct {
+	t *testing.T
+}
+
+func (w *testLogWriter) Write(p []byte) (n int, err error) {
+	w.t.Log(string(p))
+	return len(p), nil
 }

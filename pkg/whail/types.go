@@ -27,11 +27,13 @@ type (
 	ContainerInspectOptions = client.ContainerInspectOptions
 	ContainerInspectResult  = client.ContainerInspectResult
 
-	// Exec operation options.
-	ExecCreateOptions = client.ExecCreateOptions
-	ExecStartOptions  = client.ExecStartOptions
-	ExecAttachOptions = client.ExecAttachOptions
-	ExecResizeOptions = client.ExecResizeOptions
+	// Exec operation options and results.
+	ExecCreateOptions  = client.ExecCreateOptions
+	ExecStartOptions   = client.ExecStartOptions
+	ExecAttachOptions  = client.ExecAttachOptions
+	ExecResizeOptions  = client.ExecResizeOptions
+	ExecInspectOptions = client.ExecInspectOptions
+	ExecInspectResult  = client.ExecInspectResult
 
 	// Copy operation options.
 	CopyToContainerOptions   = client.CopyToContainerOptions

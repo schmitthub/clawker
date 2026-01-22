@@ -14,7 +14,9 @@ import (
 
 // Options holds options for the top command.
 type Options struct {
-	Agent string
+	Agent bool
+
+	args []string
 }
 
 // NewCmd creates a new top command.
@@ -22,7 +24,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "top [CONTAINER] [ps OPTIONS]",
+		Use:   "top CONTAINER [ps OPTIONS]",
 		Short: "Display the running processes of a container",
 		Long: `Display the running processes of a clawker container.
 
@@ -45,44 +47,31 @@ Container name can be:
 
   # Show all processes with extended info
   clawker container top --agent ralph -ef`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" {
-				// With --agent, all args are ps options
-				return nil
-			}
-			if len(args) < 1 {
-				return fmt.Errorf("requires at least 1 container argument or --agent flag")
-			}
-			return nil
-		},
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.args = args
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat first argument as agent name (resolves to clawker.<project>.<agent>)")
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	var containerName string
-	var psArgs []string
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	// First arg is container/agent name, rest are ps options
+	containerName := opts.args[0]
+	psArgs := opts.args[1:]
 
-	if opts.Agent != "" {
-		// Resolve agent name
-		containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, nil)
+	if opts.Agent {
+		// Resolve agent name to full container name
+		containers, err := cmdutil.ResolveContainerNamesFromAgents(f, []string{containerName})
 		if err != nil {
 			return err
 		}
 		containerName = containers[0]
-		psArgs = args // All args are ps options
-	} else {
-		containerName = args[0]
-		psArgs = args[1:]
 	}
-	ctx := context.Background()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)

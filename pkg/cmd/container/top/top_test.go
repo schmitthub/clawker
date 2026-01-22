@@ -14,7 +14,7 @@ func TestNewCmd(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantAgent  string
+		wantAgent  bool
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -34,17 +34,17 @@ func TestNewCmd(t *testing.T) {
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
+			wantErrMsg: "requires at least 1 argument",
 		},
 		{
 			name:      "with agent flag",
 			input:     "--agent ralph",
-			wantAgent: "ralph",
+			wantAgent: true,
 		},
 		{
 			name:      "with agent flag and ps args",
 			input:     "--agent ralph aux",
-			wantAgent: "ralph",
+			wantAgent: true,
 		},
 	}
 
@@ -54,10 +54,10 @@ func TestNewCmd(t *testing.T) {
 
 			cmd := NewCmd(f)
 
-			var capturedAgent string
+			var capturedAgent bool
 			// Override RunE to capture agent and not actually execute
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				capturedAgent, _ = cmd.Flags().GetString("agent")
+				capturedAgent, _ = cmd.Flags().GetBool("agent")
 				return nil
 			}
 
@@ -75,7 +75,7 @@ func TestNewCmd(t *testing.T) {
 			_, err := cmd.ExecuteC()
 			if tt.wantErr {
 				require.Error(t, err)
-				require.EqualError(t, err, tt.wantErrMsg)
+				require.Contains(t, err.Error(), tt.wantErrMsg)
 				return
 			}
 
@@ -90,7 +90,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "top [CONTAINER] [ps OPTIONS]", cmd.Use)
+	require.Equal(t, "top CONTAINER [ps OPTIONS]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

@@ -56,19 +56,14 @@ func TestNewCmd(t *testing.T) {
 			wantErrMsg: "accepts 2 arg(s), received 1",
 		},
 		{
-			name:     "agent flag with colon path",
-			input:    "--agent ralph :/app/file.txt ./file.txt",
-			wantOpts: Options{Agent: "ralph"},
+			name:     "agent flag with container path",
+			input:    "--agent ralph:/app/file.txt ./file.txt",
+			wantOpts: Options{Agent: true},
 		},
 		{
-			name:     "agent flag with named container path",
-			input:    "--agent ralph writer:/app/file.txt ./file.txt",
-			wantOpts: Options{Agent: "ralph"},
-		},
-		{
-			name:     "agent flag with destination colon path",
-			input:    "--agent ralph ./file.txt :/app/file.txt",
-			wantOpts: Options{Agent: "ralph"},
+			name:     "agent flag copy to container",
+			input:    "--agent ./file.txt ralph:/app/file.txt",
+			wantOpts: Options{Agent: true},
 		},
 	}
 
@@ -82,7 +77,7 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
-				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
+				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
 				cmdOpts.Archive, _ = cmd.Flags().GetBool("archive")
 				cmdOpts.FollowLink, _ = cmd.Flags().GetBool("follow-link")
 				cmdOpts.CopyUIDGID, _ = cmd.Flags().GetBool("copy-uidgid")
