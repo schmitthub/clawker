@@ -14,7 +14,8 @@ import (
 
 // Options defines the options for the wait command.
 type Options struct {
-	Agent string
+	Agent      bool
+	Containers []string
 }
 
 // NewCmd creates a new wait command.
@@ -22,7 +23,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
-		Use:   "wait [CONTAINER...]",
+		Use:   "wait [OPTIONS] CONTAINER [CONTAINER...]",
 		Short: "Block until one or more containers stop, then print their exit codes",
 		Long: `Blocks until one or more clawker containers stop, then prints their exit codes.
 
@@ -45,22 +46,27 @@ Container names can be:
 		},
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.Containers = args
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	// When opts.Agent is true, all items in opts.Containers are agent names
+	containers := opts.Containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
-	ctx := context.Background()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)

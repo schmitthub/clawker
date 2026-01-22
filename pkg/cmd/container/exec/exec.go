@@ -5,18 +5,18 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
+	"github.com/schmitthub/clawker/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
 // Options holds options for the exec command.
 type Options struct {
-	Agent       string // Agent name to resolve container
+	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
 	TTY         bool
 	Detach      bool
@@ -67,38 +67,26 @@ Container name can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: func(cmd *cobra.Command, args []string) error {
-			agentFlag, _ := cmd.Flags().GetString("agent")
-			if agentFlag != "" {
-				// With --agent, only need COMMAND (min 1 arg)
-				if len(args) == 0 {
-					return fmt.Errorf("requires at least 1 command argument when using --agent")
-				}
-			} else {
-				// Without --agent, need CONTAINER COMMAND (min 2 args)
-				if len(args) < 2 {
-					return fmt.Errorf("requires at least 2 arg(s), only received %d", len(args))
+		Args: cmdutil.RequiresMinArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			containerName := args[0]
+			if opts.Agent {
+				var err error
+				containerName, err = cmdutil.ResolveContainerName(f, args[0])
+				if err != nil {
+					return err
 				}
 			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var containerName string
+
 			var command []string
-			if opts.Agent != "" {
-				// Use all args as command
-				containerName = "" // Will be resolved from agent
-				command = args
-			} else {
-				// First arg is container, rest are command
-				containerName = args[0]
+			if len(args) > 1 {
 				command = args[1:]
 			}
-			return run(f, opts, containerName, command)
+			return run(cmd.Context(), f, opts, containerName, command)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name as first argument (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Keep STDIN open even if not attached")
 	cmd.Flags().BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Detached mode: run command in the background")
@@ -107,38 +95,19 @@ Container name can be:
 	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "Username or UID (format: <name|uid>[:<group|gid>])")
 	cmd.Flags().BoolVar(&opts.Privileged, "privileged", false, "Give extended privileges to the command")
 
+	// Stop parsing flags after the first positional argument (CONTAINER)
+	// so that command flags like "sh -c" are passed to the command, not Cobra
+	cmd.Flags().SetInterspersed(false)
+
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(err)
 		return err
-	}
-
-	// Resolve container name if using --agent
-	if opts.Agent != "" {
-		cfg, err := f.Config()
-		if err != nil {
-			cmdutil.PrintError("Failed to load config: %v", err)
-			cmdutil.PrintNextSteps(
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return err
-		}
-		if cfg.Project == "" {
-			cmdutil.PrintError("Project name not configured in clawker.yaml")
-			cmdutil.PrintNextSteps(
-				"Add 'project: <name>' to your clawker.yaml",
-			)
-			return fmt.Errorf("project name not configured")
-		}
-		containerName = docker.ContainerName(cfg.Project, opts.Agent)
 	}
 
 	// Find container by name
@@ -151,6 +120,13 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", containerName)
+	}
+
+	// Enable interactive mode early to suppress INFO logs during TTY sessions.
+	// This prevents host proxy and other startup logs from interfering with the TUI.
+	if !opts.Detach && opts.TTY && opts.Interactive {
+		logger.SetInteractiveMode(true)
+		defer logger.SetInteractiveMode(false)
 	}
 
 	// Create exec configuration
@@ -190,7 +166,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 			cmdutil.HandleError(err)
 			return err
 		}
-		fmt.Println(execID)
+		fmt.Fprintln(f.IOStreams.Out, execID)
 		return nil
 	}
 
@@ -226,7 +202,11 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 			})
 			return err
 		}
-		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+		if err := pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc); err != nil {
+			return err
+		}
+		// Check exit code after TTY mode completes
+		return checkExecExitCode(ctx, client, execID)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
@@ -234,7 +214,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
 		outputDone <- err
 	}()
 
@@ -242,7 +222,7 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 	// This goroutine can finish anytime - we don't wait for it
 	if opts.Interactive {
 		go func() {
-			io.Copy(hijacked.Conn, os.Stdin)
+			io.Copy(hijacked.Conn, f.IOStreams.In)
 			hijacked.CloseWrite()
 		}()
 	}
@@ -252,5 +232,20 @@ func run(f *cmdutil.Factory, opts *Options, containerName string, command []stri
 		return err
 	}
 
+	// Check exit code
+	return checkExecExitCode(ctx, client, execID)
+}
+
+// checkExecExitCode inspects the exec and returns an error if exit code is non-zero.
+func checkExecExitCode(ctx context.Context, client *docker.Client, execID string) error {
+	inspect, err := client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})
+	if err != nil {
+		// If we can't inspect, don't fail - the command may have completed
+		logger.Debug().Err(err).Str("execID", execID).Msg("failed to inspect exec")
+		return nil
+	}
+	if inspect.ExitCode != 0 {
+		return fmt.Errorf("command exited with code %d", inspect.ExitCode)
+	}
 	return nil
 }

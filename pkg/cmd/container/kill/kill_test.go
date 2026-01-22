@@ -44,11 +44,17 @@ func TestNewCmdKill(t *testing.T) {
 			output: KillOptions{Signal: "SIGINT"},
 		},
 		{
+			name:   "with agent flag",
+			input:  "--agent",
+			args:   []string{"ralph"},
+			output: KillOptions{Agent: true, Signal: "SIGKILL"},
+		},
+		{
 			name:       "no container specified",
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
+			wantErrMsg: "requires at least 1 argument",
 		},
 	}
 
@@ -62,6 +68,7 @@ func TestNewCmdKill(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &KillOptions{}
+				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
 				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
 				return nil
 			}
@@ -88,6 +95,7 @@ func TestNewCmdKill(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
 		})
 	}

@@ -1,42 +1,31 @@
-# Current Session Status - COMPLETED
+# Current Session Status
 
-## Last Task: Docker Client Import Cleanup
-**Status: COMPLETED**
+**Last Updated:** 2025-01-21
+**Branch:** a/run-fixes
 
-The architectural layering cleanup for Docker client imports is fully complete.
+## Status: @ Symbol Resolution Tests Complete
 
-### What Was Done
-1. Created `pkg/whail/types.go` with type aliases for Docker SDK types
-2. Created `internal/docker/types.go` re-exporting types from whail
-3. Updated all production files to follow the layering:
-   - `github.com/moby/moby/client` → only in `pkg/whail` and `internal/testutil`
-   - `pkg/whail` → only imported by `internal/docker`
-   - All pkg/cmd/*, pkg/cmdutil/*, internal/term/ → use `internal/docker`
+### Completed Work
 
-4. Key files updated in this session:
-   - `pkg/cmdutil/resolve.go` - Changed client.Filters/ImageListOptions to docker.*
-   - `pkg/cmdutil/output.go` - Changed whail.DockerError to docker.DockerError
-   - `internal/term/pty.go` - Changed client.HijackedResponse to docker.HijackedResponse
-   - `internal/docker/types.go` - Added DockerError type alias
+1. **@ symbol parsing tests** - 5 test cases in `TestNewCmdRun` for "@" symbol parsing
+2. **@ symbol resolution tests** - 5 test cases in `TestAtSymbolResolution` for runtime resolution
+3. **Mock infrastructure** - `testutil.NewMockDockerClient()` for unit testing without Docker
+4. **Type aliases added** - `whail.ImageListResult` and `whail.ImageSummary` for test code
+5. **Fixed create.go** - Removed stale call to non-existent `ResolveAndValidateImageOptions`
 
-### Verification
-- ✅ `go build ./...` succeeds
-- ✅ `go test ./...` all unit tests pass
-- ✅ No moby/client imports outside allowed locations (verified with grep)
-- ✅ No pkg/whail imports outside internal/docker (verified with grep)
+### Key Files Modified
+- `pkg/whail/types.go` - Added ImageListResult, ImageSummary type aliases
+- `pkg/cmd/container/run/run_test.go` - Added TestAtSymbolResolution tests
+- `pkg/cmd/container/create/create.go` - Fixed @ symbol handling
+- `internal/testutil/mock_docker.go` - Mock client helper
+- `internal/docker/mocks/mock_client.go` - Generated mock
+- `.claude/rules/TESTING.md` - Updated mock example to use whail types
 
-### Memory Updated
-- `docker_client_import_cleanup_status` - Marked as COMPLETED with full details
+### All Tests Pass
+```bash
+go test ./...  # All pass
+```
 
-### No Pending Work
-All tasks from the todo list are completed. No uncommitted critical changes.
+## Resume Instructions
 
-### Git Status at Session End
-Branch: a/e2e-fixes
-Modified files (from cleanup work):
-- pkg/whail/types.go
-- internal/docker/types.go
-- internal/docker/client.go, labels.go, volume.go
-- Multiple pkg/cmd/* files
-- pkg/cmdutil/resolve.go, output.go
-- internal/term/pty.go
+Branch is ready for PR or further work. Session memories cleaned up.

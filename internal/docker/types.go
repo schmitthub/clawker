@@ -20,19 +20,23 @@ type (
 	ContainerCreateOptions    = whail.ContainerCreateOptions
 	SDKContainerCreateOptions = whail.SDKContainerCreateOptions
 
-	// Container result types.
-	ContainerInspectResult = whail.ContainerInspectResult
+	// Container result types
+	ContainerInspectOptions = whail.ContainerInspectOptions
+	ContainerInspectResult  = whail.ContainerInspectResult
+	ContainerWaitCondition  = whail.WaitCondition
 
 	// Whail-specific container types.
 	ContainerStartOptions = whail.ContainerStartOptions
 	EnsureNetworkOptions  = whail.EnsureNetworkOptions
 	Labels                = whail.Labels
 
-	// Exec operation options.
-	ExecCreateOptions = whail.ExecCreateOptions
-	ExecStartOptions  = whail.ExecStartOptions
-	ExecAttachOptions = whail.ExecAttachOptions
-	ExecResizeOptions = whail.ExecResizeOptions
+	// Exec operation options and results.
+	ExecCreateOptions  = whail.ExecCreateOptions
+	ExecStartOptions   = whail.ExecStartOptions
+	ExecAttachOptions  = whail.ExecAttachOptions
+	ExecResizeOptions  = whail.ExecResizeOptions
+	ExecInspectOptions = whail.ExecInspectOptions
+	ExecInspectResult  = whail.ExecInspectResult
 
 	// Copy operation options.
 	CopyToContainerOptions   = whail.CopyToContainerOptions
@@ -56,4 +60,19 @@ type (
 
 	// Error types.
 	DockerError = whail.DockerError
+)
+
+// Container configuration types.
+type (
+	Resources       = whail.Resources
+	RestartPolicy   = whail.RestartPolicy
+	UpdateConfig    = whail.UpdateConfig
+	ContainerUpdateResult = whail.ContainerUpdateResult
+)
+
+const (
+	// WaitConditionNotRunning is used to wait until a container is not running.
+	WaitConditionNotRunning = whail.WaitConditionNotRunning
+	WaitConditionNextExit   = whail.WaitConditionNextExit
+	WaitConditionRemoved    = whail.WaitConditionRemoved
 )

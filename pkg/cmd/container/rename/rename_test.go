@@ -14,7 +14,7 @@ func TestNewCmd(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantAgent  string
+		wantAgent  bool
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -26,36 +26,18 @@ func TestNewCmd(t *testing.T) {
 			name:       "missing new name",
 			input:      "oldname",
 			wantErr:    true,
-			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
+			wantErrMsg: "rename: 'rename' requires at least 2 arguments",
 		},
 		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
+			wantErrMsg: "rename: 'rename' requires at least 2 arguments",
 		},
 		{
-			name:       "too many arguments",
-			input:      "one two three",
-			wantErr:    true,
-			wantErrMsg: "requires exactly 2 arguments: CONTAINER NEW_NAME, or --agent with NEW_NAME",
-		},
-		{
-			name:      "with agent flag and new name",
+			name:      "with agent flag",
 			input:     "--agent ralph newname",
-			wantAgent: "ralph",
-		},
-		{
-			name:       "with agent flag missing new name",
-			input:      "--agent ralph",
-			wantErr:    true,
-			wantErrMsg: "with --agent, requires exactly 1 argument: NEW_NAME",
-		},
-		{
-			name:       "with agent flag too many arguments",
-			input:      "--agent ralph one two",
-			wantErr:    true,
-			wantErrMsg: "with --agent, requires exactly 1 argument: NEW_NAME",
+			wantAgent: true,
 		},
 	}
 
@@ -65,10 +47,10 @@ func TestNewCmd(t *testing.T) {
 
 			cmd := NewCmd(f)
 
-			var capturedAgent string
+			var capturedAgent bool
 			// Override RunE to capture agent and not actually execute
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				capturedAgent, _ = cmd.Flags().GetString("agent")
+				capturedAgent, _ = cmd.Flags().GetBool("agent")
 				return nil
 			}
 
@@ -89,7 +71,7 @@ func TestNewCmd(t *testing.T) {
 			_, err := cmd.ExecuteC()
 			if tt.wantErr {
 				require.Error(t, err)
-				require.EqualError(t, err, tt.wantErrMsg)
+				require.Contains(t, err.Error(), tt.wantErrMsg)
 				return
 			}
 
@@ -104,7 +86,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "rename [CONTAINER] NEW_NAME", cmd.Use)
+	require.Equal(t, "rename CONTAINER NEW_NAME", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

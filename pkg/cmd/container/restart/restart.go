@@ -13,9 +13,11 @@ import (
 
 // Options defines the options for the restart command.
 type Options struct {
-	Agent   string
+	Agent   bool // treat arguments as agents names
 	Timeout int
 	Signal  string
+
+	containers []string
 }
 
 // NewCmd creates a new restart command.
@@ -50,26 +52,29 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidator(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.containers = args
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().IntVarP(&opts.Timeout, "time", "t", 10, "Seconds to wait before killing the container")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "", "Signal to send (default: SIGTERM)")
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, args []string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker

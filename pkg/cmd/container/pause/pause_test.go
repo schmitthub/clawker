@@ -28,7 +28,7 @@ func TestNewCmdPause(t *testing.T) {
 			name:       "no container specified",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
+			wantErrMsg: "requires at least 1 argument",
 		},
 	}
 

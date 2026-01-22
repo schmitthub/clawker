@@ -3,7 +3,6 @@
 package exec
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -113,9 +112,10 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ios := cmdutil.NewTestIOStreams()
 			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
-				IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+				IOStreams: ios.IOStreams,
 			}
 
 			// Build exec command args: container name, then command
@@ -124,16 +124,11 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 			cmd := NewCmd(f)
 			cmd.SetArgs(cmdArgs)
 
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			cmd.SetOut(stdout)
-			cmd.SetErr(stderr)
-
 			err := cmd.Execute()
-			require.NoError(t, err, "exec command failed: stderr=%s", stderr.String())
+			require.NoError(t, err, "exec command failed: stderr=%s", ios.ErrBuf.String())
 
-			// Verify output
-			tt.verifyFunc(t, stdout.String())
+			// Verify output from IOStreams (not Cobra's stdout)
+			tt.verifyFunc(t, ios.OutBuf.String())
 		})
 	}
 }
@@ -190,9 +185,10 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	require.NoError(t, err, "ready file was not created")
 
 	// Test exec with --agent flag
+	ios := cmdutil.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
-		IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+		IOStreams: ios.IOStreams,
 	}
 
 	cmd := NewCmd(f)
@@ -201,14 +197,9 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 		"echo", "agent-exec-works",
 	})
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	cmd.SetOut(stdout)
-	cmd.SetErr(stderr)
-
 	err = cmd.Execute()
-	require.NoError(t, err, "exec with --agent failed: stderr=%s", stderr.String())
-	require.Contains(t, stdout.String(), "agent-exec-works", "expected echo output")
+	require.NoError(t, err, "exec with --agent failed: stderr=%s", ios.ErrBuf.String())
+	require.Contains(t, ios.OutBuf.String(), "agent-exec-works", "expected echo output")
 }
 
 // TestExecIntegration_EnvFlag tests passing environment variables via exec.
@@ -263,9 +254,10 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	require.NoError(t, err, "ready file was not created")
 
 	// Test exec with -e flag to set environment variable
+	ios := cmdutil.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
-		IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+		IOStreams: ios.IOStreams,
 	}
 
 	cmd := NewCmd(f)
@@ -275,14 +267,9 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 		"sh", "-c", "echo $TEST_VAR",
 	})
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	cmd.SetOut(stdout)
-	cmd.SetErr(stderr)
-
 	err = cmd.Execute()
-	require.NoError(t, err, "exec with -e failed: stderr=%s", stderr.String())
-	require.Contains(t, stdout.String(), "custom_value", "expected custom env var in output")
+	require.NoError(t, err, "exec with -e failed: stderr=%s", ios.ErrBuf.String())
+	require.Contains(t, ios.OutBuf.String(), "custom_value", "expected custom env var in output")
 }
 
 // TestExecIntegration_WorkdirFlag tests executing commands in a specific directory.
@@ -337,9 +324,10 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	require.NoError(t, err, "ready file was not created")
 
 	// Test exec with -w flag to set working directory
+	ios := cmdutil.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
-		IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+		IOStreams: ios.IOStreams,
 	}
 
 	cmd := NewCmd(f)
@@ -349,14 +337,9 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 		"pwd",
 	})
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	cmd.SetOut(stdout)
-	cmd.SetErr(stderr)
-
 	err = cmd.Execute()
-	require.NoError(t, err, "exec with -w failed: stderr=%s", stderr.String())
-	require.Contains(t, stdout.String(), "/tmp", "expected /tmp as working directory")
+	require.NoError(t, err, "exec with -w failed: stderr=%s", ios.ErrBuf.String())
+	require.Contains(t, ios.OutBuf.String(), "/tmp", "expected /tmp as working directory")
 }
 
 
@@ -412,22 +395,17 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		require.NoError(t, err, "ready file was not created")
 
 		// Try to exec a command that doesn't exist
+		ios := cmdutil.NewTestIOStreams()
 		f := &cmdutil.Factory{
 			WorkDir:   h.ProjectDir,
-			IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+			IOStreams: ios.IOStreams,
 		}
 
 		cmd := NewCmd(f)
 		cmd.SetArgs([]string{
 			containerName,
-			"--",
 			"notacommand123doesnotexist",
 		})
-
-		stdout := &bytes.Buffer{}
-		stderr := &bytes.Buffer{}
-		cmd.SetOut(stdout)
-		cmd.SetErr(stderr)
 
 		err = cmd.Execute()
 		// The exec should fail with a non-zero exit code or error
@@ -453,28 +431,23 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		// Deliberately NOT starting the container
 
 		// Try to exec into the stopped container
+		ios := cmdutil.NewTestIOStreams()
 		f := &cmdutil.Factory{
 			WorkDir:   h.ProjectDir,
-			IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+			IOStreams: ios.IOStreams,
 		}
 
 		cmd := NewCmd(f)
 		cmd.SetArgs([]string{
 			containerName,
-			"--",
 			"ls",
 		})
-
-		stdout := &bytes.Buffer{}
-		stderr := &bytes.Buffer{}
-		cmd.SetOut(stdout)
-		cmd.SetErr(stderr)
 
 		err = cmd.Execute()
 		// Should fail because container is not running
 		require.Error(t, err, "expected error when execing into stopped container")
 		// Error message should indicate the container isn't running
-		errMsg := err.Error() + stderr.String()
+		errMsg := err.Error() + ios.ErrBuf.String()
 		require.True(t,
 			strings.Contains(errMsg, "not running") ||
 				strings.Contains(errMsg, "is not running") ||
@@ -489,11 +462,12 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	testutil.RequireDocker(t)
 	ctx := context.Background()
 
-	// Create harness
+	// Use the same project name as BasicCommands to leverage Docker layer caching
+	// This avoids rebuilding Claude Code from scratch for each test
 	h := testutil.NewHarness(t,
 		testutil.WithConfigBuilder(
 			testutil.MinimalValidConfig().
-				WithProject("exec-script-test").
+				WithProject("exec-test").
 				WithSecurity(testutil.SecurityFirewallDisabled()),
 		),
 	)
@@ -507,7 +481,7 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	dockerClient := testutil.NewTestClient(t)
 	rawClient := testutil.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-script-test")
+	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-test")
 
 	agentName := "test-script-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -520,7 +494,7 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 			Cmd:   []string{"sleep", "300"},
 			Labels: testutil.AddClawkerLabels(map[string]string{
 				testutil.TestLabel: testutil.TestLabelValue,
-			}, "exec-script-test", agentName),
+			}, "exec-test", agentName),
 		},
 	})
 	require.NoError(t, err, "failed to create container")
@@ -579,32 +553,28 @@ chmod +x /tmp/test-script.sh`}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ios := cmdutil.NewTestIOStreams()
 			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
-				IOStreams: cmdutil.NewTestIOStreams().IOStreams,
+				IOStreams: ios.IOStreams,
 			}
 
 			var cmdArgs []string
 			if tt.useAgentFlag {
-				cmdArgs = []string{"--agent", agentName, "--"}
+				cmdArgs = []string{"--agent", agentName}
 				cmdArgs = append(cmdArgs, tt.scriptArgs...)
 			} else {
-				cmdArgs = []string{containerName, "--"}
+				cmdArgs = []string{containerName}
 				cmdArgs = append(cmdArgs, tt.scriptArgs...)
 			}
 
 			cmd := NewCmd(f)
 			cmd.SetArgs(cmdArgs)
 
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			cmd.SetOut(stdout)
-			cmd.SetErr(stderr)
-
 			err := cmd.Execute()
-			require.NoError(t, err, "exec command failed: stderr=%s", stderr.String())
+			require.NoError(t, err, "exec command failed: stderr=%s", ios.ErrBuf.String())
 
-			tt.checkOutput(t, stdout.String())
+			tt.checkOutput(t, ios.OutBuf.String())
 		})
 	}
 }

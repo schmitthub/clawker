@@ -42,13 +42,13 @@ func TestNewCmd(t *testing.T) {
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires exactly 1 container argument or --agent flag",
+			wantErrMsg: "attach: 'attach' requires 1 argument",
 		},
 		{
 			name:       "too many arguments",
 			input:      "container1 container2",
 			wantErr:    true,
-			wantErrMsg: "requires exactly 1 container argument or --agent flag",
+			wantErrMsg: "attach: 'attach' requires 1 argument",
 		},
 	}
 
@@ -82,7 +82,7 @@ func TestNewCmd(t *testing.T) {
 			_, err := cmd.ExecuteC()
 			if tt.wantErr {
 				require.Error(t, err)
-				require.EqualError(t, err, tt.wantErrMsg)
+				require.Contains(t, err.Error(), tt.wantErrMsg)
 				return
 			}
 
@@ -99,7 +99,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "attach [OPTIONS] [CONTAINER]", cmd.Use)
+	require.Equal(t, "attach [OPTIONS] CONTAINER", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

@@ -310,6 +310,47 @@ go test -v ./pkg/whail/...
 # Static analysis
 go vet ./...
 go fmt ./...
+```
+
+## Mock Docker Client Pattern (Unit Tests)
+
+For unit testing code that needs Docker without a real daemon:
+
+```go
+import (
+    "context"
+    "testing"
+
+    "github.com/schmitthub/clawker/internal/testutil"
+    "github.com/schmitthub/clawker/pkg/whail"
+    "github.com/stretchr/testify/require"
+    "go.uber.org/mock/gomock"
+)
+
+func TestImageResolution(t *testing.T) {
+    ctx := context.Background()
+    m := testutil.NewMockDockerClient(t)
+
+    // IMPORTANT: Use whail types, NOT moby types directly
+    m.Mock.EXPECT().
+        ImageList(gomock.Any(), gomock.Any()).
+        Return(whail.ImageListResult{
+            Items: []whail.ImageSummary{
+                {RepoTags: []string{"clawker-myproject:latest"}},
+            },
+        }, nil).
+        AnyTimes()
+
+    // Pass m.Client to code under test
+    result, err := cmdutil.ResolveImageWithSource(ctx, m.Client, cfg, settings)
+    require.NoError(t, err)
+}
+```
+
+**Key points:**
+- Use `whail.ImageListResult` and `whail.ImageSummary` (NOT moby types)
+- `m.Mock` for setting expectations, `m.Client` for passing to code
+- Regenerate mocks with `make generate-mocks`
 
 ## Whail Engine Method Pattern
 

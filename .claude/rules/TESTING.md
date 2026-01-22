@@ -138,6 +138,63 @@ exists := testutil.VolumeExists(t, client, volumeName)
 exists := testutil.NetworkExists(t, client, networkName)
 ```
 
+### Mock Docker Client (Unit Tests)
+
+For unit testing code that uses `docker.Client` **without requiring Docker**, use the mock client:
+
+```go
+import (
+    "context"
+    "testing"
+
+    "github.com/schmitthub/clawker/internal/testutil"
+    "github.com/schmitthub/clawker/pkg/whail"
+    "github.com/stretchr/testify/require"
+    "go.uber.org/mock/gomock"
+)
+
+func TestImageResolution(t *testing.T) {
+    ctx := context.Background()
+
+    // Create mock client (no Docker required)
+    m := testutil.NewMockDockerClient(t)
+
+    // Set expectations using gomock with whail types (NOT moby types directly)
+    m.Mock.EXPECT().
+        ImageList(gomock.Any(), gomock.Any()).
+        Return(whail.ImageListResult{
+            Items: []whail.ImageSummary{
+                {RepoTags: []string{"clawker-myproject:latest"}},
+            },
+        }, nil)
+
+    // Pass m.Client to code under test
+    result, err := SomeFunctionThatNeedsDocker(ctx, m.Client)
+    require.NoError(t, err)
+}
+```
+
+**MockDockerClient fields:**
+- `Mock` - The gomock mock, use `.EXPECT()` to set expectations
+- `Client` - The `*docker.Client` to pass to code under test
+- `Ctrl` - The gomock controller (rarely needed directly)
+
+**When to use:**
+- Unit tests that need to test Docker client interactions without a real daemon
+- Testing error handling paths (return errors from mock)
+- Fast tests that don't need actual containers
+
+**Regenerating mocks:**
+
+```bash
+make generate-mocks
+```
+
+> **Note:** The mock is generated from `github.com/moby/moby/client.APIClient`.
+> Post-processing is required because mockgen copies the Docker SDK's unnamed
+> variadic parameters (using `_`) which is invalid Go syntax. The Makefile
+> handles this automatically.
+
 ### Cleanup Functions
 
 **CRITICAL:** Always clean up test resources. Use these functions in `t.Cleanup()`:

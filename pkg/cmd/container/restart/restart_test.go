@@ -52,7 +52,7 @@ func TestNewCmd(t *testing.T) {
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
+			wantErrMsg: "restart: 'restart' requires at least 1 argument",
 		},
 	}
 
@@ -88,7 +88,7 @@ func TestNewCmd(t *testing.T) {
 			_, err := cmd.ExecuteC()
 			if tt.wantErr {
 				require.Error(t, err)
-				require.EqualError(t, err, tt.wantErrMsg)
+				require.Contains(t, err.Error(), tt.wantErrMsg)
 				return
 			}
 

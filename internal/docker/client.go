@@ -292,7 +292,7 @@ func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string
 // If force is false, volume cleanup errors are returned.
 func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID string, force bool) error {
 	// Get container info to find associated project/agent
-	info, err := c.ContainerInspect(ctx, containerID)
+	info, err := c.ContainerInspect(ctx, containerID, whail.ContainerInspectOptions{})
 	if err != nil {
 		return err
 	}

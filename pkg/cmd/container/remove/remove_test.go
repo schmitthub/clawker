@@ -66,7 +66,7 @@ func TestNewCmdRemove(t *testing.T) {
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
+			wantErrMsg: "requires at least 1 argument",
 		},
 	}
 

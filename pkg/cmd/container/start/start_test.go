@@ -27,9 +27,9 @@ func TestNewCmdStart(t *testing.T) {
 		},
 		{
 			name:   "with agent flag",
-			input:  "--agent ralph",
-			args:   []string{},
-			output: StartOptions{Agent: "ralph"},
+			input:  "--agent",
+			args:   []string{"ralph"},
+			output: StartOptions{Agent: true},
 		},
 		{
 			name:   "multiple containers",
@@ -72,20 +72,19 @@ func TestNewCmdStart(t *testing.T) {
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires at least 1 container argument or --agent flag",
-		},
-		{
-			name:       "agent and container mutually exclusive",
-			input:      "--agent ralph",
-			args:       []string{"clawker.myapp.ralph"},
-			wantErr:    true,
-			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
+			wantErrMsg: "requires at least 1 argument",
 		},
 		{
 			name:   "combined flags shorthand",
 			input:  "-ai",
 			args:   []string{"clawker.myapp.ralph"},
 			output: StartOptions{Attach: true, Interactive: true},
+		},
+		{
+			name:   "agent flag with multiple containers",
+			input:  "--agent",
+			args:   []string{"ralph", "writer"},
+			output: StartOptions{Agent: true},
 		},
 	}
 
@@ -99,7 +98,7 @@ func TestNewCmdStart(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &StartOptions{}
-				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
+				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
 				cmdOpts.Attach, _ = cmd.Flags().GetBool("attach")
 				cmdOpts.Interactive, _ = cmd.Flags().GetBool("interactive")
 				return nil
@@ -139,7 +138,7 @@ func TestCmdStart_Properties(t *testing.T) {
 	cmd := NewCmdStart(f)
 
 	// Test command basics
-	require.Equal(t, "start [CONTAINER...]", cmd.Use)
+	require.Equal(t, "start [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

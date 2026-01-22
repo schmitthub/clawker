@@ -12,9 +12,11 @@ import (
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
-	Agent   string
+	Agent   bool
 	Force   bool
 	Volumes bool
+
+	containers []string
 }
 
 // NewCmdRemove creates the container remove command.
@@ -30,7 +32,7 @@ func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 By default, only stopped containers can be removed. Use --force to remove
 running containers.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -53,26 +55,29 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidator(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRemove(f, opts, args)
+			opts.containers = args
+			return runRemove(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force remove running containers")
 	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove associated volumes")
 
 	return cmd
 }
 
-func runRemove(f *cmdutil.Factory, opts *RemoveOptions, args []string) error {
-	ctx := context.Background()
-
+func runRemove(ctx context.Context, f *cmdutil.Factory, opts *RemoveOptions) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker

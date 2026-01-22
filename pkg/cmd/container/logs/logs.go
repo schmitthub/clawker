@@ -13,13 +13,15 @@ import (
 
 // LogsOptions holds options for the logs command.
 type LogsOptions struct {
-	Agent      string
+	Agent      bool
 	Follow     bool
 	Timestamps bool
 	Details    bool
 	Since      string
 	Until      string
 	Tail       string
+
+	containers []string
 }
 
 // NewCmdLogs creates the container logs command.
@@ -54,13 +56,14 @@ Container name can be:
 
   # Show logs with timestamps
   clawker container logs --timestamps --agent ralph`,
-		Args: cmdutil.AgentArgsValidatorExact(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLogs(f, opts, args)
+			opts.containers = args
+			return runLogs(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat argument as agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().BoolVarP(&opts.Timestamps, "timestamps", "t", false, "Show timestamps")
 	cmd.Flags().BoolVar(&opts.Details, "details", false, "Show extra details provided to logs")
@@ -71,15 +74,16 @@ Container name can be:
 	return cmd
 }
 
-func runLogs(f *cmdutil.Factory, opts *LogsOptions, args []string) error {
-	ctx := context.Background()
-
+func runLogs(ctx context.Context, f *cmdutil.Factory, opts *LogsOptions) error {
 	// Resolve container name
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containerName := opts.containers[0]
+	if opts.Agent {
+		containers, err := cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
+		if err != nil {
+			return err
+		}
+		containerName = containers[0]
 	}
-	containerName := containers[0]
 
 	// Connect to Docker
 	client, err := f.Client(ctx)

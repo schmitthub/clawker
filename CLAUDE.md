@@ -192,6 +192,7 @@ CONTAINER                              HOST PROXY (:18374)               HOST
 - **Logging**: `zerolog` only (never `fmt.Print` for debug)
 - **Whail Client Enforcement**: No go package should be using the `github.com/moby/moby/client` library directly except for `@pkg/whail`. And no go package should be using `@pkg/whail` directly except for `@internal/docker`
 - **Whail Client is a Decorator**: `@pkg/whail` decorates `github.com/moby/moby/client` and exposes the same interface so higher-level code can remain agnostic. All of the methods offered through `github.com/moby/moby/client` are available through `@pkg/whail` regardless of whether they are explicitly defined in `@pkg/whail` or not.
+- **Whail Types in Tests**: When writing unit tests with mocks, use `whail.ImageListResult`, `whail.ImageSummary` etc. from `pkg/whail/types.go` - never import moby types directly in test files.
 - **User output**: `cmdutil.PrintError()`, `cmdutil.PrintNextSteps()` to stderr
 - **Data output**: stdout only for scripting (e.g., `ls` table)
 - **Errors**: `cmdutil.HandleError(err)` for Docker errors
@@ -271,6 +272,21 @@ Example container commands:
 - `clawker container remove` (alias: `rm`)
 
 These commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
+
+### Image Resolution (@ Symbol)
+
+The `@` symbol in `clawker run @` or `clawker container create @` triggers automatic image resolution:
+
+1. **Project image** - Looks for `clawker-<project>:latest` with managed labels
+2. **Default image** - Falls back to `default_image` from config/settings
+3. **Error** - If neither found, prompts user with next steps
+
+Resolution logic in `pkg/cmdutil/resolve.go`:
+- `ResolveImageWithSource()` - Returns image reference + source (project/default)
+- `FindProjectImage()` - Searches for labeled project images
+- `ResolveAndValidateImage()` - Validates default images exist, prompts for rebuild
+
+When `opts.Image == "@"` (or empty), call `ResolveAndValidateImage()` without passing the "@" as explicit image.
 
 ## Configuration
 
@@ -398,6 +414,7 @@ go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
 - `Harness` - Isolated test environments with automatic cleanup
 - `ConfigBuilder` - Fluent API for test configs
 - `NewTestClient` / `NewRawDockerClient` - Docker client helpers
+- `NewMockDockerClient` - Mock client for unit tests without Docker (use `whail.ImageListResult`, `whail.ImageSummary` for return types)
 - `WaitForReadyFile` / `WaitForHealthy` - Container readiness detection
 - `CleanupProjectResources` - Resource cleanup with error collection
 

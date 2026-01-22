@@ -48,7 +48,7 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
   # Custom format showing name and status
   clawker container ls -a --format '{{.Name}} {{.Status}}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(f, opts)
+			return runList(cmd.Context(), f, opts)
 		},
 	}
 
@@ -59,9 +59,7 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runList(f *cmdutil.Factory, opts *ListOptions) error {
-	ctx := context.Background()
-
+func runList(ctx context.Context, f *cmdutil.Factory, opts *ListOptions) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {

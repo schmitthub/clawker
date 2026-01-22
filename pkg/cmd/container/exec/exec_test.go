@@ -71,30 +71,23 @@ func TestNewCmd(t *testing.T) {
 		{
 			name:     "with agent flag",
 			input:    "--agent ralph ls",
-			wantOpts: Options{Agent: "ralph"},
+			wantOpts: Options{Agent: true},
 		},
 		{
 			name:     "agent with interactive and tty",
 			input:    "-it --agent ralph /bin/bash",
-			wantOpts: Options{Agent: "ralph", Interactive: true, TTY: true},
+			wantOpts: Options{Agent: true, Interactive: true, TTY: true},
 		},
 		{
 			name:       "no arguments",
 			input:      "",
 			wantErr:    true,
-			wantErrMsg: "requires at least 2 arg(s), only received 0",
+			wantErrMsg: "exec: 'exec' requires at least 1 argument\n\nUsage:  exec [OPTIONS] [CONTAINER] COMMAND [ARG...] [flags]\n\nSee 'exec --help' for more information",
 		},
 		{
-			name:       "container only",
-			input:      "mycontainer",
-			wantErr:    true,
-			wantErrMsg: "requires at least 2 arg(s), only received 1",
-		},
-		{
-			name:       "agent without command",
-			input:      "--agent ralph",
-			wantErr:    true,
-			wantErrMsg: "requires at least 1 command argument when using --agent",
+			name:     "container only (now valid - container is arg, no command)",
+			input:    "mycontainer",
+			wantOpts: Options{},
 		},
 	}
 
@@ -108,7 +101,7 @@ func TestNewCmd(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &Options{}
-				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
+				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
 				cmdOpts.Interactive, _ = cmd.Flags().GetBool("interactive")
 				cmdOpts.TTY, _ = cmd.Flags().GetBool("tty")
 				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
@@ -199,7 +192,7 @@ func TestCmd_ArgsParsing(t *testing.T) {
 		},
 		{
 			name:              "container and command with args",
-			args:              []string{"mycontainer", "--", "ls", "-la"},
+			args:              []string{"mycontainer", "ls", "-la"},
 			expectedContainer: "mycontainer",
 			expectedCmdLen:    2,
 		},

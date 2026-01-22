@@ -75,7 +75,7 @@ func TestCmd_Properties(t *testing.T) {
 	cmd := NewCmd(f)
 
 	// Test command basics
-	require.Equal(t, "wait [CONTAINER...]", cmd.Use)
+	require.Equal(t, "wait [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

@@ -12,8 +12,10 @@ import (
 
 // KillOptions holds options for the kill command.
 type KillOptions struct {
-	Agent  string
+	Agent  bool
 	Signal string
+
+	containers []string
 }
 
 // NewCmdKill creates the container kill command.
@@ -28,7 +30,7 @@ func NewCmdKill(f *cmdutil.Factory) *cobra.Command {
 The main process inside the container is sent SIGKILL signal (default),
 or the signal specified with the --signal option.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -49,25 +51,28 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidator(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKill(f, opts, args)
+			opts.containers = args
+			return runKill(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat arguments as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().StringVarP(&opts.Signal, "signal", "s", "SIGKILL", "Signal to send to the container")
 
 	return cmd
 }
 
-func runKill(f *cmdutil.Factory, opts *KillOptions, args []string) error {
-	ctx := context.Background()
-
+func runKill(ctx context.Context, f *cmdutil.Factory, opts *KillOptions) error {
 	// Resolve container names
-	containers, err := cmdutil.ResolveContainerNames(f, opts.Agent, args)
-	if err != nil {
-		return err
+	containers := opts.containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker

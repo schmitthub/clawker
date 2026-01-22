@@ -112,7 +112,7 @@ func TestCmdInspect_Properties(t *testing.T) {
 	cmd := NewCmdInspect(f)
 
 	// Test command basics
-	require.Equal(t, "inspect [CONTAINER...]", cmd.Use)
+	require.Equal(t, "inspect [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)

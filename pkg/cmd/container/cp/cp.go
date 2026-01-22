@@ -17,10 +17,13 @@ import (
 
 // Options holds options for the cp command.
 type Options struct {
-	Agent      string
+	Agent      bool
 	Archive    bool
 	FollowLink bool
 	CopyUIDGID bool
+
+	src string
+	dst string
 }
 
 // NewCmd creates a new cp command.
@@ -36,23 +39,16 @@ Use '-' as the destination to write a tar archive of the container source
 to stdout. Use '-' as the source to read a tar archive from stdin and
 extract it to a directory destination in a container.
 
-When --agent is provided:
-  - :PATH syntax uses the agent from the --agent flag value
-  - name:PATH syntax resolves 'name' as an agent (overrides --agent flag)
+When --agent is provided, container names in CONTAINER:PATH are resolved
+as agent names (clawker.<project>.<agent>).
 
-Agent names are resolved as clawker.<project>.<agent> using the project
-from your clawker.yaml configuration.
-
-Container path format: CONTAINER:PATH (or :PATH / name:PATH with --agent)
+Container path format: CONTAINER:PATH
 Local path format: PATH`,
-		Example: `  # Copy file from container using agent name (:PATH uses --agent flag)
-  clawker container cp --agent ralph :/app/config.json ./config.json
+		Example: `  # Copy file from container using agent name
+  clawker container cp --agent ralph:/app/config.json ./config.json
 
   # Copy file to container using agent name
-  clawker container cp --agent ralph ./config.json :/app/config.json
-
-  # Copy from different agent (name:PATH overrides --agent flag)
-  clawker container cp --agent ralph writer:/app/output.txt ./output.txt
+  clawker container cp --agent ./config.json ralph:/app/config.json
 
   # Copy file from container by full name
   clawker container cp clawker.myapp.ralph:/app/config.json ./config.json
@@ -61,20 +57,22 @@ Local path format: PATH`,
   clawker container cp ./config.json clawker.myapp.ralph:/app/config.json
 
   # Copy directory from container to local
-  clawker container cp --agent ralph :/app/logs ./logs
+  clawker container cp --agent ralph:/app/logs ./logs
 
   # Stream tar from container to stdout
-  clawker container cp --agent ralph :/app - > backup.tar`,
+  clawker container cp --agent ralph:/app - > backup.tar`,
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args[0], args[1])
+			opts.src = args[0]
+			opts.dst = args[1]
+			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Treat container names as agent names (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Archive, "archive", "a", false, "Archive mode (copy all uid/gid information)")
 	cmd.Flags().BoolVarP(&opts.FollowLink, "follow-link", "L", false, "Always follow symbol link in SRC_PATH")
 	cmd.Flags().BoolVar(&opts.CopyUIDGID, "copy-uidgid", false, "Copy UID/GID from source to destination (same as -a)")
@@ -101,32 +99,14 @@ func parseContainerPath(arg string) (string, string, bool) {
 	return "", arg, false
 }
 
-func run(f *cmdutil.Factory, opts *Options, src, dst string) error {
-	ctx := context.Background()
-
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Parse source and destination
-	srcContainer, srcPath, srcIsContainer := parseContainerPath(src)
-	dstContainer, dstPath, dstIsContainer := parseContainerPath(dst)
+	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.src)
+	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.dst)
 
-	// If --agent is provided, resolve agent names for container paths
-	if opts.Agent != "" {
-		// Handle source path: :PATH uses --agent, name:PATH resolves name as agent
-		if strings.HasPrefix(src, ":") {
-			// :PATH syntax - use --agent flag value
-			containerName, err := cmdutil.ResolveContainerName(f, opts.Agent)
-			if err != nil {
-				cmdutil.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil.PrintNextSteps(
-					"Run 'clawker init' to create a configuration",
-					"Or ensure you're in a directory with clawker.yaml",
-				)
-				return err
-			}
-			srcContainer = containerName
-			srcPath = src[1:] // Remove leading ":"
-			srcIsContainer = true
-		} else if srcIsContainer {
-			// name:PATH syntax - resolve name as agent (overrides --agent flag)
+	// If --agent is provided, resolve container names as agent names
+	if opts.Agent {
+		if srcIsContainer && srcContainer != "" {
 			containerName, err := cmdutil.ResolveContainerName(f, srcContainer)
 			if err != nil {
 				cmdutil.PrintError("Failed to resolve agent name: %v", err)
@@ -139,23 +119,7 @@ func run(f *cmdutil.Factory, opts *Options, src, dst string) error {
 			srcContainer = containerName
 		}
 
-		// Handle destination path: :PATH uses --agent, name:PATH resolves name as agent
-		if strings.HasPrefix(dst, ":") {
-			// :PATH syntax - use --agent flag value
-			containerName, err := cmdutil.ResolveContainerName(f, opts.Agent)
-			if err != nil {
-				cmdutil.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil.PrintNextSteps(
-					"Run 'clawker init' to create a configuration",
-					"Or ensure you're in a directory with clawker.yaml",
-				)
-				return err
-			}
-			dstContainer = containerName
-			dstPath = dst[1:] // Remove leading ":"
-			dstIsContainer = true
-		} else if dstIsContainer {
-			// name:PATH syntax - resolve name as agent (overrides --agent flag)
+		if dstIsContainer && dstContainer != "" {
 			containerName, err := cmdutil.ResolveContainerName(f, dstContainer)
 			if err != nil {
 				cmdutil.PrintError("Failed to resolve agent name: %v", err)
@@ -171,10 +135,10 @@ func run(f *cmdutil.Factory, opts *Options, src, dst string) error {
 
 	// Validate that exactly one of src/dst is a container path
 	if srcIsContainer && dstIsContainer {
-		return fmt.Errorf("copying between containers is not supported (with --agent, use :PATH for one side)")
+		return fmt.Errorf("copying between containers is not supported")
 	}
 	if !srcIsContainer && !dstIsContainer {
-		return fmt.Errorf("one of source or destination must be a container path (CONTAINER:PATH or :PATH with --agent)")
+		return fmt.Errorf("one of source or destination must be a container path (CONTAINER:PATH)")
 	}
 
 	// Connect to Docker

@@ -74,18 +74,24 @@ func TestNewCmdLogs(t *testing.T) {
 			output: LogsOptions{Details: true, Tail: "all"},
 		},
 		{
+			name:   "with agent flag",
+			input:  "--agent",
+			args:   []string{"ralph"},
+			output: LogsOptions{Agent: true, Tail: "all"},
+		},
+		{
 			name:       "no container specified",
 			input:      "",
 			args:       []string{},
 			wantErr:    true,
-			wantErrMsg: "requires exactly 1 container argument or --agent flag",
+			wantErrMsg: "accepts 1 arg(s), received 0",
 		},
 		{
 			name:       "too many containers",
 			input:      "",
 			args:       []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
 			wantErr:    true,
-			wantErrMsg: "requires exactly 1 container argument or --agent flag",
+			wantErrMsg: "accepts 1 arg(s), received 2",
 		},
 	}
 
@@ -99,6 +105,7 @@ func TestNewCmdLogs(t *testing.T) {
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				cmdOpts = &LogsOptions{}
+				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
 				cmdOpts.Follow, _ = cmd.Flags().GetBool("follow")
 				cmdOpts.Timestamps, _ = cmd.Flags().GetBool("timestamps")
 				cmdOpts.Details, _ = cmd.Flags().GetBool("details")
@@ -130,6 +137,7 @@ func TestNewCmdLogs(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
 			require.Equal(t, tt.output.Follow, cmdOpts.Follow)
 			require.Equal(t, tt.output.Timestamps, cmdOpts.Timestamps)
 			require.Equal(t, tt.output.Details, cmdOpts.Details)

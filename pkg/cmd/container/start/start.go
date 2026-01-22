@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/cmdutil"
@@ -17,8 +16,9 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	Agent       string // Agent name to resolve container
+	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
+	Containers  []string
 	Interactive bool
 }
 
@@ -27,7 +27,7 @@ func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
 	opts := &StartOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "start [CONTAINER...]",
+		Use:   "start [OPTIONS] CONTAINER [CONTAINER...]",
 		Short: "Start one or more stopped containers",
 		Long: `Starts one or more stopped clawker containers.
 
@@ -51,21 +51,23 @@ Container names can be:
 		Annotations: map[string]string{
 			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil.AgentArgsValidator(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStart(f, opts, args)
+			opts.Containers = args
+			return runStart(cmd.Context(), f, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (resolves to clawker.<project>.<agent>)")
+	cmd.Flags().BoolVar(&opts.Agent, "agent", false, "Use agent name (resolves to clawker.<project>.<agent>)")
 	cmd.Flags().BoolVarP(&opts.Attach, "attach", "a", false, "Attach STDOUT/STDERR and forward signals")
 	cmd.Flags().BoolVarP(&opts.Interactive, "interactive", "i", false, "Attach container's STDIN")
 
 	return cmd
 }
 
-func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error {
-	ctx := context.Background()
+func runStart(ctx context.Context, f *cmdutil.Factory, opts *StartOptions) error {
+	ctx, cancelFun := context.WithCancel(ctx)
+	defer cancelFun()
 
 	// Load config to check host proxy setting
 	cfg, err := f.Config()
@@ -96,80 +98,50 @@ func runStart(f *cmdutil.Factory, opts *StartOptions, containers []string) error
 		}
 	}
 
-	// Resolve container names
-	containerNames, err := cmdutil.ResolveContainerNames(f, opts.Agent, containers)
-	if err != nil {
-		return err
-	}
-
-	// Attach mode only works with a single container
-	if opts.Attach && len(containerNames) > 1 {
-		return fmt.Errorf("you cannot attach to multiple containers at once")
-	}
-
-	var errs []error
-	for _, name := range containerNames {
-		if err := startContainer(ctx, client, name, opts); err != nil {
-			errs = append(errs, err)
-			cmdutil.HandleError(err)
-		} else if !opts.Attach {
-			// Only print container name if not attaching
-			fmt.Println(name)
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to start %d container(s)", len(errs))
-	}
-	return nil
-}
-
-func startContainer(ctx context.Context, client *docker.Client, name string, opts *StartOptions) error {
-	// Find container by name
-	c, err := client.FindContainerByName(ctx, name)
-	if err != nil {
-		return err
-	}
-
-	// Start the container (ensuring it's connected to clawker-net)
-	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
-		ContainerID: c.ID,
-		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	// If attach mode, attach to the container
-	if opts.Attach {
-		// Re-check container state after start
-		c, err = client.FindContainerByName(ctx, name)
+	// Resolve container names if --agent provided
+	// When opts.Agent is true, all items in opts.Containers are agent names
+	containers := opts.Containers
+	if opts.Agent {
+		var err error
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
-		if c.State != "running" {
-			return fmt.Errorf("container %q exited immediately after start", name)
-		}
-		return attachAfterStart(ctx, client, c.ID, opts)
 	}
 
-	return nil
+	// If attach or interactive mode, can only work with one container
+	if opts.Attach || opts.Interactive {
+		if len(containers) > 1 {
+			return fmt.Errorf("you cannot attach to multiple containers at once. If you want to start multiple containers, do so without --attach or --interactive")
+		}
+
+		containerName := containers[0]
+		return attachAndStart(ctx, client, containerName, opts)
+	}
+
+	// Start all containers without attaching
+	return startContainersWithoutAttach(ctx, client, containers)
 }
 
-
-// attachAfterStart attaches to a container after it has been started.
-// For TTY containers with interactive mode, it sets up raw terminal mode with resize support.
-// For non-TTY containers, it demultiplexes the Docker stream using stdcopy.
-// Returns when the container exits or the output stream closes.
-func attachAfterStart(ctx context.Context, client *docker.Client, containerID string, opts *StartOptions) error {
-	// Inspect container to check if it has TTY
-	info, err := client.ContainerInspect(ctx, containerID)
+// attachAndStart attaches to container first, then starts it.
+func attachAndStart(ctx context.Context, client *docker.Client, containerName string, opts *StartOptions) error {
+	// Find and inspect the container
+	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find container %q: %w", containerName, err)
 	}
+	if c == nil {
+		return fmt.Errorf("container %q not found", containerName)
+	}
+
+	// Get container info to determine if it has a TTY
+	info, err := client.ContainerInspect(ctx, c.ID, docker.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to inspect container: %w", err)
+	}
+
 	hasTTY := info.Container.Config.Tty
+	containerID := c.ID
 
 	// Create attach options
 	attachOpts := docker.ContainerAttachOptions{
@@ -189,15 +161,28 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 		defer pty.Restore()
 	}
 
-	// Attach to container
+	// Attach to container BEFORE starting it
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
+		cmdutil.HandleError(err)
 		return err
 	}
 	defer hijacked.Close()
 
+	// Start the container (ensuring it's connected to clawker-net)
+	_, err = client.ContainerStart(ctx, docker.ContainerStartOptions{
+		ContainerID: containerID,
+		EnsureNetwork: &docker.EnsureNetworkOptions{
+			Name: docker.NetworkName,
+		},
+	})
+	if err != nil {
+		cmdutil.HandleError(err)
+		return err
+	}
+
 	// Set up wait channel for container exit
-	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	waitResult := client.ContainerWait(ctx, containerID, docker.WaitConditionNotRunning)
 
 	// Handle I/O
 	if hasTTY && pty != nil {
@@ -286,4 +271,30 @@ func attachAfterStart(ctx context.Context, client *docker.Client, containerID st
 	case err := <-waitResult.Error:
 		return err
 	}
+}
+
+// startContainersWithoutAttach starts multiple containers without attaching.
+func startContainersWithoutAttach(ctx context.Context, client *docker.Client, containers []string) error {
+	var errs []error
+	for _, name := range containers {
+		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
+			ContainerID: name,
+			EnsureNetwork: &docker.EnsureNetworkOptions{
+				Name: docker.NetworkName,
+			},
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to start %s: %w", name, err))
+			cmdutil.HandleError(err)
+		} else {
+			// Print container name on success
+			fmt.Println(name)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to start %d container(s)", len(errs))
+	}
+
+	return nil
 }
