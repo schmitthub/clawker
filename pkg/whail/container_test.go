@@ -372,7 +372,7 @@ func TestContainerInspect(t *testing.T) {
 			}
 			defer tt.cleanupFunc(ctx, t, containerID)
 
-			info, err := testEngine.ContainerInspect(ctx, containerID)
+			info, err := testEngine.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 			if tt.shouldErr {
 				if err == nil {
 					t.Fatalf("Expected error but got none")
