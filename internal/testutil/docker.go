@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,6 +260,8 @@ func ContainerIsRunning(ctx context.Context, cli *client.Client, name string) bo
 
 // WaitForContainerRunning waits for a container to exist and be in running state.
 // Polls every 500ms until the context is cancelled or the container is running.
+// Fails fast with exit code information if the container enters a terminal state
+// (exited or dead) instead of timing out silently.
 func WaitForContainerRunning(ctx context.Context, cli *client.Client, name string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -267,9 +271,24 @@ func WaitForContainerRunning(ctx context.Context, cli *client.Client, name strin
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for container %s to be running: %w", name, ctx.Err())
 		case <-ticker.C:
-			if ContainerIsRunning(ctx, cli, name) {
+			info, err := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+			if err != nil {
+				// Container doesn't exist yet or inspect failed, continue polling
+				continue
+			}
+
+			// Container is running - success
+			if info.Container.State.Running {
 				return nil
 			}
+
+			// Container in terminal state - fail fast with useful info
+			status := info.Container.State.Status
+			if status == "exited" || status == "dead" {
+				return fmt.Errorf("container %s exited (code %d) while waiting for running state",
+					name, info.Container.State.ExitCode)
+			}
+			// Other states (created, paused, restarting) - continue polling
 		}
 	}
 }
@@ -284,6 +303,109 @@ func VolumeExists(ctx context.Context, cli *client.Client, name string) bool {
 func NetworkExists(ctx context.Context, cli *client.Client, name string) bool {
 	_, err := cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 	return err == nil
+}
+
+
+// ContainerExitDiagnostics contains comprehensive exit information for debugging.
+type ContainerExitDiagnostics struct {
+	ExitCode        int
+	OOMKilled       bool
+	Error           string // Docker's state error field
+	Logs            string // Last N lines of logs
+	LogError        error  // Error retrieving logs, if any
+	StartedAt       string // ISO 8601 timestamp
+	FinishedAt      string // ISO 8601 timestamp
+	HasClawkerError bool
+	ClawkerErrorMsg string
+	FirewallFailed  bool
+}
+
+// GetContainerExitDiagnostics retrieves detailed exit information for a stopped container.
+// logTailLines specifies how many lines from the end of logs to include (0 = all logs).
+func GetContainerExitDiagnostics(ctx context.Context, cli *client.Client, containerID string, logTailLines int) (*ContainerExitDiagnostics, error) {
+	info, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Get logs with tail limit to avoid huge log output
+	logs, logErr := getContainerLogsTail(ctx, cli, containerID, logTailLines)
+
+	// Strip Docker multiplexed stream headers
+	logs = StripDockerStreamHeaders(logs)
+
+	hasError, errorMsg := CheckForErrorPattern(logs)
+
+	return &ContainerExitDiagnostics{
+		ExitCode:        info.Container.State.ExitCode,
+		OOMKilled:       info.Container.State.OOMKilled,
+		Error:           info.Container.State.Error,
+		Logs:            logs,
+		LogError:        logErr,
+		StartedAt:       info.Container.State.StartedAt,
+		FinishedAt:      info.Container.State.FinishedAt,
+		HasClawkerError: hasError,
+		ClawkerErrorMsg: errorMsg,
+		FirewallFailed: strings.Contains(logs, "Firewall initialization failed") ||
+			strings.Contains(logs, "ERROR: Failed to fetch GitHub IP") ||
+			strings.Contains(logs, "ERROR: Failed to detect host IP"),
+	}, nil
+}
+
+// getContainerLogsTail retrieves container logs with an optional tail limit.
+func getContainerLogsTail(ctx context.Context, cli *client.Client, containerID string, tailLines int) (string, error) {
+	opts := client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     false,
+	}
+	if tailLines > 0 {
+		opts.Tail = strconv.Itoa(tailLines)
+	}
+
+	reader, err := cli.ContainerLogs(ctx, containerID, opts)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, reader)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+// StripDockerStreamHeaders removes Docker's multiplexed stream headers.
+// Docker prefixes each frame with an 8-byte header: [stream_type][padding][size].
+func StripDockerStreamHeaders(data string) string {
+	var result strings.Builder
+	b := []byte(data)
+
+	for len(b) > 0 {
+		// Check if we have a valid header
+		if len(b) >= 8 {
+			streamType := b[0]
+			// Valid stream types are 0 (stdin), 1 (stdout), 2 (stderr)
+			if streamType <= 2 && b[1] == 0 && b[2] == 0 && b[3] == 0 {
+				// Parse payload size (big endian uint32)
+				size := uint32(b[4])<<24 | uint32(b[5])<<16 | uint32(b[6])<<8 | uint32(b[7])
+				if len(b) >= int(8+size) {
+					// Extract payload and skip header
+					result.Write(b[8 : 8+size])
+					b = b[8+size:]
+					continue
+				}
+			}
+		}
+		// If no valid header found, just append remaining bytes
+		result.Write(b)
+		break
+	}
+
+	return result.String()
 }
 
 // BuildTestImageOptions configures image building for tests.

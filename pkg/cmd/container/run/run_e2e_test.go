@@ -210,6 +210,108 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 	// and interactive attach work correctly - which we've already verified above.
 }
 
+
+// TestRunE2E_ContainerExitDetection verifies that when a container exits during startup,
+// the test utilities detect and report it properly (instead of timing out silently).
+// This test intentionally creates a container that will exit quickly to verify the
+// improved WaitForContainerRunning fail-fast behavior.
+func TestRunE2E_ContainerExitDetection(t *testing.T) {
+	testutil.RequireDocker(t)
+	ctx := context.Background()
+
+	clawkerBin := buildClawkerBinary(t)
+
+	h := testutil.NewHarness(t,
+		testutil.WithConfigBuilder(
+			testutil.MinimalValidConfig().
+				WithProject("exit-detection-test").
+				WithSecurity(testutil.SecurityFirewallEnabled()),
+		),
+	)
+
+	// Build a test image
+	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{SuppressOutput: true})
+
+	client := testutil.NewTestClient(t)
+	rawClient := testutil.NewRawDockerClient(t)
+	defer testutil.CleanupProjectResources(ctx, client, "exit-detection-test")
+
+	agentName := "exit-test-" + time.Now().Format("150405.000000")
+	containerName := h.ContainerName(agentName)
+
+	// Run a container that will exit immediately with a specific exit code
+	// We use "sh -c 'exit 42'" to force an immediate exit with code 42
+	cmd := exec.Command(clawkerBin, "run",
+		"-it", "--rm",
+		"--agent", agentName,
+		imageTag,
+		"sh", "-c", "exit 42",
+	)
+	cmd.Dir = h.ProjectDir
+	cmd.Env = append(os.Environ(), "CLAWKER_CONFIG_DIR="+h.ConfigDir)
+
+	ptmx, err := pty.Start(cmd)
+	require.NoError(t, err)
+	defer ptmx.Close()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// Key test: WaitForContainerRunning should either succeed or fail with exit code info
+	// It should NOT timeout silently if the container exited
+	err = testutil.WaitForContainerRunning(waitCtx, rawClient, containerName)
+
+	if err != nil {
+		// Container exited - verify we got useful exit code info
+		errStr := err.Error()
+
+		// The error should contain exit code information (not just timeout)
+		if bytes.Contains([]byte(errStr), []byte("exited (code")) {
+			t.Logf("Container exit properly detected: %v", err)
+
+			// Get full diagnostics to verify the utility works
+			diag, diagErr := testutil.GetContainerExitDiagnostics(ctx, rawClient, containerName, 50)
+			if diagErr == nil {
+				t.Logf("Diagnostics: code=%d, OOM=%v, firewall=%v, hasError=%v",
+					diag.ExitCode, diag.OOMKilled, diag.FirewallFailed, diag.HasClawkerError)
+				if diag.Logs != "" {
+					// Log first 500 chars of logs
+					logSnippet := diag.Logs
+					if len(logSnippet) > 500 {
+						logSnippet = logSnippet[:500] + "..."
+					}
+					t.Logf("Last logs:\n%s", logSnippet)
+				}
+			} else {
+				t.Logf("Could not get diagnostics (container may have been removed by --rm): %v", diagErr)
+			}
+
+			// This is the EXPECTED behavior - container exited and we detected it
+			t.Log("SUCCESS: WaitForContainerRunning properly detected container exit")
+			return
+		}
+
+		// If it's a timeout error, that's the OLD behavior we're trying to fix
+		if bytes.Contains([]byte(errStr), []byte("timeout")) {
+			t.Fatalf("WaitForContainerRunning timed out instead of detecting exit: %v", err)
+		}
+
+		// Some other error occurred
+		t.Logf("Unexpected error (may be acceptable): %v", err)
+	} else {
+		// Container started successfully - this is also a valid outcome
+		// (if the container runs longer than expected, WaitForContainerRunning succeeds)
+		t.Log("Container started successfully (didn't exit immediately as expected)")
+
+		// Clean up the running container
+		readyErr := testutil.WaitForReadyFile(waitCtx, rawClient, containerName)
+		if readyErr != nil {
+			// Container may have exited after WaitForContainerRunning but before ready file
+			t.Logf("Container exited before ready: %v", readyErr)
+		}
+	}
+}
+
 // buildClawkerBinary builds the clawker binary and returns its path.
 // It caches the binary in a temp directory for the duration of the test run.
 func buildClawkerBinary(t *testing.T) string {

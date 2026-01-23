@@ -67,6 +67,12 @@ if [ "$OVERRIDE_MODE" != "true" ]; then
 
     echo "Processing GitHub IPs..."
     while read -r cidr; do
+        # Skip IPv6 ranges (ipset is IPv4 only)
+        if [[ "$cidr" =~ : ]]; then
+            echo "Skipping IPv6 range (ipset hash:net is IPv4 only): $cidr"
+            continue
+        fi
+        # Validate IPv4 CIDR
         if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
             echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
             exit 1

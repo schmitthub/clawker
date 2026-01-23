@@ -1,6 +1,6 @@
 # Integration Test Strategy
 
-**Updated:** 2025-01-22
+**Updated:** 2026-01-22
 **Status:** IMPLEMENTED
 
 ## Summary
@@ -116,9 +116,110 @@ func WaitForContainerExit(ctx context.Context, cli *client.Client, containerID s
 - `internal/testutil/docker.go` - Container state waiting (running, exit)
 - `internal/testutil/ready.go` - Application readiness (ready file, health, logs)
 
+## Testcontainers Integration Tests (`internal/integration/`)
+
+A separate integration test package using [testcontainers-go](https://golang.testcontainers.org/) for testing clawker scripts in lightweight containers.
+
+### Package Structure
+
+| File | Purpose |
+|------|---------|
+| `container.go` | `LightContainer` builder and `ContainerResult` wrapper |
+| `hostproxy.go` | `MockHostProxy` for testing host proxy interactions |
+| `scripts_test.go` | Entrypoint, git config, SSH known hosts, host-open, git-credential tests |
+| `firewall_test.go` | Firewall rule verification (iptables, ipset, blocked domains) |
+| `firewall_startup_test.go` | Firewall script startup flow tests |
+| `sshagent_test.go` | SSH agent proxy forwarding tests |
+| `testdata/` | Dockerfiles for Alpine and Debian test containers |
+
+### Key Components
+
+**LightContainer Builder:**
+```go
+container := NewLightContainer().
+    WithBaseImage("alpine:latest").
+    WithScripts("entrypoint.sh", "host-open.sh").
+    WithCapabilities("NET_ADMIN", "NET_RAW").
+    WithEnv("CLAWKER_HOST_PROXY", proxyURL).
+    WithExposedPorts("8080/tcp")
+result, err := container.Start(ctx, t)
+```
+
+**StartFromDockerfile:**
+```go
+result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
+    req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
+    req.User = "root"
+    req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
+})
+```
+
+**ContainerResult Methods:**
+- `Exec(ctx, cmd)` - Execute command and return `ExecResult`
+- `WaitForFile(ctx, path, timeout)` - Wait for file to exist
+- `GetLogs(ctx)` - Retrieve container logs
+- `CleanOutput()` - Strip Docker stream headers from output
+
+**MockHostProxy:**
+```go
+proxy := NewMockHostProxy(t)
+// proxy.URL() - Get the mock server URL
+// proxy.GetOpenedURLs() - Check URLs sent to /open/url
+// proxy.GetGitCreds() - Check git credential requests
+// proxy.SetCallbackReady(sessionID, path, query) - Simulate OAuth callback
+```
+
+### Running Tests
+
+```bash
+# All testcontainers integration tests
+go test -tags=integration ./internal/integration/... -v -timeout 10m
+
+# Specific test suites
+go test -tags=integration ./internal/integration/... -run "Firewall" -v -timeout 10m
+go test -tags=integration ./internal/integration/... -run "Entrypoint" -v -timeout 5m
+go test -tags=integration ./internal/integration/... -run "GitCredential" -v -timeout 5m
+go test -tags=integration ./internal/integration/... -run "SshAgent" -v -timeout 5m
+```
+
+### Script Testing Pattern
+
+Tests copy scripts from `pkg/build/templates/` into containers:
+
+```go
+// Copy script to container
+copyScriptToContainer(ctx, t, result, "init-firewall.sh")
+
+// Run script
+execResult, err := result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
+require.NoError(t, err)
+require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
+```
+
+**IMPORTANT:** These tests use the actual scripts from `pkg/build/templates/`, providing regression testing when scripts are modified.
+
+### Firewall Test Details
+
+The firewall tests verify:
+1. **iptables rules** - DROP policy on OUTPUT, ACCEPT for allowed domains
+2. **ipset creation** - `allowed-domains` hash:net set with GitHub IPs
+3. **Blocked domains** - example.com unreachable, GitHub reachable
+4. **Host access** - host.docker.internal and Docker networks allowed
+5. **IPv6 handling** - IPv6 CIDRs from GitHub API are skipped (ipset is IPv4 only)
+
+**IPv6 Skip Logic** (fixed 2026-01-22):
+```bash
+# Skip IPv6 ranges (ipset is IPv4 only)
+if [[ "$cidr" =~ : ]]; then
+    echo "Skipping invalid range: $cidr"
+    continue
+fi
+```
+
 ## Notes
 
 - Tests requiring Claude Code functionality (Claude flags, entrypoint behavior) should be in E2E tests
 - BuildTestImage is still available for E2E tests but not used in integration tests
 - Deleted ClaudeFlagsPassthrough test with TODO for future E2E implementation
 - Always use `testutil.WaitForContainerRunning` after `ContainerStart` - never write local implementations
+- Testcontainers tests in `internal/integration/` are separate from `pkg/cmd/*_integration_test.go` tests
