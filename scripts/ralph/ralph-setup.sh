@@ -102,7 +102,7 @@ echo ""
 # Start container with claude running interactively
 # User authenticates, then detaches - container stays running
 # Tasks can then be exec'd as separate claude -p processes
-clawker run -it --agent "$AGENT_NAME" -- --dangerously-skip-permissions
+clawker run -it --agent "$AGENT_NAME" @ --dangerously-skip-permissions
 
 # This message shows after user detaches or exits
 echo ""

@@ -193,7 +193,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]] && [[ "$DONE" != "true" ]]; do
 
     # Execute claude with the prompt, capture output
     set +e
-    OUTPUT=$(cat "$PROMPT_FILE" | clawker exec -i --agent "$AGENT_NAME" -- claude --dangerously-skip-permissions -p 2>&1 | tee "$LOG_FILE")
+    OUTPUT=$(cat "$PROMPT_FILE" | clawker exec -i --agent "$AGENT_NAME" claude --dangerously-skip-permissions -p 2>&1 | tee "$LOG_FILE")
     EXIT_CODE=$?
     set -e
 

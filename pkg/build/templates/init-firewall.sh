@@ -158,6 +158,48 @@ while read -r network; do
     fi
 done < <(ip route | grep -v default | grep -v "dev lo" | awk '{print $1}' | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$")
 
+# Resolve and add other allowed domains
+for domain in \
+    "registry.npmjs.org" \
+    "api.anthropic.com" \
+    "sentry.io" \
+    "statsig.anthropic.com" \
+    "statsig.com" \
+    "marketplace.visualstudio.com" \
+    "vscode.blob.core.windows.net" \
+    "update.code.visualstudio.com" \
+    "registry-1.docker.io" \
+    "production.cloudflare.docker.com" \
+    "proxy.golang.org" \
+    "sum.golang.org" \
+    "docker.io" \
+    "pypi.org"; do
+    echo "Resolving $domain..."
+    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
+    if [ -z "$ips" ]; then
+        echo "ERROR: Failed to resolve $domain"
+        exit 1
+    fi
+
+    while read -r ip; do
+        if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "ERROR: Invalid IP from DNS for $domain: $ip"
+            exit 1
+        fi
+        echo "Adding $ip for $domain"
+        if ! ipset add allowed-domains "$ip" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
+            echo "INFO: $ip for $domain is already in the set, skipping"
+            # Ignore "already added" errors, but fail on others
+            error_msg=$(ipset add allowed-domains "$ip" 2>&1 || true)
+            if [[ ! "$error_msg" =~ "already added" ]]; then
+                echo "ERROR: Failed to add $ip: $error_msg"
+                exit 1
+            fi
+        fi
+    done < <(echo "$ips")
+done
+
+
 # Set default policies to DROP first
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
