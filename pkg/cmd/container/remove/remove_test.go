@@ -118,7 +118,7 @@ func TestCmdRemove_Properties(t *testing.T) {
 	cmd := NewCmdRemove(f)
 
 	// Test command basics
-	require.Equal(t, "remove [CONTAINER...]", cmd.Use)
+	require.Equal(t, "remove [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.Contains(t, cmd.Aliases, "rm")
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)

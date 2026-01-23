@@ -227,6 +227,46 @@ err := testutil.WaitForContainerExit(ctx, rawClient, containerID)
 
 **IMPORTANT**: Never write local wait functions in test files. Always use the testutil versions - they have better error messages and use efficient ticker-based polling.
 
+### Container Exit Detection (Fail-Fast)
+
+The `WaitForContainerRunning` function now **fails fast** when a container exits instead of timing out silently:
+
+```go
+err := testutil.WaitForContainerRunning(ctx, rawClient, containerName)
+if err != nil {
+    // Error includes exit code: "container xyz exited (code 1) while waiting for running state"
+    t.Fatalf("Container failed to start: %v", err)
+}
+```
+
+For detailed diagnostics on container failures (firewall issues, OOM, etc.):
+
+```go
+diag, err := testutil.GetContainerExitDiagnostics(ctx, rawClient, containerID, 50)
+if err == nil {
+    t.Logf("Exit code: %d", diag.ExitCode)
+    t.Logf("OOMKilled: %v", diag.OOMKilled)
+    t.Logf("FirewallFailed: %v", diag.FirewallFailed)
+    t.Logf("ClawkerError: %v (%s)", diag.HasClawkerError, diag.ClawkerErrorMsg)
+    t.Logf("Logs:\n%s", diag.Logs)
+}
+```
+
+**ContainerExitDiagnostics fields:**
+- `ExitCode` - Container exit code
+- `OOMKilled` - True if container was OOM killed
+- `Error` - Docker's state error field
+- `Logs` - Last N lines of container logs (stripped of Docker stream headers)
+- `StartedAt` / `FinishedAt` - Timestamps for debugging
+- `HasClawkerError` / `ClawkerErrorMsg` - Clawker error pattern detection
+- `FirewallFailed` - True if logs contain firewall failure patterns
+
+**Use cases:**
+- Debugging firewall initialization failures
+- Detecting missing capabilities (NET_ADMIN)
+- Identifying entrypoint script errors
+- Diagnosing out-of-memory conditions
+
 ### Readiness Detection
 
 For tests that need to wait for application readiness (clawker images with entrypoint):
@@ -287,6 +327,79 @@ imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
 )
 // Image is automatically cleaned up via t.Cleanup()
 ```
+
+---
+
+## Testcontainers Integration Tests (`internal/integration/`)
+
+A separate test package using [testcontainers-go](https://golang.testcontainers.org/) for testing clawker scripts in lightweight containers. These tests verify script behavior (firewall, entrypoint, git credentials, SSH agent) without needing full clawker images.
+
+### Package Structure
+
+| File | Purpose |
+|------|---------|
+| `container.go` | `LightContainer` builder and `ContainerResult` wrapper |
+| `hostproxy.go` | `MockHostProxy` for testing host proxy interactions |
+| `scripts_test.go` | Entrypoint, git config, SSH known hosts, host-open, git-credential tests |
+| `firewall_test.go` | Firewall rule verification (iptables, ipset, blocked domains) |
+| `firewall_startup_test.go` | Firewall script startup flow tests |
+| `sshagent_test.go` | SSH agent proxy forwarding tests |
+| `testdata/` | Dockerfiles for Alpine and Debian test containers |
+
+### Running Testcontainers Tests
+
+```bash
+# All testcontainers integration tests
+go test -tags=integration ./internal/integration/... -v -timeout 10m
+
+# Specific test suites
+go test -tags=integration ./internal/integration/... -run "Firewall" -v -timeout 10m
+go test -tags=integration ./internal/integration/... -run "Entrypoint" -v -timeout 5m
+go test -tags=integration ./internal/integration/... -run "GitCredential" -v -timeout 5m
+go test -tags=integration ./internal/integration/... -run "SshAgent" -v -timeout 5m
+```
+
+### Key Components
+
+**StartFromDockerfile** - Start container from test Dockerfile:
+```go
+result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
+    req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
+    req.User = "root"
+    req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
+})
+```
+
+**ContainerResult Methods:**
+- `Exec(ctx, cmd)` - Execute command and return `ExecResult`
+- `WaitForFile(ctx, path, timeout)` - Wait for file to exist
+- `GetLogs(ctx)` - Retrieve container logs
+- `CleanOutput()` - Strip Docker stream headers from output
+
+**MockHostProxy** - Mock for testing container-to-host communication:
+```go
+proxy := NewMockHostProxy(t)
+proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
+// proxy.GetOpenedURLs() - Check URLs sent to /open/url
+// proxy.GetGitCreds() - Check git credential requests
+// proxy.SetCallbackReady(sessionID, path, query) - Simulate OAuth callback
+```
+
+### Script Testing Pattern
+
+Tests copy scripts from `pkg/build/templates/` into containers, providing **regression testing** when scripts are modified:
+
+```go
+// Copy script to container
+copyScriptToContainer(ctx, t, result, "init-firewall.sh")
+
+// Run script
+execResult, err := result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
+require.NoError(t, err)
+require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
+```
+
+**IMPORTANT:** These tests use the actual scripts from `pkg/build/templates/`. Any change to those scripts is automatically tested by running the integration tests.
 
 ---
 

@@ -1,0 +1,36 @@
+# Lightweight Debian test image for integration testing clawker scripts
+# This image is ~150MB and includes basic tools needed for script testing
+FROM debian:bookworm-slim
+
+# Install essential tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    jq \
+    git \
+    iptables \
+    openssh-client \
+    openssl \
+    coreutils \
+    grep \
+    sed \
+    procps \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create claude user (matches production containers)
+RUN useradd -m -s /bin/bash -d /home/claude claude
+
+# Create standard directories
+RUN mkdir -p /var/run/clawker \
+    && mkdir -p /home/claude/.ssh \
+    && mkdir -p /home/claude/.claude \
+    && mkdir -p /workspace \
+    && chown -R claude:claude /home/claude /var/run/clawker /workspace
+
+# Default to claude user
+USER claude
+WORKDIR /workspace
+
+# Keep container running for test exec
+CMD ["sleep", "infinity"]
