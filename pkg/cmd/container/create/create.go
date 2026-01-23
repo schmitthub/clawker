@@ -24,9 +24,9 @@ import (
 // Options holds options for the create command.
 type Options struct {
 	// Naming
-	Agent     string
-	AgentName string // Agent name for clawker naming (mutually exclusive with Name)
-	Name      string // Full container name (overrides agent)
+	Agent string // Agent name for clawker naming (mutually exclusive with Name)
+	Name  string // name same as agent name
+  container string // Full container name
 
 	// Container configuration
 	Env        []string // Environment variables
@@ -99,7 +99,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	}
 
 	// Naming flags
-	cmd.Flags().StringVar(&opts.AgentName, "agent", "", "Agent name for container (uses clawker.<project>.<agent> naming)")
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for container (uses clawker.<project>.<agent> naming)")
 	cmd.Flags().StringVar(&opts.Name, "name", "", "Same as --agent; provided for Docker CLI familiarity (mutually exclusive with --agent)")
 
 	// Container configuration flags
@@ -157,45 +157,46 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Resolve image name
-	if opts.Image == "@" {
-		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
-		if err != nil {
-			// ResolveAndValidateImage already prints appropriate errors
-			return err
-		}
-		if resolvedImage == nil {
-			cmdutil.PrintError("No image specified and no default image configured")
-			cmdutil.PrintNextSteps(
-				"Specify an image: clawker container run IMAGE",
-				"Set default_image in clawker.yaml",
-				"Set default_image in ~/.local/clawker/settings.yaml",
-				"Build a project image: clawker build",
-			)
-			return fmt.Errorf("no image specified")
-		}
-		opts.Image = resolvedImage.Reference
+if opts.Image == "@" {
+	resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
+	if err != nil {
+		// ResolveAndValidateImage already prints appropriate errors
+		return err
 	}
+	if resolvedImage == nil {
+		cmdutil.PrintError("No image specified and no default image configured")
+		cmdutil.PrintNextSteps(
+			"Specify an image: clawker container run IMAGE",
+			"Set default_image in clawker.yaml",
+			"Set default_image in ~/.local/clawker/settings.yaml",
+			"Build a project image: clawker build",
+		)
+		return fmt.Errorf("no image specified")
+	}
+	opts.Image = resolvedImage.Reference
+}
 
-	// If agent or name set, set AgentName
-	opts.AgentName = opts.Agent
-	if opts.AgentName == "" && opts.Name != "" {
-		opts.AgentName = opts.Name
-	}
-	var containerName string
-	var agent string
-	if opts.AgentName == "" {
-		agent = docker.GenerateRandomName()
-	} else {
-		agent = opts.AgentName
-	}
-	containerName = docker.ContainerName(cfg.Project, agent)
+// adding a defensive check here in case both --name and --agent end up being set due to regression
+if opts.Name != "" && opts.Agent != "" && opts.Name != opts.Agent {
+  cmdutil.PrintError("Cannot use both --name and --agent")
+  return fmt.Errorf("conflicting container naming options")
+}
 
-	// Setup workspace mounts
-	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: opts.Mode,
-		Config:       cfg,
-		AgentName:    agent,
-	})
+agentName := opts.Agent
+if opts.Name != "" {
+	agentName = opts.Name
+}
+
+if agentName == "" {
+  agentName = docker.GenerateRandomName()
+}
+
+// Setup workspace mounts
+workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+	ModeOverride: opts.Mode,
+	Config:       cfg,
+	AgentName:    agentName,
+})
 	if err != nil {
 		return err
 	}
@@ -232,9 +233,9 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	extraLabels := map[string]string{
 		docker.LabelProject: cfg.Project,
 	}
-	if agent != "" {
-		extraLabels[docker.LabelAgent] = agent
-	}
+	extraLabels[docker.LabelAgent] = agentName
+
+  containerName := docker.ContainerName(cfg.Project, agentName)
 
 	// Create container (whail injects managed labels and auto-connects to clawker-net)
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{

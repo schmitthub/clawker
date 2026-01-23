@@ -24,7 +24,7 @@ func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 	opts := &RemoveOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "remove [CONTAINER...]",
+		Use:     "remove [OPTIONS] CONTAINER [CONTAINER...]",
 		Aliases: []string{"rm"},
 		Short:   "Remove one or more containers",
 		Long: `Removes one or more clawker containers.
@@ -66,7 +66,7 @@ Container names can be:
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force remove running containers")
 	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove associated volumes")
 
-	return cmd
+  return cmd
 }
 
 func runRemove(ctx context.Context, f *cmdutil.Factory, opts *RemoveOptions) error {
