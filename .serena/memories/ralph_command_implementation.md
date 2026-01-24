@@ -8,10 +8,20 @@ The `clawker ralph` command provides autonomous loop execution for Claude Code a
 
 ---
 
-## Current Status: Production Ready (Committed 2026-01-24)
+## Current Status: Production Ready with Full Documentation (2026-01-24)
 
 **Latest Commit:** `7a2dace` on branch `a/ralph`
 **Commit Message:** feat(ralph): implement autonomous loop execution with circuit breaker
+
+### Documentation Status: COMPLETE
+
+The README.md now includes a comprehensive step-by-step Ralph workflow:
+- Quick start for API key users
+- Quick start for subscription users (with OAuth authentication)
+- Complete 7-step setup guide
+- Copy-paste CLAUDE.md instructions with all 10 completion patterns
+- Circuit breaker explanation with all trip conditions
+- YOLO mode documentation
 
 ### What's Complete (Excellent Parity)
 
@@ -304,7 +314,7 @@ Export to clawker's monitoring stack:
 ### Standard Workflow:
 ```bash
 # 1. Create container and authenticate
-clawker run -it --agent ralph
+clawker run -it --agent ralph @
 # Complete browser OAuth, then Ctrl+C to exit
 
 # 2. Run autonomous loop
@@ -314,7 +324,7 @@ clawker ralph run --agent ralph --prompt "Fix all tests"
 ### YOLO Workflow (after --skip-permissions is added):
 ```bash
 # 1. Create container with skip-permissions, authenticate
-clawker run -it --agent ralph -- --dangerously-skip-permissions
+clawker run -it --agent ralph @ -- --dangerously-skip-permissions
 # Accept risk prompt, then Ctrl+P,Q to detach (keep running)
 
 # 2. Run autonomous loop with skip-permissions
@@ -340,13 +350,67 @@ go test ./internal/ralph/...
 | analyzer_test.go | Status parsing, completion indicators, rate limit detection |
 | circuit_test.go | Circuit breaker, safety circuit breaker |
 | config_test.go | Default values |
+| loop_test.go | Session creation timing, startup invariants |
 | ratelimit_test.go | Rate limiter |
 | session_test.go | Persistence, expiration |
 | history_test.go | History tracking |
 
 ---
 
+## Development Process (CRITICAL)
+
+**When developing ralph features, YOU MUST:**
+
+1. **Manually test the feature yourself** - Don't assume it works
+   ```bash
+   # Start ralph run in one terminal
+   clawker ralph run --agent test --prompt "Hello"
+
+   # In another terminal, verify status works
+   clawker ralph status --agent test
+
+   # Check filesystem directly
+   ls -la ~/.local/clawker/ralph/sessions/
+   ls -la ~/.local/clawker/ralph/history/
+   ```
+
+2. **If it doesn't work, write tests FIRST to catch the problem**
+   - Tests should FAIL on current broken code
+   - Confirms the test actually catches the bug
+
+3. **Then fix the code**
+   - Tests should now PASS
+
+4. **You are NOT done until:**
+   - Tests exist that would have caught this bug
+   - Tests run and pass
+   - Manual verification confirms the fix works
+
+---
+
 ## Recent Changes
+
+### Session Save Timing Fix (2026-01-24)
+
+**Bug:** `clawker ralph status` showed "No ralph session found" while ralph was actively running.
+
+**Root Cause:** Session was created in memory and history was written, but `SaveSession()` was only called AFTER the first loop iteration completed (which could take 15+ minutes).
+
+**Fix in `loop.go`:** Added immediate `SaveSession()` call after session creation:
+```go
+if sessionCreated {
+    r.history.AddSessionEntry(...)
+    // FIX: Save session immediately so status command can see it
+    if saveErr := r.store.SaveSession(session); saveErr != nil {
+        // Return error, don't continue with broken state
+    }
+}
+```
+
+**Tests added in `loop_test.go`:**
+- `TestSessionCreationMirrorsLoopStartup` - Documents correct behavior
+- `TestRunner_SessionSavedOnCreation` - Regression test for the fix
+- `TestRunner_OnLoopStartSessionExists` - Verifies session exists before loop
 
 ### PR Review Fixes (2026-01-23)
 - Fixed context break bug in rate limit wait (loop.go)
@@ -390,6 +454,8 @@ go test ./internal/ralph/...
 2. **Context management** - Always use `context.WithTimeout` for individual loop iterations. Don't store context in structs.
 
 3. **Monitor callback integration** - The Monitor interface provides callbacks for loop events. When `--monitor` is used, don't also emit simple log lines (would duplicate).
+
+4. **Session save timing** - Session MUST be saved immediately after creation, not after the first loop completes. Otherwise `ralph status` shows "no session found" during the first (potentially long) loop iteration. History and session files must stay in sync.
 
 ### File Locations
 - **Session data**: `~/.local/clawker/ralph/sessions/<project>.<agent>.json`

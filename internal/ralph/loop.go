@@ -181,10 +181,20 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 	if session == nil {
 		session = NewSession(opts.Project, opts.Agent, opts.Prompt)
 	}
-	// Record session creation in history
+	// Record session creation in history and save session immediately
+	// This ensures `ralph status` can see the session before the first loop completes
 	if sessionCreated {
 		if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record session creation in history")
+		}
+		// Save session immediately so status command can see it
+		if saveErr := r.store.SaveSession(session); saveErr != nil {
+			logger.Error().Err(saveErr).Msg("failed to save initial session")
+			return &LoopResult{
+				Session:    session,
+				ExitReason: "failed to save initial session",
+				Error:      fmt.Errorf("failed to save initial session: %w", saveErr),
+			}, nil
 		}
 	}
 
@@ -523,13 +533,35 @@ func (r *Runner) execCapture(ctx context.Context, containerName string, cmd []st
 		outputWriter = io.MultiWriter(&stdout, &callbackWriter{fn: onOutput})
 	}
 
-	_, err = stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
-	if err != nil && err != io.EOF {
-		return stdout.String(), -1, fmt.Errorf("failed to read output: %w", err)
+	// Run StdCopy in a goroutine so we can respect context cancellation
+	// When context is cancelled, we close the connection to interrupt the read
+	copyDone := make(chan error, 1)
+	go func() {
+		_, copyErr := stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
+		copyDone <- copyErr
+	}()
+
+	// Wait for either copy completion or context cancellation
+	var copyErr error
+	select {
+	case copyErr = <-copyDone:
+		// Normal completion
+	case <-ctx.Done():
+		// Context cancelled/timeout - close connection to unblock StdCopy
+		hijacked.Close()
+		<-copyDone // Wait for goroutine to finish
+		return stdout.String(), -1, fmt.Errorf("exec timed out: %w", ctx.Err())
 	}
 
-	// Get exit code
-	inspectResp, err := r.client.ExecInspect(ctx, execResp.ID, docker.ExecInspectOptions{})
+	if copyErr != nil && copyErr != io.EOF {
+		return stdout.String(), -1, fmt.Errorf("failed to read output: %w", copyErr)
+	}
+
+	// Get exit code - use fresh context since the loop context may have timed out
+	// but we still need to retrieve the exit code from the completed exec
+	inspectCtx, inspectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer inspectCancel()
+	inspectResp, err := r.client.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
 	if err != nil {
 		return stdout.String(), -1, fmt.Errorf("failed to inspect exec: %w", err)
 	}
