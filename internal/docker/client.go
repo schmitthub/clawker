@@ -11,7 +11,7 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 

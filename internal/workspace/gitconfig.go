@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // HostGitConfigStagingPath is where the host's gitconfig is mounted for processing by entrypoint

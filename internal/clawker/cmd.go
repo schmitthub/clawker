@@ -1,15 +1,23 @@
 package clawker
 
 import (
-	"github.com/schmitthub/clawker/pkg/cmd/root"
-	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/cmd/root"
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
 )
 
 // Build-time variables injected via ldflags
 var (
 	Version = "dev"
 	Commit  = "none"
+)
+
+const (
+	exitOk      = 0
+	exitError   = 1
+	exitUsage   = 2
+	exitDataErr = 3
 )
 
 // Main is the entry point for the clawker CLI.
@@ -28,7 +36,7 @@ func Main() int {
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
 		// Print contextual help hint (Cobra already printed "Error: ...")
-		cmdutil.PrintHelpHint(cmd.CommandPath())
+		output.PrintHelpHint(cmd.CommandPath())
 		f.CloseClient()
 		return 1
 	}

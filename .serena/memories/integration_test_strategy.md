@@ -36,7 +36,7 @@ Integration tests use `alpine:latest` instead of clawker-built images. This:
 ### Client Usage Rules
 
 ```
-pkg/cmd/* → internal/docker.Client → pkg/whail.Engine → Docker daemon
+internal/cmd/* → internal/docker.Client → pkg/whail.Engine → Docker daemon
 ```
 
 In tests:
@@ -57,13 +57,13 @@ For clawker images (with entrypoint):
 
 | File | Action |
 |------|--------|
-| `pkg/cmdutil/resolve_unit_test.go` | Created - unit tests without Docker |
-| `pkg/cmdutil/resolve_integration_test.go` | Created - Docker-dependent tests |
-| `pkg/cmdutil/resolve_test.go` | Deleted |
+| `internal/cmdutil/resolve_unit_test.go` | Created - unit tests without Docker |
+| `internal/cmdutil/resolve_integration_test.go` | Created - Docker-dependent tests |
+| `internal/cmdutil/resolve_test.go` | Deleted |
 | `internal/docker/client_integration_test.go` | Created - all Docker client tests |
 | `internal/docker/client_test.go` | Deleted |
-| `pkg/cmd/container/run/run_integration_test.go` | Modified - converted to alpine |
-| `pkg/cmd/container/exec/exec_integration_test.go` | Modified - converted to alpine |
+| `internal/cmd/container/run/run_integration_test.go` | Modified - converted to alpine |
+| `internal/cmd/container/exec/exec_integration_test.go` | Modified - converted to alpine |
 
 ## Test Utilities
 
@@ -222,4 +222,4 @@ fi
 - BuildTestImage is still available for E2E tests but not used in integration tests
 - Deleted ClaudeFlagsPassthrough test with TODO for future E2E implementation
 - Always use `testutil.WaitForContainerRunning` after `ContainerStart` - never write local implementations
-- Testcontainers tests in `internal/integration/` are separate from `pkg/cmd/*_integration_test.go` tests
+- Testcontainers tests in `internal/integration/` are separate from `internal/cmd/*_integration_test.go` tests

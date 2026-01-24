@@ -6,9 +6,10 @@ package main
 import (
 	"os"
 
-	"github.com/schmitthub/clawker/pkg/cmd/generate"
-	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/cmd/generate"
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
 )
 
 // Build-time variables set by ldflags.
@@ -24,7 +25,7 @@ func main() {
 	// Create factory with working directory
 	wd, err := os.Getwd()
 	if err != nil {
-		cmdutil.PrintError("Failed to get working directory: %v", err)
+		output.PrintError("Failed to get working directory: %v", err)
 		os.Exit(1)
 	}
 

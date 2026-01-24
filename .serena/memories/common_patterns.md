@@ -2,7 +2,7 @@
 
 ## Adding a New CLI Command
 
-1. Create package: `pkg/cmd/<cmdname>/<cmdname>.go`
+1. Create package: `internal/cmd/<cmdname>/<cmdname>.go`
 2. Define options struct:
 
    ```go
@@ -38,9 +38,9 @@
    }
 
    ```
-4. Register in `pkg/cmd/root/root.go`:
+4. Register in `internal/cmd/root/root.go`:
    ```go
-   import "<package>/pkg/cmd/<cmdname>"
+   import "<package>/internal/cmd/<cmdname>"
    // In NewCmdRoot:
    cmd.AddCommand(<cmdname>.NewCmd<Name>(f))
    ```
@@ -459,7 +459,7 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 Test files in the same package share helpers. **Do not duplicate:**
 
 ```go
-// container_test.go - define shared helpers
+// container_test.go - define shared output
 func generateContainerName(prefix string) string {
     return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
@@ -467,7 +467,7 @@ func generateContainerName(prefix string) string {
 func setupManagedContainer(ctx context.Context, t *testing.T, name string) string { ... }
 func setupUnmanagedContainer(ctx context.Context, t *testing.T, name string, labels map[string]string) string { ... }
 
-// copy_test.go - USE the shared helpers, don't redefine
+// copy_test.go - USE the shared output, don't redefine
 func TestCopyToContainer(t *testing.T) {
     containerName := generateContainerName("test-copy")  // Uses shared helper
     // ...
@@ -484,10 +484,11 @@ func TestCopyToContainer(t *testing.T) {
 - Clawker Labels: `internal/docker/labels.go`
 - Clawker Names: `internal/docker/names.go`
 - Clawker Volume Helpers: `internal/docker/volume.go`
-- Factory: `pkg/cmdutil/factory.go` (use `f.Client(ctx)`)
-- Command Registration: `pkg/cmd/root/root.go`
+- Factory: `internal/cmdutil/factory.go` (use `f.Client(ctx)`)
+- Command Registration: `internal/cmd/root/root.go`
 - Workspace Setup: `internal/workspace/strategy.go` (uses `docker.Client`)
 - Build Orchestration: `internal/build/build.go` (uses `docker.Client`)
+- Logger: `internal/logger/`
 - Tests: `pkg/whail/*_test.go`, `internal/docker/*_test.go`
 
 **Note:** `internal/engine/` has been **deleted**. All code uses the above paths.

@@ -217,7 +217,7 @@ cli-test-integration:
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -tags=integration -timeout 10m ./pkg/cmd/...
+	$(TEST_CMD_VERBOSE) -tags=integration -timeout 10m ./internal/cmd/...
 
 # Run CLI tests with coverage
 cli-test-coverage:

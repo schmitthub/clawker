@@ -4,7 +4,7 @@
 
 ## Adding a New CLI Command
 
-1. **Create the command file**: `pkg/cmd/<cmdname>/<cmdname>.go`
+1. **Create the command file**: `internal/cmd/<cmdname>/<cmdname>.go`
 
 2. **Define options struct and constructor**:
 
@@ -55,7 +55,7 @@
    }
    ```
 
-4. **Register in `pkg/cmd/root/root.go`**
+4. **Register in `internal/cmd/root/root.go`**
 
 5. **Update documentation**:
    - Add to `.claude/docs/CLI-VERBS.md`
@@ -165,7 +165,7 @@ Before adding a new command, verify:
 - [ ] Routes status messages to stderr (`fmt.Fprintf(os.Stderr, ...)`)
 - [ ] Uses `cmdutil.HandleError(err)` for Docker errors
 - [ ] Uses `cmdutil.PrintNextSteps()` for guidance
-- [ ] Registered in `pkg/cmd/root/root.go`
+- [ ] Registered in `internal/cmd/root/root.go`
 - [ ] Updates `README.md` with user-facing docs
 - [ ] Updates `.claude/docs/CLI-VERBS.md`
 - [ ] Uses standard flag names from CLI-VERBS.md Flag Conventions

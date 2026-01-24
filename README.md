@@ -13,18 +13,7 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 **Clawker** (claude + docker) wraps Claude Code in Docker containers with a familiar CLI. It handles auth seamlessly via a host proxy, forwards your git credentials, and provides optional monitoring - so you can let Claude Code loose without worrying about your system.
 
 > **Status:** Alpha (macOS tested). Issues and PRs welcome — if clawker helps you, please star the repo.
->
-> **Planned features and fixes**
-> - Linux support (untested)
-> - Windows support
-> - Versioning and releases with CI/CD integration
-> - Terminal UI improvements (redraw on reattach, status indicators, progress bars, styling); current output can conflict with Claude's Ink-based TUI (see Known Issues)
-> - Auto pruning to manage disk usage
-> - Man pages and helper docs
-> - Docker MCP Toolkit support (currently a known “feature-not-a-bug”: MCP plugin inside a container doesn’t detect Docker Desktop)
-> - Host proxy browser auth: re-attach before authenticating can break the flow (low priority)
-> - Grafana pre-built dashboard improvements (currently basic POC)
-> - Improved host Claude directory mounting strategy to avoid permission issues and settings
+
 
 ## Quick Start
 

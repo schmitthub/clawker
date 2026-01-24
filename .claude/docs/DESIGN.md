@@ -494,7 +494,7 @@ Tests run against real Docker—no mocking:
 **Before completing any code change:**
 
 1. Run `go test ./...` - all unit tests must pass
-2. Run `go test ./pkg/cmd/...` - all integration tests must pass
+2. Run `go test ./internal/cmd/...` - all integration tests must pass
 
 ### 11.2 Table-Driven Tests
 

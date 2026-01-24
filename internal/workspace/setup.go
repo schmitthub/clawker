@@ -8,8 +8,8 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
 )
 
 // SetupMountsConfig holds configuration for workspace mount setup
@@ -44,7 +44,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	mode, err := config.ParseMode(modeStr)
 	if err != nil {
-		cmdutil.PrintError("Invalid workspace mode: %v", err)
+		output.PrintError("Invalid workspace mode: %v", err)
 		return nil, err
 	}
 
@@ -58,7 +58,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	strategy, err := NewStrategy(mode, wsCfg)
 	if err != nil {
-		cmdutil.PrintError("Failed to create workspace strategy: %v", err)
+		output.PrintError("Failed to create workspace strategy: %v", err)
 		return nil, err
 	}
 
@@ -69,7 +69,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Prepare workspace resources (important for snapshot mode)
 	if err := strategy.Prepare(ctx, client); err != nil {
-		cmdutil.PrintError("Failed to prepare workspace: %v", err)
+		output.PrintError("Failed to prepare workspace: %v", err)
 		return nil, err
 	}
 
@@ -78,7 +78,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Ensure and get config volumes
 	if err := EnsureConfigVolumes(ctx, client, cfg.Config.Project, cfg.AgentName); err != nil {
-		cmdutil.PrintError("Failed to create config volumes: %v", err)
+		output.PrintError("Failed to create config volumes: %v", err)
 		return nil, err
 	}
 	mounts = append(mounts, GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)...)

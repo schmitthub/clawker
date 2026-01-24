@@ -76,7 +76,7 @@ func (c *Client) ListContainersByProject(ctx context.Context, project string, in
 func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (*Container, error)
 func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID string, force bool) error
 
-// docker.Client volume helpers (internal/docker/volume.go)
+// docker.Client volume output (internal/docker/volume.go)
 func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[string]string) (bool, error)
 func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath string, ignorePatterns []string) error
 ```
@@ -117,18 +117,18 @@ When cleanup runs in deferred functions, use a fresh context since the original 
 func runCommand(...) error {
     ctx, cancel := term.SetupSignalContext(context.Background())
     defer cancel()
-    
+
     defer func() {
         // Use background context for cleanup - original ctx may be cancelled
         cleanupCtx := context.Background()
         // Or with timeout:
         cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
         defer cancel()
-        
+
         client.ContainerRemove(cleanupCtx, containerID, true)
         client.VolumeRemove(cleanupCtx, volumeName, true)
     }()
-    
+
     // ... main operation using ctx
 }
 ```

@@ -14,8 +14,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/build/registry"
-	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Embedded templates for Dockerfile generation
@@ -67,13 +67,13 @@ type DockerfileManager struct {
 
 // DockerfileContext contains the template data for generating a Dockerfile.
 type DockerfileContext struct {
-	BaseImage      string
-	Packages       []string
-	Username       string
-	UID            int
-	GID            int
-	Shell          string
-	WorkspacePath  string
+	BaseImage           string
+	Packages            []string
+	Username            string
+	UID                 int
+	GID                 int
+	Shell               string
+	WorkspacePath       string
 	ClaudeVersion       string
 	IsAlpine            bool
 	EnableFirewall      bool
@@ -81,11 +81,11 @@ type DockerfileContext struct {
 	FirewallDomainsJSON string   // JSON-encoded domain list for env var
 	FirewallOverride    bool     // True if using override mode (skips GitHub IP fetching)
 	ExtraEnv            map[string]string
-	Editor         string
-	Visual         string
-	Instructions   *DockerfileInstructions
-	Inject         *DockerfileInject
-	ImageLabels    map[string]string // Clawker internal labels (com.clawker.*)
+	Editor              string
+	Visual              string
+	Instructions        *DockerfileInstructions
+	Inject              *DockerfileInject
+	ImageLabels         map[string]string // Clawker internal labels (com.clawker.*)
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -571,7 +571,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	return ctx, nil
 }
 
-// Conversion helpers from config types to build types
+// Conversion output from config types to build types
 
 func convertCopyInstructions(src []config.CopyInstruction) []CopyInstruction {
 	if src == nil {
