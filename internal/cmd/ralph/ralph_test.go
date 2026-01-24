@@ -24,9 +24,9 @@ func TestNewCmdRalph(t *testing.T) {
 
 	// Test subcommands exist
 	subCmds := cmd.Commands()
-	require.Len(t, subCmds, 3)
+	require.Len(t, subCmds, 4)
 
-	var runCmd, statusCmd, resetCmd *cobra.Command
+	var runCmd, statusCmd, resetCmd, tuiCmd *cobra.Command
 	for _, sub := range subCmds {
 		switch sub.Use {
 		case "run":
@@ -35,12 +35,15 @@ func TestNewCmdRalph(t *testing.T) {
 			statusCmd = sub
 		case "reset":
 			resetCmd = sub
+		case "tui":
+			tuiCmd = sub
 		}
 	}
 
 	require.NotNil(t, runCmd, "run subcommand should exist")
 	require.NotNil(t, statusCmd, "status subcommand should exist")
 	require.NotNil(t, resetCmd, "reset subcommand should exist")
+	require.NotNil(t, tuiCmd, "tui subcommand should exist")
 }
 
 func TestCmdRun_Flags(t *testing.T) {

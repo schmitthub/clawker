@@ -70,6 +70,25 @@ clawker network   [list|inspect|create|remove|prune]
 clawker image     [list|inspect|build|remove|prune]
 ```
 
+### internal/cmdutil - CLI Utilities
+
+Shared utilities for all CLI commands.
+
+**Key abstractions:**
+- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, host proxy)
+- `IOStreams` - Testable I/O with TTY detection, color support, progress indicators
+- `ColorScheme` - Color formatting that bridges to `tui/styles.go`
+- `Prompter` - Interactive prompts respecting TTY and CI detection
+- Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`)
+
+**IOStreams features:**
+- TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
+- Color support with `NO_COLOR` env var compliance
+- Progress indicators (spinners) for long operations
+- Pager support (`CLAWKER_PAGER`, `PAGER` env vars)
+- Alternate screen buffer for full-screen TUIs
+- Terminal size detection with caching
+
 ## Other Key Components
 
 | Package | Purpose |
@@ -80,7 +99,9 @@ clawker image     [list|inspect|build|remove|prune]
 | `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
-| `internal/cmdutil` | Factory, error handling, output utilities |
+| `internal/cmdutil` | Factory, IOStreams, error handling, output utilities |
+| `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
+| `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
 | `pkg/build` | Dockerfile generation, semver, npm registry client |
 
 ## Design Principles

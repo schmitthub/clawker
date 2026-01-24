@@ -317,6 +317,27 @@ clawker ralph reset --agent dev --all
 
 ---
 
+### `clawker ralph tui`
+
+Launch an interactive TUI dashboard for monitoring ralph agents.
+
+**Usage:**
+```bash
+clawker ralph tui
+```
+
+Provides a real-time terminal interface for monitoring all ralph agents in the current project. Features include live agent discovery, status updates, and log streaming.
+
+**Examples:**
+```bash
+# Launch TUI for current project
+clawker ralph tui
+```
+
+**Note:** Must be run from a directory containing `clawker.yaml`.
+
+---
+
 ### RALPH_STATUS Block Format
 
 Claude must output this block for progress tracking:

@@ -23,7 +23,8 @@ See the documentation for the expected format.
 Available commands:
   run     Start the autonomous loop
   status  Show current session status
-  reset   Reset the circuit breaker`,
+  reset   Reset the circuit breaker
+  tui     Launch interactive dashboard`,
 		Example: `  # Start a ralph loop with an initial prompt
   clawker ralph run --agent dev --prompt "Fix all failing tests"
 
@@ -37,6 +38,7 @@ Available commands:
 	cmd.AddCommand(newCmdRun(f))
 	cmd.AddCommand(newCmdStatus(f))
 	cmd.AddCommand(newCmdReset(f))
+	cmd.AddCommand(NewCmdTUI(f))
 
 	return cmd
 }
