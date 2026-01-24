@@ -16,7 +16,7 @@ Container name can be:
   - Container ID: abc123...
 
 ```
-clawker container top [CONTAINER] [ps OPTIONS] [flags]
+clawker container top CONTAINER [ps OPTIONS] [flags]
 ```
 
 ### Examples
@@ -38,8 +38,8 @@ clawker container top [CONTAINER] [ps OPTIONS] [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for top
+      --agent   Treat first argument as agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for top
 ```
 
 ### Options inherited from parent commands

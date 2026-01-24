@@ -39,7 +39,7 @@ Added `ContainerExitDiagnostics` struct and `GetContainerExitDiagnostics()` func
 Added helper to strip Docker's 8-byte multiplexed stream headers from log output.
 
 ### Task 4: Added E2E Test for Container Exit Detection ✅ DONE
-**File:** `pkg/cmd/container/run/run_e2e_test.go`
+**File:** `internal/cmd/container/run/run_e2e_test.go`
 
 Added `TestRunE2E_ContainerExitDetection` that:
 - Creates container that exits immediately with code 42
@@ -47,7 +47,7 @@ Added `TestRunE2E_ContainerExitDetection` that:
 - Tests GetContainerExitDiagnostics provides useful info
 
 ### Task 5: Added Integration Test for Firewall Startup ✅ DONE
-**File:** `internal/integration/firewall_startup_test.go` (NEW FILE)
+**File:** `internal/testutil/integration/firewall_startup_test.go` (NEW FILE)
 
 Added tests:
 - `TestFirewallStartup_FullScript` - Tests complete init-firewall.sh execution
@@ -69,10 +69,10 @@ Added section on "Container Exit Detection (Fail-Fast)" with:
 go test ./...
 
 # Integration tests - PASSED ✅ (2026-01-22)
-go test -tags=integration ./internal/integration/... -v -timeout 10m
+go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
 
 # E2E tests - PASSED ✅ (2026-01-22)
-go test -tags=e2e ./pkg/cmd/container/run/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/container/run/... -v -timeout 15m
 # TestRunE2E_ContainerExitDetection passed
 ```
 
@@ -83,8 +83,8 @@ go test -tags=e2e ./pkg/cmd/container/run/... -v -timeout 15m
 | File | Change |
 |------|--------|
 | `internal/testutil/docker.go` | Improved `WaitForContainerRunning`, added `GetContainerExitDiagnostics`, `stripDockerStreamHeaders`, `getContainerLogsTail` |
-| `pkg/cmd/container/run/run_e2e_test.go` | Added `TestRunE2E_ContainerExitDetection` |
-| `internal/integration/firewall_startup_test.go` | NEW FILE - firewall startup flow tests |
+| `internal/cmd/container/run/run_e2e_test.go` | Added `TestRunE2E_ContainerExitDetection` |
+| `internal/testutil/integration/firewall_startup_test.go` | NEW FILE - firewall startup flow tests |
 | `.claude/rules/TESTING.md` | Added container exit detection documentation |
 
 ## Additional Fix: Firewall IPv6 Handling (2026-01-22)

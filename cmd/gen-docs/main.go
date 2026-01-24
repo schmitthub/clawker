@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/cmd/root"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docs"
-	"github.com/schmitthub/clawker/pkg/cmd/root"
-	"github.com/schmitthub/clawker/pkg/cmdutil"
 	"github.com/spf13/pflag"
 )
 

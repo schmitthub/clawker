@@ -183,6 +183,160 @@ clawker start [flags]
 
 ---
 
+## Autonomous Loops (`clawker ralph`)
+
+Run Claude Code in autonomous loops using the "Ralph Wiggum" technique.
+
+### `clawker ralph run`
+
+Start an autonomous Claude Code loop.
+
+**Usage:**
+```bash
+clawker ralph run --agent NAME [flags]
+```
+
+Runs Claude Code repeatedly with `--continue` until completion or stagnation.
+The agent must output a RALPH_STATUS block for progress tracking.
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--agent` | | string | | Agent name (required) |
+| `--prompt` | `-p` | string | | Initial prompt for the first loop |
+| `--prompt-file` | | string | | File containing the initial prompt |
+| `--max-loops` | | int | 50 | Maximum number of loops |
+| `--stagnation-threshold` | | int | 3 | Loops without progress before circuit trips |
+| `--timeout` | | duration | 15m | Timeout per loop iteration |
+| `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
+| `--quiet` | `-q` | bool | false | Suppress progress output |
+| `--json` | | bool | false | Output result as JSON |
+| `--calls` | | int | 100 | Rate limit: max calls per hour (0 to disable) |
+| `--monitor` | | bool | false | Enable live monitoring output |
+| `--verbose` | `-v` | bool | false | Enable verbose output |
+| `--strict-completion` | | bool | false | Require both EXIT_SIGNAL and completion indicators |
+| `--same-error-threshold` | | int | 5 | Same error repetitions before circuit trips |
+| `--output-decline-threshold` | | int | 70 | Output decline percentage that triggers trip |
+| `--max-test-loops` | | int | 3 | Consecutive test-only loops before circuit trips |
+| `--loop-delay` | | int | 3 | Seconds to wait between loop iterations |
+| `--skip-permissions` | | bool | false | Pass --dangerously-skip-permissions to claude |
+
+**Examples:**
+```bash
+# Start with an initial prompt
+clawker ralph run --agent dev --prompt "Fix all failing tests"
+
+# Start from a prompt file
+clawker ralph run --agent dev --prompt-file task.md
+
+# Continue an existing session
+clawker ralph run --agent dev
+
+# Reset circuit breaker and retry
+clawker ralph run --agent dev --reset-circuit
+
+# Run with custom limits
+clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+
+# Run with live monitoring
+clawker ralph run --agent dev --monitor
+
+# Run with rate limiting (5 calls per hour)
+clawker ralph run --agent dev --calls 5
+
+# Run with verbose output
+clawker ralph run --agent dev -v
+
+# Run in YOLO mode (skip all permission prompts)
+clawker ralph run --agent dev --skip-permissions
+```
+
+**Exit conditions:**
+- Claude signals `EXIT_SIGNAL: true` with sufficient completion indicators (strict mode)
+- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE` (default mode)
+- Circuit breaker trips (no progress, same error, output decline, or test loops)
+- Maximum loops reached
+- Error during execution
+- Claude's API rate limit hit
+
+---
+
+### `clawker ralph status`
+
+Show current ralph session status.
+
+**Usage:**
+```bash
+clawker ralph status --agent NAME [flags]
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent` | string | | Agent name (required) |
+| `--json` | bool | false | Output as JSON |
+
+**Examples:**
+```bash
+# Show status
+clawker ralph status --agent dev
+
+# Output as JSON
+clawker ralph status --agent dev --json
+```
+
+---
+
+### `clawker ralph reset`
+
+Reset the circuit breaker for an agent.
+
+**Usage:**
+```bash
+clawker ralph reset --agent NAME [flags]
+```
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--agent` | | string | | Agent name (required) |
+| `--all` | | bool | false | Also clear session history |
+| `--quiet` | `-q` | bool | false | Suppress output |
+
+**Examples:**
+```bash
+# Reset circuit breaker only
+clawker ralph reset --agent dev
+
+# Reset everything (circuit and session)
+clawker ralph reset --agent dev --all
+```
+
+---
+
+### RALPH_STATUS Block Format
+
+Claude must output this block for progress tracking:
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line>
+---END_RALPH_STATUS---
+```
+
+Add instructions to your project's CLAUDE.md to have the agent output this block.
+
+---
+
 ## Management Commands
 
 ### Container Management (`clawker container`)
@@ -262,6 +416,65 @@ Standard flag names used across commands. Note that shorthand meanings are conte
 - In build commands: `-f` means `--file` (Dockerfile path) - matches Docker CLI convention
 - In remove/prune commands: `-f` means `--force`
 - In inspect commands: `-f` means `--format` (Go template)
+
+---
+
+## The `@` Symbol (Automatic Image Resolution)
+
+The `container run` and `container create` commands support `@` as a special IMAGE argument that automatically resolves the image name.
+
+**How it works:**
+
+When you pass `@` as the IMAGE argument:
+
+1. **Project image** - Looks for `clawker-<project>:latest` with managed labels
+2. **Default image** - Falls back to `default_image` from settings or config
+3. **Error** - If neither found, prompts with next steps
+
+**Resolution order:**
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | Project-built image | `clawker-myproject:latest` |
+| 2 | Settings default_image | From `~/.local/clawker/settings.yaml` |
+| 3 | Config default_image | From `clawker.yaml` |
+
+**Examples:**
+
+```bash
+# Instead of typing the full image name:
+clawker run -it clawker-myproject:abcd1234
+
+# Just use @:
+clawker run -it @
+
+# Works with all run/create flags:
+clawker run -it --rm @
+clawker run -it --agent ralph @
+clawker container create --agent sandbox @
+
+# When using with Claude Code flags, @ stops clawker's flag parsing:
+clawker run -it --rm @ --dangerously-skip-permissions -p "Fix bugs"
+```
+
+**When to use `@`:**
+
+- After running `clawker build` - `@` resolves to the built image
+- When you have a `default_image` configured - `@` uses that
+- For quick iteration - no need to remember exact image names/tags
+
+**Error handling:**
+
+If no image can be resolved, you'll see:
+
+```
+Error: Could not resolve image
+
+Next steps:
+  1. Run 'clawker build' to build a project image
+  2. Set 'default_image' in clawker.yaml or ~/.local/clawker/settings.yaml
+  3. Or specify an image directly: clawker run IMAGE
+```
 
 ---
 
@@ -352,13 +565,13 @@ The `container run` and `container create` commands support the `--mode` flag to
 
 ```bash
 # Run with bind mode (default - live sync)
-clawker container run -it --agent dev alpine sh
+clawker container run -it --agent dev @
 
 # Run with snapshot mode (isolated copy)
-clawker container run -it --agent sandbox --mode=snapshot alpine sh
+clawker container run -it --agent sandbox --mode=snapshot @
 
 # Create a container with snapshot mode
-clawker container create --agent test --mode=snapshot alpine
+clawker container create --agent test --mode=snapshot @
 ```
 
 **Workspace mounts created:**
@@ -439,40 +652,40 @@ clawker run [CLAWKER_FLAGS] IMAGE [CONTAINER_COMMAND_AND_FLAGS]
 
 ```bash
 # Clawker flags before image, container flags after
-clawker run -it --rm alpine --version
+clawker run -it --rm @ -- --version
 
 # Pass Claude Code flags to the container
-clawker run -it --rm clawker-myapp:latest --allow-dangerously-skip-permissions -p "Fix bugs"
+clawker run -it --rm @ -- --dangerously-skip-permissions -p "Fix bugs"
 
 # Mix clawker flags with container command
-clawker run -it --rm -e FOO=bar alpine sh -c "echo hello"
+clawker run -it --rm -e FOO=bar @ -- sh -c "echo hello"
 ```
 
-**Using `--agent` without IMAGE:**
+**Using `--agent` with `@`:**
 
-When using `--agent` without specifying an IMAGE (relying on defaults), you must use `--` to stop flag parsing:
+When using `--agent`, you must also specify the `@` symbol to auto-resolve the image:
 
 ```bash
-# Without --, fails with "unknown flag: --allow-dangerously-skip-permissions"
-clawker run -it --rm --agent ralph --allow-dangerously-skip-permissions  # ERROR
+# Standard pattern: --agent with @ for image resolution
+clawker run -it --rm --agent ralph @
 
-# Use -- to stop clawker flag parsing
-clawker run -it --rm --agent ralph -- --allow-dangerously-skip-permissions -p "Fix bugs"
+# Pass flags to Claude Code after @ and --
+clawker run -it --rm --agent ralph @ -- --dangerously-skip-permissions -p "Fix bugs"
 ```
 
 **Flag conflict: `-p`**
 
-Clawker uses `-p` as shorthand for `--publish` (port mapping), while Claude Code uses `-p` for `--prompt`. Since clawker flags are parsed first, you must either specify the image or use `--`:
+Clawker uses `-p` as shorthand for `--publish` (port mapping), while Claude Code uses `-p` for `--prompt`. Since clawker flags are parsed first, use `@` and `--` to pass Claude's `-p`:
 
 ```bash
 # This fails - clawker parses -p as port mapping
 clawker run -it --rm -p "Fix bugs"  # ERROR: invalid port format
 
-# Option 1: Specify image first, then Claude's -p is passed through
-clawker run -it --rm clawker-myapp:latest -p "Fix bugs"
+# Correct: Use @ for image, -- to separate, then Claude's -p
+clawker run -it --rm --agent ralph @ -- -p "Fix bugs"
 
-# Option 2: Use -- with --agent
-clawker run -it --rm --agent ralph -- -p "Fix bugs"
+# Also works with explicit image name
+clawker run -it --rm clawker-myapp:latest -- -p "Fix bugs"
 ```
 
 ---

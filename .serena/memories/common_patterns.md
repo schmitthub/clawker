@@ -2,7 +2,7 @@
 
 ## Adding a New CLI Command
 
-1. Create package: `pkg/cmd/<cmdname>/<cmdname>.go`
+1. Create package: `internal/cmd/<cmdname>/<cmdname>.go`
 2. Define options struct:
 
    ```go
@@ -38,9 +38,9 @@
    }
 
    ```
-4. Register in `pkg/cmd/root/root.go`:
+4. Register in `internal/cmd/root/root.go`:
    ```go
-   import "<package>/pkg/cmd/<cmdname>"
+   import "<package>/internal/cmd/<cmdname>"
    // In NewCmdRoot:
    cmd.AddCommand(<cmdname>.NewCmd<Name>(f))
    ```
@@ -474,6 +474,194 @@ func TestCopyToContainer(t *testing.T) {
 }
 ```
 
+## Autonomous Loop Command Pattern (Ralph)
+
+For commands that run Claude Code in autonomous loops with circuit breaker:
+
+```go
+// internal/ralph/loop.go pattern
+type Runner struct {
+    client  *docker.Client
+    store   *SessionStore
+    circuit *CircuitBreaker
+}
+
+func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
+    // 1. Get or create session
+    session, _ := r.store.LoadSession(opts.Project, opts.Agent)
+    if session == nil {
+        session = NewSession(opts.Project, opts.Agent, opts.InitialPrompt)
+    }
+
+    // 2. Load or create circuit breaker state
+    circuitState, _ := r.store.LoadCircuitState(opts.Project, opts.Agent)
+    if circuitState != nil {
+        r.circuit.LoadState(circuitState)
+    }
+
+    // 3. Main loop
+    for loopNum := 1; loopNum <= opts.MaxLoops; loopNum++ {
+        // Check circuit breaker
+        if !r.circuit.Check() {
+            return nil, fmt.Errorf("circuit breaker open: %s", r.circuit.TripReason())
+        }
+
+        // Build command (first loop uses prompt, subsequent use --continue)
+        var cmd []string
+        if loopNum == 1 && opts.InitialPrompt != "" {
+            cmd = []string{"claude", "-p", opts.InitialPrompt, "--dangerously-skip-permissions"}
+        } else {
+            cmd = []string{"claude", "--continue", "--dangerously-skip-permissions"}
+        }
+
+        // Execute with output capture (non-TTY)
+        output, exitCode, err := r.execCapture(ctx, containerName, cmd, opts.OnOutput)
+
+        // Parse RALPH_STATUS block
+        status := ParseStatus(output)
+
+        // Check exit conditions
+        if status != nil && status.IsComplete() {
+            session.Status = StatusComplete
+            return &LoopResult{Status: "complete"}, nil
+        }
+
+        // Update circuit breaker
+        if tripped, reason := r.circuit.Update(status); tripped {
+            return nil, fmt.Errorf("stagnation detected: %s", reason)
+        }
+
+        // Persist state
+        r.store.SaveSession(session)
+        r.store.SaveCircuitState(r.circuit.GetState(opts.Project, opts.Agent))
+    }
+
+    return nil, fmt.Errorf("max loops reached")
+}
+```
+
+**Key patterns:**
+- Circuit breaker with configurable threshold for stagnation detection
+- Session persistence for resumable loops
+- Non-TTY exec with output capture via ExecCreate/ExecAttach
+- RALPH_STATUS block parsing from Claude output
+
+## Non-TTY Exec with Output Capture Pattern
+
+For capturing command output without TTY (used by ralph loop):
+
+```go
+func (r *Runner) execCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error) {
+    // Create exec with Tty: false for output capture
+    execResp, err := r.client.ExecCreate(ctx, containerName, docker.ExecCreateOptions{
+        Cmd:          cmd,
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty:          false,  // Critical: no TTY for proper output capture
+    })
+
+    // Attach to exec
+    hijacked, err := r.client.ExecAttach(ctx, execResp.ID, docker.ExecAttachOptions{})
+    defer hijacked.Close()
+
+    // Use stdcopy for proper demultiplexing
+    var stdout, stderr bytes.Buffer
+    outputWriter := io.Writer(&stdout)
+    if onOutput != nil {
+        outputWriter = io.MultiWriter(&stdout, &callbackWriter{fn: onOutput})
+    }
+
+    // CRITICAL: StdCopy doesn't respect context cancellation
+    // Wrap in goroutine and close connection on context cancel
+    copyDone := make(chan error, 1)
+    go func() {
+        _, copyErr := stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
+        copyDone <- copyErr
+    }()
+
+    var copyErr error
+    select {
+    case copyErr = <-copyDone:
+        // Normal completion
+    case <-ctx.Done():
+        // Context cancelled - close connection to unblock StdCopy
+        hijacked.Close()
+        <-copyDone // Wait for goroutine to finish
+        return stdout.String(), -1, fmt.Errorf("exec timed out: %w", ctx.Err())
+    }
+
+    if copyErr != nil && copyErr != io.EOF {
+        return stdout.String(), -1, fmt.Errorf("failed to read output: %w", copyErr)
+    }
+
+    // Get exit code - use FRESH context since loop context may be cancelled
+    inspectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    inspectResp, _ := r.client.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
+    return stdout.String(), inspectResp.ExitCode, nil
+}
+```
+
+**Key patterns:**
+- `Tty: false` required for proper stdout/stderr multiplexing
+- `stdcopy.StdCopy` does NOT respect context cancellation - must wrap in goroutine
+- Close hijacked connection on context cancel to unblock the StdCopy goroutine
+- Use `context.Background()` with timeout for ExecInspect (original context may be cancelled)
+- Use callback for streaming output while collecting full buffer
+
+## Image Resolution Pattern (`@` Symbol)
+
+For commands that accept an IMAGE argument and support `@` for automatic resolution:
+
+```go
+func runCmd(f *cmdutil.Factory, opts *Options) error {
+    ctx := context.Background()
+    cfg, _ := f.Config()
+    settings, _ := f.Settings()
+
+    // ALWAYS use Factory's Client method
+    client, err := f.Client(ctx)
+    if err != nil {
+        cmdutil.HandleError(err)
+        return err
+    }
+
+    // Handle @ symbol for automatic image resolution
+    if opts.Image == "@" {
+        resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, client, cfg, settings)
+        if err != nil {
+            cmdutil.HandleError(err)
+            return err
+        }
+        opts.Image = resolvedImage.Reference
+        
+        // Optionally show which image was resolved
+        if !opts.Quiet {
+            fmt.Fprintf(os.Stderr, "Using image: %s\n", opts.Image)
+        }
+    }
+
+    // Continue with container creation using opts.Image
+    // ...
+}
+```
+
+**Resolution order (in `cmdutil.ResolveImageWithSource`):**
+1. Project image: `clawker-<project>:latest` with managed labels
+2. Settings default_image: `~/.local/clawker/settings.yaml`
+3. Config default_image: `clawker.yaml`
+
+**Key functions in `internal/cmdutil/resolve.go`:**
+- `ResolveImageWithSource(ctx, client, cfg, settings)` - Returns `*ResolvedImage` with `.Reference` and `.Source`
+- `ResolveAndValidateImage(ctx, client, cfg, settings)` - Same but validates image exists, prompts for rebuild
+- `FindProjectImage(ctx, client, project)` - Finds `clawker-<project>:latest` with labels
+- `ResolveDefaultImage(cfg, settings)` - Gets merged default_image
+
+**Image source constants:**
+- `ImageSourceProject` - From project build (clawker-<project>:latest)
+- `ImageSourceDefault` - From default_image setting
+- `ImageSourceExplicit` - User provided explicit image name
+
 ## Key Files to Check When Making Changes
 
 **Current Architecture (Migration Complete):**
@@ -484,10 +672,13 @@ func TestCopyToContainer(t *testing.T) {
 - Clawker Labels: `internal/docker/labels.go`
 - Clawker Names: `internal/docker/names.go`
 - Clawker Volume Helpers: `internal/docker/volume.go`
-- Factory: `pkg/cmdutil/factory.go` (use `f.Client(ctx)`)
-- Command Registration: `pkg/cmd/root/root.go`
+- Factory: `internal/cmdutil/factory.go` (use `f.Client(ctx)`)
+- Command Registration: `internal/cmd/root/root.go`
 - Workspace Setup: `internal/workspace/strategy.go` (uses `docker.Client`)
 - Build Orchestration: `internal/build/build.go` (uses `docker.Client`)
 - Tests: `pkg/whail/*_test.go`, `internal/docker/*_test.go`
+- Ralph Loop: `internal/ralph/loop.go`, `circuit.go`, `analyzer.go`, `session.go`
+- Ralph CLI: `internal/cmd/ralph/run.go`, `status.go`, `reset.go`
+- Logger: `internal/logger/logger.go`
 
 **Note:** `internal/engine/` has been **deleted**. All code uses the above paths.

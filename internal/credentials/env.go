@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // EnvBuilder builds environment variables for container execution

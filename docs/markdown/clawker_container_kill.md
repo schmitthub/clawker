@@ -9,7 +9,7 @@ Kills one or more running clawker containers.
 The main process inside the container is sent SIGKILL signal (default),
 or the signal specified with the --signal option.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -40,7 +40,7 @@ clawker container kill [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string    Agent name (resolves to clawker.<project>.<agent>)
+      --agent           Treat arguments as agent names (resolves to clawker.<project>.<agent>)
   -h, --help            help for kill
   -s, --signal string   Signal to send to the container (default "SIGKILL")
 ```

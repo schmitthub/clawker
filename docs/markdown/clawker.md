@@ -35,6 +35,7 @@ Workspace modes:
 * [clawker pause](clawker_pause.md) - Pause all processes within one or more containers
 * [clawker project](clawker_project.md) - Manage clawker projects
 * [clawker ps](clawker_ps.md) - List containers
+* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
 * [clawker rename](clawker_rename.md) - Rename a container
 * [clawker restart](clawker_restart.md) - Restart one or more containers
 * [clawker rm](clawker_rm.md) - Remove one or more containers

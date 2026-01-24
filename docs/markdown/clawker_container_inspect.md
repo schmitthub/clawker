@@ -16,7 +16,7 @@ Container names can be:
   - Container ID: abc123...
 
 ```
-clawker container inspect [CONTAINER...] [flags]
+clawker container inspect [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ```
 
 ### Examples
@@ -41,7 +41,7 @@ clawker container inspect [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string    Agent name (resolves to clawker.<project>.<agent>)
+      --agent           Use agent name (resolves to clawker.<project>.<agent>)
   -f, --format string   Format output using a Go template
   -h, --help            help for inspect
   -s, --size            Display total file sizes

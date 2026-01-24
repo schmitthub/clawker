@@ -9,7 +9,7 @@ Removes one or more clawker containers.
 By default, only stopped containers can be removed. Use --force to remove
 running containers.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -17,7 +17,7 @@ Container names can be:
   - Container ID: abc123...
 
 ```
-clawker container remove [CONTAINER...] [flags]
+clawker container remove [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ```
 
 ### Aliases
@@ -46,10 +46,10 @@ clawker container remove [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -f, --force          Force remove running containers
-  -h, --help           help for remove
-  -v, --volumes        Remove associated volumes
+      --agent     Treat arguments as agent names (resolves to clawker.<project>.<agent>)
+  -f, --force     Force remove running containers
+  -h, --help      help for remove
+  -v, --volumes   Remove associated volumes
 ```
 
 ### Options inherited from parent commands

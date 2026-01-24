@@ -38,8 +38,8 @@ clawker top [OPTIONS] CONTAINER [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for top
+      --agent   Treat first argument as agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for top
 ```
 
 ### Options inherited from parent commands

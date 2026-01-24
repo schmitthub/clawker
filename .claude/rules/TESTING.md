@@ -16,10 +16,10 @@ paths:
 go test ./...
 
 # Integration tests (requires Docker)
-go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
-go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 ```
 
 ---
@@ -330,7 +330,7 @@ imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
 
 ---
 
-## Testcontainers Integration Tests (`internal/integration/`)
+## Testcontainers Integration Tests (`internal/testutil/integration/`)
 
 A separate test package using [testcontainers-go](https://golang.testcontainers.org/) for testing clawker scripts in lightweight containers. These tests verify script behavior (firewall, entrypoint, git credentials, SSH agent) without needing full clawker images.
 
@@ -350,13 +350,13 @@ A separate test package using [testcontainers-go](https://golang.testcontainers.
 
 ```bash
 # All testcontainers integration tests
-go test -tags=integration ./internal/integration/... -v -timeout 10m
+go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
 
 # Specific test suites
-go test -tags=integration ./internal/integration/... -run "Firewall" -v -timeout 10m
-go test -tags=integration ./internal/integration/... -run "Entrypoint" -v -timeout 5m
-go test -tags=integration ./internal/integration/... -run "GitCredential" -v -timeout 5m
-go test -tags=integration ./internal/integration/... -run "SshAgent" -v -timeout 5m
+go test -tags=integration ./internal/testutil/integration/... -run "Firewall" -v -timeout 10m
+go test -tags=integration ./internal/testutil/integration/... -run "Entrypoint" -v -timeout 5m
+go test -tags=integration ./internal/testutil/integration/... -run "GitCredential" -v -timeout 5m
+go test -tags=integration ./internal/testutil/integration/... -run "SshAgent" -v -timeout 5m
 ```
 
 ### Key Components

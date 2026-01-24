@@ -49,3 +49,35 @@
 - **FindProjectRoot utility**: Use `testutil.FindProjectRoot()` instead of duplicating - uses `runtime.Caller()` for reliability
 - **Test image cleanup**: `BuildTestImage` automatically registers `t.Cleanup()` for image removal
 - **Readiness timeout constants**: `DefaultReadyTimeout` (60s local), `CIReadyTimeout` (120s CI), `E2EReadyTimeout` (180s E2E)
+
+## Ralph Command Implementation Learnings
+
+- **Non-TTY exec for output capture**: Set `Tty: false` in ExecCreateOptions to get proper stdout/stderr multiplexing. Docker adds 8-byte header to each frame.
+- **Circuit breaker pattern**: Use mutex for thread safety, track consecutive no-progress loops, trip immediately on BLOCKED status
+- **RALPH_STATUS parsing**: Use regex with `(?s)` DOTALL flag: `(?s)---RALPH_STATUS---(.+?)---END_RALPH_STATUS---`
+- **Session persistence**: Store to `~/.local/clawker/ralph/sessions/` and `circuit/` directories as JSON
+- **Time pointer for omitempty**: Change `TrippedAt time.Time` to `*time.Time` to avoid "omitempty has no effect" warning
+- **ExecInspect needs options**: `client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})` - second arg required
+- **Config wiring**: Check if CLI flag is at default value before applying config default (avoids overwriting explicit CLI choices)
+- **Subcommand registration**: Parent command adds subcommands via `cmd.AddCommand()` in NewCmd function
+- **Boolean flag config override**: Can't use default value comparison for booleans. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
+- **Docker exec vs container CMD**: Ralph uses `docker exec` to run claude, NOT the container's startup CMD. Flags like `--skip-permissions` must be added to ralph's command building in `loop.go`, not to container create.
+- **Sliding window rate limiting**: Better than hourly reset. Track timestamps in slice, calculate window, allow burst recovery.
+- **No interactive prompts in autonomous mode**: Rate limit handler exits cleanly instead of prompting. Prevents goroutine leaks from blocking stdin reads.
+- **Monitor callback integration**: When `--monitor` is used, don't also emit simple log lines (would duplicate output).
+- **Completion indicator detection**: Parse output for patterns like "done", "complete", "finished" - case insensitive word boundary matching.
+- **Safety circuit breaker**: Force exit after N consecutive loops with completion signals (prevents infinite "almost done" loops).
+
+### Exec Context and Timeout Handling
+
+- **StdCopy doesn't respect context cancellation**: `stdcopy.StdCopy` blocks until EOF or error. To handle timeouts, wrap in goroutine and close the hijacked connection on context cancel.
+- **Fresh context for cleanup operations**: When loop context times out, use `context.Background()` with short timeout (10s) for ExecInspect to get exit code. Original context is cancelled.
+- **Session save timing**: Session MUST be saved immediately after creation, not after first loop completes. Otherwise `ralph status` shows "no session found" during the first (potentially long) loop iteration.
+- **Hijacked connection cleanup**: Always `defer hijacked.Close()` but also close explicitly on context cancel to unblock StdCopy goroutine.
+
+## Documentation Guidelines
+
+- **@ symbol required**: All command examples that require an IMAGE positional argument MUST include `@` for auto-resolution. Examples: `clawker run -it --agent ralph @`, `clawker container create --agent test @`
+- **Regenerate markdown docs**: After updating Example fields in Cobra commands, run `go run ./cmd/gen-docs --doc-path docs --markdown` to update `docs/markdown/` files
+- **Documentation files to update**: README.md (user-facing), CLAUDE.md (developer), CLI-VERBS.md (reference), and Serena memories
+- **Flag passthrough pattern**: When passing flags to Claude Code, use `@` for image and `--` to separate: `clawker run -it --agent ralph @ -- --dangerously-skip-permissions`

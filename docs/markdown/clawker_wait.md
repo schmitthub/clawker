@@ -33,8 +33,8 @@ clawker wait CONTAINER [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for wait
+      --agent   Use agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for wait
 ```
 
 ### Options inherited from parent commands

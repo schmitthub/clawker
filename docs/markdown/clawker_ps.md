@@ -29,12 +29,19 @@ clawker ps [OPTIONS] [flags]
 
   # List containers for a specific project
   clawker container list -p myproject
+
+  # List container names only
+  clawker container ls -a --format '{{.Names}}'
+
+  # Custom format showing name and status
+  clawker container ls -a --format '{{.Name}} {{.Status}}'
 ```
 
 ### Options
 
 ```
   -a, --all              Show all containers (including stopped)
+      --format string    Format output using a Go template
   -h, --help             help for ps
   -p, --project string   Filter by project name
 ```

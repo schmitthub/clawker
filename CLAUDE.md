@@ -35,23 +35,28 @@
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
-│   ├── config/                # Viper config loading + validation
-│   ├── credentials/           # Env vars, .env parsing, OTEL
-│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
-│   ├── hostproxy/             # Host proxy server for container-to-host communication
-│   ├── monitor/               # Observability stack (Prometheus, Grafana)
-│   ├── term/                  # PTY/terminal handling
-│   └── workspace/             # Bind vs Snapshot strategies
-├── pkg/
-│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   ├── cmd/                   # Cobra commands organized as:
 │   │   ├── container/         # Docker CLI-compatible container management
 │   │   ├── volume/            # Volume management
 │   │   ├── network/           # Network management
 │   │   ├── image/             # Image management
+│   │   ├── ralph/             # Autonomous loop commands
+│   │   ├── root/              # Root command and aliases
 │   │   └── ...                # Top-level shortcuts (run, start, init, build, etc.)
 │   ├── cmdutil/               # Factory, error handling, output utilities
+│   ├── config/                # Viper config loading + validation
+│   ├── credentials/           # Env vars, .env parsing, OTEL
+│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── hostproxy/             # Host proxy server for container-to-host communication
 │   ├── logger/                # Zerolog setup
+│   ├── monitor/               # Observability stack (Prometheus, Grafana)
+│   ├── ralph/                 # Ralph autonomous loop core logic
+│   ├── term/                  # PTY/terminal handling
+│   ├── testutil/              # Test utilities
+│   │   └── integration/       # Testcontainers integration tests
+│   └── workspace/             # Bind vs Snapshot strategies
+├── pkg/
+│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 └── templates/                 # clawker.yaml scaffolding
 ```
@@ -61,8 +66,11 @@
 ```bash
 go build -o bin/clawker ./cmd/clawker  # Build CLI
 go test ./...                             # Run tests
-./bin/clawker --debug run                # Debug logging
+./bin/clawker --debug run @              # Debug logging
 ./bin/clawker generate latest 2.1        # Generate versions.json
+
+# Regenerate CLI documentation (after updating Cobra Example fields)
+go run ./cmd/gen-docs --doc-path docs --markdown
 ```
 
 ## Key Concepts
@@ -252,6 +260,7 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 | `run`, `start` | Aliases for `container run`, `container start` |
 | `config check`, `monitor *` | Configuration/observability |
 | `generate` | Generate versions.json for releases |
+| `ralph run/status/reset` | Autonomous loop execution |
 
 ### Management Commands (Docker CLI-compatible)
 
@@ -281,7 +290,7 @@ The `@` symbol in `clawker run @` or `clawker container create @` triggers autom
 2. **Default image** - Falls back to `default_image` from config/settings
 3. **Error** - If neither found, prompts user with next steps
 
-Resolution logic in `pkg/cmdutil/resolve.go`:
+Resolution logic in `internal/cmdutil/resolve.go`:
 - `ResolveImageWithSource()` - Returns image reference + source (project/default)
 - `FindProjectImage()` - Searches for labeled project images
 - `ResolveAndValidateImage()` - Validates default images exist, prompts for rebuild
@@ -340,9 +349,23 @@ security:
     forward_https: true    # Forward HTTPS credentials via host proxy (default: follows host_proxy)
     forward_ssh: true      # Forward SSH agent for git+ssh (default: true)
     copy_git_config: true  # Copy host ~/.gitconfig (default: true)
+
+ralph:                            # Autonomous loop configuration
+  max_loops: 50                   # Maximum loops before stopping (default: 50)
+  stagnation_threshold: 3         # Loops without progress before circuit trips (default: 3)
+  timeout_minutes: 15             # Per-loop timeout in minutes (default: 15)
+  calls_per_hour: 100             # Rate limit: max calls per hour, 0 to disable (default: 100)
+  completion_threshold: 2         # Completion indicators required for strict mode (default: 2)
+  session_expiration_hours: 24    # Session TTL, auto-reset if older (default: 24)
+  same_error_threshold: 5         # Same error repetitions before circuit trips (default: 5)
+  output_decline_threshold: 70    # Output decline percentage that triggers trip (default: 70)
+  max_consecutive_test_loops: 3   # Test-only loops before circuit trips (default: 3)
+  loop_delay_seconds: 3           # Seconds to wait between loop iterations (default: 3)
+  safety_completion_threshold: 5  # Force exit after N loops with completion indicators (default: 5)
+  skip_permissions: false         # Pass --dangerously-skip-permissions to claude (default: false)
 ```
 
-**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`
+**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
 
 ## Design Decisions
 
@@ -404,10 +427,10 @@ See `context_management` memory for detailed patterns and examples.
 go test ./...
 
 # Integration tests (requires Docker)
-go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
-go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 ```
 
 **Test Utilities:** The `internal/testutil` package provides:
@@ -431,3 +454,95 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @README.md | see @.serena/readme_design_direction.md |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.
+
+## Ralph Autonomous Loop Integration
+
+When running in an autonomous loop via `clawker ralph run`, output a RALPH_STATUS
+block at the end of EVERY response. This tells the loop controller your progress.
+
+### RALPH_STATUS Block Format
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line summary>
+---END_RALPH_STATUS---
+```
+
+### Field Definitions
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| STATUS | IN_PROGRESS, COMPLETE, BLOCKED | Current work state |
+| TASKS_COMPLETED_THIS_LOOP | 0-N | Discrete tasks finished this iteration |
+| FILES_MODIFIED | 0-N | Files changed this iteration |
+| TESTS_STATUS | PASSING, FAILING, NOT_RUN | Current test suite state |
+| WORK_TYPE | IMPLEMENTATION, TESTING, DOCUMENTATION, REFACTORING | What you did |
+| EXIT_SIGNAL | true/false | Set true when ALL work is complete |
+| RECOMMENDATION | text | Brief note on progress or next steps |
+
+### Important Rules
+
+1. **Always output the block** - Every response must end with RALPH_STATUS
+2. **Be honest about progress** - TASKS_COMPLETED must reflect real work
+3. **Signal completion clearly** - Set EXIT_SIGNAL: true only when truly done
+4. **Include completion phrases** - When done, use phrases like:
+  - "all tasks complete"
+  - "project ready"
+  - "work is done"
+  - "implementation complete"
+  - "no more work"
+  - "finished"
+  - "task complete"
+  - "all done"
+  - "nothing left to do"
+  - "completed successfully"
+
+### Example: Work in Progress
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 2
+FILES_MODIFIED: 4
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: false
+RECOMMENDATION: Continue with user authentication module
+---END_RALPH_STATUS---
+```
+
+### Example: All Work Complete
+
+```
+All tasks are now complete. The feature has been fully implemented and tested.
+
+---RALPH_STATUS---
+STATUS: COMPLETE
+TASKS_COMPLETED_THIS_LOOP: 1
+FILES_MODIFIED: 2
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: true
+RECOMMENDATION: All work complete, ready for review
+---END_RALPH_STATUS---
+```
+
+### Example: Blocked
+
+```
+---RALPH_STATUS---
+STATUS: BLOCKED
+TASKS_COMPLETED_THIS_LOOP: 0
+FILES_MODIFIED: 0
+TESTS_STATUS: FAILING
+WORK_TYPE: TESTING
+EXIT_SIGNAL: false
+RECOMMENDATION: Tests failing due to missing database fixture
+---END_RALPH_STATUS---
+```

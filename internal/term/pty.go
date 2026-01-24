@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // resetSequence contains ANSI escape sequences to reset terminal visual state.

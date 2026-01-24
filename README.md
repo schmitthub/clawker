@@ -54,10 +54,11 @@ Create and run some agents. In this example you'll create a main agent for inter
 
 ```bash
 # Create a fresh container, start it, and connect interactively.
-# Use Claude Code as normal, This will feel just like running it on your host.
+# Use Claude Code as normal. This will feel just like running it on your host.
 # Clawker adds a status line so you know this session is containerized by clawker and which agent you're using.
 # Subscription users will need authenticate via browser.
-clawker run -it --agent main
+# The @ symbol auto-resolves your project's image (clawker-<project>:latest)
+clawker run -it --agent main @
 
 # hit crtl+p, ctrl+q to detach without stopping the container. You can leave sessions running
 
@@ -76,7 +77,7 @@ clawker stop --agent main
 
 # Lets start a new agent in interactive mode and give it a modified start command for YOLOing
 # authenticate if needed, then use Claude Code as normal. hit crtl+p, ctrl+q to detach, or ctlr+c to stop the container
-clawker run -it --agent ralph -- --dangerously-skip-permissions
+clawker run -it --agent ralph @ -- --dangerously-skip-permissions
 
 clawker stop --agent ralph # if you detached instead of exiting
 
@@ -157,6 +158,18 @@ See the [`examples/`](./examples/) directory for complete configurations:
 
 ## Workflows
 
+### The `@` image shortcut
+
+Use `@` as the image argument to auto-resolve your project's image:
+
+```bash
+clawker run -it @                    # Uses clawker-<project>:latest
+clawker run -it --agent dev @        # Same, with agent name
+clawker container create --agent test @
+```
+
+Resolution order: project image (`clawker-<project>:latest`) → `default_image` from settings/config.
+
 ### Starting containers
 
 ```bash
@@ -171,11 +184,11 @@ clawker start --agent sandbox --mode snapshot
 
 ```bash
 # Using --agent to select the container? Use -- to separate clawker flags from Claude flags
-clawker run -it --rm --agent ralph -- --dangerously-skip-permissions
+clawker run -it --rm --agent ralph @ -- --dangerously-skip-permissions
 
 # or give it an explicit image to use
 clawker image list
-clawker run -it --rm clawker-myproject:latest --dangerously-skip-permissions
+clawker run -it --rm clawker-myproject:latest -- --dangerously-skip-permissions
 ```
 
 ### Detach and reattach
@@ -202,14 +215,14 @@ clawker container stop --agent ralph
 The wiggum pattern runs Claude Code in autonomous loops with scripted prompts.
 
 > **Subscription users:** You must authenticate interactively first. Run
-> `clawker run -it --agent <name>`, complete browser OAuth, then exit. After
+> `clawker run -it --agent <name> @`, complete browser OAuth, then exit. After
 > that, scripted usage works because credentials persist in the config volume.
 
 #### Keep container running and use exec
 
 ```bash
 # Create and auth, then detach with Ctrl+P, Ctrl+Q
-clawker run -it --agent ralph -- --dangerously-skip-permissions
+clawker run -it --agent ralph @ -- --dangerously-skip-permissions
 
 # Send prompts via exec (new claude process per task)
 echo "Fix the tests" | clawker exec -i --agent ralph claude -p
@@ -247,8 +260,8 @@ git worktree add ../myapp-w1 -b feature/auth
 git worktree add ../myapp-w2 -b feature/tests
 
 # Auth each agent first (one-time, interactive)
-# cd ../myapp-w1 && clawker run -it --agent w1  # complete OAuth, then exit with Ctrl+C
-# cd ../myapp-w2 && clawker run -it --agent w2  # complete OAuth, then exit with Ctrl+C
+# cd ../myapp-w1 && clawker run -it --agent w1 @  # complete OAuth, then exit with Ctrl+C
+# cd ../myapp-w2 && clawker run -it --agent w2 @  # complete OAuth, then exit with Ctrl+C
 
 # Run tasks in parallel
 cd ../myapp-w1 && echo "Implement user auth" | clawker exec --agent w1 claude -p &
@@ -257,6 +270,298 @@ wait
 
 echo "Both agents finished"
 ```
+
+## Autonomous Loops with Ralph
+
+Ralph runs Claude Code in autonomous loops with built-in stagnation detection, progress tracking, and circuit breaker protection. It's the "Ralph Wiggum" technique - let Claude keep going until it's done or stuck.
+
+### Quick Start (API Key Users)
+
+```bash
+# 1. Setup project (if not done)
+cd your-project
+clawker project init
+
+# 2. Add RALPH_STATUS instructions to CLAUDE.md (see Step 3 below)
+
+# 3. Build image
+clawker build
+
+# 4. Create container with API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+clawker run -it --agent ralph @
+
+# 5. Run ralph (in another terminal, or after exiting)
+clawker ralph run --agent ralph --prompt "Fix all failing tests"
+```
+
+### Quick Start (Subscription Users)
+
+```bash
+# 1. Setup project (if not done)
+cd your-project
+clawker project init
+
+# 2. Add RALPH_STATUS instructions to CLAUDE.md (see Step 3 below)
+
+# 3. Build image
+clawker build
+
+# 4. Create and authenticate (one-time per agent)
+clawker run -it --agent ralph @
+# Complete browser OAuth when prompted
+# Then Ctrl+C to exit (credentials persist in config volume)
+
+# 5. Run ralph
+clawker ralph run --agent ralph --prompt "Fix all failing tests"
+```
+
+---
+
+### Step-by-Step Setup
+
+#### Step 1: Prerequisites
+
+- Docker running
+- clawker installed (`go build -o ./bin/clawker ./cmd/clawker`)
+- User settings initialized (`clawker init`)
+- Project with `clawker.yaml` (`clawker project init`)
+
+#### Step 2: Add Ralph Configuration to clawker.yaml
+
+Add this section to your `clawker.yaml`:
+
+```yaml
+ralph:
+  max_loops: 50                   # Maximum loops before stopping (default: 50)
+  stagnation_threshold: 3         # Loops without progress before circuit trips (default: 3)
+  timeout_minutes: 15             # Per-loop timeout in minutes (default: 15)
+  calls_per_hour: 100             # Rate limit: max calls per hour, 0 to disable (default: 100)
+  completion_threshold: 2         # Completion indicators required for strict mode (default: 2)
+  session_expiration_hours: 24    # Session TTL, auto-reset if older (default: 24)
+  same_error_threshold: 5         # Same error repetitions before circuit trips (default: 5)
+  output_decline_threshold: 70    # Output decline percentage that triggers trip (default: 70)
+  max_consecutive_test_loops: 3   # Test-only loops before circuit trips (default: 3)
+  loop_delay_seconds: 3           # Seconds to wait between loop iterations (default: 3)
+  safety_completion_threshold: 5  # Force exit after N loops with completion indicators (default: 5)
+  skip_permissions: false         # Pass --dangerously-skip-permissions to claude (default: false)
+```
+
+#### Step 3: Add RALPH_STATUS Instructions to CLAUDE.md
+
+**This is the critical step.** Add this section to your project's `CLAUDE.md` file:
+
+````markdown
+## Ralph Autonomous Loop Integration
+
+When running in an autonomous loop via `clawker ralph run`, output a RALPH_STATUS
+block at the end of EVERY response. This tells the loop controller your progress.
+
+### RALPH_STATUS Block Format
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line summary>
+---END_RALPH_STATUS---
+```
+
+### Field Definitions
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| STATUS | IN_PROGRESS, COMPLETE, BLOCKED | Current work state |
+| TASKS_COMPLETED_THIS_LOOP | 0-N | Discrete tasks finished this iteration |
+| FILES_MODIFIED | 0-N | Files changed this iteration |
+| TESTS_STATUS | PASSING, FAILING, NOT_RUN | Current test suite state |
+| WORK_TYPE | IMPLEMENTATION, TESTING, DOCUMENTATION, REFACTORING | What you did |
+| EXIT_SIGNAL | true/false | Set true when ALL work is complete |
+| RECOMMENDATION | text | Brief note on progress or next steps |
+
+### Important Rules
+
+1. **Always output the block** - Every response must end with RALPH_STATUS
+2. **Be honest about progress** - TASKS_COMPLETED must reflect real work
+3. **Signal completion clearly** - Set EXIT_SIGNAL: true only when truly done
+4. **Include completion phrases** - When done, use phrases like:
+   - "all tasks complete"
+   - "project ready"
+   - "work is done"
+   - "implementation complete"
+   - "no more work"
+   - "finished"
+   - "task complete"
+   - "all done"
+   - "nothing left to do"
+   - "completed successfully"
+
+### Example: Work in Progress
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 2
+FILES_MODIFIED: 4
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: false
+RECOMMENDATION: Continue with user authentication module
+---END_RALPH_STATUS---
+```
+
+### Example: All Work Complete
+
+```
+All tasks are now complete. The feature has been fully implemented and tested.
+
+---RALPH_STATUS---
+STATUS: COMPLETE
+TASKS_COMPLETED_THIS_LOOP: 1
+FILES_MODIFIED: 2
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: true
+RECOMMENDATION: All work complete, ready for review
+---END_RALPH_STATUS---
+```
+
+### Example: Blocked
+
+```
+---RALPH_STATUS---
+STATUS: BLOCKED
+TASKS_COMPLETED_THIS_LOOP: 0
+FILES_MODIFIED: 0
+TESTS_STATUS: FAILING
+WORK_TYPE: TESTING
+EXIT_SIGNAL: false
+RECOMMENDATION: Tests failing due to missing database fixture
+---END_RALPH_STATUS---
+```
+````
+
+#### Step 4: Build and Authenticate
+
+```bash
+# Build your project's image
+clawker build
+
+# For API key users:
+export ANTHROPIC_API_KEY="sk-ant-..."
+clawker run -it --agent ralph @
+# Exit with Ctrl+C when ready
+
+# For subscription users:
+clawker run -it --agent ralph @
+# Complete browser OAuth when prompted
+# Then either:
+#   - Continue working interactively, OR
+#   - Exit with Ctrl+C (container stops, credentials persist)
+#   - Detach with Ctrl+P, Ctrl+Q (container stays running)
+```
+
+#### Step 5: Run Ralph
+
+```bash
+# Basic run with initial prompt
+clawker ralph run --agent ralph --prompt "Fix all failing tests"
+
+# Run from a prompt file
+clawker ralph run --agent ralph --prompt-file task.md
+
+# Continue an existing session (no prompt needed)
+clawker ralph run --agent ralph
+
+# YOLO mode (skip all permission prompts)
+clawker ralph run --agent ralph --skip-permissions --prompt "Build feature X"
+
+# With live monitoring
+clawker ralph run --agent ralph --monitor --prompt "Implement auth"
+
+# With custom limits
+clawker ralph run --agent ralph --max-loops 100 --stagnation-threshold 5
+
+# With rate limiting (5 calls per hour)
+clawker ralph run --agent ralph --calls 5
+```
+
+#### Step 6: Monitor Progress
+
+```bash
+# Check current session status
+clawker ralph status --agent ralph
+
+# Output as JSON for scripting
+clawker ralph status --agent ralph --json
+
+# View container logs
+clawker container logs --agent ralph --follow
+
+# Attach to see live output
+clawker container attach --agent ralph
+# Detach with Ctrl+P, Ctrl+Q
+```
+
+#### Step 7: Troubleshooting
+
+**Circuit breaker tripped?**
+
+```bash
+# Check why
+clawker ralph status --agent ralph
+
+# Reset circuit breaker
+clawker ralph reset --agent ralph
+
+# Reset circuit AND session history
+clawker ralph reset --agent ralph --all
+
+# Retry
+clawker ralph run --agent ralph
+```
+
+**Session expired?** Sessions expire after 24 hours by default. Run again to start fresh.
+
+**Rate limit hit?** Ralph detects Claude's API rate limits. Wait ~5 hours and retry.
+
+---
+
+### Circuit Breaker Protection
+
+Ralph's circuit breaker automatically stops loops when it detects problems:
+
+| Trip Condition | Default | Description |
+|----------------|---------|-------------|
+| Stagnation | 3 loops | No progress (0 tasks, 0 files) for N consecutive loops |
+| Same Error | 5 times | Identical error repeated N times in a row |
+| Output Decline | 70% | Output shrinks by >N% (context rot/model degradation) |
+| Test-Only Loops | 3 loops | N consecutive loops with only TESTING work type |
+| Safety Completion | 5 loops | N loops with completion text but no EXIT_SIGNAL |
+
+**Completion indicators detected:**
+`all tasks complete`, `project ready`, `work is done`, `implementation complete`, `no more work`, `finished`, `task complete`, `all done`, `nothing left to do`, `completed successfully`
+
+---
+
+### YOLO Mode (Skip All Permission Prompts)
+
+YOLO mode allows Claude to execute any command without asking for permission.
+
+```bash
+# Via CLI flag
+clawker ralph run --agent ralph --skip-permissions --prompt "Build feature X"
+
+# Or configure in clawker.yaml
+ralph:
+  skip_permissions: true
+```
+
+**Warning:** YOLO mode allows Claude to run any command without asking. Use only in sandboxed containers where you trust the task definition.
 
 ## Dockerfile Generation
 
@@ -326,7 +631,7 @@ Clawker is a port of the Docker CLI, not just a passthrough. It adds isolation f
 Using an API key? Just pass it as an environment variable:
 
 ```bash
-clawker run -it --rm -e ANTHROPIC_API_KEY myimage:latest
+clawker run -it --rm -e ANTHROPIC_API_KEY @
 ```
 
 Or set it in your shell and clawker forwards it automatically.

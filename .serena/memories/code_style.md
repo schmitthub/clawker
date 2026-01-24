@@ -14,7 +14,7 @@
 ## Logging
 
 - Use `zerolog` for all logging (never `fmt.Print` for debug)
-- Import via `github.com/schmitthub/clawker/pkg/logger`
+- Import via `github.com/schmitthub/clawker/internal/logger`
 
 ## Error Handling
 
@@ -28,7 +28,7 @@
 
 ## CLI Commands
 
-- Create in `pkg/cmd/<cmdname>/`
+- Create in `internal/cmd/<cmdname>/`
 - Use Cobra's `RunE` pattern
 - Register in root command
 

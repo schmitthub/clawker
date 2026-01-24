@@ -17,7 +17,7 @@ Container name can be:
   - Container ID: abc123...
 
 ```
-clawker container attach [OPTIONS] [CONTAINER] [flags]
+clawker container attach [OPTIONS] CONTAINER [flags]
 ```
 
 ### Examples
@@ -39,7 +39,7 @@ clawker container attach [OPTIONS] [CONTAINER] [flags]
 ### Options
 
 ```
-      --agent string         Agent name (resolves to clawker.<project>.<agent>)
+      --agent                Treat argument as agent name (resolves to clawker.<project>.<agent>)
       --detach-keys string   Override the key sequence for detaching a container
   -h, --help                 help for attach
       --no-stdin             Do not attach STDIN

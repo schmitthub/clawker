@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // LoadDotEnv loads environment variables from a .env file
@@ -68,10 +68,8 @@ func LoadDotEnv(path string) (map[string]string, error) {
 
 // parseEnvLine parses a single line from a .env file
 func parseEnvLine(line string) (key, value string, ok bool) {
-	// Handle export prefix
-	if strings.HasPrefix(line, "export ") {
-		line = strings.TrimPrefix(line, "export ")
-	}
+	// Handle export prefix (TrimPrefix returns original if no match)
+	line = strings.TrimPrefix(line, "export ")
 
 	// Find the first =
 	idx := strings.Index(line, "=")

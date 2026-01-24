@@ -48,7 +48,7 @@ clawker container exec [OPTIONS] [CONTAINER] COMMAND [ARG...] [flags]
 ### Options
 
 ```
-      --agent string      Agent name (resolves to clawker.<project>.<agent>)
+      --agent             Use agent name as first argument (resolves to clawker.<project>.<agent>)
       --detach            Detached mode: run command in the background
   -e, --env stringArray   Set environment variables
   -h, --help              help for exec

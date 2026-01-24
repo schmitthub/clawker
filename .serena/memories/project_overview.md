@@ -50,13 +50,15 @@ For `container create` and `container run`, image is resolved in this order:
 
 ### Architecture (Post-Migration)
 ```
-cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
+cmd/clawker → internal/cmd/* → internal/docker → pkg/whail → Docker SDK
 ```
 
 - `cmd/clawker/` - Main entry point
-- `pkg/cmd/` - Cobra commands organized as:
+- `internal/cmd/` - Cobra commands organized as:
   - Top-level shortcuts: `run`, `start`, `init`, `build`, `config`, `monitor`, `generate`
   - Management commands: `container/*`, `volume/*`, `network/*`, `image/*`
+  - `ralph/` - Autonomous loop commands
+  - `root/` - Root command and aliases
 - `pkg/whail/` - **Reusable** Docker engine library with label-based isolation
   - `engine.go` - Core Engine with configurable labels
   - `container.go` - All container operations (Create, Start, Stop, Kill, Pause, etc.)
@@ -71,20 +73,31 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
   - `labels.go` - Clawker label constants (`com.clawker.*`)
   - `names.go` - Container/volume naming (`clawker.project.agent`)
   - `volume.go` - Volume helpers (EnsureVolume, CopyToVolume)
+- `internal/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
 - `internal/config/` - Viper configuration loading and validation
 - `internal/workspace/` - Bind vs Snapshot strategies
 - `internal/build/` - Image building orchestration
 - `internal/credentials/` - .env parsing, EnvBuilder, OTEL injection
 - `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
+- `internal/logger/` - Zerolog setup
 - `internal/term/` - PTY/terminal handling
+- `internal/ralph/` - Ralph autonomous loop implementation (committed 2026-01-24):
+  - `loop.go` - Main Runner orchestrating autonomous loops
+  - `circuit.go` - CircuitBreaker with multiple trip conditions (stagnation, same-error, output-decline, test-loops, safety)
+  - `analyzer.go` - RALPH_STATUS block parser, completion indicator detection, API rate limit detection
+  - `session.go` - Session and CircuitState persistence with 24h expiration
+  - `config.go` - Ralph-specific configuration types and defaults
+  - `ratelimit.go` - Sliding window rate limiter
+  - `monitor.go` - Live progress output formatting
+  - `history.go` - Session and circuit event logging
 - `internal/hostproxy/` - Host proxy server for container-to-host communication:
   - `server.go` - HTTP server with browser opening and OAuth callback endpoints
   - `session.go` - Generic session store with TTL and automatic cleanup
   - `callback.go` - CallbackChannel for OAuth callback interception and forwarding
   - `manager.go` - Lifecycle management of the proxy server
+- `internal/testutil/` - Test utilities
+  - `integration/` - Testcontainers integration tests
 - `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
-- `pkg/logger/` - Zerolog setup
-- `pkg/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
 
 ## CLI Commands
 
@@ -98,6 +111,9 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 | `clawker config check` | Validate configuration |
 | `clawker monitor init/up/down/status` | Manage observability stack |
 | `clawker generate` | Generate versions.json for releases |
+| `clawker ralph run` | Run autonomous loop with circuit breaker |
+| `clawker ralph status` | Show current session status |
+| `clawker ralph reset` | Reset circuit breaker |
 
 ### Management Commands (Docker CLI-style)
 | Command | Purpose |

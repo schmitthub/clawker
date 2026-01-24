@@ -39,7 +39,7 @@ clawker restart [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string    Agent name (resolves to clawker.<project>.<agent>)
+      --agent           Treat arguments as agent names (resolves to clawker.<project>.<agent>)
   -h, --help            help for restart
   -s, --signal string   Signal to send (default: SIGTERM)
   -t, --time int        Seconds to wait before killing the container (default 10)

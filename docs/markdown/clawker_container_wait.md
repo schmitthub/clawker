@@ -14,7 +14,7 @@ Container names can be:
   - Container ID: abc123...
 
 ```
-clawker container wait [CONTAINER...] [flags]
+clawker container wait [OPTIONS] CONTAINER [CONTAINER...] [flags]
 ```
 
 ### Examples
@@ -33,8 +33,8 @@ clawker container wait [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for wait
+      --agent   Use agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for wait
 ```
 
 ### Options inherited from parent commands

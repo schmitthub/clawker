@@ -45,11 +45,11 @@ All **7 container start integration tests** continue to pass.
 
 ## Files Modified
 
-- `internal/integration/container.go` - Added `StripDockerStreamHeaders()` and `CleanOutput()`
-- `internal/integration/sshagent_test.go` - Fixed entrypoint sourcing issues
-- `internal/integration/firewall_test.go` - Updated to use `CleanOutput()`, fixed host network detection
-- `internal/integration/scripts_test.go` - Updated to use `CleanOutput()`, fixed `Operation` -> `Action`
-- `internal/integration/hostproxy.go` - Fixed callback response format (added `received`), fixed git credential mock (changed `operation` to `action`, added `success`)
+- `internal/testutil/integration/container.go` - Added `StripDockerStreamHeaders()` and `CleanOutput()`
+- `internal/testutil/integration/sshagent_test.go` - Fixed entrypoint sourcing issues
+- `internal/testutil/integration/firewall_test.go` - Updated to use `CleanOutput()`, fixed host network detection
+- `internal/testutil/integration/scripts_test.go` - Updated to use `CleanOutput()`, fixed `Operation` -> `Action`
+- `internal/testutil/integration/hostproxy.go` - Fixed callback response format (added `received`), fixed git credential mock (changed `operation` to `action`, added `success`)
 
 ## Verification Commands
 
@@ -58,8 +58,8 @@ All **7 container start integration tests** continue to pass.
 go test ./...
 
 # Run component integration tests
-go test -tags=integration ./internal/integration/... -v -timeout 10m
+go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
 
 # Run all integration tests
-go test -tags=integration ./pkg/cmd/... ./internal/integration/... -v -timeout 15m
+go test -tags=integration ./internal/cmd/... ./internal/testutil/integration/... -v -timeout 15m
 ```
