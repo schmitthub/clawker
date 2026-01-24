@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // LoadDotEnv loads environment variables from a .env file

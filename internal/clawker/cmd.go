@@ -1,9 +1,9 @@
 package clawker
 
 import (
-	"github.com/schmitthub/clawker/pkg/cmd/root"
-	"github.com/schmitthub/clawker/pkg/cmdutil"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/cmd/root"
+	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Build-time variables injected via ldflags
@@ -19,7 +19,7 @@ func Main() int {
 	defer logger.CloseFileWriter()
 
 	// Create factory with version info
-	f := cmdutil.New(Version, Commit)
+	f := cmdutil2.New(Version, Commit)
 
 	// Create root command
 	rootCmd := root.NewCmdRoot(f)
@@ -28,7 +28,7 @@ func Main() int {
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
 		// Print contextual help hint (Cobra already printed "Error: ...")
-		cmdutil.PrintHelpHint(cmd.CommandPath())
+		cmdutil2.PrintHelpHint(cmd.CommandPath())
 		f.CloseClient()
 		return 1
 	}

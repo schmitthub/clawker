@@ -5,7 +5,7 @@ import (
 	"runtime"
 
 	"github.com/moby/moby/api/types/mount"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // ContainerSSHAgentPath is the path where the SSH agent socket is mounted in the container

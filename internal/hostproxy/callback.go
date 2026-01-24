@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // ErrCallbackAlreadyReceived is returned when attempting to capture a callback

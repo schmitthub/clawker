@@ -3,7 +3,7 @@ package workspace
 import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // GitCredentialSetupResult holds the mounts and environment variables
