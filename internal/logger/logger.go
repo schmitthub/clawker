@@ -131,10 +131,8 @@ func SetInteractiveMode(enabled bool) {
 // Init initializes the global logger with the specified configuration.
 // This initializes console-only logging. Use InitWithFile for file logging.
 func Init(debug bool) {
-	var output io.Writer
-
 	// Use console writer for pretty output
-	output = zerolog.ConsoleWriter{
+	var output io.Writer = zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
 		NoColor:    false,

@@ -12,7 +12,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
-	"github.com/moby/moby/api/types/strslice"
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -24,9 +23,8 @@ import (
 // Options holds options for the create command.
 type Options struct {
 	// Naming
-	Agent     string // Agent name for clawker naming (mutually exclusive with Name)
-	Name      string // name same as agent name
-	container string // Full container name
+	Agent string // Agent name for clawker naming (mutually exclusive with Name)
+	Name  string // name same as agent name
 
 	// Container configuration
 	Env        []string // Environment variables
@@ -280,12 +278,12 @@ func buildConfigs(opts *Options, mounts []mount.Mount, projectCfg *config.Config
 
 	// Set command if provided
 	if len(opts.Command) > 0 {
-		cfg.Cmd = strslice.StrSlice(opts.Command)
+		cfg.Cmd = opts.Command
 	}
 
 	// Set entrypoint if provided
 	if opts.Entrypoint != "" {
-		cfg.Entrypoint = strslice.StrSlice{opts.Entrypoint}
+		cfg.Entrypoint = []string{opts.Entrypoint}
 	}
 
 	// Parse additional labels
