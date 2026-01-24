@@ -6,8 +6,9 @@ import (
 	"io"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +26,7 @@ type LogsOptions struct {
 }
 
 // NewCmdLogs creates the container logs command.
-func NewCmdLogs(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
 	opts := &LogsOptions{}
 
 	cmd := &cobra.Command{
@@ -74,11 +75,11 @@ Container name can be:
 	return cmd
 }
 
-func runLogs(ctx context.Context, f *cmdutil2.Factory, opts *LogsOptions) error {
+func runLogs(ctx context.Context, f *cmdutil.Factory, opts *LogsOptions) error {
 	// Resolve container name
 	containerName := opts.containers[0]
 	if opts.Agent {
-		containers, err := cmdutil2.ResolveContainerNamesFromAgents(f, opts.containers)
+		containers, err := cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
 		if err != nil {
 			return err
 		}
@@ -88,7 +89,7 @@ func runLogs(ctx context.Context, f *cmdutil2.Factory, opts *LogsOptions) error 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

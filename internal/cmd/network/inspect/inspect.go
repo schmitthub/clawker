@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +20,7 @@ type Options struct {
 }
 
 // NewCmd creates the network inspect command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -48,13 +49,13 @@ connected containers and configuration.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
+func run(f *cmdutil.Factory, opts *Options, networks []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 
@@ -83,7 +84,7 @@ func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			cmdutil2.HandleError(e)
+			output.HandleError(e)
 		}
 		return fmt.Errorf("failed to inspect %d network(s)", len(errs))
 	}

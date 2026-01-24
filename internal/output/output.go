@@ -1,4 +1,4 @@
-package cmdutil
+package output
 
 import (
 	"encoding/json"

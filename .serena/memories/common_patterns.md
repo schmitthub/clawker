@@ -459,7 +459,7 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 Test files in the same package share helpers. **Do not duplicate:**
 
 ```go
-// container_test.go - define shared helpers
+// container_test.go - define shared output
 func generateContainerName(prefix string) string {
     return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
@@ -467,7 +467,7 @@ func generateContainerName(prefix string) string {
 func setupManagedContainer(ctx context.Context, t *testing.T, name string) string { ... }
 func setupUnmanagedContainer(ctx context.Context, t *testing.T, name string, labels map[string]string) string { ... }
 
-// copy_test.go - USE the shared helpers, don't redefine
+// copy_test.go - USE the shared output, don't redefine
 func TestCopyToContainer(t *testing.T) {
     containerName := generateContainerName("test-copy")  // Uses shared helper
     // ...

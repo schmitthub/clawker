@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
 // NewCmdConfig creates the config command.
-func NewCmdConfig(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdConfig(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Configuration management commands",
@@ -23,7 +24,7 @@ func NewCmdConfig(f *cmdutil2.Factory) *cobra.Command {
 	return cmd
 }
 
-func newCmdConfigCheck(f *cmdutil2.Factory) *cobra.Command {
+func newCmdConfigCheck(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Validate clawker.yaml configuration",
@@ -44,15 +45,15 @@ Checks for:
 	return cmd
 }
 
-func runConfigCheck(f *cmdutil2.Factory) error {
+func runConfigCheck(f *cmdutil.Factory) error {
 	logger.Debug().Str("workdir", f.WorkDir).Msg("checking configuration")
 
 	// Load configuration
 	loader := internalconfig.NewLoader(f.WorkDir)
 
 	if !loader.Exists() {
-		cmdutil2.PrintError("%s not found", internalconfig.ConfigFileName)
-		cmdutil2.PrintNextSteps(
+		output.PrintError("%s not found", internalconfig.ConfigFileName)
+		output.PrintNextSteps(
 			"Run 'clawker init' to create a configuration file",
 			"Or create clawker.yaml manually",
 		)
@@ -61,9 +62,9 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 
 	cfg, err := loader.Load()
 	if err != nil {
-		cmdutil2.PrintError("Failed to load configuration")
+		output.PrintError("Failed to load configuration")
 		fmt.Fprintf(os.Stderr, "  %s\n", err)
-		cmdutil2.PrintNextSteps(
+		output.PrintNextSteps(
 			"Check YAML syntax (indentation, colons, quotes)",
 			"Ensure all required fields are present",
 		)
@@ -78,7 +79,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	// Validate configuration
 	validator := internalconfig.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
-		cmdutil2.PrintError("Configuration validation failed")
+		output.PrintError("Configuration validation failed")
 		fmt.Fprintln(os.Stderr)
 
 		if multiErr, ok := err.(*internalconfig.MultiValidationError); ok {
@@ -89,7 +90,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 			fmt.Fprintf(os.Stderr, "  %s\n", err)
 		}
 
-		cmdutil2.PrintNextSteps(
+		output.PrintNextSteps(
 			"Review the errors above",
 			"Edit clawker.yaml to fix the issues",
 			"Run 'clawker config check' again",
@@ -99,7 +100,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 
 	// Print any warnings
 	for _, warning := range validator.Warnings() {
-		cmdutil2.PrintWarning("%s", warning)
+		output.PrintWarning("%s", warning)
 	}
 
 	// Success output

@@ -1,5 +1,5 @@
 // Package cmdutil provides utilities for command-line applications.
-package cmdutil
+package iostreams
 
 import (
 	"io"
@@ -8,7 +8,7 @@ import (
 	"golang.org/x/term"
 )
 
-// IOStreams provides access to standard input/output/error streams.
+// IOStreams provides access to standard input/output/error iostreams.
 // It follows the GitHub CLI pattern for testable I/O.
 type IOStreams struct {
 	In     io.Reader
@@ -23,7 +23,7 @@ type IOStreams struct {
 	isOutputTTY int
 }
 
-// NewIOStreams creates an IOStreams connected to standard streams.
+// NewIOStreams creates an IOStreams connected to standard iostreams.
 func NewIOStreams() *IOStreams {
 	return &IOStreams{
 		In:          os.Stdin,
@@ -72,7 +72,7 @@ func boolToInt(b bool) int {
 }
 
 // TestIOStreams creates IOStreams for testing with bytes.Buffer.
-// Returns the streams and separate buffers for stdout and stderr.
+// Returns the iostreams and separate buffers for stdout and stderr.
 type TestIOStreams struct {
 	*IOStreams
 	InBuf  *testBuffer

@@ -7,6 +7,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
 
 // Factory provides shared dependencies for CLI commands.
@@ -21,8 +23,8 @@ type Factory struct {
 	Version string
 	Commit  string
 
-	// IO streams for input/output (for testability)
-	IOStreams *IOStreams
+	// IO iostreams for input/output (for testability)
+	IOStreams *iostreams.IOStreams
 
 	// Lazy-loaded dependencies
 	clientOnce sync.Once
@@ -48,7 +50,7 @@ func New(version, commit string) *Factory {
 	return &Factory{
 		Version:   version,
 		Commit:    commit,
-		IOStreams: NewIOStreams(),
+		IOStreams: iostreams.NewIOStreams(),
 	}
 }
 
@@ -162,6 +164,6 @@ func (f *Factory) HostProxyEnvVar() string {
 
 // Prompter returns a new Prompter using the Factory's IOStreams.
 // Use this for interactive user prompts that respect TTY detection.
-func (f *Factory) Prompter() *Prompter {
-	return NewPrompter(f.IOStreams)
+func (f *Factory) Prompter() *prompter.Prompter {
+	return prompter.NewPrompter(f.IOStreams)
 }

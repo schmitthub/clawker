@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the network remove command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -38,7 +39,7 @@ Note: Only clawker-managed networks can be removed with this command.`,
   # Force remove (future: disconnect containers first)
   clawker network remove --force mynetwork`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -51,13 +52,13 @@ Note: Only clawker-managed networks can be removed with this command.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
+func run(f *cmdutil.Factory, _ *Options, networks []string) error {
 	ctx := context.Background()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 
@@ -65,7 +66,7 @@ func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
 	for _, name := range networks {
 		if _, err := client.NetworkRemove(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove network %q: %w", name, err))
-			cmdutil2.HandleError(err)
+			output.HandleError(err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Removed: %s\n", name)
 		}

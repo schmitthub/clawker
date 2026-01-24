@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +22,7 @@ type Options struct {
 }
 
 // NewCmd creates a new restart command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -50,9 +51,9 @@ Container names can be:
   # Restart with a custom timeout (20 seconds)
   clawker container restart --time 20 --agent ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			return run(cmd.Context(), f, opts)
@@ -66,12 +67,12 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -80,7 +81,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

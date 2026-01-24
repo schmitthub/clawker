@@ -338,7 +338,7 @@ func (e *Engine) ContainerWait(ctx context.Context, containerID string, conditio
 	return client.ContainerWaitResult{Result: waitResult.Result, Error: wrappedErrCh}
 }
 
-// ContainerLogs streams container logs.
+// ContainerLogs iostreams container logs.
 // Only returns logs for managed containers.
 func (e *Engine) ContainerLogs(ctx context.Context, containerID string, options client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
 	isManaged, err := e.IsContainerManaged(ctx, containerID)

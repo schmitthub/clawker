@@ -8,7 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +21,7 @@ type Options struct {
 }
 
 // NewCmd creates a new top command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -47,7 +48,7 @@ Container name can be:
 
   # Show all processes with extended info
   clawker container top --agent ralph -ef`,
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.args = args
 			return run(cmd.Context(), f, opts)
@@ -59,14 +60,14 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// First arg is container/agent name, rest are ps options
 	containerName := opts.args[0]
 	psArgs := opts.args[1:]
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers, err := cmdutil2.ResolveContainerNamesFromAgents(f, []string{containerName})
+		containers, err := cmdutil.ResolveContainerNamesFromAgents(f, []string{containerName})
 		if err != nil {
 			return err
 		}
@@ -76,7 +77,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 
@@ -92,7 +93,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Get top output
 	top, err := client.ContainerTop(ctx, c.ID, psArgs)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +20,7 @@ type KillOptions struct {
 }
 
 // NewCmdKill creates the container kill command.
-func NewCmdKill(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdKill(f *cmdutil.Factory) *cobra.Command {
 	opts := &KillOptions{}
 
 	cmd := &cobra.Command{
@@ -49,9 +50,9 @@ Container names can be:
   clawker container kill --signal SIGTERM --agent ralph
   clawker container kill -s SIGINT clawker.myapp.ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			return runKill(cmd.Context(), f, opts)
@@ -64,12 +65,12 @@ Container names can be:
 	return cmd
 }
 
-func runKill(ctx context.Context, f *cmdutil2.Factory, opts *KillOptions) error {
+func runKill(ctx context.Context, f *cmdutil.Factory, opts *KillOptions) error {
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -78,7 +79,7 @@ func runKill(ctx context.Context, f *cmdutil2.Factory, opts *KillOptions) error 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

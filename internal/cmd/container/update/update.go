@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +36,7 @@ type Options struct {
 }
 
 // NewCmd creates a new update command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -67,9 +68,9 @@ Container names can be:
   # Update multiple containers
   clawker container update --memory 256m container1 container2`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.AgentArgsValidator(1),
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			opts.nFlag = cmd.Flags().NFlag()
@@ -104,13 +105,13 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, _ []string) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options, _ []string) error {
 	// Resolve container names
 	// When opts.Agent is true, all items in opts.containers are agent names
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, opts.containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
 		if err != nil {
 			return err
 		}
@@ -119,7 +120,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, _ []string) er
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

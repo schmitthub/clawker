@@ -18,11 +18,11 @@ import (
 type MockHostProxy struct {
 	Server      *httptest.Server
 	mu          sync.Mutex
-	OpenedURLs  []string                   // URLs received at /open/url
-	Callbacks   map[string]*CallbackData   // Registered callback sessions
-	GitCreds    []GitCredRequest           // Git credential requests
-	SSHRequests [][]byte                   // SSH agent requests
-	healthOK    bool                       // Health check response
+	OpenedURLs  []string                 // URLs received at /open/url
+	Callbacks   map[string]*CallbackData // Registered callback sessions
+	GitCreds    []GitCredRequest         // Git credential requests
+	SSHRequests [][]byte                 // SSH agent requests
+	healthOK    bool                     // Health check response
 	t           *testing.T
 }
 

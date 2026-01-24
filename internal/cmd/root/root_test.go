@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 )
 
 func TestNewCmdRoot(t *testing.T) {
-	f := cmdutil2.New("1.0.0", "abc123")
+	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdRoot(f)
 
 	if cmd.Use != "clawker" {
@@ -54,7 +54,7 @@ func TestNewCmdRoot(t *testing.T) {
 }
 
 func TestNewCmdRoot_GlobalFlags(t *testing.T) {
-	f := cmdutil2.New("1.0.0", "abc123")
+	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdRoot(f)
 
 	// Check debug flag exists
@@ -106,7 +106,7 @@ func TestStateChangingCommandsRequireProject(t *testing.T) {
 		{"network", "prune"},
 	}
 
-	f := cmdutil2.New("1.0.0", "abc123")
+	f := cmdutil.New("1.0.0", "abc123")
 	root := NewCmdRoot(f)
 
 	for _, path := range requiredCommands {
@@ -120,7 +120,7 @@ func TestStateChangingCommandsRequireProject(t *testing.T) {
 				t.Fatalf("command %s should not be nil", name)
 			}
 
-			if !cmdutil2.CommandRequiresProject(cmd) {
+			if !cmdutil.CommandRequiresProject(cmd) {
 				t.Errorf("command %s should have requiresProject annotation", name)
 			}
 		})
@@ -149,7 +149,7 @@ func TestReadOnlyCommandsDoNotRequireProject(t *testing.T) {
 		{"network", "inspect"},
 	}
 
-	f := cmdutil2.New("1.0.0", "abc123")
+	f := cmdutil.New("1.0.0", "abc123")
 	root := NewCmdRoot(f)
 
 	for _, path := range readOnlyCommands {
@@ -163,7 +163,7 @@ func TestReadOnlyCommandsDoNotRequireProject(t *testing.T) {
 				t.Fatalf("command %s should not be nil", name)
 			}
 
-			if cmdutil2.CommandRequiresProject(cmd) {
+			if cmdutil.CommandRequiresProject(cmd) {
 				t.Errorf("read-only command %s should NOT have requiresProject annotation", name)
 			}
 		})

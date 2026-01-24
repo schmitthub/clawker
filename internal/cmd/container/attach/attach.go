@@ -8,8 +8,9 @@ import (
 	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
 )
@@ -24,13 +25,13 @@ type Options struct {
 }
 
 // NewCmd creates a new attach command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
 		Use:   "attach [OPTIONS] CONTAINER",
-		Short: "Attach local standard input, output, and error streams to a running container",
-		Long: `Attach local standard input, output, and error streams to a running container.
+		Short: "Attach local standard input, output, and error iostreams to a running container",
+		Long: `Attach local standard input, output, and error iostreams to a running container.
 
 Use ctrl-p, ctrl-q to detach from the container and leave it running.
 To stop a container, use clawker container stop.
@@ -53,9 +54,9 @@ Container name can be:
   # Attach with custom detach keys
   clawker container attach --detach-keys="ctrl-c" --agent ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.ExactArgs(1),
+		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
 			return run(cmd.Context(), f, opts)
@@ -70,11 +71,11 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	container := opts.container
 	if opts.Agent {
 		var err error
-		container, err = cmdutil2.ResolveContainerName(f, container)
+		container, err = cmdutil.ResolveContainerName(f, container)
 		if err != nil {
 			return err
 		}
@@ -82,7 +83,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 
@@ -129,7 +130,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Attach to container
 	hijacked, err := client.ContainerAttach(ctx, c.ID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 	defer hijacked.Close()

@@ -571,7 +571,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	return ctx, nil
 }
 
-// Conversion helpers from config types to build types
+// Conversion output from config types to build types
 
 func convertCopyInstructions(src []config.CopyInstruction) []CopyInstruction {
 	if src == nil {

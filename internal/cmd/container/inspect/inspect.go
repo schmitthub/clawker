@@ -7,8 +7,9 @@ import (
 	"os"
 	"text/template"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +23,7 @@ type InspectOptions struct {
 }
 
 // NewCmdInspect creates the container inspect command.
-func NewCmdInspect(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
 	opts := &InspectOptions{}
 
 	cmd := &cobra.Command{
@@ -52,7 +53,7 @@ Container names can be:
 
   # Get container IP address
   clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent ralph`,
-		Args: cmdutil2.AgentArgsValidator(1),
+		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			return runInspect(cmd.Context(), f, opts)
@@ -66,12 +67,12 @@ Container names can be:
 	return cmd
 }
 
-func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) error {
+func runInspect(ctx context.Context, f *cmdutil.Factory, opts *InspectOptions) error {
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -80,7 +81,7 @@ func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) 
 	// Connect to Docker
 	dockerClient, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 

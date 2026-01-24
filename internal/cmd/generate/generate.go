@@ -6,9 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/build"
 	"github.com/schmitthub/clawker/pkg/build/registry"
@@ -24,7 +25,7 @@ type GenerateOptions struct {
 }
 
 // NewCmdGenerate creates a new generate command.
-func NewCmdGenerate(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdGenerate(f *cmdutil.Factory) *cobra.Command {
 	opts := &GenerateOptions{}
 
 	cmd := &cobra.Command{
@@ -66,7 +67,7 @@ Version patterns:
 	return cmd
 }
 
-func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) error {
+func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
@@ -99,8 +100,8 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 	if opts.SkipFetch {
 		vf, err := build.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil2.PrintError("Failed to load versions.json from %s", outputDir)
-			cmdutil2.PrintNextSteps(
+			output.PrintError("Failed to load versions.json from %s", outputDir)
+			output.PrintNextSteps(
 				"Run 'clawker generate <versions...>' to fetch versions from npm",
 				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
 			)
@@ -115,7 +116,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 		Debug: opts.Debug,
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		output.HandleError(err)
 		return err
 	}
 
@@ -131,7 +132,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// Save updated versions.json
 	if err := build.SaveVersionsFile(versionsFile, vf); err != nil {
-		cmdutil2.PrintError("Failed to save versions.json")
+		output.PrintError("Failed to save versions.json")
 		return err
 	}
 
@@ -140,7 +141,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 	// Generate Dockerfiles
 	dfMgr := build.NewDockerfileManager(outputDir, nil)
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
-		cmdutil2.PrintError("Failed to generate Dockerfiles")
+		output.PrintError("Failed to generate Dockerfiles")
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
@@ -152,8 +153,8 @@ func showVersions(path string) error {
 	vf, err := build.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cmdutil2.PrintError("No versions.json found")
-			cmdutil2.PrintNextSteps(
+			output.PrintError("No versions.json found")
+			output.PrintNextSteps(
 				"Run 'clawker generate latest' to fetch the latest version",
 				"Run 'clawker generate 2.1.2' to fetch a specific version",
 			)

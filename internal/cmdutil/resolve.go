@@ -8,6 +8,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
+	prompter2 "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
@@ -162,8 +164,8 @@ func ResolveAndValidateImage(
 
 	// Default image doesn't exist - prompt to rebuild or error
 	if !f.IOStreams.IsInteractive() {
-		PrintError("Default image %q not found", result.Reference)
-		PrintNextSteps(
+		output.PrintError("Default image %q not found", result.Reference)
+		output.PrintNextSteps(
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -173,7 +175,7 @@ func ResolveAndValidateImage(
 
 	// Interactive mode - prompt to rebuild
 	prompter := f.Prompter()
-	options := []SelectOption{
+	options := []prompter2.SelectOption{
 		{Label: "Yes", Description: "Rebuild the default base image now"},
 		{Label: "No", Description: "Cancel and fix manually"},
 	}
@@ -188,7 +190,7 @@ func ResolveAndValidateImage(
 	}
 
 	if idx != 0 {
-		PrintNextSteps(
+		output.PrintNextSteps(
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -198,9 +200,9 @@ func ResolveAndValidateImage(
 
 	// User chose to rebuild - get flavor selection
 	flavors := DefaultFlavorOptions()
-	flavorOptions := make([]SelectOption, len(flavors))
+	flavorOptions := make([]prompter2.SelectOption, len(flavors))
 	for i, opt := range flavors {
-		flavorOptions[i] = SelectOption{
+		flavorOptions[i] = prompter2.SelectOption{
 			Label:       opt.Name,
 			Description: opt.Description,
 		}
@@ -216,7 +218,7 @@ func ResolveAndValidateImage(
 	fmt.Fprintf(f.IOStreams.ErrOut, "Building %s...\n", DefaultImageTag)
 
 	if err := BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		PrintError("Failed to build image: %v", err)
+		output.PrintError("Failed to build image: %v", err)
 		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
@@ -297,8 +299,8 @@ func ResolveContainerNames(f *Factory, agentName string, containerArgs []string)
 	if agentName != "" {
 		container, err := ResolveContainerName(f, agentName)
 		if err != nil {
-			PrintError("Failed to resolve agent name: %v", err)
-			PrintNextSteps(
+			output.PrintError("Failed to resolve agent name: %v", err)
+			output.PrintNextSteps(
 				"Run 'clawker init' to create a configuration",
 				"Or ensure you're in a directory with clawker.yaml",
 			)
@@ -319,8 +321,8 @@ func ResolveContainerNamesFromAgents(f *Factory, agents []string) ([]string, err
 	for _, agent := range agents {
 		container, err := ResolveContainerName(f, agent)
 		if err != nil {
-			PrintError("Failed to resolve agent name: %v", err)
-			PrintNextSteps(
+			output.PrintError("Failed to resolve agent name: %v", err)
+			output.PrintNextSteps(
 				"Run 'clawker init' to create a configuration",
 				"Or ensure you're in a directory with clawker.yaml",
 			)

@@ -10,6 +10,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/output"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
@@ -136,9 +138,9 @@ func IsChildOfProject(dir string, settings *config.Settings) string {
 // On decline, prints "Aborted." and guidance to stderr.
 func ConfirmExternalProjectOperation(in io.Reader, projectPath, operation string) bool {
 	message := fmt.Sprintf("You are running %s in '%s', which is outside of a project directory.\nDo you want to continue?", operation, projectPath)
-	if !PromptForConfirmation(in, message) {
+	if !prompter.PromptForConfirmation(in, message) {
 		fmt.Fprintln(os.Stderr, "Aborted.")
-		PrintNextSteps("Run 'clawker init' in the project root to initialize a new project")
+		output.PrintNextSteps("Run 'clawker init' in the project root to initialize a new project")
 		return false
 	}
 	return true
