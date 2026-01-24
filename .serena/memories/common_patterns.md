@@ -541,38 +541,10 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 ```
 
 **Key patterns:**
-- Circuit breaker with configurable thresholds (stagnation, same-error, output-decline, test-loops)
-- Session persistence with 24-hour expiration for resumable loops
-- Sliding window rate limiting (better than hourly reset)
+- Circuit breaker with configurable threshold for stagnation detection
+- Session persistence for resumable loops
 - Non-TTY exec with output capture via ExecCreate/ExecAttach
 - RALPH_STATUS block parsing from Claude output
-- Completion indicator detection (pattern matching for "done", "complete", etc.)
-- Safety circuit breaker (force exit after N consecutive completion signals)
-- `--skip-permissions` flag to pass `--dangerously-skip-permissions` to claude
-
-**Configuration (clawker.yaml):**
-```yaml
-ralph:
-  max_loops: 50
-  stagnation_threshold: 3
-  timeout_minutes: 15
-  calls_per_hour: 100
-  completion_threshold: 2
-  session_expiration_hours: 24
-  same_error_threshold: 5
-  output_decline_threshold: 70
-  max_consecutive_test_loops: 3
-  loop_delay_seconds: 3
-  safety_completion_threshold: 5
-  skip_permissions: false
-```
-
-**CLI usage:**
-```bash
-clawker ralph run --agent dev --prompt "Fix tests" --skip-permissions
-clawker ralph status --agent dev
-clawker ralph reset --agent dev --all
-```
 
 ## Non-TTY Exec with Output Capture Pattern
 
@@ -589,40 +561,106 @@ func (r *Runner) execCapture(ctx context.Context, containerName string, cmd []st
     })
 
     // Attach to exec
-    resp, err := r.client.ExecAttach(ctx, execResp.ID, docker.ExecAttachOptions{})
-    defer resp.Conn.Close()
+    hijacked, err := r.client.ExecAttach(ctx, execResp.ID, docker.ExecAttachOptions{})
+    defer hijacked.Close()
 
-    // Read multiplexed output (stdout/stderr)
-    var output bytes.Buffer
-    buf := make([]byte, 4096)
-    for {
-        n, err := resp.Reader.Read(buf)
-        if n > 0 {
-            // Strip Docker stream header (8 bytes) for non-TTY
-            data := buf[:n]
-            if len(data) > 8 {
-                data = data[8:]  // Skip multiplexing header
-            }
-            output.Write(data)
-            if onOutput != nil {
-                onOutput(data)
-            }
-        }
-        if err == io.EOF {
-            break
-        }
+    // Use stdcopy for proper demultiplexing
+    var stdout, stderr bytes.Buffer
+    outputWriter := io.Writer(&stdout)
+    if onOutput != nil {
+        outputWriter = io.MultiWriter(&stdout, &callbackWriter{fn: onOutput})
     }
 
-    // Get exit code
-    inspectResp, _ := r.client.ExecInspect(ctx, execResp.ID, docker.ExecInspectOptions{})
-    return output.String(), inspectResp.ExitCode, nil
+    // CRITICAL: StdCopy doesn't respect context cancellation
+    // Wrap in goroutine and close connection on context cancel
+    copyDone := make(chan error, 1)
+    go func() {
+        _, copyErr := stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
+        copyDone <- copyErr
+    }()
+
+    var copyErr error
+    select {
+    case copyErr = <-copyDone:
+        // Normal completion
+    case <-ctx.Done():
+        // Context cancelled - close connection to unblock StdCopy
+        hijacked.Close()
+        <-copyDone // Wait for goroutine to finish
+        return stdout.String(), -1, fmt.Errorf("exec timed out: %w", ctx.Err())
+    }
+
+    if copyErr != nil && copyErr != io.EOF {
+        return stdout.String(), -1, fmt.Errorf("failed to read output: %w", copyErr)
+    }
+
+    // Get exit code - use FRESH context since loop context may be cancelled
+    inspectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    inspectResp, _ := r.client.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
+    return stdout.String(), inspectResp.ExitCode, nil
 }
 ```
 
 **Key patterns:**
 - `Tty: false` required for proper stdout/stderr multiplexing
-- Docker adds 8-byte header to each frame in non-TTY mode
+- `stdcopy.StdCopy` does NOT respect context cancellation - must wrap in goroutine
+- Close hijacked connection on context cancel to unblock the StdCopy goroutine
+- Use `context.Background()` with timeout for ExecInspect (original context may be cancelled)
 - Use callback for streaming output while collecting full buffer
+
+## Image Resolution Pattern (`@` Symbol)
+
+For commands that accept an IMAGE argument and support `@` for automatic resolution:
+
+```go
+func runCmd(f *cmdutil.Factory, opts *Options) error {
+    ctx := context.Background()
+    cfg, _ := f.Config()
+    settings, _ := f.Settings()
+
+    // ALWAYS use Factory's Client method
+    client, err := f.Client(ctx)
+    if err != nil {
+        cmdutil.HandleError(err)
+        return err
+    }
+
+    // Handle @ symbol for automatic image resolution
+    if opts.Image == "@" {
+        resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, client, cfg, settings)
+        if err != nil {
+            cmdutil.HandleError(err)
+            return err
+        }
+        opts.Image = resolvedImage.Reference
+        
+        // Optionally show which image was resolved
+        if !opts.Quiet {
+            fmt.Fprintf(os.Stderr, "Using image: %s\n", opts.Image)
+        }
+    }
+
+    // Continue with container creation using opts.Image
+    // ...
+}
+```
+
+**Resolution order (in `cmdutil.ResolveImageWithSource`):**
+1. Project image: `clawker-<project>:latest` with managed labels
+2. Settings default_image: `~/.local/clawker/settings.yaml`
+3. Config default_image: `clawker.yaml`
+
+**Key functions in `internal/cmdutil/resolve.go`:**
+- `ResolveImageWithSource(ctx, client, cfg, settings)` - Returns `*ResolvedImage` with `.Reference` and `.Source`
+- `ResolveAndValidateImage(ctx, client, cfg, settings)` - Same but validates image exists, prompts for rebuild
+- `FindProjectImage(ctx, client, project)` - Finds `clawker-<project>:latest` with labels
+- `ResolveDefaultImage(cfg, settings)` - Gets merged default_image
+
+**Image source constants:**
+- `ImageSourceProject` - From project build (clawker-<project>:latest)
+- `ImageSourceDefault` - From default_image setting
+- `ImageSourceExplicit` - User provided explicit image name
 
 ## Key Files to Check When Making Changes
 

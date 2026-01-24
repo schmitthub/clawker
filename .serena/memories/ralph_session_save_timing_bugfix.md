@@ -3,9 +3,9 @@
 ## End Goal
 Fix the bug where `clawker ralph status` shows "No ralph session found" even while ralph is actively running, AND fix the exec hanging/timeout issue.
 
-## Status: NEEDS USER VERIFICATION
+## Status: VERIFIED ✅ (2026-01-24)
 
-Code changes complete. Tests pass. User must verify manually before commit.
+All fixes verified and committed. Commit: `1279b37 fix(ralph): session save timing and exec timeout handling`
 
 ## Background Context
 - **Session Bug**: Session was only saved AFTER the first loop completed (15+ minutes)
@@ -39,10 +39,12 @@ Code changes complete. Tests pass. User must verify manually before commit.
 - [x] 5. Write integration test for exec timeout - PASSED
 - [x] 6. Run full test suite `go test ./...` - PASSED
 - [x] 7. Run integration tests `go test -tags=integration ./internal/ralph/...` - PASSED
-- [ ] **8. USER MANUAL VERIFICATION (REQUIRED)**
-  - User must run ralph and confirm it works
-  - If it fails, check logs, write test, fix it
-- [ ] 9. Commit the changes (only after user confirms)
+- [x] **8. USER MANUAL VERIFICATION (REQUIRED)** ✅
+  - Ran ralph with file write test
+  - Verified file appeared on host filesystem
+  - Multiple loop iterations worked correctly
+- [x] 9. Commit the changes ✅
+  - Commit: `1279b37 fix(ralph): session save timing and exec timeout handling`
 
 ## Troubleshooting Commands (CRITICAL - USE THESE)
 
@@ -137,14 +139,8 @@ clawker ralph status --agent ralph
 
 ## IMPERATIVE REMINDER
 
-**USER MUST VERIFY THE FIX WORKS BEFORE COMMITTING.**
+**VERIFICATION COMPLETE** ✅
 
-**If verification fails:**
-1. Check logs: `tail -50 ~/.local/clawker/logs/clawker.log | jq .`
-2. Write an integration test that catches the failure
-3. Fix the issue
-4. Re-verify
+User verified the fix works. Commit: `1279b37`
 
-**ALWAYS ask user for confirmation before proceeding.**
-
-**If all work is complete and user has verified, ask if they want to delete this memory.**
+This memory can be kept for reference or deleted.

@@ -390,7 +390,7 @@ go test ./internal/ralph/...
 
 ## Recent Changes
 
-### Session Save Timing Fix (2026-01-24)
+### Session Save Timing Fix (2026-01-24) - VERIFIED ✅
 
 **Bug:** `clawker ralph status` showed "No ralph session found" while ralph was actively running.
 
@@ -411,6 +411,66 @@ if sessionCreated {
 - `TestSessionCreationMirrorsLoopStartup` - Documents correct behavior
 - `TestRunner_SessionSavedOnCreation` - Regression test for the fix
 - `TestRunner_OnLoopStartSessionExists` - Verifies session exists before loop
+
+### Exec Timeout Hanging Fix (2026-01-24) - VERIFIED ✅
+
+**Bug:** Exec commands would hang even after timeout because `stdcopy.StdCopy` blocks on read and doesn't respect context cancellation.
+
+**Root Cause:** `stdcopy.StdCopy` reads from the hijacked connection until EOF. When context times out, the function doesn't return - it keeps blocking on the read.
+
+**Fix in `loop.go`:** Wrap StdCopy in goroutine, close connection on context cancel:
+```go
+copyDone := make(chan error, 1)
+go func() {
+    _, copyErr := stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
+    copyDone <- copyErr
+}()
+
+select {
+case copyErr = <-copyDone:
+    // Normal completion
+case <-ctx.Done():
+    // Context cancelled - close connection to unblock StdCopy
+    hijacked.Close()
+    <-copyDone // Wait for goroutine to finish
+    return stdout.String(), -1, fmt.Errorf("exec timed out: %w", ctx.Err())
+}
+```
+
+**Additional fix:** ExecInspect uses fresh context since loop context may be cancelled:
+```go
+inspectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+inspectResp, err := r.client.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
+```
+
+**Tests added in `loop_integration_test.go`:**
+- `TestRalphIntegration_SessionCreatedImmediately` - Verifies session exists immediately
+- `TestRalphIntegration_ExecCaptureTimeout` - Verifies exec respects timeout (completes in ~3s)
+
+### Manual Verification (2026-01-24) - PASSED ✅
+
+**Test commands run:**
+```bash
+# Build
+go build -o bin/clawker ./cmd/clawker
+
+# Start container
+clawker container start --agent ralph
+
+# Run ralph - completed without hanging
+./bin/clawker ralph run --agent ralph --prompt "Hello" --max-loops 1 --timeout 30s
+
+# File write test - confirmed file appears on host
+./bin/clawker ralph run --agent ralph --skip-permissions \
+  --prompt "Append line to /workspace/RALPH-TEST.md" --max-loops 3 --timeout 120s
+cat RALPH-TEST.md  # Shows iterations
+
+# All tests pass
+go test ./internal/ralph/... -v
+```
+
+**Commit:** `1279b37 fix(ralph): session save timing and exec timeout handling`
 
 ### PR Review Fixes (2026-01-23)
 - Fixed context break bug in rate limit wait (loop.go)
