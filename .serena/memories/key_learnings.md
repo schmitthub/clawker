@@ -49,3 +49,14 @@
 - **FindProjectRoot utility**: Use `testutil.FindProjectRoot()` instead of duplicating - uses `runtime.Caller()` for reliability
 - **Test image cleanup**: `BuildTestImage` automatically registers `t.Cleanup()` for image removal
 - **Readiness timeout constants**: `DefaultReadyTimeout` (60s local), `CIReadyTimeout` (120s CI), `E2EReadyTimeout` (180s E2E)
+
+## Ralph Command Implementation Learnings
+
+- **Non-TTY exec for output capture**: Set `Tty: false` in ExecCreateOptions to get proper stdout/stderr multiplexing. Docker adds 8-byte header to each frame.
+- **Circuit breaker pattern**: Use mutex for thread safety, track consecutive no-progress loops, trip immediately on BLOCKED status
+- **RALPH_STATUS parsing**: Use regex with `(?s)` DOTALL flag: `(?s)---RALPH_STATUS---(.+?)---END_RALPH_STATUS---`
+- **Session persistence**: Store to `~/.local/clawker/ralph/sessions/` and `circuit/` directories as JSON
+- **Time pointer for omitempty**: Change `TrippedAt time.Time` to `*time.Time` to avoid "omitempty has no effect" warning
+- **ExecInspect needs options**: `client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})` - second arg required
+- **Config wiring**: Check if CLI flag is at default value before applying config default (avoids overwriting explicit CLI choices)
+- **Subcommand registration**: Parent command adds subcommands via `cmd.AddCommand()` in NewCmd function

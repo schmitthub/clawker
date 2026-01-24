@@ -35,7 +35,7 @@ Note: `SDKContainerCreateOptions` is for raw SDK API bypass (e.g., in volume.go 
 - `labels.go` - Changed client.Filters to whail.Filters  
 - `volume.go` - Changed to whail types; uses SDKContainerCreateOptions for raw API calls
 
-#### pkg/cmd/* (use internal/docker types)
+#### internal/cmd/* (use internal/docker types)
 - container: exec.go, attach.go, logs.go, cp.go, run.go, start.go, inspect.go, create.go, restart.go
 - volume: create.go
 - network: create.go, inspect.go
@@ -43,8 +43,8 @@ Note: `SDKContainerCreateOptions` is for raw SDK API bypass (e.g., in volume.go 
 - monitor: up.go
 
 #### Utility files
-- `pkg/cmdutil/resolve.go` - docker.Filters, docker.ImageListOptions
-- `pkg/cmdutil/output.go` - docker.DockerError
+- `internal/cmdutil/resolve.go` - docker.Filters, docker.ImageListOptions
+- `internal/cmdutil/output.go` - docker.DockerError
 - `internal/term/pty.go` - docker.HijackedResponse
 
 ### Test Files - Use whail Types for Mocks

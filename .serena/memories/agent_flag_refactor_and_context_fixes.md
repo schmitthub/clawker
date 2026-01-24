@@ -104,7 +104,7 @@ args:   []string{"ralph"},
 - [x] Fix restart_test.go - Error message format
 - [x] Run full test suite `go test ./...` - ALL PASS ✅
 - [ ] **NEXT** Refactor kill.go, logs.go, remove.go, pause.go, cp.go, top.go, unpause.go, list.go
-- [ ] Run integration tests `go test -tags=integration ./pkg/cmd/... -v -timeout 10m`
+- [ ] Run integration tests `go test -tags=integration ./internal/cmd/... -v -timeout 10m`
 
 ## Useful Commands
 
@@ -113,7 +113,7 @@ args:   []string{"ralph"},
 go test ./... 2>&1 | head -100
 
 # Test specific package
-go test -c ./pkg/cmd/container/stop/
+go test -c ./internal/cmd/container/stop/
 
 # Run all tests
 go test ./...

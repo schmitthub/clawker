@@ -11,6 +11,7 @@ type Config struct {
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
+	Ralph        *RalphConfig    `yaml:"ralph,omitempty" mapstructure:"ralph"`
 }
 
 // BuildConfig defines the container build configuration
@@ -218,6 +219,37 @@ func (g *GitCredentialsConfig) CopyGitConfigEnabled() bool {
 		return true // Default to enabled
 	}
 	return *g.CopyGitConfig
+}
+
+// RalphConfig defines configuration for autonomous ralph loops.
+type RalphConfig struct {
+	MaxLoops            int `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
+	StagnationThreshold int `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
+	TimeoutMinutes      int `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
+}
+
+// GetMaxLoops returns the max loops with default fallback.
+func (r *RalphConfig) GetMaxLoops() int {
+	if r == nil || r.MaxLoops <= 0 {
+		return 50
+	}
+	return r.MaxLoops
+}
+
+// GetStagnationThreshold returns the stagnation threshold with default fallback.
+func (r *RalphConfig) GetStagnationThreshold() int {
+	if r == nil || r.StagnationThreshold <= 0 {
+		return 3
+	}
+	return r.StagnationThreshold
+}
+
+// GetTimeoutMinutes returns the timeout in minutes with default fallback.
+func (r *RalphConfig) GetTimeoutMinutes() int {
+	if r == nil || r.TimeoutMinutes <= 0 {
+		return 15
+	}
+	return r.TimeoutMinutes
 }
 
 type Mode string

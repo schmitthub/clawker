@@ -258,6 +258,50 @@ wait
 echo "Both agents finished"
 ```
 
+### Autonomous Loops with Ralph
+
+The `clawker ralph` command provides built-in autonomous loop execution with stagnation detection and progress tracking.
+
+```bash
+# Start a ralph loop
+clawker ralph run --agent dev --prompt "Fix all failing tests"
+
+# Check session status
+clawker ralph status --agent dev
+
+# Reset circuit breaker after stagnation
+clawker ralph reset --agent dev
+```
+
+**How it works:**
+1. Ralph runs Claude with `--continue` repeatedly
+2. Parses each output for a `RALPH_STATUS` block
+3. Tracks progress (tasks completed, files modified)
+4. Trips circuit breaker if no progress for N loops
+5. Exits when Claude signals completion
+
+**Setup:** Add instructions to your project's CLAUDE.md telling Claude to output a RALPH_STATUS block:
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line>
+---END_RALPH_STATUS---
+```
+
+**Configuration:** Set project defaults in `clawker.yaml`:
+
+```yaml
+ralph:
+  max_loops: 50
+  stagnation_threshold: 3
+  timeout_minutes: 15
+```
+
 ## Dockerfile Generation
 
 Want to use Docker directly without clawker's management? The `generate` command creates clawker boilerplate Dockerfiles using any Claude Code npm tag or version.

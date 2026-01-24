@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // maxSSHAgentMessageSize limits SSH agent message size (64KB should be plenty)

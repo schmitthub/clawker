@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/schmitthub/clawker/pkg/logger"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Manager manages the lifecycle of the host proxy server.

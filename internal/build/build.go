@@ -7,8 +7,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 	pkgbuild "github.com/schmitthub/clawker/pkg/build"
-	"github.com/schmitthub/clawker/pkg/logger"
 )
 
 // Builder handles Docker image building for clawker projects.

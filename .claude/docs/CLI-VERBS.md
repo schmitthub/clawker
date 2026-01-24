@@ -183,6 +183,137 @@ clawker start [flags]
 
 ---
 
+## Autonomous Loops (`clawker ralph`)
+
+Run Claude Code in autonomous loops using the "Ralph Wiggum" technique.
+
+### `clawker ralph run`
+
+Start an autonomous Claude Code loop.
+
+**Usage:**
+```bash
+clawker ralph run --agent NAME [flags]
+```
+
+Runs Claude Code repeatedly with `--continue` until completion or stagnation.
+The agent must output a RALPH_STATUS block for progress tracking.
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--agent` | | string | | Agent name (required) |
+| `--prompt` | `-p` | string | | Initial prompt for the first loop |
+| `--prompt-file` | | string | | File containing the initial prompt |
+| `--max-loops` | | int | 50 | Maximum number of loops |
+| `--stagnation-threshold` | | int | 3 | Loops without progress before circuit trips |
+| `--timeout` | | duration | 15m | Timeout per loop iteration |
+| `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
+| `--quiet` | `-q` | bool | false | Suppress progress output |
+| `--json` | | bool | false | Output result as JSON |
+
+**Examples:**
+```bash
+# Start with an initial prompt
+clawker ralph run --agent dev --prompt "Fix all failing tests"
+
+# Start from a prompt file
+clawker ralph run --agent dev --prompt-file task.md
+
+# Continue an existing session
+clawker ralph run --agent dev
+
+# Reset circuit breaker and retry
+clawker ralph run --agent dev --reset-circuit
+
+# Run with custom limits
+clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+```
+
+**Exit conditions:**
+- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE`
+- Circuit breaker trips (no progress for N consecutive loops)
+- Maximum loops reached
+- Error during execution
+
+---
+
+### `clawker ralph status`
+
+Show current ralph session status.
+
+**Usage:**
+```bash
+clawker ralph status --agent NAME [flags]
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent` | string | | Agent name (required) |
+| `--json` | bool | false | Output as JSON |
+
+**Examples:**
+```bash
+# Show status
+clawker ralph status --agent dev
+
+# Output as JSON
+clawker ralph status --agent dev --json
+```
+
+---
+
+### `clawker ralph reset`
+
+Reset the circuit breaker for an agent.
+
+**Usage:**
+```bash
+clawker ralph reset --agent NAME [flags]
+```
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--agent` | | string | | Agent name (required) |
+| `--all` | | bool | false | Also clear session history |
+| `--quiet` | `-q` | bool | false | Suppress output |
+
+**Examples:**
+```bash
+# Reset circuit breaker only
+clawker ralph reset --agent dev
+
+# Reset everything (circuit and session)
+clawker ralph reset --agent dev --all
+```
+
+---
+
+### RALPH_STATUS Block Format
+
+Claude must output this block for progress tracking:
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line>
+---END_RALPH_STATUS---
+```
+
+Add instructions to your project's CLAUDE.md to have the agent output this block.
+
+---
+
 ## Management Commands
 
 ### Container Management (`clawker container`)

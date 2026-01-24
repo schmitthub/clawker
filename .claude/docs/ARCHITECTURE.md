@@ -11,7 +11,7 @@
 └─────────────────────┬───────────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────────┐
-│                  pkg/cmd/*                                   │
+│                  internal/cmd/*                              │
 │            (Command implementations)                         │
 └─────────────────────┬───────────────────────────────────────┘
                       │
@@ -55,7 +55,7 @@ Thin layer configuring whail with clawker's conventions.
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
 
-### pkg/cmd/* - CLI Commands
+### internal/cmd/* - CLI Commands
 
 Two parallel command interfaces:
 
@@ -79,8 +79,9 @@ clawker image     [list|inspect|build|remove|prune]
 | `internal/config` | Viper config loading and validation |
 | `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
+| `internal/logger` | Zerolog setup |
+| `internal/cmdutil` | Factory, error handling, output utilities |
 | `pkg/build` | Dockerfile generation, semver, npm registry client |
-| `pkg/cmdutil` | Factory, error handling, output utilities |
 
 ## Design Principles
 

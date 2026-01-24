@@ -35,23 +35,28 @@
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
-│   ├── config/                # Viper config loading + validation
-│   ├── credentials/           # Env vars, .env parsing, OTEL
-│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
-│   ├── hostproxy/             # Host proxy server for container-to-host communication
-│   ├── monitor/               # Observability stack (Prometheus, Grafana)
-│   ├── term/                  # PTY/terminal handling
-│   └── workspace/             # Bind vs Snapshot strategies
-├── pkg/
-│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   ├── cmd/                   # Cobra commands organized as:
 │   │   ├── container/         # Docker CLI-compatible container management
 │   │   ├── volume/            # Volume management
 │   │   ├── network/           # Network management
 │   │   ├── image/             # Image management
+│   │   ├── ralph/             # Autonomous loop commands
+│   │   ├── root/              # Root command and aliases
 │   │   └── ...                # Top-level shortcuts (run, start, init, build, etc.)
 │   ├── cmdutil/               # Factory, error handling, output utilities
+│   ├── config/                # Viper config loading + validation
+│   ├── credentials/           # Env vars, .env parsing, OTEL
+│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── hostproxy/             # Host proxy server for container-to-host communication
 │   ├── logger/                # Zerolog setup
+│   ├── monitor/               # Observability stack (Prometheus, Grafana)
+│   ├── ralph/                 # Ralph autonomous loop core logic
+│   ├── term/                  # PTY/terminal handling
+│   ├── testutil/              # Test utilities
+│   │   └── integration/       # Testcontainers integration tests
+│   └── workspace/             # Bind vs Snapshot strategies
+├── pkg/
+│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 └── templates/                 # clawker.yaml scaffolding
 ```
@@ -252,6 +257,7 @@ See @.claude/docs/CLI-VERBS.md for complete command reference.
 | `run`, `start` | Aliases for `container run`, `container start` |
 | `config check`, `monitor *` | Configuration/observability |
 | `generate` | Generate versions.json for releases |
+| `ralph run/status/reset` | Autonomous loop execution |
 
 ### Management Commands (Docker CLI-compatible)
 
@@ -281,7 +287,7 @@ The `@` symbol in `clawker run @` or `clawker container create @` triggers autom
 2. **Default image** - Falls back to `default_image` from config/settings
 3. **Error** - If neither found, prompts user with next steps
 
-Resolution logic in `pkg/cmdutil/resolve.go`:
+Resolution logic in `internal/cmdutil/resolve.go`:
 - `ResolveImageWithSource()` - Returns image reference + source (project/default)
 - `FindProjectImage()` - Searches for labeled project images
 - `ResolveAndValidateImage()` - Validates default images exist, prompts for rebuild
@@ -340,9 +346,14 @@ security:
     forward_https: true    # Forward HTTPS credentials via host proxy (default: follows host_proxy)
     forward_ssh: true      # Forward SSH agent for git+ssh (default: true)
     copy_git_config: true  # Copy host ~/.gitconfig (default: true)
+
+ralph:                     # Autonomous loop configuration
+  max_loops: 50            # Maximum loops before stopping (default: 50)
+  stagnation_threshold: 3  # Loops without progress before circuit trips (default: 3)
+  timeout_minutes: 15      # Per-loop timeout in minutes (default: 15)
 ```
 
-**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`
+**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
 
 ## Design Decisions
 
@@ -404,10 +415,10 @@ See `context_management` memory for detailed patterns and examples.
 go test ./...
 
 # Integration tests (requires Docker)
-go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
-go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 ```
 
 **Test Utilities:** The `internal/testutil` package provides:
