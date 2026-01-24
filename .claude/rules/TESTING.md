@@ -16,10 +16,10 @@ paths:
 go test ./...
 
 # Integration tests (requires Docker)
-go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
-go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 ```
 
 ---

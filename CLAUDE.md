@@ -31,27 +31,40 @@
 ## Repository Structure
 
 ```
-├── cmd/clawker/              # Main CLI binary
+├── cmd/
+│   ├── clawker/               # Main CLI binary
+│   ├── clawker-generate/      # Standalone Dockerfile generator
+│   └── gen-docs/              # Documentation generator (markdown, yaml, man, rst)
 ├── internal/
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
-│   ├── config/                # Viper config loading + validation
-│   ├── credentials/           # Env vars, .env parsing, OTEL
-│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
-│   ├── hostproxy/             # Host proxy server for container-to-host communication
-│   ├── monitor/               # Observability stack (Prometheus, Grafana)
-│   ├── term/                  # PTY/terminal handling
-│   └── workspace/             # Bind vs Snapshot strategies
-├── pkg/
-│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   ├── cmd/                   # Cobra commands organized as:
 │   │   ├── container/         # Docker CLI-compatible container management
 │   │   ├── volume/            # Volume management
 │   │   ├── network/           # Network management
 │   │   ├── image/             # Image management
-│   │   └── ...                # Top-level shortcuts (run, start, init, build, etc.)
+│   │   ├── init/              # User init
+│   │   ├── project/           # Project management
+│   │   ├── config/            # Config commands
+│   │   ├── monitor/           # Monitor commands
+│   │   ├── generate/          # Generate command
+│   │   └── root/              # Root command and aliases
 │   ├── cmdutil/               # Factory, error handling, output utilities
+│   ├── config/                # Viper config loading + validation
+│   ├── credentials/           # Env vars, .env parsing, OTEL
+│   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
+│   ├── docs/                  # Doc generation utilities
+│   ├── hostproxy/             # Host proxy server for container-to-host communication
+│   ├── iostreams/             # I/O streams abstraction
 │   ├── logger/                # Zerolog setup
+│   ├── monitor/               # Observability stack (Prometheus, Grafana)
+│   ├── output/                # Output utilities
+│   ├── prompter/              # Interactive prompting utilities
+│   ├── term/                  # PTY/terminal handling
+│   ├── testutil/              # Test utilities
+│   └── workspace/             # Bind vs Snapshot strategies
+├── pkg/
+│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 └── templates/                 # clawker.yaml scaffolding
 ```
@@ -281,7 +294,7 @@ The `@` symbol in `clawker run @` or `clawker container create @` triggers autom
 2. **Default image** - Falls back to `default_image` from config/settings
 3. **Error** - If neither found, prompts user with next steps
 
-Resolution logic in `pkg/cmdutil/resolve.go`:
+Resolution logic in `internal/cmdutil/resolve.go`:
 - `ResolveImageWithSource()` - Returns image reference + source (project/default)
 - `FindProjectImage()` - Searches for labeled project images
 - `ResolveAndValidateImage()` - Validates default images exist, prompts for rebuild
@@ -404,10 +417,10 @@ See `context_management` memory for detailed patterns and examples.
 go test ./...
 
 # Integration tests (requires Docker)
-go test -tags=integration ./pkg/cmd/... -v -timeout 10m
+go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
-go test -tags=e2e ./pkg/cmd/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 ```
 
 **Test Utilities:** The `internal/testutil` package provides:

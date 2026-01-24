@@ -232,6 +232,7 @@ func (e *Engine) ContainerList(ctx context.Context, options client.ContainerList
 	options.Filters = e.injectManagedFilter(options.Filters)
 	result, err := e.APIClient.ContainerList(ctx, options)
 	if err != nil {
+
 		return client.ContainerListResult{}, ErrContainerListFailed(err)
 	}
 	return result, nil

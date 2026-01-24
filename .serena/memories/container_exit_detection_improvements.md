@@ -39,7 +39,7 @@ Added `ContainerExitDiagnostics` struct and `GetContainerExitDiagnostics()` func
 Added helper to strip Docker's 8-byte multiplexed stream headers from log output.
 
 ### Task 4: Added E2E Test for Container Exit Detection ✅ DONE
-**File:** `pkg/cmd/container/run/run_e2e_test.go`
+**File:** `internal/cmd/container/run/run_e2e_test.go`
 
 Added `TestRunE2E_ContainerExitDetection` that:
 - Creates container that exits immediately with code 42
@@ -72,7 +72,7 @@ go test ./...
 go test -tags=integration ./internal/integration/... -v -timeout 10m
 
 # E2E tests - PASSED ✅ (2026-01-22)
-go test -tags=e2e ./pkg/cmd/container/run/... -v -timeout 15m
+go test -tags=e2e ./internal/cmd/container/run/... -v -timeout 15m
 # TestRunE2E_ContainerExitDetection passed
 ```
 
@@ -83,7 +83,7 @@ go test -tags=e2e ./pkg/cmd/container/run/... -v -timeout 15m
 | File | Change |
 |------|--------|
 | `internal/testutil/docker.go` | Improved `WaitForContainerRunning`, added `GetContainerExitDiagnostics`, `stripDockerStreamHeaders`, `getContainerLogsTail` |
-| `pkg/cmd/container/run/run_e2e_test.go` | Added `TestRunE2E_ContainerExitDetection` |
+| `internal/cmd/container/run/run_e2e_test.go` | Added `TestRunE2E_ContainerExitDetection` |
 | `internal/integration/firewall_startup_test.go` | NEW FILE - firewall startup flow tests |
 | `.claude/rules/TESTING.md` | Added container exit detection documentation |
 

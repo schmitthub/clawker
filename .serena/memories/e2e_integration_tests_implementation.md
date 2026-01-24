@@ -61,5 +61,5 @@ go test ./...
 go test -tags=integration ./internal/integration/... -v -timeout 10m
 
 # Run all integration tests
-go test -tags=integration ./pkg/cmd/... ./internal/integration/... -v -timeout 15m
+go test -tags=integration ./internal/cmd/... ./internal/integration/... -v -timeout 15m
 ```

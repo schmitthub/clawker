@@ -50,13 +50,21 @@ For `container create` and `container run`, image is resolved in this order:
 
 ### Architecture (Post-Migration)
 ```
-cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
+cmd/clawker → internal/cmd/* → internal/docker → pkg/whail → Docker SDK
 ```
 
 - `cmd/clawker/` - Main entry point
-- `pkg/cmd/` - Cobra commands organized as:
+- `cmd/clawker-generate/` - Standalone Dockerfile generator
+- `cmd/gen-docs/` - Documentation generator (markdown, yaml, man, rst)
+- `internal/cmd/` - Cobra commands organized as:
   - Top-level shortcuts: `run`, `start`, `init`, `build`, `config`, `monitor`, `generate`
   - Management commands: `container/*`, `volume/*`, `network/*`, `image/*`
+- `internal/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
+- `internal/logger/` - Zerolog setup
+- `internal/prompter/` - Interactive prompting utilities
+- `internal/iostreams/` - I/O streams abstraction
+- `internal/output/` - Output utilities
+- `internal/docs/` - Doc generation utilities
 - `pkg/whail/` - **Reusable** Docker engine library with label-based isolation
   - `engine.go` - Core Engine with configurable labels
   - `container.go` - All container operations (Create, Start, Stop, Kill, Pause, etc.)
@@ -77,14 +85,13 @@ cmd/clawker → pkg/cmd/* → internal/docker → pkg/whail → Docker SDK
 - `internal/credentials/` - .env parsing, EnvBuilder, OTEL injection
 - `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
 - `internal/term/` - PTY/terminal handling
+- `internal/testutil/` - Test utilities
 - `internal/hostproxy/` - Host proxy server for container-to-host communication:
   - `server.go` - HTTP server with browser opening and OAuth callback endpoints
   - `session.go` - Generic session store with TTL and automatic cleanup
   - `callback.go` - CallbackChannel for OAuth callback interception and forwarding
   - `manager.go` - Lifecycle management of the proxy server
 - `pkg/build/` - Version generation, Dockerfile templates, and ProjectGenerator
-- `pkg/logger/` - Zerolog setup
-- `pkg/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
 
 ## CLI Commands
 
