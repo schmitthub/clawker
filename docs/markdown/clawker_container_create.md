@@ -12,13 +12,13 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.<project>.<agent> where
 project comes from clawker.yaml. When --name is provided, it overrides this.
 
-If IMAGE is not specified, clawker will use (in order of precedence):
+If IMAGE is "@", clawker will use (in order of precedence):
 1. default_image from clawker.yaml
 2. default_image from user settings (~/.local/clawker/settings.yaml)
 3. The project's built image with :latest tag
 
 ```
-clawker container create [OPTIONS] [IMAGE] [COMMAND] [ARG...] [flags]
+clawker container create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
 ```
 
 ### Examples
@@ -28,7 +28,7 @@ clawker container create [OPTIONS] [IMAGE] [COMMAND] [ARG...] [flags]
   clawker container create --agent myagent alpine
 
   # Create a container using default image from config
-  clawker container create --agent myagent
+  clawker container create --agent myagent @
 
   # Create a container with a command
   clawker container create --agent worker alpine echo "hello world"
@@ -53,7 +53,7 @@ clawker container create [OPTIONS] [IMAGE] [COMMAND] [ARG...] [flags]
   -i, --interactive           Keep STDIN open even if not attached
   -l, --label stringArray     Set metadata on container
       --mode string           Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)
-      --name string           Full container name (overrides --agent)
+      --name string           Same as --agent; provided for Docker CLI familiarity (mutually exclusive with --agent)
       --network string        Connect container to a network
   -p, --publish stringArray   Publish container port(s) to host
       --rm                    Automatically remove container when it exits

@@ -9,7 +9,7 @@ Stops one or more running clawker containers.
 The container is sent a SIGTERM signal, then after a timeout period (default 10s),
 it is sent SIGKILL if still running.
 
-When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+When --agent is provided, the container names are resolved as clawker.<project>.<agent>
 using the project from your clawker.yaml configuration.
 
 Container names can be:
@@ -39,7 +39,7 @@ clawker container stop [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string    Agent name (resolves to clawker.<project>.<agent>)
+      --agent           Treat arguments as agent name (resolves to clawker.<project>.<agent>)
   -h, --help            help for stop
   -s, --signal string   Signal to send (default: SIGTERM)
   -t, --time int        Seconds to wait before killing the container (default 10)

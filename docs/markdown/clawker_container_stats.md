@@ -41,10 +41,10 @@ clawker container stats [OPTIONS] [CONTAINER...] [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for stats
-      --no-stream      Disable streaming stats and only pull the first result
-      --no-trunc       Do not truncate output
+      --agent       Treat arguments as agent name (resolves to clawker.<project>.<agent>)
+  -h, --help        help for stats
+      --no-stream   Disable streaming stats and only pull the first result
+      --no-trunc    Do not truncate output
 ```
 
 ### Options inherited from parent commands

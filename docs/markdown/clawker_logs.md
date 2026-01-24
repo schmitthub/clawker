@@ -42,7 +42,7 @@ clawker logs [OPTIONS] CONTAINER [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
+      --agent          Treat argument as agent name (resolves to clawker.<project>.<agent>)
       --details        Show extra details provided to logs
   -f, --follow         Follow log output
   -h, --help           help for logs

@@ -30,8 +30,8 @@ clawker rename CONTAINER NEW_NAME [flags]
 ### Options
 
 ```
-      --agent string   Agent name (resolves to clawker.<project>.<agent>)
-  -h, --help           help for rename
+      --agent   Treat first argument as agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for rename
 ```
 
 ### Options inherited from parent commands

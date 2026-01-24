@@ -66,8 +66,11 @@
 ```bash
 go build -o bin/clawker ./cmd/clawker  # Build CLI
 go test ./...                             # Run tests
-./bin/clawker --debug run                # Debug logging
+./bin/clawker --debug run @              # Debug logging
 ./bin/clawker generate latest 2.1        # Generate versions.json
+
+# Regenerate CLI documentation (after updating Cobra Example fields)
+go run ./cmd/gen-docs --doc-path docs --markdown
 ```
 
 ## Key Concepts
@@ -451,3 +454,95 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @README.md | see @.serena/readme_design_direction.md |
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.
+
+## Ralph Autonomous Loop Integration
+
+When running in an autonomous loop via `clawker ralph run`, output a RALPH_STATUS
+block at the end of EVERY response. This tells the loop controller your progress.
+
+### RALPH_STATUS Block Format
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS | COMPLETE | BLOCKED
+TASKS_COMPLETED_THIS_LOOP: <number>
+FILES_MODIFIED: <number>
+TESTS_STATUS: PASSING | FAILING | NOT_RUN
+WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
+EXIT_SIGNAL: false | true
+RECOMMENDATION: <one line summary>
+---END_RALPH_STATUS---
+```
+
+### Field Definitions
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| STATUS | IN_PROGRESS, COMPLETE, BLOCKED | Current work state |
+| TASKS_COMPLETED_THIS_LOOP | 0-N | Discrete tasks finished this iteration |
+| FILES_MODIFIED | 0-N | Files changed this iteration |
+| TESTS_STATUS | PASSING, FAILING, NOT_RUN | Current test suite state |
+| WORK_TYPE | IMPLEMENTATION, TESTING, DOCUMENTATION, REFACTORING | What you did |
+| EXIT_SIGNAL | true/false | Set true when ALL work is complete |
+| RECOMMENDATION | text | Brief note on progress or next steps |
+
+### Important Rules
+
+1. **Always output the block** - Every response must end with RALPH_STATUS
+2. **Be honest about progress** - TASKS_COMPLETED must reflect real work
+3. **Signal completion clearly** - Set EXIT_SIGNAL: true only when truly done
+4. **Include completion phrases** - When done, use phrases like:
+  - "all tasks complete"
+  - "project ready"
+  - "work is done"
+  - "implementation complete"
+  - "no more work"
+  - "finished"
+  - "task complete"
+  - "all done"
+  - "nothing left to do"
+  - "completed successfully"
+
+### Example: Work in Progress
+
+```
+---RALPH_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 2
+FILES_MODIFIED: 4
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: false
+RECOMMENDATION: Continue with user authentication module
+---END_RALPH_STATUS---
+```
+
+### Example: All Work Complete
+
+```
+All tasks are now complete. The feature has been fully implemented and tested.
+
+---RALPH_STATUS---
+STATUS: COMPLETE
+TASKS_COMPLETED_THIS_LOOP: 1
+FILES_MODIFIED: 2
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: true
+RECOMMENDATION: All work complete, ready for review
+---END_RALPH_STATUS---
+```
+
+### Example: Blocked
+
+```
+---RALPH_STATUS---
+STATUS: BLOCKED
+TASKS_COMPLETED_THIS_LOOP: 0
+FILES_MODIFIED: 0
+TESTS_STATUS: FAILING
+WORK_TYPE: TESTING
+EXIT_SIGNAL: false
+RECOMMENDATION: Tests failing due to missing database fixture
+---END_RALPH_STATUS---
+```
