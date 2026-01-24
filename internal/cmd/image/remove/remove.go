@@ -4,7 +4,6 @@ package remove
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -59,6 +58,8 @@ Note: Only clawker-managed images can be removed with this command.`,
 
 func run(f *cmdutil2.Factory, opts *Options, images []string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -84,10 +85,10 @@ func run(f *cmdutil2.Factory, opts *Options, images []string) error {
 		// Print what was removed
 		for _, resp := range responses.Items {
 			if resp.Untagged != "" {
-				fmt.Fprintf(os.Stderr, "Untagged: %s\n", resp.Untagged)
+				fmt.Fprintf(ios.ErrOut, "%s Untagged: %s\n", cs.SuccessIcon(), resp.Untagged)
 			}
 			if resp.Deleted != "" {
-				fmt.Fprintf(os.Stderr, "Deleted: %s\n", resp.Deleted)
+				fmt.Fprintf(ios.ErrOut, "%s Deleted: %s\n", cs.SuccessIcon(), resp.Deleted)
 			}
 		}
 	}

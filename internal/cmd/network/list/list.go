@@ -4,7 +4,6 @@ package list
 import (
 	"context"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
@@ -48,6 +47,7 @@ integration. The primary network is clawker-net.`,
 
 func run(f *cmdutil2.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -64,20 +64,20 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	}
 
 	if len(networks.Items) == 0 {
-		fmt.Fprintln(os.Stderr, "No clawker networks found.")
+		fmt.Fprintln(ios.ErrOut, "No clawker networks found.")
 		return nil
 	}
 
 	// Quiet mode - just print names
 	if opts.Quiet {
 		for _, n := range networks.Items {
-			fmt.Println(n.Name)
+			fmt.Fprintln(ios.Out, n.Name)
 		}
 		return nil
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NETWORK ID\tNAME\tDRIVER\tSCOPE")
 
 	for _, n := range networks.Items {

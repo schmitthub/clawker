@@ -4,7 +4,6 @@ package list
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -56,6 +55,7 @@ across multiple containers.`,
 
 func run(f *cmdutil2.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -75,20 +75,20 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	}
 
 	if len(images.Items) == 0 {
-		fmt.Fprintln(os.Stderr, "No clawker images found.")
+		fmt.Fprintln(ios.ErrOut, "No clawker images found.")
 		return nil
 	}
 
 	// Quiet mode - just print IDs
 	if opts.Quiet {
 		for _, img := range images.Items {
-			fmt.Println(truncateID(img.ID))
+			fmt.Fprintln(ios.Out, truncateID(img.ID))
 		}
 		return nil
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "IMAGE\tID\tCREATED\tSIZE")
 
 	for _, img := range images.Items {

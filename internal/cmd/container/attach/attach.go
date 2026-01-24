@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
@@ -71,6 +70,8 @@ Container name can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	container := opts.container
 	if opts.Agent {
 		var err error
@@ -150,7 +151,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
 		if err != nil && err != io.EOF {
 			errCh <- err
 		}
@@ -160,7 +161,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Copy stdin to container if enabled
 	if !opts.NoStdin {
 		go func() {
-			_, err := io.Copy(hijacked.Conn, os.Stdin)
+			_, err := io.Copy(hijacked.Conn, ios.In)
 			hijacked.CloseWrite()
 			if err != nil && err != io.EOF {
 				errCh <- err

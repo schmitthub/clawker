@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
@@ -68,6 +67,7 @@ Container names can be:
 func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
+	ios := f.IOStreams
 
 	// Load config to check host proxy setting
 	cfg, err := f.Config()
@@ -116,15 +116,15 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 		}
 
 		containerName := containers[0]
-		return attachAndStart(ctx, client, containerName, opts)
+		return attachAndStart(ctx, ios, client, containerName, opts)
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, client, containers)
+	return startContainersWithoutAttach(ctx, ios, client, containers)
 }
 
 // attachAndStart attaches to container first, then starts it.
-func attachAndStart(ctx context.Context, client *docker.Client, containerName string, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -221,7 +221,7 @@ func attachAndStart(ctx context.Context, client *docker.Client, containerName st
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
 		if err != nil && err != io.EOF {
 			errCh <- err
 		}
@@ -233,7 +233,7 @@ func attachAndStart(ctx context.Context, client *docker.Client, containerName st
 	// indefinitely, and we exit when output closes or container exits.
 	if opts.Interactive {
 		go func() {
-			_, err := io.Copy(hijacked.Conn, os.Stdin)
+			_, err := io.Copy(hijacked.Conn, ios.In)
 			hijacked.CloseWrite()
 			if err != nil && err != io.EOF {
 				errCh <- err
@@ -274,7 +274,7 @@ func attachAndStart(ctx context.Context, client *docker.Client, containerName st
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, client *docker.Client, containers []string) error {
+func startContainersWithoutAttach(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
@@ -288,7 +288,7 @@ func startContainersWithoutAttach(ctx context.Context, client *docker.Client, co
 			cmdutil2.HandleError(err)
 		} else {
 			// Print container name on success
-			fmt.Println(name)
+			fmt.Fprintln(ios.Out, name)
 		}
 	}
 

@@ -4,7 +4,6 @@ package remove
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
@@ -53,6 +52,8 @@ Note: Only clawker-managed networks can be removed with this command.`,
 
 func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -67,7 +68,7 @@ func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
 			errs = append(errs, fmt.Errorf("failed to remove network %q: %w", name, err))
 			cmdutil2.HandleError(err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Removed: %s\n", name)
+			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 		}
 	}
 

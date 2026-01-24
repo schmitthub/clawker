@@ -4,7 +4,6 @@ package update
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -105,6 +104,8 @@ Container names can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, _ []string) error {
+	ios := f.IOStreams
+
 	// Resolve container names
 	// When opts.Agent is true, all items in opts.containers are agent names
 	containers := opts.containers
@@ -128,11 +129,11 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, _ []string) er
 
 	var errs []error
 	for _, name := range containers {
-		if err := updateContainer(ctx, client, name, resources, restartPolicy); err != nil {
+		if err := updateContainer(ctx, ios, client, name, resources, restartPolicy); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
 		} else {
-			fmt.Println(name)
+			fmt.Fprintln(ios.Out, name)
 		}
 	}
 
@@ -142,7 +143,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, _ []string) er
 	return nil
 }
 
-func updateContainer(ctx context.Context, client *docker.Client, name string, resources *docker.Resources, restartPolicy *docker.RestartPolicy) error {
+func updateContainer(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, name string, resources *docker.Resources, restartPolicy *docker.RestartPolicy) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {
@@ -160,7 +161,7 @@ func updateContainer(ctx context.Context, client *docker.Client, name string, re
 
 	// Check for warnings
 	for _, warning := range resp.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+		fmt.Fprintf(ios.ErrOut, "Warning: %s\n", warning)
 	}
 
 	return nil

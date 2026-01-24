@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"text/tabwriter"
 	"time"
 
@@ -70,6 +69,8 @@ Container names can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// Resolve container names if --agent provided
 	containers := opts.containers
 	if opts.Agent {
@@ -104,22 +105,22 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 			}
 		}
 		if len(containers) == 0 {
-			fmt.Fprintln(os.Stderr, "No running containers")
+			fmt.Fprintln(ios.ErrOut, "No running containers")
 			return nil
 		}
 	}
 
 	// For non-streaming mode, show stats once
 	if opts.NoStream {
-		return showStatsOnce(ctx, client, containers, opts)
+		return showStatsOnce(ctx, ios, client, containers, opts)
 	}
 
 	// Streaming mode - continuously show stats
-	return streamStats(ctx, client, containers, opts)
+	return streamStats(ctx, ios, client, containers, opts)
 }
 
-func showStatsOnce(ctx context.Context, client *docker.Client, containers []string, opts *Options) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+func showStatsOnce(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 
 	var errs []error
@@ -128,12 +129,12 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		c, err := client.FindContainerByName(ctx, name)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to find container %q: %w", name, err))
-			fmt.Fprintf(os.Stderr, "Error: failed to find container %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "Error: failed to find container %q: %v\n", name, err)
 			continue
 		}
 		if c == nil {
 			errs = append(errs, fmt.Errorf("container %q not found", name))
-			fmt.Fprintf(os.Stderr, "Error: container %q not found\n", name)
+			fmt.Fprintf(ios.ErrOut, "Error: container %q not found\n", name)
 			continue
 		}
 
@@ -141,7 +142,7 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		statsReader, err := client.ContainerStatsOneShot(ctx, c.ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to get stats for %q: %w", name, err))
-			fmt.Fprintf(os.Stderr, "Error: failed to get stats for %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "Error: failed to get stats for %q: %v\n", name, err)
 			continue
 		}
 
@@ -149,7 +150,7 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 		if err := json.NewDecoder(statsReader.Body).Decode(&stats); err != nil {
 			statsReader.Body.Close()
 			errs = append(errs, fmt.Errorf("failed to decode stats for %q: %w", name, err))
-			fmt.Fprintf(os.Stderr, "Error: failed to decode stats for %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "Error: failed to decode stats for %q: %v\n", name, err)
 			continue
 		}
 		statsReader.Body.Close()
@@ -168,7 +169,7 @@ func showStatsOnce(ctx context.Context, client *docker.Client, containers []stri
 	return nil
 }
 
-func streamStats(ctx context.Context, client *docker.Client, containers []string, opts *Options) error {
+func streamStats(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string, opts *Options) error {
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -189,11 +190,11 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 	for _, name := range containers {
 		c, err := client.FindContainerByName(ctx, name)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to resolve container %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "Warning: failed to resolve container %q: %v\n", name, err)
 			continue
 		}
 		if c == nil {
-			fmt.Fprintf(os.Stderr, "Warning: container %q not found\n", name)
+			fmt.Fprintf(ios.ErrOut, "Warning: container %q not found\n", name)
 			continue
 		}
 		containerIDs[name] = c.ID
@@ -239,7 +240,7 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 	}
 
 	// Collect and print stats
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 
 	// Track the last stats for each container
 	lastStats := make(map[string]*container.StatsResponse)
@@ -249,7 +250,7 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 	// Print header once
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 	if err := w.Flush(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: output flush failed: %v\n", err)
+		fmt.Fprintf(ios.ErrOut, "Warning: output flush failed: %v\n", err)
 	}
 
 	for {
@@ -258,20 +259,20 @@ func streamStats(ctx context.Context, client *docker.Client, containers []string
 			return nil
 		case result := <-results:
 			if result.Err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %s: %v\n", result.Name, result.Err)
+				fmt.Fprintf(ios.ErrOut, "Error: %s: %v\n", result.Name, result.Err)
 				continue
 			}
 			lastStats[result.Name] = result.Stats
 		case <-ticker.C:
 			// Clear screen and reprint
-			fmt.Print("\033[H\033[2J")
+			fmt.Fprint(ios.Out, "\033[H\033[2J")
 			fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 			for name, stats := range lastStats {
 				id := containerIDs[name]
 				printStats(w, id, name, stats, opts)
 			}
 			if err := w.Flush(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: output flush failed: %v\n", err)
+				fmt.Fprintf(ios.ErrOut, "Warning: output flush failed: %v\n", err)
 			}
 		}
 	}

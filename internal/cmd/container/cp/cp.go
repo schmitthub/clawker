@@ -100,6 +100,8 @@ func parseContainerPath(arg string) (string, string, bool) {
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// Parse source and destination
 	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.src)
 	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.dst)
@@ -149,12 +151,12 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	}
 
 	if srcIsContainer {
-		return copyFromContainer(ctx, client, srcContainer, srcPath, dstPath, opts)
+		return copyFromContainer(ctx, ios, client, srcContainer, srcPath, dstPath, opts)
 	}
-	return copyToContainer(ctx, client, dstContainer, srcPath, dstPath, opts)
+	return copyToContainer(ctx, ios, client, dstContainer, srcPath, dstPath, opts)
 }
 
-func copyFromContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyFromContainer(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -174,7 +176,7 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 
 	// If destination is stdout, just copy the tar
 	if dstPath == "-" {
-		_, err := io.Copy(os.Stdout, copyResult.Content)
+		_, err := io.Copy(ios.Out, copyResult.Content)
 		return err
 	}
 
@@ -182,7 +184,7 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
-func copyToContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyToContainer(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -196,7 +198,7 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 	if srcPath == "-" {
 		copyOpts := docker.CopyToContainerOptions{
 			DestinationPath:           dstPath,
-			Content:                   os.Stdin,
+			Content:                   ios.In,
 			AllowOverwriteDirWithFile: true,
 			CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 		}

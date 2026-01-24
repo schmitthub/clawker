@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
-	"os"
 	"strings"
 
 	"github.com/docker/go-connections/nat"
@@ -127,6 +126,8 @@ If IMAGE is "@", clawker will use (in order of precedence):
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// Load config for project name
 	cfg, err := f.Config()
 	if err != nil {
@@ -253,11 +254,11 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 
 	// Print warnings if any
 	for _, warning := range resp.Warnings {
-		fmt.Fprintln(os.Stderr, "Warning:", warning)
+		fmt.Fprintln(ios.ErrOut, "Warning:", warning)
 	}
 
 	// Output container ID (short 12-char) to stdout
-	fmt.Println(resp.ID[:12])
+	fmt.Fprintln(ios.Out, resp.ID[:12])
 	return nil
 }
 

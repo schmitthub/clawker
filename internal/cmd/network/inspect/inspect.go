@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -50,6 +50,7 @@ connected containers and configuration.`,
 
 func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -76,7 +77,7 @@ func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 
 	// Output results
 	if len(results) > 0 {
-		if err := outputJSON(results); err != nil {
+		if err := outputJSON(ios.Out, results); err != nil {
 			return err
 		}
 	}
@@ -91,8 +92,8 @@ func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 	return nil
 }
 
-func outputJSON(data any) error {
-	encoder := json.NewEncoder(os.Stdout)
+func outputJSON(w io.Writer, data any) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "    ")
 	return encoder.Encode(data)
 }

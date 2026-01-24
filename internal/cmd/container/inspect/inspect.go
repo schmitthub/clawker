@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"text/template"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
@@ -67,6 +67,8 @@ Container names can be:
 }
 
 func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) error {
+	ios := f.IOStreams
+
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
@@ -112,16 +114,16 @@ func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) 
 	// Output results
 	if len(results) > 0 {
 		if opts.Format != "" {
-			return outputFormatted(opts.Format, results)
+			return outputFormatted(ios.Out, opts.Format, results)
 		}
-		if err := outputJSON(results); err != nil {
+		if err := outputJSON(ios.Out, results); err != nil {
 			return err
 		}
 	}
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", e)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", e)
 		}
 		return fmt.Errorf("failed to inspect %d container(s)", len(errs))
 	}
@@ -129,8 +131,8 @@ func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) 
 	return nil
 }
 
-func outputJSON(data any) error {
-	encoder := json.NewEncoder(os.Stdout)
+func outputJSON(w io.Writer, data any) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "    ")
 	return encoder.Encode(data)
 }
@@ -138,7 +140,7 @@ func outputJSON(data any) error {
 // outputFormatted outputs results using a Go template format string.
 // Templates execute against the Container field (InspectResponse) for Docker CLI compatibility.
 // This means templates like '{{.State.Status}}' work as expected.
-func outputFormatted(format string, results []docker.ContainerInspectResult) error {
+func outputFormatted(w io.Writer, format string, results []docker.ContainerInspectResult) error {
 	tmpl, err := template.New("format").Parse(format)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)
@@ -147,10 +149,10 @@ func outputFormatted(format string, results []docker.ContainerInspectResult) err
 	for _, result := range results {
 		// Execute against .Container (InspectResponse) for Docker CLI compatibility
 		// This allows templates like '{{.State.Status}}' instead of '{{.Container.State.Status}}'
-		if err := tmpl.Execute(os.Stdout, result.Container); err != nil {
+		if err := tmpl.Execute(w, result.Container); err != nil {
 			return fmt.Errorf("template execution failed: %w", err)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 	return nil
 }

@@ -3,7 +3,6 @@ package remove
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -70,6 +69,9 @@ Container names can be:
 }
 
 func runRemove(ctx context.Context, f *cmdutil2.Factory, opts *RemoveOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
@@ -91,9 +93,9 @@ func runRemove(ctx context.Context, f *cmdutil2.Factory, opts *RemoveOptions) er
 	for _, name := range containers {
 		if err := removeContainer(ctx, client, name, opts); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Removed: %s\n", name)
+			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 		}
 	}
 

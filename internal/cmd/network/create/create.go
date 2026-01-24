@@ -63,6 +63,7 @@ By default, a bridge network driver is used.`,
 
 func run(f *cmdutil2.Factory, opts *Options, name string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -89,7 +90,7 @@ func run(f *cmdutil2.Factory, opts *Options, name string) error {
 	}
 
 	// Print the network ID
-	fmt.Println(resp.ID)
+	fmt.Fprintln(ios.Out, resp.ID)
 	return nil
 }
 

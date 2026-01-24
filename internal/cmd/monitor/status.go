@@ -31,6 +31,9 @@ Displays running/stopped state and service URLs when the stack is running.`,
 }
 
 func runStatus(f *cmdutil.Factory) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
 	if err != nil {
@@ -42,9 +45,9 @@ func runStatus(f *cmdutil.Factory) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		fmt.Fprintln(os.Stderr, "Monitoring stack: NOT INITIALIZED")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Run 'clawker monitor init' to scaffold configuration files.")
+		fmt.Fprintf(ios.ErrOut, "Monitoring stack: %s\n", cs.Yellow("NOT INITIALIZED"))
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintln(ios.ErrOut, "Run 'clawker monitor init' to scaffold configuration files.")
 		return nil
 	}
 
@@ -58,37 +61,37 @@ func runStatus(f *cmdutil.Factory) error {
 	outputStr := strings.TrimSpace(string(output))
 
 	if outputStr == "" || !strings.Contains(outputStr, "Up") {
-		fmt.Fprintln(os.Stderr, "Monitoring stack: STOPPED")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Run 'clawker monitor up' to start the stack.")
+		fmt.Fprintf(ios.ErrOut, "Monitoring stack: %s\n", cs.Red("STOPPED"))
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintln(ios.ErrOut, "Run 'clawker monitor up' to start the stack.")
 		return nil
 	}
 
-	fmt.Fprintln(os.Stderr, "Monitoring stack: RUNNING")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Containers:")
-	fmt.Fprintln(os.Stderr, outputStr)
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(ios.ErrOut, "Monitoring stack: %s\n", cs.Green("RUNNING"))
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.ErrOut, "Containers:")
+	fmt.Fprintln(ios.ErrOut, outputStr)
+	fmt.Fprintln(ios.ErrOut)
 
 	// Check which services are actually running and print relevant URLs
-	fmt.Fprintln(os.Stderr, "Service URLs:")
+	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, "grafana") {
-		fmt.Fprintln(os.Stderr, "  Grafana:    http://localhost:3000 (No login required)")
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan("http://localhost:3000"))
 	}
 	if strings.Contains(outputStr, "jaeger") {
-		fmt.Fprintln(os.Stderr, "  Jaeger:     http://localhost:16686")
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan("http://localhost:16686"))
 	}
 	if strings.Contains(outputStr, "prometheus") {
-		fmt.Fprintln(os.Stderr, "  Prometheus: http://localhost:9090")
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan("http://localhost:9090"))
 	}
 
 	// Check network status
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(ios.ErrOut)
 	networkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork, "--format", "{{.Name}}")
 	if networkOutput, err := networkCmd.Output(); err == nil {
-		fmt.Fprintf(os.Stderr, "Network: %s (active)\n", strings.TrimSpace(string(networkOutput)))
+		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", strings.TrimSpace(string(networkOutput)), cs.Green("(active)"))
 	} else {
-		fmt.Fprintf(os.Stderr, "Network: %s (not found)\n", config.ClawkerNetwork)
+		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", config.ClawkerNetwork, cs.Red("(not found)"))
 	}
 
 	return nil

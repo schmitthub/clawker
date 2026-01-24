@@ -4,7 +4,6 @@ package wait
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/moby/moby/api/types/container"
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
@@ -57,6 +56,8 @@ Container names can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// Resolve container names
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
@@ -80,10 +81,10 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		exitCode, err := waitContainer(ctx, client, name)
 		if err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
 		} else {
 			// Print exit code to stdout (for scripting)
-			fmt.Println(exitCode)
+			fmt.Fprintln(ios.Out, exitCode)
 		}
 	}
 

@@ -42,6 +42,9 @@ the clawker-net Docker network for other clawker services.`,
 }
 
 func runDown(f *cmdutil2.Factory, opts *downOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
 	if err != nil {
@@ -67,18 +70,21 @@ func runDown(f *cmdutil2.Factory, opts *downOptions) error {
 	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.Command("docker", composeArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = ios.Out
+	cmd.Stderr = ios.ErrOut
 
-	fmt.Fprintln(os.Stderr, "Stopping monitoring stack...")
-	if err := cmd.Run(); err != nil {
+	ios.StartProgressIndicatorWithLabel("Stopping monitoring stack...")
+	err = cmd.Run()
+	ios.StopProgressIndicator()
+
+	if err != nil {
 		return fmt.Errorf("failed to stop monitoring stack: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Monitoring stack stopped.")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
 	if !opts.volumes {
-		fmt.Fprintln(os.Stderr, "Note: Volumes were preserved. Use --volumes to remove them.")
+		fmt.Fprintf(ios.ErrOut, "%s Volumes were preserved. Use --volumes to remove them.\n", cs.InfoIcon())
 	}
 
 	return nil

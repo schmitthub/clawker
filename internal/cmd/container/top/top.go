@@ -4,7 +4,6 @@ package top
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -60,6 +59,8 @@ Container name can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// First arg is container/agent name, rest are ps options
 	containerName := opts.args[0]
 	psArgs := opts.args[1:]
@@ -97,7 +98,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	}
 
 	// Print output in table format
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 
 	// Print header
 	fmt.Fprintln(w, strings.Join(top.Titles, "\t"))

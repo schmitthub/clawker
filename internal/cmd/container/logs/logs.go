@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -75,6 +74,8 @@ Container name can be:
 }
 
 func runLogs(ctx context.Context, f *cmdutil2.Factory, opts *LogsOptions) error {
+	ios := f.IOStreams
+
 	// Resolve container name
 	containerName := opts.containers[0]
 	if opts.Agent {
@@ -121,7 +122,7 @@ func runLogs(ctx context.Context, f *cmdutil2.Factory, opts *LogsOptions) error 
 	defer reader.Close()
 
 	// Stream logs to stdout
-	if _, err = io.Copy(os.Stdout, reader); err != nil {
+	if _, err = io.Copy(ios.Out, reader); err != nil {
 		return fmt.Errorf("error streaming logs: %w", err)
 	}
 	return nil

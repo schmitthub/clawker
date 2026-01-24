@@ -53,6 +53,7 @@ Container names can be:
 }
 
 func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+	ios := f.IOStreams
 	oldName := opts.container
 	newName := opts.newName
 
@@ -86,6 +87,6 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		return err
 	}
 
-	fmt.Println(newName)
+	fmt.Fprintln(ios.Out, newName)
 	return nil
 }

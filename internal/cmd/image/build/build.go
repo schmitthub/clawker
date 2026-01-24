@@ -4,7 +4,6 @@ package build
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/build"
@@ -95,6 +94,9 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Load configuration
 	cfg, err := f.Config()
 	if err != nil {
@@ -113,7 +115,7 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	validator := config.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil2.PrintError("Configuration validation failed")
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(ios.ErrOut, err)
 		return err
 	}
 
@@ -186,9 +188,9 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	if !opts.Quiet {
 		if len(opts.Tags) > 0 {
 			allTags := append([]string{imageTag}, opts.Tags...)
-			fmt.Fprintf(os.Stderr, "Successfully built image with tags: %s\n", strings.Join(allTags, ", "))
+			fmt.Fprintf(ios.ErrOut, "%s Built image with tags: %s\n", cs.SuccessIcon(), strings.Join(allTags, ", "))
 		} else {
-			fmt.Fprintf(os.Stderr, "Successfully built image: %s\n", imageTag)
+			fmt.Fprintf(ios.ErrOut, "%s Built image: %s\n", cs.SuccessIcon(), imageTag)
 		}
 	}
 	return nil

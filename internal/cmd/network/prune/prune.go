@@ -4,7 +4,6 @@ package prune
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
@@ -49,6 +48,8 @@ are using it for the monitoring stack.`,
 
 func run(f *cmdutil2.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
@@ -59,15 +60,15 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 
 	// Prompt for confirmation if not forced
 	if !opts.Force {
-		fmt.Fprint(os.Stderr, "WARNING! This will remove all unused clawker-managed networks.\nAre you sure you want to continue? [y/N] ")
+		fmt.Fprintf(ios.ErrOut, "%s This will remove all unused clawker-managed networks.\nAre you sure you want to continue? [y/N] ", cs.WarningIcon())
 		var response string
 		if _, err := fmt.Scanln(&response); err != nil {
 			// Treat read errors (EOF, etc.) as "no"
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 		if response != "y" && response != "Y" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 	}
@@ -80,12 +81,12 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	}
 
 	if len(report.Report.NetworksDeleted) == 0 {
-		fmt.Fprintln(os.Stderr, "No unused clawker networks to remove.")
+		fmt.Fprintln(ios.ErrOut, "No unused clawker networks to remove.")
 		return nil
 	}
 
 	for _, name := range report.Report.NetworksDeleted {
-		fmt.Fprintf(os.Stderr, "Deleted: %s\n", name)
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 	}
 
 	return nil

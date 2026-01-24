@@ -3,7 +3,6 @@ package kill
 import (
 	"context"
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -65,6 +64,8 @@ Container names can be:
 }
 
 func runKill(ctx context.Context, f *cmdutil2.Factory, opts *KillOptions) error {
+	ios := f.IOStreams
+
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
@@ -86,9 +87,9 @@ func runKill(ctx context.Context, f *cmdutil2.Factory, opts *KillOptions) error 
 	for _, name := range containers {
 		if err := killContainer(ctx, client, name, opts.Signal); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
 		} else {
-			fmt.Println(name)
+			fmt.Fprintln(ios.Out, name)
 		}
 	}
 
