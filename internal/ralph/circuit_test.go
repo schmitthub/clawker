@@ -178,3 +178,143 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 	// Just verify no race conditions occurred
 	_ = cb.IsTripped()
 }
+
+func TestCircuitBreaker_SafetyCompletionThreshold(t *testing.T) {
+	// Configure with safety threshold of 3
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		StagnationThreshold:       10, // High so it doesn't trip on no-progress
+		SafetyCompletionThreshold: 3,
+	})
+
+	// Status with completion indicators but no EXIT_SIGNAL
+	status := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 2, // Has completion text but no exit signal
+	}
+
+	// First loop - not tripped yet
+	result := cb.UpdateWithAnalysis(status, nil)
+	assert.False(t, result.Tripped)
+	assert.False(t, result.IsComplete)
+
+	// Second loop - still not tripped
+	result = cb.UpdateWithAnalysis(status, nil)
+	assert.False(t, result.Tripped)
+
+	// Third loop - should trip due to safety threshold
+	result = cb.UpdateWithAnalysis(status, nil)
+	assert.True(t, result.Tripped)
+	assert.Contains(t, result.Reason, "safety")
+	assert.Contains(t, result.Reason, "consecutive loops with completion indicators")
+}
+
+func TestCircuitBreaker_SafetyCompletionResetsOnNoIndicators(t *testing.T) {
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		StagnationThreshold:       10,
+		SafetyCompletionThreshold: 3,
+	})
+
+	// Two loops with completion indicators
+	withCompletion := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 1,
+		TasksCompleted:       1, // Has progress so no-progress counter doesn't trip
+	}
+	cb.UpdateWithAnalysis(withCompletion, nil)
+	cb.UpdateWithAnalysis(withCompletion, nil)
+
+	// One loop without completion indicators - should reset counter
+	noCompletion := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 0,
+		TasksCompleted:       1,
+	}
+	result := cb.UpdateWithAnalysis(noCompletion, nil)
+	assert.False(t, result.Tripped)
+
+	// Now two more with completion - should NOT trip (counter was reset)
+	cb.UpdateWithAnalysis(withCompletion, nil)
+	result = cb.UpdateWithAnalysis(withCompletion, nil)
+	assert.False(t, result.Tripped)
+}
+
+func TestCircuitBreaker_SafetyCompletionDoesNotBlockNormalCompletion(t *testing.T) {
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		StagnationThreshold:       10,
+		SafetyCompletionThreshold: 5, // Set higher than completion threshold
+		CompletionThreshold:       2,
+	})
+
+	// Status with EXIT_SIGNAL and enough completion indicators should complete normally
+	// before safety threshold is reached
+	status := &Status{
+		Status:               StatusComplete,
+		ExitSignal:           true,
+		CompletionIndicators: 3,
+	}
+
+	result := cb.UpdateWithAnalysis(status, nil)
+	assert.True(t, result.IsComplete) // Normal completion
+	assert.False(t, result.Tripped)   // Not tripped as safety
+}
+
+func TestCircuitBreaker_StateIncludesCompletionCount(t *testing.T) {
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		SafetyCompletionThreshold: 10,
+	})
+
+	// Add some completion indicators
+	status := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 2,
+		TasksCompleted:       1,
+	}
+	cb.UpdateWithAnalysis(status, nil)
+	cb.UpdateWithAnalysis(status, nil)
+
+	// State should include the count
+	state := cb.State()
+	assert.Equal(t, 2, state.ConsecutiveCompletionCount)
+}
+
+func TestCircuitBreaker_RestoreStateWithCompletionCount(t *testing.T) {
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		SafetyCompletionThreshold: 5,
+	})
+
+	// Restore state with existing completion count
+	state := CircuitBreakerState{
+		ConsecutiveCompletionCount: 4,
+	}
+	cb.RestoreState(state)
+
+	// One more loop with completion indicators should trip
+	status := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 1,
+		TasksCompleted:       1,
+	}
+	result := cb.UpdateWithAnalysis(status, nil)
+	assert.True(t, result.Tripped)
+	assert.Contains(t, result.Reason, "safety")
+}
+
+func TestCircuitBreaker_ResetClearsCompletionCount(t *testing.T) {
+	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		SafetyCompletionThreshold: 10,
+	})
+
+	// Add some completion indicators
+	status := &Status{
+		Status:               StatusPending,
+		CompletionIndicators: 2,
+		TasksCompleted:       1,
+	}
+	cb.UpdateWithAnalysis(status, nil)
+	cb.UpdateWithAnalysis(status, nil)
+
+	// Reset should clear the count
+	cb.Reset()
+	state := cb.State()
+	assert.Equal(t, 0, state.ConsecutiveCompletionCount)
+}

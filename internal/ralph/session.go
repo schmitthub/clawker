@@ -42,6 +42,23 @@ type Session struct {
 
 	// InitialPrompt is the prompt that started the session.
 	InitialPrompt string `json:"initial_prompt,omitempty"`
+
+	// RateLimitState tracks the rate limiter state for persistence.
+	RateLimitState *RateLimitState `json:"rate_limit_state,omitempty"`
+}
+
+// IsExpired returns true if the session is older than the given hours.
+func (sess *Session) IsExpired(hours int) bool {
+	if hours <= 0 {
+		hours = DefaultSessionExpirationHours
+	}
+	expiration := sess.StartedAt.Add(time.Duration(hours) * time.Hour)
+	return time.Now().After(expiration)
+}
+
+// Age returns the duration since the session started.
+func (sess *Session) Age() time.Duration {
+	return time.Since(sess.StartedAt)
 }
 
 // CircuitState represents the persistent state of the circuit breaker.
@@ -102,6 +119,28 @@ func (s *SessionStore) LoadSession(project, agent string) (*Session, error) {
 		return nil, fmt.Errorf("failed to parse session: %w", err)
 	}
 	return &session, nil
+}
+
+// LoadSessionWithExpiration loads a session and auto-resets if expired.
+// Returns nil (and deletes the old session) if the session is expired.
+func (s *SessionStore) LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error) {
+	session, err := s.LoadSession(project, agent)
+	if err != nil {
+		return nil, false, err
+	}
+	if session == nil {
+		return nil, false, nil
+	}
+
+	if session.IsExpired(expirationHours) {
+		// Delete expired session
+		if delErr := s.DeleteSession(project, agent); delErr != nil {
+			return nil, true, fmt.Errorf("failed to delete expired session: %w", delErr)
+		}
+		return nil, true, nil
+	}
+
+	return session, false, nil
 }
 
 // SaveSession saves a session to disk.

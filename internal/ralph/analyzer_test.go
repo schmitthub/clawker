@@ -298,3 +298,262 @@ func TestStatus_String(t *testing.T) {
 		})
 	}
 }
+
+func TestStatus_IsTestOnly(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   Status
+		expected bool
+	}{
+		{
+			name:     "testing work type",
+			status:   Status{WorkType: WorkTypeTesting},
+			expected: true,
+		},
+		{
+			name:     "implementation work type",
+			status:   Status{WorkType: WorkTypeImplementation},
+			expected: false,
+		},
+		{
+			name:     "empty work type",
+			status:   Status{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.status.IsTestOnly())
+		})
+	}
+}
+
+func TestStatus_IsCompleteStrict(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    Status
+		threshold int
+		expected  bool
+	}{
+		{
+			name:      "exit signal with enough indicators",
+			status:    Status{ExitSignal: true, CompletionIndicators: 3},
+			threshold: 2,
+			expected:  true,
+		},
+		{
+			name:      "exit signal with exact threshold",
+			status:    Status{ExitSignal: true, CompletionIndicators: 2},
+			threshold: 2,
+			expected:  true,
+		},
+		{
+			name:      "exit signal but not enough indicators",
+			status:    Status{ExitSignal: true, CompletionIndicators: 1},
+			threshold: 2,
+			expected:  false,
+		},
+		{
+			name:      "enough indicators but no exit signal",
+			status:    Status{ExitSignal: false, CompletionIndicators: 5},
+			threshold: 2,
+			expected:  false,
+		},
+		{
+			name:      "neither condition met",
+			status:    Status{ExitSignal: false, CompletionIndicators: 0},
+			threshold: 2,
+			expected:  false,
+		},
+		{
+			name:      "zero threshold uses default",
+			status:    Status{ExitSignal: true, CompletionIndicators: 2},
+			threshold: 0,
+			expected:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.status.IsCompleteStrict(tt.threshold))
+		})
+	}
+}
+
+func TestCountCompletionIndicators(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		expected int
+	}{
+		{
+			name:     "no indicators",
+			output:   "Just some regular output",
+			expected: 0,
+		},
+		{
+			name:     "one indicator",
+			output:   "All tasks complete and ready to go",
+			expected: 1,
+		},
+		{
+			name:     "multiple indicators",
+			output:   "All tasks complete, project ready, work is done!",
+			expected: 3,
+		},
+		{
+			name:     "case insensitive",
+			output:   "ALL TASKS COMPLETE and PROJECT READY",
+			expected: 2,
+		},
+		{
+			name:     "partial match doesn't count",
+			output:   "Some tasks are still incomplete",
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, CountCompletionIndicators(tt.output))
+		})
+	}
+}
+
+func TestDetectRateLimitError(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		expected bool
+	}{
+		{
+			name:     "no rate limit",
+			output:   "Regular output without any errors",
+			expected: false,
+		},
+		{
+			name:     "rate limit detected",
+			output:   "Error: You have exceeded your rate limit",
+			expected: true,
+		},
+		{
+			name:     "usage limit detected",
+			output:   "Usage limit exceeded, please wait",
+			expected: true,
+		},
+		{
+			name:     "5-hour limit",
+			output:   "You've hit the 5-hour usage limit",
+			expected: true,
+		},
+		{
+			name:     "too many requests",
+			output:   "Error: Too many requests, slow down",
+			expected: true,
+		},
+		{
+			name:     "quota exceeded",
+			output:   "API quota exceeded for the current period",
+			expected: true,
+		},
+		{
+			name:     "case insensitive",
+			output:   "RATE LIMIT ERROR",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, DetectRateLimitError(tt.output))
+		})
+	}
+}
+
+func TestExtractErrorSignature(t *testing.T) {
+	tests := []struct {
+		name          string
+		output        string
+		expectEmpty   bool
+		expectSameAs  string // If non-empty, compare signature with this output
+		expectDiffAs  string // If non-empty, signature should differ from this output
+	}{
+		{
+			name:        "no error",
+			output:      "Everything is fine",
+			expectEmpty: true,
+		},
+		{
+			name:        "simple error",
+			output:      "Error: file not found",
+			expectEmpty: false,
+		},
+		{
+			name:        "exception pattern",
+			output:      "Exception: null pointer",
+			expectEmpty: false,
+		},
+		{
+			name:        "failed pattern",
+			output:      "Test failed: assertion error",
+			expectEmpty: false,
+		},
+		{
+			name:       "same error different line numbers",
+			output:     "Error: file not found at line 123",
+			expectSameAs: "Error: file not found at line 456",
+		},
+		{
+			name:       "different errors",
+			output:     "Error: file not found",
+			expectDiffAs: "Error: permission denied",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sig := ExtractErrorSignature(tt.output)
+			if tt.expectEmpty {
+				assert.Empty(t, sig)
+			} else {
+				assert.NotEmpty(t, sig)
+			}
+
+			if tt.expectSameAs != "" {
+				otherSig := ExtractErrorSignature(tt.expectSameAs)
+				assert.Equal(t, sig, otherSig, "signatures should match")
+			}
+
+			if tt.expectDiffAs != "" {
+				otherSig := ExtractErrorSignature(tt.expectDiffAs)
+				assert.NotEqual(t, sig, otherSig, "signatures should differ")
+			}
+		})
+	}
+}
+
+func TestAnalyzeOutput(t *testing.T) {
+	output := `Some output here
+---RALPH_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 2
+FILES_MODIFIED: 3
+WORK_TYPE: TESTING
+EXIT_SIGNAL: false
+RECOMMENDATION: Continue testing
+---END_RALPH_STATUS---
+Error: test failed assertion
+All tasks complete.`
+
+	result := AnalyzeOutput(output)
+
+	require.NotNil(t, result)
+	require.NotNil(t, result.Status)
+	assert.Equal(t, "IN_PROGRESS", result.Status.Status)
+	assert.Equal(t, 2, result.Status.TasksCompleted)
+	assert.False(t, result.RateLimitHit)
+	assert.NotEmpty(t, result.ErrorSignature)
+	assert.Greater(t, result.OutputSize, 0)
+	assert.Equal(t, 1, result.CompletionCount) // "All tasks complete" matches
+}

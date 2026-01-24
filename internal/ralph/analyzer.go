@@ -1,9 +1,13 @@
 package ralph
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Status represents the parsed RALPH_STATUS block from Claude's output.
@@ -28,6 +32,9 @@ type Status struct {
 
 	// Recommendation is a one-line recommendation for next steps.
 	Recommendation string
+
+	// CompletionIndicators is the count of completion phrases found in output.
+	CompletionIndicators int
 }
 
 // StatusPending indicates work is still in progress.
@@ -48,12 +55,40 @@ const TestsFailing = "FAILING"
 // TestsNotRun indicates tests were not run.
 const TestsNotRun = "NOT_RUN"
 
+// Work type constants.
+const (
+	WorkTypeImplementation = "IMPLEMENTATION"
+	WorkTypeTesting        = "TESTING"
+	WorkTypeDocumentation  = "DOCUMENTATION"
+	WorkTypeRefactoring    = "REFACTORING"
+)
+
 var (
 	// Match the RALPH_STATUS block boundaries
 	statusBlockRe = regexp.MustCompile(`(?s)---RALPH_STATUS---(.+?)---END_RALPH_STATUS---`)
 
 	// Match individual fields within the block
 	fieldRe = regexp.MustCompile(`(?m)^([A-Z_]+):\s*(.*)$`)
+
+	// Match Claude's rate limit error patterns
+	rateLimitRe = regexp.MustCompile(`(?i)(rate.?limit|usage.?limit|5.?hour|too.?many.?requests|quota.?exceeded|api.?limit)`)
+
+	// Completion indicator patterns
+	completionPatterns = []string{
+		"all tasks complete",
+		"project ready",
+		"work is done",
+		"implementation complete",
+		"no more work",
+		"finished",
+		"task complete",
+		"all done",
+		"nothing left to do",
+		"completed successfully",
+	}
+
+	// Error patterns to extract for signature
+	errorPatternRe = regexp.MustCompile(`(?i)(error|exception|failed|failure|cannot|unable|refused|denied|timeout|crash)[\s:]+([^\n]{0,100})`)
 )
 
 // ParseStatus extracts the RALPH_STATUS block from output and parses it.
@@ -79,9 +114,17 @@ func ParseStatus(output string) *Status {
 		case "STATUS":
 			status.Status = value
 		case "TASKS_COMPLETED_THIS_LOOP":
-			status.TasksCompleted, _ = strconv.Atoi(value)
+			if val, err := strconv.Atoi(value); err != nil {
+				logger.Debug().Str("value", value).Msg("failed to parse TASKS_COMPLETED_THIS_LOOP, defaulting to 0")
+			} else {
+				status.TasksCompleted = val
+			}
 		case "FILES_MODIFIED":
-			status.FilesModified, _ = strconv.Atoi(value)
+			if val, err := strconv.Atoi(value); err != nil {
+				logger.Debug().Str("value", value).Msg("failed to parse FILES_MODIFIED, defaulting to 0")
+			} else {
+				status.FilesModified = val
+			}
 		case "TESTS_STATUS":
 			status.TestsStatus = value
 		case "WORK_TYPE":
@@ -93,12 +136,27 @@ func ParseStatus(output string) *Status {
 		}
 	}
 
+	// Count completion indicators in the full output
+	status.CompletionIndicators = CountCompletionIndicators(output)
+
 	return status
 }
 
 // IsComplete returns true if the status indicates completion.
+// This is the basic check: STATUS: COMPLETE or EXIT_SIGNAL: true
 func (s *Status) IsComplete() bool {
 	return s.Status == StatusComplete || s.ExitSignal
+}
+
+// IsCompleteStrict returns true only if BOTH conditions are met:
+// - EXIT_SIGNAL is true
+// - CompletionIndicators >= threshold
+// This prevents premature exit due to false positives.
+func (s *Status) IsCompleteStrict(threshold int) bool {
+	if threshold <= 0 {
+		threshold = DefaultCompletionThreshold
+	}
+	return s.ExitSignal && s.CompletionIndicators >= threshold
 }
 
 // IsBlocked returns true if the status indicates the agent is blocked.
@@ -109,6 +167,11 @@ func (s *Status) IsBlocked() bool {
 // HasProgress returns true if the status indicates meaningful progress.
 func (s *Status) HasProgress() bool {
 	return s.TasksCompleted > 0 || s.FilesModified > 0
+}
+
+// IsTestOnly returns true if this loop was test-only work.
+func (s *Status) IsTestOnly() bool {
+	return s.WorkType == WorkTypeTesting
 }
 
 // String returns a human-readable summary of the status.
@@ -127,4 +190,95 @@ func (s *Status) String() string {
 		parts = append(parts, "tests: "+s.TestsStatus)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// CountCompletionIndicators counts how many completion phrases appear in the output.
+func CountCompletionIndicators(output string) int {
+	lower := strings.ToLower(output)
+	count := 0
+	for _, pattern := range completionPatterns {
+		if strings.Contains(lower, pattern) {
+			count++
+		}
+	}
+	return count
+}
+
+// DetectRateLimitError checks if the output contains Claude's rate limit error.
+// Returns true if a rate limit error is detected.
+func DetectRateLimitError(output string) bool {
+	return rateLimitRe.MatchString(output)
+}
+
+// ExtractErrorSignature extracts a normalized error signature from output.
+// The signature can be used to detect repeated identical errors.
+// Returns empty string if no error pattern is found.
+func ExtractErrorSignature(output string) string {
+	matches := errorPatternRe.FindAllStringSubmatch(output, 5) // Get up to 5 error patterns
+	if len(matches) == 0 {
+		return ""
+	}
+
+	// Combine all error patterns into a signature
+	var parts []string
+	for _, match := range matches {
+		if len(match) >= 3 {
+			// Normalize: lowercase, trim spaces
+			errorType := strings.ToLower(strings.TrimSpace(match[1]))
+			errorMsg := strings.ToLower(strings.TrimSpace(match[2]))
+			// Remove variable parts like line numbers, timestamps
+			errorMsg = normalizeErrorMessage(errorMsg)
+			parts = append(parts, errorType+":"+errorMsg)
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// Hash the combined parts for a compact signature
+	combined := strings.Join(parts, "|")
+	hash := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(hash[:8]) // 16 char hex string
+}
+
+// normalizeErrorMessage removes variable parts from error messages
+// to allow comparison of "same" errors.
+func normalizeErrorMessage(msg string) string {
+	// Remove line numbers like ":123" or "line 45"
+	lineNumRe := regexp.MustCompile(`:\d+|line\s+\d+`)
+	msg = lineNumRe.ReplaceAllString(msg, "")
+
+	// Remove timestamps
+	timestampRe := regexp.MustCompile(`\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}`)
+	msg = timestampRe.ReplaceAllString(msg, "")
+
+	// Remove hex addresses
+	addrRe := regexp.MustCompile(`0x[0-9a-fA-F]+`)
+	msg = addrRe.ReplaceAllString(msg, "")
+
+	// Collapse whitespace
+	msg = strings.Join(strings.Fields(msg), " ")
+
+	return msg
+}
+
+// AnalysisResult contains the full analysis of a loop's output.
+type AnalysisResult struct {
+	Status          *Status
+	RateLimitHit    bool
+	ErrorSignature  string
+	OutputSize      int
+	CompletionCount int
+}
+
+// AnalyzeOutput performs full analysis of a loop's output.
+func AnalyzeOutput(output string) *AnalysisResult {
+	return &AnalysisResult{
+		Status:          ParseStatus(output),
+		RateLimitHit:    DetectRateLimitError(output),
+		ErrorSignature:  ExtractErrorSignature(output),
+		OutputSize:      len(output),
+		CompletionCount: CountCompletionIndicators(output),
+	}
 }

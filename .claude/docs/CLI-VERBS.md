@@ -212,6 +212,15 @@ The agent must output a RALPH_STATUS block for progress tracking.
 | `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
 | `--quiet` | `-q` | bool | false | Suppress progress output |
 | `--json` | | bool | false | Output result as JSON |
+| `--calls` | | int | 100 | Rate limit: max calls per hour (0 to disable) |
+| `--monitor` | | bool | false | Enable live monitoring output |
+| `--verbose` | `-v` | bool | false | Enable verbose output |
+| `--strict-completion` | | bool | false | Require both EXIT_SIGNAL and completion indicators |
+| `--same-error-threshold` | | int | 5 | Same error repetitions before circuit trips |
+| `--output-decline-threshold` | | int | 70 | Output decline percentage that triggers trip |
+| `--max-test-loops` | | int | 3 | Consecutive test-only loops before circuit trips |
+| `--loop-delay` | | int | 3 | Seconds to wait between loop iterations |
+| `--skip-permissions` | | bool | false | Pass --dangerously-skip-permissions to claude |
 
 **Examples:**
 ```bash
@@ -229,13 +238,27 @@ clawker ralph run --agent dev --reset-circuit
 
 # Run with custom limits
 clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+
+# Run with live monitoring
+clawker ralph run --agent dev --monitor
+
+# Run with rate limiting (5 calls per hour)
+clawker ralph run --agent dev --calls 5
+
+# Run with verbose output
+clawker ralph run --agent dev -v
+
+# Run in YOLO mode (skip all permission prompts)
+clawker ralph run --agent dev --skip-permissions
 ```
 
 **Exit conditions:**
-- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE`
-- Circuit breaker trips (no progress for N consecutive loops)
+- Claude signals `EXIT_SIGNAL: true` with sufficient completion indicators (strict mode)
+- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE` (default mode)
+- Circuit breaker trips (no progress, same error, output decline, or test loops)
 - Maximum loops reached
 - Error during execution
+- Claude's API rate limit hit
 
 ---
 

@@ -266,6 +266,9 @@ The `clawker ralph` command provides built-in autonomous loop execution with sta
 # Start a ralph loop
 clawker ralph run --agent dev --prompt "Fix all failing tests"
 
+# Run in YOLO mode (skip all permission prompts)
+clawker ralph run --agent dev --skip-permissions --prompt "Build feature X"
+
 # Check session status
 clawker ralph status --agent dev
 
@@ -297,9 +300,16 @@ RECOMMENDATION: <one line>
 
 ```yaml
 ralph:
-  max_loops: 50
-  stagnation_threshold: 3
-  timeout_minutes: 15
+  max_loops: 50                   # Maximum loops before stopping
+  stagnation_threshold: 3         # Loops without progress before circuit trips
+  timeout_minutes: 15             # Per-loop timeout
+  calls_per_hour: 100             # Rate limit (0 to disable)
+  completion_threshold: 2         # Required completion indicators for strict mode
+  session_expiration_hours: 24    # Session TTL (auto-reset if older)
+  same_error_threshold: 5         # Same error repetitions before circuit trips
+  output_decline_threshold: 70    # Output decline percentage that triggers trip
+  max_consecutive_test_loops: 3   # Test-only loops before circuit trips
+  skip_permissions: false         # Pass --dangerously-skip-permissions to claude
 ```
 
 ## Dockerfile Generation

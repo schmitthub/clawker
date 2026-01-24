@@ -28,6 +28,9 @@ type LoopResult struct {
 
 	// Error is set if the loop exited due to an error.
 	Error error
+
+	// RateLimitHit is true if the loop hit Claude's API rate limit.
+	RateLimitHit bool
 }
 
 // LoopOptions configures the Ralph loop execution.
@@ -56,6 +59,39 @@ type LoopOptions struct {
 	// ResetCircuit resets the circuit breaker before starting.
 	ResetCircuit bool
 
+	// CallsPerHour is the rate limit (0 to disable).
+	CallsPerHour int
+
+	// CompletionThreshold is the number of completion indicators required.
+	CompletionThreshold int
+
+	// SessionExpirationHours is the session TTL (0 for default).
+	SessionExpirationHours int
+
+	// SameErrorThreshold is how many same-error loops before tripping.
+	SameErrorThreshold int
+
+	// OutputDeclineThreshold is the percentage decline that triggers trip.
+	OutputDeclineThreshold int
+
+	// MaxConsecutiveTestLoops is how many test-only loops before tripping.
+	MaxConsecutiveTestLoops int
+
+	// LoopDelaySeconds is the delay between loop iterations.
+	LoopDelaySeconds int
+
+	// UseStrictCompletion requires both EXIT_SIGNAL and completion indicators.
+	UseStrictCompletion bool
+
+	// SkipPermissions passes --dangerously-skip-permissions to claude.
+	SkipPermissions bool
+
+	// Monitor is the optional monitor for live output.
+	Monitor *Monitor
+
+	// Verbose enables verbose logging.
+	Verbose bool
+
 	// OnLoopStart is called before each loop iteration.
 	OnLoopStart func(loopNum int)
 
@@ -64,12 +100,17 @@ type LoopOptions struct {
 
 	// OnOutput is called with output chunks during execution.
 	OnOutput func(chunk []byte)
+
+	// OnRateLimitHit is called when Claude's API limit is detected.
+	// Return true to wait and retry, false to exit.
+	OnRateLimitHit func() bool
 }
 
 // Runner executes Ralph loops.
 type Runner struct {
-	client *docker.Client
-	store  *SessionStore
+	client  *docker.Client
+	store   *SessionStore
+	history *HistoryStore
 }
 
 // NewRunner creates a new Runner with the given Docker client.
@@ -78,9 +119,14 @@ func NewRunner(client *docker.Client) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	history, err := DefaultHistoryStore()
+	if err != nil {
+		return nil, err
+	}
 	return &Runner{
-		client: client,
-		store:  store,
+		client:  client,
+		store:   store,
+		history: history,
 	}, nil
 }
 
@@ -88,38 +134,95 @@ func NewRunner(client *docker.Client) (*Runner, error) {
 func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
 	// Set defaults
 	if opts.MaxLoops <= 0 {
-		opts.MaxLoops = 50
+		opts.MaxLoops = DefaultMaxLoops
 	}
 	if opts.StagnationThreshold <= 0 {
-		opts.StagnationThreshold = 3
+		opts.StagnationThreshold = DefaultStagnationThreshold
 	}
 	if opts.Timeout <= 0 {
-		opts.Timeout = 15 * time.Minute
+		opts.Timeout = time.Duration(DefaultTimeoutMinutes) * time.Minute
+	}
+	if opts.CompletionThreshold <= 0 {
+		opts.CompletionThreshold = DefaultCompletionThreshold
+	}
+	if opts.SessionExpirationHours <= 0 {
+		opts.SessionExpirationHours = DefaultSessionExpirationHours
+	}
+	if opts.SameErrorThreshold <= 0 {
+		opts.SameErrorThreshold = DefaultSameErrorThreshold
+	}
+	if opts.OutputDeclineThreshold <= 0 {
+		opts.OutputDeclineThreshold = DefaultOutputDeclineThreshold
+	}
+	if opts.MaxConsecutiveTestLoops <= 0 {
+		opts.MaxConsecutiveTestLoops = DefaultMaxConsecutiveTestLoops
+	}
+	if opts.CallsPerHour == 0 {
+		opts.CallsPerHour = DefaultCallsPerHour
 	}
 
-	// Load or create session
-	session, err := r.store.LoadSession(opts.Project, opts.Agent)
+	// Load or create session (with expiration check)
+	session, expired, err := r.store.LoadSessionWithExpiration(opts.Project, opts.Agent, opts.SessionExpirationHours)
 	if err != nil {
-		// Distinguish between "no session" (nil, nil) and "load error"
-		logger.Error().Err(err).Msg("failed to load existing session - starting fresh but data may be lost")
+		logger.Error().Err(err).Msg("failed to load session")
+		return &LoopResult{
+			ExitReason: "failed to load session",
+			Error:      fmt.Errorf("failed to load session (use --reset-circuit --all to start fresh): %w", err),
+		}, nil
 	}
+	if expired {
+		logger.Info().Msg("session expired, starting fresh")
+		// Record session expiration in history
+		if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "expired", "", "", 0); histErr != nil {
+			logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
+		}
+	}
+	sessionCreated := session == nil
 	if session == nil {
 		session = NewSession(opts.Project, opts.Agent, opts.Prompt)
 	}
+	// Record session creation in history
+	if sessionCreated {
+		if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
+			logger.Warn().Err(histErr).Msg("failed to record session creation in history")
+		}
+	}
 
-	// Initialize circuit breaker
-	circuit := NewCircuitBreaker(opts.StagnationThreshold)
+	// Initialize rate limiter
+	rateLimiter := NewRateLimiter(opts.CallsPerHour)
+	if session.RateLimitState != nil {
+		if !rateLimiter.RestoreState(*session.RateLimitState) {
+			logger.Warn().Msg("rate limit state expired or invalid, starting fresh window")
+		}
+	}
+
+	// Initialize circuit breaker with full config
+	circuit := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		StagnationThreshold:     opts.StagnationThreshold,
+		SameErrorThreshold:      opts.SameErrorThreshold,
+		OutputDeclineThreshold:  opts.OutputDeclineThreshold,
+		MaxConsecutiveTestLoops: opts.MaxConsecutiveTestLoops,
+		CompletionThreshold:     opts.CompletionThreshold,
+	})
 
 	// Reset circuit if requested
 	if opts.ResetCircuit {
 		if err := r.store.DeleteCircuitState(opts.Project, opts.Agent); err != nil {
 			logger.Warn().Err(err).Msg("failed to delete circuit state")
+			return &LoopResult{
+				Session:    session,
+				ExitReason: "failed to reset circuit breaker",
+				Error:      fmt.Errorf("failed to reset circuit breaker as requested: %w", err),
+			}, nil
+		}
+		// Record circuit reset in history
+		if histErr := r.history.AddCircuitEntry(opts.Project, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
+			logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
 		}
 	} else {
 		// Load existing circuit state
 		circuitState, err := r.store.LoadCircuitState(opts.Project, opts.Agent)
 		if err != nil {
-			// Error loading circuit state is critical - it may be tripped and we don't know
 			logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
 			return &LoopResult{
 				Session:    session,
@@ -140,7 +243,14 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		Session: session,
 	}
 
+	// Update monitor with rate limiter if available
+	if opts.Monitor != nil {
+		opts.Monitor.opts.RateLimiter = rateLimiter
+		opts.Monitor.opts.ShowRateLimit = rateLimiter.IsEnabled()
+	}
+
 	// Main loop
+mainLoop:
 	for loopNum := 1; loopNum <= opts.MaxLoops; loopNum++ {
 		// Check context cancellation
 		if ctx.Err() != nil {
@@ -156,8 +266,40 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 			break
 		}
 
+		// Check rate limiter
+		if rateLimiter.IsEnabled() && !rateLimiter.Allow() {
+			logger.Warn().
+				Int("limit", rateLimiter.Limit()).
+				Time("reset_time", rateLimiter.ResetTime()).
+				Msg("rate limit reached")
+
+			if opts.Monitor != nil {
+				fmt.Fprintln(opts.Monitor.opts.Writer, opts.Monitor.FormatRateLimitWait(rateLimiter.ResetTime()))
+			}
+
+			// Wait until reset time
+			waitDuration := time.Until(rateLimiter.ResetTime())
+			if waitDuration > 0 {
+				select {
+				case <-ctx.Done():
+					result.ExitReason = "context cancelled while waiting for rate limit"
+					result.Error = ctx.Err()
+					break mainLoop
+				case <-time.After(waitDuration):
+					// Rate limit should be reset now, retry this loop
+					loopNum--
+					continue
+				}
+			}
+		}
+
+		loopStart := time.Now()
+
 		if opts.OnLoopStart != nil {
 			opts.OnLoopStart(loopNum)
+		}
+		if opts.Monitor != nil {
+			opts.Monitor.PrintLoopStart(loopNum)
 		}
 
 		logger.Info().
@@ -173,25 +315,80 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		} else {
 			cmd = []string{"claude", "--continue"}
 		}
+		if opts.SkipPermissions {
+			cmd = append(cmd, "--dangerously-skip-permissions")
+		}
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		output, exitCode, loopErr := r.execCapture(loopCtx, opts.ContainerName, cmd, opts.OnOutput)
 		cancel()
 
-		// Parse status
-		status := ParseStatus(output)
+		loopDuration := time.Since(loopStart)
+
+		// Full analysis of output
+		analysis := AnalyzeOutput(output)
+		status := analysis.Status
 		result.FinalStatus = status
 		result.LoopsCompleted = loopNum
 
+		// Check for Claude's API rate limit
+		if analysis.RateLimitHit {
+			result.RateLimitHit = true
+			logger.Warn().Msg("Claude API rate limit detected")
+
+			if opts.Monitor != nil {
+				isInteractive := opts.OnRateLimitHit != nil
+				fmt.Fprintln(opts.Monitor.opts.Writer, opts.Monitor.FormatAPILimitError(isInteractive))
+			}
+
+			if opts.OnRateLimitHit != nil && opts.OnRateLimitHit() {
+				// User chose to wait, sleep for a bit and retry
+				select {
+				case <-ctx.Done():
+					result.ExitReason = "context cancelled while waiting for API rate limit"
+					result.Error = ctx.Err()
+					break mainLoop
+				case <-time.After(60 * time.Second):
+					loopNum--
+					continue mainLoop
+				}
+			}
+
+			result.ExitReason = "Claude API rate limit hit"
+			result.Error = fmt.Errorf("claude API rate limit hit (5-hour limit)")
+			break
+		}
+
 		// Update session
 		session.Update(status, loopErr)
+		rlState := rateLimiter.State()
+		session.RateLimitState = &rlState
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
 			logger.Error().Err(saveErr).Msg("failed to save session - progress may be lost")
+			if opts.Monitor != nil {
+				fmt.Fprintf(opts.Monitor.opts.Writer, "WARNING: Failed to save session: %v\n", saveErr)
+			}
+		} else {
+			// Record session update in history
+			errStr := ""
+			if loopErr != nil {
+				errStr = loopErr.Error()
+			}
+			statusStr := ""
+			if status != nil {
+				statusStr = status.Status
+			}
+			if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
+				logger.Warn().Err(histErr).Msg("failed to record session update in history")
+			}
 		}
 
 		if opts.OnLoopEnd != nil {
 			opts.OnLoopEnd(loopNum, status, loopErr)
+		}
+		if opts.Monitor != nil {
+			opts.Monitor.PrintLoopEnd(loopNum, status, loopErr, analysis.OutputSize, loopDuration)
 		}
 
 		logger.Info().
@@ -201,8 +398,17 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 			Err(loopErr).
 			Msg("completed ralph loop")
 
-		// Check for completion
-		if status != nil && status.IsComplete() {
+		// Check for completion using circuit breaker's analysis
+		updateResult := circuit.UpdateWithAnalysis(status, analysis)
+
+		if updateResult.IsComplete {
+			result.ExitReason = "agent signaled completion"
+			logger.Info().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
+			break
+		}
+
+		// For backward compatibility: check basic completion if strict mode not required
+		if !opts.UseStrictCompletion && status != nil && status.IsComplete() {
 			result.ExitReason = "agent signaled completion"
 			break
 		}
@@ -214,15 +420,15 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 			break
 		}
 
-		// Check for non-zero exit code (might indicate issue)
+		// Check for non-zero exit code
 		if exitCode != 0 {
 			logger.Warn().Int("exit_code", exitCode).Msg("non-zero exit code from claude")
 		}
 
-		// Update circuit breaker
-		if tripped, reason := circuit.Update(status); tripped {
-			result.ExitReason = fmt.Sprintf("stagnation: %s", reason)
-			result.Error = fmt.Errorf("circuit breaker tripped: %s", reason)
+		// Check if circuit tripped from update
+		if updateResult.Tripped {
+			result.ExitReason = fmt.Sprintf("stagnation: %s", updateResult.Reason)
+			result.Error = fmt.Errorf("circuit breaker tripped: %s", updateResult.Reason)
 
 			// Save circuit state
 			now := time.Now()
@@ -231,25 +437,46 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 				Agent:           opts.Agent,
 				NoProgressCount: circuit.NoProgressCount(),
 				Tripped:         true,
-				TripReason:      reason,
+				TripReason:      updateResult.Reason,
 				TrippedAt:       &now,
 			}
 			if saveErr := r.store.SaveCircuitState(circuitState); saveErr != nil {
 				logger.Error().Err(saveErr).Msg("CRITICAL: failed to save circuit state")
-				// Include warning in exit reason so user knows circuit state wasn't persisted
-				result.ExitReason = fmt.Sprintf("stagnation: %s (WARNING: circuit state not persisted)", reason)
+				result.ExitReason = fmt.Sprintf("stagnation: %s (WARNING: circuit state not persisted)", updateResult.Reason)
+				result.Error = fmt.Errorf("circuit breaker tripped (%s) and state save failed: %w", updateResult.Reason, saveErr)
+			}
+
+			// Record circuit trip in history
+			state := circuit.State()
+			if histErr := r.history.AddCircuitEntry(opts.Project, opts.Agent, "closed", "tripped", updateResult.Reason,
+				state.NoProgressCount, state.SameErrorCount, state.ConsecutiveTestLoops, state.ConsecutiveCompletionCount); histErr != nil {
+				logger.Warn().Err(histErr).Msg("failed to record circuit trip in history")
 			}
 			break
 		}
 
+		// Monitor progress output
+		if opts.Monitor != nil {
+			opts.Monitor.PrintLoopProgress(loopNum, status, circuit)
+		}
+
 		// Brief pause between loops
-		time.Sleep(time.Second)
+		loopDelay := time.Duration(opts.LoopDelaySeconds) * time.Second
+		if loopDelay <= 0 {
+			loopDelay = time.Duration(DefaultLoopDelaySeconds) * time.Second
+		}
+		time.Sleep(loopDelay)
 	}
 
 	// Check if we hit max loops
 	if result.LoopsCompleted >= opts.MaxLoops && result.ExitReason == "" {
 		result.ExitReason = "max loops reached"
 		result.Error = fmt.Errorf("reached maximum loops (%d)", opts.MaxLoops)
+	}
+
+	// Print final result if monitor available
+	if opts.Monitor != nil {
+		opts.Monitor.PrintResult(result)
 	}
 
 	return result, nil
@@ -307,9 +534,10 @@ func (r *Runner) execCapture(ctx context.Context, containerName string, cmd []st
 		return stdout.String(), -1, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	// Combine stdout and stderr for output
+	// Log stderr separately if non-empty (Fix #5: don't silently merge)
 	output := stdout.String()
 	if stderr.Len() > 0 {
+		logger.Debug().Str("stderr", stderr.String()).Msg("claude stderr output")
 		output += "\n" + stderr.String()
 	}
 
@@ -328,6 +556,14 @@ func (w *callbackWriter) Write(p []byte) (n int, err error) {
 
 // ResetCircuit resets the circuit breaker for a project/agent.
 func (r *Runner) ResetCircuit(project, agent string) error {
+	return r.store.DeleteCircuitState(project, agent)
+}
+
+// ResetSession resets both session and circuit for a project/agent.
+func (r *Runner) ResetSession(project, agent string) error {
+	if err := r.store.DeleteSession(project, agent); err != nil {
+		return err
+	}
 	return r.store.DeleteCircuitState(project, agent)
 }
 

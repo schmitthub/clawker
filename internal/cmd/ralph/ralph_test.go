@@ -61,6 +61,7 @@ func TestCmdRun_Flags(t *testing.T) {
 	require.NotNil(t, runCmd.Flags().Lookup("reset-circuit"))
 	require.NotNil(t, runCmd.Flags().Lookup("quiet"))
 	require.NotNil(t, runCmd.Flags().Lookup("json"))
+	require.NotNil(t, runCmd.Flags().Lookup("skip-permissions"))
 
 	// Test shorthand flags
 	require.NotNil(t, runCmd.Flags().ShorthandLookup("p"))
@@ -126,6 +127,14 @@ func TestCmdRun_FlagParsing(t *testing.T) {
 			checkOpts: func(t *testing.T, cmd *cobra.Command) {
 				prompt, _ := cmd.Flags().GetString("prompt")
 				assert.Equal(t, "Fix tests", prompt)
+			},
+		},
+		{
+			name:  "with skip-permissions flag",
+			input: "run --agent dev --skip-permissions",
+			checkOpts: func(t *testing.T, cmd *cobra.Command) {
+				skipPerms, _ := cmd.Flags().GetBool("skip-permissions")
+				assert.True(t, skipPerms)
 			},
 		},
 	}

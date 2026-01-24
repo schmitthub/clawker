@@ -347,10 +347,19 @@ security:
     forward_ssh: true      # Forward SSH agent for git+ssh (default: true)
     copy_git_config: true  # Copy host ~/.gitconfig (default: true)
 
-ralph:                     # Autonomous loop configuration
-  max_loops: 50            # Maximum loops before stopping (default: 50)
-  stagnation_threshold: 3  # Loops without progress before circuit trips (default: 3)
-  timeout_minutes: 15      # Per-loop timeout in minutes (default: 15)
+ralph:                            # Autonomous loop configuration
+  max_loops: 50                   # Maximum loops before stopping (default: 50)
+  stagnation_threshold: 3         # Loops without progress before circuit trips (default: 3)
+  timeout_minutes: 15             # Per-loop timeout in minutes (default: 15)
+  calls_per_hour: 100             # Rate limit: max calls per hour, 0 to disable (default: 100)
+  completion_threshold: 2         # Completion indicators required for strict mode (default: 2)
+  session_expiration_hours: 24    # Session TTL, auto-reset if older (default: 24)
+  same_error_threshold: 5         # Same error repetitions before circuit trips (default: 5)
+  output_decline_threshold: 70    # Output decline percentage that triggers trip (default: 70)
+  max_consecutive_test_loops: 3   # Test-only loops before circuit trips (default: 3)
+  loop_delay_seconds: 3           # Seconds to wait between loop iterations (default: 3)
+  safety_completion_threshold: 5  # Force exit after N loops with completion indicators (default: 5)
+  skip_permissions: false         # Pass --dangerously-skip-permissions to claude (default: false)
 ```
 
 **Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
