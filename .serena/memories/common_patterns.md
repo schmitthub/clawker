@@ -541,10 +541,38 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 ```
 
 **Key patterns:**
-- Circuit breaker with configurable threshold for stagnation detection
-- Session persistence for resumable loops
+- Circuit breaker with configurable thresholds (stagnation, same-error, output-decline, test-loops)
+- Session persistence with 24-hour expiration for resumable loops
+- Sliding window rate limiting (better than hourly reset)
 - Non-TTY exec with output capture via ExecCreate/ExecAttach
 - RALPH_STATUS block parsing from Claude output
+- Completion indicator detection (pattern matching for "done", "complete", etc.)
+- Safety circuit breaker (force exit after N consecutive completion signals)
+- `--skip-permissions` flag to pass `--dangerously-skip-permissions` to claude
+
+**Configuration (clawker.yaml):**
+```yaml
+ralph:
+  max_loops: 50
+  stagnation_threshold: 3
+  timeout_minutes: 15
+  calls_per_hour: 100
+  completion_threshold: 2
+  session_expiration_hours: 24
+  same_error_threshold: 5
+  output_decline_threshold: 70
+  max_consecutive_test_loops: 3
+  loop_delay_seconds: 3
+  safety_completion_threshold: 5
+  skip_permissions: false
+```
+
+**CLI usage:**
+```bash
+clawker ralph run --agent dev --prompt "Fix tests" --skip-permissions
+clawker ralph status --agent dev
+clawker ralph reset --agent dev --all
+```
 
 ## Non-TTY Exec with Output Capture Pattern
 

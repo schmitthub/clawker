@@ -60,3 +60,10 @@
 - **ExecInspect needs options**: `client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})` - second arg required
 - **Config wiring**: Check if CLI flag is at default value before applying config default (avoids overwriting explicit CLI choices)
 - **Subcommand registration**: Parent command adds subcommands via `cmd.AddCommand()` in NewCmd function
+- **Boolean flag config override**: Can't use default value comparison for booleans. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
+- **Docker exec vs container CMD**: Ralph uses `docker exec` to run claude, NOT the container's startup CMD. Flags like `--skip-permissions` must be added to ralph's command building in `loop.go`, not to container create.
+- **Sliding window rate limiting**: Better than hourly reset. Track timestamps in slice, calculate window, allow burst recovery.
+- **No interactive prompts in autonomous mode**: Rate limit handler exits cleanly instead of prompting. Prevents goroutine leaks from blocking stdin reads.
+- **Monitor callback integration**: When `--monitor` is used, don't also emit simple log lines (would duplicate output).
+- **Completion indicator detection**: Parse output for patterns like "done", "complete", "finished" - case insensitive word boundary matching.
+- **Safety circuit breaker**: Force exit after N consecutive loops with completion signals (prevents infinite "almost done" loops).

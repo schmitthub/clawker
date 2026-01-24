@@ -81,12 +81,15 @@ cmd/clawker → internal/cmd/* → internal/docker → pkg/whail → Docker SDK
 - `internal/monitor/` - Observability stack (Prometheus, Grafana, OTel)
 - `internal/logger/` - Zerolog setup
 - `internal/term/` - PTY/terminal handling
-- `internal/ralph/` - Ralph autonomous loop implementation:
+- `internal/ralph/` - Ralph autonomous loop implementation (committed 2026-01-24):
   - `loop.go` - Main Runner orchestrating autonomous loops
-  - `circuit.go` - CircuitBreaker for stagnation detection
-  - `analyzer.go` - RALPH_STATUS block parser
-  - `session.go` - Session and CircuitState persistence
-  - `config.go` - Ralph-specific configuration types
+  - `circuit.go` - CircuitBreaker with multiple trip conditions (stagnation, same-error, output-decline, test-loops, safety)
+  - `analyzer.go` - RALPH_STATUS block parser, completion indicator detection, API rate limit detection
+  - `session.go` - Session and CircuitState persistence with 24h expiration
+  - `config.go` - Ralph-specific configuration types and defaults
+  - `ratelimit.go` - Sliding window rate limiter
+  - `monitor.go` - Live progress output formatting
+  - `history.go` - Session and circuit event logging
 - `internal/hostproxy/` - Host proxy server for container-to-host communication:
   - `server.go` - HTTP server with browser opening and OAuth callback endpoints
   - `session.go` - Generic session store with TTL and automatic cleanup

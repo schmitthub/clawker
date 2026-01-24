@@ -8,7 +8,10 @@ The `clawker ralph` command provides autonomous loop execution for Claude Code a
 
 ---
 
-## Current Status: Production Ready with Gaps
+## Current Status: Production Ready (Committed 2026-01-24)
+
+**Latest Commit:** `7a2dace` on branch `a/ralph`
+**Commit Message:** feat(ralph): implement autonomous loop execution with circuit breaker
 
 ### What's Complete (Excellent Parity)
 
@@ -355,3 +358,40 @@ go test ./internal/ralph/...
 - Comprehensive comparison with original bash implementation
 - Identified gaps: --skip-permissions, TUI, --allowed-tools
 - Confirmed excellent parity on core features
+
+### Full Implementation Commit (2026-01-24)
+- **Commit:** `7a2dace` on branch `a/ralph`
+- Implemented `--skip-permissions` flag (Phase 1 complete)
+- Added sliding window rate limiting (`ratelimit.go`)
+- Added session/circuit history tracking (`history.go`)
+- Added live monitoring output (`monitor.go`)
+- Full RALPH_STATUS parsing with completion indicators
+- Circuit breaker with multiple trip conditions
+- Session persistence with 24h expiration
+- All unit tests passing
+- Documentation updated: CLI-VERBS.md, README.md, CLAUDE.md
+
+---
+
+## Key Learnings
+
+### Architecture Decisions
+1. **Simplified circuit breaker** - Two states (CLOSED/TRIPPED) instead of bash's three (CLOSED/HALF_OPEN/OPEN). Manual reset via `--reset-circuit` is clearer than automatic HALF_OPEN recovery.
+
+2. **Sliding window rate limiting** - Better than bash's hourly reset. Tracks call timestamps in a window, allows burst recovery.
+
+3. **Docker exec, not container CMD** - Ralph uses `docker exec` to run claude commands, NOT the container's startup CMD. This is why `--skip-permissions` needed to be added to ralph's command building.
+
+4. **No interactive prompts in autonomous mode** - Rate limit handling exits cleanly instead of prompting. This prevents goroutine leaks from blocking stdin reads.
+
+### Common Pitfalls
+1. **Config override logic** - Boolean flags need special handling: `if !opts.SkipPermissions && cfg.Ralph.SkipPermissions`. Can't use default value comparison like numeric flags.
+
+2. **Context management** - Always use `context.WithTimeout` for individual loop iterations. Don't store context in structs.
+
+3. **Monitor callback integration** - The Monitor interface provides callbacks for loop events. When `--monitor` is used, don't also emit simple log lines (would duplicate).
+
+### File Locations
+- **Session data**: `~/.local/clawker/ralph/sessions/<project>.<agent>.json`
+- **Circuit state**: `~/.local/clawker/ralph/circuit/<project>.<agent>.json`
+- **History logs**: `~/.local/clawker/ralph/history/<project>.<agent>.*.json`
