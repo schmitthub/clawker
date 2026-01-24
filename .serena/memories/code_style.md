@@ -32,6 +32,27 @@
 - Use Cobra's `RunE` pattern
 - Register in root command
 
+## IOStreams & Output
+
+- Use `f.IOStreams` from Factory for all I/O (never create IOStreams directly)
+- Use `ios.Out` for data output (stdout), `ios.ErrOut` for status messages (stderr)
+- Use `ios.ColorScheme()` for color formatting that respects NO_COLOR and TTY detection
+- Use `ios.IsInteractive()` before prompting for input
+- Use `ios.CanPrompt()` which also respects CI environment variable
+- Use `ios.StartProgressIndicatorWithLabel()` / `ios.StopProgressIndicator()` for spinners
+- Use `ios.RunWithProgress(label, fn)` for automatic spinner lifecycle
+- See `iostreams_package.md` memory for full API reference
+
+## TUI Development
+
+- Use `internal/tui/` components for all terminal UIs (BubbleTea/Lipgloss)
+- Use `tui.ListModel` for selectable lists, `tui.PanelModel` for bordered containers
+- Use `tui.SplitHorizontal/Vertical`, `tui.Stack`, `tui.Row` for layout composition
+- Use `tui.IsUp/IsDown/IsEnter/IsQuit` helpers for key handling in Update()
+- Use `tui.FormatRelative/Duration/Uptime` for time display
+- Use consistent styles: `tui.ColorPrimary`, `tui.HeaderStyle`, `tui.PanelStyle`
+- See `tui_components_package.md` memory for full API reference
+
 ## Cobra CLI Best Practices
 
 - Always use `PersistentPreRunE` not `PersistentPreRun` - never use `logger.Fatal()` in hooks

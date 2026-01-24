@@ -54,6 +54,7 @@
 │   ├── term/                  # PTY/terminal handling
 │   ├── testutil/              # Test utilities
 │   │   └── integration/       # Testcontainers integration tests
+│   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   ├── build/                 # Dockerfile templates, semver, npm registry
@@ -85,8 +86,123 @@ go run ./cmd/gen-docs --doc-path docs --markdown
 | `hostproxy.Manager` | Host proxy server for container-to-host actions (e.g., opening URLs) |
 | `hostproxy.SessionStore` | Generic session management for proxy channels |
 | `hostproxy.CallbackChannel` | OAuth callback interception and forwarding |
+| `cmdutil.IOStreams` | Testable I/O with TTY detection, colors, progress indicators |
+| `cmdutil.ColorScheme` | Color formatting that respects NO_COLOR and terminal theme |
+| `tui.ListModel` | Selectable list component with scrolling |
+| `tui.PanelModel` | Bordered panel with focus management |
+| `tui.SpinnerModel` | Animated spinner component |
 
 See @.claude/docs/ARCHITECTURE.md for detailed abstractions.
+
+## TUI Components (`internal/tui/`)
+
+Reusable BubbleTea components for building terminal user interfaces. See `tui_components_package.md` memory for complete API reference.
+
+### When to Use
+
+- Building any TUI feature (e.g., `clawker ralph tui`)
+- Need consistent styling across terminal interfaces
+- Want responsive layouts that adapt to terminal size
+- Building interactive components (lists, panels, spinners)
+
+### Quick Reference
+
+| Component | Usage |
+|-----------|-------|
+| `tui.ListModel` | Selectable lists with `SetItems()`, `SelectNext()`, `SelectedItem()` |
+| `tui.PanelModel` | Bordered containers with `SetContent()`, `SetFocused()` |
+| `tui.SpinnerModel` | Loading indicators with `Init()`, `Update()`, `View()` |
+| `tui.StatusBarModel` | Status bars with `SetLeft()`, `SetCenter()`, `SetRight()` |
+| `tui.HelpModel` | Help bars from `[]key.Binding` |
+
+### Layout Helpers
+
+```go
+leftW, rightW := tui.SplitHorizontal(width, tui.SplitConfig{Ratio: 0.4})
+content := tui.Stack(0, header, body, footer)  // Vertical stack
+row := tui.Row(1, col1, col2, col3)            // Horizontal row
+```
+
+### Text & Time
+
+```go
+tui.Truncate(s, 20)              // "hello..." truncation
+tui.FormatRelative(t)            // "2 hours ago"
+tui.FormatDuration(d)            // "2m 30s"
+tui.FormatUptime(d)              // "01:15:42"
+```
+
+### Input Handling
+
+```go
+case tea.KeyMsg:
+    if tui.IsQuit(msg) { return m, tea.Quit }
+    if tui.IsUp(msg)   { m.list = m.list.SelectPrev() }
+    if tui.IsDown(msg) { m.list = m.list.SelectNext() }
+```
+
+### Styles
+
+All components use consistent styles from `tui.ColorPrimary`, `tui.ColorSuccess`, etc. Use `tui.HeaderStyle`, `tui.PanelStyle`, `tui.ListItemSelectedStyle` for component-specific styling.
+
+## IOStreams & Output (`internal/cmdutil/`)
+
+Testable I/O abstraction following the GitHub CLI pattern. See `iostreams_package.md` memory for complete API reference.
+
+### When to Use
+
+- **All CLI commands** should access I/O through `f.IOStreams` from Factory
+- **Color output** that respects `NO_COLOR` env var and terminal capabilities
+- **Progress indicators** (spinners) during long operations
+- **TTY detection** for conditional interactive behavior
+
+### Quick Reference
+
+```go
+ios := f.IOStreams
+
+// TTY Detection
+ios.IsInputTTY()      // stdin is a terminal
+ios.IsOutputTTY()     // stdout is a terminal
+ios.IsInteractive()   // both stdin and stdout are TTYs
+ios.CanPrompt()       // interactive AND not CI mode
+
+// Color Output
+cs := ios.ColorScheme()
+cs.Green("Success")   // Returns unmodified string if colors disabled
+cs.SuccessIcon()      // "✓" or "[ok]" based on color support
+
+// Progress Indicators
+ios.StartProgressIndicatorWithLabel("Building...")
+defer ios.StopProgressIndicator()
+// Or: ios.RunWithProgress("Building", func() error { ... })
+
+// Terminal Size
+width := ios.TerminalWidth()
+width, height := ios.TerminalSize()
+```
+
+### Environment Variables
+
+| Variable | Effect |
+|----------|--------|
+| `NO_COLOR` | Disables color output when set |
+| `CI` | Disables interactive prompts when set |
+| `CLAWKER_PAGER` | Custom pager command (highest priority) |
+| `PAGER` | Standard pager command |
+
+### Testing
+
+```go
+ios := cmdutil.NewTestIOStreams()
+ios.SetInteractive(true)         // Simulate TTY
+ios.SetColorEnabled(true)        // Enable colors
+ios.SetTerminalSize(120, 40)     // Set terminal size
+ios.InBuf.SetInput("user input") // Simulate stdin
+// Verify output:
+ios.OutBuf.String()              // stdout content
+ios.ErrBuf.String()              // stderr content
+```
 
 ## Host Proxy Architecture
 

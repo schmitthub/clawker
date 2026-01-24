@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -45,10 +46,28 @@ type Factory struct {
 
 // New creates a new Factory with the given version information.
 func New(version, commit string) *Factory {
+	ios := NewIOStreams()
+
+	// Auto-detect color support
+	if ios.IsOutputTTY() {
+		ios.DetectTerminalTheme()
+		// Respect NO_COLOR environment variable
+		if os.Getenv("NO_COLOR") != "" {
+			ios.SetColorEnabled(false)
+		}
+	} else {
+		ios.SetColorEnabled(false)
+	}
+
+	// Respect CI environment (disable prompts)
+	if os.Getenv("CI") != "" {
+		ios.SetNeverPrompt(true)
+	}
+
 	return &Factory{
 		Version:   version,
 		Commit:    commit,
-		IOStreams: NewIOStreams(),
+		IOStreams: ios,
 	}
 }
 
