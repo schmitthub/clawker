@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
@@ -45,6 +44,7 @@ Checks for:
 }
 
 func runConfigCheck(f *cmdutil2.Factory) error {
+	ios := f.IOStreams
 	logger.Debug().Str("workdir", f.WorkDir).Msg("checking configuration")
 
 	// Load configuration
@@ -62,7 +62,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	cfg, err := loader.Load()
 	if err != nil {
 		cmdutil2.PrintError("Failed to load configuration")
-		fmt.Fprintf(os.Stderr, "  %s\n", err)
+		fmt.Fprintf(ios.ErrOut, "  %s\n", err)
 		cmdutil2.PrintNextSteps(
 			"Check YAML syntax (indentation, colons, quotes)",
 			"Ensure all required fields are present",
@@ -79,14 +79,14 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	validator := internalconfig.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil2.PrintError("Configuration validation failed")
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(ios.ErrOut)
 
 		if multiErr, ok := err.(*internalconfig.MultiValidationError); ok {
 			for _, e := range multiErr.ValidationErrors() {
-				fmt.Fprintf(os.Stderr, "  - %s\n", e)
+				fmt.Fprintf(ios.ErrOut, "  - %s\n", e)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
+			fmt.Fprintf(ios.ErrOut, "  %s\n", err)
 		}
 
 		cmdutil2.PrintNextSteps(
@@ -103,22 +103,22 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	}
 
 	// Success output
-	fmt.Fprintln(os.Stderr, "Configuration is valid!")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  Project:    %s\n", cfg.Project)
-	fmt.Fprintf(os.Stderr, "  Image:      %s\n", cfg.Build.Image)
+	fmt.Fprintln(ios.ErrOut, "Configuration is valid!")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "  Project:    %s\n", cfg.Project)
+	fmt.Fprintf(ios.ErrOut, "  Image:      %s\n", cfg.Build.Image)
 	if cfg.Build.Dockerfile != "" {
-		fmt.Fprintf(os.Stderr, "  Dockerfile: %s\n", cfg.Build.Dockerfile)
+		fmt.Fprintf(ios.ErrOut, "  Dockerfile: %s\n", cfg.Build.Dockerfile)
 	}
-	fmt.Fprintf(os.Stderr, "  Mode:       %s\n", cfg.Workspace.DefaultMode)
-	fmt.Fprintf(os.Stderr, "  Firewall:   %t\n", cfg.Security.FirewallEnabled())
+	fmt.Fprintf(ios.ErrOut, "  Mode:       %s\n", cfg.Workspace.DefaultMode)
+	fmt.Fprintf(ios.ErrOut, "  Firewall:   %t\n", cfg.Security.FirewallEnabled())
 
 	if len(cfg.Build.Packages) > 0 {
-		fmt.Fprintf(os.Stderr, "  Packages:   %v\n", cfg.Build.Packages)
+		fmt.Fprintf(ios.ErrOut, "  Packages:   %v\n", cfg.Build.Packages)
 	}
 
 	if len(cfg.Agent.Includes) > 0 {
-		fmt.Fprintf(os.Stderr, "  Includes:   %d file(s)\n", len(cfg.Agent.Includes))
+		fmt.Fprintf(ios.ErrOut, "  Includes:   %d file(s)\n", len(cfg.Agent.Includes))
 	}
 
 	return nil

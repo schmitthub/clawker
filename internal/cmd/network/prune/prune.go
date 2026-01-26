@@ -2,8 +2,10 @@
 package prune
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"strings"
 
 	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
@@ -37,7 +39,7 @@ are using it for the monitoring stack.`,
 			cmdutil2.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts)
+			return run(cmd, f, opts)
 		},
 	}
 
@@ -46,7 +48,7 @@ are using it for the monitoring stack.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
@@ -61,12 +63,13 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	// Prompt for confirmation if not forced
 	if !opts.Force {
 		fmt.Fprintf(ios.ErrOut, "%s This will remove all unused clawker-managed networks.\nAre you sure you want to continue? [y/N] ", cs.WarningIcon())
-		var response string
-		if _, err := fmt.Scanln(&response); err != nil {
-			// Treat read errors (EOF, etc.) as "no"
+		reader := bufio.NewReader(cmd.InOrStdin())
+		response, err := reader.ReadString('\n')
+		if err != nil {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
+		response = strings.TrimSpace(response)
 		if response != "y" && response != "Y" {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil

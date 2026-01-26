@@ -2,7 +2,6 @@ package ralph
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/ralph"
@@ -49,6 +48,8 @@ the session history.`,
 }
 
 func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
+	ios := f.IOStreams
+
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
@@ -70,7 +71,7 @@ func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
 	}
 
 	if !opts.Quiet {
-		fmt.Fprintf(os.Stderr, "Circuit breaker reset for %s.%s\n", cfg.Project, opts.Agent)
+		fmt.Fprintf(ios.ErrOut, "Circuit breaker reset for %s.%s\n", cfg.Project, opts.Agent)
 	}
 
 	// Optionally clear session
@@ -80,7 +81,7 @@ func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
 			return err
 		}
 		if !opts.Quiet {
-			fmt.Fprintf(os.Stderr, "Session history cleared\n")
+			fmt.Fprintf(ios.ErrOut, "Session history cleared\n")
 		}
 	}
 

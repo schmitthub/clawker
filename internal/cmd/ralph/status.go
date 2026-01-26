@@ -3,7 +3,6 @@ package ralph
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/ralph"
@@ -47,6 +46,8 @@ Shows information about:
 }
 
 func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
+	ios := f.IOStreams
+
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
@@ -78,9 +79,9 @@ func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
 	// Check if any data exists
 	if session == nil && circuitState == nil {
 		if opts.JSON {
-			fmt.Fprintln(f.IOStreams.Out, "{\"exists\": false}")
+			fmt.Fprintln(ios.Out, "{\"exists\": false}")
 		} else {
-			fmt.Fprintf(os.Stderr, "No ralph session found for agent %q\n", opts.Agent)
+			fmt.Fprintf(ios.ErrOut, "No ralph session found for agent %q\n", opts.Agent)
 		}
 		return nil
 	}
@@ -117,43 +118,43 @@ func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
 			cmdutil.PrintError("Failed to encode JSON output: %v", jsonErr)
 			return fmt.Errorf("json encoding failed: %w", jsonErr)
 		}
-		fmt.Fprintln(f.IOStreams.Out, string(data))
+		fmt.Fprintln(ios.Out, string(data))
 		return nil
 	}
 
 	// Human-readable output
-	fmt.Fprintf(os.Stderr, "Ralph status for %s.%s\n", cfg.Project, opts.Agent)
-	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(ios.ErrOut, "Ralph status for %s.%s\n", cfg.Project, opts.Agent)
+	fmt.Fprintf(ios.ErrOut, "\n")
 
 	if session != nil {
-		fmt.Fprintf(os.Stderr, "Session:\n")
-		fmt.Fprintf(os.Stderr, "  Started: %s\n", session.StartedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(os.Stderr, "  Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(os.Stderr, "  Loops completed: %d\n", session.LoopsCompleted)
-		fmt.Fprintf(os.Stderr, "  Current status: %s\n", session.Status)
-		fmt.Fprintf(os.Stderr, "  Total tasks: %d\n", session.TotalTasksCompleted)
-		fmt.Fprintf(os.Stderr, "  Total files: %d\n", session.TotalFilesModified)
+		fmt.Fprintf(ios.ErrOut, "Session:\n")
+		fmt.Fprintf(ios.ErrOut, "  Started: %s\n", session.StartedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(ios.ErrOut, "  Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(ios.ErrOut, "  Loops completed: %d\n", session.LoopsCompleted)
+		fmt.Fprintf(ios.ErrOut, "  Current status: %s\n", session.Status)
+		fmt.Fprintf(ios.ErrOut, "  Total tasks: %d\n", session.TotalTasksCompleted)
+		fmt.Fprintf(ios.ErrOut, "  Total files: %d\n", session.TotalFilesModified)
 		if session.LastError != "" {
-			fmt.Fprintf(os.Stderr, "  Last error: %s\n", session.LastError)
+			fmt.Fprintf(ios.ErrOut, "  Last error: %s\n", session.LastError)
 		}
-		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(ios.ErrOut, "\n")
 	}
 
 	if circuitState != nil {
-		fmt.Fprintf(os.Stderr, "Circuit breaker:\n")
+		fmt.Fprintf(ios.ErrOut, "Circuit breaker:\n")
 		if circuitState.Tripped {
-			fmt.Fprintf(os.Stderr, "  Status: TRIPPED\n")
-			fmt.Fprintf(os.Stderr, "  Reason: %s\n", circuitState.TripReason)
+			fmt.Fprintf(ios.ErrOut, "  Status: TRIPPED\n")
+			fmt.Fprintf(ios.ErrOut, "  Reason: %s\n", circuitState.TripReason)
 			if circuitState.TrippedAt != nil {
-				fmt.Fprintf(os.Stderr, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(ios.ErrOut, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
 			}
-			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Fprintf(ios.ErrOut, "\n")
 			cmdutil.PrintNextSteps(
 				fmt.Sprintf("Reset the circuit: clawker ralph reset --agent %s", opts.Agent),
 			)
 		} else {
-			fmt.Fprintf(os.Stderr, "  Status: OK\n")
-			fmt.Fprintf(os.Stderr, "  No-progress count: %d\n", circuitState.NoProgressCount)
+			fmt.Fprintf(ios.ErrOut, "  Status: OK\n")
+			fmt.Fprintf(ios.ErrOut, "  No-progress count: %d\n", circuitState.NoProgressCount)
 		}
 	}
 

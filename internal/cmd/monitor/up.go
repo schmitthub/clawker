@@ -121,7 +121,7 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 		if err != nil {
 			logger.Debug().Err(err).Msg("failed to connect to docker for container check")
 		} else {
-			checkRunningContainers(ctx, client, ios, cs)
+			checkRunningContainers(ctx, client, ios)
 		}
 	}
 
@@ -130,7 +130,8 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 
 // checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client, ios *cmdutil2.IOStreams, cs *cmdutil2.ColorScheme) {
+func checkRunningContainers(ctx context.Context, client *docker.Client, ios *cmdutil2.IOStreams) {
+	cs := ios.ColorScheme()
 	containers, err := client.ListContainers(ctx, false)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")

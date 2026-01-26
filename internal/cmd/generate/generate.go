@@ -3,6 +3,7 @@ package generate
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -69,6 +70,7 @@ Version patterns:
 func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
+	ios := f.IOStreams
 
 	// Determine output directory: explicit flag > factory default
 	outputDir := f.BuildOutputDir
@@ -92,7 +94,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// If no versions specified, show existing versions.json
 	if len(versions) == 0 && !opts.SkipFetch {
-		return showVersions(versionsFile)
+		return showVersions(versionsFile, ios.ErrOut)
 	}
 
 	// If skip-fetch, load and display existing file
@@ -106,7 +108,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 			)
 			return err
 		}
-		return displayVersionsFile(vf)
+		return displayVersionsFile(vf, ios.ErrOut)
 	}
 
 	// Resolve versions from npm
@@ -135,7 +137,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
+	fmt.Fprintf(ios.ErrOut, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
 
 	// Generate Dockerfiles
 	dfMgr := build.NewDockerfileManager(outputDir, nil)
@@ -143,12 +145,12 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 		cmdutil2.PrintError("Failed to generate Dockerfiles")
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
+	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
 
-	return displayVersionsFile(vf)
+	return displayVersionsFile(vf, ios.ErrOut)
 }
 
-func showVersions(path string) error {
+func showVersions(path string, w io.Writer) error {
 	vf, err := build.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -162,17 +164,17 @@ func showVersions(path string) error {
 		return err
 	}
 
-	return displayVersionsFile(vf)
+	return displayVersionsFile(vf, w)
 }
 
-func displayVersionsFile(vf *registry.VersionsFile) error {
-	fmt.Fprintln(os.Stderr, "\nVersions:")
+func displayVersionsFile(vf *registry.VersionsFile, w io.Writer) error {
+	fmt.Fprintln(w, "\nVersions:")
 	for _, key := range vf.SortedKeys() {
 		info := (*vf)[key]
-		fmt.Fprintf(os.Stderr, "  %s\n", key)
-		fmt.Fprintf(os.Stderr, "    Debian default: %s\n", info.DebianDefault)
-		fmt.Fprintf(os.Stderr, "    Alpine default: %s\n", info.AlpineDefault)
-		fmt.Fprintf(os.Stderr, "    Variants: %d\n", len(info.Variants))
+		fmt.Fprintf(w, "  %s\n", key)
+		fmt.Fprintf(w, "    Debian default: %s\n", info.DebianDefault)
+		fmt.Fprintf(w, "    Alpine default: %s\n", info.AlpineDefault)
+		fmt.Fprintf(w, "    Variants: %d\n", len(info.Variants))
 	}
 	return nil
 }

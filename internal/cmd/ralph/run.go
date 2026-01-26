@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/ralph"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // RunOptions holds options for the ralph run command.
@@ -121,6 +120,7 @@ The container must already be running. Use 'clawker start' first.`,
 
 func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Load config
 	cfg, err := f.Config()
@@ -211,22 +211,22 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 
 	if opts.Monitor && !opts.Quiet && !opts.JSON {
 		monitor = ralph.NewMonitor(ralph.MonitorOptions{
-			Writer:        os.Stderr,
+			Writer:        ios.ErrOut,
 			MaxLoops:      opts.MaxLoops,
 			ShowRateLimit: opts.CallsPerHour > 0,
 			Verbose:       opts.Verbose,
 		})
 	} else if !opts.Quiet && !opts.JSON {
 		onLoopStart = func(loopNum int) {
-			fmt.Fprintf(os.Stderr, "Loop %d/%d starting...\n", loopNum, opts.MaxLoops)
+			fmt.Fprintf(ios.ErrOut, "Loop %d/%d starting...\n", loopNum, opts.MaxLoops)
 		}
 		onLoopEnd = func(loopNum int, status *ralph.Status, err error) {
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Loop %d: error: %v\n", loopNum, err)
+				fmt.Fprintf(ios.ErrOut, "Loop %d: error: %v\n", loopNum, err)
 			} else if status != nil {
-				fmt.Fprintf(os.Stderr, "Loop %d: %s\n", loopNum, status.String())
+				fmt.Fprintf(ios.ErrOut, "Loop %d: %s\n", loopNum, status.String())
 			} else {
-				fmt.Fprintf(os.Stderr, "Loop %d: no status block found\n", loopNum)
+				fmt.Fprintf(ios.ErrOut, "Loop %d: no status block found\n", loopNum)
 			}
 		}
 	}
@@ -234,16 +234,16 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	// Rate limit callback - Ralph is autonomous, so we exit cleanly instead of prompting
 	// This avoids goroutine leaks from blocking stdin reads
 	var onRateLimitHit func() bool
-	if isInteractive() && !opts.Quiet {
+	if ios.IsInputTTY() && !opts.Quiet {
 		onRateLimitHit = func() bool {
-			fmt.Fprintln(os.Stderr, "\nClaude's API rate limit hit (5-hour limit).")
-			fmt.Fprintln(os.Stderr, "Exiting. Retry in ~60 minutes or use --reset-circuit to restart.")
+			fmt.Fprintln(ios.ErrOut, "\nClaude's API rate limit hit (5-hour limit).")
+			fmt.Fprintln(ios.ErrOut, "Exiting. Retry in ~60 minutes or use --reset-circuit to restart.")
 			return false // Always exit, no blocking goroutine
 		}
 	}
 
 	if !opts.Quiet && !opts.JSON {
-		fmt.Fprintf(os.Stderr, "Starting ralph loop for %s...\n", containerName)
+		fmt.Fprintf(ios.ErrOut, "Starting ralph loop for %s...\n", containerName)
 	}
 
 	logger.Info().
@@ -330,19 +330,19 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 
 	// Human-readable output (skip if monitor already printed)
 	if !opts.Quiet && monitor == nil {
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Fprintf(os.Stderr, "Ralph loop finished\n")
-		fmt.Fprintf(os.Stderr, "  Loops completed: %d\n", result.LoopsCompleted)
-		fmt.Fprintf(os.Stderr, "  Exit reason: %s\n", result.ExitReason)
+		fmt.Fprintf(ios.ErrOut, "\n")
+		fmt.Fprintf(ios.ErrOut, "Ralph loop finished\n")
+		fmt.Fprintf(ios.ErrOut, "  Loops completed: %d\n", result.LoopsCompleted)
+		fmt.Fprintf(ios.ErrOut, "  Exit reason: %s\n", result.ExitReason)
 		if result.Session != nil {
-			fmt.Fprintf(os.Stderr, "  Total tasks: %d\n", result.Session.TotalTasksCompleted)
-			fmt.Fprintf(os.Stderr, "  Total files: %d\n", result.Session.TotalFilesModified)
+			fmt.Fprintf(ios.ErrOut, "  Total tasks: %d\n", result.Session.TotalTasksCompleted)
+			fmt.Fprintf(ios.ErrOut, "  Total files: %d\n", result.Session.TotalFilesModified)
 		}
 		if result.FinalStatus != nil && result.FinalStatus.Recommendation != "" {
-			fmt.Fprintf(os.Stderr, "  Recommendation: %s\n", result.FinalStatus.Recommendation)
+			fmt.Fprintf(ios.ErrOut, "  Recommendation: %s\n", result.FinalStatus.Recommendation)
 		}
 		if result.RateLimitHit {
-			fmt.Fprintf(os.Stderr, "  Note: Claude API rate limit was hit\n")
+			fmt.Fprintf(ios.ErrOut, "  Note: Claude API rate limit was hit\n")
 		}
 	}
 
@@ -350,9 +350,4 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 		return result.Error
 	}
 	return nil
-}
-
-// isInteractive returns true if stdin is a terminal.
-func isInteractive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
 }
