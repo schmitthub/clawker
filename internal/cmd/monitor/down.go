@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -16,7 +16,7 @@ type downOptions struct {
 	volumes bool
 }
 
-func newCmdDown(f *cmdutil2.Factory) *cobra.Command {
+func newCmdDown(f *cmdutil.Factory) *cobra.Command {
 	opts := &downOptions{}
 
 	cmd := &cobra.Command{
@@ -41,7 +41,10 @@ the clawker-net Docker network for other clawker services.`,
 	return cmd
 }
 
-func runDown(f *cmdutil2.Factory, opts *downOptions) error {
+func runDown(f *cmdutil.Factory, opts *downOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
 	if err != nil {
@@ -53,8 +56,8 @@ func runDown(f *cmdutil2.Factory, opts *downOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil2.PrintError("Monitoring stack not initialized")
-		cmdutil2.PrintNextSteps("Run 'clawker monitor init' to scaffold configuration files")
+		cmdutil.PrintError(ios, "Monitoring stack not initialized")
+		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
@@ -67,18 +70,21 @@ func runDown(f *cmdutil2.Factory, opts *downOptions) error {
 	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.Command("docker", composeArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = ios.Out
+	cmd.Stderr = ios.ErrOut
 
-	fmt.Fprintln(os.Stderr, "Stopping monitoring stack...")
-	if err := cmd.Run(); err != nil {
+	ios.StartProgressIndicatorWithLabel("Stopping monitoring stack...")
+	err = cmd.Run()
+	ios.StopProgressIndicator()
+
+	if err != nil {
 		return fmt.Errorf("failed to stop monitoring stack: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Monitoring stack stopped.")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
 	if !opts.volumes {
-		fmt.Fprintln(os.Stderr, "Note: Volumes were preserved. Use --volumes to remove them.")
+		fmt.Fprintf(ios.ErrOut, "%s Volumes were preserved. Use --volumes to remove them.\n", cs.InfoIcon())
 	}
 
 	return nil

@@ -4,12 +4,11 @@ package list
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,7 @@ type Options struct {
 }
 
 // NewCmd creates the image list command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -54,13 +53,14 @@ across multiple containers.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options) error {
+func run(f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -70,25 +70,25 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	}
 	images, err := client.ImageList(ctx, listOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	if len(images.Items) == 0 {
-		fmt.Fprintln(os.Stderr, "No clawker images found.")
+		fmt.Fprintln(ios.ErrOut, "No clawker images found.")
 		return nil
 	}
 
 	// Quiet mode - just print IDs
 	if opts.Quiet {
 		for _, img := range images.Items {
-			fmt.Println(truncateID(img.ID))
+			fmt.Fprintln(ios.Out, truncateID(img.ID))
 		}
 		return nil
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "IMAGE\tID\tCREATED\tSIZE")
 
 	for _, img := range images.Items {

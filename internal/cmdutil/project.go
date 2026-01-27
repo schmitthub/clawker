@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +36,7 @@ func CheckProjectContext(cmd *cobra.Command, f *Factory) error {
 	projectRoot := FindProjectRoot(f.WorkDir, settings)
 
 	if projectRoot == "" {
-		if !ConfirmExternalProjectOperation(cmd.InOrStdin(), f.WorkDir, cmd.Name()) {
+		if !ConfirmExternalProjectOperation(f.IOStreams, cmd.InOrStdin(), f.WorkDir, cmd.Name()) {
 			return ErrAborted
 		}
 	}
@@ -134,11 +136,11 @@ func IsChildOfProject(dir string, settings *config.Settings) string {
 // ConfirmExternalProjectOperation prompts user to confirm operation outside project.
 // Returns true if user confirms, false otherwise.
 // On decline, prints "Aborted." and guidance to stderr.
-func ConfirmExternalProjectOperation(in io.Reader, projectPath, operation string) bool {
+func ConfirmExternalProjectOperation(ios *iostreams.IOStreams, in io.Reader, projectPath, operation string) bool {
 	message := fmt.Sprintf("You are running %s in '%s', which is outside of a project directory.\nDo you want to continue?", operation, projectPath)
-	if !PromptForConfirmation(in, message) {
-		fmt.Fprintln(os.Stderr, "Aborted.")
-		PrintNextSteps("Run 'clawker init' in the project root to initialize a new project")
+	if !prompts.PromptForConfirmation(in, message) {
+		fmt.Fprintln(ios.ErrOut, "Aborted.")
+		PrintNextSteps(ios, "Run 'clawker init' in the project root to initialize a new project")
 		return false
 	}
 	return true

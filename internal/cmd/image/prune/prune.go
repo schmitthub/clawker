@@ -5,10 +5,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +18,7 @@ type Options struct {
 }
 
 // NewCmd creates the image prune command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -40,7 +39,7 @@ Use with caution as this will permanently delete images.`,
   # Remove without confirmation prompt
   clawker image prune --force`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, f, opts)
@@ -53,33 +52,35 @@ Use with caution as this will permanently delete images.`,
 	return cmd
 }
 
-func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Prompt for confirmation if not forced
 	if !opts.Force {
-		warning := "WARNING! This will remove all dangling clawker-managed images."
+		warning := "This will remove all dangling clawker-managed images."
 		if opts.All {
-			warning = "WARNING! This will remove all unused clawker-managed images."
+			warning = "This will remove all unused clawker-managed images."
 		}
-		fmt.Fprint(os.Stderr, warning+"\nAre you sure you want to continue? [y/N] ")
+		fmt.Fprintf(ios.ErrOut, "%s %s\nAre you sure you want to continue? [y/N] ", cs.WarningIcon(), warning)
 		reader := bufio.NewReader(cmd.InOrStdin())
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			// Treat read errors (EOF, etc.) as "no"
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 		response = strings.TrimSpace(response)
 		if response != "y" && response != "Y" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 	}
@@ -88,25 +89,25 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// dangling=!opts.All: if --all is false, only prune dangling images
 	report, err := client.ImagesPrune(ctx, !opts.All)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	if len(report.Report.ImagesDeleted) == 0 {
-		fmt.Fprintln(os.Stderr, "No unused clawker images to remove.")
+		fmt.Fprintln(ios.ErrOut, "No unused clawker images to remove.")
 		return nil
 	}
 
 	for _, img := range report.Report.ImagesDeleted {
 		if img.Untagged != "" {
-			fmt.Fprintf(os.Stderr, "Untagged: %s\n", img.Untagged)
+			fmt.Fprintf(ios.ErrOut, "%s Untagged: %s\n", cs.SuccessIcon(), img.Untagged)
 		}
 		if img.Deleted != "" {
-			fmt.Fprintf(os.Stderr, "Deleted: %s\n", img.Deleted)
+			fmt.Fprintf(ios.ErrOut, "%s Deleted: %s\n", cs.SuccessIcon(), img.Deleted)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
+	fmt.Fprintf(ios.ErrOut, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
 
 	return nil
 }

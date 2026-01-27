@@ -73,7 +73,20 @@ cmd/clawker → internal/cmd/* → internal/docker → pkg/whail → Docker SDK
   - `labels.go` - Clawker label constants (`com.clawker.*`)
   - `names.go` - Container/volume naming (`clawker.project.agent`)
   - `volume.go` - Volume helpers (EnsureVolume, CopyToVolume)
-- `internal/cmdutil/` - Factory pattern with `Client(ctx)` for lazy docker.Client
+- `internal/iostreams/` - Testable I/O abstractions (GitHub CLI pattern)
+  - `iostreams.go` - IOStreams struct with TTY detection, terminal size
+  - `colorscheme.go` - Color formatting bridging to tui/styles.go
+  - `progress.go` - Animated spinner for progress indicators
+  - `pager.go` - Output paging via external commands
+- `internal/prompts/` - Interactive user prompts
+  - `prompts.go` - Prompter with String, Confirm, Select methods
+- `internal/cmdutil/` - CLI utilities and Factory pattern
+  - `factory.go` - Factory with lazy-loaded dependencies (Client, Config, Settings, IOStreams, Prompter)
+  - `output.go` - Error handling utilities (HandleError, PrintNextSteps, PrintError)
+  - `resolve.go` - Image resolution logic
+  - `project.go` - Project utilities
+  - `required.go` - Validation helpers
+  - `image_build.go` - Build utilities
 - `internal/config/` - Viper configuration loading and validation
 - `internal/workspace/` - Bind vs Snapshot strategies
 - `internal/build/` - Image building orchestration

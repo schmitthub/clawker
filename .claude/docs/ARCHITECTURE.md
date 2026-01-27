@@ -75,19 +75,41 @@ clawker image     [list|inspect|build|remove|prune]
 Shared utilities for all CLI commands.
 
 **Key abstractions:**
-- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, host proxy)
-- `IOStreams` - Testable I/O with TTY detection, color support, progress indicators
-- `ColorScheme` - Color formatting that bridges to `tui/styles.go`
-- `Prompter` - Interactive prompts respecting TTY and CI detection
+- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, host proxy, IOStreams, Prompter)
 - Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`)
+- Image resolution (`ResolveImageWithSource`, `FindProjectImage`)
+- Project utilities
 
-**IOStreams features:**
+### internal/iostreams - Testable I/O
+
+Testable I/O abstraction following the GitHub CLI pattern.
+
+**Key types:**
+- `IOStreams` - Core I/O with TTY detection, color support, progress indicators
+- `ColorScheme` - Color formatting that bridges to `tui/styles.go`
+- `TestIOStreams` - Test helper with in-memory buffers
+
+**Features:**
 - TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
 - Color support with `NO_COLOR` env var compliance
 - Progress indicators (spinners) for long operations
 - Pager support (`CLAWKER_PAGER`, `PAGER` env vars)
 - Alternate screen buffer for full-screen TUIs
 - Terminal size detection with caching
+
+### internal/prompts - Interactive Prompts
+
+User interaction utilities with TTY and CI awareness.
+
+**Key types:**
+- `Prompter` - Interactive prompts using IOStreams
+- `PromptConfig` - Configuration for string prompts
+- `SelectOption` - Options for selection prompts
+
+**Methods:**
+- `String(cfg)` - Text input with default and validation
+- `Confirm(msg, defaultYes)` - Yes/no confirmation
+- `Select(msg, options, defaultIdx)` - Selection from list
 
 ## Other Key Components
 
@@ -99,7 +121,9 @@ Shared utilities for all CLI commands.
 | `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
-| `internal/cmdutil` | Factory, IOStreams, error handling, output utilities |
+| `internal/cmdutil` | Factory, error handling, output utilities |
+| `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
+| `internal/prompts` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
 | `pkg/build` | Dockerfile generation, semver, npm registry client |

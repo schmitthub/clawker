@@ -48,8 +48,10 @@
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker-specific Docker middleware (wraps pkg/whail)
 │   ├── hostproxy/             # Host proxy server for container-to-host communication
+│   ├── iostreams/             # Testable I/O: TTY detection, colors, progress, pager
 │   ├── logger/                # Zerolog setup
 │   ├── monitor/               # Observability stack (Prometheus, Grafana)
+│   ├── prompts/               # Interactive user prompts (String, Confirm, Select)
 │   ├── ralph/                 # Ralph autonomous loop core logic
 │   ├── term/                  # PTY/terminal handling
 │   ├── testutil/              # Test utilities
@@ -86,8 +88,9 @@ go run ./cmd/gen-docs --doc-path docs --markdown
 | `hostproxy.Manager` | Host proxy server for container-to-host actions (e.g., opening URLs) |
 | `hostproxy.SessionStore` | Generic session management for proxy channels |
 | `hostproxy.CallbackChannel` | OAuth callback interception and forwarding |
-| `cmdutil.IOStreams` | Testable I/O with TTY detection, colors, progress indicators |
-| `cmdutil.ColorScheme` | Color formatting that respects NO_COLOR and terminal theme |
+| `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress indicators |
+| `iostreams.ColorScheme` | Color formatting that respects NO_COLOR and terminal theme |
+| `prompts.Prompter` | Interactive prompts (String, Confirm, Select) with TTY awareness |
 | `tui.ListModel` | Selectable list component with scrolling |
 | `tui.PanelModel` | Bordered panel with focus management |
 | `tui.SpinnerModel` | Animated spinner component |
@@ -145,7 +148,7 @@ case tea.KeyMsg:
 
 All components use consistent styles from `tui.ColorPrimary`, `tui.ColorSuccess`, etc. Use `tui.HeaderStyle`, `tui.PanelStyle`, `tui.ListItemSelectedStyle` for component-specific styling.
 
-## IOStreams & Output (`internal/cmdutil/`)
+## IOStreams & Output (`internal/iostreams/`)
 
 Testable I/O abstraction following the GitHub CLI pattern. See `iostreams_package.md` memory for complete API reference.
 
@@ -159,7 +162,7 @@ Testable I/O abstraction following the GitHub CLI pattern. See `iostreams_packag
 ### Quick Reference
 
 ```go
-ios := f.IOStreams
+ios := f.IOStreams  // *iostreams.IOStreams
 
 // TTY Detection
 ios.IsInputTTY()      // stdin is a terminal
@@ -194,7 +197,9 @@ width, height := ios.TerminalSize()
 ### Testing
 
 ```go
-ios := cmdutil.NewTestIOStreams()
+import "github.com/schmitthub/clawker/internal/iostreams"
+
+ios := iostreams.NewTestIOStreams()
 ios.SetInteractive(true)         // Simulate TTY
 ios.SetColorEnabled(true)        // Enable colors
 ios.SetTerminalSize(120, 40)     // Set terminal size
@@ -203,6 +208,34 @@ ios.InBuf.SetInput("user input") // Simulate stdin
 ios.OutBuf.String()              // stdout content
 ios.ErrBuf.String()              // stderr content
 ```
+
+## Prompts (`internal/prompts/`)
+
+Interactive user prompts with TTY and CI awareness. See `prompts_package.md` memory for complete API reference.
+
+### Quick Reference
+
+```go
+prompter := f.Prompter()  // *prompts.Prompter
+
+// String prompt with default
+name, err := prompter.String(prompts.PromptConfig{
+    Message: "Project name",
+    Default: "my-project",
+})
+
+// Confirmation prompt
+proceed, err := prompter.Confirm("Continue?", false)  // [y/N]
+
+// Selection prompt
+options := []prompts.SelectOption{
+    {Label: "Option A", Description: "First choice"},
+    {Label: "Option B", Description: "Second choice"},
+}
+idx, err := prompter.Select("Choose:", options, 0)
+```
+
+**Non-interactive behavior:** In CI or non-TTY environments, prompts return defaults without user interaction.
 
 ## Host Proxy Architecture
 

@@ -2,11 +2,12 @@
 package prune
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"os"
+	"strings"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume prune command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -32,10 +33,10 @@ Use with caution as this will permanently delete data.`,
   # Remove without confirmation prompt
   clawker volume prune --force`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts)
+			return run(cmd, f, opts)
 		},
 	}
 
@@ -44,27 +45,30 @@ Use with caution as this will permanently delete data.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Prompt for confirmation if not forced
 	if !opts.Force {
-		fmt.Fprint(os.Stderr, "WARNING! This will remove all unused clawker-managed volumes.\nAre you sure you want to continue? [y/N] ")
-		var response string
-		if _, err := fmt.Scanln(&response); err != nil {
-			// Treat read errors (EOF, etc.) as "no"
-			fmt.Fprintln(os.Stderr, "Aborted.")
+		fmt.Fprintf(ios.ErrOut, "%s This will remove all unused clawker-managed volumes.\nAre you sure you want to continue? [y/N] ", cs.WarningIcon())
+		reader := bufio.NewReader(cmd.InOrStdin())
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
+		response = strings.TrimSpace(response)
 		if response != "y" && response != "Y" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 	}
@@ -72,20 +76,20 @@ func run(f *cmdutil2.Factory, opts *Options) error {
 	// Prune all unused managed volumes (all=true to include named volumes)
 	report, err := client.VolumesPrune(ctx, true)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	if len(report.Report.VolumesDeleted) == 0 {
-		fmt.Fprintln(os.Stderr, "No unused clawker volumes to remove.")
+		fmt.Fprintln(ios.ErrOut, "No unused clawker volumes to remove.")
 		return nil
 	}
 
 	for _, name := range report.Report.VolumesDeleted {
-		fmt.Fprintf(os.Stderr, "Deleted: %s\n", name)
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
+	fmt.Fprintf(ios.ErrOut, "\nTotal reclaimed space: %s\n", formatBytes(int64(report.Report.SpaceReclaimed)))
 
 	return nil
 }

@@ -2,7 +2,6 @@ package ralph
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/ralph"
@@ -49,38 +48,40 @@ the session history.`,
 }
 
 func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
+	ios := f.IOStreams
+
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil.PrintError("Failed to load config: %v", err)
+		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err
 	}
 
 	// Get session store
 	store, err := ralph.DefaultSessionStore()
 	if err != nil {
-		cmdutil.PrintError("Failed to create session store: %v", err)
+		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
 		return err
 	}
 
 	// Reset circuit breaker
 	if err := store.DeleteCircuitState(cfg.Project, opts.Agent); err != nil {
-		cmdutil.PrintError("Failed to reset circuit breaker: %v", err)
+		cmdutil.PrintError(ios, "Failed to reset circuit breaker: %v", err)
 		return err
 	}
 
 	if !opts.Quiet {
-		fmt.Fprintf(os.Stderr, "Circuit breaker reset for %s.%s\n", cfg.Project, opts.Agent)
+		fmt.Fprintf(ios.ErrOut, "Circuit breaker reset for %s.%s\n", cfg.Project, opts.Agent)
 	}
 
 	// Optionally clear session
 	if opts.ClearAll {
 		if err := store.DeleteSession(cfg.Project, opts.Agent); err != nil {
-			cmdutil.PrintError("Failed to clear session: %v", err)
+			cmdutil.PrintError(ios, "Failed to clear session: %v", err)
 			return err
 		}
 		if !opts.Quiet {
-			fmt.Fprintf(os.Stderr, "Session history cleared\n")
+			fmt.Fprintf(ios.ErrOut, "Session history cleared\n")
 		}
 	}
 

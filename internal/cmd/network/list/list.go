@@ -4,10 +4,9 @@ package list
 import (
 	"context"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +16,7 @@ type Options struct {
 }
 
 // NewCmd creates the network list command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -46,38 +45,39 @@ integration. The primary network is clawker-net.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options) error {
+func run(f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// List networks
 	networks, err := client.NetworkList(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	if len(networks.Items) == 0 {
-		fmt.Fprintln(os.Stderr, "No clawker networks found.")
+		fmt.Fprintln(ios.ErrOut, "No clawker networks found.")
 		return nil
 	}
 
 	// Quiet mode - just print names
 	if opts.Quiet {
 		for _, n := range networks.Items {
-			fmt.Println(n.Name)
+			fmt.Fprintln(ios.Out, n.Name)
 		}
 		return nil
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NETWORK ID\tNAME\tDRIVER\tSCOPE")
 
 	for _, n := range networks.Items {

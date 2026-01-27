@@ -3,9 +3,8 @@ package remove
 import (
 	"context"
 	"fmt"
-	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +19,7 @@ type RemoveOptions struct {
 }
 
 // NewCmdRemove creates the container remove command.
-func NewCmdRemove(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
 	opts := &RemoveOptions{}
 
 	cmd := &cobra.Command{
@@ -53,9 +52,9 @@ Container names can be:
   # Remove container and its volumes
   clawker container remove --volumes --agent ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			return runRemove(cmd.Context(), f, opts)
@@ -69,12 +68,15 @@ Container names can be:
 	return cmd
 }
 
-func runRemove(ctx context.Context, f *cmdutil2.Factory, opts *RemoveOptions) error {
+func runRemove(ctx context.Context, f *cmdutil.Factory, opts *RemoveOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -83,7 +85,7 @@ func runRemove(ctx context.Context, f *cmdutil2.Factory, opts *RemoveOptions) er
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -91,9 +93,9 @@ func runRemove(ctx context.Context, f *cmdutil2.Factory, opts *RemoveOptions) er
 	for _, name := range containers {
 		if err := removeContainer(ctx, client, name, opts); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Removed: %s\n", name)
+			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 		}
 	}
 

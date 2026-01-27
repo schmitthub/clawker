@@ -4,9 +4,8 @@ package remove
 import (
 	"context"
 	"fmt"
-	"os"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the image remove command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -43,7 +42,7 @@ Note: Only clawker-managed images can be removed with this command.`,
   # Remove an image without pruning parent images
   clawker image rm --no-prune clawker-myapp:latest`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,13 +56,15 @@ Note: Only clawker-managed images can be removed with this command.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options, images []string) error {
+func run(f *cmdutil.Factory, opts *Options, images []string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -77,17 +78,17 @@ func run(f *cmdutil2.Factory, opts *Options, images []string) error {
 		responses, err := client.ImageRemove(ctx, ref, removeOpts)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove image %q: %w", ref, err))
-			cmdutil2.HandleError(err)
+			cmdutil.HandleError(ios, err)
 			continue
 		}
 
 		// Print what was removed
 		for _, resp := range responses.Items {
 			if resp.Untagged != "" {
-				fmt.Fprintf(os.Stderr, "Untagged: %s\n", resp.Untagged)
+				fmt.Fprintf(ios.ErrOut, "%s Untagged: %s\n", cs.SuccessIcon(), resp.Untagged)
 			}
 			if resp.Deleted != "" {
-				fmt.Fprintf(os.Stderr, "Deleted: %s\n", resp.Deleted)
+				fmt.Fprintf(ios.ErrOut, "%s Deleted: %s\n", cs.SuccessIcon(), resp.Deleted)
 			}
 		}
 	}

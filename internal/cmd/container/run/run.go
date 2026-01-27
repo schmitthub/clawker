@@ -13,7 +13,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -53,7 +53,7 @@ type Options struct {
 }
 
 // NewCmd creates a new container run command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -92,9 +92,9 @@ If IMAGE is "@", clawker will use (in order of precedence):
   # Run and automatically remove on exit
   clawker container run --rm -it @ sh`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Image = args[0]
 			if len(args) > 1 {
@@ -142,13 +142,14 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	ios := f.IOStreams
 
 	// Load config for project name
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil2.PrintError("Failed to load config: %v", err)
-		cmdutil2.PrintNextSteps(
+		cmdutil.PrintError(ios, "Failed to load config: %v", err)
+		cmdutil.PrintNextSteps(ios,
 			"Run 'clawker init' to create a configuration",
 			"Or ensure you're in a directory with clawker.yaml",
 		)
@@ -165,20 +166,20 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Resolve image name
 	if opts.Image == "@" {
-		resolvedImage, err := cmdutil2.ResolveAndValidateImage(ctx, f, client, cfg, settings)
+		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
 			return err
 		}
 		if resolvedImage == nil {
-			cmdutil2.PrintError("No image specified and no default image configured")
-			cmdutil2.PrintNextSteps(
+			cmdutil.PrintError(ios, "No image specified and no default image configured")
+			cmdutil.PrintNextSteps(ios,
 				"Specify an image: clawker container run IMAGE",
 				"Set default_image in clawker.yaml",
 				"Set default_image in ~/.local/clawker/settings.yaml",
@@ -227,8 +228,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	if cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil2.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
-			cmdutil2.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
+			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
@@ -246,7 +247,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Build configs
 	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts, cfg)
 	if err != nil {
-		cmdutil2.PrintError("Invalid configuration: %v", err)
+		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
 		return err
 	}
 
@@ -270,7 +271,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		},
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -283,7 +284,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 
 	// Start the container
 	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -298,7 +299,9 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 }
 
 // attachAndWait attaches to a running container and waits for it to exit.
-func attachAndWait(ctx context.Context, f *cmdutil2.Factory, client *docker.Client, containerID string, opts *Options) error {
+func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
+	ios := f.IOStreams
+
 	// Create attach options
 	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
@@ -320,7 +323,7 @@ func attachAndWait(ctx context.Context, f *cmdutil2.Factory, client *docker.Clie
 	// Attach to container
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()

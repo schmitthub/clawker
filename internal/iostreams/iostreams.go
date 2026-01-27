@@ -1,5 +1,5 @@
 // Package cmdutil provides utilities for command-line applications.
-package cmdutil
+package iostreams
 
 import (
 	"fmt"

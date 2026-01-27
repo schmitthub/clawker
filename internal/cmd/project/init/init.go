@@ -6,9 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +20,7 @@ type ProjectInitOptions struct {
 }
 
 // NewCmdProjectInit creates the project init command.
-func NewCmdProjectInit(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdProjectInit(f *cmdutil.Factory) *cobra.Command {
 	opts := &ProjectInitOptions{}
 
 	cmd := &cobra.Command{
@@ -59,15 +60,17 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 	return cmd
 }
 
-func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string) error {
+func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
 	prompter := f.Prompter()
 
 	// Print header
-	fmt.Fprintln(f.IOStreams.ErrOut, "Setting up clawker project...")
-	if !opts.Yes && f.IOStreams.IsInteractive() {
-		fmt.Fprintln(f.IOStreams.ErrOut, "(Press Enter to accept defaults)")
+	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
+	if !opts.Yes && ios.IsInteractive() {
+		fmt.Fprintln(ios.ErrOut, "(Press Enter to accept defaults)")
 	}
-	fmt.Fprintln(f.IOStreams.ErrOut)
+	fmt.Fprintln(ios.ErrOut)
 
 	// Get absolute path of working directory
 	absPath, err := filepath.Abs(f.WorkDir)
@@ -80,12 +83,12 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 	var projectName string
 	if len(args) > 0 {
 		projectName = args[0]
-	} else if opts.Yes || !f.IOStreams.IsInteractive() {
+	} else if opts.Yes || !ios.IsInteractive() {
 		// Non-interactive: use directory name
 		projectName = dirName
 	} else {
 		// Interactive: prompt for project name
-		projectName, err = prompter.String(cmdutil2.PromptConfig{
+		projectName, err = prompter.String(prompts.PromptConfig{
 			Message:  "Project name",
 			Default:  dirName,
 			Required: true,
@@ -104,20 +107,20 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 
 	// Prompt for build.image (base Linux flavor for Dockerfile FROM)
 	var buildImage string
-	if opts.Yes || !f.IOStreams.IsInteractive() {
+	if opts.Yes || !ios.IsInteractive() {
 		// Non-interactive: use buildpack-deps:bookworm-scm as default
-		buildImage = cmdutil2.FlavorToImage("bookworm")
+		buildImage = cmdutil.FlavorToImage("bookworm")
 	} else {
 		// Interactive: show flavor options + Custom option
-		flavors := cmdutil2.DefaultFlavorOptions()
-		selectOptions := make([]cmdutil2.SelectOption, len(flavors)+1)
+		flavors := cmdutil.DefaultFlavorOptions()
+		selectOptions := make([]prompts.SelectOption, len(flavors)+1)
 		for i, opt := range flavors {
-			selectOptions[i] = cmdutil2.SelectOption{
+			selectOptions[i] = prompts.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}
 		}
-		selectOptions[len(flavors)] = cmdutil2.SelectOption{
+		selectOptions[len(flavors)] = prompts.SelectOption{
 			Label:       "Custom",
 			Description: "Enter a custom base image (e.g., node:20, python:3.12)",
 		}
@@ -129,7 +132,7 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 
 		if idx == len(flavors) {
 			// Custom option selected - prompt for custom image
-			customImage, err := prompter.String(cmdutil2.PromptConfig{
+			customImage, err := prompter.String(prompts.PromptConfig{
 				Message:  "Custom base image",
 				Required: true,
 			})
@@ -139,18 +142,18 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 			buildImage = customImage
 		} else {
 			// Map flavor name to full image reference
-			buildImage = cmdutil2.FlavorToImage(selectOptions[idx].Label)
+			buildImage = cmdutil.FlavorToImage(selectOptions[idx].Label)
 		}
 	}
 
 	// Prompt for default_image (pre-built fallback image for clawker run)
 	var defaultImage string
-	if opts.Yes || !f.IOStreams.IsInteractive() {
+	if opts.Yes || !ios.IsInteractive() {
 		// Non-interactive: use user's default_image from settings (can be empty)
 		defaultImage = userDefaultImage
 	} else {
 		// Interactive: prompt with user's default_image as default, allow override or empty
-		defaultImage, err = prompter.String(cmdutil2.PromptConfig{
+		defaultImage, err = prompter.String(prompts.PromptConfig{
 			Message:  "Default fallback image (leave empty if none)",
 			Default:  userDefaultImage,
 			Required: false,
@@ -162,10 +165,10 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 
 	// Prompt for workspace mode
 	var workspaceMode string
-	if opts.Yes || !f.IOStreams.IsInteractive() {
+	if opts.Yes || !ios.IsInteractive() {
 		workspaceMode = "bind"
 	} else {
-		options := []cmdutil2.SelectOption{
+		options := []prompts.SelectOption{
 			{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
 			{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
 		}
@@ -188,9 +191,9 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 	// Check if configuration already exists
 	loader := config.NewLoader(f.WorkDir)
 	if loader.Exists() && !opts.Force {
-		if opts.Yes || !f.IOStreams.IsInteractive() {
-			cmdutil2.PrintError("%s already exists", config.ConfigFileName)
-			cmdutil2.PrintNextSteps(
+		if opts.Yes || !ios.IsInteractive() {
+			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
+			cmdutil.PrintNextSteps(ios,
 				"Use --force to overwrite the existing configuration",
 				"Or edit the existing clawker.yaml manually",
 			)
@@ -205,7 +208,7 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 			return fmt.Errorf("failed to get confirmation: %w", err)
 		}
 		if !overwrite {
-			fmt.Fprintln(f.IOStreams.ErrOut, "Aborted.")
+			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}
 	}
@@ -233,7 +236,7 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 	settingsLoader, err := config.NewSettingsLoader()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to create settings loader")
-		fmt.Fprintf(f.IOStreams.ErrOut, "Note: Could not access user settings: %v\n", err)
+		fmt.Fprintf(ios.ErrOut, "%s Could not access user settings: %v\n", cs.WarningIcon(), err)
 	} else {
 		// Ensure settings file exists
 		_, err := settingsLoader.EnsureExists()
@@ -243,19 +246,19 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 		// Register the project
 		if err := settingsLoader.AddProject(f.WorkDir); err != nil {
 			logger.Debug().Err(err).Msg("failed to register project in settings")
-			fmt.Fprintf(f.IOStreams.ErrOut, "Note: Could not register project in settings: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "%s Could not register project in settings: %v\n", cs.WarningIcon(), err)
 		} else {
 			logger.Info().Str("dir", f.WorkDir).Msg("registered project in user settings")
 		}
 	}
 
 	// Success output
-	fmt.Fprintln(f.IOStreams.ErrOut)
-	fmt.Fprintf(f.IOStreams.ErrOut, "Created: %s\n", config.ConfigFileName)
-	fmt.Fprintf(f.IOStreams.ErrOut, "Created: %s\n", config.IgnoreFileName)
-	fmt.Fprintf(f.IOStreams.ErrOut, "Project: %s\n", projectName)
-	fmt.Fprintln(f.IOStreams.ErrOut)
-	cmdutil2.PrintNextSteps(
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.ConfigFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.IgnoreFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintln(ios.ErrOut)
+	cmdutil.PrintNextSteps(ios,
 		"Review and customize clawker.yaml",
 		"Run 'clawker start' to start Claude in a container",
 	)

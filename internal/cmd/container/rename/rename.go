@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates a new rename command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -37,9 +37,9 @@ Container names can be:
   # Rename a container by full name
   clawker container rename clawker.myapp.ralph clawker.myapp.newname`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(2),
+		Args: cmdutil.RequiresMinArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
 			opts.newName = args[1]
@@ -52,13 +52,14 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	ios := f.IOStreams
 	oldName := opts.container
 	newName := opts.newName
 
 	if opts.Agent {
 		var err error
-		oldName, err = cmdutil2.ResolveContainerName(f, oldName)
+		oldName, err = cmdutil.ResolveContainerName(f, oldName)
 		if err != nil {
 			return err
 		}
@@ -67,7 +68,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -82,10 +83,10 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 
 	// Rename the container
 	if _, err := client.ContainerRename(ctx, c.ID, newName); err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
-	fmt.Println(newName)
+	fmt.Fprintln(ios.Out, newName)
 	return nil
 }

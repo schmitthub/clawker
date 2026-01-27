@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +28,7 @@ type Options struct {
 }
 
 // NewCmd creates a new cp command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -62,7 +63,7 @@ Local path format: PATH`,
   # Stream tar from container to stdout
   clawker container cp --agent ralph:/app - > backup.tar`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -99,7 +100,9 @@ func parseContainerPath(arg string) (string, string, bool) {
 	return "", arg, false
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
+	ios := f.IOStreams
+
 	// Parse source and destination
 	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.src)
 	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.dst)
@@ -107,10 +110,10 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			containerName, err := cmdutil2.ResolveContainerName(f, srcContainer)
+			containerName, err := cmdutil.ResolveContainerName(f, srcContainer)
 			if err != nil {
-				cmdutil2.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil2.PrintNextSteps(
+				cmdutil.PrintError(ios, "Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(ios,
 					"Run 'clawker init' to create a configuration",
 					"Or ensure you're in a directory with clawker.yaml",
 				)
@@ -120,10 +123,10 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			containerName, err := cmdutil2.ResolveContainerName(f, dstContainer)
+			containerName, err := cmdutil.ResolveContainerName(f, dstContainer)
 			if err != nil {
-				cmdutil2.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil2.PrintNextSteps(
+				cmdutil.PrintError(ios, "Failed to resolve agent name: %v", err)
+				cmdutil.PrintNextSteps(ios,
 					"Run 'clawker init' to create a configuration",
 					"Or ensure you're in a directory with clawker.yaml",
 				)
@@ -144,17 +147,17 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	if srcIsContainer {
-		return copyFromContainer(ctx, client, srcContainer, srcPath, dstPath, opts)
+		return copyFromContainer(ctx, ios, client, srcContainer, srcPath, dstPath, opts)
 	}
-	return copyToContainer(ctx, client, dstContainer, srcPath, dstPath, opts)
+	return copyToContainer(ctx, ios, client, dstContainer, srcPath, dstPath, opts)
 }
 
-func copyFromContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -167,14 +170,14 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 	// Get tar archive from container
 	copyResult, err := client.CopyFromContainer(ctx, c.ID, docker.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer copyResult.Content.Close()
 
 	// If destination is stdout, just copy the tar
 	if dstPath == "-" {
-		_, err := io.Copy(os.Stdout, copyResult.Content)
+		_, err := io.Copy(ios.Out, copyResult.Content)
 		return err
 	}
 
@@ -182,7 +185,7 @@ func copyFromContainer(ctx context.Context, client *docker.Client, containerName
 	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
-func copyToContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -196,7 +199,7 @@ func copyToContainer(ctx context.Context, client *docker.Client, containerName, 
 	if srcPath == "-" {
 		copyOpts := docker.CopyToContainerOptions{
 			DestinationPath:           dstPath,
-			Content:                   os.Stdin,
+			Content:                   ios.In,
 			AllowOverwriteDirWithFile: true,
 			CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 		}

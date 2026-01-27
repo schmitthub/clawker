@@ -1,4 +1,4 @@
-package cmdutil
+package iostreams
 
 import (
 	"os"
@@ -16,11 +16,11 @@ func TestGetPagerCommand(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name          string
-		clawkerPager  string
-		pager         string
-		wantContains  string
-		wantDefault   bool
+		name         string
+		clawkerPager string
+		pager        string
+		wantContains string
+		wantDefault  bool
 	}{
 		{
 			name:         "CLAWKER_PAGER takes precedence",
@@ -35,10 +35,10 @@ func TestGetPagerCommand(t *testing.T) {
 			wantContains: "more",
 		},
 		{
-			name:        "platform default when both empty",
+			name:         "platform default when both empty",
 			clawkerPager: "",
 			pager:        "",
-			wantDefault: true,
+			wantDefault:  true,
 		},
 	}
 

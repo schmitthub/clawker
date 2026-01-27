@@ -51,6 +51,9 @@ The monitoring stack includes:
 }
 
 func runInit(f *cmdutil.Factory, opts *initOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
 	if err != nil {
@@ -60,11 +63,11 @@ func runInit(f *cmdutil.Factory, opts *initOptions) error {
 	logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Ensure directory exists
-	fmt.Fprintf(os.Stderr, "[INFO]  Checking configuration directory...\n")
+	fmt.Fprintf(ios.ErrOut, "%s Checking configuration directory...\n", cs.InfoIcon())
 	if err := config.EnsureDir(monitorDir); err != nil {
 		return fmt.Errorf("failed to create monitor directory: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "[INFO]  Created directory: %s\n", monitorDir)
+	fmt.Fprintf(ios.ErrOut, "%s Created directory: %s\n", cs.InfoIcon(), monitorDir)
 
 	// Define files to write
 	files := []struct {
@@ -85,27 +88,27 @@ func runInit(f *cmdutil.Factory, opts *initOptions) error {
 
 		// Check if file exists
 		if _, err := os.Stat(filePath); err == nil && !opts.force {
-			fmt.Fprintf(os.Stderr, "[SKIP]  %s already exists (use --force to overwrite)\n", file.name)
+			fmt.Fprintf(ios.ErrOut, "%s %s already exists (use --force to overwrite)\n", cs.Muted("Skipped:"), file.name)
 			continue
 		}
 
 		if err := os.WriteFile(filePath, []byte(file.content), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", file.name, err)
 		}
-		fmt.Fprintf(os.Stderr, "[INFO]  Generated %s\n", file.name)
+		fmt.Fprintf(ios.ErrOut, "%s Generated %s\n", cs.InfoIcon(), file.name)
 	}
 
 	// Success message
-	fmt.Fprintln(os.Stderr, "[SUCCESS] Monitoring stack initialized.")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Next Steps:")
-	fmt.Fprintln(os.Stderr, "  1. Start the stack:")
-	fmt.Fprintln(os.Stderr, "     clawker monitor up")
-	fmt.Fprintln(os.Stderr, "  2. Open Grafana at http://localhost:3000 (No login required)")
-	fmt.Fprintln(os.Stderr, "  3. Open Jaeger at http://localhost:16686")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Note: The monitoring stack uses the clawker-net Docker network.")
-	fmt.Fprintln(os.Stderr, "      Run 'clawker start' or 'clawker run' to create the network if needed.")
+	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack initialized.\n", cs.SuccessIcon())
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.ErrOut, "Next Steps:")
+	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
+	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
+	fmt.Fprintln(ios.ErrOut, "  2. Open Grafana at http://localhost:3000 (No login required)")
+	fmt.Fprintln(ios.ErrOut, "  3. Open Jaeger at http://localhost:16686")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
+	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")
 
 	return nil
 }

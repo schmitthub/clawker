@@ -3,11 +3,13 @@ package generate
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/build"
@@ -24,7 +26,7 @@ type GenerateOptions struct {
 }
 
 // NewCmdGenerate creates a new generate command.
-func NewCmdGenerate(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdGenerate(f *cmdutil.Factory) *cobra.Command {
 	opts := &GenerateOptions{}
 
 	cmd := &cobra.Command{
@@ -66,9 +68,10 @@ Version patterns:
 	return cmd
 }
 
-func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) error {
+func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
+	ios := f.IOStreams
 
 	// Determine output directory: explicit flag > factory default
 	outputDir := f.BuildOutputDir
@@ -92,21 +95,21 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// If no versions specified, show existing versions.json
 	if len(versions) == 0 && !opts.SkipFetch {
-		return showVersions(versionsFile)
+		return showVersions(ios, versionsFile)
 	}
 
 	// If skip-fetch, load and display existing file
 	if opts.SkipFetch {
 		vf, err := build.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil2.PrintError("Failed to load versions.json from %s", outputDir)
-			cmdutil2.PrintNextSteps(
+			cmdutil.PrintError(ios, "Failed to load versions.json from %s", outputDir)
+			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker generate <versions...>' to fetch versions from npm",
 				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
 			)
 			return err
 		}
-		return displayVersionsFile(vf)
+		return displayVersionsFile(vf, ios.ErrOut)
 	}
 
 	// Resolve versions from npm
@@ -115,7 +118,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 		Debug: opts.Debug,
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -131,29 +134,29 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// Save updated versions.json
 	if err := build.SaveVersionsFile(versionsFile, vf); err != nil {
-		cmdutil2.PrintError("Failed to save versions.json")
+		cmdutil.PrintError(ios, "Failed to save versions.json")
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
+	fmt.Fprintf(ios.ErrOut, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
 
 	// Generate Dockerfiles
 	dfMgr := build.NewDockerfileManager(outputDir, nil)
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
-		cmdutil2.PrintError("Failed to generate Dockerfiles")
+		cmdutil.PrintError(ios, "Failed to generate Dockerfiles")
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
+	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
 
-	return displayVersionsFile(vf)
+	return displayVersionsFile(vf, ios.ErrOut)
 }
 
-func showVersions(path string) error {
+func showVersions(ios *iostreams.IOStreams, path string) error {
 	vf, err := build.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cmdutil2.PrintError("No versions.json found")
-			cmdutil2.PrintNextSteps(
+			cmdutil.PrintError(ios, "No versions.json found")
+			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker generate latest' to fetch the latest version",
 				"Run 'clawker generate 2.1.2' to fetch a specific version",
 			)
@@ -162,17 +165,17 @@ func showVersions(path string) error {
 		return err
 	}
 
-	return displayVersionsFile(vf)
+	return displayVersionsFile(vf, ios.ErrOut)
 }
 
-func displayVersionsFile(vf *registry.VersionsFile) error {
-	fmt.Fprintln(os.Stderr, "\nVersions:")
+func displayVersionsFile(vf *registry.VersionsFile, w io.Writer) error {
+	fmt.Fprintln(w, "\nVersions:")
 	for _, key := range vf.SortedKeys() {
 		info := (*vf)[key]
-		fmt.Fprintf(os.Stderr, "  %s\n", key)
-		fmt.Fprintf(os.Stderr, "    Debian default: %s\n", info.DebianDefault)
-		fmt.Fprintf(os.Stderr, "    Alpine default: %s\n", info.AlpineDefault)
-		fmt.Fprintf(os.Stderr, "    Variants: %d\n", len(info.Variants))
+		fmt.Fprintf(w, "  %s\n", key)
+		fmt.Fprintf(w, "    Debian default: %s\n", info.DebianDefault)
+		fmt.Fprintf(w, "    Alpine default: %s\n", info.AlpineDefault)
+		fmt.Fprintf(w, "    Variants: %d\n", len(info.Variants))
 	}
 	return nil
 }

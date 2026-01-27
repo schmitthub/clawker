@@ -3,12 +3,12 @@ package list
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"text/tabwriter"
 	"text/template"
 	"time"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +21,7 @@ type ListOptions struct {
 }
 
 // NewCmdList creates the container list command.
-func NewCmdList(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdList(f *cmdutil.Factory) *cobra.Command {
 	opts := &ListOptions{}
 
 	cmd := &cobra.Command{
@@ -59,11 +59,13 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runList(ctx context.Context, f *cmdutil2.Factory, opts *ListOptions) error {
+func runList(ctx context.Context, f *cmdutil.Factory, opts *ListOptions) error {
+	ios := f.IOStreams
+
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -80,20 +82,20 @@ func runList(ctx context.Context, f *cmdutil2.Factory, opts *ListOptions) error 
 
 	if len(containers) == 0 {
 		if opts.All {
-			fmt.Fprintln(os.Stderr, "No clawker containers found.")
+			fmt.Fprintln(ios.ErrOut, "No clawker containers found.")
 		} else {
-			fmt.Fprintln(os.Stderr, "No running clawker containers found. Use -a to show all containers.")
+			fmt.Fprintln(ios.ErrOut, "No running clawker containers found. Use -a to show all containers.")
 		}
 		return nil
 	}
 
 	// Output with format if specified
 	if opts.Format != "" {
-		return outputFormatted(opts.Format, containers)
+		return outputFormatted(ios.Out, opts.Format, containers)
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSTATUS\tPROJECT\tAGENT\tIMAGE\tCREATED")
 
 	for _, c := range containers {
@@ -158,7 +160,7 @@ type containerForFormat struct {
 }
 
 // outputFormatted outputs containers using a Go template format string.
-func outputFormatted(format string, containers []docker.Container) error {
+func outputFormatted(w io.Writer, format string, containers []docker.Container) error {
 	tmpl, err := template.New("format").Parse(format)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)
@@ -170,10 +172,10 @@ func outputFormatted(format string, containers []docker.Container) error {
 			Container: c,
 			Names:     c.Name,
 		}
-		if err := tmpl.Execute(os.Stdout, wrapper); err != nil {
+		if err := tmpl.Execute(w, wrapper); err != nil {
 			return fmt.Errorf("template execution failed: %w", err)
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 	return nil
 }

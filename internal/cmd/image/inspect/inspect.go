@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the image inspect command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -40,13 +40,14 @@ Outputs detailed image information in JSON format.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, _ *Options, images []string) error {
+func run(f *cmdutil.Factory, _ *Options, images []string) error {
 	ctx := context.Background()
+	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -66,14 +67,14 @@ func run(f *cmdutil2.Factory, _ *Options, images []string) error {
 
 	// Output results
 	if len(results) > 0 {
-		if err := outputJSON(results); err != nil {
+		if err := outputJSON(ios.Out, results); err != nil {
 			return err
 		}
 	}
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			cmdutil2.HandleError(e)
+			cmdutil.HandleError(ios, e)
 		}
 		return fmt.Errorf("failed to inspect %d image(s)", len(errs))
 	}
@@ -81,8 +82,8 @@ func run(f *cmdutil2.Factory, _ *Options, images []string) error {
 	return nil
 }
 
-func outputJSON(data any) error {
-	encoder := json.NewEncoder(os.Stdout)
+func outputJSON(w io.Writer, data any) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "    ")
 	return encoder.Encode(data)
 }

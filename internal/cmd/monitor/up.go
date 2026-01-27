@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/exec"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
@@ -18,7 +19,7 @@ type upOptions struct {
 	detach bool
 }
 
-func newCmdUp(f *cmdutil2.Factory) *cobra.Command {
+func newCmdUp(f *cmdutil.Factory) *cobra.Command {
 	opts := &upOptions{}
 
 	cmd := &cobra.Command{
@@ -49,7 +50,10 @@ Claude Code containers to send telemetry automatically.`,
 	return cmd
 }
 
-func runUp(f *cmdutil2.Factory, opts *upOptions) error {
+func runUp(f *cmdutil.Factory, opts *upOptions) error {
+	ios := f.IOStreams
+	cs := ios.ColorScheme()
+
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
 	if err != nil {
@@ -61,8 +65,8 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil2.PrintError("Monitoring stack not initialized")
-		cmdutil2.PrintNextSteps("Run 'clawker monitor init' to scaffold configuration files")
+		cmdutil.PrintError(ios, "Monitoring stack not initialized")
+		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
@@ -90,24 +94,27 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.Command("docker", composeArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = ios.Out
+	cmd.Stderr = ios.ErrOut
 
-	fmt.Fprintln(os.Stderr, "Starting monitoring stack...")
-	if err := cmd.Run(); err != nil {
+	ios.StartProgressIndicatorWithLabel("Starting monitoring stack...")
+	err = cmd.Run()
+	ios.StopProgressIndicator()
+
+	if err != nil {
 		return fmt.Errorf("failed to start monitoring stack: %w", err)
 	}
 
 	if opts.detach {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Monitoring stack started successfully!")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Service URLs:")
-		fmt.Fprintln(os.Stderr, "  Grafana:    http://localhost:3000 (No login required)")
-		fmt.Fprintln(os.Stderr, "  Jaeger:     http://localhost:16686")
-		fmt.Fprintln(os.Stderr, "  Prometheus: http://localhost:9090")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "To stop the stack: clawker monitor down")
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintln(ios.ErrOut, "Service URLs:")
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan("http://localhost:3000"))
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan("http://localhost:16686"))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan("http://localhost:9090"))
+		fmt.Fprintln(ios.ErrOut)
+		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 
 		// Check for running clawker containers that need restart
 		ctx := context.Background()
@@ -115,7 +122,7 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 		if err != nil {
 			logger.Debug().Err(err).Msg("failed to connect to docker for container check")
 		} else {
-			checkRunningContainers(ctx, client)
+			checkRunningContainers(ctx, client, ios)
 		}
 	}
 
@@ -124,7 +131,8 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 
 // checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client) {
+func checkRunningContainers(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams) {
+	cs := ios.ColorScheme()
 	containers, err := client.ListContainers(ctx, false)
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to list running containers")
@@ -135,18 +143,18 @@ func checkRunningContainers(ctx context.Context, client *docker.Client) {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "⚠️  Running containers detected without telemetry:")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintf(ios.ErrOut, "%s Running containers detected without telemetry:\n", cs.WarningIcon())
 	for _, c := range containers {
-		fmt.Fprintf(os.Stderr, "   • %s\n", c.Name)
+		fmt.Fprintf(ios.ErrOut, "   %s %s\n", cs.Muted("•"), c.Name)
 	}
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "These containers were started before the monitoring stack and")
-	fmt.Fprintln(os.Stderr, "won't export telemetry. To enable telemetry, restart them:")
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.ErrOut, "These containers were started before the monitoring stack and")
+	fmt.Fprintln(ios.ErrOut, "won't export telemetry. To enable telemetry, restart them:")
+	fmt.Fprintln(ios.ErrOut)
 	for _, c := range containers {
-		fmt.Fprintf(os.Stderr, "   cd /path/to/%s && clawker restart\n", c.Project)
+		fmt.Fprintf(ios.ErrOut, "   cd /path/to/%s && clawker restart\n", c.Project)
 	}
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Then run 'clawker start' to start with telemetry enabled.")
+	fmt.Fprintln(ios.ErrOut)
+	fmt.Fprintln(ios.ErrOut, "Then run 'clawker start' to start with telemetry enabled.")
 }
