@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +24,7 @@ type Options struct {
 }
 
 // NewCmd creates a new stats command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -68,14 +68,14 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	ios := f.IOStreams
 
 	// Resolve container names if --agent provided
 	containers := opts.containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -119,7 +119,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	return streamStats(ctx, ios, client, containers, opts)
 }
 
-func showStatsOnce(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func showStatsOnce(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string, opts *Options) error {
 	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 
@@ -169,7 +169,7 @@ func showStatsOnce(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.
 	return nil
 }
 
-func streamStats(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func streamStats(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string, opts *Options) error {
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

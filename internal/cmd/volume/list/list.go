@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"text/tabwriter"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +16,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume list command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -47,21 +47,21 @@ Volumes are used to persist data between container runs, including:
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options) error {
+func run(f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// List volumes
 	resp, err := client.VolumeList(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 

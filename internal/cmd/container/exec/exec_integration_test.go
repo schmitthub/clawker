@@ -10,7 +10,7 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -104,8 +104,8 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := cmdutil2.NewTestIOStreams()
-			f := &cmdutil2.Factory{
+			ios := cmdutil.NewTestIOStreams()
+			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
 				IOStreams: ios.IOStreams,
 			}
@@ -172,8 +172,8 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with --agent flag
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
@@ -236,8 +236,8 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -e flag to set environment variable
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
@@ -301,8 +301,8 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -w flag to set working directory
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
@@ -365,8 +365,8 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		require.NoError(t, err, "container did not start")
 
 		// Try to exec a command that doesn't exist
-		ios := cmdutil2.NewTestIOStreams()
-		f := &cmdutil2.Factory{
+		ios := cmdutil.NewTestIOStreams()
+		f := &cmdutil.Factory{
 			WorkDir:   h.ProjectDir,
 			IOStreams: ios.IOStreams,
 		}
@@ -401,8 +401,8 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		// Deliberately NOT starting the container
 
 		// Try to exec into the stopped container
-		ios := cmdutil2.NewTestIOStreams()
-		f := &cmdutil2.Factory{
+		ios := cmdutil.NewTestIOStreams()
+		f := &cmdutil.Factory{
 			WorkDir:   h.ProjectDir,
 			IOStreams: ios.IOStreams,
 		}
@@ -519,8 +519,8 @@ chmod +x /tmp/test-script.sh`}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := cmdutil2.NewTestIOStreams()
-			f := &cmdutil2.Factory{
+			ios := cmdutil.NewTestIOStreams()
+			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
 				IOStreams: ios.IOStreams,
 			}

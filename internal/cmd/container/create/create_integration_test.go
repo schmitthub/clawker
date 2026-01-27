@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -44,8 +44,8 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	expectedContainerName := "clawker.create-agent-test." + agentName
 
 	// Create factory pointing to harness project directory
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
@@ -112,8 +112,8 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 	expectedContainerName := "clawker.create-name-test." + agentName
 
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
@@ -158,8 +158,8 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 	client := testutil.NewTestClient(t)
 	defer testutil.CleanupProjectResources(ctx, client, "create-random-test")
 
-	ios := cmdutil2.NewTestIOStreams()
-	f := &cmdutil2.Factory{
+	ios := cmdutil.NewTestIOStreams()
+	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}

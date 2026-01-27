@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -18,7 +18,7 @@ type upOptions struct {
 	detach bool
 }
 
-func newCmdUp(f *cmdutil2.Factory) *cobra.Command {
+func newCmdUp(f *cmdutil.Factory) *cobra.Command {
 	opts := &upOptions{}
 
 	cmd := &cobra.Command{
@@ -49,7 +49,7 @@ Claude Code containers to send telemetry automatically.`,
 	return cmd
 }
 
-func runUp(f *cmdutil2.Factory, opts *upOptions) error {
+func runUp(f *cmdutil.Factory, opts *upOptions) error {
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
 
@@ -64,8 +64,8 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil2.PrintError(ios, "Monitoring stack not initialized")
-		cmdutil2.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
+		cmdutil.PrintError(ios, "Monitoring stack not initialized")
+		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
@@ -130,7 +130,7 @@ func runUp(f *cmdutil2.Factory, opts *upOptions) error {
 
 // checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client, ios *cmdutil2.IOStreams) {
+func checkRunningContainers(ctx context.Context, client *docker.Client, ios *cmdutil.IOStreams) {
 	cs := ios.ColorScheme()
 	containers, err := client.ListContainers(ctx, false)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +18,7 @@ type Options struct {
 }
 
 // NewCmd creates the image prune command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -39,7 +39,7 @@ Use with caution as this will permanently delete images.`,
   # Remove without confirmation prompt
   clawker image prune --force`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, f, opts)
@@ -52,7 +52,7 @@ Use with caution as this will permanently delete images.`,
 	return cmd
 }
 
-func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
@@ -60,7 +60,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -89,7 +89,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// dangling=!opts.All: if --all is false, only prune dangling images
 	report, err := client.ImagesPrune(ctx, !opts.All)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 

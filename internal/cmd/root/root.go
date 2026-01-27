@@ -15,14 +15,14 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/ralph"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
 // NewCmdRoot creates the root command for the clawker CLI.
-func NewCmdRoot(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clawker",
 		Short: "Manage Claude Code in secure Docker containers with clawker",
@@ -68,9 +68,9 @@ Workspace modes:
 				Msg("clawker starting")
 
 			// Check project context for commands that require it
-			if cmdutil2.CommandRequiresProject(cmd) {
-				if err := cmdutil2.CheckProjectContext(cmd, f); err != nil {
-					if errors.Is(err, cmdutil2.ErrAborted) {
+			if cmdutil.CommandRequiresProject(cmd) {
+				if err := cmdutil.CheckProjectContext(cmd, f); err != nil {
+					if errors.Is(err, cmdutil.ErrAborted) {
 						// User declined - silence Cobra's error output but return error
 						// for non-zero exit code (operation was not completed)
 						cmd.SilenceErrors = true

@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -16,7 +16,7 @@ type downOptions struct {
 	volumes bool
 }
 
-func newCmdDown(f *cmdutil2.Factory) *cobra.Command {
+func newCmdDown(f *cmdutil.Factory) *cobra.Command {
 	opts := &downOptions{}
 
 	cmd := &cobra.Command{
@@ -41,7 +41,7 @@ the clawker-net Docker network for other clawker services.`,
 	return cmd
 }
 
-func runDown(f *cmdutil2.Factory, opts *downOptions) error {
+func runDown(f *cmdutil.Factory, opts *downOptions) error {
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
 
@@ -56,8 +56,8 @@ func runDown(f *cmdutil2.Factory, opts *downOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil2.PrintError(ios, "Monitoring stack not initialized")
-		cmdutil2.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
+		cmdutil.PrintError(ios, "Monitoring stack not initialized")
+		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume create command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -40,7 +40,7 @@ The volume will be labeled as a clawker-managed resource.`,
   # Create a volume with labels
   clawker volume create --label env=test --label project=myapp myvolume`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -59,14 +59,14 @@ The volume will be labeled as a clawker-managed resource.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options, name string) error {
+func run(f *cmdutil.Factory, opts *Options, name string) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -81,7 +81,7 @@ func run(f *cmdutil2.Factory, opts *Options, name string) error {
 	// Create the volume
 	vol, err := client.VolumeCreate(ctx, createOpts)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 

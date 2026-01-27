@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume prune command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -33,7 +33,7 @@ Use with caution as this will permanently delete data.`,
   # Remove without confirmation prompt
   clawker volume prune --force`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, f, opts)
@@ -45,7 +45,7 @@ Use with caution as this will permanently delete data.`,
 	return cmd
 }
 
-func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
+func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
@@ -53,7 +53,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -76,7 +76,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Prune all unused managed volumes (all=true to include named volumes)
 	report, err := client.VolumesPrune(ctx, true)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 

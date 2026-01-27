@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -248,7 +248,7 @@ func TestNewCmdRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil2.Factory{}
+			f := &cmdutil.Factory{}
 
 			var cmdOpts *Options
 			cmd := NewCmd(f)
@@ -307,7 +307,7 @@ func TestNewCmdRun(t *testing.T) {
 					require.Contains(t, err.Error(), tt.wantErrMsg)
 				} else if len(tt.args) == 0 {
 					// For empty args, verify error matches RequiresMinArgs
-					expectedErr := cmdutil2.RequiresMinArgs(1)(cmd, tt.args)
+					expectedErr := cmdutil.RequiresMinArgs(1)(cmd, tt.args)
 					require.Equal(t, expectedErr.Error(), err.Error())
 				}
 				return
@@ -337,7 +337,7 @@ func TestNewCmdRun(t *testing.T) {
 
 // TestCmdRun_NoDetachShorthand verifies --detach does NOT have -d shorthand (conflicts with --debug)
 func TestCmdRun_NoDetachShorthand(t *testing.T) {
-	f := &cmdutil2.Factory{}
+	f := &cmdutil.Factory{}
 	cmd := NewCmd(f)
 
 	// Verify --detach does NOT have -d shorthand (conflicts with --debug)
@@ -673,7 +673,7 @@ func TestImageArg(t *testing.T) {
 			defaultImage  string
 			mockImages    []string // Images to return from mock ImageList
 			wantReference string
-			wantSource    cmdutil2.ImageSource
+			wantSource    cmdutil.ImageSource
 			wantNil       bool // Expect nil result (no resolution)
 		}{
 			{
@@ -682,7 +682,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    cmdutil2.ImageSourceProject,
+				wantSource:    cmdutil.ImageSourceProject,
 			},
 			{
 				name:          "@ resolves to default image when no project image",
@@ -690,7 +690,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "node:20-slim",
 				mockImages:    []string{}, // No project images
 				wantReference: "node:20-slim",
-				wantSource:    cmdutil2.ImageSourceDefault,
+				wantSource:    cmdutil.ImageSourceDefault,
 			},
 			{
 				name:         "@ returns nil when no default available",
@@ -705,7 +705,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    cmdutil2.ImageSourceProject,
+				wantSource:    cmdutil.ImageSourceProject,
 			},
 			{
 				name:          "@ ignores non-latest project images",
@@ -713,7 +713,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
 				wantReference: "alpine:latest",
-				wantSource:    cmdutil2.ImageSourceDefault,
+				wantSource:    cmdutil.ImageSourceDefault,
 			},
 		}
 
@@ -752,7 +752,7 @@ func TestImageArg(t *testing.T) {
 				}
 
 				// Call the resolution function
-				result, err := cmdutil2.ResolveImageWithSource(ctx, m.Client, cfg, settings)
+				result, err := cmdutil.ResolveImageWithSource(ctx, m.Client, cfg, settings)
 				require.NoError(t, err)
 
 				if tt.wantNil {
@@ -804,7 +804,7 @@ func TestImageArg(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				f := &cmdutil2.Factory{}
+				f := &cmdutil.Factory{}
 
 				var capturedImage string
 				cmd := NewCmd(f)
@@ -837,7 +837,7 @@ func TestImageArg(t *testing.T) {
 	// The test is written to expect proper error handling, but will fail/panic until the bug is fixed.
 	// DO NOT FIX THE BUG IN THIS PR - it should be addressed separately.
 	t.Run("empty image shows error", func(t *testing.T) {
-		f := &cmdutil2.Factory{}
+		f := &cmdutil.Factory{}
 		cmd := NewCmd(f)
 
 		// Cobra hack-around for help flag
@@ -852,7 +852,7 @@ func TestImageArg(t *testing.T) {
 
 		_, err := cmd.ExecuteC()
 
-		argsErr := cmdutil2.RequiresMinArgs(1)(cmd, []string{})
+		argsErr := cmdutil.RequiresMinArgs(1)(cmd, []string{})
 
 		// Expect an error with helpful message
 		require.Error(t, err, "should return error when no image provided")

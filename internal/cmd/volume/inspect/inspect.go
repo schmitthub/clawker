@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +17,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume inspect command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -40,14 +40,14 @@ Outputs detailed volume information in JSON format.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, _ *Options, volumes []string) error {
+func run(f *cmdutil.Factory, _ *Options, volumes []string) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -74,7 +74,7 @@ func run(f *cmdutil2.Factory, _ *Options, volumes []string) error {
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			cmdutil2.HandleError(ios, e)
+			cmdutil.HandleError(ios, e)
 		}
 		return fmt.Errorf("failed to inspect %d volume(s)", len(errs))
 	}

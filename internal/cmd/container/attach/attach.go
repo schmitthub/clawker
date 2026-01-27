@@ -7,7 +7,7 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
@@ -23,7 +23,7 @@ type Options struct {
 }
 
 // NewCmd creates a new attach command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -52,9 +52,9 @@ Container name can be:
   # Attach with custom detach keys
   clawker container attach --detach-keys="ctrl-c" --agent ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.ExactArgs(1),
+		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
 			return run(cmd.Context(), f, opts)
@@ -69,13 +69,13 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	ios := f.IOStreams
 
 	container := opts.container
 	if opts.Agent {
 		var err error
-		container, err = cmdutil2.ResolveContainerName(f, container)
+		container, err = cmdutil.ResolveContainerName(f, container)
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -130,7 +130,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Attach to container
 	hijacked, err := client.ContainerAttach(ctx, c.ID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()

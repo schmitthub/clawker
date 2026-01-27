@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/build"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -30,7 +30,7 @@ type BuildOptions struct {
 }
 
 // NewCmd creates the image build command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &BuildOptions{}
 
 	cmd := &cobra.Command{
@@ -68,7 +68,7 @@ Build-time variables can be passed using --build-arg.`,
   # Always pull base image
   clawker image build --pull`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBuild(f, opts)
@@ -90,7 +90,7 @@ Build-time variables can be passed using --build-arg.`,
 	return cmd
 }
 
-func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
+func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	ctx, cancel := term.SetupSignalContext(context.Background())
 	defer cancel()
 
@@ -101,8 +101,8 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil2.PrintError(ios, "No clawker.yaml found in current directory")
-			cmdutil2.PrintNextSteps(ios,
+			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
+			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker init' to create a configuration",
 				"Or change to a directory with clawker.yaml",
 			)
@@ -114,14 +114,14 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	// Validate configuration
 	validator := config.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
-		cmdutil2.PrintError(ios, "Configuration validation failed")
+		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut, err)
 		return err
 	}
 
 	// Print any warnings
 	for _, warning := range validator.Warnings() {
-		cmdutil2.PrintWarning(ios, "%s", warning)
+		cmdutil.PrintWarning(ios, "%s", warning)
 	}
 
 	// Handle Dockerfile path from -f/--file flag
@@ -140,7 +140,7 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -175,8 +175,8 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	}
 
 	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
-		cmdutil2.HandleError(ios, err)
-		cmdutil2.PrintNextSteps(ios,
+		cmdutil.HandleError(ios, err)
+		cmdutil.PrintNextSteps(ios,
 			"Check your Dockerfile for syntax errors",
 			"Ensure the base image exists and is accessible",
 			"Run 'clawker build --no-cache' to rebuild from scratch",

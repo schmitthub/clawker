@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
@@ -16,7 +16,7 @@ type InitOptions struct {
 }
 
 // NewCmdInit creates the init command for user-level setup.
-func NewCmdInit(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
 	opts := &InitOptions{}
 
 	cmd := &cobra.Command{
@@ -48,7 +48,7 @@ To initialize a project in the current directory, use 'clawker project init' ins
 	return cmd
 }
 
-func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
+func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
@@ -80,7 +80,7 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 	if opts.Yes || !ios.IsInteractive() {
 		buildBaseImage = false // Default to no in non-interactive mode
 	} else {
-		options := []cmdutil2.SelectOption{
+		options := []cmdutil.SelectOption{
 			{Label: "Yes", Description: "Build a clawker-optimized base image (Recommended)"},
 			{Label: "No", Description: "Skip - specify images per-project later"},
 		}
@@ -93,10 +93,10 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 
 	if buildBaseImage {
 		// Convert flavor options to SelectOption
-		flavors := cmdutil2.DefaultFlavorOptions()
-		selectOptions := make([]cmdutil2.SelectOption, len(flavors))
+		flavors := cmdutil.DefaultFlavorOptions()
+		selectOptions := make([]cmdutil.SelectOption, len(flavors))
 		for i, opt := range flavors {
-			selectOptions[i] = cmdutil2.SelectOption{
+			selectOptions[i] = cmdutil.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}
@@ -128,7 +128,7 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Starting base image build...\n", cs.InfoIcon())
 
 		go func() {
-			buildResultCh <- buildResult{err: cmdutil2.BuildDefaultImage(ctx, selectedFlavor)}
+			buildResultCh <- buildResult{err: cmdutil.BuildDefaultImage(ctx, selectedFlavor)}
 		}()
 	}
 
@@ -146,7 +146,7 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 	// Wait for build if started
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)
-		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", cmdutil2.DefaultImageTag))
+		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", cmdutil.DefaultImageTag))
 
 		result := <-buildResultCh
 
@@ -154,17 +154,17 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 
 		if result.err != nil {
 			fmt.Fprintln(ios.ErrOut)
-			cmdutil2.PrintError(ios, "Base image build failed: %v", result.err)
-			cmdutil2.PrintNextSteps(ios,
+			cmdutil.PrintError(ios, "Base image build failed: %v", result.err)
+			cmdutil.PrintNextSteps(ios,
 				"You can manually build later with 'clawker generate latest && docker build ...'",
 				"Or specify images per-project in clawker.yaml",
 			)
 		} else {
 			fmt.Fprintln(ios.ErrOut)
-			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), cmdutil2.DefaultImageTag)
+			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), cmdutil.DefaultImageTag)
 
 			// Update settings with the built image
-			settings.Project.DefaultImage = cmdutil2.DefaultImageTag
+			settings.Project.DefaultImage = cmdutil.DefaultImageTag
 			if err := settingsLoader.Save(settings); err != nil {
 				logger.Warn().Err(err).Msg("failed to update settings with default image")
 			}
@@ -172,7 +172,7 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 	}
 
 	fmt.Fprintln(ios.ErrOut)
-	cmdutil2.PrintNextSteps(ios,
+	cmdutil.PrintNextSteps(ios,
 		"Navigate to a project directory",
 		"Run 'clawker project init' to set up the project",
 	)

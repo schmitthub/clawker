@@ -3,11 +3,11 @@ package init
 import (
 	"testing"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 )
 
 func TestNewCmdInit(t *testing.T) {
-	f := cmdutil2.New("1.0.0", "abc123")
+	f := cmdutil.New("1.0.0", "abc123")
 	cmd := NewCmdInit(f)
 
 	// Check command use (user-only setup, no args)
@@ -33,14 +33,14 @@ func TestNewCmdInit(t *testing.T) {
 func TestDefaultImageTag(t *testing.T) {
 	// Verify the default image tag constant from cmdutil
 	expected := "clawker-default:latest"
-	if cmdutil2.DefaultImageTag != expected {
-		t.Errorf("expected DefaultImageTag %q, got %q", expected, cmdutil2.DefaultImageTag)
+	if cmdutil.DefaultImageTag != expected {
+		t.Errorf("expected DefaultImageTag %q, got %q", expected, cmdutil.DefaultImageTag)
 	}
 }
 
 func TestFlavorOptions(t *testing.T) {
 	// Verify flavor options are defined
-	flavorOptions := cmdutil2.DefaultFlavorOptions()
+	flavorOptions := cmdutil.DefaultFlavorOptions()
 	if len(flavorOptions) == 0 {
 		t.Error("expected flavor options to be defined")
 	}

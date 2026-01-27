@@ -7,7 +7,7 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
@@ -27,7 +27,7 @@ type Options struct {
 }
 
 // NewCmd creates a new exec command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -65,14 +65,14 @@ Container name can be:
   # Run in a specific directory
   clawker container exec -w /tmp clawker.myapp.ralph pwd`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerName := args[0]
 			if opts.Agent {
 				var err error
-				containerName, err = cmdutil2.ResolveContainerName(f, args[0])
+				containerName, err = cmdutil.ResolveContainerName(f, args[0])
 				if err != nil {
 					return err
 				}
@@ -102,18 +102,18 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName string, command []string) error {
+func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(f.IOStreams, err)
 		return err
 	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		cmdutil2.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(f.IOStreams, err)
 		return err
 	}
 
@@ -145,14 +145,14 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 	// Create exec instance
 	execResp, err := client.ExecCreate(ctx, c.ID, execConfig)
 	if err != nil {
-		cmdutil2.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(f.IOStreams, err)
 		return err
 	}
 
 	execID := execResp.ID
 	if execID == "" {
 		err := fmt.Errorf("exec ID is empty")
-		cmdutil2.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(f.IOStreams, err)
 		return err
 	}
 
@@ -163,7 +163,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 			TTY:    opts.TTY,
 		})
 		if err != nil {
-			cmdutil2.HandleError(f.IOStreams, err)
+			cmdutil.HandleError(f.IOStreams, err)
 			return err
 		}
 		fmt.Fprintln(f.IOStreams.Out, execID)
@@ -187,7 +187,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 
 	hijacked, err := client.ExecAttach(ctx, execID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(f.IOStreams, err)
 		return err
 	}
 	defer hijacked.Close()

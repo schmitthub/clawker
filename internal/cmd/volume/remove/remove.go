@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +15,7 @@ type Options struct {
 }
 
 // NewCmd creates the volume remove command.
-func NewCmd(f *cmdutil2.Factory) *cobra.Command {
+func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{}
 
 	cmd := &cobra.Command{
@@ -37,7 +37,7 @@ Note: Only clawker-managed volumes can be removed with this command.`,
   # Force remove a volume
   clawker volume remove --force clawker.myapp.ralph-workspace`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,7 +50,7 @@ Note: Only clawker-managed volumes can be removed with this command.`,
 	return cmd
 }
 
-func run(f *cmdutil2.Factory, opts *Options, volumes []string) error {
+func run(f *cmdutil.Factory, opts *Options, volumes []string) error {
 	ctx := context.Background()
 	ios := f.IOStreams
 	cs := ios.ColorScheme()
@@ -58,7 +58,7 @@ func run(f *cmdutil2.Factory, opts *Options, volumes []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -66,7 +66,7 @@ func run(f *cmdutil2.Factory, opts *Options, volumes []string) error {
 	for _, name := range volumes {
 		if _, err := client.VolumeRemove(ctx, name, opts.Force); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove volume %q: %w", name, err))
-			cmdutil2.HandleError(ios, err)
+			cmdutil.HandleError(ios, err)
 		} else {
 			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 		}

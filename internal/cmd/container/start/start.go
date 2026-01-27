@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
@@ -22,7 +22,7 @@ type StartOptions struct {
 }
 
 // NewCmdStart creates the container start command.
-func NewCmdStart(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
 	opts := &StartOptions{}
 
 	cmd := &cobra.Command{
@@ -48,9 +48,9 @@ Container names can be:
   # Start and attach to container output
   clawker container start --attach clawker.myapp.ralph`,
 		Annotations: map[string]string{
-			cmdutil2.AnnotationRequiresProject: "true",
+			cmdutil.AnnotationRequiresProject: "true",
 		},
-		Args: cmdutil2.RequiresMinArgs(1),
+		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args
 			return runStart(cmd.Context(), f, opts)
@@ -64,7 +64,7 @@ Container names can be:
 	return cmd
 }
 
-func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) error {
+func runStart(ctx context.Context, f *cmdutil.Factory, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
 	ios := f.IOStreams
@@ -78,7 +78,7 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -93,8 +93,8 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 	if cfg == nil || cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil2.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
-			cmdutil2.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
+			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		}
 	}
 
@@ -103,7 +103,7 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 	containers := opts.Containers
 	if opts.Agent {
 		var err error
-		containers, err = cmdutil2.ResolveContainerNamesFromAgents(f, containers)
+		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 }
 
 // attachAndStart attaches to container first, then starts it.
-func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -164,7 +164,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker
 	// Attach to container BEFORE starting it
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()
@@ -177,7 +177,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker
 		},
 	})
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -274,7 +274,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *cmdutil2.IOStreams, client *docker.Client, containers []string) error {
+func startContainersWithoutAttach(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
@@ -285,7 +285,7 @@ func startContainersWithoutAttach(ctx context.Context, ios *cmdutil2.IOStreams, 
 		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to start %s: %w", name, err))
-			cmdutil2.HandleError(ios, err)
+			cmdutil.HandleError(ios, err)
 		} else {
 			// Print container name on success
 			fmt.Fprintln(ios.Out, name)

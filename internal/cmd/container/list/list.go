@@ -8,7 +8,7 @@ import (
 	"text/template"
 	"time"
 
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +21,7 @@ type ListOptions struct {
 }
 
 // NewCmdList creates the container list command.
-func NewCmdList(f *cmdutil2.Factory) *cobra.Command {
+func NewCmdList(f *cmdutil.Factory) *cobra.Command {
 	opts := &ListOptions{}
 
 	cmd := &cobra.Command{
@@ -59,13 +59,13 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runList(ctx context.Context, f *cmdutil2.Factory, opts *ListOptions) error {
+func runList(ctx context.Context, f *cmdutil.Factory, opts *ListOptions) error {
 	ios := f.IOStreams
 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(ios, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
