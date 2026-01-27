@@ -1,10 +1,12 @@
-# IOStreams Package (`internal/cmdutil/`)
+# IOStreams Package (`internal/iostreams/`)
 
 ## Status: COMPLETE
 
 ## Overview
 
 The IOStreams package provides testable I/O abstractions following the GitHub CLI pattern. It handles terminal detection, color output, progress indicators, paging, and alternate screen buffers.
+
+This package was moved from `internal/cmdutil/` to `internal/iostreams/` to better separate I/O concerns from CLI utilities.
 
 ## When to Use This Package
 
@@ -13,7 +15,7 @@ The IOStreams package provides testable I/O abstractions following the GitHub CL
 - **Color output** that respects NO_COLOR and terminal capabilities
 - **Progress indicators** (spinners) during long operations
 - **Paged output** for large data sets
-- **Testing** - use `NewTestIOStreams()` for unit tests
+- **Testing** - use `iostreams.NewTestIOStreams()` for unit tests
 
 ## Package Files
 
@@ -23,15 +25,18 @@ The IOStreams package provides testable I/O abstractions following the GitHub CL
 | `colorscheme.go` | Color formatting that bridges to `tui/styles.go` |
 | `progress.go` | Animated spinner for progress indication |
 | `pager.go` | Output paging via external commands (less, more) |
-| `factory.go` | Factory creates IOStreams with env var detection |
+
+Note: Factory integration is in `internal/cmdutil/factory.go`, which creates IOStreams with env var detection.
 
 ## Core Patterns
 
 ### Accessing IOStreams in Commands
 
 ```go
+import "github.com/schmitthub/clawker/internal/iostreams"
+
 func runMyCommand(f *cmdutil.Factory, opts *Options) error {
-    ios := f.IOStreams
+    ios := f.IOStreams  // *iostreams.IOStreams
     
     // Write data to stdout (for scripting)
     fmt.Fprintln(ios.Out, "data output")
@@ -210,12 +215,12 @@ cs.Theme()    // "light", "dark", or "none"
 
 ## Factory Integration
 
-The Factory creates IOStreams with proper environment detection:
+The Factory (`internal/cmdutil/factory.go`) creates IOStreams with proper environment detection:
 
 ```go
 // In cmdutil.New():
 func New(version, commit string) *Factory {
-    ios := NewIOStreams()
+    ios := iostreams.NewIOStreams()
     
     // Auto-detect color support
     if ios.IsOutputTTY() {
@@ -251,11 +256,13 @@ func New(version, commit string) *Factory {
 
 ### TestIOStreams
 
-Use `NewTestIOStreams()` for unit testing commands:
+Use `iostreams.NewTestIOStreams()` for unit testing commands:
 
 ```go
+import "github.com/schmitthub/clawker/internal/iostreams"
+
 func TestMyCommand(t *testing.T) {
-    ios := cmdutil.NewTestIOStreams()
+    ios := iostreams.NewTestIOStreams()
     
     // Access buffers for verification
     ios.InBuf.SetInput("yes\n")  // Simulate user input
@@ -277,7 +284,7 @@ func TestMyCommand(t *testing.T) {
 ### TestIOStreams Configuration
 
 ```go
-ios := cmdutil.NewTestIOStreams()
+ios := iostreams.NewTestIOStreams()
 
 // Simulate interactive terminal
 ios.SetInteractive(true)  // Sets all TTYs to true
