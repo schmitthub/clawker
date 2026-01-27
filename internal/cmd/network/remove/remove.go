@@ -58,7 +58,7 @@ func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -66,7 +66,7 @@ func run(f *cmdutil2.Factory, _ *Options, networks []string) error {
 	for _, name := range networks {
 		if _, err := client.NetworkRemove(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove network %q: %w", name, err))
-			cmdutil2.HandleError(err)
+			cmdutil2.HandleError(ios, err)
 		} else {
 			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.SuccessIcon(), name)
 		}

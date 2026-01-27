@@ -106,14 +106,14 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(f.IOStreams, err)
 		return err
 	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(f.IOStreams, err)
 		return err
 	}
 
@@ -145,14 +145,14 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 	// Create exec instance
 	execResp, err := client.ExecCreate(ctx, c.ID, execConfig)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(f.IOStreams, err)
 		return err
 	}
 
 	execID := execResp.ID
 	if execID == "" {
 		err := fmt.Errorf("exec ID is empty")
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(f.IOStreams, err)
 		return err
 	}
 
@@ -163,7 +163,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 			TTY:    opts.TTY,
 		})
 		if err != nil {
-			cmdutil2.HandleError(err)
+			cmdutil2.HandleError(f.IOStreams, err)
 			return err
 		}
 		fmt.Fprintln(f.IOStreams.Out, execID)
@@ -187,7 +187,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options, containerName 
 
 	hijacked, err := client.ExecAttach(ctx, execID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(f.IOStreams, err)
 		return err
 	}
 	defer hijacked.Close()

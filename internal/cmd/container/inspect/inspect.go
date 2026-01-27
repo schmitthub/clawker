@@ -82,7 +82,7 @@ func runInspect(ctx context.Context, f *cmdutil2.Factory, opts *InspectOptions) 
 	// Connect to Docker
 	dockerClient, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

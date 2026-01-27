@@ -55,7 +55,7 @@ func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -84,7 +84,7 @@ func run(f *cmdutil2.Factory, opts *Options, networks []string) error {
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			cmdutil2.HandleError(e)
+			cmdutil2.HandleError(ios, e)
 		}
 		return fmt.Errorf("failed to inspect %d network(s)", len(errs))
 	}

@@ -78,7 +78,7 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -93,8 +93,8 @@ func runStart(ctx context.Context, f *cmdutil2.Factory, opts *StartOptions) erro
 	if cfg == nil || cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil2.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
-			cmdutil2.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cmdutil2.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
+			cmdutil2.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		}
 	}
 
@@ -164,7 +164,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker
 	// Attach to container BEFORE starting it
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()
@@ -177,7 +177,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil2.IOStreams, client *docker
 		},
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -285,7 +285,7 @@ func startContainersWithoutAttach(ctx context.Context, ios *cmdutil2.IOStreams, 
 		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to start %s: %w", name, err))
-			cmdutil2.HandleError(err)
+			cmdutil2.HandleError(ios, err)
 		} else {
 			// Print container name on success
 			fmt.Fprintln(ios.Out, name)

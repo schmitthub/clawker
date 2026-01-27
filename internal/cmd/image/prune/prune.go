@@ -60,7 +60,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -89,7 +89,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// dangling=!opts.All: if --all is false, only prune dangling images
 	report, err := client.ImagesPrune(ctx, !opts.All)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

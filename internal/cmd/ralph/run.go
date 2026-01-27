@@ -125,7 +125,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil.PrintError("Failed to load config: %v", err)
+		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err
 	}
 
@@ -134,7 +134,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	if opts.PromptFile != "" {
 		data, err := os.ReadFile(opts.PromptFile)
 		if err != nil {
-			cmdutil.PrintError("Failed to read prompt file: %v", err)
+			cmdutil.PrintError(ios, "Failed to read prompt file: %v", err)
 			return err
 		}
 		prompt = string(data)
@@ -178,19 +178,19 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	// Get docker client
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Verify container exists and is running
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		cmdutil.HandleError(err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	if c.State != "running" {
-		cmdutil.PrintError("Container %q is not running", containerName)
-		cmdutil.PrintNextSteps(
+		cmdutil.PrintError(ios, "Container %q is not running", containerName)
+		cmdutil.PrintNextSteps(ios,
 			fmt.Sprintf("Start the container: clawker start --agent %s", opts.Agent),
 			"Or create a new one: clawker run --agent "+opts.Agent,
 		)
@@ -200,7 +200,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	// Create runner
 	runner, err := ralph.NewRunner(client)
 	if err != nil {
-		cmdutil.PrintError("Failed to create runner: %v", err)
+		cmdutil.PrintError(ios, "Failed to create runner: %v", err)
 		return err
 	}
 
@@ -284,7 +284,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	if err != nil {
 		// Error is already logged by the runner
 		if !opts.JSON {
-			cmdutil.PrintError("Ralph loop failed: %v", err)
+			cmdutil.PrintError(ios, "Ralph loop failed: %v", err)
 		}
 	}
 
@@ -301,12 +301,12 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 		}
 		if result.FinalStatus != nil {
 			output["final_status"] = map[string]any{
-				"status":               result.FinalStatus.Status,
-				"tasks_completed":      result.FinalStatus.TasksCompleted,
-				"files_modified":       result.FinalStatus.FilesModified,
-				"tests_status":         result.FinalStatus.TestsStatus,
-				"work_type":            result.FinalStatus.WorkType,
-				"recommendation":       result.FinalStatus.Recommendation,
+				"status":                result.FinalStatus.Status,
+				"tasks_completed":       result.FinalStatus.TasksCompleted,
+				"files_modified":        result.FinalStatus.FilesModified,
+				"tests_status":          result.FinalStatus.TestsStatus,
+				"work_type":             result.FinalStatus.WorkType,
+				"recommendation":        result.FinalStatus.Recommendation,
 				"completion_indicators": result.FinalStatus.CompletionIndicators,
 			}
 		}
@@ -318,7 +318,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 		}
 		data, jsonErr := json.MarshalIndent(output, "", "  ")
 		if jsonErr != nil {
-			cmdutil.PrintError("Failed to encode JSON output: %v", jsonErr)
+			cmdutil.PrintError(ios, "Failed to encode JSON output: %v", jsonErr)
 			return fmt.Errorf("json encoding failed: %w", jsonErr)
 		}
 		fmt.Fprintln(f.IOStreams.Out, string(data))

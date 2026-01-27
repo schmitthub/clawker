@@ -66,7 +66,7 @@ func run(f *cmdutil2.Factory, opts *Options, name string) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -81,7 +81,7 @@ func run(f *cmdutil2.Factory, opts *Options, name string) error {
 	// Create the volume
 	vol, err := client.VolumeCreate(ctx, createOpts)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

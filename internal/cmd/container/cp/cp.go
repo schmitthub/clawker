@@ -111,8 +111,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		if srcIsContainer && srcContainer != "" {
 			containerName, err := cmdutil2.ResolveContainerName(f, srcContainer)
 			if err != nil {
-				cmdutil2.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil2.PrintNextSteps(
+				cmdutil2.PrintError(ios, "Failed to resolve agent name: %v", err)
+				cmdutil2.PrintNextSteps(ios,
 					"Run 'clawker init' to create a configuration",
 					"Or ensure you're in a directory with clawker.yaml",
 				)
@@ -124,8 +124,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		if dstIsContainer && dstContainer != "" {
 			containerName, err := cmdutil2.ResolveContainerName(f, dstContainer)
 			if err != nil {
-				cmdutil2.PrintError("Failed to resolve agent name: %v", err)
-				cmdutil2.PrintNextSteps(
+				cmdutil2.PrintError(ios, "Failed to resolve agent name: %v", err)
+				cmdutil2.PrintNextSteps(ios,
 					"Run 'clawker init' to create a configuration",
 					"Or ensure you're in a directory with clawker.yaml",
 				)
@@ -146,7 +146,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -169,7 +169,7 @@ func copyFromContainer(ctx context.Context, ios *cmdutil2.IOStreams, client *doc
 	// Get tar archive from container
 	copyResult, err := client.CopyFromContainer(ctx, c.ID, docker.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 	defer copyResult.Content.Close()

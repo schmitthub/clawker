@@ -77,7 +77,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -93,7 +93,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Get top output
 	top, err := client.ContainerTop(ctx, c.ID, psArgs)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

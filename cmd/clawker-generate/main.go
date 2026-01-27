@@ -4,10 +4,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/schmitthub/clawker/internal/cmd/generate"
-	cmdutil2 "github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -24,11 +25,11 @@ func main() {
 	// Create factory with working directory
 	wd, err := os.Getwd()
 	if err != nil {
-		cmdutil2.PrintError("Failed to get working directory: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to get working directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	f := &cmdutil2.Factory{
+	f := &cmdutil.Factory{
 		WorkDir:        wd,
 		BuildOutputDir: wd, // Standalone binary defaults to CWD
 		Version:        Version,

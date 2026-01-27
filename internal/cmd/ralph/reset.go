@@ -53,20 +53,20 @@ func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil.PrintError("Failed to load config: %v", err)
+		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err
 	}
 
 	// Get session store
 	store, err := ralph.DefaultSessionStore()
 	if err != nil {
-		cmdutil.PrintError("Failed to create session store: %v", err)
+		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
 		return err
 	}
 
 	// Reset circuit breaker
 	if err := store.DeleteCircuitState(cfg.Project, opts.Agent); err != nil {
-		cmdutil.PrintError("Failed to reset circuit breaker: %v", err)
+		cmdutil.PrintError(ios, "Failed to reset circuit breaker: %v", err)
 		return err
 	}
 
@@ -77,7 +77,7 @@ func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
 	// Optionally clear session
 	if opts.ClearAll {
 		if err := store.DeleteSession(cfg.Project, opts.Agent); err != nil {
-			cmdutil.PrintError("Failed to clear session: %v", err)
+			cmdutil.PrintError(ios, "Failed to clear session: %v", err)
 			return err
 		}
 		if !opts.Quiet {

@@ -37,11 +37,13 @@ Features:
 }
 
 func runTUI(f *cmdutil.Factory) error {
+	ios := f.IOStreams
+
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError("No clawker.yaml found in current directory")
-			cmdutil.PrintNextSteps(
+			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
+			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker project init' to create a configuration",
 				"Or change to a directory with clawker.yaml",
 			)

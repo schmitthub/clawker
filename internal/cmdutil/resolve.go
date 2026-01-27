@@ -162,8 +162,8 @@ func ResolveAndValidateImage(
 
 	// Default image doesn't exist - prompt to rebuild or error
 	if !f.IOStreams.IsInteractive() {
-		PrintError("Default image %q not found", result.Reference)
-		PrintNextSteps(
+		PrintError(f.IOStreams, "Default image %q not found", result.Reference)
+		PrintNextSteps(f.IOStreams,
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -188,7 +188,7 @@ func ResolveAndValidateImage(
 	}
 
 	if idx != 0 {
-		PrintNextSteps(
+		PrintNextSteps(f.IOStreams,
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -216,7 +216,7 @@ func ResolveAndValidateImage(
 	fmt.Fprintf(f.IOStreams.ErrOut, "Building %s...\n", DefaultImageTag)
 
 	if err := BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		PrintError("Failed to build image: %v", err)
+		PrintError(f.IOStreams, "Failed to build image: %v", err)
 		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
@@ -297,8 +297,8 @@ func ResolveContainerNames(f *Factory, agentName string, containerArgs []string)
 	if agentName != "" {
 		container, err := ResolveContainerName(f, agentName)
 		if err != nil {
-			PrintError("Failed to resolve agent name: %v", err)
-			PrintNextSteps(
+			PrintError(f.IOStreams, "Failed to resolve agent name: %v", err)
+			PrintNextSteps(f.IOStreams,
 				"Run 'clawker init' to create a configuration",
 				"Or ensure you're in a directory with clawker.yaml",
 			)
@@ -319,8 +319,8 @@ func ResolveContainerNamesFromAgents(f *Factory, agents []string) ([]string, err
 	for _, agent := range agents {
 		container, err := ResolveContainerName(f, agent)
 		if err != nil {
-			PrintError("Failed to resolve agent name: %v", err)
-			PrintNextSteps(
+			PrintError(f.IOStreams, "Failed to resolve agent name: %v", err)
+			PrintNextSteps(f.IOStreams,
 				"Run 'clawker init' to create a configuration",
 				"Or ensure you're in a directory with clawker.yaml",
 			)

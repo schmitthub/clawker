@@ -79,7 +79,7 @@ func runStop(ctx context.Context, f *cmdutil2.Factory, opts *StopOptions) error 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

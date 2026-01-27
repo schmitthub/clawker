@@ -191,8 +191,8 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 	loader := config.NewLoader(f.WorkDir)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
-			cmdutil2.PrintError("%s already exists", config.ConfigFileName)
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "%s already exists", config.ConfigFileName)
+			cmdutil2.PrintNextSteps(ios,
 				"Use --force to overwrite the existing configuration",
 				"Or edit the existing clawker.yaml manually",
 			)
@@ -257,7 +257,7 @@ func runProjectInit(f *cmdutil2.Factory, opts *ProjectInitOptions, args []string
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.IgnoreFileName)
 	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
 	fmt.Fprintln(ios.ErrOut)
-	cmdutil2.PrintNextSteps(
+	cmdutil2.PrintNextSteps(ios,
 		"Review and customize clawker.yaml",
 		"Run 'clawker start' to start Claude in a container",
 	)

@@ -51,8 +51,8 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	loader := internalconfig.NewLoader(f.WorkDir)
 
 	if !loader.Exists() {
-		cmdutil2.PrintError("%s not found", internalconfig.ConfigFileName)
-		cmdutil2.PrintNextSteps(
+		cmdutil2.PrintError(ios, "%s not found", internalconfig.ConfigFileName)
+		cmdutil2.PrintNextSteps(ios,
 			"Run 'clawker init' to create a configuration file",
 			"Or create clawker.yaml manually",
 		)
@@ -61,9 +61,9 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 
 	cfg, err := loader.Load()
 	if err != nil {
-		cmdutil2.PrintError("Failed to load configuration")
+		cmdutil2.PrintError(ios, "Failed to load configuration")
 		fmt.Fprintf(ios.ErrOut, "  %s\n", err)
-		cmdutil2.PrintNextSteps(
+		cmdutil2.PrintNextSteps(ios,
 			"Check YAML syntax (indentation, colons, quotes)",
 			"Ensure all required fields are present",
 		)
@@ -78,7 +78,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 	// Validate configuration
 	validator := internalconfig.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
-		cmdutil2.PrintError("Configuration validation failed")
+		cmdutil2.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut)
 
 		if multiErr, ok := err.(*internalconfig.MultiValidationError); ok {
@@ -89,7 +89,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 			fmt.Fprintf(ios.ErrOut, "  %s\n", err)
 		}
 
-		cmdutil2.PrintNextSteps(
+		cmdutil2.PrintNextSteps(ios,
 			"Review the errors above",
 			"Edit clawker.yaml to fix the issues",
 			"Run 'clawker config check' again",
@@ -99,7 +99,7 @@ func runConfigCheck(f *cmdutil2.Factory) error {
 
 	// Print any warnings
 	for _, warning := range validator.Warnings() {
-		cmdutil2.PrintWarning("%s", warning)
+		cmdutil2.PrintWarning(ios, "%s", warning)
 	}
 
 	// Success output

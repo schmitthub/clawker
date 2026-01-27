@@ -101,8 +101,8 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	cfg, err := f.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
-			cmdutil2.PrintError("No clawker.yaml found in current directory")
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "No clawker.yaml found in current directory")
+			cmdutil2.PrintNextSteps(ios,
 				"Run 'clawker init' to create a configuration",
 				"Or change to a directory with clawker.yaml",
 			)
@@ -114,14 +114,14 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	// Validate configuration
 	validator := config.NewValidator(f.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
-		cmdutil2.PrintError("Configuration validation failed")
+		cmdutil2.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut, err)
 		return err
 	}
 
 	// Print any warnings
 	for _, warning := range validator.Warnings() {
-		cmdutil2.PrintWarning("%s", warning)
+		cmdutil2.PrintWarning(ios, "%s", warning)
 	}
 
 	// Handle Dockerfile path from -f/--file flag
@@ -140,7 +140,7 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -175,8 +175,8 @@ func runBuild(f *cmdutil2.Factory, opts *BuildOptions) error {
 	}
 
 	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
-		cmdutil2.HandleError(err)
-		cmdutil2.PrintNextSteps(
+		cmdutil2.HandleError(ios, err)
+		cmdutil2.PrintNextSteps(ios,
 			"Check your Dockerfile for syntax errors",
 			"Ensure the base image exists and is accessible",
 			"Run 'clawker build --no-cache' to rebuild from scratch",

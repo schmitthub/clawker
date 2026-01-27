@@ -53,7 +53,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -76,7 +76,7 @@ func run(cmd *cobra.Command, f *cmdutil2.Factory, opts *Options) error {
 	// Prune all unused managed volumes (all=true to include named volumes)
 	report, err := client.VolumesPrune(ctx, true)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

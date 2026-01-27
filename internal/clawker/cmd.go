@@ -28,7 +28,7 @@ func Main() int {
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
 		// Print contextual help hint (Cobra already printed "Error: ...")
-		cmdutil2.PrintHelpHint(cmd.CommandPath())
+		cmdutil2.PrintHelpHint(f.IOStreams, cmd.CommandPath())
 		f.CloseClient()
 		return 1
 	}

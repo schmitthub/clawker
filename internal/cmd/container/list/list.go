@@ -65,7 +65,7 @@ func runList(ctx context.Context, f *cmdutil2.Factory, opts *ListOptions) error 
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

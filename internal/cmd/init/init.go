@@ -154,8 +154,8 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 
 		if result.err != nil {
 			fmt.Fprintln(ios.ErrOut)
-			cmdutil2.PrintError("Base image build failed: %v", result.err)
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "Base image build failed: %v", result.err)
+			cmdutil2.PrintNextSteps(ios,
 				"You can manually build later with 'clawker generate latest && docker build ...'",
 				"Or specify images per-project in clawker.yaml",
 			)
@@ -172,7 +172,7 @@ func runInit(f *cmdutil2.Factory, opts *InitOptions) error {
 	}
 
 	fmt.Fprintln(ios.ErrOut)
-	cmdutil2.PrintNextSteps(
+	cmdutil2.PrintNextSteps(ios,
 		"Navigate to a project directory",
 		"Run 'clawker project init' to set up the project",
 	)

@@ -56,8 +56,8 @@ func runDown(f *cmdutil2.Factory, opts *downOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil2.PrintError("Monitoring stack not initialized")
-		cmdutil2.PrintNextSteps("Run 'clawker monitor init' to scaffold configuration files")
+		cmdutil2.PrintError(ios, "Monitoring stack not initialized")
+		cmdutil2.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 

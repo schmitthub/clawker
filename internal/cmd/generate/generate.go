@@ -94,15 +94,15 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// If no versions specified, show existing versions.json
 	if len(versions) == 0 && !opts.SkipFetch {
-		return showVersions(versionsFile, ios.ErrOut)
+		return showVersions(ios, versionsFile)
 	}
 
 	// If skip-fetch, load and display existing file
 	if opts.SkipFetch {
 		vf, err := build.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil2.PrintError("Failed to load versions.json from %s", outputDir)
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "Failed to load versions.json from %s", outputDir)
+			cmdutil2.PrintNextSteps(ios,
 				"Run 'clawker generate <versions...>' to fetch versions from npm",
 				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
 			)
@@ -117,7 +117,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 		Debug: opts.Debug,
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -133,7 +133,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 
 	// Save updated versions.json
 	if err := build.SaveVersionsFile(versionsFile, vf); err != nil {
-		cmdutil2.PrintError("Failed to save versions.json")
+		cmdutil2.PrintError(ios, "Failed to save versions.json")
 		return err
 	}
 
@@ -142,7 +142,7 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 	// Generate Dockerfiles
 	dfMgr := build.NewDockerfileManager(outputDir, nil)
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
-		cmdutil2.PrintError("Failed to generate Dockerfiles")
+		cmdutil2.PrintError(ios, "Failed to generate Dockerfiles")
 		return err
 	}
 	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
@@ -150,12 +150,12 @@ func runGenerate(f *cmdutil2.Factory, opts *GenerateOptions, versions []string) 
 	return displayVersionsFile(vf, ios.ErrOut)
 }
 
-func showVersions(path string, w io.Writer) error {
+func showVersions(ios *cmdutil2.IOStreams, path string) error {
 	vf, err := build.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cmdutil2.PrintError("No versions.json found")
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "No versions.json found")
+			cmdutil2.PrintNextSteps(ios,
 				"Run 'clawker generate latest' to fetch the latest version",
 				"Run 'clawker generate 2.1.2' to fetch a specific version",
 			)
@@ -164,7 +164,7 @@ func showVersions(path string, w io.Writer) error {
 		return err
 	}
 
-	return displayVersionsFile(vf, w)
+	return displayVersionsFile(vf, ios.ErrOut)
 }
 
 func displayVersionsFile(vf *registry.VersionsFile, w io.Writer) error {

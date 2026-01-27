@@ -51,28 +51,28 @@ func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
 	// Load config
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil.PrintError("Failed to load config: %v", err)
+		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err
 	}
 
 	// Get session store
 	store, err := ralph.DefaultSessionStore()
 	if err != nil {
-		cmdutil.PrintError("Failed to create session store: %v", err)
+		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
 		return err
 	}
 
 	// Load session
 	session, err := store.LoadSession(cfg.Project, opts.Agent)
 	if err != nil {
-		cmdutil.PrintError("Failed to load session: %v", err)
+		cmdutil.PrintError(ios, "Failed to load session: %v", err)
 		return err
 	}
 
 	// Load circuit state
 	circuitState, err := store.LoadCircuitState(cfg.Project, opts.Agent)
 	if err != nil {
-		cmdutil.PrintError("Failed to load circuit state: %v", err)
+		cmdutil.PrintError(ios, "Failed to load circuit state: %v", err)
 		return err
 	}
 
@@ -115,7 +115,7 @@ func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
 		}
 		data, jsonErr := json.MarshalIndent(output, "", "  ")
 		if jsonErr != nil {
-			cmdutil.PrintError("Failed to encode JSON output: %v", jsonErr)
+			cmdutil.PrintError(ios, "Failed to encode JSON output: %v", jsonErr)
 			return fmt.Errorf("json encoding failed: %w", jsonErr)
 		}
 		fmt.Fprintln(ios.Out, string(data))
@@ -149,7 +149,7 @@ func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
 				fmt.Fprintf(ios.ErrOut, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
 			}
 			fmt.Fprintf(ios.ErrOut, "\n")
-			cmdutil.PrintNextSteps(
+			cmdutil.PrintNextSteps(ios,
 				fmt.Sprintf("Reset the circuit: clawker ralph reset --agent %s", opts.Agent),
 			)
 		} else {

@@ -131,8 +131,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Load config for project name
 	cfg, err := f.Config()
 	if err != nil {
-		cmdutil2.PrintError("Failed to load config: %v", err)
-		cmdutil2.PrintNextSteps(
+		cmdutil2.PrintError(ios, "Failed to load config: %v", err)
+		cmdutil2.PrintNextSteps(ios,
 			"Run 'clawker init' to create a configuration",
 			"Or ensure you're in a directory with clawker.yaml",
 		)
@@ -151,7 +151,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Connect to Docker
 	client, err := f.Client(ctx)
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 
@@ -163,8 +163,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 			return err
 		}
 		if resolvedImage == nil {
-			cmdutil2.PrintError("No image specified and no default image configured")
-			cmdutil2.PrintNextSteps(
+			cmdutil2.PrintError(ios, "No image specified and no default image configured")
+			cmdutil2.PrintNextSteps(ios,
 				"Specify an image: clawker container run IMAGE",
 				"Set default_image in clawker.yaml",
 				"Set default_image in ~/.local/clawker/settings.yaml",
@@ -177,7 +177,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 
 	// adding a defensive check here in case both --name and --agent end up being set due to regression
 	if opts.Name != "" && opts.Agent != "" && opts.Name != opts.Agent {
-		cmdutil2.PrintError("Cannot use both --name and --agent")
+		cmdutil2.PrintError(ios, "Cannot use both --name and --agent")
 		return fmt.Errorf("conflicting container naming options")
 	}
 
@@ -205,8 +205,8 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	if cfg.Security.HostProxyEnabled() {
 		if err := f.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil2.PrintWarning("Host proxy failed to start. Browser authentication may not work.")
-			cmdutil2.PrintNextSteps("To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cmdutil2.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
+			cmdutil2.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
@@ -224,7 +224,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 	// Build configs
 	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts, cfg)
 	if err != nil {
-		cmdutil2.PrintError("Invalid configuration: %v", err)
+		cmdutil2.PrintError(ios, "Invalid configuration: %v", err)
 		return err
 	}
 
@@ -248,7 +248,7 @@ func run(ctx context.Context, f *cmdutil2.Factory, opts *Options) error {
 		},
 	})
 	if err != nil {
-		cmdutil2.HandleError(err)
+		cmdutil2.HandleError(ios, err)
 		return err
 	}
 

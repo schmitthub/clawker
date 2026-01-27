@@ -372,9 +372,11 @@ func TestCheckProjectContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a factory with the test workdir
+			// Create a factory with the test workdir and IOStreams
+			ios := NewTestIOStreams()
 			f := &Factory{
-				WorkDir: tt.workDir,
+				WorkDir:   tt.workDir,
+				IOStreams: ios.IOStreams,
 			}
 
 			// Create a command with stdin set to our test input
@@ -450,8 +452,9 @@ func TestConfirmExternalProjectOperation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ios := NewTestIOStreams()
 			reader := strings.NewReader(tt.input)
-			got := ConfirmExternalProjectOperation(reader, tt.projectPath, tt.operation)
+			got := ConfirmExternalProjectOperation(ios.IOStreams, reader, tt.projectPath, tt.operation)
 			if got != tt.want {
 				t.Errorf("ConfirmExternalProjectOperation() = %v, want %v", got, tt.want)
 			}
