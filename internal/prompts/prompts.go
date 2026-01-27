@@ -1,4 +1,4 @@
-package cmdutil
+package prompts
 
 import (
 	"bufio"
@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // PromptForConfirmation prompts the user for y/N confirmation.
@@ -31,11 +33,11 @@ func PromptForConfirmation(in io.Reader, message string) bool {
 // Prompter provides interactive prompting functionality.
 // It uses IOStreams for testable I/O.
 type Prompter struct {
-	ios *IOStreams
+	ios *iostreams.IOStreams
 }
 
 // NewPrompter creates a new Prompter with the given IOStreams.
-func NewPrompter(ios *IOStreams) *Prompter {
+func NewPrompter(ios *iostreams.IOStreams) *Prompter {
 	return &Prompter{ios: ios}
 }
 

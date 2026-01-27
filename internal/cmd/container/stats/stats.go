@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
@@ -119,7 +120,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	return streamStats(ctx, ios, client, containers, opts)
 }
 
-func showStatsOnce(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *Options) error {
 	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 
@@ -169,7 +170,7 @@ func showStatsOnce(ctx context.Context, ios *cmdutil.IOStreams, client *docker.C
 	return nil
 }
 
-func streamStats(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *Options) error {
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

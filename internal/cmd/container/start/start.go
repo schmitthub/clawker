@@ -8,6 +8,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
@@ -124,7 +125,7 @@ func runStart(ctx context.Context, f *cmdutil.Factory, opts *StartOptions) error
 }
 
 // attachAndStart attaches to container first, then starts it.
-func attachAndStart(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
+func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName string, opts *StartOptions) error {
 	// Find and inspect the container
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -274,7 +275,7 @@ func attachAndStart(ctx context.Context, ios *cmdutil.IOStreams, client *docker.
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containers []string) error {
+func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{

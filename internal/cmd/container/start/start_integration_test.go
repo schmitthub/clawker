@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	require.False(t, testutil.ContainerIsRunning(ctx, rawClient, containerName), "container should be stopped initially")
 
 	// Run start command
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -128,7 +129,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 			require.NoError(t, err, "failed to create container")
 
 			// Run start command with appropriate args
-			ios := cmdutil.NewTestIOStreams()
+			ios := iostreams.NewTestIOStreams()
 			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
 				IOStreams: ios.IOStreams,
@@ -210,7 +211,7 @@ func TestStartIntegration_BothImages(t *testing.T) {
 			require.NoError(t, err, "failed to create container with image %s", tt.image)
 
 			// Run start command
-			ios := cmdutil.NewTestIOStreams()
+			ios := iostreams.NewTestIOStreams()
 			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
 				IOStreams: ios.IOStreams,
@@ -276,7 +277,7 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 	}
 
 	// Run start command with all 3 containers
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -348,7 +349,7 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Try to start it again - should succeed (idempotent)
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -378,7 +379,7 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 	h.Chdir()
 
 	// Try to start a container that doesn't exist
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -435,7 +436,7 @@ func TestStartIntegration_MultipleWithAttach(t *testing.T) {
 	}
 
 	// Try to start with --attach and multiple containers
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,

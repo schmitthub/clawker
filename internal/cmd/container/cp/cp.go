@@ -12,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
@@ -156,7 +157,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	return copyToContainer(ctx, ios, client, dstContainer, srcPath, dstPath, opts)
 }
 
-func copyFromContainer(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -184,7 +185,7 @@ func copyFromContainer(ctx context.Context, ios *cmdutil.IOStreams, client *dock
 	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
-func copyToContainer(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {

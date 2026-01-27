@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -173,7 +174,7 @@ func ResolveAndValidateImage(
 
 	// Interactive mode - prompt to rebuild
 	prompter := f.Prompter()
-	options := []SelectOption{
+	options := []prompts.SelectOption{
 		{Label: "Yes", Description: "Rebuild the default base image now"},
 		{Label: "No", Description: "Cancel and fix manually"},
 	}
@@ -198,9 +199,9 @@ func ResolveAndValidateImage(
 
 	// User chose to rebuild - get flavor selection
 	flavors := DefaultFlavorOptions()
-	flavorOptions := make([]SelectOption, len(flavors))
+	flavorOptions := make([]prompts.SelectOption, len(flavors))
 	for i, opt := range flavors {
-		flavorOptions[i] = SelectOption{
+		flavorOptions[i] = prompts.SelectOption{
 			Label:       opt.Name,
 			Description: opt.Description,
 		}

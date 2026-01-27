@@ -5,12 +5,13 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // HandleError prints an error to stderr with user-friendly formatting.
 // If the error is a DockerError, it uses FormatUserError for rich output.
 // Otherwise, it prints a simple error message.
-func HandleError(ios *IOStreams, err error) {
+func HandleError(ios *iostreams.IOStreams, err error) {
 	if err == nil {
 		return
 	}
@@ -25,7 +26,7 @@ func HandleError(ios *IOStreams, err error) {
 
 // PrintNextSteps prints a "Next Steps" section to stderr.
 // Use this when you have actionable suggestions for the user.
-func PrintNextSteps(ios *IOStreams, steps ...string) {
+func PrintNextSteps(ios *iostreams.IOStreams, steps ...string) {
 	if len(steps) == 0 {
 		return
 	}
@@ -38,18 +39,18 @@ func PrintNextSteps(ios *IOStreams, steps ...string) {
 
 // PrintError prints a simple error message to stderr.
 // Use HandleError instead when the error might be a DockerError.
-func PrintError(ios *IOStreams, format string, args ...any) {
+func PrintError(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)
 }
 
 // PrintWarning prints a warning message to stderr.
-func PrintWarning(ios *IOStreams, format string, args ...any) {
+func PrintWarning(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Warning: "+format+"\n", args...)
 }
 
 // PrintStatus prints a status message to stderr unless quiet is enabled.
 // Use this for informational messages that can be suppressed with --quiet.
-func PrintStatus(ios *IOStreams, quiet bool, format string, args ...any) {
+func PrintStatus(ios *iostreams.IOStreams, quiet bool, format string, args ...any) {
 	if !quiet {
 		fmt.Fprintf(ios.ErrOut, format+"\n", args...)
 	}
@@ -57,7 +58,7 @@ func PrintStatus(ios *IOStreams, quiet bool, format string, args ...any) {
 
 // OutputJSON marshals data to stdout as JSON with indentation.
 // Use this for machine-readable output when --json flag is set.
-func OutputJSON(ios *IOStreams, data any) error {
+func OutputJSON(ios *iostreams.IOStreams, data any) error {
 	enc := json.NewEncoder(ios.Out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
@@ -65,6 +66,6 @@ func OutputJSON(ios *IOStreams, data any) error {
 
 // PrintHelpHint prints a contextual help hint to stderr.
 // cmdPath should be cmd.CommandPath() (e.g., "clawker container stop")
-func PrintHelpHint(ios *IOStreams, cmdPath string) {
+func PrintHelpHint(ios *iostreams.IOStreams, cmdPath string) {
 	fmt.Fprintf(ios.ErrOut, "\nRun '%s --help' for more information.\n", cmdPath)
 }

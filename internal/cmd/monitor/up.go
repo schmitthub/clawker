@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
@@ -130,7 +131,7 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 
 // checkRunningContainers warns if there are running clawker containers
 // that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client, ios *cmdutil.IOStreams) {
+func checkRunningContainers(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams) {
 	cs := ios.ColorScheme()
 	containers, err := client.ListContainers(ctx, false)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
@@ -143,7 +144,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, _ []string) err
 	return nil
 }
 
-func updateContainer(ctx context.Context, ios *cmdutil.IOStreams, client *docker.Client, name string, resources *docker.Resources, restartPolicy *docker.RestartPolicy) error {
+func updateContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, name string, resources *docker.Resources, restartPolicy *docker.RestartPolicy) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {

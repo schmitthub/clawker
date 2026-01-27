@@ -7,6 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -80,7 +81,7 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 	if opts.Yes || !ios.IsInteractive() {
 		buildBaseImage = false // Default to no in non-interactive mode
 	} else {
-		options := []cmdutil.SelectOption{
+		options := []prompts.SelectOption{
 			{Label: "Yes", Description: "Build a clawker-optimized base image (Recommended)"},
 			{Label: "No", Description: "Skip - specify images per-project later"},
 		}
@@ -94,9 +95,9 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 	if buildBaseImage {
 		// Convert flavor options to SelectOption
 		flavors := cmdutil.DefaultFlavorOptions()
-		selectOptions := make([]cmdutil.SelectOption, len(flavors))
+		selectOptions := make([]prompts.SelectOption, len(flavors))
 		for i, opt := range flavors {
-			selectOptions[i] = cmdutil.SelectOption{
+			selectOptions[i] = prompts.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}

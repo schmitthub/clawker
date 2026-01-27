@@ -9,6 +9,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/pkg/build"
@@ -150,7 +151,7 @@ func runGenerate(f *cmdutil.Factory, opts *GenerateOptions, versions []string) e
 	return displayVersionsFile(vf, ios.ErrOut)
 }
 
-func showVersions(ios *cmdutil.IOStreams, path string) error {
+func showVersions(ios *iostreams.IOStreams, path string) error {
 	vf, err := build.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -87,7 +88,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 		projectName = dirName
 	} else {
 		// Interactive: prompt for project name
-		projectName, err = prompter.String(cmdutil.PromptConfig{
+		projectName, err = prompter.String(prompts.PromptConfig{
 			Message:  "Project name",
 			Default:  dirName,
 			Required: true,
@@ -112,14 +113,14 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 	} else {
 		// Interactive: show flavor options + Custom option
 		flavors := cmdutil.DefaultFlavorOptions()
-		selectOptions := make([]cmdutil.SelectOption, len(flavors)+1)
+		selectOptions := make([]prompts.SelectOption, len(flavors)+1)
 		for i, opt := range flavors {
-			selectOptions[i] = cmdutil.SelectOption{
+			selectOptions[i] = prompts.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}
 		}
-		selectOptions[len(flavors)] = cmdutil.SelectOption{
+		selectOptions[len(flavors)] = prompts.SelectOption{
 			Label:       "Custom",
 			Description: "Enter a custom base image (e.g., node:20, python:3.12)",
 		}
@@ -131,7 +132,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 
 		if idx == len(flavors) {
 			// Custom option selected - prompt for custom image
-			customImage, err := prompter.String(cmdutil.PromptConfig{
+			customImage, err := prompter.String(prompts.PromptConfig{
 				Message:  "Custom base image",
 				Required: true,
 			})
@@ -152,7 +153,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 		defaultImage = userDefaultImage
 	} else {
 		// Interactive: prompt with user's default_image as default, allow override or empty
-		defaultImage, err = prompter.String(cmdutil.PromptConfig{
+		defaultImage, err = prompter.String(prompts.PromptConfig{
 			Message:  "Default fallback image (leave empty if none)",
 			Default:  userDefaultImage,
 			Required: false,
@@ -167,7 +168,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 	if opts.Yes || !ios.IsInteractive() {
 		workspaceMode = "bind"
 	} else {
-		options := []cmdutil.SelectOption{
+		options := []prompts.SelectOption{
 			{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
 			{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
 		}

@@ -12,6 +12,7 @@ import (
 	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	containerName := h.ContainerName(agentName)
 
 	// Create factory pointing to harness project directory
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -112,7 +113,7 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 
 	agentName := "test-rm-" + time.Now().Format("150405.000000")
 
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -165,7 +166,7 @@ func TestRunIntegration_Labels(t *testing.T) {
 
 	agentName := "test-labels-" + time.Now().Format("150405.000000")
 
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -233,7 +234,7 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 
 	agentName := "test-ready-" + time.Now().Format("150405.000000")
 
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -342,7 +343,7 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 			sanitizedName := strings.ReplaceAll(tt.name, " ", "-")
 			agentName := "test-arb-" + sanitizedName + "-" + time.Now().Format("150405.000000")
 
-			ios := cmdutil.NewTestIOStreams()
+			ios := iostreams.NewTestIOStreams()
 			f := &cmdutil.Factory{
 				WorkDir:   h.ProjectDir,
 				IOStreams: ios.IOStreams,
@@ -419,7 +420,7 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 
 	agentName := "test-env-" + time.Now().Format("150405.000000")
 
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
@@ -493,7 +494,7 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 
-	ios := cmdutil.NewTestIOStreams()
+	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
 		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
