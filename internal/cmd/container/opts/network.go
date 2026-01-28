@@ -208,6 +208,10 @@ func parseNetworkOpts(copts *ContainerOptions) (map[string]*network.EndpointSett
 		return nil, fmt.Errorf("conflicting options: cannot attach both user-defined and non-user-defined network-modes")
 	}
 
+	if hasNonUserDefined && len(copts.Links) > 0 {
+		return nil, fmt.Errorf("--link is only supported for user-defined networks")
+	}
+
 	return endpoints, nil
 }
 

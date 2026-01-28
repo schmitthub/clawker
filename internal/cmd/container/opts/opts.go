@@ -458,10 +458,10 @@ func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.
 		}
 		cfg.Healthcheck = &container.HealthConfig{Test: []string{"NONE"}}
 	} else if haveHealthSettings {
-		var probe []string
-		if opts.HealthCmd != "" {
-			probe = []string{"CMD-SHELL", opts.HealthCmd}
+		if opts.HealthCmd == "" {
+			return nil, nil, nil, fmt.Errorf("--health-cmd is required when using --health-* options")
 		}
+		probe := []string{"CMD-SHELL", opts.HealthCmd}
 		if opts.HealthInterval < 0 {
 			return nil, nil, nil, fmt.Errorf("--health-interval cannot be negative")
 		}
@@ -667,7 +667,7 @@ func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.
 		hostCfg.CPUPercent = opts.CPUPercent
 	}
 	if opts.IOMaxBandwidth.Value() > 0 {
-		hostCfg.IOMaximumBandwidth = uint64(opts.IOMaxBandwidth)
+		hostCfg.IOMaximumBandwidth = uint64(opts.IOMaxBandwidth.Value())
 	}
 	if opts.IOMaxIOps > 0 {
 		hostCfg.IOMaximumIOps = opts.IOMaxIOps
@@ -925,7 +925,7 @@ func parseStorageOpts(storageOpts []string) (map[string]string, error) {
 	for _, option := range storageOpts {
 		k, v, ok := strings.Cut(option, "=")
 		if !ok {
-			return nil, fmt.Errorf("invalid storage option")
+			return nil, fmt.Errorf("invalid storage option %q: missing '=' separator", option)
 		}
 		m[k] = v
 	}

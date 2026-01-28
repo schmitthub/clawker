@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -221,13 +220,13 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	extraLabels[docker.LabelAgent] = agentName
 
 	// Create container (whail injects managed labels and auto-connects to clawker-net)
-	resp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkConfig,
 		Name:             containerName,
-		ExtraLabels:      whail.Labels{extraLabels},
-		EnsureNetwork: &whail.EnsureNetworkOptions{
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
 			Name: docker.NetworkName,
 		},
 	})
@@ -245,7 +244,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// If detached, just start and print container ID
 	if opts.Detach {
-		if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 			cmdutil.HandleError(ios, err)
 			return err
 		}
@@ -332,7 +331,7 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 	}
 
 	// Now start the container - the I/O streaming goroutines are already running
-	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
 	}
