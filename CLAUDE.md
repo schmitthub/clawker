@@ -192,3 +192,9 @@ See `.claude/rules/testing.md` for testing conventions and utilities.
 - `.serena/memories/` — Active work-in-progress tracking
 
 **Critical**: After code changes, update README.md (user-facing), CLAUDE.md (developer-facing), and memories as appropriate.
+
+## Documentation Maintenance
+
+- `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
+- `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
+- `bash scripts/install-hooks.sh` — Install advisory pre-commit freshness check

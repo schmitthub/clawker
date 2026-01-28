@@ -1,0 +1,35 @@
+# Test invalid namespace mode validation
+# Verifies: Invalid namespace modes are rejected with clear errors
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test invalid --pid mode is rejected
+! exec clawker container run --rm --pid invalid alpine:latest echo test
+stderr 'invalid PID mode'
+
+# Test invalid --uts mode is rejected
+! exec clawker container run --rm --uts invalid alpine:latest echo test
+stderr 'invalid UTS mode'
+
+# Test invalid --userns mode is rejected
+! exec clawker container run --rm --userns invalid alpine:latest echo test
+stderr 'invalid USER mode'
+
+# Test invalid --cgroupns mode is rejected
+! exec clawker container run --rm --cgroupns invalid alpine:latest echo test
+stderr 'invalid CGROUP mode'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -12,12 +12,16 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Options holds options for the create command.
 // It embeds ContainerOptions for shared container configuration.
 type Options struct {
 	*copts.ContainerOptions
+
+	// flags stores the pflag.FlagSet for detecting explicitly changed flags
+	flags *pflag.FlagSet
 }
 
 // NewCmd creates a new container create command.
@@ -66,6 +70,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 			if len(args) > 1 {
 				containerOpts.Command = args[1:]
 			}
+			opts.flags = cmd.Flags()
 			return run(cmd.Context(), f, opts)
 		},
 	}
@@ -183,7 +188,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Build configs using shared function
-	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(workspaceMounts, cfg)
+	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(opts.flags, workspaceMounts, cfg)
 	if err != nil {
 		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
 		return err

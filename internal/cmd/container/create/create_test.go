@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -225,7 +226,9 @@ func TestNewCmdCreate(t *testing.T) {
 				cmdOpts.Entrypoint, _ = cmd.Flags().GetString("entrypoint")
 				cmdOpts.TTY, _ = cmd.Flags().GetBool("tty")
 				cmdOpts.Stdin, _ = cmd.Flags().GetBool("interactive")
-				cmdOpts.Network, _ = cmd.Flags().GetString("network")
+				if netFlag := cmd.Flags().Lookup("network"); netFlag != nil {
+					cmdOpts.Network = netFlag.Value.String()
+				}
 				cmdOpts.Labels, _ = cmd.Flags().GetStringArray("label")
 				cmdOpts.AutoRemove, _ = cmd.Flags().GetBool("rm")
 				if len(args) > 0 {
@@ -396,17 +399,18 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with network",
-			opts: &copts.ContainerOptions{
-				Image:   "alpine",
-				Network: "mynet",
-				Publish: copts.NewPortOpts(),
-			},
+			opts: func() *copts.ContainerOptions {
+				o := copts.NewContainerOptions()
+				o.Image = "alpine"
+				o.NetMode.Set("mynet")
+				return o
+			}(),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, netCfg, err := tt.opts.BuildConfigs(nil, config.DefaultConfig())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultConfig())
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -432,10 +436,9 @@ func TestBuildConfigs(t *testing.T) {
 				require.Equal(t, tt.opts.Env, cfg.Env)
 			}
 
-			// Verify network config
-			if tt.opts.Network != "" {
-				require.NotNil(t, netCfg)
-				require.Contains(t, netCfg.EndpointsConfig, tt.opts.Network)
+			// Verify network mode is set in host config
+			if tt.opts.NetMode.NetworkMode() != "" {
+				require.Equal(t, container.NetworkMode(tt.opts.NetMode.NetworkMode()), hostCfg.NetworkMode)
 			}
 		})
 	}

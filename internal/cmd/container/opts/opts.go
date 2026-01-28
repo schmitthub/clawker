@@ -10,10 +10,14 @@ package opts
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +32,16 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	// seccompProfileDefault is the built-in default seccomp profile.
+	seccompProfileDefault = "builtin"
+	// seccompProfileUnconfined is a special profile name for an "unconfined" seccomp profile.
+	seccompProfileUnconfined = "unconfined"
+)
+
+// deviceCgroupRuleRegexp validates device cgroup rule format: 'type major:minor mode'
+var deviceCgroupRuleRegexp = regexp.MustCompile(`^[acb] ([0-9]+|\*):([0-9]+|\*) [rwm]{1,3}$`)
+
 // ContainerOptions holds common options for container run and create commands.
 // Commands can embed this struct and add command-specific options.
 type ContainerOptions struct {
@@ -40,19 +54,19 @@ type ContainerOptions struct {
 	EnvFile         []string // Read env vars from file(s)
 	Volumes         []string // Bind mounts
 	Publish         *PortOpts
-	Workdir         string    // Working directory
-	User            string    // User
-	Entrypoint      string    // Override entrypoint
-	TTY             bool      // Allocate TTY
-	Stdin           bool      // Keep STDIN open
-	Attach          *ListOpts // Attach to STDIN, STDOUT, STDERR
-	Network         string    // Network connection
-	Labels          []string  // Additional labels
-	LabelsFile      []string  // Read labels from file(s)
-	AutoRemove      bool      // Auto-remove on exit
-	Domainname      string    // Container NIS domain name
-	ContainerIDFile string    // Write container ID to file
-	GroupAdd        []string  // Additional groups
+	Workdir         string     // Working directory
+	User            string     // User
+	Entrypoint      string     // Override entrypoint
+	TTY             bool       // Allocate TTY
+	Stdin           bool       // Keep STDIN open
+	Attach          *ListOpts  // Attach to STDIN, STDOUT, STDERR
+	NetMode         NetworkOpt // Network connection (supports advanced syntax)
+	Labels          []string   // Additional labels
+	LabelsFile      []string   // Read labels from file(s)
+	AutoRemove      bool       // Auto-remove on exit
+	Domainname      string     // Container NIS domain name
+	ContainerIDFile string     // Write container ID to file
+	GroupAdd        []string   // Additional groups
 
 	// Resource limits
 	Memory            docker.MemBytes           // Memory limit (e.g., "512m", "2g")
@@ -77,6 +91,10 @@ type ContainerOptions struct {
 	OOMKillDisable    bool                      // Disable OOM Killer
 	OOMScoreAdj       int                       // OOM preferences (-1000 to 1000)
 	Swappiness        int64                     // Memory swappiness (0-100, -1 for default)
+	CPUCount          int64                     // CPU count (Windows only)
+	CPUPercent        int64                     // CPU percent (Windows only)
+	IOMaxBandwidth    docker.MemBytes           // Max IO bandwidth (Windows only)
+	IOMaxIOps         uint64                    // Max IOps (Windows only)
 
 	// Networking
 	Hostname     string   // Container hostname
@@ -194,7 +212,9 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringVar(&opts.Entrypoint, "entrypoint", "", "Overwrite the default ENTRYPOINT")
 	flags.BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
 	flags.BoolVarP(&opts.Stdin, "interactive", "i", false, "Keep STDIN open even if not attached")
-	flags.StringVar(&opts.Network, "network", "", "Connect container to a network")
+	flags.Var(&opts.NetMode, "network", "Connect a container to a network")
+	flags.Var(&opts.NetMode, "net", "Connect a container to a network")
+	_ = flags.MarkHidden("net")
 	flags.StringArrayVarP(&opts.Labels, "label", "l", nil, "Set metadata on container")
 	flags.StringArrayVar(&opts.LabelsFile, "label-file", nil, "Read in a file of labels")
 	flags.BoolVar(&opts.AutoRemove, "rm", false, "Automatically remove container when it exits")
@@ -227,6 +247,10 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.BoolVar(&opts.OOMKillDisable, "oom-kill-disable", false, "Disable OOM Killer")
 	flags.IntVar(&opts.OOMScoreAdj, "oom-score-adj", 0, "Tune host's OOM preferences (-1000 to 1000)")
 	flags.Var(opts.Ulimits, "ulimit", "Ulimit options")
+	flags.Int64Var(&opts.CPUCount, "cpu-count", 0, "CPU count (Windows only)")
+	flags.Int64Var(&opts.CPUPercent, "cpu-percent", 0, "CPU percent (Windows only)")
+	flags.Var(&opts.IOMaxBandwidth, "io-maxbandwidth", "Maximum IO bandwidth limit for the system drive (Windows only)")
+	flags.Uint64Var(&opts.IOMaxIOps, "io-maxiops", 0, "Maximum IOps limit for the system drive (Windows only)")
 
 	// Networking flags
 	// Note: NOT using -h shorthand for --hostname as it conflicts with Cobra's --help flag
@@ -318,7 +342,9 @@ func (opts *ContainerOptions) GetAgentName() string {
 
 // BuildConfigs builds Docker container, host, and network configs from the options.
 // This consolidates the duplicated buildConfigs logic from run.go and create.go.
-func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+// The flags parameter is used to detect whether certain flags were explicitly set
+// (e.g., --entrypoint="" to reset entrypoint, --stop-timeout, --init).
+func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
 	// Determine attach modes
 	attachStdin := opts.Stdin
 	attachStdout := true
@@ -381,9 +407,12 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		cfg.Cmd = opts.Command
 	}
 
-	// Set entrypoint if provided
+	// Set entrypoint if provided; --entrypoint="" resets entrypoint
 	if opts.Entrypoint != "" {
 		cfg.Entrypoint = []string{opts.Entrypoint}
+	} else if flags != nil && flags.Changed("entrypoint") {
+		// --entrypoint="" was explicitly set to reset the entrypoint
+		cfg.Entrypoint = []string{""}
 	}
 
 	// Parse additional labels
@@ -399,17 +428,19 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		}
 	}
 
-	// Parse exposed ports (--expose)
+	// Parse exposed ports (--expose), supporting ranges like "3000-3005/tcp"
 	if len(opts.Expose) > 0 {
 		if cfg.ExposedPorts == nil {
 			cfg.ExposedPorts = make(network.PortSet)
 		}
 		for _, expose := range opts.Expose {
-			port, err := network.ParsePort(expose)
+			pr, err := network.ParsePortRange(expose)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid --expose port %q: %w", expose, err)
+				return nil, nil, nil, fmt.Errorf("invalid range format for --expose: %w", err)
 			}
-			cfg.ExposedPorts[port] = struct{}{}
+			for p := range pr.All() {
+				cfg.ExposedPorts[p] = struct{}{}
+			}
 		}
 	}
 
@@ -427,26 +458,33 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		}
 		cfg.Healthcheck = &container.HealthConfig{Test: []string{"NONE"}}
 	} else if haveHealthSettings {
-		healthCfg := &container.HealthConfig{}
+		var probe []string
 		if opts.HealthCmd != "" {
-			healthCfg.Test = []string{"CMD-SHELL", opts.HealthCmd}
+			probe = []string{"CMD-SHELL", opts.HealthCmd}
 		}
-		if opts.HealthInterval > 0 {
-			healthCfg.Interval = opts.HealthInterval
+		if opts.HealthInterval < 0 {
+			return nil, nil, nil, fmt.Errorf("--health-interval cannot be negative")
 		}
-		if opts.HealthTimeout > 0 {
-			healthCfg.Timeout = opts.HealthTimeout
+		if opts.HealthTimeout < 0 {
+			return nil, nil, nil, fmt.Errorf("--health-timeout cannot be negative")
 		}
-		if opts.HealthRetries > 0 {
-			healthCfg.Retries = opts.HealthRetries
+		if opts.HealthRetries < 0 {
+			return nil, nil, nil, fmt.Errorf("--health-retries cannot be negative")
 		}
-		if opts.HealthStartPeriod > 0 {
-			healthCfg.StartPeriod = opts.HealthStartPeriod
+		if opts.HealthStartPeriod < 0 {
+			return nil, nil, nil, fmt.Errorf("--health-start-period cannot be negative")
 		}
-		if opts.HealthStartInterval > 0 {
-			healthCfg.StartInterval = opts.HealthStartInterval
+		if opts.HealthStartInterval < 0 {
+			return nil, nil, nil, fmt.Errorf("--health-start-interval cannot be negative")
 		}
-		cfg.Healthcheck = healthCfg
+		cfg.Healthcheck = &container.HealthConfig{
+			Test:          probe,
+			Interval:      opts.HealthInterval,
+			Timeout:       opts.HealthTimeout,
+			StartPeriod:   opts.HealthStartPeriod,
+			StartInterval: opts.HealthStartInterval,
+			Retries:       opts.HealthRetries,
+		}
 	}
 
 	// Host config
@@ -479,25 +517,48 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.Privileged = true
 	}
 	if len(opts.SecurityOpt) > 0 {
-		hostCfg.SecurityOpt = opts.SecurityOpt
+		securityOpts, err := parseSecurityOpts(opts.SecurityOpt)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		securityOpts, maskedPaths, readonlyPaths := parseSystemPaths(securityOpts)
+		hostCfg.SecurityOpt = securityOpts
+		if maskedPaths != nil {
+			hostCfg.MaskedPaths = maskedPaths
+		}
+		if readonlyPaths != nil {
+			hostCfg.ReadonlyPaths = readonlyPaths
+		}
 	}
 
-	// Namespace modes
-	if opts.PidMode != "" {
-		hostCfg.PidMode = container.PidMode(opts.PidMode)
+	// Namespace modes (with validation)
+	pidMode := container.PidMode(opts.PidMode)
+	if !pidMode.Valid() {
+		return nil, nil, nil, fmt.Errorf("--pid: invalid PID mode")
 	}
+	hostCfg.PidMode = pidMode
+
 	if opts.IpcMode != "" {
 		hostCfg.IpcMode = container.IpcMode(opts.IpcMode)
 	}
-	if opts.UtsMode != "" {
-		hostCfg.UTSMode = container.UTSMode(opts.UtsMode)
+
+	utsMode := container.UTSMode(opts.UtsMode)
+	if !utsMode.Valid() {
+		return nil, nil, nil, fmt.Errorf("--uts: invalid UTS mode")
 	}
-	if opts.UsernsMode != "" {
-		hostCfg.UsernsMode = container.UsernsMode(opts.UsernsMode)
+	hostCfg.UTSMode = utsMode
+
+	usernsMode := container.UsernsMode(opts.UsernsMode)
+	if !usernsMode.Valid() {
+		return nil, nil, nil, fmt.Errorf("--userns: invalid USER mode")
 	}
-	if opts.CgroupnsMode != "" {
-		hostCfg.CgroupnsMode = container.CgroupnsMode(opts.CgroupnsMode)
+	hostCfg.UsernsMode = usernsMode
+
+	cgroupnsMode := container.CgroupnsMode(opts.CgroupnsMode)
+	if !cgroupnsMode.Valid() {
+		return nil, nil, nil, fmt.Errorf("--cgroupns: invalid CGROUP mode")
 	}
+	hostCfg.CgroupnsMode = cgroupnsMode
 	if opts.CgroupParent != "" {
 		hostCfg.CgroupParent = opts.CgroupParent
 	}
@@ -510,15 +571,13 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 
 	// Logging config
 	if opts.LogDriver != "" {
-		hostCfg.LogConfig = container.LogConfig{
-			Type: opts.LogDriver,
+		loggingOptsMap, err := parseLoggingOpts(opts.LogDriver, opts.LogOpts)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		if len(opts.LogOpts) > 0 {
-			hostCfg.LogConfig.Config = make(map[string]string)
-			for _, lo := range opts.LogOpts {
-				k, v, _ := strings.Cut(lo, "=")
-				hostCfg.LogConfig.Config[k] = v
-			}
+		hostCfg.LogConfig = container.LogConfig{
+			Type:   opts.LogDriver,
+			Config: loggingOptsMap,
 		}
 	}
 
@@ -600,6 +659,20 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.OomKillDisable = &opts.OOMKillDisable
 	}
 
+	// Windows-only CPU/IO resources
+	if opts.CPUCount > 0 {
+		hostCfg.CPUCount = opts.CPUCount
+	}
+	if opts.CPUPercent > 0 {
+		hostCfg.CPUPercent = opts.CPUPercent
+	}
+	if opts.IOMaxBandwidth.Value() > 0 {
+		hostCfg.IOMaximumBandwidth = uint64(opts.IOMaxBandwidth)
+	}
+	if opts.IOMaxIOps > 0 {
+		hostCfg.IOMaximumIOps = opts.IOMaxIOps
+	}
+
 	// Ulimits
 	if opts.Ulimits != nil && opts.Ulimits.Len() > 0 {
 		hostCfg.Ulimits = opts.Ulimits.GetAll()
@@ -613,6 +686,11 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.DeviceRequests = opts.GPUs.GetAll()
 	}
 	if len(opts.DeviceCgroupRules) > 0 {
+		for _, rule := range opts.DeviceCgroupRules {
+			if err := validateDeviceCgroupRule(rule); err != nil {
+				return nil, nil, nil, err
+			}
+		}
 		hostCfg.DeviceCgroupRules = opts.DeviceCgroupRules
 	}
 
@@ -634,11 +712,11 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.VolumesFrom = opts.VolumesFrom
 	}
 	if len(opts.StorageOpt) > 0 {
-		hostCfg.StorageOpt = make(map[string]string)
-		for _, so := range opts.StorageOpt {
-			k, v, _ := strings.Cut(so, "=")
-			hostCfg.StorageOpt[k] = v
+		storageOpts, err := parseStorageOpts(opts.StorageOpt)
+		if err != nil {
+			return nil, nil, nil, err
 		}
+		hostCfg.StorageOpt = storageOpts
 	}
 	if len(opts.Tmpfs) > 0 {
 		hostCfg.Tmpfs = make(map[string]string)
@@ -659,9 +737,13 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.Mounts = append(hostCfg.Mounts, opts.Mounts.GetAll()...)
 	}
 
-	// Parse user-provided volumes (via -v flag) as Binds
+	// Parse user-provided volumes (via -v flag) as Binds, resolving relative paths
 	if len(opts.Volumes) > 0 {
-		hostCfg.Binds = opts.Volumes
+		binds := make([]string, 0, len(opts.Volumes))
+		for _, v := range opts.Volumes {
+			binds = append(binds, resolveVolumePath(v))
+		}
+		hostCfg.Binds = binds
 	}
 
 	// Process and runtime options
@@ -675,16 +757,27 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 	if opts.StopSignal != "" {
 		cfg.StopSignal = opts.StopSignal
 	}
-	if opts.StopTimeout > 0 {
+	if flags != nil && flags.Changed("stop-timeout") {
 		cfg.StopTimeout = &opts.StopTimeout
-	}
-	if opts.Init {
-		hostCfg.Init = &opts.Init
+	} else if opts.StopTimeout > 0 {
+		cfg.StopTimeout = &opts.StopTimeout
 	}
 
 	// Validate --rm and --restart conflict
 	if opts.AutoRemove && opts.Restart != "" && opts.Restart != "no" {
 		return nil, nil, nil, fmt.Errorf("conflicting options: cannot specify both --restart and --rm")
+	}
+
+	// When allocating stdin in attached mode, close stdin at client disconnect
+	if cfg.OpenStdin && cfg.AttachStdin {
+		cfg.StdinOnce = true
+	}
+
+	// Use flags.Changed for --init and --stop-timeout to distinguish "not set" from "set to zero"
+	if flags != nil && flags.Changed("init") {
+		hostCfg.Init = &opts.Init
+	} else if opts.Init {
+		hostCfg.Init = &opts.Init
 	}
 
 	// Add port mappings from PortOpts
@@ -699,59 +792,27 @@ func (opts *ContainerOptions) BuildConfigs(mounts []mount.Mount, projectCfg *con
 		hostCfg.PortBindings = opts.Publish.GetPortBindings()
 	}
 
-	// Network config
-	var networkCfg *network.NetworkingConfig
-	if opts.Network != "" {
-		endpointSettings := &network.EndpointSettings{}
+	// Network config — use NetworkMode from NetMode for HostConfig,
+	// and parseNetworkOpts for advanced EndpointsConfig
+	networkMode := opts.NetMode.NetworkMode()
+	if networkMode != "" {
+		hostCfg.NetworkMode = container.NetworkMode(networkMode)
+	}
 
-		// Apply network-specific options
-		if len(opts.Aliases) > 0 {
-			endpointSettings.Aliases = opts.Aliases
+	// Validate MAC address if provided
+	if opts.MacAddress != "" {
+		if _, err := net.ParseMAC(strings.TrimSpace(opts.MacAddress)); err != nil {
+			return nil, nil, nil, fmt.Errorf("%s is not a valid mac address", opts.MacAddress)
 		}
-		if len(opts.Links) > 0 {
-			endpointSettings.Links = opts.Links
-		}
-		if opts.IPv4Address != "" || opts.IPv6Address != "" || opts.MacAddress != "" || len(opts.LinkLocalIPs) > 0 {
-			endpointSettings.IPAMConfig = &network.EndpointIPAMConfig{}
-			if opts.IPv4Address != "" {
-				addr, err := netip.ParseAddr(opts.IPv4Address)
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("invalid IPv4 address %q: %w", opts.IPv4Address, err)
-				}
-				endpointSettings.IPAMConfig.IPv4Address = addr
-			}
-			if opts.IPv6Address != "" {
-				addr, err := netip.ParseAddr(opts.IPv6Address)
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("invalid IPv6 address %q: %w", opts.IPv6Address, err)
-				}
-				endpointSettings.IPAMConfig.IPv6Address = addr
-			}
-			if len(opts.LinkLocalIPs) > 0 {
-				llAddrs := make([]netip.Addr, 0, len(opts.LinkLocalIPs))
-				for _, ip := range opts.LinkLocalIPs {
-					addr, err := netip.ParseAddr(ip)
-					if err != nil {
-						return nil, nil, nil, fmt.Errorf("invalid link-local IP %q: %w", ip, err)
-					}
-					llAddrs = append(llAddrs, addr)
-				}
-				endpointSettings.IPAMConfig.LinkLocalIPs = llAddrs
-			}
-		}
-		if opts.MacAddress != "" {
-			mac, err := net.ParseMAC(opts.MacAddress)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid MAC address %q: %w", opts.MacAddress, err)
-			}
-			endpointSettings.MacAddress = network.HardwareAddr(mac)
-		}
+	}
 
-		networkCfg = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				opts.Network: endpointSettings,
-			},
-		}
+	epCfg, err := parseNetworkOpts(opts)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	networkCfg := &network.NetworkingConfig{
+		EndpointsConfig: epCfg,
 	}
 
 	return cfg, hostCfg, networkCfg, nil
@@ -788,6 +849,110 @@ func (opts *ContainerOptions) ValidateFlags() error {
 	}
 
 	return nil
+}
+
+// parseSecurityOpts reads the content of seccomp profile files, handling special
+// profile names (builtin, unconfined) and the no-new-privileges option.
+func parseSecurityOpts(securityOpts []string) ([]string, error) {
+	for key, opt := range securityOpts {
+		k, v, ok := strings.Cut(opt, "=")
+		if !ok && k != "no-new-privileges" {
+			k, v, ok = strings.Cut(opt, ":")
+		}
+		if (!ok || v == "") && k != "no-new-privileges" {
+			return securityOpts, fmt.Errorf("invalid --security-opt: %q", opt)
+		}
+		if k == "seccomp" {
+			switch v {
+			case seccompProfileDefault, seccompProfileUnconfined:
+				// known special names for built-in profiles, nothing to do.
+			default:
+				// value may be a filename, in which case we send the profile's
+				// content if it's valid JSON.
+				f, err := os.ReadFile(v)
+				if err != nil {
+					return securityOpts, fmt.Errorf("opening seccomp profile (%s) failed: %w", v, err)
+				}
+				var b bytes.Buffer
+				if err := json.Compact(&b, f); err != nil {
+					return securityOpts, fmt.Errorf("compacting json for seccomp profile (%s) failed: %w", v, err)
+				}
+				securityOpts[key] = "seccomp=" + b.String()
+			}
+		}
+	}
+	return securityOpts, nil
+}
+
+// parseSystemPaths checks if `systempaths=unconfined` security option is set,
+// and returns the `MaskedPaths` and `ReadonlyPaths` accordingly. An updated
+// list of security options is returned with this option removed, because the
+// `unconfined` option is handled client-side, and should not be sent to the daemon.
+func parseSystemPaths(securityOpts []string) (filtered, maskedPaths, readonlyPaths []string) {
+	filtered = securityOpts[:0]
+	for _, opt := range securityOpts {
+		if opt == "systempaths=unconfined" {
+			maskedPaths = []string{}
+			readonlyPaths = []string{}
+		} else {
+			filtered = append(filtered, opt)
+		}
+	}
+	return filtered, maskedPaths, readonlyPaths
+}
+
+// parseLoggingOpts converts logging opts and validates that no opts are provided
+// when the driver is "none".
+func parseLoggingOpts(loggingDriver string, loggingOpts []string) (map[string]string, error) {
+	if loggingDriver == "none" && len(loggingOpts) > 0 {
+		return nil, fmt.Errorf("invalid logging opts for driver %s", loggingDriver)
+	}
+	if len(loggingOpts) == 0 {
+		return nil, nil
+	}
+	loggingOptsMap := make(map[string]string, len(loggingOpts))
+	for _, lo := range loggingOpts {
+		k, v, _ := strings.Cut(lo, "=")
+		loggingOptsMap[k] = v
+	}
+	return loggingOptsMap, nil
+}
+
+// parseStorageOpts parses storage options per container into a map,
+// validating that each option contains a '=' separator.
+func parseStorageOpts(storageOpts []string) (map[string]string, error) {
+	m := make(map[string]string)
+	for _, option := range storageOpts {
+		k, v, ok := strings.Cut(option, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid storage option")
+		}
+		m[k] = v
+	}
+	return m, nil
+}
+
+// validateDeviceCgroupRule validates a device cgroup rule string format.
+// The format must be: 'type major:minor mode'
+func validateDeviceCgroupRule(val string) error {
+	if deviceCgroupRuleRegexp.MatchString(val) {
+		return nil
+	}
+	return fmt.Errorf("invalid device cgroup format '%s'", val)
+}
+
+// resolveVolumePath converts relative paths (starting with ./) in volume specs
+// to absolute paths.
+func resolveVolumePath(bind string) string {
+	if hostPart, targetPath, ok := strings.Cut(bind, ":"); ok {
+		if !filepath.IsAbs(hostPart) && strings.HasPrefix(hostPart, ".") {
+			if absHostPart, err := filepath.Abs(hostPart); err == nil {
+				hostPart = absHostPart
+			}
+		}
+		return hostPart + ":" + targetPath
+	}
+	return bind
 }
 
 // ResolveAgentName returns the agent name, generating one if not provided.
