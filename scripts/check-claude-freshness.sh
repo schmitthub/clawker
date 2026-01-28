@@ -69,25 +69,30 @@ git_timestamp() {
 }
 
 # Find newest .go file commit under a directory (or repo-wide if ".")
+# Find newest .go file commit under a directory (or repo-wide if ".")
+# Uses git log with :(glob) pathspec for reliable glob matching.
 newest_go_in() {
-    local dir="$1" glob
+    local dir="$1" pathspec
     if [[ "$dir" == "." ]]; then
-        glob="*.go"
+        pathspec=":(glob)**/*.go"
     else
-        glob="${dir}/*.go"
+        pathspec=":(glob)${dir}/**/*.go"
     fi
-    local newest_file="" newest_ts=0
 
-    while IFS= read -r gofile; do
-        local ts
-        ts=$(git_timestamp "$gofile")
-        if (( ts > newest_ts )); then
-            newest_ts=$ts
-            newest_file=$gofile
-        fi
-    done < <(git ls-files "$glob" 2>/dev/null)
+    # Get the most recent commit touching any .go file under the path.
+    # --diff-filter=ACMR excludes deleted files.
+    local result
+    result=$(git log --format="%at" --diff-filter=ACMR --name-only -1 -- "$pathspec" 2>/dev/null || true)
+    if [[ -z "$result" ]]; then
+        echo "0 "
+        return
+    fi
 
-    echo "$newest_ts $newest_file"
+    local ts file
+    ts=$(echo "$result" | head -1)
+    # Filter to .go files only (git shows all files in the commit)
+    file=$(echo "$result" | tail -n +2 | grep '\.go$' | head -1)
+    echo "${ts:-0} ${file:-}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -158,9 +163,24 @@ done < <(git ls-files 'internal/*/CLAUDE.md' 'internal/*/*/CLAUDE.md' 'pkg/*/CLA
 
 # ── Check .claude/rules/*.md with paths: frontmatter ─────────────────────────
 while IFS= read -r rule; do
-    # Extract paths from frontmatter: paths: ["glob1", "glob2"]
-    paths_line=$(head -5 "$rule" | grep '^paths:' || true)
-    if [[ -z "$paths_line" ]]; then
+    # Extract paths from frontmatter. Supports:
+    #   paths: ["glob1", "glob2"]     (inline)
+    #   paths:\n  - "glob1"\n  - "glob2"  (YAML array)
+    globs=""
+    # Read frontmatter (between --- markers)
+    frontmatter=$(sed -n '/^---$/,/^---$/p' "$rule")
+    if echo "$frontmatter" | grep -q '^paths:'; then
+        # Inline format: paths: ["glob1", "glob2"]
+        inline=$(echo "$frontmatter" | grep '^paths: *\[' || true)
+        if [[ -n "$inline" ]]; then
+            globs=$(echo "$inline" | sed 's/^paths: *\[//;s/\].*$//;s/"//g;s/,/ /g')
+        else
+            # Multi-line YAML array format
+            globs=$(echo "$frontmatter" | sed -n '/^paths:/,/^[^ -]/p' | grep '^ *- ' | sed 's/^ *- *//;s/"//g' | tr '\n' ' ')
+        fi
+    fi
+
+    if [[ -z "$globs" ]] || [[ "$globs" =~ ^[[:space:]]*$ ]]; then
         continue
     fi
 
@@ -173,20 +193,26 @@ while IFS= read -r rule; do
         continue
     fi
 
-    # Parse glob patterns from paths: ["glob1", "glob2"]
-    globs=$(echo "$paths_line" | sed 's/^paths: *\[//;s/\].*$//;s/"//g;s/,/ /g')
-
     newest_ts=0
     newest_file=""
+    # Build pathspec args — disable globbing to prevent bash expansion of **
+    pathspec_args=()
+    set -f  # disable globbing
     for glob in $globs; do
-        while IFS= read -r gofile; do
-            ts=$(git_timestamp "$gofile")
-            if (( ts > newest_ts )); then
-                newest_ts=$ts
-                newest_file=$gofile
-            fi
-        done < <(git ls-files "$glob" -- '*.go' 2>/dev/null || git ls-files "${glob}/**/*.go" 2>/dev/null || true)
+        if [[ "$glob" == *.go ]]; then
+            # Glob already targets .go files directly
+            pathspec_args+=(":(glob)${glob}")
+        else
+            pathspec_args+=(":(glob)${glob}/*.go" ":(glob)${glob}/**/*.go")
+        fi
     done
+    set +f  # re-enable globbing
+
+    local_result=$(git log --format="%at" --diff-filter=ACMR --name-only -1 -- "${pathspec_args[@]}" 2>/dev/null || true)
+    if [[ -n "$local_result" ]]; then
+        newest_ts=$(echo "$local_result" | head -1)
+        newest_file=$(echo "$local_result" | tail -n +2 | grep '\.go$' | head -1)
+    fi
 
     echo -e "${BOLD}${rule}${RESET}"
     echo "  Doc updated:   $(format_date "$local_doc_ts")"
