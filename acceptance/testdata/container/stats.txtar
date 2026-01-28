@@ -1,0 +1,31 @@
+# Test container stats command
+# Verifies: can get resource usage statistics
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent stats-$RANDOM_STRING
+defer clawker container stop --agent stats-$RANDOM_STRING
+
+# Start a container
+exec clawker container run --detach --agent stats-$RANDOM_STRING alpine:latest sleep 3600
+wait_container_running clawker.$PROJECT.stats-$RANDOM_STRING 30
+
+# Get stats (one-shot, non-streaming)
+exec clawker container stats --no-stream --agent stats-$RANDOM_STRING
+stdout 'stats-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

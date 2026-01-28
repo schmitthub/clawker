@@ -1,0 +1,33 @@
+# Test network create and remove commands
+# Verifies: networks can be created and removed
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Create a network (outputs network ID, not name)
+exec clawker network create net-test-$RANDOM_STRING
+
+# Verify network exists in list
+exec clawker network ls
+stdout 'net-test-'$RANDOM_STRING
+
+# Remove the network
+exec clawker network rm net-test-$RANDOM_STRING
+
+# Verify network is gone
+exec clawker network ls
+! stdout 'net-test-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

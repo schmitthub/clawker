@@ -1,0 +1,31 @@
+# Test container top command
+# Verifies: can list processes running in container
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent top-$RANDOM_STRING
+defer clawker container stop --agent top-$RANDOM_STRING
+
+# Start a container running sleep
+exec clawker container run --detach --agent top-$RANDOM_STRING alpine:latest sleep 3600
+wait_container_running clawker.$PROJECT.top-$RANDOM_STRING 30
+
+# Get process list
+exec clawker container top --agent top-$RANDOM_STRING
+stdout 'sleep'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

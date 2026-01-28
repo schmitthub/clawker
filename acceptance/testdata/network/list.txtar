@@ -1,0 +1,36 @@
+# Test network list command
+# Verifies: networks can be listed
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker network rm net-list1-$RANDOM_STRING
+defer clawker network rm net-list2-$RANDOM_STRING
+
+# Create two networks
+exec clawker network create net-list1-$RANDOM_STRING
+exec clawker network create net-list2-$RANDOM_STRING
+
+# List networks (default)
+exec clawker network ls
+stdout 'net-list1-'$RANDOM_STRING
+stdout 'net-list2-'$RANDOM_STRING
+
+# List with alias
+exec clawker network list
+stdout 'net-list1-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
