@@ -282,24 +282,27 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 		fmt.Fprintln(f.IOStreams.ErrOut, "Warning:", warning)
 	}
 
-	// Start the container
-	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
-	}
-
-	// If detached, print container ID and exit
+	// If detached, just start and print container ID
 	if opts.Detach {
+		if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+			cmdutil.HandleError(ios, err)
+			return err
+		}
 		fmt.Fprintln(f.IOStreams.Out, containerID[:12])
 		return nil
 	}
 
-	// Attach to container
-	return attachAndWait(ctx, f, client, containerID, opts)
+	// For non-detached mode, attach BEFORE starting to handle short-lived containers
+	// and containers with --rm that may exit and be removed before we can attach.
+	// See: https://labs.iximiuz.com/tutorials/docker-run-vs-attach-vs-exec
+	return attachThenStart(ctx, f, client, containerID, opts)
 }
 
-// attachAndWait attaches to a running container and waits for it to exit.
-func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
+// attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
+// This ensures we don't miss output from short-lived containers, especially with --rm.
+// The sequence follows Docker CLI's approach: attach -> start I/O streaming -> start container -> wait.
+// See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
+func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
 	ios := f.IOStreams
 
 	// Create attach options
@@ -320,7 +323,9 @@ func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Clien
 		defer pty.Restore()
 	}
 
-	// Attach to container
+	// Attach to container BEFORE starting it
+	// This is critical for short-lived containers (especially with --rm) where the container
+	// might exit and be removed before we can attach if we start first.
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
@@ -328,24 +333,51 @@ func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Clien
 	}
 	defer hijacked.Close()
 
-	// Set up wait channel for container exit
+	// Set up wait channel for container exit (use a context that won't be cancelled
+	// when we cancel the attach context, following Docker CLI pattern)
 	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 
-	// Handle I/O
+	// Start I/O streaming BEFORE starting the container
+	// This ensures we're ready to receive output immediately when the container starts
+	var outputDone chan error
+	var streamDone chan error
+
 	if opts.TTY && pty != nil {
-		// Use PTY handler for TTY mode with resize support
+		// TTY mode: use PTY handler for bidirectional streaming with resize support
 		resizeFunc := func(height, width uint) error {
 			_, err := client.ContainerResize(ctx, containerID, height, width)
 			return err
 		}
-
-		// Run streaming in a goroutine so we can also wait for container exit
-		streamDone := make(chan error, 1)
+		streamDone = make(chan error, 1)
 		go func() {
 			streamDone <- pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
 		}()
+	} else {
+		// Non-TTY mode: demux the multiplexed stream
+		outputDone = make(chan error, 1)
+		go func() {
+			_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
+			outputDone <- err
+		}()
 
-		// Wait for either stream to end or container to exit
+		// Copy stdin to container if enabled
+		if opts.Stdin {
+			go func() {
+				io.Copy(hijacked.Conn, f.IOStreams.In)
+				hijacked.CloseWrite()
+			}()
+		}
+	}
+
+	// Now start the container - the I/O streaming goroutines are already running
+	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		cmdutil.HandleError(ios, err)
+		return err
+	}
+
+	// Wait for completion based on mode
+	if opts.TTY && pty != nil {
+		// TTY mode: wait for stream or container exit
 		select {
 		case err := <-streamDone:
 			return err
@@ -362,27 +394,13 @@ func attachAndWait(ctx context.Context, f *cmdutil.Factory, client *docker.Clien
 		}
 	}
 
-	// Non-TTY mode: demux the multiplexed stream
-	outputDone := make(chan struct{})
-
-	// Copy output using stdcopy to demultiplex stdout/stderr
-	go func() {
-		stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
-		close(outputDone)
-	}()
-
-	// Copy stdin to container if enabled
-	if opts.Stdin {
-		go func() {
-			io.Copy(hijacked.Conn, f.IOStreams.In)
-			hijacked.CloseWrite()
-		}()
-	}
-
-	// Wait for container to exit
+	// Non-TTY mode: wait for output to complete or container to exit
 	select {
-	case <-outputDone:
-		// Output closed, check container status
+	case err := <-outputDone:
+		// Output stream closed, check container status
+		if err != nil {
+			return err
+		}
 		select {
 		case result := <-waitResult.Result:
 			if result.Error != nil {

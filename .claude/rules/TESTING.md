@@ -20,6 +20,9 @@ go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
 go test -tags=e2e ./internal/cmd/... -v -timeout 15m
+
+# Acceptance tests (requires Docker, tests CLI workflows)
+go test -tags=acceptance ./acceptance -v -timeout 15m
 ```
 
 ---
@@ -31,11 +34,57 @@ go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 | Unit | (none) | `*_test.go` | No |
 | Integration | `integration` | `*_integration_test.go` | Yes |
 | E2E | `e2e` | `*_e2e_test.go` | Yes |
+| Acceptance | `acceptance` | `acceptance/testdata/*.txtar` | Yes |
 
 **Naming Convention:**
 - Unit tests: `foo_test.go`
 - Integration tests: `foo_integration_test.go`
 - E2E tests: `foo_e2e_test.go`
+- Acceptance tests: `testdata/<category>/*.txtar`
+
+---
+
+## Acceptance Tests (`acceptance/`)
+
+Acceptance tests use the [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript) framework to test CLI workflows against a real Docker daemon. They provide high-level validation of command behavior.
+
+### Running Acceptance Tests
+
+```bash
+# All acceptance tests
+go test -tags=acceptance ./acceptance -v -timeout 15m
+
+# Specific category
+go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+go test -tags=acceptance -run ^TestRalph$ ./acceptance -v
+
+# Single test script
+CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+
+# Via Makefile
+make acceptance
+```
+
+### When to Write Acceptance Tests
+
+Write acceptance tests for:
+- Command-line interface behavior (flags, output format)
+- Multi-command workflows
+- User-facing error messages
+- Configuration file handling
+
+Use unit/integration tests instead for:
+- Internal function logic
+- Docker SDK interactions
+- Performance-sensitive code paths
+
+### Quick Reference
+
+See [`acceptance/README.md`](../../acceptance/README.md) for complete documentation including:
+- Test file format (.txtar)
+- Custom commands (`defer`, `replace`, `wait_container_running`, etc.)
+- Environment variables
+- Debugging tips
 
 ---
 

@@ -74,6 +74,10 @@ go test ./...                             # Run tests
 
 # Regenerate CLI documentation (after updating Cobra Example fields)
 go run ./cmd/gen-docs --doc-path docs --markdown
+
+# Acceptance tests (requires Docker, tests CLI workflows)
+go test -tags=acceptance ./acceptance -v -timeout 15m
+# Or: make acceptance
 ```
 
 ## Key Concepts
@@ -538,6 +542,8 @@ ralph:                            # Autonomous loop configuration
 - Docker hijacked connections need cleanup of both read and write sides
 - Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode - `term.Restore()` handles both by sending escape sequences `\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B` before restoring raw/cooked mode
 - Terminal resize +1/-1 trick: When attaching to containers, first resize to (height+1, width+1) then to actual size. This forces a SIGWINCH event that triggers TUI apps to redraw. Matches Docker CLI's approach in attach.go. Implemented in `StreamWithResize`.
+- Acceptance test assertions are case-sensitive - check actual command output (e.g., `building container image` not `Building image`)
+- Acceptance tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false` for isolation
 
 ## Context Management (Critical)
 
@@ -584,6 +590,10 @@ go test -tags=integration ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (requires Docker, builds binary)
 go test -tags=e2e ./internal/cmd/... -v -timeout 15m
+
+# Acceptance tests (requires Docker, tests CLI workflows)
+go test -tags=acceptance ./acceptance -v -timeout 15m
+# Or: make acceptance
 ```
 
 **Test Utilities:** The `internal/testutil` package provides:
@@ -604,7 +614,10 @@ See @.claude/rules/TESTING.md for detailed testing guidelines.
 | @.claude/docs/ARCHITECTURE.md | Detailed abstractions and interfaces |
 | @.claude/docs/CONTRIBUTING.md | Adding commands, updating docs |
 | @.claude/rules/TESTING.md | CLI testing guidelines (**only access when writing command tests**) |
+| @acceptance/README.md | Acceptance test authoring guide (txtar format, custom commands) |
 | @README.md | see @.serena/readme_design_direction.md |
+
+**Serena Memory:** `acceptance_testing_progress.md` - Implementation status, gotchas, and tips for writing acceptance tests.
 
 **Critical**: After code changes, update README.md (user-facing) and CLAUDE.md (developer-facing) and memories (serena) as appropriate.
 

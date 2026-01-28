@@ -1,0 +1,31 @@
+# Test network inspect command
+# Verifies: network details can be inspected
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker network rm net-inspect-$RANDOM_STRING
+
+# Create a network
+exec clawker network create net-inspect-$RANDOM_STRING
+
+# Inspect the network (outputs JSON)
+exec clawker network inspect net-inspect-$RANDOM_STRING
+stdout '"Name":'
+stdout 'net-inspect-'$RANDOM_STRING
+stdout '"Driver": "bridge"'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

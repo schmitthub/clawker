@@ -1,0 +1,28 @@
+# Test --rm flag for automatic container removal
+# Verifies: container is removed after exit
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Run container with --rm that exits immediately
+exec clawker container run --rm --agent rm-test-$RANDOM_STRING alpine:latest echo done
+stdout 'done'
+
+# Container should not appear in list after exit (with small delay)
+sleep 2
+exec clawker container ls -a
+! stdout 'rm-test-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

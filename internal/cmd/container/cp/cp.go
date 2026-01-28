@@ -221,6 +221,9 @@ func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 		CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 	}
 	_, err = client.CopyToContainer(ctx, c.ID, copyOpts)
+	if err != nil {
+		cmdutil.HandleError(ios, err)
+	}
 	return err
 }
 
