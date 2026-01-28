@@ -1,0 +1,29 @@
+# Test --device-cgroup-rule format validation
+# Verifies: Invalid device cgroup rules are rejected
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test invalid device cgroup rule is rejected
+! exec clawker container run --rm --device-cgroup-rule 'invalid rule' alpine:latest echo test
+stderr 'invalid device cgroup'
+
+# Test valid device cgroup rule is accepted
+defer clawker container rm --force --agent dcg-$RANDOM_STRING
+exec clawker container create --agent dcg-$RANDOM_STRING --device-cgroup-rule 'c 1:3 rwm' alpine:latest sleep 3600
+exec clawker container inspect --format '{{json .HostConfig.DeviceCgroupRules}}' --agent dcg-$RANDOM_STRING
+stdout 'c 1:3 rwm'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

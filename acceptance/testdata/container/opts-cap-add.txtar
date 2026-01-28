@@ -1,0 +1,29 @@
+# Test capability add flag (--cap-add)
+# Verifies: Linux capabilities are added to container
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent capadd-$RANDOM_STRING
+
+# Create container with added capability
+exec clawker container create --agent capadd-$RANDOM_STRING --cap-add SYS_PTRACE alpine:latest sleep 3600
+
+# Verify capability via inspect
+exec clawker container inspect --format '{{.HostConfig.CapAdd}}' --agent capadd-$RANDOM_STRING
+stdout 'SYS_PTRACE'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

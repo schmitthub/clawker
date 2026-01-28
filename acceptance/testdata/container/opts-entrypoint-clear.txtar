@@ -1,0 +1,30 @@
+# Test clearing entrypoint with empty string
+# Verifies: --entrypoint '' sets an explicitly empty entrypoint
+# Docker CLI behavior: --entrypoint="" sets Entrypoint to [""] which overrides image entrypoint
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent entryclear-$RANDOM_STRING
+
+# Create container with cleared entrypoint
+exec clawker container create --agent entryclear-$RANDOM_STRING --entrypoint '' alpine:latest sleep 3600
+
+# Verify entrypoint is set to explicitly empty ([""] = 1 element)
+exec clawker container inspect --format '{{json .Config.Entrypoint}}' --agent entryclear-$RANDOM_STRING
+stdout '""'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

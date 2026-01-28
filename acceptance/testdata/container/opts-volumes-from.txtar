@@ -1,0 +1,34 @@
+# Test volumes-from flag (--volumes-from)
+# Verifies: Volumes from another container are mounted
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent vfsrc-$RANDOM_STRING
+defer clawker container rm --force --agent vfdst-$RANDOM_STRING
+
+# Create source container with an anonymous volume
+exec clawker container create --agent vfsrc-$RANDOM_STRING -v /shared-data alpine:latest sleep 3600
+
+# Create second container with --volumes-from (uses full container name)
+exec clawker container create --agent vfdst-$RANDOM_STRING --volumes-from clawker.$PROJECT.vfsrc-$RANDOM_STRING alpine:latest sleep 3600
+
+# Verify volumes-from via inspect
+exec clawker container inspect --format '{{json .HostConfig.VolumesFrom}}' --agent vfdst-$RANDOM_STRING
+stdout 'clawker'
+stdout 'vfsrc'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

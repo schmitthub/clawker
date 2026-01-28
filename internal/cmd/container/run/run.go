@@ -5,56 +5,38 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/netip"
-	"strings"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/api/types/network"
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
-	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Options holds options for the run command.
 type Options struct {
-	// Naming
-	Agent     string // Use an agent name for first argument, image is auto resolved
-	Name      string // Full container name (overrides agent)
-	AgentName string // Resolved container name or id
-
-	// Container configuration
-	Env        []string // Environment variables
-	Volumes    []string // Bind mounts
-	Publish    []string // Port mappings
-	Workdir    string   // Working directory
-	User       string   // User
-	Entrypoint string   // Override entrypoint
-	TTY        bool     // Allocate TTY
-	Stdin      bool     // Keep STDIN open
-	Network    string   // Network connection
-	Labels     []string // Additional labels
-	AutoRemove bool     // Auto-remove on exit
+	*copts.ContainerOptions
 
 	// Run-specific options
-	Detach bool   // Run in background
-	Mode   string // Workspace mode: "bind" or "snapshot" (empty = use config default)
+	Detach bool // Run in background
 
-	// Internal (set after parsing positional args)
-	Image   string
-	Command []string
+	// Internal (resolved from ContainerOptions)
+	AgentName string // Resolved container name or id
+
+	// flags stores the pflag.FlagSet for detecting explicitly changed flags
+	flags *pflag.FlagSet
 }
 
 // NewCmd creates a new container run command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	containerOpts := copts.NewContainerOptions()
+	opts := &Options{ContainerOptions: containerOpts}
 
 	cmd := &cobra.Command{
 		Use:   "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
@@ -96,40 +78,22 @@ If IMAGE is "@", clawker will use (in order of precedence):
 		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Image = args[0]
+			containerOpts.Image = args[0]
 			if len(args) > 1 {
-				opts.Command = args[1:]
+				containerOpts.Command = args[1:]
 			}
+			opts.flags = cmd.Flags()
 			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	flags := cmd.Flags()
-	flags.SetInterspersed(false)
-
-	// Naming flags
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Assign a name to the agent, used in container name (mutually exclusive with --name)")
-	cmd.Flags().StringVar(&opts.Name, "name", "", "Same as --agent; provided for Docker CLI familiarity (mutually exclusive with --agent)")
-
-	// Container configuration flags
-	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "Set environment variables")
-	cmd.Flags().StringArrayVarP(&opts.Volumes, "volume", "v", nil, "Bind mount a volume")
-	cmd.Flags().StringArrayVarP(&opts.Publish, "publish", "p", nil, "Publish container port(s) to host")
-	cmd.Flags().StringVarP(&opts.Workdir, "workdir", "w", "", "Working directory inside the container")
-	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "Username or UID")
-	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", "Overwrite the default ENTRYPOINT")
-	cmd.Flags().BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
-	cmd.Flags().BoolVarP(&opts.Stdin, "interactive", "i", false, "Keep STDIN open even if not attached")
-	cmd.Flags().StringVar(&opts.Network, "network", "", "Connect container to a network")
-	cmd.Flags().StringArrayVarP(&opts.Labels, "label", "l", nil, "Set metadata on container")
-	cmd.Flags().BoolVar(&opts.AutoRemove, "rm", false, "Automatically remove container when it exits")
+	// Add shared container flags
+	copts.AddFlags(cmd.Flags(), containerOpts)
+	copts.MarkMutuallyExclusive(cmd)
 
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
 	cmd.Flags().BoolVar(&opts.Detach, "detach", false, "Run container in background and print container ID")
-	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
-
-	cmd.MarkFlagsMutuallyExclusive("agent", "name")
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
@@ -144,6 +108,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 
 func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	ios := f.IOStreams
+	containerOpts := opts.ContainerOptions
 
 	// Load config for project name
 	cfg, err := f.Config()
@@ -171,7 +136,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Resolve image name
-	if opts.Image == "@" {
+	if containerOpts.Image == "@" {
 		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
@@ -187,30 +152,22 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			)
 			return fmt.Errorf("no image specified")
 		}
-		opts.Image = resolvedImage.Reference
+		containerOpts.Image = resolvedImage.Reference
 	}
 
 	// Resolve Agent and Container Name
-
-	// If agent or name set, set AgentName
-	opts.AgentName = opts.Agent
-	if opts.AgentName == "" && opts.Name != "" {
-		opts.AgentName = opts.Name
+	agentName := containerOpts.GetAgentName()
+	if agentName == "" {
+		agentName = docker.GenerateRandomName()
 	}
-	var containerName string
-	var agent string
-	if opts.AgentName == "" {
-		agent = docker.GenerateRandomName()
-	} else {
-		agent = opts.AgentName
-	}
-	containerName = docker.ContainerName(cfg.Project, agent)
+	opts.AgentName = agentName
+	containerName := docker.ContainerName(cfg.Project, agentName)
 
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: opts.Mode,
+		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
-		AgentName:    agent,
+		AgentName:    agentName,
 	})
 	if err != nil {
 		return err
@@ -218,7 +175,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Enable interactive mode early to suppress INFO logs during TTY sessions.
 	// This prevents host proxy and other startup logs from interfering with the TUI.
-	if !opts.Detach && opts.TTY && opts.Stdin {
+	if !opts.Detach && containerOpts.TTY && containerOpts.Stdin {
 		logger.SetInteractiveMode(true)
 		defer logger.SetInteractiveMode(false)
 	}
@@ -234,7 +191,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
 			if envVar := f.HostProxyEnvVar(); envVar != "" {
-				opts.Env = append(opts.Env, envVar)
+				containerOpts.Env = append(containerOpts.Env, envVar)
 			}
 		}
 	}
@@ -242,10 +199,15 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Setup git credential forwarding
 	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
-	opts.Env = append(opts.Env, gitSetup.Env...)
+	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	// Build configs
-	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts, cfg)
+	// Validate cross-field constraints before building configs
+	if err := containerOpts.ValidateFlags(); err != nil {
+		return err
+	}
+
+	// Build configs using shared function
+	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(opts.flags, workspaceMounts, cfg)
 	if err != nil {
 		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
 		return err
@@ -255,18 +217,16 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	extraLabels := map[string]string{
 		docker.LabelProject: cfg.Project,
 	}
-	if agent != "" {
-		extraLabels[docker.LabelAgent] = agent
-	}
+	extraLabels[docker.LabelAgent] = agentName
 
 	// Create container (whail injects managed labels and auto-connects to clawker-net)
-	resp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           containerConfig,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkConfig,
 		Name:             containerName,
-		ExtraLabels:      whail.Labels{extraLabels},
-		EnsureNetwork: &whail.EnsureNetworkOptions{
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
 			Name: docker.NetworkName,
 		},
 	})
@@ -284,7 +244,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// If detached, just start and print container ID
 	if opts.Detach {
-		if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 			cmdutil.HandleError(ios, err)
 			return err
 		}
@@ -304,18 +264,19 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
 func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
 	ios := f.IOStreams
+	containerOpts := opts.ContainerOptions
 
 	// Create attach options
 	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
-		Stdin:  opts.Stdin,
+		Stdin:  containerOpts.Stdin,
 		Stdout: true,
 		Stderr: true,
 	}
 
 	// Set up TTY if enabled
 	var pty *term.PTYHandler
-	if opts.TTY && opts.Stdin {
+	if containerOpts.TTY && containerOpts.Stdin {
 		pty = term.NewPTYHandler()
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
@@ -342,7 +303,7 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 	var outputDone chan error
 	var streamDone chan error
 
-	if opts.TTY && pty != nil {
+	if containerOpts.TTY && pty != nil {
 		// TTY mode: use PTY handler for bidirectional streaming with resize support
 		resizeFunc := func(height, width uint) error {
 			_, err := client.ContainerResize(ctx, containerID, height, width)
@@ -361,7 +322,7 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 		}()
 
 		// Copy stdin to container if enabled
-		if opts.Stdin {
+		if containerOpts.Stdin {
 			go func() {
 				io.Copy(hijacked.Conn, f.IOStreams.In)
 				hijacked.CloseWrite()
@@ -370,13 +331,13 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 	}
 
 	// Now start the container - the I/O streaming goroutines are already running
-	if _, err := client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID}); err != nil {
+	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Wait for completion based on mode
-	if opts.TTY && pty != nil {
+	if containerOpts.TTY && pty != nil {
 		// TTY mode: wait for stream or container exit
 		select {
 		case err := <-streamDone:
@@ -425,117 +386,4 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 	case err := <-waitResult.Error:
 		return err
 	}
-}
-
-// buildConfigs builds Docker container, host, and network configurations from options.
-func buildConfigs(opts *Options, mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
-	// Container config
-	cfg := &container.Config{
-		Image:        opts.Image,
-		Tty:          opts.TTY,
-		OpenStdin:    opts.Stdin,
-		AttachStdin:  opts.Stdin,
-		AttachStdout: true,
-		AttachStderr: true,
-		Env:          opts.Env,
-		WorkingDir:   opts.Workdir,
-		User:         opts.User,
-	}
-
-	// Set command if provided
-	if len(opts.Command) > 0 {
-		cfg.Cmd = opts.Command
-	}
-
-	// Set entrypoint if provided
-	if opts.Entrypoint != "" {
-		cfg.Entrypoint = []string{opts.Entrypoint}
-	}
-
-	// Parse additional labels
-	if len(opts.Labels) > 0 {
-		cfg.Labels = make(map[string]string)
-		for _, l := range opts.Labels {
-			parts := strings.SplitN(l, "=", 2)
-			if len(parts) == 2 {
-				cfg.Labels[parts[0]] = parts[1]
-			} else {
-				cfg.Labels[parts[0]] = ""
-			}
-		}
-	}
-
-	// Host config
-	hostCfg := &container.HostConfig{
-		AutoRemove: opts.AutoRemove,
-		Mounts:     mounts,
-		CapAdd:     projectCfg.Security.CapAdd,
-	}
-
-	// Parse user-provided volumes (via -v flag) as Binds
-	if len(opts.Volumes) > 0 {
-		hostCfg.Binds = opts.Volumes
-	}
-
-	// Parse port mappings
-	if len(opts.Publish) > 0 {
-		exposedPorts, portBindings, err := parsePortMappings(opts.Publish)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		cfg.ExposedPorts = exposedPorts
-		hostCfg.PortBindings = portBindings
-	}
-
-	// Network config
-	var networkCfg *network.NetworkingConfig
-	if opts.Network != "" {
-		networkCfg = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				opts.Network: {},
-			},
-		}
-	}
-
-	return cfg, hostCfg, networkCfg, nil
-}
-
-// parsePortMappings converts port mapping specs (e.g., "8080:80/tcp") to network types.
-func parsePortMappings(specs []string) (network.PortSet, network.PortMap, error) {
-	exposedPorts := make(network.PortSet)
-	portBindings := make(network.PortMap)
-
-	for _, spec := range specs {
-		portMappings, err := nat.ParsePortSpec(spec)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid port mapping %q: %w", spec, err)
-		}
-		for _, pm := range portMappings {
-			// Convert nat.Port to network.Port
-			// nat.Port is a string like "80/tcp"
-			netPort, err := network.ParsePort(string(pm.Port))
-			if err != nil {
-				return nil, nil, fmt.Errorf("invalid port %q: %w", pm.Port, err)
-			}
-
-			exposedPorts[netPort] = struct{}{}
-
-			// Convert nat.PortBinding to network.PortBinding
-			// HostIP needs to be netip.Addr; HostPort stays as string
-			var hostIP netip.Addr
-			if pm.Binding.HostIP != "" {
-				hostIP, err = netip.ParseAddr(pm.Binding.HostIP)
-				if err != nil {
-					return nil, nil, fmt.Errorf("invalid host IP %q: %w", pm.Binding.HostIP, err)
-				}
-			}
-			binding := network.PortBinding{
-				HostIP:   hostIP,
-				HostPort: pm.Binding.HostPort,
-			}
-			portBindings[netPort] = append(portBindings[netPort], binding)
-		}
-	}
-
-	return exposedPorts, portBindings, nil
 }

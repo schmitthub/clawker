@@ -1,0 +1,33 @@
+# Test link flag (--link)
+# Verifies: Legacy container linking is configured
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent lnktgt-$RANDOM_STRING
+defer clawker container rm --force --agent lnksrc-$RANDOM_STRING
+
+# Create target container
+exec clawker container create --agent lnktgt-$RANDOM_STRING alpine:latest sleep 3600
+
+# Create source container linked to target
+exec clawker container create --agent lnksrc-$RANDOM_STRING --link clawker.$PROJECT.lnktgt-$RANDOM_STRING:myalias alpine:latest sleep 3600
+
+# Verify link via inspect
+exec clawker container inspect --format '{{json .HostConfig.Links}}' --agent lnksrc-$RANDOM_STRING
+stdout 'myalias'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

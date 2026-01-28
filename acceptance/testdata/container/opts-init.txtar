@@ -1,0 +1,29 @@
+# Test init process flag (--init)
+# Verifies: Init process is enabled in container
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent init-$RANDOM_STRING
+
+# Create container with init enabled
+exec clawker container create --agent init-$RANDOM_STRING --init alpine:latest sleep 3600
+
+# Verify init via inspect
+exec clawker container inspect --format '{{.HostConfig.Init}}' --agent init-$RANDOM_STRING
+stdout 'true'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

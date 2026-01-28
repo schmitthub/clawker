@@ -1,0 +1,29 @@
+# Test memory swappiness flag (--memory-swappiness)
+# Verifies: Memory swappiness is applied to container
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent swap-$RANDOM_STRING
+
+# Create container with memory swappiness
+exec clawker container create --agent swap-$RANDOM_STRING --memory-swappiness 50 alpine:latest sleep 3600
+
+# Verify memory swappiness via inspect
+exec clawker container inspect --format '{{.HostConfig.MemorySwappiness}}' --agent swap-$RANDOM_STRING
+stdout '50'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,27 @@
+# Test --log-driver none rejects --log-opt
+# Verifies: Cannot specify log options with "none" driver
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test that --log-driver none with --log-opt is rejected
+! exec clawker container run --rm --log-driver none --log-opt max-size=10m alpine:latest echo test
+stderr 'none'
+
+# Test that --log-driver none without opts works
+exec clawker container run --rm --log-driver none alpine:latest echo log-none-ok
+stdout 'log-none-ok'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

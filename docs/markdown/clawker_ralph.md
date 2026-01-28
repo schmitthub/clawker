@@ -17,6 +17,7 @@ Available commands:
   run     Start the autonomous loop
   status  Show current session status
   reset   Reset the circuit breaker
+  tui     Launch interactive dashboard
 
 ### Examples
 
@@ -36,6 +37,7 @@ Available commands:
 * [clawker ralph reset](clawker_ralph_reset.md) - Reset the circuit breaker for an agent
 * [clawker ralph run](clawker_ralph_run.md) - Start an autonomous Claude Code loop
 * [clawker ralph status](clawker_ralph_status.md) - Show current ralph session status
+* [clawker ralph tui](clawker_ralph_tui.md) - Launch interactive TUI dashboard
 
 ### Options
 

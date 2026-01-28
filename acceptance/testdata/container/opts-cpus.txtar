@@ -1,0 +1,29 @@
+# Test CPU limit flag (--cpus)
+# Verifies: CPU limit is applied to container via inspect
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent cpu-$RANDOM_STRING
+
+# Create container with CPU limit (1.5 CPUs = 1500000000 NanoCPUs)
+exec clawker container create --agent cpu-$RANDOM_STRING --cpus 1.5 alpine:latest sleep 3600
+
+# Verify CPU limit via inspect
+exec clawker container inspect --format '{{.HostConfig.NanoCPUs}}' --agent cpu-$RANDOM_STRING
+stdout '1500000000'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,29 @@
+# Test capability drop flag (--cap-drop)
+# Verifies: Linux capabilities are dropped from container
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent capdrop-$RANDOM_STRING
+
+# Create container with dropped capability
+exec clawker container create --agent capdrop-$RANDOM_STRING --cap-drop NET_RAW alpine:latest sleep 3600
+
+# Verify capability via inspect
+exec clawker container inspect --format '{{.HostConfig.CapDrop}}' --agent capdrop-$RANDOM_STRING
+stdout 'NET_RAW'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

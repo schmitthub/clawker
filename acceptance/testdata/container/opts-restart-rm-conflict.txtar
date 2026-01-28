@@ -1,0 +1,31 @@
+# Test restart and rm conflict validation (CRITICAL)
+# Verifies: --restart (not "no") with --rm fails with clear error
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# This SHOULD fail with conflict error
+! exec clawker container run --rm --restart always alpine:latest echo test
+stderr 'cannot specify both --restart and --rm'
+
+# Also test via create command
+! exec clawker container create --agent rmconflict-$RANDOM_STRING --rm --restart unless-stopped alpine:latest sleep 3600
+stderr 'cannot specify both --restart and --rm'
+
+# Verify --restart no with --rm is allowed (should NOT error)
+exec clawker container run --rm --restart no alpine:latest echo allowed
+stdout 'allowed'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

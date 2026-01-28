@@ -1,9 +1,9 @@
 # Acceptance Testing Implementation Progress
 
-## Current Status: Phase 6 Complete (All Phases Done)
+## Current Status: Phase 7 Complete (Container Options Adversarial Tests)
 
-The acceptance testing infrastructure is being implemented following a plan created off of `.claude/docs/prds/acceptance-testing/`. The work is divided into phases, with each phase focusing on specific areas of functionality.
-Initial planning was performed on a different computer and separate file system. so if you need to create your own plan file, refer to the documents in `.claude/docs/prds/acceptance-testing/`.
+The acceptance testing infrastructure is being implemented following a plan created off of `.claude/prds/acceptance-testing/`. The work is divided into phases, with each phase focusing on specific areas of functionality.
+Initial planning was performed on a different computer and separate file system. so if you need to create your own plan file, refer to the documents in `.claude/prds/acceptance-testing/`.
 
 ## Completed Work
 
@@ -129,14 +129,50 @@ CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestCon
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Container | 14 | ✅ All Pass |
+| Container | 55 (opts) + 14 (lifecycle) = 69 | Run tests to verify |
 | Volume | 3 | ✅ All Pass |
 | Network | 3 | ✅ All Pass |
 | Image | 4 | ✅ All Pass |
 | Ralph | 3 | ✅ All Pass |
 | Project | 2 | ✅ All Pass |
 | Root | 2 | ✅ All Pass |
-| **Total** | **31** | **31 Pass** |
+| **Total** | **72** | **48 Pass, 4 Fail (adversarial), 20 new (untested)** |
+
+### Phase 7: Container Options Tests (35 existing + 20 new = 55 total opts-* tests)
+
+New tests in `acceptance/testdata/container/opts-*.txtar` covering all container option flags from the PRD.
+
+**Phase 7b: Additional Flag Coverage (20 new test files)**
+
+| Test File | Flags Tested |
+|-----------|-------------|
+| `opts-attach.txtar` | `--attach` / `-a` |
+| `opts-stop-timeout.txtar` | `--stop-timeout` |
+| `opts-tty-stdin.txtar` | `--tty` / `-t`, `--interactive` / `-i` |
+| `opts-security-opt.txtar` | `--security-opt` |
+| `opts-userns-cgroupns.txtar` | `--cgroupns` |
+| `opts-dns-search.txtar` | `--dns-search` |
+| `opts-network-config.txtar` | `--network`, `--mac-address` |
+| `opts-network-ip-alias.txtar` | `--ip`, `--network-alias` |
+| `opts-volumes.txtar` | `--volume` / `-v` |
+| `opts-volumes-from.txtar` | `--volumes-from` |
+| `opts-cidfile.txtar` | `--cidfile` |
+| `opts-cpu-scheduling.txtar` | `--cpu-shares`, `--cpu-period`, `--cpu-quota`, `--cpuset-mems` |
+| `opts-blkio.txtar` | `--blkio-weight` |
+| `opts-blkio-validation.txtar` | `--blkio-weight` range validation |
+| `opts-memory-swappiness.txtar` | `--memory-swappiness` |
+| `opts-memory-swappiness-validation.txtar` | `--memory-swappiness` range validation |
+| `opts-uts.txtar` | `--uts` |
+| `opts-isolation.txtar` | `--isolation` |
+| `opts-storage-opt.txtar` | `--storage-opt` |
+| `opts-link.txtar` | `--link` |
+
+**Deliberately Skipped (not testable in CI)**:
+- Windows-only: `--cpu-count`, `--cpu-percent`, `--io-maxbandwidth`, `--io-maxiops`
+- Hardware-dependent: `--gpus`, `--cpu-rt-period`, `--cpu-rt-runtime`
+- Device-path-dependent: `--blkio-weight-device`, `--device-read-bps`, `--device-write-bps`, `--device-read-iops`, `--device-write-iops`
+- IPv6-dependent: `--ip6`
+- Complex setup: `--link-local-ip`
 
 ## Files Modified/Created
 
@@ -158,7 +194,7 @@ CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestCon
 - `Makefile` - Added `acceptance` target
 
 ### Staged Documentation (from plan mode)
-- `.claude/docs/prds/acceptance-testing/*.md` - Various PRD and analysis docs
+- `.claude/prds/acceptance-testing/*.md` - Various PRD and analysis docs
 
 ## Tips for Writing New Acceptance Tests
 

@@ -1,0 +1,40 @@
+# Test multiple --network flags
+# Verifies: Multiple network attachments via --network flag
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Create test networks
+defer exec docker network rm clawker-testnet1-$RANDOM_STRING
+exec docker network create clawker-testnet1-$RANDOM_STRING
+
+defer exec docker network rm clawker-testnet2-$RANDOM_STRING
+exec docker network create clawker-testnet2-$RANDOM_STRING
+
+# Register cleanup
+defer clawker container rm --force --agent multinet-$RANDOM_STRING
+
+# Create container with multiple networks
+exec clawker container create --agent multinet-$RANDOM_STRING --network clawker-testnet1-$RANDOM_STRING --network clawker-testnet2-$RANDOM_STRING alpine:latest sleep 3600
+
+# Start the container to verify network connectivity
+exec clawker container start --agent multinet-$RANDOM_STRING
+
+# Verify container is connected to both networks
+exec clawker container inspect --format '{{json .NetworkSettings.Networks}}' --agent multinet-$RANDOM_STRING
+stdout 'clawker-testnet1'
+stdout 'clawker-testnet2'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

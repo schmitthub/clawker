@@ -1,0 +1,29 @@
+# Test entrypoint override flag (--entrypoint)
+# Verifies: Custom entrypoint overrides image default
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test entrypoint via run
+exec clawker container run --rm --entrypoint /bin/echo alpine:latest hello-entrypoint
+stdout 'hello-entrypoint'
+
+# Test entrypoint via inspect
+defer clawker container rm --force --agent entry-$RANDOM_STRING
+exec clawker container create --agent entry-$RANDOM_STRING --entrypoint /bin/sh alpine:latest -c 'echo test'
+exec clawker container inspect --format '{{index .Config.Entrypoint 0}}' --agent entry-$RANDOM_STRING
+stdout '/bin/sh'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
