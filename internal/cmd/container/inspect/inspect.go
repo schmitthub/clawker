@@ -141,7 +141,16 @@ func outputJSON(w io.Writer, data any) error {
 // Templates execute against the Container field (InspectResponse) for Docker CLI compatibility.
 // This means templates like '{{.State.Status}}' work as expected.
 func outputFormatted(w io.Writer, format string, results []docker.ContainerInspectResult) error {
-	tmpl, err := template.New("format").Parse(format)
+	funcMap := template.FuncMap{
+		"json": func(v interface{}) string {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return err.Error()
+			}
+			return string(b)
+		},
+	}
+	tmpl, err := template.New("format").Funcs(funcMap).Parse(format)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)
 	}

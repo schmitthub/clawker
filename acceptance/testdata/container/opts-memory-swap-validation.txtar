@@ -1,0 +1,27 @@
+# Test memory-swap validation (CRITICAL: exposes ValidateFlags bug if not called)
+# Verifies: --memory-swap without --memory fails with clear error message
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# This SHOULD fail with "--memory-swap requires --memory to be set"
+! exec clawker container create --agent swaptest-$RANDOM_STRING --memory-swap 1g alpine:latest echo test
+stderr 'memory-swap requires --memory'
+
+# Also test via run command
+! exec clawker container run --rm --memory-swap 512m alpine:latest echo test
+stderr 'memory-swap requires --memory'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,29 @@
+# Test container ID file flag (--cidfile)
+# Verifies: Container ID is written to the specified file
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent cid-$RANDOM_STRING
+
+# Create container with cidfile
+exec clawker container create --agent cid-$RANDOM_STRING --cidfile $WORK/container.id alpine:latest sleep 3600
+
+# Verify cidfile exists and contains a hex container ID (at least 12 hex chars)
+exec cat $WORK/container.id
+stdout '[0-9a-f]{12}'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

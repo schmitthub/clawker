@@ -1,0 +1,27 @@
+# Test health check conflict validation
+# Verifies: --no-healthcheck with --health-cmd fails with clear error
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# This SHOULD fail with conflict error
+! exec clawker container create --agent hcconflict-$RANDOM_STRING --no-healthcheck --health-cmd 'exit 0' alpine:latest sleep 3600
+stderr 'no-healthcheck conflicts with --health-'
+
+# Also test via run command
+! exec clawker container run --rm --no-healthcheck --health-cmd 'exit 0' alpine:latest echo test
+stderr 'no-healthcheck conflicts with --health-'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

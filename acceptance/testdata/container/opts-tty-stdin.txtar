@@ -1,0 +1,37 @@
+# Test TTY and interactive flags (--tty/-t, --interactive/-i)
+# Verifies: TTY allocation and stdin open settings
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent tty-$RANDOM_STRING
+defer clawker container rm --force --agent stdin-$RANDOM_STRING
+
+# Create container with TTY
+exec clawker container create --agent tty-$RANDOM_STRING -t alpine:latest sleep 3600
+
+# Verify TTY via inspect
+exec clawker container inspect --format '{{.Config.Tty}}' --agent tty-$RANDOM_STRING
+stdout 'true'
+
+# Create container with interactive mode
+exec clawker container create --agent stdin-$RANDOM_STRING -i alpine:latest sleep 3600
+
+# Verify OpenStdin via inspect
+exec clawker container inspect --format '{{.Config.OpenStdin}}' --agent stdin-$RANDOM_STRING
+stdout 'true'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

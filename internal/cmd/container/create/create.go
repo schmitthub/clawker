@@ -4,13 +4,8 @@ package create
 import (
 	"context"
 	"fmt"
-	"net/netip"
-	"strings"
 
-	"github.com/docker/go-connections/nat"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/api/types/network"
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -20,35 +15,15 @@ import (
 )
 
 // Options holds options for the create command.
+// It embeds ContainerOptions for shared container configuration.
 type Options struct {
-	// Naming
-	Agent string // Agent name for clawker naming (mutually exclusive with Name)
-	Name  string // name same as agent name
-
-	// Container configuration
-	Env        []string // Environment variables
-	Volumes    []string // Bind mounts
-	Publish    []string // Port mappings
-	Workdir    string   // Working directory
-	User       string   // User
-	Entrypoint string   // Override entrypoint
-	TTY        bool     // Allocate TTY
-	Stdin      bool     // Keep STDIN open
-	Network    string   // Network connection
-	Labels     []string // Additional labels
-	AutoRemove bool     // Auto-remove on exit
-
-	// Workspace mode
-	Mode string // Workspace mode: "bind" or "snapshot" (empty = use config default)
-
-	// Internal (set after parsing positional args)
-	Image   string
-	Command []string
+	*copts.ContainerOptions
 }
 
 // NewCmd creates a new container create command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	containerOpts := copts.NewContainerOptions()
+	opts := &Options{ContainerOptions: containerOpts}
 
 	cmd := &cobra.Command{
 		Use:   "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
@@ -87,33 +62,17 @@ If IMAGE is "@", clawker will use (in order of precedence):
 		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Image = args[0]
+			containerOpts.Image = args[0]
 			if len(args) > 1 {
-				opts.Command = args[1:]
+				containerOpts.Command = args[1:]
 			}
 			return run(cmd.Context(), f, opts)
 		},
 	}
 
-	// Naming flags
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name for container (uses clawker.<project>.<agent> naming)")
-	cmd.Flags().StringVar(&opts.Name, "name", "", "Same as --agent; provided for Docker CLI familiarity (mutually exclusive with --agent)")
-
-	// Container configuration flags
-	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "Set environment variables")
-	cmd.Flags().StringArrayVarP(&opts.Volumes, "volume", "v", nil, "Bind mount a volume")
-	cmd.Flags().StringArrayVarP(&opts.Publish, "publish", "p", nil, "Publish container port(s) to host")
-	cmd.Flags().StringVarP(&opts.Workdir, "workdir", "w", "", "Working directory inside the container")
-	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "Username or UID")
-	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", "Overwrite the default ENTRYPOINT")
-	cmd.Flags().BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
-	cmd.Flags().BoolVarP(&opts.Stdin, "interactive", "i", false, "Keep STDIN open even if not attached")
-	cmd.Flags().StringVar(&opts.Network, "network", "", "Connect container to a network")
-	cmd.Flags().StringArrayVarP(&opts.Labels, "label", "l", nil, "Set metadata on container")
-	cmd.Flags().BoolVar(&opts.AutoRemove, "rm", false, "Automatically remove container when it exits")
-	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
-
-	cmd.MarkFlagsMutuallyExclusive("agent", "name")
+	// Add shared container flags
+	copts.AddFlags(cmd.Flags(), containerOpts)
+	copts.MarkMutuallyExclusive(cmd)
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
@@ -127,6 +86,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 
 func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	ios := f.IOStreams
+	containerOpts := opts.ContainerOptions
 
 	// Load config for project name
 	cfg, err := f.Config()
@@ -156,7 +116,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Resolve image name
-	if opts.Image == "@" {
+	if containerOpts.Image == "@" {
 		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
@@ -172,27 +132,23 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			)
 			return fmt.Errorf("no image specified")
 		}
-		opts.Image = resolvedImage.Reference
+		containerOpts.Image = resolvedImage.Reference
 	}
 
 	// adding a defensive check here in case both --name and --agent end up being set due to regression
-	if opts.Name != "" && opts.Agent != "" && opts.Name != opts.Agent {
+	if containerOpts.Name != "" && containerOpts.Agent != "" && containerOpts.Name != containerOpts.Agent {
 		cmdutil.PrintError(ios, "Cannot use both --name and --agent")
 		return fmt.Errorf("conflicting container naming options")
 	}
 
-	agentName := opts.Agent
-	if opts.Name != "" {
-		agentName = opts.Name
-	}
-
+	agentName := containerOpts.GetAgentName()
 	if agentName == "" {
 		agentName = docker.GenerateRandomName()
 	}
 
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: opts.Mode,
+		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
 	})
@@ -211,7 +167,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
 			if envVar := f.HostProxyEnvVar(); envVar != "" {
-				opts.Env = append(opts.Env, envVar)
+				containerOpts.Env = append(containerOpts.Env, envVar)
 			}
 		}
 	}
@@ -219,10 +175,15 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Setup git credential forwarding
 	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
-	opts.Env = append(opts.Env, gitSetup.Env...)
+	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	// Build configs
-	containerConfig, hostConfig, networkConfig, err := buildConfigs(opts, workspaceMounts, cfg)
+	// Validate cross-field constraints before building configs
+	if err := containerOpts.ValidateFlags(); err != nil {
+		return err
+	}
+
+	// Build configs using shared function
+	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(workspaceMounts, cfg)
 	if err != nil {
 		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
 		return err
@@ -260,117 +221,4 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Output container ID (short 12-char) to stdout
 	fmt.Fprintln(ios.Out, resp.ID[:12])
 	return nil
-}
-
-// buildConfigs builds Docker container, host, and network configurations from options.
-func buildConfigs(opts *Options, mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
-	// Container config
-	cfg := &container.Config{
-		Image:        opts.Image,
-		Tty:          opts.TTY,
-		OpenStdin:    opts.Stdin,
-		AttachStdin:  opts.Stdin,
-		AttachStdout: true,
-		AttachStderr: true,
-		Env:          opts.Env,
-		WorkingDir:   opts.Workdir,
-		User:         opts.User,
-	}
-
-	// Set command if provided
-	if len(opts.Command) > 0 {
-		cfg.Cmd = opts.Command
-	}
-
-	// Set entrypoint if provided
-	if opts.Entrypoint != "" {
-		cfg.Entrypoint = []string{opts.Entrypoint}
-	}
-
-	// Parse additional labels
-	if len(opts.Labels) > 0 {
-		cfg.Labels = make(map[string]string)
-		for _, l := range opts.Labels {
-			parts := strings.SplitN(l, "=", 2)
-			if len(parts) == 2 {
-				cfg.Labels[parts[0]] = parts[1]
-			} else {
-				cfg.Labels[parts[0]] = ""
-			}
-		}
-	}
-
-	// Host config
-	hostCfg := &container.HostConfig{
-		AutoRemove: opts.AutoRemove,
-		Mounts:     mounts,
-		CapAdd:     projectCfg.Security.CapAdd,
-	}
-
-	// Parse user-provided volumes (via -v flag) as Binds
-	if len(opts.Volumes) > 0 {
-		hostCfg.Binds = opts.Volumes
-	}
-
-	// Parse port mappings
-	if len(opts.Publish) > 0 {
-		exposedPorts, portBindings, err := parsePortMappings(opts.Publish)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		cfg.ExposedPorts = exposedPorts
-		hostCfg.PortBindings = portBindings
-	}
-
-	// Network config
-	var networkCfg *network.NetworkingConfig
-	if opts.Network != "" {
-		networkCfg = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				opts.Network: {},
-			},
-		}
-	}
-
-	return cfg, hostCfg, networkCfg, nil
-}
-
-// parsePortMappings converts port mapping specs (e.g., "8080:80/tcp") to network types.
-func parsePortMappings(specs []string) (network.PortSet, network.PortMap, error) {
-	exposedPorts := make(network.PortSet)
-	portBindings := make(network.PortMap)
-
-	for _, spec := range specs {
-		portMappings, err := nat.ParsePortSpec(spec)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid port mapping %q: %w", spec, err)
-		}
-		for _, pm := range portMappings {
-			// Convert nat.Port to network.Port
-			// nat.Port is a string like "80/tcp"
-			netPort, err := network.ParsePort(string(pm.Port))
-			if err != nil {
-				return nil, nil, fmt.Errorf("invalid port %q: %w", pm.Port, err)
-			}
-
-			exposedPorts[netPort] = struct{}{}
-
-			// Convert nat.PortBinding to network.PortBinding
-			// HostIP needs to be netip.Addr; HostPort stays as string
-			var hostIP netip.Addr
-			if pm.Binding.HostIP != "" {
-				hostIP, err = netip.ParseAddr(pm.Binding.HostIP)
-				if err != nil {
-					return nil, nil, fmt.Errorf("invalid host IP %q: %w", pm.Binding.HostIP, err)
-				}
-			}
-			binding := network.PortBinding{
-				HostIP:   hostIP,
-				HostPort: pm.Binding.HostPort,
-			}
-			portBindings[netPort] = append(portBindings[netPort], binding)
-		}
-	}
-
-	return exposedPorts, portBindings, nil
 }

@@ -1,0 +1,31 @@
+# Test OOM killer flags
+# Verifies: --oom-kill-disable and --oom-score-adj flags are supported
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test --oom-score-adj flag via create + inspect
+defer clawker container rm --force --agent oom-$RANDOM_STRING
+exec clawker container create --agent oom-$RANDOM_STRING --oom-score-adj 500 alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.OomScoreAdj}}' --agent oom-$RANDOM_STRING
+stdout '500'
+
+# Test --oom-kill-disable flag via create + inspect
+defer clawker container rm --force --agent oomkd-$RANDOM_STRING
+exec clawker container create --agent oomkd-$RANDOM_STRING --oom-kill-disable alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.OomKillDisable}}' --agent oomkd-$RANDOM_STRING
+stdout 'true'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,300 @@
+================================================================================
+ACCEPTANCE TESTING INFRASTRUCTURE DOCUMENTATION FILES
+================================================================================
+
+Created: January 27, 2026
+Repository: /Users/andrew/Code/vendor/github/github-cli
+Feature: Acceptance Testing System
+
+================================================================================
+PRIMARY DOCUMENTATION FILES (Root Directory)
+================================================================================
+
+1. INFRASTRUCTURE-ACCEPTANCE-TESTING.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/
+   Size: 27 KB (830 lines)
+   Purpose: Comprehensive technical reference for infrastructure teams
+   
+   Sections:
+   - Overview & execution model
+   - Build system integration
+   - Environment variables (required, optional, auto-injected)
+   - GitHub API requirements & token scopes
+   - Test organization (18 categories, 175+ tests)
+   - Custom commands (defer, env2upper, replace, stdout2env, sleep)
+   - testscript configuration
+   - CI/CD integration
+   - Development environment setup
+   - Code coverage collection
+   - External dependencies
+   - Security considerations
+   - Monitoring & observability
+   - Operational procedures
+   - Known limitations & issues
+   - Adaptation recommendations
+
+2. ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/
+   Size: 8.3 KB (292 lines)
+   Purpose: Quick lookup guide for developers & QA engineers
+   
+   Sections:
+   - Environment variables summary
+   - Quick commands (all tests, specific categories, single tests)
+   - Key injected variables
+   - Test categories with run commands
+   - Custom test commands
+   - Token requirements
+   - VS Code setup
+   - Debugging techniques
+   - Test format (.txtar structure)
+   - CI/CD example (GitHub Actions)
+   - Directory structure
+   - Common issues & troubleshooting
+   - Performance notes
+   - Quick start checklist
+
+3. ACCEPTANCE-INFRASTRUCTURE-ANALYSIS.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/
+   Size: 21 KB (528 lines)
+   Purpose: Architectural analysis for system designers
+   
+   Sections:
+   - System overview (with architecture diagram)
+   - Environment configuration chain
+   - Test execution lifecycle (5 phases)
+   - Dependency graph
+   - Custom command implementation details
+   - Test data organization
+   - Build constraint impact
+   - Test script execution model
+   - Token scope dependency chain
+   - Performance characteristics
+   - Error handling & failure modes
+   - Key architectural decisions (6 decisions)
+   - Integration points
+   - Network architecture
+   - Monitoring integration
+   - Infrastructure checklist
+
+4. ACCEPTANCE-TESTING-INFRASTRUCTURE-INDEX.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/
+   Size: 13 KB (~300 lines)
+   Purpose: Navigation guide for all documentation
+   
+   Sections:
+   - Documentation overview
+   - Quick navigation (by role, by task)
+   - Key infrastructure facts
+   - File structure reference
+   - Quick commands
+   - Common lookup table
+   - Document maintenance info
+
+================================================================================
+SUMMARY DOCUMENT (.serena/ Directory)
+================================================================================
+
+5. ACCEPTANCE-TESTING-INFRASTRUCTURE-SUMMARY.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/.serena/
+   Size: ~15 KB (~400 lines)
+   Purpose: Executive summary of analysis and findings
+   
+   Contents:
+   - Executive summary
+   - Deliverables overview
+   - Key infrastructure findings
+   - Test category mapping
+   - Source file analysis
+   - Implementation recommendations
+   - Documentation file references
+   - Quick start checklist
+   - Analysis methodology
+   - Key metrics
+   - Conclusion
+
+================================================================================
+SUPPORTING DOCUMENTATION (Existing)
+================================================================================
+
+6. acceptance/acceptance_test.go
+   Location: /Users/andrew/Code/vendor/github/github-cli/acceptance/
+   Size: 422 lines
+   Type: Source code (test runner)
+   Key Content:
+   - TestMain() entry point
+   - 17 test functions (TestAPI, TestAuth, etc.)
+   - testScriptParamsFor() configuration
+   - sharedSetup() environment setup
+   - sharedCmds() custom command handlers
+   - testScriptEnv struct for configuration
+   - Helper functions (randomString, extractScriptName)
+
+7. acceptance/README.md
+   Location: /Users/andrew/Code/vendor/github/github-cli/acceptance/
+   Size: 196 lines
+   Type: User guide (existing documentation)
+   Content: Running tests, writing tests, debugging, VS Code setup
+
+8. acceptance/testdata/
+   Location: /Users/andrew/Code/vendor/github/github-cli/acceptance/testdata/
+   Type: Test data directory (18 subdirectories, 175+ .txtar files)
+   Contents:
+   - api/ (~5 test scripts)
+   - auth/ (~10 test scripts)
+   - extension/ (~8 test scripts)
+   - gpg-key/ (~5 test scripts)
+   - issue/ (~20 test scripts)
+   - label/ (~10 test scripts)
+   - org/ (~8 test scripts)
+   - project/ (~10 test scripts)
+   - pr/ (~40+ test scripts)
+   - release/ (~10 test scripts)
+   - repo/ (~15 test scripts)
+   - ruleset/ (~8 test scripts)
+   - search/ (~5 test scripts)
+   - secret/ (~15 test scripts)
+   - ssh-key/ (~5 test scripts)
+   - variable/ (~10 test scripts)
+   - workflow/ (~15 test scripts)
+
+9. Makefile
+   Location: /Users/andrew/Code/vendor/github/github-cli/
+   Size: 117 lines total
+   Content: Acceptance test target (line 47-49)
+   Target: make acceptance → go test -tags=acceptance ./acceptance
+
+10. go.mod
+    Location: /Users/andrew/Code/vendor/github/github-cli/
+    Type: Go module definition
+    Content: testscript dependency v0.0.0-20241025142207-6c48bcd5ce24
+
+================================================================================
+DOCUMENTATION STATISTICS
+================================================================================
+
+PRIMARY DOCUMENTATION:
+  - Total files: 4 (+ 1 summary in .serena/)
+  - Total lines: 2,050+
+  - Total size: ~71 KB
+  
+  Breakdown by file:
+  - INFRASTRUCTURE-ACCEPTANCE-TESTING.md: 830 lines (27 KB)
+  - ACCEPTANCE-INFRASTRUCTURE-ANALYSIS.md: 528 lines (21 KB)
+  - ACCEPTANCE-TESTING-INFRASTRUCTURE-INDEX.md: ~300 lines (13 KB)
+  - ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md: 292 lines (8.3 KB)
+  - ACCEPTANCE-TESTING-INFRASTRUCTURE-SUMMARY.md: ~400 lines (15 KB)
+
+COVERAGE:
+  - Infrastructure domains: 15
+  - Test categories: 18
+  - Total tests documented: 175+
+  - Custom commands: 5
+  - Required env variables: 3
+  - Optional env variables: 3
+  - Auto-injected variables: 7
+  - Token scopes documented: 8+
+  - Architectural decisions: 6
+  - Known limitations: 5+
+  - Failure modes: 8+
+
+================================================================================
+HOW TO USE THESE DOCUMENTS
+================================================================================
+
+FOR DIFFERENT ROLES:
+
+Infrastructure Engineer:
+  1. Start with: INFRASTRUCTURE-ACCEPTANCE-TESTING.md
+  2. Reference: ACCEPTANCE-INFRASTRUCTURE-ANALYSIS.md
+  3. Quick lookup: ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md
+
+Developer Writing Tests:
+  1. Start with: ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md
+  2. Reference: INFRASTRUCTURE-ACCEPTANCE-TESTING.md (test organization)
+  3. Examples: acceptance/testdata/ test scripts
+
+CI/CD Engineer:
+  1. Start with: ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md (CI/CD section)
+  2. Reference: INFRASTRUCTURE-ACCEPTANCE-TESTING.md (CI/CD integration)
+  3. Analysis: ACCEPTANCE-INFRASTRUCTURE-ANALYSIS.md (performance)
+
+System Architect:
+  1. Start with: ACCEPTANCE-INFRASTRUCTURE-ANALYSIS.md
+  2. Reference: INFRASTRUCTURE-ACCEPTANCE-TESTING.md
+  3. Focus: Key Architectural Decisions section
+
+Project Lead:
+  1. Start with: ACCEPTANCE-TESTING-INFRASTRUCTURE-SUMMARY.md
+  2. Overview: ACCEPTANCE-TESTING-INFRASTRUCTURE-INDEX.md
+  3. Details: Other documents as needed
+
+================================================================================
+KEY COMMANDS FROM DOCUMENTATION
+================================================================================
+
+Environment Setup:
+  export GH_ACCEPTANCE_HOST="github.com"
+  export GH_ACCEPTANCE_ORG="gh-acceptance-testing"
+  export GH_ACCEPTANCE_TOKEN="ghp_..."
+
+Run All Tests:
+  go test -tags=acceptance ./acceptance
+
+Run Specific Category:
+  go test -tags=acceptance -run ^TestPullRequests$ ./acceptance
+
+Run Single Test:
+  GH_ACCEPTANCE_SCRIPT=pr-view.txtar go test -tags=acceptance -run ^TestPullRequests$ ./acceptance
+
+Collect Coverage:
+  go test -tags=acceptance -coverprofile=coverage.out -coverpkg=./... ./acceptance
+
+Debug Mode:
+  GH_ACCEPTANCE_PRESERVE_WORK_DIR=true GH_ACCEPTANCE_SKIP_DEFER=true go test -tags=acceptance -v ./acceptance
+
+================================================================================
+DOCUMENT MAINTENANCE
+================================================================================
+
+These documents reference and analyze:
+  - Source: acceptance_test.go (422 lines)
+  - User guide: acceptance/README.md (196 lines)
+  - Build target: Makefile (line 47-49)
+  - Dependencies: go.mod (testscript)
+  - Test data: acceptance/testdata/ (175+ tests)
+
+Last updated: January 27, 2026
+Analysis status: COMPLETE
+All infrastructure domains covered: YES
+
+================================================================================
+QUICK REFERENCE TABLE
+================================================================================
+
+Document                                Purpose                        Size    Audience
+─────────────────────────────────────────────────────────────────────────────────────
+INFRASTRUCTURE-ACCEPTANCE-TESTING       Comprehensive reference        27 KB   Infrastructure
+ACCEPTANCE-INFRASTRUCTURE-QUICK-REF     Quick lookup guide             8.3 KB  Developers
+ACCEPTANCE-INFRASTRUCTURE-ANALYSIS      Architectural analysis         21 KB   Architects
+ACCEPTANCE-TESTING-INFRASTRUCTURE-IDX   Navigation guide               13 KB   All users
+ACCEPTANCE-TESTING-INFRASTRUCTURE-SUM   Executive summary               15 KB   Stakeholders
+
+================================================================================
+START HERE
+================================================================================
+
+If you're new to the acceptance testing infrastructure:
+
+1. Read: ACCEPTANCE-TESTING-INFRASTRUCTURE-INDEX.md
+   └─ Get oriented with all documents
+
+2. Choose your role from the index
+
+3. Follow the recommended document order for your role
+
+4. Use quick commands from ACCEPTANCE-INFRASTRUCTURE-QUICK-REFERENCE.md
+
+For specific topics, use the "Common Lookup Table" in the INDEX document.
+
+================================================================================

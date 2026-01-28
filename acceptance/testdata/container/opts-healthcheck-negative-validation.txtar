@@ -1,0 +1,28 @@
+# Test healthcheck with negative values
+# Verifies: Negative health check values are passed through to Docker daemon
+# Note: Docker daemon accepts negative durations (they become 0), negative retries become 0
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Test negative --health-retries is accepted (Docker treats as 0)
+exec clawker container run --rm --health-cmd 'exit 0' --health-retries -1 alpine:latest echo test
+stdout 'test'
+
+# Test negative --health-interval is accepted (pflag duration parsing)
+exec clawker container run --rm --health-cmd 'exit 0' --health-interval -1s alpine:latest echo test
+stdout 'test'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -3,10 +3,10 @@ package run
 import (
 	"bytes"
 	"context"
-	"net/netip"
 	"strings"
 	"testing"
 
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
@@ -16,12 +16,37 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// testOptions is a flat struct for test comparisons
+// It mirrors the fields from the embedded copts.ContainerOptions plus run-specific fields
+type testOptions struct {
+	// From copts.ContainerOptions
+	Agent      string
+	Name       string
+	Env        []string
+	Volumes    []string
+	Publish    []string // String representation for comparison
+	Workdir    string
+	User       string
+	Entrypoint string
+	TTY        bool
+	Stdin      bool
+	Network    string
+	Labels     []string
+	AutoRemove bool
+	Mode       string
+	Image      string
+	Command    []string
+
+	// Run-specific
+	Detach bool
+}
+
 func TestNewCmdRun(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     Options
+		output     testOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
@@ -29,134 +54,134 @@ func TestNewCmdRun(t *testing.T) {
 			name:    "no image specified",
 			input:   "",
 			args:    []string{},
-			output:  Options{},
+			output:  testOptions{},
 			wantErr: true, // RequiresMinArgs(1) rejects empty args
 		},
 		{
 			name:   "basic image only",
 			input:  "",
 			args:   []string{"alpine"},
-			output: Options{Image: "alpine"},
+			output: testOptions{Image: "alpine"},
 		},
 		{
 			name:   "image with tag",
 			input:  "",
 			args:   []string{"alpine:latest"},
-			output: Options{Image: "alpine:latest"},
+			output: testOptions{Image: "alpine:latest"},
 		},
 		{
 			name:   "image with command",
 			input:  "",
 			args:   []string{"alpine", "echo", "hello"},
-			output: Options{Image: "alpine", Command: []string{"echo", "hello"}},
+			output: testOptions{Image: "alpine", Command: []string{"echo", "hello"}},
 		},
 		{
 			name:   "with agent flag",
 			input:  "--agent myagent",
 			args:   []string{"alpine"},
-			output: Options{Agent: "myagent", Image: "alpine"},
+			output: testOptions{Agent: "myagent", Image: "alpine"},
 		},
 		{
 			name:   "with name flag",
 			input:  "--name mycontainer",
 			args:   []string{"alpine"},
-			output: Options{Name: "mycontainer", Image: "alpine"},
+			output: testOptions{Name: "mycontainer", Image: "alpine"},
 		},
 		{
 			name:   "with detach flag",
 			input:  "--detach",
 			args:   []string{"alpine"},
-			output: Options{Detach: true, Image: "alpine"},
+			output: testOptions{Detach: true, Image: "alpine"},
 		},
 		{
 			name:   "with environment variable",
 			input:  "-e FOO=bar",
 			args:   []string{"alpine"},
-			output: Options{Env: []string{"FOO=bar"}, Image: "alpine"},
+			output: testOptions{Env: []string{"FOO=bar"}, Image: "alpine"},
 		},
 		{
 			name:   "with multiple env vars",
 			input:  "-e FOO=bar -e BAZ=qux",
 			args:   []string{"alpine"},
-			output: Options{Env: []string{"FOO=bar", "BAZ=qux"}, Image: "alpine"},
+			output: testOptions{Env: []string{"FOO=bar", "BAZ=qux"}, Image: "alpine"},
 		},
 		{
 			name:   "with volume",
 			input:  "-v /host:/container",
 			args:   []string{"alpine"},
-			output: Options{Volumes: []string{"/host:/container"}, Image: "alpine"},
+			output: testOptions{Volumes: []string{"/host:/container"}, Image: "alpine"},
 		},
 		{
 			name:   "with port",
 			input:  "-p 8080:80",
 			args:   []string{"alpine"},
-			output: Options{Publish: []string{"8080:80"}, Image: "alpine"},
+			output: testOptions{Publish: []string{"8080:80"}, Image: "alpine"},
 		},
 		{
 			name:   "with workdir",
 			input:  "-w /app",
 			args:   []string{"alpine"},
-			output: Options{Workdir: "/app", Image: "alpine"},
+			output: testOptions{Workdir: "/app", Image: "alpine"},
 		},
 		{
 			name:   "with user",
 			input:  "-u nobody",
 			args:   []string{"alpine"},
-			output: Options{User: "nobody", Image: "alpine"},
+			output: testOptions{User: "nobody", Image: "alpine"},
 		},
 		{
 			name:   "with entrypoint",
 			input:  "--entrypoint /bin/sh",
 			args:   []string{"alpine"},
-			output: Options{Entrypoint: "/bin/sh", Image: "alpine"},
+			output: testOptions{Entrypoint: "/bin/sh", Image: "alpine"},
 		},
 		{
 			name:   "with tty",
 			input:  "-t",
 			args:   []string{"alpine"},
-			output: Options{TTY: true, Image: "alpine"},
+			output: testOptions{TTY: true, Image: "alpine"},
 		},
 		{
 			name:   "with interactive",
 			input:  "-i",
 			args:   []string{"alpine"},
-			output: Options{Stdin: true, Image: "alpine"},
+			output: testOptions{Stdin: true, Image: "alpine"},
 		},
 		{
 			name:   "with tty and interactive",
 			input:  "-it",
 			args:   []string{"alpine"},
-			output: Options{TTY: true, Stdin: true, Image: "alpine"},
+			output: testOptions{TTY: true, Stdin: true, Image: "alpine"},
 		},
 		{
 			name:   "with network",
 			input:  "--network mynet",
 			args:   []string{"alpine"},
-			output: Options{Network: "mynet", Image: "alpine"},
+			output: testOptions{Network: "mynet", Image: "alpine"},
 		},
 		{
 			name:   "with label",
 			input:  "-l foo=bar",
 			args:   []string{"alpine"},
-			output: Options{Labels: []string{"foo=bar"}, Image: "alpine"},
+			output: testOptions{Labels: []string{"foo=bar"}, Image: "alpine"},
 		},
 		{
 			name:   "with auto-remove",
 			input:  "--rm",
 			args:   []string{"alpine"},
-			output: Options{AutoRemove: true, Image: "alpine"},
+			output: testOptions{AutoRemove: true, Image: "alpine"},
 		},
 		{
 			name:   "interactive detached with rm",
 			input:  "-it --detach --rm",
 			args:   []string{"alpine", "sh"},
-			output: Options{TTY: true, Stdin: true, Detach: true, AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+			output: testOptions{TTY: true, Stdin: true, Detach: true, AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
 		},
 		{
 			name:    "no image requires error",
 			input:   "",
 			args:    []string{},
-			output:  Options{},
+			output:  testOptions{},
 			wantErr: true, // RequiresMinArgs(1) rejects empty args
 		},
 		// @ symbol tests - triggers default image resolution at runtime
@@ -164,85 +189,85 @@ func TestNewCmdRun(t *testing.T) {
 			name:   "@ symbol as image",
 			input:  "",
 			args:   []string{"@"},
-			output: Options{Image: "@"},
+			output: testOptions{Image: "@"},
 		},
 		{
 			name:   "@ symbol with agent flag",
 			input:  "--agent ralph",
 			args:   []string{"@"},
-			output: Options{Agent: "ralph", Image: "@"},
+			output: testOptions{Agent: "ralph", Image: "@"},
 		},
 		{
 			name:   "@ symbol with common flags",
 			input:  "-it --rm",
 			args:   []string{"@"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "@"},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "@"},
 		},
 		{
 			name:   "@ symbol with command",
 			input:  "",
 			args:   []string{"@", "echo", "hello"},
-			output: Options{Image: "@", Command: []string{"echo", "hello"}},
+			output: testOptions{Image: "@", Command: []string{"echo", "hello"}},
 		},
 		{
 			name:   "@ symbol with mode",
 			input:  "--agent dev --mode=snapshot",
 			args:   []string{"@"},
-			output: Options{Agent: "dev", Mode: "snapshot", Image: "@"},
+			output: testOptions{Agent: "dev", Mode: "snapshot", Image: "@"},
 		},
 		{
 			name:   "with mode bind",
 			input:  "--agent dev --mode=bind",
 			args:   []string{"alpine"},
-			output: Options{Agent: "dev", Mode: "bind", Image: "alpine"},
+			output: testOptions{Agent: "dev", Mode: "bind", Image: "alpine"},
 		},
 		{
 			name:   "with mode snapshot",
 			input:  "--agent dev --mode=snapshot",
 			args:   []string{"alpine"},
-			output: Options{Agent: "dev", Mode: "snapshot", Image: "alpine"},
+			output: testOptions{Agent: "dev", Mode: "snapshot", Image: "alpine"},
 		},
 		{
 			name:   "with mode and other flags",
 			input:  "-it --agent sandbox --mode=snapshot --rm",
 			args:   []string{"alpine", "sh"},
-			output: Options{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+			output: testOptions{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
 		},
 		{
 			name:   "flags after image passed as command",
 			input:  "-it --rm",
 			args:   []string{"alpine", "--version"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--version"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--version"}},
 		},
 		{
 			name:   "mixed clawker and container flags",
 			input:  "-it --rm -e FOO=bar",
 			args:   []string{"alpine", "-p", "prompt"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Env: []string{"FOO=bar"}, Image: "alpine", Command: []string{"-p", "prompt"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Env: []string{"FOO=bar"}, Image: "alpine", Command: []string{"-p", "prompt"}},
 		},
 		{
 			name:   "claude flags passthrough",
 			input:  "-it --rm",
 			args:   []string{"clawker-image:latest", "--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "clawker-image:latest", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "clawker-image:latest", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
 		},
 		{
 			name:   "flags only as command with -- separator",
 			input:  "-it --rm --agent ralph --",
 			args:   []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
 		},
 		{
 			name:   "arg starting with dash treated as command after -- separator",
 			input:  "-it --rm --",
 			args:   []string{"-unusual-image:v1"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Command: []string{"-unusual-image:v1"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Command: []string{"-unusual-image:v1"}},
 		},
 		{
 			name:   "multiple flag-value pairs after image",
 			input:  "-it --rm",
 			args:   []string{"alpine", "--flag1", "value1", "--flag2", "value2"},
-			output: Options{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--flag1", "value1", "--flag2", "value2"}},
+			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--flag1", "value1", "--flag2", "value2"}},
 		},
 	}
 
@@ -250,19 +275,23 @@ func TestNewCmdRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *Options
+			var cmdOpts testOptions
 			cmd := NewCmd(f)
 
 			// Override RunE to capture options instead of executing
 			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
 				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
 				cmdOpts.Name, _ = cmd.Flags().GetString("name")
 				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
 				cmdOpts.Mode, _ = cmd.Flags().GetString("mode")
 				cmdOpts.Env, _ = cmd.Flags().GetStringArray("env")
 				cmdOpts.Volumes, _ = cmd.Flags().GetStringArray("volume")
-				cmdOpts.Publish, _ = cmd.Flags().GetStringArray("publish")
+				// Note: Publish is now a PortOpts, but flag value is still accessible
+				if publishFlag := cmd.Flags().Lookup("publish"); publishFlag != nil {
+					if portOpts, ok := publishFlag.Value.(*copts.PortOpts); ok {
+						cmdOpts.Publish = portOpts.GetAsStrings()
+					}
+				}
 				cmdOpts.Workdir, _ = cmd.Flags().GetString("workdir")
 				cmdOpts.User, _ = cmd.Flags().GetString("user")
 				cmdOpts.Entrypoint, _ = cmd.Flags().GetString("entrypoint")
@@ -344,237 +373,117 @@ func TestCmdRun_NoDetachShorthand(t *testing.T) {
 	require.Nil(t, cmd.Flags().ShorthandLookup("d"))
 }
 
-func TestParsePortMappings(t *testing.T) {
-	tests := []struct {
-		name            string
-		specs           []string
-		wantExposed     int
-		wantBindings    int
-		wantHostIP      string
-		wantHostPort    string
-		wantContainerP  string
-		wantErr         bool
-		wantErrContains string
-	}{
-		{
-			name:           "simple port mapping",
-			specs:          []string{"8080:80"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostPort:   "8080",
-			wantContainerP: "80/tcp",
-		},
-		{
-			name:           "port with explicit tcp protocol",
-			specs:          []string{"8080:80/tcp"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostPort:   "8080",
-			wantContainerP: "80/tcp",
-		},
-		{
-			name:           "port with udp protocol",
-			specs:          []string{"8080:80/udp"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostPort:   "8080",
-			wantContainerP: "80/udp",
-		},
-		{
-			name:         "multiple ports",
-			specs:        []string{"8080:80", "9090:90"},
-			wantExposed:  2,
-			wantBindings: 2,
-		},
-		{
-			name:           "with host IP",
-			specs:          []string{"127.0.0.1:8080:80"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostIP:     "127.0.0.1",
-			wantHostPort:   "8080",
-			wantContainerP: "80/tcp",
-		},
-		{
-			name:           "with IPv6 host IP",
-			specs:          []string{"[::1]:8080:80"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostIP:     "::1",
-			wantHostPort:   "8080",
-			wantContainerP: "80/tcp",
-		},
-		{
-			name:            "invalid port spec",
-			specs:           []string{"invalid"},
-			wantErr:         true,
-			wantErrContains: "invalid port mapping",
-		},
-		{
-			name:            "invalid port number",
-			specs:           []string{"99999:80"},
-			wantErr:         true,
-			wantErrContains: "invalid",
-		},
-		{
-			name:        "empty specs",
-			specs:       []string{},
-			wantExposed: 0,
-		},
-		{
-			name:           "container port only (random host port)",
-			specs:          []string{"80"},
-			wantExposed:    1,
-			wantBindings:   1,
-			wantHostPort:   "",
-			wantContainerP: "80/tcp",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exposedPorts, portBindings, err := parsePortMappings(tt.specs)
-
-			if tt.wantErr {
-				require.Error(t, err)
-				if tt.wantErrContains != "" {
-					require.Contains(t, err.Error(), tt.wantErrContains)
-				}
-				return
-			}
-
-			require.NoError(t, err)
-			require.Len(t, exposedPorts, tt.wantExposed)
-
-			// Count total bindings across all ports
-			totalBindings := 0
-			for _, bindings := range portBindings {
-				totalBindings += len(bindings)
-			}
-			require.Equal(t, tt.wantBindings, totalBindings)
-
-			// Verify specific binding details if provided
-			if tt.wantContainerP != "" {
-				// Find the port binding for the expected container port
-				var foundBinding bool
-				for port, bindings := range portBindings {
-					if port.String() == tt.wantContainerP && len(bindings) > 0 {
-						foundBinding = true
-						if tt.wantHostPort != "" {
-							require.Equal(t, tt.wantHostPort, bindings[0].HostPort)
-						}
-						if tt.wantHostIP != "" {
-							require.Equal(t, netip.MustParseAddr(tt.wantHostIP), bindings[0].HostIP)
-						}
-						break
-					}
-				}
-				require.True(t, foundBinding, "expected port binding for %s not found", tt.wantContainerP)
-			}
-		})
-	}
-}
-
+// TestBuildConfigs tests the shared BuildConfigs function from copts package
 func TestBuildConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    *Options
+		opts    *copts.ContainerOptions
 		wantErr bool
 	}{
 		{
 			name: "basic config",
-			opts: &Options{
-				Image: "alpine",
+			opts: &copts.ContainerOptions{
+				Image:   "alpine",
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with tty and stdin",
-			opts: &Options{
-				Image: "alpine",
-				TTY:   true,
-				Stdin: true,
+			opts: &copts.ContainerOptions{
+				Image:   "alpine",
+				TTY:     true,
+				Stdin:   true,
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with command",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:   "alpine",
 				Command: []string{"echo", "hello"},
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with env vars",
-			opts: &Options{
-				Image: "alpine",
-				Env:   []string{"FOO=bar", "BAZ=qux"},
+			opts: &copts.ContainerOptions{
+				Image:   "alpine",
+				Env:     []string{"FOO=bar", "BAZ=qux"},
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with valid port",
-			opts: &Options{
-				Image:   "alpine",
-				Publish: []string{"8080:80"},
-			},
+			opts: func() *copts.ContainerOptions {
+				o := copts.NewContainerOptions()
+				o.Image = "alpine"
+				o.Publish.Set("8080:80")
+				return o
+			}(),
 		},
-		{
-			name:    "with invalid port",
-			opts:    &Options{Image: "alpine", Publish: []string{"invalid"}},
-			wantErr: true,
-		},
+		// Note: Invalid port validation happens in PortOpts.Set(), not in BuildConfigs.
+		// See TestPortOpts in internal/docker/opts_test.go for port validation tests.
 		{
 			name: "with labels",
-			opts: &Options{
-				Image:  "alpine",
-				Labels: []string{"foo=bar", "baz"},
+			opts: &copts.ContainerOptions{
+				Image:   "alpine",
+				Labels:  []string{"foo=bar", "baz"},
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with network",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:   "alpine",
 				Network: "mynet",
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with auto-remove",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:      "alpine",
 				AutoRemove: true,
+				Publish:    copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with entrypoint",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:      "alpine",
 				Entrypoint: "/custom/entrypoint",
+				Publish:    copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with volumes/binds",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:   "alpine",
 				Volumes: []string{"/host/path:/container/path", "/another:/mount"},
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with workdir",
-			opts: &Options{
+			opts: &copts.ContainerOptions{
 				Image:   "alpine",
 				Workdir: "/app",
+				Publish: copts.NewPortOpts(),
 			},
 		},
 		{
 			name: "with user",
-			opts: &Options{
-				Image: "alpine",
-				User:  "nobody",
+			opts: &copts.ContainerOptions{
+				Image:   "alpine",
+				User:    "nobody",
+				Publish: copts.NewPortOpts(),
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, netCfg, err := buildConfigs(tt.opts, nil, config.DefaultConfig())
+			cfg, hostCfg, netCfg, err := tt.opts.BuildConfigs(nil, config.DefaultConfig())
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -638,7 +547,10 @@ func TestBuildConfigs(t *testing.T) {
 }
 
 func TestBuildConfigs_CapAdd(t *testing.T) {
-	opts := &Options{Image: "alpine"}
+	opts := &copts.ContainerOptions{
+		Image:   "alpine",
+		Publish: copts.NewPortOpts(),
+	}
 	projectCfg := &config.Config{
 		Project: "test",
 		Security: config.SecurityConfig{
@@ -646,7 +558,7 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		},
 	}
 
-	_, hostCfg, _, err := buildConfigs(opts, nil, projectCfg)
+	_, hostCfg, _, err := opts.BuildConfigs(nil, projectCfg)
 	require.NoError(t, err)
 	require.Len(t, hostCfg.CapAdd, 2)
 	require.Contains(t, hostCfg.CapAdd, "NET_ADMIN")

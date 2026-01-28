@@ -2,6 +2,7 @@ package list
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -161,7 +162,16 @@ type containerForFormat struct {
 
 // outputFormatted outputs containers using a Go template format string.
 func outputFormatted(w io.Writer, format string, containers []docker.Container) error {
-	tmpl, err := template.New("format").Parse(format)
+	funcMap := template.FuncMap{
+		"json": func(v interface{}) string {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return err.Error()
+			}
+			return string(b)
+		},
+	}
+	tmpl, err := template.New("format").Funcs(funcMap).Parse(format)
 	if err != nil {
 		return fmt.Errorf("invalid format template: %w", err)
 	}

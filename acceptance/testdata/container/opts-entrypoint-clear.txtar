@@ -1,0 +1,33 @@
+# ADVERSARIAL: Test clearing entrypoint with empty string
+# Verifies: --entrypoint "" clears the image's default entrypoint
+# Expected: FAIL - clawker checks opts.Entrypoint != "" which makes empty string a no-op
+# Docker CLI checks flags.Changed("entrypoint") to detect explicit empty string
+
+# Substitute project name in config
+replace clawker.yaml PROJECT=$PROJECT
+
+# Create settings directory
+mkdir $HOME/.local/clawker
+
+# Register cleanup
+defer clawker container rm --force --agent entryclear-$RANDOM_STRING
+
+# Create container with cleared entrypoint
+# Using an image that has an entrypoint (alpine doesn't by default, so we use a command that
+# would fail if entrypoint were still set)
+exec clawker container create --agent entryclear-$RANDOM_STRING --entrypoint '' alpine:latest sleep 3600
+
+# Verify entrypoint is cleared (should be empty/null, not the image default)
+exec clawker container inspect --format '{{len .Config.Entrypoint}}' --agent entryclear-$RANDOM_STRING
+stdout '0'
+
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
