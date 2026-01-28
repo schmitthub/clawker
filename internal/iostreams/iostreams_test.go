@@ -19,12 +19,17 @@ func TestNewIOStreams(t *testing.T) {
 	if ios.ErrOut == nil {
 		t.Error("NewIOStreams().ErrOut is nil")
 	}
+	// isInputTTY should still be lazy-loaded (not queried during construction)
 	if ios.isInputTTY != -1 {
 		t.Errorf("NewIOStreams().isInputTTY = %d, want -1", ios.isInputTTY)
 	}
-	if ios.isOutputTTY != -1 {
-		t.Errorf("NewIOStreams().isOutputTTY = %d, want -1", ios.isOutputTTY)
+	// isOutputTTY is now queried during construction to check for progress indicator enablement.
+	// It will be 0 (not a TTY) when running in tests.
+	if ios.isOutputTTY == -1 {
+		t.Error("NewIOStreams().isOutputTTY should be detected during construction")
 	}
+	// Note: isStderrTTY may still be -1 due to short-circuit evaluation in the progress check.
+	// If stdout is not a TTY, stderr check is skipped. This is fine - it will be lazy-loaded on demand.
 }
 
 func TestIOStreams_TTY(t *testing.T) {

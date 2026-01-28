@@ -175,10 +175,11 @@ cs := ios.ColorScheme()
 cs.Green("Success")   // Returns unmodified string if colors disabled
 cs.SuccessIcon()      // "✓" or "[ok]" based on color support
 
-// Progress Indicators
+// Progress Indicators (animated spinner or text fallback)
 ios.StartProgressIndicatorWithLabel("Building...")
 defer ios.StopProgressIndicator()
 // Or: ios.RunWithProgress("Building", func() error { ... })
+// Text mode: set CLAWKER_SPINNER_DISABLED=1 or ios.SetSpinnerDisabled(true)
 
 // Terminal Size
 width := ios.TerminalWidth()
@@ -193,6 +194,7 @@ width, height := ios.TerminalSize()
 | `CI` | Disables interactive prompts when set |
 | `CLAWKER_PAGER` | Custom pager command (highest priority) |
 | `PAGER` | Standard pager command |
+| `CLAWKER_SPINNER_DISABLED` | Uses static text instead of animated spinner |
 
 ### Testing
 
@@ -203,6 +205,8 @@ ios := iostreams.NewTestIOStreams()
 ios.SetInteractive(true)         // Simulate TTY
 ios.SetColorEnabled(true)        // Enable colors
 ios.SetTerminalSize(120, 40)     // Set terminal size
+ios.SetProgressEnabled(true)     // Enable progress indicators
+ios.SetSpinnerDisabled(true)     // Use text mode instead of animation
 ios.InBuf.SetInput("user input") // Simulate stdin
 // Verify output:
 ios.OutBuf.String()              // stdout content
