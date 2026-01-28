@@ -1,0 +1,13 @@
+# Test user-level init (clawker init)
+# Verifies: settings.yaml is created
+
+# Ensure settings directory doesn't exist yet
+! exists $HOME/.local/clawker/settings.yaml
+
+# Run clawker init with --yes for non-interactive (skips base image build)
+exec clawker init --yes
+stderr 'Setting up clawker user settings'
+stderr 'Created:'
+
+# Verify settings file was created
+exists $HOME/.local/clawker/settings.yaml

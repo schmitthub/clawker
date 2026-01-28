@@ -1,9 +1,9 @@
 # Acceptance Testing Implementation Progress
 
-## Current Status: Phase 4 Complete
+## Current Status: Phase 6 Complete (All Phases Done)
 
-The acceptance testing infrastructure is being implemented following the plan at:
-`.claude/plans/memoized-beaming-island.md`
+The acceptance testing infrastructure is being implemented following a plan created off of `.claude/docs/prds/acceptance-testing/`. The work is divided into phases, with each phase focusing on specific areas of functionality.
+Initial planning was performed on a different computer and separate file system. so if you need to create your own plan file, refer to the documents in `.claude/docs/prds/acceptance-testing/`.
 
 ## Completed Work
 
@@ -16,7 +16,7 @@ The acceptance testing infrastructure is being implemented following the plan at
 ### Phase 3: Container Tests (Complete - 14 tests)
 Located in `acceptance/testdata/container/`:
 - `run-basic.txtar` - Basic container run with echo
-- `run-detach.txtar` - Detached container with logs  
+- `run-detach.txtar` - Detached container with logs
 - `run-autoremove.txtar` - Auto-remove flag behavior
 - `start-stop.txtar` - Container lifecycle
 - `exec-basic.txtar` - Exec into container
@@ -64,11 +64,19 @@ Located in `acceptance/testdata/container/`:
 
 4. **Output assertions**: Many clawker commands output to stderr not stdout:
    - `volume rm` → stderr
-   - `volume prune` → stderr  
+   - `volume prune` → stderr
    - `network rm` → stderr
    - Use `stderr` assertions instead of `stdout`
 
 5. **Network create**: Returns network ID (hash), not network name. Don't assert on stdout after create.
+
+6. **build.txtar stderr assertion**: The `clawker build` command outputs `building container image` (lowercase) not `Building image`. Always check actual command output when writing assertions.
+
+7. **Ralph status output**: `clawker ralph status --json` outputs `{"exists": false}` (with space after colon) when no session exists. The `--quiet` flag is NOT supported by ralph status - it outputs human-readable text to stderr by default.
+
+8. **Project init with --yes**: Requires `mkdir $HOME/.local/clawker` first because --yes mode expects settings directory to exist.
+
+9. **Firewall disabled for tests**: All acceptance tests use `security.firewall.enable: false` to avoid NET_ADMIN capability requirements and simplify test setup.
 
 ## Running Tests
 
@@ -86,25 +94,36 @@ go test -tags=acceptance -run ^TestImage$ ./acceptance -v -timeout 10m
 CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
 ```
 
-## Next Steps: Phase 5 and 6
+### Phase 5: Ralph, Project, and Root Tests (Complete - 7 tests)
 
-### Phase 5: Ralph and Project Tests (NOT STARTED)
-Need to create:
-- `acceptance/testdata/ralph/status-no-session.txtar`
-- `acceptance/testdata/ralph/reset.txtar`
-- `acceptance/testdata/ralph/status-json.txtar`
-- `acceptance/testdata/project/init-basic.txtar`
-- `acceptance/testdata/project/init-force.txtar`
-- `acceptance/testdata/root/init.txtar`
-- `acceptance/testdata/root/build.txtar`
+**Ralph tests** (`acceptance/testdata/ralph/`):
+- `status-no-session.txtar` - Status when no session exists
+- `status-json.txtar` - JSON output format (`{"exists": false}`)
+- `reset.txtar` - Reset command with --quiet and --all flags
 
-### Phase 6: Documentation and CI (NOT STARTED)
-Need to:
-- Write `acceptance/README.md` - Test authoring guide
-- Update `TESTING.md` - Add acceptance test section
-- Update `CLAUDE.md` - Add acceptance test commands
-- Add Makefile target - `make acceptance`
-- Create GitHub Actions workflow
+**Project tests** (`acceptance/testdata/project/`):
+- `init-basic.txtar` - Non-interactive project init with --yes
+- `init-force.txtar` - Force overwrite with --force flag
+
+**Root tests** (`acceptance/testdata/root/`):
+- `init.txtar` - User-level init creating settings.yaml
+- `build.txtar` - Image build command (note: output is `building container image` lowercase)
+
+### Phase 6: Documentation and CI (Complete)
+
+**Created:**
+- `acceptance/README.md` - Comprehensive test authoring guide (~300 lines)
+  - Directory structure, test file format (.txtar)
+  - All custom commands documented (defer, replace, wait_*, etc.)
+  - Environment variables table
+  - Running tests (all, by category, single script)
+  - Debugging tips (preserve work dir, skip defer)
+  - CI configuration examples
+
+**Modified:**
+- `.claude/rules/TESTING.md` - Added acceptance tests section with running commands
+- `CLAUDE.md` - Added acceptance test commands to Build Commands and Testing Requirements
+- `Makefile` - Added `acceptance` target with `$(TEST_CMD_VERBOSE) -tags=acceptance -timeout 15m ./acceptance`
 
 ## Test Counts Summary
 
@@ -114,22 +133,89 @@ Need to:
 | Volume | 3 | ✅ All Pass |
 | Network | 3 | ✅ All Pass |
 | Image | 4 | ✅ All Pass |
-| Ralph | 0 | ⏳ Not Started |
-| Project | 0 | ⏳ Not Started |
-| Root | 0 | ⏳ Not Started |
-| **Total** | **24** | **24 Pass** |
+| Ralph | 3 | ✅ All Pass |
+| Project | 2 | ✅ All Pass |
+| Root | 2 | ✅ All Pass |
+| **Total** | **31** | **31 Pass** |
 
 ## Files Modified/Created
 
 ### New Files
 - `acceptance/acceptance_test.go`
+- `acceptance/README.md` - Test authoring guide
 - `acceptance/testdata/container/*.txtar` (14 files)
 - `acceptance/testdata/volume/*.txtar` (3 files)
 - `acceptance/testdata/network/*.txtar` (3 files)
 - `acceptance/testdata/image/*.txtar` (4 files)
+- `acceptance/testdata/ralph/*.txtar` (3 files)
+- `acceptance/testdata/project/*.txtar` (2 files)
+- `acceptance/testdata/root/*.txtar` (2 files)
 
 ### Modified Files
 - `internal/cmd/container/cp/cp.go` - Added HandleError for better error messages
+- `.claude/rules/TESTING.md` - Added acceptance tests section
+- `CLAUDE.md` - Added acceptance test commands
+- `Makefile` - Added `acceptance` target
 
 ### Staged Documentation (from plan mode)
 - `.claude/docs/prds/acceptance-testing/*.md` - Various PRD and analysis docs
+
+## Tips for Writing New Acceptance Tests
+
+### Before Writing a Test
+
+1. **Check command implementation** - Read the actual command code to understand:
+   - What outputs to stdout vs stderr
+   - Exact message wording (case-sensitive!)
+   - Required flags and their defaults
+
+2. **Look at existing similar tests** - Follow established patterns in `acceptance/testdata/`
+
+3. **Test interactively first** - Run the command manually to see actual output
+
+### Common Patterns
+
+```txtar
+# Standard setup for most tests
+replace clawker.yaml PROJECT=$PROJECT
+mkdir $HOME/.local/clawker
+
+# Standard config with firewall disabled
+-- clawker.yaml --
+version: "1"
+project: "$PROJECT"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
+```
+
+### Output Channel Reference
+
+| Command | stdout | stderr |
+|---------|--------|--------|
+| `container ls` | Data | - |
+| `container run/create` | Container ID | Status |
+| `volume/network rm` | - | Status |
+| `build` | - | Progress |
+| `ralph status` | JSON (with --json) | Human-readable |
+| `ralph status --json` | JSON object | - |
+| `ralph reset` | - | Status |
+| `project init` | - | Status |
+| `init` | - | Status |
+
+### Debugging Failed Tests
+
+```bash
+# Preserve work directory for inspection
+CLAWKER_ACCEPTANCE_PRESERVE_WORK_DIR=true go test -tags=acceptance -run ^TestRalph$ ./acceptance -v
+
+# Skip cleanup to inspect state
+CLAWKER_ACCEPTANCE_SKIP_DEFER=true go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+
+# Run single script with verbose output
+CLAWKER_ACCEPTANCE_SCRIPT=build.txtar go test -tags=acceptance -run ^TestRoot$ ./acceptance -v
+```

@@ -1,7 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
         cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-staticcheck cli-install cli-clean \
-        test test-integration test-e2e test-coverage test-clean golden-update \
+        test test-integration test-e2e acceptance test-coverage test-clean golden-update \
         generate-mocks
 
 # Variables
@@ -43,6 +43,7 @@ help:
 	@echo "  test                Unit tests only (fast, no Docker)"
 	@echo "  test-integration    Unit + integration tests (requires Docker)"
 	@echo "  test-e2e            All tests including E2E (requires Docker)"
+	@echo "  acceptance          Acceptance tests - CLI workflow validation (requires Docker)"
 	@echo "  test-coverage       Unit tests with coverage"
 	@echo "  test-clean          Remove test Docker resources"
 	@echo "  golden-update       Regenerate golden files"
@@ -306,6 +307,14 @@ ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
 	$(TEST_CMD_VERBOSE) -tags=integration,e2e -timeout 15m ./...
+
+# Acceptance tests (CLI workflow validation)
+acceptance:
+	@echo "Running acceptance tests..."
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -tags=acceptance -timeout 15m ./acceptance
 
 # Unit tests with coverage
 test-coverage:
