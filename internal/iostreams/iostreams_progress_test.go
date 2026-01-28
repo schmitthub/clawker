@@ -4,7 +4,6 @@ package iostreams
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -105,8 +104,7 @@ func TestProgressIndicator_StopTwice(t *testing.T) {
 }
 
 func TestProgressIndicator_EnvVar(t *testing.T) {
-	os.Setenv("CLAWKER_SPINNER_DISABLED", "1")
-	defer os.Unsetenv("CLAWKER_SPINNER_DISABLED")
+	t.Setenv("CLAWKER_SPINNER_DISABLED", "1")
 
 	ios := NewIOStreams()
 	if !ios.spinnerDisabled {
