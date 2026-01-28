@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/schmitthub/clawker/internal/logger"
 	"golang.org/x/term"
 )
@@ -37,9 +39,10 @@ type IOStreams struct {
 	terminalTheme string
 
 	// Progress indicator state
-	progressMu     sync.Mutex
-	progressActive bool
-	progress       *progressIndicator
+	progressIndicatorEnabled bool
+	progressIndicator        *spinner.Spinner
+	progressIndicatorMu      sync.Mutex
+	spinnerDisabled          bool
 
 	// Pager state
 	pagerCommand string
@@ -61,7 +64,7 @@ type IOStreams struct {
 
 // NewIOStreams creates an IOStreams connected to standard streams.
 func NewIOStreams() *IOStreams {
-	return &IOStreams{
+	ios := &IOStreams{
 		In:            os.Stdin,
 		Out:           os.Stdout,
 		ErrOut:        os.Stderr,
@@ -71,6 +74,18 @@ func NewIOStreams() *IOStreams {
 		colorEnabled:  -1, // Auto-detect
 		terminalTheme: "", // Detect on first use
 	}
+
+	// Progress enabled when both stdout and stderr are TTYs
+	if ios.IsOutputTTY() && ios.IsStderrTTY() {
+		ios.progressIndicatorEnabled = true
+	}
+
+	// Check for spinner disabled env var
+	if os.Getenv("CLAWKER_SPINNER_DISABLED") != "" {
+		ios.spinnerDisabled = true
+	}
+
+	return ios
 }
 
 // IsInputTTY returns true if stdin is a terminal.
@@ -241,42 +256,81 @@ func (s *IOStreams) StartProgressIndicator() {
 
 // StartProgressIndicatorWithLabel starts a spinner with a label on stderr.
 func (s *IOStreams) StartProgressIndicatorWithLabel(label string) {
-	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
+	if !s.progressIndicatorEnabled {
+		return
+	}
 
-	if s.progressActive {
-		// Already running, just update the label
-		if s.progress != nil {
-			s.progress.setLabel(label)
+	s.progressIndicatorMu.Lock()
+	defer s.progressIndicatorMu.Unlock()
+
+	// Check spinnerDisabled inside mutex for thread safety
+	if s.spinnerDisabled {
+		s.startTextualProgressIndicatorLocked(label)
+		return
+	}
+
+	// If spinner already running, just update the prefix
+	if s.progressIndicator != nil {
+		if label == "" {
+			s.progressIndicator.Prefix = ""
+		} else {
+			s.progressIndicator.Prefix = label + " "
 		}
 		return
 	}
 
-	// Only show spinner if stderr is a TTY
-	if !s.IsStderrTTY() {
-		s.progressActive = true
-		return
+	// Create new spinner
+	// CharSets[11] is braille: ⣾ ⣷ ⣽ ⣻ ⡿
+	// Note: spinner.WithColor silently ignores invalid colors per library design.
+	// "fgCyan" is a verified valid color (see TestProgressIndicator_ColorIsValid).
+	sp := spinner.New(spinner.CharSets[11], 120*time.Millisecond,
+		spinner.WithWriter(s.ErrOut),
+		spinner.WithColor("fgCyan"))
+	if label != "" {
+		sp.Prefix = label + " "
 	}
 
-	s.progress = newProgressIndicator(s.ErrOut, label)
-	s.progress.start()
-	s.progressActive = true
+	sp.Start()
+	s.progressIndicator = sp
+}
+
+// startTextualProgressIndicatorLocked prints a one-time text message instead of animated spinner.
+// Caller must hold progressIndicatorMu.
+func (s *IOStreams) startTextualProgressIndicatorLocked(label string) {
+	// Default label when spinner disabled
+	if label == "" {
+		label = "Working..."
+	}
+
+	// Add ellipsis if not present
+	if !strings.HasSuffix(label, "...") {
+		label = label + "..."
+	}
+
+	fmt.Fprintf(s.ErrOut, "%s\n", s.ColorScheme().Cyan(label))
 }
 
 // StopProgressIndicator stops the spinner.
 func (s *IOStreams) StopProgressIndicator() {
-	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
+	s.progressIndicatorMu.Lock()
+	defer s.progressIndicatorMu.Unlock()
 
-	if !s.progressActive {
+	if s.progressIndicator == nil {
 		return
 	}
 
-	if s.progress != nil {
-		s.progress.stop()
-		s.progress = nil
-	}
-	s.progressActive = false
+	s.progressIndicator.Stop()
+	s.progressIndicator = nil
+}
+
+// GetSpinnerDisabled returns whether the animated spinner is disabled.
+func (s *IOStreams) GetSpinnerDisabled() bool {
+	return s.spinnerDisabled
+}
+
+// SetSpinnerDisabled sets whether the animated spinner is disabled.
+func (s *IOStreams) SetSpinnerDisabled(v bool) {
+	s.spinnerDisabled = v
 }
 
 // RunWithProgress runs a function while showing a spinner.
@@ -500,4 +554,14 @@ func (t *TestIOStreams) SetTerminalSize(width, height int) {
 	t.IOStreams.termWidthCache = width
 	t.IOStreams.termHeightCache = height
 	t.IOStreams.termSizeCached = true
+}
+
+// SetProgressEnabled allows tests to enable/disable progress indicator.
+func (t *TestIOStreams) SetProgressEnabled(enabled bool) {
+	t.IOStreams.progressIndicatorEnabled = enabled
+}
+
+// SetSpinnerDisabled allows tests to disable the animated spinner.
+func (t *TestIOStreams) SetSpinnerDisabled(disabled bool) {
+	t.IOStreams.spinnerDisabled = disabled
 }

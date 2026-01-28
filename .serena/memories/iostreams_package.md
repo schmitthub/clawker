@@ -21,12 +21,12 @@ This package was moved from `internal/cmdutil/` to `internal/iostreams/` to bett
 
 | File | Purpose |
 |------|---------|
-| `iostreams.go` | Core IOStreams struct with TTY detection, color, terminal size |
+| `iostreams.go` | Core IOStreams struct with TTY detection, color, terminal size, progress indicators |
 | `colorscheme.go` | Color formatting that bridges to `tui/styles.go` |
-| `progress.go` | Animated spinner for progress indication |
 | `pager.go` | Output paging via external commands (less, more) |
 
 Note: Factory integration is in `internal/cmdutil/factory.go`, which creates IOStreams with env var detection.
+Progress indicator functionality (formerly in `progress.go`) is now integrated into `iostreams.go`.
 
 ## Core Patterns
 
@@ -251,6 +251,7 @@ func New(version, commit string) *Factory {
 | `CLAWKER_PAGER` | Custom pager command (highest priority) |
 | `PAGER` | Standard pager command |
 | `COLORFGBG` | Terminal theme detection hint |
+| `CLAWKER_SPINNER_DISABLED` | Uses static text instead of animated spinner |
 
 ## Testing
 
@@ -299,6 +300,10 @@ ios.SetColorEnabled(false)  // Disable (default)
 // Set terminal size
 ios.SetTerminalSize(120, 40)  // Width, Height
 
+// Progress indicator control
+ios.SetProgressEnabled(true)   // Enable progress indicators
+ios.SetSpinnerDisabled(true)   // Use text mode instead of animation
+
 // Access underlying IOStreams
 ios.IOStreams.SetNeverPrompt(true)
 ```
@@ -323,18 +328,59 @@ ios.OutBuf.Reset()
 
 ## Progress Indicator Details
 
-The spinner uses Braille patterns for smooth animation:
+The spinner uses the `briandowns/spinner` library with two modes:
+
+### Animated Mode (Default)
+
+Uses braille character set (CharSets[11]) at 120ms intervals with cyan color:
 
 ```go
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-const spinnerInterval = 80 * time.Millisecond
+sp := spinner.New(spinner.CharSets[11], 120*time.Millisecond,
+    spinner.WithWriter(s.ErrOut),
+    spinner.WithColor("fgCyan"))
 ```
 
 - Writes to stderr (not stdout)
-- Only animates if stderr is a TTY
-- Thread-safe (mutex-protected)
+- Only animates if both stdout and stderr are TTYs
+- Thread-safe (mutex-protected with `progressIndicatorMu`)
+- `spinnerDisabled` check is inside mutex for race-safety
+- Reuses existing spinner instance (updates prefix)
 - Clears line when stopped
-- Can update label mid-spin
+- `spinner.WithColor("fgCyan")` silently ignores invalid colors per library design
+
+### Text Fallback Mode
+
+When `CLAWKER_SPINNER_DISABLED=1` is set or `SetSpinnerDisabled(true)` is called:
+
+```go
+// Prints static cyan text with ellipsis
+fmt.Fprintf(s.ErrOut, "%s\n", s.ColorScheme().Cyan("Building..."))
+```
+
+- Useful for CI environments or log capture
+- Each call prints a new line (no spinner reuse)
+- Default label is "Working..." if none provided
+
+### API Methods
+
+| Method | Purpose |
+|--------|---------|
+| `StartProgressIndicator()` | Start spinner with no label |
+| `StartProgressIndicatorWithLabel(label)` | Start spinner with label |
+| `StopProgressIndicator()` | Stop the spinner |
+| `RunWithProgress(label, fn)` | Run function with spinner |
+| `GetSpinnerDisabled()` | Check if text mode is enabled |
+| `SetSpinnerDisabled(bool)` | Enable/disable text mode |
+
+### Auto-detection
+
+Progress is enabled when both stdout and stderr are TTYs:
+
+```go
+if ios.IsOutputTTY() && ios.IsStderrTTY() {
+    ios.progressIndicatorEnabled = true
+}
+```
 
 ## Pager Details
 
