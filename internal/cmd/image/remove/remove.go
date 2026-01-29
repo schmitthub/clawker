@@ -41,9 +41,6 @@ Note: Only clawker-managed images can be removed with this command.`,
 
   # Remove an image without pruning parent images
   clawker image rm --no-prune clawker-myapp:latest`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args)

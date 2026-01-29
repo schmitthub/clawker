@@ -2,7 +2,6 @@
 # Documentation: https://github.com/schmitthub/clawker
 
 version: "1"
-project: "clawker"
 
 build:
   # Base image for the container

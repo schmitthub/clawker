@@ -16,11 +16,17 @@ import (
 )
 
 type upOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client   func(context.Context) (*docker.Client, error)
+
 	detach bool
 }
 
 func newCmdUp(f *cmdutil.Factory) *cobra.Command {
-	opts := &upOptions{}
+	opts := &upOptions{
+		IOStreams: f.IOStreams,
+		Client:   f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -41,7 +47,7 @@ Claude Code containers to send telemetry automatically.`,
   # Start in foreground (see logs)
   clawker monitor up --detach=false`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUp(f, opts)
+			return runUp(opts)
 		},
 	}
 
@@ -50,8 +56,8 @@ Claude Code containers to send telemetry automatically.`,
 	return cmd
 }
 
-func runUp(f *cmdutil.Factory, opts *upOptions) error {
-	ios := f.IOStreams
+func runUp(opts *upOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Resolve monitor directory
@@ -72,7 +78,7 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 
 	// Ensure clawker-net network exists (creates with managed labels if needed)
 	ctx := context.Background()
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -118,7 +124,7 @@ func runUp(f *cmdutil.Factory, opts *upOptions) error {
 
 		// Check for running clawker containers that need restart
 		ctx := context.Background()
-		client, err := f.Client(ctx)
+		client, err := opts.Client(ctx)
 		if err != nil {
 			logger.Debug().Err(err).Msg("failed to connect to docker for container check")
 		} else {

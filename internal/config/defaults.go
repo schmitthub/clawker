@@ -50,7 +50,6 @@ const DefaultConfigYAML = `# Clawker Configuration
 # Documentation: https://github.com/schmitthub/clawker
 
 version: "1"
-project: "%s"
 
 build:
   # Base image for the container
@@ -101,13 +100,18 @@ security:
 const DefaultSettingsYAML = `# Clawker User Settings
 # Documentation: https://github.com/schmitthub/clawker
 
-# Project defaults (merged with local clawker.yaml, local takes precedence)
-project:
-  # Default image to use when not specified in project config or CLI
-  # default_image: "node:20-slim"
+# Logging configuration
+# logging:
+#   file_enabled: true
+#   max_size_mb: 50
+#   max_age_days: 7
+#   max_backups: 3
+`
 
-# Project directories (managed by 'clawker init')
-projects: []
+// DefaultRegistryYAML returns the default registry template
+const DefaultRegistryYAML = `# Clawker Project Registry
+# Managed by 'clawker init' — do not edit manually
+projects: {}
 `
 
 // DefaultIgnoreFile returns the default .clawkerignore content

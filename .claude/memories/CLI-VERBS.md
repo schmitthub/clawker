@@ -113,7 +113,7 @@ clawker init --yes
 | `alpine3.22` | Alpine Linux 3.22 |
 | `alpine3.23` | Alpine Linux 3.23 |
 
-**Note:** To initialize a project, use `clawker project init` instead.
+**Note:** To initialize a project, use `clawker project init` instead. `clawker init` sets up user-level settings only; it does not register projects.
 
 ---
 
@@ -158,6 +158,39 @@ clawker project init --force
 
 **Note:** When using `--yes`, a default image must be configured via `clawker init`.
 If no default image exists, the command will fail with a helpful error message.
+
+**Registry:** `project init` also registers the project in `~/.local/clawker/projects.yaml`.
+
+---
+
+### `clawker project register`
+
+Register an existing clawker project in the local registry without modifying the configuration file.
+
+**Usage:**
+```bash
+clawker project register [project-name] [flags]
+```
+
+Useful when a `clawker.yaml` was manually created, copied from another machine, or already exists and you want to register it locally.
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--yes` | `-y` | bool | false | Non-interactive mode, use directory name as project name |
+
+**Examples:**
+```bash
+# Register with interactive prompt for project name
+clawker project register
+
+# Register with a specific project name
+clawker project register my-project
+
+# Register using directory name without prompting
+clawker project register --yes
+```
 
 ---
 

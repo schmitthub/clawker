@@ -3,6 +3,7 @@ package project
 
 import (
 	projectinit "github.com/schmitthub/clawker/internal/cmd/project/init"
+	projectregister "github.com/schmitthub/clawker/internal/cmd/project/register"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -24,12 +25,16 @@ Use 'clawker project init' to set up a new project in the current directory.`,
   clawker project init my-project
 
   # Initialize non-interactively with defaults
-  clawker project init --yes`,
+  clawker project init --yes
+
+  # Register an existing project
+  clawker project register`,
 		// No RunE - this is a parent command
 	}
 
 	// Add subcommands
 	cmd.AddCommand(projectinit.NewCmdProjectInit(f))
+	cmd.AddCommand(projectregister.NewCmdProjectRegister(f))
 
 	return cmd
 }

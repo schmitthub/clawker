@@ -35,9 +35,6 @@ are using it for the monitoring stack.`,
 
   # Remove without confirmation prompt
   clawker network prune --force`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, f, opts)
 		},

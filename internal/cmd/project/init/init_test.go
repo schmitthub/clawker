@@ -178,7 +178,6 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 func TestGenerateConfigYAML(t *testing.T) {
 	tests := []struct {
 		name           string
-		projectName    string
 		buildImage     string
 		defaultImage   string
 		workspaceMode  string
@@ -187,12 +186,10 @@ func TestGenerateConfigYAML(t *testing.T) {
 	}{
 		{
 			name:          "basic config",
-			projectName:   "my-app",
 			buildImage:    "buildpack-deps:bookworm-scm",
 			defaultImage:  "",
 			workspaceMode: "bind",
 			wantContains: []string{
-				`project: "my-app"`,
 				`image: "buildpack-deps:bookworm-scm"`,
 				`default_mode: "bind"`,
 				`version: "1"`,
@@ -201,25 +198,25 @@ func TestGenerateConfigYAML(t *testing.T) {
 			},
 			wantNotContain: []string{
 				"default_image:",
+				"project:",
 			},
 		},
 		{
 			name:          "with default image",
-			projectName:   "test-project",
 			buildImage:    "alpine:latest",
 			defaultImage:  "clawker-default:latest",
 			workspaceMode: "snapshot",
 			wantContains: []string{
-				`project: "test-project"`,
 				`image: "alpine:latest"`,
 				`default_image: "clawker-default:latest"`,
 				`default_mode: "snapshot"`,
 			},
-			wantNotContain: []string{},
+			wantNotContain: []string{
+				"project:",
+			},
 		},
 		{
 			name:          "includes standard packages",
-			projectName:   "pkg-test",
 			buildImage:    "debian:latest",
 			defaultImage:  "",
 			workspaceMode: "bind",
@@ -232,7 +229,6 @@ func TestGenerateConfigYAML(t *testing.T) {
 		},
 		{
 			name:          "includes commented sections",
-			projectName:   "comments-test",
 			buildImage:    "debian:latest",
 			defaultImage:  "",
 			workspaceMode: "bind",
@@ -249,7 +245,7 @@ func TestGenerateConfigYAML(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateConfigYAML(tt.projectName, tt.buildImage, tt.defaultImage, tt.workspaceMode)
+			result := generateConfigYAML(tt.buildImage, tt.defaultImage, tt.workspaceMode)
 
 			for _, want := range tt.wantContains {
 				if !strings.Contains(result, want) {
@@ -268,7 +264,7 @@ func TestGenerateConfigYAML(t *testing.T) {
 
 func TestGenerateConfigYAML_ValidYAML(t *testing.T) {
 	// Test that generated YAML is valid by checking basic structure
-	result := generateConfigYAML("test", "debian:latest", "default:latest", "bind")
+	result := generateConfigYAML("debian:latest", "default:latest", "bind")
 
 	// Check it starts with version
 	if !strings.HasPrefix(result, `version: "1"`) {

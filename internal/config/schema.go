@@ -5,7 +5,7 @@ import "sort"
 // Config represents the root configuration structure for clawker.yaml
 type Config struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
-	Project      string          `yaml:"project" mapstructure:"project"`
+	Project      string          `yaml:"-" mapstructure:"-"`
 	DefaultImage string          `yaml:"default_image,omitempty" mapstructure:"default_image"`
 	Build        BuildConfig     `yaml:"build" mapstructure:"build"`
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`

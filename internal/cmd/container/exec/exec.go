@@ -8,7 +8,9 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
@@ -16,6 +18,10 @@ import (
 
 // Options holds options for the exec command.
 type Options struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
 	TTY         bool
@@ -24,11 +30,18 @@ type Options struct {
 	Workdir     string
 	User        string
 	Privileged  bool
+
+	containerName string
+	command       []string
 }
 
 // NewCmd creates a new exec command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "exec [OPTIONS] [CONTAINER] COMMAND [ARG...]",
@@ -64,25 +77,17 @@ Container name can be:
 
   # Run in a specific directory
   clawker container exec -w /tmp clawker.myapp.ralph pwd`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			containerName := args[0]
+			opts.containerName = args[0]
 			if opts.Agent {
-				var err error
-				containerName, err = cmdutil.ResolveContainerName(f, args[0])
-				if err != nil {
-					return err
-				}
+				opts.containerName = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, args[0])
 			}
 
-			var command []string
 			if len(args) > 1 {
-				command = args[1:]
+				opts.command = args[1:]
 			}
-			return run(cmd.Context(), f, opts, containerName, command)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -102,18 +107,22 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName string, command []string) error {
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
+	containerName := opts.containerName
+	command := opts.command
+
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		cmdutil.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -145,14 +154,14 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 	// Create exec instance
 	execResp, err := client.ExecCreate(ctx, c.ID, execConfig)
 	if err != nil {
-		cmdutil.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	execID := execResp.ID
 	if execID == "" {
 		err := fmt.Errorf("exec ID is empty")
-		cmdutil.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 
@@ -163,10 +172,10 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 			TTY:    opts.TTY,
 		})
 		if err != nil {
-			cmdutil.HandleError(f.IOStreams, err)
+			cmdutil.HandleError(ios, err)
 			return err
 		}
-		fmt.Fprintln(f.IOStreams.Out, execID)
+		fmt.Fprintln(ios.Out, execID)
 		return nil
 	}
 
@@ -187,7 +196,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 
 	hijacked, err := client.ExecAttach(ctx, execID, attachOpts)
 	if err != nil {
-		cmdutil.HandleError(f.IOStreams, err)
+		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()
@@ -214,7 +223,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 
 	// Copy output using stdcopy to demultiplex stdout/stderr
 	go func() {
-		_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
+		_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
 		outputDone <- err
 	}()
 
@@ -222,7 +231,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options, containerName s
 	// This goroutine can finish anytime - we don't wait for it
 	if opts.Interactive {
 		go func() {
-			io.Copy(hijacked.Conn, f.IOStreams.In)
+			io.Copy(hijacked.Conn, ios.In)
 			hijacked.CloseWrite()
 		}()
 	}

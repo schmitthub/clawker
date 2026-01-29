@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
@@ -13,12 +14,18 @@ import (
 
 // InitOptions contains the options for the init command.
 type InitOptions struct {
+	IOStreams *iostreams.IOStreams
+	Prompter func() *prompts.Prompter
+
 	Yes bool // Non-interactive mode
 }
 
 // NewCmdInit creates the init command for user-level setup.
 func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
-	opts := &InitOptions{}
+	opts := &InitOptions{
+		IOStreams: f.IOStreams,
+		Prompter: f.Prompter,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -40,7 +47,7 @@ To initialize a project in the current directory, use 'clawker project init' ins
   clawker init --yes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(f, opts)
+			return runInit(opts)
 		},
 	}
 
@@ -49,11 +56,11 @@ To initialize a project in the current directory, use 'clawker project init' ins
 	return cmd
 }
 
-func runInit(f *cmdutil.Factory, opts *InitOptions) error {
+func runInit(opts *InitOptions) error {
 	ctx := context.Background()
-	ios := f.IOStreams
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	prompter := f.Prompter()
+	prompter := opts.Prompter()
 
 	// Print header
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker user settings...")
@@ -110,7 +117,7 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 		selectedFlavor = flavors[idx].Name
 
 		// Clear default image when building (will be set after successful build)
-		settings.Project.DefaultImage = ""
+		settings.DefaultImage = ""
 	}
 
 	logger.Debug().
@@ -165,7 +172,7 @@ func runInit(f *cmdutil.Factory, opts *InitOptions) error {
 			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), cmdutil.DefaultImageTag)
 
 			// Update settings with the built image
-			settings.Project.DefaultImage = cmdutil.DefaultImageTag
+			settings.DefaultImage = cmdutil.DefaultImageTag
 			if err := settingsLoader.Save(settings); err != nil {
 				logger.Warn().Err(err).Msg("failed to update settings with default image")
 			}

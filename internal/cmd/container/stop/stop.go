@@ -5,12 +5,18 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent   bool
 	Timeout int
 	Signal  string
@@ -20,7 +26,11 @@ type StopOptions struct {
 
 // NewCmdStop creates the container stop command.
 func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
-	opts := &StopOptions{}
+	opts := &StopOptions{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "stop [CONTAINER...]",
@@ -47,13 +57,10 @@ Container names can be:
 
   # Stop with a custom timeout (20 seconds)
   clawker container stop --time 20 --agent ralph`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return runStop(cmd.Context(), f, opts)
+			return runStop(cmd.Context(), opts)
 		},
 	}
 
@@ -64,20 +71,16 @@ Container names can be:
 	return cmd
 }
 
-func runStop(ctx context.Context, f *cmdutil.Factory, opts *StopOptions) error {
-	ios := f.IOStreams
+func runStop(ctx context.Context, opts *StopOptions) error {
+	ios := opts.IOStreams
 
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
-		var err error
-		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
-		if err != nil {
-			return err
-		}
+		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

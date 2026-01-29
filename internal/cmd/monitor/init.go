@@ -7,17 +7,22 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
 
 type initOptions struct {
+	IOStreams *iostreams.IOStreams
+
 	force bool
 }
 
 func newCmdInit(f *cmdutil.Factory) *cobra.Command {
-	opts := &initOptions{}
+	opts := &initOptions{
+		IOStreams: f.IOStreams,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -41,7 +46,7 @@ The monitoring stack includes:
   # Overwrite existing configuration
   clawker monitor init --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(f, opts)
+			return runInit(opts)
 		},
 	}
 
@@ -50,8 +55,8 @@ The monitoring stack includes:
 	return cmd
 }
 
-func runInit(f *cmdutil.Factory, opts *initOptions) error {
-	ios := f.IOStreams
+func runInit(opts *initOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Resolve monitor directory

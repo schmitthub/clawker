@@ -6,11 +6,18 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // Options defines the options for the rename command.
 type Options struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	container string
 	newName   string
@@ -18,7 +25,11 @@ type Options struct {
 
 // NewCmd creates a new rename command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "rename CONTAINER NEW_NAME",
@@ -36,14 +47,11 @@ Container names can be:
 
   # Rename a container by full name
   clawker container rename clawker.myapp.ralph clawker.myapp.newname`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
 			opts.newName = args[1]
-			return run(cmd.Context(), f, opts)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -52,21 +60,17 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 	oldName := opts.container
 	newName := opts.newName
 
 	if opts.Agent {
-		var err error
-		oldName, err = cmdutil.ResolveContainerName(f, oldName)
-		if err != nil {
-			return err
-		}
+		oldName = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, oldName)
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

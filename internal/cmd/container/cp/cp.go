@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -18,6 +19,10 @@ import (
 
 // Options holds options for the cp command.
 type Options struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent      bool
 	Archive    bool
 	FollowLink bool
@@ -29,7 +34,11 @@ type Options struct {
 
 // NewCmd creates a new cp command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH\n  clawker container cp [OPTIONS] SRC_PATH CONTAINER:DEST_PATH",
@@ -62,14 +71,11 @@ Local path format: PATH`,
 
   # Stream tar from container to stdout
   clawker container cp --agent ralph:/app - > backup.tar`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.src = args[0]
 			opts.dst = args[1]
-			return run(cmd.Context(), f, opts)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -100,8 +106,8 @@ func parseContainerPath(arg string) (string, string, bool) {
 	return "", arg, false
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 
 	// Parse source and destination
 	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.src)
@@ -110,29 +116,11 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			containerName, err := cmdutil.ResolveContainerName(f, srcContainer)
-			if err != nil {
-				cmdutil.PrintError(ios, "Failed to resolve agent name: %v", err)
-				cmdutil.PrintNextSteps(ios,
-					"Run 'clawker init' to create a configuration",
-					"Or ensure you're in a directory with clawker.yaml",
-				)
-				return err
-			}
-			srcContainer = containerName
+			srcContainer = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, srcContainer)
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			containerName, err := cmdutil.ResolveContainerName(f, dstContainer)
-			if err != nil {
-				cmdutil.PrintError(ios, "Failed to resolve agent name: %v", err)
-				cmdutil.PrintNextSteps(ios,
-					"Run 'clawker init' to create a configuration",
-					"Or ensure you're in a directory with clawker.yaml",
-				)
-				return err
-			}
-			dstContainer = containerName
+			dstContainer = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, dstContainer)
 		}
 	}
 
@@ -145,7 +133,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

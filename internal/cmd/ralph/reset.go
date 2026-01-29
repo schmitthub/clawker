@@ -4,19 +4,27 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/ralph"
 	"github.com/spf13/cobra"
 )
 
 // ResetOptions holds options for the ralph reset command.
 type ResetOptions struct {
+	IOStreams *iostreams.IOStreams
+	Config   func() (*config.Config, error)
+
 	Agent    string
 	ClearAll bool
 	Quiet    bool
 }
 
 func newCmdReset(f *cmdutil.Factory) *cobra.Command {
-	opts := &ResetOptions{}
+	opts := &ResetOptions{
+		IOStreams: f.IOStreams,
+		Config:   f.Config,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "reset",
@@ -34,7 +42,7 @@ the session history.`,
   # Reset everything (circuit and session)
   clawker ralph reset --agent dev --all`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReset(f, opts)
+			return runReset(opts)
 		},
 	}
 
@@ -47,11 +55,11 @@ the session history.`,
 	return cmd
 }
 
-func runReset(f *cmdutil.Factory, opts *ResetOptions) error {
-	ios := f.IOStreams
+func runReset(opts *ResetOptions) error {
+	ios := opts.IOStreams
 
 	// Load config
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err

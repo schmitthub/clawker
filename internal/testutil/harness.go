@@ -16,15 +16,15 @@ import (
 // - Environment variable backup and restoration
 // - Automatic cleanup via t.Cleanup()
 type Harness struct {
-	T              *testing.T
-	ProjectDir     string            // Temp dir with clawker.yaml
-	ConfigDir      string            // Isolated ~/.local/clawker/
-	OriginalEnv    map[string]string // For restoration
-	OriginalDir    string            // Original working directory
-	Config         *config.Config    // The test config
-	Project        string            // Project name
-	envKeys        []string          // Keys we've set for cleanup
-	changedDir     bool              // Whether we changed directory
+	T           *testing.T
+	ProjectDir  string            // Temp dir with clawker.yaml
+	ConfigDir   string            // Isolated ~/.local/clawker/
+	OriginalEnv map[string]string // For restoration
+	OriginalDir string            // Original working directory
+	Config      *config.Config    // The test config
+	Project     string            // Project name
+	envKeys     []string          // Keys we've set for cleanup
+	changedDir  bool              // Whether we changed directory
 }
 
 // HarnessOption configures a Harness.
@@ -113,9 +113,40 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 		h.Project = h.Config.Project
 	}
 
+	// Slugify the project name to match registry resolution behavior.
+	// The registry stores projects by slug, and Resolution.ProjectKey returns the slug.
+	// Container/volume/network names use the slug, so the harness must too.
+	if h.Project != "" {
+		h.Project = config.Slugify(h.Project)
+	}
+
 	// Write clawker.yaml to project directory
 	if err := h.writeConfig(); err != nil {
 		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// Isolate CLAWKER_HOME so registry/settings load from temp dir
+	h.SetEnv("CLAWKER_HOME", h.ConfigDir)
+
+	// Register the project in a temp registry so resolution finds it
+	if h.Project != "" {
+		slug := config.Slugify(h.Project)
+		registry := config.ProjectRegistry{
+			Projects: map[string]config.ProjectEntry{
+				slug: {
+					Name: h.Project,
+					Root: h.ProjectDir,
+				},
+			},
+		}
+		regData, err := yaml.Marshal(registry)
+		if err != nil {
+			t.Fatalf("failed to marshal registry: %v", err)
+		}
+		regPath := filepath.Join(h.ConfigDir, config.RegistryFileName)
+		if err := os.WriteFile(regPath, regData, 0644); err != nil {
+			t.Fatalf("failed to write registry: %v", err)
+		}
 	}
 
 	// Set up cleanup

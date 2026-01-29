@@ -8,6 +8,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
@@ -15,18 +16,30 @@ import (
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
+	IOStreams      *iostreams.IOStreams
+	Prompter       func() *prompts.Prompter
+	Settings       func() (*config.Settings, error)
+	RegistryLoader func() (*config.RegistryLoader, error)
+	WorkDir        string
+
 	Force bool
 	Yes   bool // Non-interactive mode
 }
 
 // NewCmdProjectInit creates the project init command.
 func NewCmdProjectInit(f *cmdutil.Factory) *cobra.Command {
-	opts := &ProjectInitOptions{}
+	opts := &ProjectInitOptions{
+		IOStreams:      f.IOStreams,
+		Prompter:       f.Prompter,
+		Settings:       f.Settings,
+		RegistryLoader: f.RegistryLoader,
+		WorkDir:        f.WorkDir,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
 		Short: "Initialize a new clawker project in the current directory",
-		Long: `Creates a clawker.yaml configuration file and .clawkerignore in the current directory.
+		Long: `Creates a clawker.yaml configuration file and .clawkerignore in the current directory if they don't exist'.
 
 If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
@@ -50,7 +63,7 @@ Use --yes/-y to skip prompts and accept all defaults.`,
   clawker project init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProjectInit(f, opts, args)
+			return runProjectInit(opts, args)
 		},
 	}
 
@@ -60,10 +73,49 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 	return cmd
 }
 
-func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string) error {
-	ios := f.IOStreams
+func runProjectInit(opts *ProjectInitOptions, args []string) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	prompter := f.Prompter()
+	prompter := opts.Prompter()
+
+	// Check if configuration already exists
+	loader := config.NewLoader(opts.WorkDir)
+	if loader.Exists() && !opts.Force {
+		if opts.Yes || !ios.IsInteractive() {
+			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
+			cmdutil.PrintNextSteps(ios,
+				"Use --force to overwrite the existing configuration",
+				"Or edit the existing clawker.yaml manually",
+				"Or run 'clawker project register' to register the existing project",
+			)
+			return fmt.Errorf("configuration already exists")
+		}
+		// Interactive: ask for confirmation
+		overwrite, err := prompter.Confirm(
+			fmt.Sprintf("%s already exists. Overwrite?", config.ConfigFileName),
+			false,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to get confirmation: %w", err)
+		}
+		if !overwrite {
+			// Don't overwrite config, but still register the project using directory name
+			absPath, absErr := filepath.Abs(opts.WorkDir)
+			if absErr != nil {
+				fmt.Fprintln(ios.ErrOut, "Aborted.")
+				return nil
+			}
+			dirName := filepath.Base(absPath)
+			slug, err := cmdutil.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, dirName)
+			if err != nil {
+				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
+			}
+			if slug != "" {
+				fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
+			}
+			return nil
+		}
+	}
 
 	// Print header
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker project...")
@@ -73,7 +125,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 	fmt.Fprintln(ios.ErrOut)
 
 	// Get absolute path of working directory
-	absPath, err := filepath.Abs(f.WorkDir)
+	absPath, err := filepath.Abs(opts.WorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -100,9 +152,9 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings, err := f.Settings()
-	if err == nil && settings != nil && settings.Project.DefaultImage != "" {
-		userDefaultImage = settings.Project.DefaultImage
+	settings, err := opts.Settings()
+	if err == nil && settings != nil && settings.DefaultImage != "" {
+		userDefaultImage = settings.DefaultImage
 	}
 
 	// Prompt for build.image (base Linux flavor for Dockerfile FROM)
@@ -184,37 +236,12 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 		Str("build_image", buildImage).
 		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
-		Str("workdir", f.WorkDir).
+		Str("workdir", opts.WorkDir).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
-	// Check if configuration already exists
-	loader := config.NewLoader(f.WorkDir)
-	if loader.Exists() && !opts.Force {
-		if opts.Yes || !ios.IsInteractive() {
-			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
-			cmdutil.PrintNextSteps(ios,
-				"Use --force to overwrite the existing configuration",
-				"Or edit the existing clawker.yaml manually",
-			)
-			return fmt.Errorf("configuration already exists")
-		}
-		// Interactive: ask for confirmation
-		overwrite, err := prompter.Confirm(
-			fmt.Sprintf("%s already exists. Overwrite?", config.ConfigFileName),
-			false,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to get confirmation: %w", err)
-		}
-		if !overwrite {
-			fmt.Fprintln(ios.ErrOut, "Aborted.")
-			return nil
-		}
-	}
-
 	// Generate config content with collected options
-	configContent := generateConfigYAML(projectName, buildImage, defaultImage, workspaceMode)
+	configContent := generateConfigYAML(buildImage, defaultImage, workspaceMode)
 
 	// Create clawker.yaml
 	configPath := loader.ConfigPath()
@@ -233,23 +260,8 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 	}
 
 	// Register project in user settings
-	settingsLoader, err := config.NewSettingsLoader()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to create settings loader")
-		fmt.Fprintf(ios.ErrOut, "%s Could not access user settings: %v\n", cs.WarningIcon(), err)
-	} else {
-		// Ensure settings file exists
-		_, err := settingsLoader.EnsureExists()
-		if err != nil {
-			logger.Debug().Err(err).Msg("failed to ensure settings file exists")
-		}
-		// Register the project
-		if err := settingsLoader.AddProject(f.WorkDir); err != nil {
-			logger.Debug().Err(err).Msg("failed to register project in settings")
-			fmt.Fprintf(ios.ErrOut, "%s Could not register project in settings: %v\n", cs.WarningIcon(), err)
-		} else {
-			logger.Info().Str("dir", f.WorkDir).Msg("registered project in user settings")
-		}
+	if _, err := cmdutil.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName); err != nil {
+		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 
 	// Success output
@@ -269,7 +281,7 @@ func runProjectInit(f *cmdutil.Factory, opts *ProjectInitOptions, args []string)
 // generateConfigYAML creates the clawker.yaml content with the given options.
 // buildImage is the base Linux flavor for Dockerfile FROM (e.g., buildpack-deps:bookworm-scm).
 // defaultImage is the pre-built fallback image for clawker run when no project image exists.
-func generateConfigYAML(projectName, buildImage, defaultImage, workspaceMode string) string {
+func generateConfigYAML(buildImage, defaultImage, workspaceMode string) string {
 	// Only include default_image line if it's set
 	defaultImageLine := ""
 	if defaultImage != "" {
@@ -277,7 +289,6 @@ func generateConfigYAML(projectName, buildImage, defaultImage, workspaceMode str
 	}
 
 	return fmt.Sprintf(`version: "1"
-project: "%s"
 %s
 build:
   image: "%s"
@@ -315,5 +326,5 @@ security:
   #   copy_git_config: true
   # allowed_domains: []
   # cap_add: []
-`, projectName, defaultImageLine, buildImage, workspaceMode)
+`, defaultImageLine, buildImage, workspaceMode)
 }

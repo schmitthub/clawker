@@ -12,7 +12,9 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -22,6 +24,16 @@ import (
 // Options holds options for the run command.
 type Options struct {
 	*copts.ContainerOptions
+
+	IOStreams                *iostreams.IOStreams
+	Client                  func(context.Context) (*docker.Client, error)
+	Config                  func() (*config.Config, error)
+	Settings                func() (*config.Settings, error)
+	Prompter                func() *prompts.Prompter
+	SettingsLoader          func() (*config.SettingsLoader, error)
+	InvalidateSettingsCache func()
+	EnsureHostProxy         func() error
+	HostProxyEnvVar         func() string
 
 	// Run-specific options
 	Detach bool // Run in background
@@ -36,7 +48,18 @@ type Options struct {
 // NewCmd creates a new container run command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
-	opts := &Options{ContainerOptions: containerOpts}
+	opts := &Options{
+		ContainerOptions:        containerOpts,
+		IOStreams:                f.IOStreams,
+		Client:                  f.Client,
+		Config:                  f.Config,
+		Settings:                f.Settings,
+		Prompter:                f.Prompter,
+		SettingsLoader:          f.SettingsLoader,
+		InvalidateSettingsCache: f.InvalidateSettingsCache,
+		EnsureHostProxy:         f.EnsureHostProxy,
+		HostProxyEnvVar:         f.HostProxyEnvVar,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
@@ -73,9 +96,6 @@ If IMAGE is "@", clawker will use (in order of precedence):
 
   # Run and automatically remove on exit
   clawker container run --rm -it @ sh`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerOpts.Image = args[0]
@@ -83,7 +103,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 				containerOpts.Command = args[1:]
 			}
 			opts.flags = cmd.Flags()
-			return run(cmd.Context(), f, opts)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -106,12 +126,12 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
 	// Load config for project name
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		cmdutil.PrintNextSteps(ios,
@@ -122,14 +142,14 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Load user settings for defaults
-	settings, err := f.Settings()
+	settings, err := opts.Settings()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
 		settings = config.DefaultSettings()
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -137,7 +157,12 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
+		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, cmdutil.ImageValidationDeps{
+			IOStreams:                opts.IOStreams,
+			Prompter:                opts.Prompter,
+			SettingsLoader:          opts.SettingsLoader,
+			InvalidateSettingsCache: opts.InvalidateSettingsCache,
+		}, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
 			return err
@@ -183,14 +208,14 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Start host proxy server for container-to-host communication (if enabled)
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
-		if err := f.EnsureHostProxy(); err != nil {
+		if err := opts.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
-			if envVar := f.HostProxyEnvVar(); envVar != "" {
+			if envVar := opts.HostProxyEnvVar(); envVar != "" {
 				containerOpts.Env = append(containerOpts.Env, envVar)
 			}
 		}
@@ -239,7 +264,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Print warnings if any
 	for _, warning := range resp.Warnings {
-		fmt.Fprintln(f.IOStreams.ErrOut, "Warning:", warning)
+		fmt.Fprintln(ios.ErrOut, "Warning:", warning)
 	}
 
 	// If detached, just start and print container ID
@@ -248,22 +273,22 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			cmdutil.HandleError(ios, err)
 			return err
 		}
-		fmt.Fprintln(f.IOStreams.Out, containerID[:12])
+		fmt.Fprintln(ios.Out, containerID[:12])
 		return nil
 	}
 
 	// For non-detached mode, attach BEFORE starting to handle short-lived containers
 	// and containers with --rm that may exit and be removed before we can attach.
 	// See: https://labs.iximiuz.com/tutorials/docker-run-vs-attach-vs-exec
-	return attachThenStart(ctx, f, client, containerID, opts)
+	return attachThenStart(ctx, client, containerID, opts)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
 // This ensures we don't miss output from short-lived containers, especially with --rm.
 // The sequence follows Docker CLI's approach: attach -> start I/O streaming -> start container -> wait.
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
-func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
-	ios := f.IOStreams
+func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
+	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
 	// Create attach options
@@ -317,14 +342,14 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 		// Non-TTY mode: demux the multiplexed stream
 		outputDone = make(chan error, 1)
 		go func() {
-			_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
+			_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
 			outputDone <- err
 		}()
 
 		// Copy stdin to container if enabled
 		if containerOpts.Stdin {
 			go func() {
-				io.Copy(hijacked.Conn, f.IOStreams.In)
+				io.Copy(hijacked.Conn, ios.In)
 				hijacked.CloseWrite()
 			}()
 		}

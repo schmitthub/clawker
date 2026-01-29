@@ -64,23 +64,34 @@ workspaceMounts = append(workspaceMounts, workspace.GetConfigVolumeMounts(projec
 if cfg.Security.DockerSocket { workspaceMounts = append(workspaceMounts, workspace.GetDockerSocketMount()) }
 ```
 
-## Container Command Pattern
+## Command Dependency Injection Pattern
+
+Commands use function references on Options structs rather than `*Factory` directly. `NewCmd` takes `*Factory` and wires the references:
 
 ```go
-func runCmd(f *cmdutil.Factory, opts *Options) error {
-    ctx := context.Background()
-    client, err := f.Client(ctx)  // ALWAYS use Factory's Client, never docker.NewClient
-    // Do NOT call defer client.Close() - Factory manages lifecycle
+type StopOptions struct {
+    IOStreams   *iostreams.IOStreams
+    Client     func(context.Context) (*docker.Client, error)
+    Resolution func() *config.Resolution
 
-    // Find container by agent or project
-    if opts.Agent != "" {
-        container, err := client.FindContainerByAgent(ctx, cfg.Project, opts.Agent)
-    } else {
-        containers, err := client.ListContainersByProject(ctx, cfg.Project, true)
-        // Handle 0, 1, or multiple containers
-    }
-    // Use whail methods via embedded Engine
-    client.ContainerStop(ctx, containerID, nil)
+    Agent   bool
+    Timeout int
+    Signal  string
+
+    containers []string
+}
+```
+
+Run functions accept `*Options` only:
+
+```go
+func runStop(opts *StopOptions) error {
+    ctx := context.Background()
+    client, err := opts.Client(ctx)  // Call function ref, not Factory
+    // ...
+    resolution := opts.Resolution()
+    project := resolution.ProjectKey
+    // ...
 }
 ```
 

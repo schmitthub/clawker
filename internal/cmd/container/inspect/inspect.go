@@ -8,12 +8,18 @@ import (
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // InspectOptions holds options for the inspect command.
 type InspectOptions struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent  bool
 	Format string
 	Size   bool
@@ -23,7 +29,11 @@ type InspectOptions struct {
 
 // NewCmdInspect creates the container inspect command.
 func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
-	opts := &InspectOptions{}
+	opts := &InspectOptions{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "inspect [OPTIONS] CONTAINER [CONTAINER...]",
@@ -55,7 +65,7 @@ Container names can be:
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return runInspect(cmd.Context(), f, opts)
+			return runInspect(cmd.Context(), opts)
 		},
 	}
 
@@ -66,21 +76,17 @@ Container names can be:
 	return cmd
 }
 
-func runInspect(ctx context.Context, f *cmdutil.Factory, opts *InspectOptions) error {
-	ios := f.IOStreams
+func runInspect(ctx context.Context, opts *InspectOptions) error {
+	ios := opts.IOStreams
 
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
-		var err error
-		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
-		if err != nil {
-			return err
-		}
+		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker
-	dockerClient, err := f.Client(ctx)
+	dockerClient, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

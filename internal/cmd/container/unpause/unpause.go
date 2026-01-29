@@ -5,12 +5,18 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // Options holds options for the unpause command.
 type Options struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent bool
 
 	containers []string
@@ -18,7 +24,11 @@ type Options struct {
 
 // NewCmdUnpause creates the container unpause command.
 func NewCmdUnpause(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "unpause [CONTAINER...]",
@@ -39,13 +49,10 @@ Container names can be:
 
   # Unpause multiple containers
   clawker container unpause clawker.myapp.ralph clawker.myapp.writer`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return runUnpause(cmd.Context(), f, opts)
+			return runUnpause(cmd.Context(), opts)
 		},
 	}
 
@@ -54,21 +61,17 @@ Container names can be:
 	return cmd
 }
 
-func runUnpause(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func runUnpause(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
-		var err error
-		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
-		if err != nil {
-			return err
-		}
+		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
