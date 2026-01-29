@@ -1,19 +1,12 @@
 # Test ralph status when no session exists
 # Verifies: status command handles missing session gracefully
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Run ralph status - no session should exist
 exec clawker ralph status --agent testdev
 stderr 'No ralph session found'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

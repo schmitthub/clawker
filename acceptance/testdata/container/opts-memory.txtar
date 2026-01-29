@@ -1,12 +1,6 @@
 # Test memory limit flag (-m/--memory)
 # Verifies: Memory limit is applied to container via inspect
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent mem-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout '134217728'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

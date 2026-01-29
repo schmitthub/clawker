@@ -1,12 +1,6 @@
 # Test hostname flag (--hostname)
 # Verifies: Container hostname is set correctly
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test hostname via hostname command
 exec clawker container run --rm --hostname myhost alpine:latest hostname
 stdout 'myhost'
@@ -19,7 +13,6 @@ stdout 'testhost'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

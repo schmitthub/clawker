@@ -1,12 +1,6 @@
 # Test --health-start-interval flag
 # Verifies: Docker CLI health-start-interval flag is supported (added in Docker 25.0)
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --health-start-interval flag via create + inspect
 defer clawker container rm --force --agent hsi-$RANDOM_STRING
 exec clawker container create --agent hsi-$RANDOM_STRING --health-cmd 'exit 0' --health-start-interval 5s alpine:latest sleep 3600
@@ -15,7 +9,6 @@ stdout '5s'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

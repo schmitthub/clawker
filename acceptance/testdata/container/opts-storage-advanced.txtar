@@ -1,12 +1,6 @@
 # Test advanced storage flags
 # Verifies: --mount, --volume-driver flags are supported
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --mount flag with tmpfs
 exec clawker container run --rm --mount type=tmpfs,destination=/mytmp alpine:latest mount
 stdout '/mytmp'
@@ -19,7 +13,6 @@ stdout 'local'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

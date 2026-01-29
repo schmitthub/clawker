@@ -1,12 +1,6 @@
 # Test privileged mode flag (--privileged)
 # Verifies: Container runs in privileged mode
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent priv-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'true'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

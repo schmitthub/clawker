@@ -1,12 +1,6 @@
 # Test advanced resource constraint flags
 # Verifies: Resource limit flags are supported and set correctly
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --memory-reservation flag via create + inspect
 defer clawker container rm --force --agent memres-$RANDOM_STRING
 exec clawker container create --agent memres-$RANDOM_STRING --memory-reservation 128m alpine:latest sleep 3600
@@ -33,7 +27,6 @@ stdout '0'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

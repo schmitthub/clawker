@@ -1,12 +1,6 @@
 # Test read-only root filesystem flag (--read-only)
 # Verifies: Container root filesystem is read-only
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent readonly-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'true'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

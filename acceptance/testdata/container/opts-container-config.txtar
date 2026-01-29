@@ -1,12 +1,6 @@
 # Test container configuration flags
 # Verifies: --group-add, --cidfile, --cgroup-parent, --runtime, --isolation flags work
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --group-add flag - verify group is added inside container
 exec clawker container run --rm --group-add audio alpine:latest id
 stdout 'audio'
@@ -23,7 +17,6 @@ stdout '/custom'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test ulimit, sysctl, and annotation flags
 # Verifies: --ulimit, --sysctl, --annotation flags are supported
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --ulimit flag - verify nofile limits inside container
 exec clawker container run --rm --ulimit nofile=1024:2048 alpine:latest sh -c 'ulimit -n'
 stdout '1024'
@@ -24,7 +18,6 @@ stdout 'myvalue'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

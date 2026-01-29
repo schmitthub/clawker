@@ -1,12 +1,6 @@
 # Test container rename command
 # Verifies: container can be renamed
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup (use new name since we'll rename)
 defer clawker container rm --force clawker.$PROJECT.renamed-$RANDOM_STRING
 defer clawker container stop clawker.$PROJECT.renamed-$RANDOM_STRING
@@ -30,7 +24,6 @@ stdout 'renamed-'$RANDOM_STRING
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

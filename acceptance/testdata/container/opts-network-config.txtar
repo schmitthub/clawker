@@ -1,12 +1,6 @@
 # Test network and MAC address flags (--network, --mac-address)
 # Verifies: Network mode and MAC address are set correctly
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent netcfg-$RANDOM_STRING
 defer clawker container rm --force --agent netmac-$RANDOM_STRING
@@ -27,7 +21,6 @@ stdout '02:42:ac:11:00:02'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

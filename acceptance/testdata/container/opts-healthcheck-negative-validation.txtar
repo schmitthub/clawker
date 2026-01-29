@@ -1,12 +1,6 @@
 # Test healthcheck negative value validation
 # Verifies: Negative health check values are rejected by clawker
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test negative --health-retries is rejected
 ! exec clawker container run --rm --health-cmd 'exit 0' --health-retries -1 alpine:latest echo test
 stderr 'health-retries'
@@ -21,7 +15,6 @@ stderr 'health-timeout'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

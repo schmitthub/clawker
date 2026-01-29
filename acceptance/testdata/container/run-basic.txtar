@@ -1,19 +1,12 @@
 # Test basic container run with echo command
 # Verifies: container runs, produces output, exits cleanly
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Run container with simple command
 exec clawker container run --rm alpine:latest echo hello
 stdout 'hello'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

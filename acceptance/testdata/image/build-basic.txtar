@@ -1,12 +1,6 @@
 # Test image build command
 # Verifies: images can be built from project config
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Build with custom tag
 exec clawker image build --tag test-img-build-$RANDOM_STRING:v1
 
@@ -29,7 +23,6 @@ stdout 'test-img-build-'$RANDOM_STRING':v2'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

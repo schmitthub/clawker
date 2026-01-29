@@ -17,9 +17,10 @@ import (
 
 // Options holds options for the attach command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	IOStreams        *iostreams.IOStreams
+	Client          func(context.Context) (*docker.Client, error)
+	Resolution      func() *config.Resolution
+	EnsureHostProxy func() error
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
@@ -31,9 +32,10 @@ type Options struct {
 // NewCmd creates a new attach command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
-		Client:     f.Client,
-		Resolution: f.Resolution,
+		IOStreams:        f.IOStreams,
+		Client:          f.Client,
+		Resolution:      f.Resolution,
+		EnsureHostProxy: f.EnsureHostProxy,
 	}
 
 	cmd := &cobra.Command{
@@ -102,6 +104,13 @@ func run(ctx context.Context, opts *Options) error {
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", container)
+	}
+
+	// Start host proxy so browser opening and other host actions work
+	if opts.EnsureHostProxy != nil {
+		if err := opts.EnsureHostProxy(); err != nil {
+			return fmt.Errorf("failed to start host proxy: %w", err)
+		}
 	}
 
 	// Get container info to determine if it has a TTY

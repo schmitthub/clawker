@@ -1,12 +1,6 @@
 # Test network IP and alias flags (--ip, --network-alias)
 # Verifies: Static IP and network aliases are configured on user-defined networks
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Create a custom network with a known subnet
 defer clawker network rm netip-$RANDOM_STRING
 exec clawker network create --subnet 172.28.0.0/16 netip-$RANDOM_STRING
@@ -31,7 +25,6 @@ stdout 'myalias'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

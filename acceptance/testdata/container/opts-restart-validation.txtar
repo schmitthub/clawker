@@ -1,12 +1,6 @@
 # Test restart policy validation
 # Verifies: Invalid restart policy names are rejected by Docker daemon
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test invalid restart policy is rejected via create (no --rm to avoid conflict check)
 ! exec clawker container create --agent rv-$RANDOM_STRING --restart garbage alpine:latest sleep 3600
 stderr 'invalid restart policy'
@@ -17,7 +11,6 @@ stderr 'invalid restart policy'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

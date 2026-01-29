@@ -1,12 +1,6 @@
 # Test detached container run
 # Verifies: container starts in background, can be stopped
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup first (LIFO order - rm after stop)
 defer clawker container rm --force --agent test-$RANDOM_STRING
 defer clawker container stop --agent test-$RANDOM_STRING
@@ -26,7 +20,6 @@ exec clawker container stop --agent test-$RANDOM_STRING
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

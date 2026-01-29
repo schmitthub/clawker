@@ -97,15 +97,37 @@ func runStop(opts *StopOptions) error {
 
 ## Exit Code Handling
 
-```go
-type ExitError struct { Code int }
-func (e *ExitError) Error() string { return fmt.Sprintf("container exited with code %d", e.Code) }
+Use `cmdutil.ExitError` (defined in `internal/cmdutil/output.go`) to propagate non-zero container exit codes. This allows deferred cleanup (terminal restore, container removal) to run before the process exits.
 
-func runCmd(...) (retErr error) {
-    defer func() {
-        var exitErr *ExitError
-        if errors.As(retErr, &exitErr) { os.Exit(exitErr.Code) }
-    }()
-    // Return ExitError instead of calling os.Exit directly
+```go
+import "github.com/schmitthub/clawker/internal/cmdutil"
+
+// Return ExitError instead of calling os.Exit directly
+if status != 0 {
+    return &cmdutil.ExitError{Code: status}
 }
+
+// The root command checks for ExitError and calls os.Exit(code)
 ```
+
+## Wait Helper Pattern (`waitForContainerExit`)
+
+Follows Docker CLI's `waitExitOrRemoved` pattern. Wraps the dual-channel `ContainerWait` into a single `<-chan int` status channel.
+
+```go
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int
+```
+
+**Critical**: Use `WaitConditionNextExit` (not `WaitConditionNotRunning`) when waiting is set up before `ContainerStart` — a "created" container is already not-running, so `WaitConditionNotRunning` returns `StatusCode=0` immediately. Use `WaitConditionRemoved` when `--rm` (auto-remove) is set.
+
+## Attach-Then-Start Pattern (`run.go` and `start.go`)
+
+Interactive container sessions (`-it`) use attach-before-start to avoid missing output from short-lived containers:
+
+1. **Attach** to container before starting (prevents race with `--rm` containers)
+2. **Start I/O goroutines** before `ContainerStart` (ready to receive immediately)
+3. **Start container** via `ContainerStart`
+4. **Resize TTY** after start — the +1/-1 trick forces SIGWINCH for TUI redraw; `ResizeHandler` monitors ongoing SIGWINCH events
+5. **Wait for exit or detach** — on stream completion, wait up to 2s for exit status; timeout means Ctrl+P Ctrl+Q detach (container still running)
+
+**Key separation**: I/O streaming (`pty.Stream`) starts pre-start; resize (`ResizeHandler`) starts post-start. This matches Docker CLI's split between `attachContainer()` and `MonitorTtySize()`.

@@ -1,12 +1,6 @@
 # Test attach flag (--attach / -a)
 # Verifies: Attach options control which streams are connected
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent att-$RANDOM_STRING
 
@@ -22,7 +16,6 @@ stdout 'false'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

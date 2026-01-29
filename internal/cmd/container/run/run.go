@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -213,12 +214,16 @@ func run(ctx context.Context, opts *Options) error {
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
+			logger.Debug().Msg("host proxy started successfully")
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
 			if envVar := opts.HostProxyEnvVar(); envVar != "" {
 				containerOpts.Env = append(containerOpts.Env, envVar)
+				logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
 			}
 		}
+	} else {
+		logger.Debug().Msg("host proxy disabled by config")
 	}
 
 	// Setup git credential forwarding
@@ -312,38 +317,38 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// Attach to container BEFORE starting it
 	// This is critical for short-lived containers (especially with --rm) where the container
 	// might exit and be removed before we can attach if we start first.
+	logger.Debug().Msg("attaching to container before start")
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
+		logger.Debug().Err(err).Msg("container attach failed")
 		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()
+	logger.Debug().Msg("container attach succeeded")
 
-	// Set up wait channel for container exit (use a context that won't be cancelled
-	// when we cancel the attach context, following Docker CLI pattern)
-	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	// Set up wait channel for container exit following Docker CLI's waitExitOrRemoved pattern.
+	// This wraps the dual-channel ContainerWait into a single status channel.
+	// Must use WaitConditionNextExit (not WaitConditionNotRunning) because this is called
+	// before the container starts — a "created" container is already not-running.
+	logger.Debug().Msg("setting up container wait")
+	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove)
 
-	// Start I/O streaming BEFORE starting the container
-	// This ensures we're ready to receive output immediately when the container starts
-	var outputDone chan error
-	var streamDone chan error
+	// Start I/O streaming BEFORE starting the container.
+	// This ensures we're ready to receive output immediately when the container starts.
+	// Following Docker CLI pattern: I/O goroutines start pre-start, resize happens post-start.
+	streamDone := make(chan error, 1)
 
 	if containerOpts.TTY && pty != nil {
-		// TTY mode: use PTY handler for bidirectional streaming with resize support
-		resizeFunc := func(height, width uint) error {
-			_, err := client.ContainerResize(ctx, containerID, height, width)
-			return err
-		}
-		streamDone = make(chan error, 1)
+		// TTY mode: use Stream (I/O only, no resize — resize happens after start)
 		go func() {
-			streamDone <- pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+			streamDone <- pty.Stream(ctx, hijacked.HijackedResponse)
 		}()
 	} else {
 		// Non-TTY mode: demux the multiplexed stream
-		outputDone = make(chan error, 1)
 		go func() {
 			_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
-			outputDone <- err
+			streamDone <- err
 		}()
 
 		// Copy stdin to container if enabled
@@ -355,60 +360,109 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		}
 	}
 
-	// Now start the container - the I/O streaming goroutines are already running
+	// Now start the container — the I/O streaming goroutines are already running
+	logger.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		logger.Debug().Err(err).Msg("container start failed")
 		cmdutil.HandleError(ios, err)
 		return err
 	}
+	logger.Debug().Msg("container started successfully")
 
-	// Wait for completion based on mode
+	// Set up TTY resize AFTER container is running (Docker CLI's MonitorTtySize pattern).
+	// The +1/-1 trick forces a SIGWINCH to trigger TUI redraw on re-attach.
 	if containerOpts.TTY && pty != nil {
-		// TTY mode: wait for stream or container exit
-		select {
-		case err := <-streamDone:
+		resizeFunc := func(height, width uint) error {
+			_, err := client.ContainerResize(ctx, containerID, height, width)
 			return err
-		case result := <-waitResult.Result:
-			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
+		}
+
+		if pty.IsTerminal() {
+			width, height, err := pty.GetSize()
+			if err != nil {
+				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+			} else {
+				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+				}
+				if err := resizeFunc(uint(height), uint(width)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+				}
 			}
-			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
-			}
-			return nil
-		case err := <-waitResult.Error:
-			return err
+
+			// Monitor for window resize events (SIGWINCH)
+			resizeHandler := term.NewResizeHandler(resizeFunc, pty.GetSize)
+			resizeHandler.Start()
+			defer resizeHandler.Stop()
 		}
 	}
 
-	// Non-TTY mode: wait for output to complete or container to exit
+	// Wait for stream completion or container exit.
+	// Following Docker CLI's run.go pattern: when stream ends, check exit status;
+	// when exit status arrives first, drain the stream.
 	select {
-	case err := <-outputDone:
-		// Output stream closed, check container status
+	case err := <-streamDone:
+		logger.Debug().Err(err).Msg("stream completed")
 		if err != nil {
 			return err
 		}
+		// Stream done — check for container exit status.
+		// For normal container exits, the status is available almost immediately.
+		// For detach (Ctrl+P Ctrl+Q), the container is still running so no status
+		// arrives. We use a timeout to distinguish the two cases without blocking
+		// forever. This is necessary because we don't do client-side detach key
+		// detection (Docker CLI uses term.EscapeError for this).
 		select {
+		case status := <-statusCh:
+			logger.Debug().Int("exitCode", status).Msg("container exited")
+			if status != 0 {
+				return fmt.Errorf("container exited with status %d", status)
+			}
+			return nil
+		case <-time.After(2 * time.Second):
+			// No exit status within timeout — stream ended due to detach, not exit.
+			logger.Debug().Msg("no exit status received after stream ended, assuming detach")
+			return nil
+		}
+	case status := <-statusCh:
+		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
+		if status != 0 {
+			return fmt.Errorf("container exited with status %d", status)
+		}
+		return nil
+	}
+}
+
+// waitForContainerExit sets up a channel that receives the container's exit status code.
+// It follows Docker CLI's waitExitOrRemoved pattern:
+//   - Uses WaitConditionNextExit (not WaitConditionNotRunning) so it can be called
+//     BEFORE the container starts without returning immediately for "created" containers.
+//   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
+//     when the container is removed after exit.
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int {
+	condition := container.WaitConditionNextExit
+	if autoRemove {
+		condition = container.WaitConditionRemoved
+	}
+
+	statusCh := make(chan int, 1)
+	go func() {
+		defer close(statusCh)
+		waitResult := client.ContainerWait(ctx, containerID, condition)
+		select {
+		case <-ctx.Done():
+			return
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
-			}
-			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
+				logger.Error().Str("message", result.Error.Message).Msg("container wait error")
+				statusCh <- 125
+			} else {
+				statusCh <- int(result.StatusCode)
 			}
 		case err := <-waitResult.Error:
-			return err
-		default:
+			logger.Error().Err(err).Msg("error waiting for container")
+			statusCh <- 125
 		}
-		return nil
-	case result := <-waitResult.Result:
-		if result.Error != nil {
-			return fmt.Errorf("container exit error: %s", result.Error.Message)
-		}
-		if result.StatusCode != 0 {
-			return fmt.Errorf("container exited with status %d", result.StatusCode)
-		}
-		return nil
-	case err := <-waitResult.Error:
-		return err
-	}
+	}()
+	return statusCh
 }

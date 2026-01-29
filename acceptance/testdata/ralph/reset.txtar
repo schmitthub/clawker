@@ -1,12 +1,6 @@
 # Test ralph reset command
 # Verifies: reset command executes successfully even when no session exists
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Reset circuit breaker (should succeed even with no session)
 exec clawker ralph reset --agent testdev
 stderr 'Circuit breaker reset'
@@ -21,7 +15,6 @@ stderr 'Circuit breaker reset'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

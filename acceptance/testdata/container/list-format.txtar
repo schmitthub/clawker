@@ -1,12 +1,6 @@
 # Test container list with format flag
 # Verifies: custom format output works
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent fmt-$RANDOM_STRING
 defer clawker container stop --agent fmt-$RANDOM_STRING
@@ -25,7 +19,6 @@ stdout 'running'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -326,10 +326,11 @@ func (e *Engine) ContainerWait(ctx context.Context, containerID string, conditio
 	// Get result from Docker SDK - new API returns a ContainerWaitResult with Result and Error channels
 	waitResult := e.APIClient.ContainerWait(ctx, containerID, client.ContainerWaitOptions{Condition: condition})
 
-	// Wrap errors from the SDK to provide consistent user-friendly messages
+	// Wrap errors from the SDK to provide consistent user-friendly messages.
+	// Don't defer close — SDK error channel blocks forever on normal exit
+	// (only one of Result or Error will receive a value).
 	wrappedErrCh := make(chan error, 1)
 	go func() {
-		defer close(wrappedErrCh)
 		if err := <-waitResult.Error; err != nil {
 			wrappedErrCh <- ErrContainerWaitFailed(containerID, err)
 		}

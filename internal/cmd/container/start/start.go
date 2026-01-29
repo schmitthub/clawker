@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -106,7 +107,11 @@ func runStart(ctx context.Context, opts *StartOptions) error {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+		} else {
+			logger.Debug().Msg("host proxy started successfully")
 		}
+	} else {
+		logger.Debug().Msg("host proxy disabled by config")
 	}
 
 	// Resolve container names if --agent provided
@@ -189,7 +194,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	}
 
 	// Set up wait channel for container exit
-	waitResult := client.ContainerWait(ctx, containerID, docker.WaitConditionNotRunning)
+	waitResult := client.ContainerWait(ctx, containerID, docker.WaitConditionNextExit)
 
 	// Handle I/O
 	if hasTTY && pty != nil {
@@ -208,13 +213,31 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 		// Wait for either stream to end or container to exit
 		select {
 		case err := <-streamDone:
-			return err
+			if err != nil {
+				return err
+			}
+			// Stream ended cleanly — check for exit code
+			select {
+			case result := <-waitResult.Result:
+				if result.Error != nil {
+					return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
+				}
+				if result.StatusCode != 0 {
+					return &cmdutil.ExitError{Code: int(result.StatusCode)}
+				}
+				return nil
+			case err := <-waitResult.Error:
+				return err
+			case <-time.After(2 * time.Second):
+				// No exit status — container still running (Ctrl+P Ctrl+Q detach)
+				return nil
+			}
 		case result := <-waitResult.Result:
 			if result.Error != nil {
 				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+				return &cmdutil.ExitError{Code: int(result.StatusCode)}
 			}
 			return nil
 		case err := <-waitResult.Error:
@@ -258,7 +281,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+				return &cmdutil.ExitError{Code: int(result.StatusCode)}
 			}
 			return nil
 		case err := <-waitResult.Error:
@@ -272,7 +295,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 			return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 		}
 		if result.StatusCode != 0 {
-			return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+			return &cmdutil.ExitError{Code: int(result.StatusCode)}
 		}
 		return nil
 	case err := <-waitResult.Error:

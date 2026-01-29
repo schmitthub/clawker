@@ -1,12 +1,6 @@
 # Test environment variable passing via -e/--env flag
 # Verifies: Environment variables are passed to container and accessible
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test single environment variable with -e
 exec clawker container run --rm -e TEST_VAR=hello alpine:latest printenv TEST_VAR
 stdout 'hello'
@@ -21,7 +15,6 @@ stdout 'works'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test container wait command
 # Verifies: can wait for container to exit and get exit code
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent wait-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout '0'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

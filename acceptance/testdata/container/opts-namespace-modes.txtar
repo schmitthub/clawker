@@ -1,12 +1,6 @@
 # Test namespace mode flags (--pid, --uts, --userns, --cgroupns, --ipc)
 # Verifies: Docker CLI namespace isolation flags are accepted
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --pid host flag - can see host PIDs
 exec clawker container run --rm --pid host alpine:latest echo pid-test
 stdout 'pid-test'
@@ -25,7 +19,6 @@ stdout 'host'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

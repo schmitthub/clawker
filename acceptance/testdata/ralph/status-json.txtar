@@ -1,19 +1,12 @@
 # Test ralph status --json output
 # Verifies: JSON output format when no session exists
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Run ralph status with --json flag
 exec clawker ralph status --agent testdev --json
 stdout '{"exists": false}'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

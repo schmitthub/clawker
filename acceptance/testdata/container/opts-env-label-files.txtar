@@ -1,12 +1,6 @@
 # Test file-based env and label flags (--env-file, --label-file)
 # Verifies: Environment variables and labels can be loaded from files
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --env-file flag with empty file (should succeed with no env vars)
 exec clawker container run --rm --env-file env.txt alpine:latest printenv MY_FILE_VAR
 stdout 'from-file'
@@ -19,7 +13,6 @@ stdout 'labelvalue'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test port publishing flag (-p/--publish)
 # Verifies: Port mappings are created correctly
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent port-$RANDOM_STRING
 
@@ -20,7 +14,6 @@ stdout '8080'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

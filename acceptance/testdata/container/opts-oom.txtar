@@ -1,11 +1,6 @@
+[!linux] skip
 # Test OOM killer flags
 # Verifies: --oom-kill-disable and --oom-score-adj flags are supported
-
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
 
 # Test --oom-score-adj flag via create + inspect
 defer clawker container rm --force --agent oom-$RANDOM_STRING
@@ -21,7 +16,6 @@ stdout 'true'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -60,3 +60,14 @@ func RegisterProject(loader func() (*config.RegistryLoader, error), name, root s
 - `HandleError(err)` — format Docker errors for users
 - `PrintError(io, msg)` — print error to stderr
 - `PrintNextSteps(io, steps)` — print next-steps guidance to stderr
+
+### ExitError (`output.go`)
+
+Type for propagating non-zero container exit codes through Cobra's error chain. Allows deferred cleanup (terminal restore, container removal) to run before `os.Exit()`.
+
+```go
+type ExitError struct { Code int }
+func (e *ExitError) Error() string // "container exited with code <N>"
+```
+
+Commands return `&ExitError{Code: status}` instead of calling `os.Exit()` directly. The root command's `Execute()` checks for `ExitError` and calls `os.Exit(code)` after all defers have run. This is critical because `os.Exit()` does **not** run deferred functions — returning `ExitError` ensures terminal state is restored before exit.

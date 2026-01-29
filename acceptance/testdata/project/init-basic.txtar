@@ -1,9 +1,6 @@
 # Test non-interactive project init
 # Verifies: clawker project init creates config files
 
-# Create settings directory (simulating user already ran clawker init)
-mkdir $HOME/.local/clawker
-
 # No existing clawker.yaml in work directory
 ! exists clawker.yaml
 ! exists .clawkerignore
@@ -19,6 +16,5 @@ stderr 'testproj-'$RANDOM_STRING
 exists clawker.yaml
 exists .clawkerignore
 
-# Verify config content contains project name
-grep 'project:' clawker.yaml
-grep 'testproj-' clawker.yaml
+# Verify project is registered in the registry
+grep 'testproj-' $HOME/.local/clawker/projects.yaml

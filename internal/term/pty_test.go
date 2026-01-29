@@ -1,6 +1,7 @@
 package term
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -137,5 +138,43 @@ func TestRestore_NoErrorOnNonTerminal(t *testing.T) {
 	err := handler.Restore()
 	if err != nil {
 		t.Errorf("Restore() should not error for non-terminal, got: %v", err)
+	}
+}
+
+func TestIsClosedConnectionError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "closed connection error",
+			err:      fmt.Errorf("read unix ->/var/run/docker.sock: use of closed network connection"),
+			expected: true,
+		},
+		{
+			name:     "wrapped closed connection error",
+			err:      fmt.Errorf("copy failed: %w", fmt.Errorf("use of closed network connection")),
+			expected: true,
+		},
+		{
+			name:     "unrelated error",
+			err:      fmt.Errorf("connection refused"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isClosedConnectionError(tt.err)
+			if got != tt.expected {
+				t.Errorf("isClosedConnectionError(%v) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
 	}
 }

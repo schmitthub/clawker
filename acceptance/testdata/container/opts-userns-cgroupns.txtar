@@ -1,12 +1,6 @@
 # Test user namespace and cgroup namespace flags (--userns, --cgroupns)
 # Verifies: Namespace mode settings are applied
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent cgns-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'private'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"
