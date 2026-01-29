@@ -1,42 +1,63 @@
 # Cmdutil Package
 
-Shared CLI utilities: Factory, project registration, name resolution, error handling.
+Shared CLI utilities: Factory struct, project registration, name resolution, error handling.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `factory.go` | `Factory` — lazy-loaded dependencies for all commands |
+| `factory.go` | `Factory` — pure struct with closure fields (no methods, no construction logic) |
 | `register.go` | `RegisterProject` — shared helper for project registration |
 | `resolve.go` | Image resolution, container/agent name resolution |
 | `project.go` | Project utilities |
 
 ## Factory (`factory.go`)
 
-Central dependency provider with lazy initialization via `sync.Once`.
+Pure dependency injection container struct. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
-    WorkDir       string
-    IOStreams      *iostreams.IOStreams
-    // ... version, debug fields
+    WorkDir, BuildOutputDir string
+    Debug                   bool
+    Version, Commit         string
+    IOStreams                *iostreams.IOStreams
 
-    // Lazy-loaded (each has a sync.Once + cached result + error)
-    // Access via methods: Client(ctx), Config(), Settings(), etc.
+    // Closure fields (wired by factory constructor, lazy internally)
+    Client      func(context.Context) (*docker.Client, error)
+    CloseClient func()
+    Config      func() (*config.Config, error)
+    ResetConfig func()
+    // ... 16 closure fields total
 }
 ```
 
-**Lazy-loaded fields:**
+**Closure Fields:**
 - `Client(ctx)` — Docker client (`*docker.Client`)
-- `Config()` — Project config (`*config.Config`)
+- `CloseClient()` — Close Docker client
 - `ConfigLoader()` — Config loader (`*config.Loader`)
-- `Settings()` — User settings (`*config.Settings`)
+- `Config()` — Project config (`*config.Config`)
+- `ResetConfig()` — Clear config cache
 - `SettingsLoader()` — Settings loader (`*config.SettingsLoader`)
+- `Settings()` — User settings (`*config.Settings`)
+- `InvalidateSettingsCache()` — Clear settings cache
 - `RegistryLoader()` — Project registry loader (`*config.RegistryLoader`)
 - `Registry()` — Project registry (`*config.ProjectRegistry`)
 - `Resolution()` — Project resolution (`*config.Resolution`)
 - `HostProxy()` — Host proxy manager
+- `EnsureHostProxy()` — Start host proxy if needed
+- `StopHostProxy(ctx)` — Stop host proxy
+- `HostProxyEnvVar()` — Proxy env var for containers
 - `Prompter()` — Interactive prompter
+
+**Testing:** Construct minimal Factory structs directly:
+```go
+tio := iostreams.NewTestIOStreams()
+f := &cmdutil.Factory{
+    Version:  "1.0.0",
+    Commit:   "abc123",
+    IOStreams: tio.IOStreams,
+}
+```
 
 ## RegisterProject (`register.go`)
 

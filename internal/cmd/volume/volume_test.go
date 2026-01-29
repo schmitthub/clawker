@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func TestNewCmdVolume(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdVolume(f)
 
 	// Verify command basics
@@ -34,7 +36,8 @@ func TestNewCmdVolume(t *testing.T) {
 }
 
 func TestNewCmdVolume_Subcommands(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdVolume(f)
 
 	subcommands := cmd.Commands()

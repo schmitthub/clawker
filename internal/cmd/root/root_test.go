@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func TestNewCmdRoot(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdRoot(f)
 
 	if cmd.Use != "clawker" {
@@ -53,7 +55,8 @@ func TestNewCmdRoot(t *testing.T) {
 }
 
 func TestNewCmdRoot_GlobalFlags(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdRoot(f)
 
 	// Check debug flag exists
@@ -68,4 +71,3 @@ func TestNewCmdRoot_GlobalFlags(t *testing.T) {
 		t.Error("expected --workdir flag to exist")
 	}
 }
-

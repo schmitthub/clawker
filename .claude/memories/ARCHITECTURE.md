@@ -35,6 +35,42 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Factory Dependency Injection (gh CLI Pattern)
+
+Clawker follows the GitHub CLI's three-layer Factory pattern for dependency injection:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Layer 1: WIRING (internal/cmd/factory/default.go)                      │
+│                                                                         │
+│  factory.New(version, commit) → *cmdutil.Factory                        │
+│    • Creates IOStreams, wires sync.Once closures for all dependencies    │
+│    • Imports everything: config, docker, hostproxy, iostreams, prompts   │
+│    • Called ONCE at entry point (internal/clawker/cmd.go)                │
+│    • Tests NEVER import this package                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Layer 2: CONTRACT (internal/cmdutil/factory.go)                        │
+│                                                                         │
+│  Factory struct — pure data with closure fields, no methods             │
+│    • Defines WHAT dependencies exist (Client, Config, Resolution, etc.) │
+│    • Importable by all cmd/* packages without cycles                    │
+│    • Also provides error handling, name resolution, project utilities   │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Layer 3: CONSUMERS (internal/cmd/*)                                    │
+│                                                                         │
+│  NewCmdFoo(f *cmdutil.Factory) → *cobra.Command                         │
+│    • Cherry-picks Factory closure fields into per-command Options struct │
+│    • Run functions accept *Options only — never see Factory             │
+│    • opts.Client = f.Client assigns closure, not method reference       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this pattern:**
+- **Testability**: Tests construct `&cmdutil.Factory{IOStreams: tio.IOStreams}` with only needed fields
+- **Decoupling**: cmdutil has no construction logic; factory/ imports the heavy deps
+- **Transparent**: `f.Client(ctx)` syntax is identical for methods and closure fields
+- **Assignable**: `opts.Client = f.Client` works naturally for Options injection
+
 ## Key Packages
 
 ### pkg/whail - Docker Engine Library
@@ -72,13 +108,26 @@ clawker image     [list|inspect|build|remove|prune]
 
 ### internal/cmdutil - CLI Utilities
 
-Shared utilities for all CLI commands.
+Shared toolkit importable by all command packages.
 
 **Key abstractions:**
-- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, registry, resolution, host proxy, IOStreams, Prompter)
-- Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`)
+- `Factory` — Pure struct with closure fields (no methods, no construction logic). Defines the dependency contract. Constructor lives in `internal/cmd/factory/default.go`.
+- Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`, `ExitError`)
 - Image resolution (`ResolveImageWithSource`, `FindProjectImage`)
-- Project utilities
+- Name resolution (`ResolveContainerName`, `ResolveContainerNames`)
+- Project registration (`RegisterProject`)
+
+### internal/cmd/factory - Factory Wiring
+
+Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy dependencies (config, docker, hostproxy, iostreams, logger, prompts) and wires `sync.Once` closures.
+
+**Key function:**
+- `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
+
+**Dependency wiring order:**
+1. IOStreams (eager) → 2. Registry → 3. Resolution → 4. Config → 5. Settings → 6. Client → 7. HostProxy → 8. Prompter
+
+Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
 ### internal/iostreams - Testable I/O
 
@@ -121,7 +170,8 @@ User interaction utilities with TTY and CI awareness.
 | `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
-| `internal/cmdutil` | Factory, error handling, output utilities |
+| `internal/cmdutil` | Factory struct (closure fields), error handling, name resolution, output utilities |
+| `internal/cmd/factory` | Factory constructor — wires real dependencies (sync.Once closures) |
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
 | `internal/prompts` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
@@ -158,18 +208,37 @@ Runs Claude Code in non-interactive Docker exec with circuit breaker protection.
 
 ## Command Dependency Injection Pattern
 
-Commands receive function references on their Options structs rather than `*Factory` directly. `NewCmd` still takes `*Factory` and wires the function references during command setup:
+Commands follow the gh CLI's NewCmd/Options/runF pattern. Factory closure fields flow through three steps:
 
+**Step 1**: NewCmd receives Factory, cherry-picks closures into Options:
+```go
+func NewCmdStop(f *cmdutil.Factory, runF func(*StopOptions) error) *cobra.Command {
+    opts := &StopOptions{
+        IOStreams:   f.IOStreams,    // value field
+        Client:     f.Client,       // closure field
+        Resolution: f.Resolution,   // closure field
+    }
+```
+
+**Step 2**: Options struct declares only what this command needs:
 ```go
 type StopOptions struct {
     IOStreams   *iostreams.IOStreams
     Client     func(context.Context) (*docker.Client, error)
     Resolution func() *config.Resolution
-    // ... command-specific fields
+    // command-specific fields...
 }
 ```
 
-Run functions only accept `*Options`, keeping them testable without a full Factory.
+**Step 3**: Run function receives only Options (never Factory):
+```go
+func stopRun(opts *StopOptions) error {
+    client, err := opts.Client(context.Background())
+    // ...
+}
+```
+
+Factory fields are closures, so `opts.Client = f.Client` assigns the closure value directly — syntactically identical to a bound method reference.
 
 ## Container Naming & Labels
 
@@ -200,3 +269,4 @@ Run functions only accept `*Options`, keeping them testable without a full Facto
 3. **Naming is secondary** - `clawker.*` prefix for readability, not filtering
 4. **stdout for data, stderr for status** - Enables scripting/composability
 5. **User-friendly errors** - All errors include "Next Steps" guidance
+6. **Factory DI pattern (gh CLI)** — Pure struct in cmdutil, constructor in cmd/factory, Options in commands

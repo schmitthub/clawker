@@ -5,11 +5,13 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdImage(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdImage(f)
 
 	// Verify command basics
@@ -23,7 +25,8 @@ func TestNewCmdImage(t *testing.T) {
 }
 
 func TestNewCmdImage_Subcommands(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdImage(f)
 
 	// Get registered subcommands

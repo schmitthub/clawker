@@ -36,7 +36,8 @@
 │   ├── build/                 # Image building orchestration
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
-│   ├── cmdutil/               # Factory, error handling, output utilities
+│   │   └── factory/           # Factory constructor — wires real dependencies
+│   ├── cmdutil/               # Factory struct, error handling, output utilities
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware (wraps pkg/whail)
@@ -71,6 +72,7 @@ go test -tags=acceptance ./acceptance -v -timeout 15m
 
 | Abstraction | Purpose |
 |-------------|---------|
+| `Factory` | DI container struct (cmdutil) + constructor (cmd/factory) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
@@ -158,6 +160,7 @@ ralph:
 7. Project registry replaces directory walking for resolution
 8. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
 9. Commands receive function references on Options structs, not `*Factory` directly
+10. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands follow NewCmd(f, runF) pattern with per-command Options structs
 
 ## Important Gotchas
 

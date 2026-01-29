@@ -204,6 +204,26 @@ type Engine interface {
 
 **Docker API Compatibility**: Minimum supported version defined at compile-time. No feature detection or graceful degradation—fail fast on incompatible versions.
 
+### 3.3 Factory Dependency Injection
+
+The CLI layer follows the GitHub CLI's Factory pattern:
+
+```
+internal/clawker/cmd.go
+    │ calls factory.New()
+    ▼
+internal/cmd/factory/default.go  ──imports──▶  internal/cmdutil  ◀──imports──  internal/cmd/*
+    │                                               ▲
+    │ imports heavy deps                            │
+    │ (config, docker, hostproxy,                   │ imports for Factory type
+    │  iostreams, logger, prompts)                  │ + utilities
+    ▼                                               │
+Returns *cmdutil.Factory                      Commands consume
+with all closures wired                       *cmdutil.Factory
+```
+
+Factory is a pure struct with closure fields — no methods. The constructor in `internal/cmd/factory/default.go` wires all `sync.Once` lazy closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
+
 ### 3.2 Internal Client (`internal/docker`)
 
 Clawker-specific middleware that builds on the External Engine:
@@ -535,84 +555,42 @@ func TestContainerOperations(t *testing.T) {
 **cli command test**
 
 ```go
-func TestNewCmdToken(t *testing.T) {
- tests := []struct {
-  name       string
-  input      string
-  output     TokenOptions
-  wantErr    bool
-  wantErrMsg string
- }{
-  {
-   name:   "no flags",
-   input:  "",
-   output: TokenOptions{},
-  },
-  {
-   name:   "with hostname",
-   input:  "--hostname github.mycompany.com",
-   output: TokenOptions{Hostname: "github.mycompany.com"},
-  },
-  {
-   name:   "with user",
-   input:  "--user test-user",
-   output: TokenOptions{Username: "test-user"},
-  },
-  {
-   name:   "with shorthand user",
-   input:  "-u test-user",
-   output: TokenOptions{Username: "test-user"},
-  },
-  {
-   name:   "with shorthand hostname",
-   input:  "-h github.mycompany.com",
-   output: TokenOptions{Hostname: "github.mycompany.com"},
-  },
-  {
-   name:   "with secure-storage",
-   input:  "--secure-storage",
-   output: TokenOptions{SecureStorage: true},
-  },
- }
+func TestNewCmdStop(t *testing.T) {
+    tests := []struct {
+        name    string
+        args    []string
+        wantErr bool
+    }{
+        {name: "no args", args: []string{}, wantErr: true},
+        {name: "with agent flag", args: []string{"--agent", "ralph"}},
+        {name: "with container name", args: []string{"clawker.myapp.ralph"}},
+    }
 
- for _, tt := range tests {
-  t.Run(tt.name, func(t *testing.T) {
-   ios, _, _, _ := iostreams.Test()
-   f := &cmdutil.Factory{
-    IOStreams: ios,
-    Config: func() (gh.Config, error) {
-     cfg := config.NewBlankConfig()
-     return cfg, nil
-    },
-   }
-   argv, err := shlex.Split(tt.input)
-   require.NoError(t, err)
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            tio := iostreams.NewTestIOStreams()
+            f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-   var cmdOpts *TokenOptions
-   cmd := NewCmdToken(f, func(opts *TokenOptions) error {
-    cmdOpts = opts
-    return nil
-   })
-   // TODO cobra hack-around
-   cmd.Flags().BoolP("help", "x", false, "")
+            var gotOpts *StopOptions
+            cmd := NewCmdStop(f, func(opts *StopOptions) error {
+                gotOpts = opts
+                return nil
+            })
 
-   cmd.SetArgs(argv)
-   cmd.SetIn(&bytes.Buffer{})
-   cmd.SetOut(&bytes.Buffer{})
-   cmd.SetErr(&bytes.Buffer{})
+            cmd.SetArgs(tt.args)
+            cmd.SetIn(&bytes.Buffer{})
+            cmd.SetOut(&bytes.Buffer{})
+            cmd.SetErr(&bytes.Buffer{})
 
-   _, err = cmd.ExecuteC()
-   if tt.wantErr {
-    require.Error(t, err)
-    require.EqualError(t, err, tt.wantErrMsg)
-    return
-   }
-
-   require.NoError(t, err)
-   require.Equal(t, tt.output.Hostname, cmdOpts.Hostname)
-   require.Equal(t, tt.output.SecureStorage, cmdOpts.SecureStorage)
-  })
- }
+            err := cmd.Execute()
+            if tt.wantErr {
+                require.Error(t, err)
+                return
+            }
+            require.NoError(t, err)
+            require.NotNil(t, gotOpts)
+        })
+    }
 }
 ```
 

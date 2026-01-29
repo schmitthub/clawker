@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 func TestNewCmdProjectInit(t *testing.T) {
-	f := cmdutil.New("1.0.0", "abc123")
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 	cmd := NewCmdProjectInit(f)
 
 	// Check command use
@@ -123,7 +125,8 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := cmdutil.New("1.0.0", "abc123")
+			tio := iostreams.NewTestIOStreams()
+			f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
 
 			var capturedOpts *ProjectInitOptions
 			cmd := NewCmdProjectInit(f)
