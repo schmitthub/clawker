@@ -1,6 +1,7 @@
 package clawker
 
 import (
+	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -19,7 +20,7 @@ func Main() int {
 	defer logger.CloseFileWriter()
 
 	// Create factory with version info
-	f := cmdutil.New(Version, Commit)
+	f := factory.New(Version, Commit)
 
 	// Create root command
 	rootCmd := root.NewCmdRoot(f)
