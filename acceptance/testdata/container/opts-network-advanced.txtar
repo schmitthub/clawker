@@ -1,12 +1,6 @@
 # Test advanced networking flags
 # Verifies: --dns-option, --domainname, --expose, --publish-all flags work
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --dns-option flag
 exec clawker container run --rm --dns-option ndots:5 alpine:latest cat /etc/resolv.conf
 stdout 'ndots:5'
@@ -25,7 +19,6 @@ stdout '8080'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

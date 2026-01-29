@@ -1,12 +1,6 @@
 # Test UTS namespace flag (--uts)
 # Verifies: UTS mode is set on the container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent uts-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'host'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

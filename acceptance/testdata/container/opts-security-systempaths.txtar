@@ -1,12 +1,6 @@
 # Test --security-opt systempaths=unconfined
 # Verifies: systempaths=unconfined clears MaskedPaths and ReadonlyPaths
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent syspath-$RANDOM_STRING
 
@@ -23,7 +17,6 @@ stdout '0'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

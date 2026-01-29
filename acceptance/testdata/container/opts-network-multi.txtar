@@ -1,12 +1,6 @@
 # Test multiple --network flags
 # Verifies: Multiple network attachments via --network flag
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Create test networks
 defer exec docker network rm clawker-testnet1-$RANDOM_STRING
 exec docker network create clawker-testnet1-$RANDOM_STRING
@@ -30,7 +24,6 @@ stdout 'clawker-testnet2'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

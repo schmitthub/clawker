@@ -42,9 +42,6 @@ By default, a bridge network driver is used.`,
 
   # Create a network with labels
   clawker network create --label env=test --label project=myapp mynetwork`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(f, opts, args[0])

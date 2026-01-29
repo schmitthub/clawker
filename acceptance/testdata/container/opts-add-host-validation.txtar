@@ -1,12 +1,6 @@
 # Test --add-host format validation
 # Verifies: Invalid --add-host values are rejected by Docker daemon
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test missing IP portion is rejected
 ! exec clawker container run --rm --add-host badformat alpine:latest echo test
 stderr 'bad format'
@@ -21,7 +15,6 @@ stderr 'invalid IP'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test logging driver flags
 # Verifies: --log-driver and --log-opt flags are supported
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test --log-driver flag via run
 exec clawker container run --rm --log-driver json-file alpine:latest echo logdriver-test
 stdout 'logdriver-test'
@@ -19,7 +13,6 @@ stdout 'json-file'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

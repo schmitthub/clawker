@@ -8,13 +8,20 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
 )
 
 // Options holds options for the attach command.
 type Options struct {
+	IOStreams        *iostreams.IOStreams
+	Client          func(context.Context) (*docker.Client, error)
+	Resolution      func() *config.Resolution
+	EnsureHostProxy func() error
+
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
 	SigProxy   bool
@@ -24,7 +31,12 @@ type Options struct {
 
 // NewCmd creates a new attach command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:        f.IOStreams,
+		Client:          f.Client,
+		Resolution:      f.Resolution,
+		EnsureHostProxy: f.EnsureHostProxy,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "attach [OPTIONS] CONTAINER",
@@ -51,13 +63,10 @@ Container name can be:
 
   # Attach with custom detach keys
   clawker container attach --detach-keys="ctrl-c" --agent ralph`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
-			return run(cmd.Context(), f, opts)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -69,19 +78,15 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 
 	container := opts.container
 	if opts.Agent {
-		var err error
-		container, err = cmdutil.ResolveContainerName(f, container)
-		if err != nil {
-			return err
-		}
+		container = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, container)
 	}
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -99,6 +104,13 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", container)
+	}
+
+	// Start host proxy so browser opening and other host actions work
+	if opts.EnsureHostProxy != nil {
+		if err := opts.EnsureHostProxy(); err != nil {
+			return fmt.Errorf("failed to start host proxy: %w", err)
+		}
 	}
 
 	// Get container info to determine if it has a TTY

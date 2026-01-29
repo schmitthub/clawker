@@ -5,7 +5,7 @@ paths:
 
 # CLI Testing Guide
 
-> **LLM Memory Document**: Reference this document when writing CLI command tests. Contains test utilities, integration test patterns, and best practices.
+> Essential rules and utilities for writing tests. For detailed examples and patterns, see `.claude/memories/TESTING-REFERENCE.md`.
 
 ## CRITICAL: All Tests Must Pass
 
@@ -46,9 +46,7 @@ go test -tags=acceptance ./acceptance -v -timeout 15m
 
 ## Acceptance Tests (`acceptance/`)
 
-Acceptance tests use the [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript) framework to test CLI workflows against a real Docker daemon. They provide high-level validation of command behavior.
-
-### Running Acceptance Tests
+Use [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript) framework. See [`acceptance/README.md`](../../acceptance/README.md) for complete documentation.
 
 ```bash
 # All acceptance tests
@@ -56,49 +54,24 @@ go test -tags=acceptance ./acceptance -v -timeout 15m
 
 # Specific category
 go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
-go test -tags=acceptance -run ^TestRalph$ ./acceptance -v
 
 # Single test script
 CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
-
-# Via Makefile
-make acceptance
 ```
 
-### When to Write Acceptance Tests
-
-Write acceptance tests for:
-- Command-line interface behavior (flags, output format)
-- Multi-command workflows
-- User-facing error messages
-- Configuration file handling
-
-Use unit/integration tests instead for:
-- Internal function logic
-- Docker SDK interactions
-- Performance-sensitive code paths
-
-### Quick Reference
-
-See [`acceptance/README.md`](../../acceptance/README.md) for complete documentation including:
-- Test file format (.txtar)
-- Custom commands (`defer`, `replace`, `wait_container_running`, etc.)
-- Environment variables
-- Debugging tips
+Write acceptance tests for CLI behavior, multi-command workflows, user-facing errors, config handling. Use unit/integration tests for internal logic and Docker SDK interactions.
 
 ---
 
 ## Test Utilities (`internal/testutil`)
-
-The `internal/testutil` package provides reusable test infrastructure.
 
 ### Key Components
 
 | File | Purpose |
 |------|---------|
 | `harness.go` | Test harness with project/config setup |
-| `docker.go` | Docker client helpers, cleanup, and container state waiting (`WaitForContainerRunning`) |
-| `ready.go` | Application readiness detection (ready file, logs, health checks) |
+| `docker.go` | Docker client helpers, cleanup, container state waiting |
+| `ready.go` | Application readiness detection |
 | `config_builder.go` | Fluent config construction |
 | `golden.go` | Golden file comparison |
 | `hash.go` | Template hashing for cache invalidation |
@@ -106,42 +79,23 @@ The `internal/testutil` package provides reusable test infrastructure.
 
 ### Test Harness (`Harness`)
 
-The `Harness` provides isolated test environments with automatic cleanup.
-
 ```go
-func TestMyCommand(t *testing.T) {
-    h := testutil.NewHarness(t,
-        testutil.WithProject("myproject"),
-        testutil.WithConfigBuilder(
-            testutil.NewConfigBuilder().
-                WithProject("myproject").
-                WithDefaultImage("alpine:latest").
-                WithBuild(testutil.DefaultBuild()),
-        ),
-    )
-    // h.ProjectDir contains clawker.yaml
-    // h.ContainerName("agent") returns "clawker.myproject.agent"
-    // Cleanup is automatic via t.Cleanup()
-}
+h := testutil.NewHarness(t,
+    testutil.WithProject("myproject"),
+    testutil.WithConfigBuilder(
+        testutil.NewConfigBuilder().
+            WithProject("myproject").
+            WithDefaultImage("alpine:latest").
+            WithBuild(testutil.DefaultBuild()),
+    ),
+)
 ```
 
-**Harness Options:**
-- `WithProject(name)` - Set project name
-- `WithConfig(cfg)` - Use pre-built config
-- `WithConfigBuilder(cb)` - Use config builder
+**Options:** `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(cb)`
 
-**Harness Methods:**
-- `ContainerName(agent)` → `clawker.project.agent`
-- `ImageName()` → `clawker-project:hash`
-- `VolumeName(purpose)` → `clawker.project.agent-purpose`
-- `NetworkName()` → `clawker-project`
-- `SetEnv(key, value)` / `UnsetEnv(key)` - Environment manipulation
-- `Chdir(path)` - Change working directory (auto-restored)
-- `WriteFile(path, content)` / `ReadFile(path)` - File helpers
+**Methods:** `ContainerName(agent)`, `ImageName()`, `VolumeName(purpose)`, `NetworkName()`, `SetEnv/UnsetEnv`, `Chdir`, `WriteFile/ReadFile`
 
 ### Config Builder
-
-Fluent API for constructing `config.Config` objects.
 
 ```go
 cfg := testutil.NewConfigBuilder().
@@ -149,518 +103,85 @@ cfg := testutil.NewConfigBuilder().
     WithDefaultImage("alpine:latest").
     WithBuild(testutil.BuildWithPackages([]string{"git", "curl"})).
     WithSecurity(testutil.SecurityFirewallEnabled()).
-    WithAgent(testutil.AgentWithEnv(map[string]string{"FOO": "bar"})).
-    WithWorkspace(testutil.WorkspaceSnapshot()).
     Build()
 ```
 
-**Presets:**
-- `MinimalValidConfig()` - Minimum required fields
-- `FullFeaturedConfig()` - All features enabled
-- `DefaultBuild()` / `AlpineBuild()` - Common build configs
-- `SecurityFirewallEnabled()` / `SecurityFirewallDisabled()`
-- `WorkspaceSnapshot()` - Snapshot mode workspace
+**Presets:** `MinimalValidConfig()`, `FullFeaturedConfig()`, `DefaultBuild()`, `AlpineBuild()`, `SecurityFirewallEnabled/Disabled()`, `WorkspaceSnapshot()`
 
 ### Docker Helpers
 
 ```go
-// Skip test if Docker unavailable
-testutil.SkipIfNoDocker(t)
-
-// Require Docker (fail if unavailable)
-testutil.RequireDocker(t)
-
-// Create test client (whail.Engine with test labels)
-client := testutil.NewTestClient(t)
-
-// Create raw Docker client (for low-level operations)
-rawClient := testutil.NewRawDockerClient(t)
-
-// Add labels to container config
-config := testutil.AddTestLabels(config, "myproject", "myagent")
-config := testutil.AddClawkerLabels(config, "myproject", "myagent")
-
-// Check resource existence
-exists := testutil.ContainerExists(t, client, containerID)
-running := testutil.ContainerIsRunning(t, client, containerID)
-exists := testutil.VolumeExists(t, client, volumeName)
-exists := testutil.NetworkExists(t, client, networkName)
+testutil.SkipIfNoDocker(t)           // Skip if no Docker
+testutil.RequireDocker(t)            // Fail if no Docker
+client := testutil.NewTestClient(t)  // whail.Engine with test labels
+rawClient := testutil.NewRawDockerClient(t)  // Low-level Docker client
 ```
 
 ### Mock Docker Client (Unit Tests)
 
-For unit testing code that uses `docker.Client` **without requiring Docker**, use the mock client:
+For unit testing without Docker:
 
 ```go
-import (
-    "context"
-    "testing"
-
-    "github.com/schmitthub/clawker/internal/testutil"
-    "github.com/schmitthub/clawker/pkg/whail"
-    "github.com/stretchr/testify/require"
-    "go.uber.org/mock/gomock"
-)
-
-func TestImageResolution(t *testing.T) {
-    ctx := context.Background()
-
-    // Create mock client (no Docker required)
-    m := testutil.NewMockDockerClient(t)
-
-    // Set expectations using gomock with whail types (NOT moby types directly)
-    m.Mock.EXPECT().
-        ImageList(gomock.Any(), gomock.Any()).
-        Return(whail.ImageListResult{
-            Items: []whail.ImageSummary{
-                {RepoTags: []string{"clawker-myproject:latest"}},
-            },
-        }, nil)
-
-    // Pass m.Client to code under test
-    result, err := SomeFunctionThatNeedsDocker(ctx, m.Client)
-    require.NoError(t, err)
-}
+m := testutil.NewMockDockerClient(t)
+m.Mock.EXPECT().ImageList(gomock.Any(), gomock.Any()).Return(whail.ImageListResult{
+    Items: []whail.ImageSummary{{RepoTags: []string{"clawker-myproject:latest"}}},
+}, nil)
+// Pass m.Client to code under test
 ```
 
-**MockDockerClient fields:**
-- `Mock` - The gomock mock, use `.EXPECT()` to set expectations
-- `Client` - The `*docker.Client` to pass to code under test
-- `Ctrl` - The gomock controller (rarely needed directly)
+**Fields:** `Mock` (gomock expectations), `Client` (`*docker.Client`), `Ctrl` (gomock controller)
 
-**When to use:**
-- Unit tests that need to test Docker client interactions without a real daemon
-- Testing error handling paths (return errors from mock)
-- Fast tests that don't need actual containers
+Regenerate: `make generate-mocks`
 
-**Regenerating mocks:**
+### Cleanup (CRITICAL)
 
-```bash
-make generate-mocks
-```
-
-> **Note:** The mock is generated from `github.com/moby/moby/client.APIClient`.
-> Post-processing is required because mockgen copies the Docker SDK's unnamed
-> variadic parameters (using `_`) which is invalid Go syntax. The Makefile
-> handles this automatically.
-
-### Cleanup Functions
-
-**CRITICAL:** Always clean up test resources. Use these functions in `t.Cleanup()`:
+Always clean up test resources via `t.Cleanup()`:
 
 ```go
-// Clean up all resources for a project
 t.Cleanup(func() {
-    ctx := context.Background()
     testutil.CleanupProjectResources(ctx, client, "myproject")
-})
-
-// Clean up resources with test label
-t.Cleanup(func() {
-    ctx := context.Background()
-    testutil.CleanupTestResources(ctx, rawClient)
 })
 ```
 
 ### Container State Waiting
 
-For tests that need to wait for container state changes:
-
 ```go
-// Wait for container to be running (use after ContainerStart, before exec/attach)
-err := testutil.WaitForContainerRunning(ctx, rawClient, containerID)
-
-// Wait for container to exit with code 0 (for short-lived containers)
+err := testutil.WaitForContainerRunning(ctx, rawClient, containerID)  // Fails fast on exit
 err := testutil.WaitForContainerExit(ctx, rawClient, containerID)
 ```
 
-**IMPORTANT**: Never write local wait functions in test files. Always use the testutil versions - they have better error messages and use efficient ticker-based polling.
-
-### Container Exit Detection (Fail-Fast)
-
-The `WaitForContainerRunning` function now **fails fast** when a container exits instead of timing out silently:
-
-```go
-err := testutil.WaitForContainerRunning(ctx, rawClient, containerName)
-if err != nil {
-    // Error includes exit code: "container xyz exited (code 1) while waiting for running state"
-    t.Fatalf("Container failed to start: %v", err)
-}
-```
-
-For detailed diagnostics on container failures (firewall issues, OOM, etc.):
-
-```go
-diag, err := testutil.GetContainerExitDiagnostics(ctx, rawClient, containerID, 50)
-if err == nil {
-    t.Logf("Exit code: %d", diag.ExitCode)
-    t.Logf("OOMKilled: %v", diag.OOMKilled)
-    t.Logf("FirewallFailed: %v", diag.FirewallFailed)
-    t.Logf("ClawkerError: %v (%s)", diag.HasClawkerError, diag.ClawkerErrorMsg)
-    t.Logf("Logs:\n%s", diag.Logs)
-}
-```
-
-**ContainerExitDiagnostics fields:**
-- `ExitCode` - Container exit code
-- `OOMKilled` - True if container was OOM killed
-- `Error` - Docker's state error field
-- `Logs` - Last N lines of container logs (stripped of Docker stream headers)
-- `StartedAt` / `FinishedAt` - Timestamps for debugging
-- `HasClawkerError` / `ClawkerErrorMsg` - Clawker error pattern detection
-- `FirewallFailed` - True if logs contain firewall failure patterns
-
-**Use cases:**
-- Debugging firewall initialization failures
-- Detecting missing capabilities (NET_ADMIN)
-- Identifying entrypoint script errors
-- Diagnosing out-of-memory conditions
+**IMPORTANT**: Never write local wait functions. Always use testutil versions.
 
 ### Readiness Detection
 
-For tests that need to wait for application readiness (clawker images with entrypoint):
-
 ```go
-// Wait for ready file (written by entrypoint)
-err := testutil.WaitForReadyFile(ctx, rawClient, containerID)
-
-// Wait for health check to pass
-err := testutil.WaitForHealthy(ctx, rawClient, containerID)
-
-// Wait for specific log pattern
-err := testutil.WaitForLogPattern(ctx, rawClient, containerID, "Server started")
-
-// Wait for ready log (from emit_ready in entrypoint)
-err := testutil.WaitForReadyLog(ctx, rawClient, containerID)
-
-// Check for error pattern in logs
-hasError := testutil.CheckForErrorPattern(ctx, rawClient, containerID)
-
-// Verify process is running in container
-running, err := testutil.VerifyProcessRunning(ctx, rawClient, containerID, "claude")
+testutil.WaitForReadyFile(ctx, rawClient, containerID)
+testutil.WaitForHealthy(ctx, rawClient, containerID)
+testutil.WaitForLogPattern(ctx, rawClient, containerID, "Server started")
+testutil.WaitForReadyLog(ctx, rawClient, containerID)
 ```
 
-**Timeout Constants:**
-- `DefaultReadyTimeout` - 60s (local development)
-- `CIReadyTimeout` - 120s (CI environments)
-- `E2EReadyTimeout` - 180s (E2E tests)
-
-### Golden File Testing
-
-For output comparison tests:
-
-```go
-// Compare bytes against golden file
-testutil.CompareGolden(t, actualBytes, "testdata/expected.golden")
-
-// Compare string
-testutil.CompareGoldenString(t, actualString, "testdata/expected.golden")
-
-// Assert with automatic update (set UPDATE_GOLDEN=1)
-testutil.GoldenAssert(t, actualBytes, "testdata/expected.golden")
-```
-
-Update golden files: `UPDATE_GOLDEN=1 go test ./...`
-
-### Build Test Images
-
-For tests requiring custom images:
-
-```go
-imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
-    "FROM alpine:latest\nRUN apk add bash",
-    testutil.BuildTestImageOptions{
-        SuppressOutput: true,
-        NoCache:        false,
-    },
-)
-// Image is automatically cleaned up via t.Cleanup()
-```
-
----
-
-## Testcontainers Integration Tests (`internal/testutil/integration/`)
-
-A separate test package using [testcontainers-go](https://golang.testcontainers.org/) for testing clawker scripts in lightweight containers. These tests verify script behavior (firewall, entrypoint, git credentials, SSH agent) without needing full clawker images.
-
-### Package Structure
-
-| File | Purpose |
-|------|---------|
-| `container.go` | `LightContainer` builder and `ContainerResult` wrapper |
-| `hostproxy.go` | `MockHostProxy` for testing host proxy interactions |
-| `scripts_test.go` | Entrypoint, git config, SSH known hosts, host-open, git-credential tests |
-| `firewall_test.go` | Firewall rule verification (iptables, ipset, blocked domains) |
-| `firewall_startup_test.go` | Firewall script startup flow tests |
-| `sshagent_test.go` | SSH agent proxy forwarding tests |
-| `testdata/` | Dockerfiles for Alpine and Debian test containers |
-
-### Running Testcontainers Tests
-
-```bash
-# All testcontainers integration tests
-go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
-
-# Specific test suites
-go test -tags=integration ./internal/testutil/integration/... -run "Firewall" -v -timeout 10m
-go test -tags=integration ./internal/testutil/integration/... -run "Entrypoint" -v -timeout 5m
-go test -tags=integration ./internal/testutil/integration/... -run "GitCredential" -v -timeout 5m
-go test -tags=integration ./internal/testutil/integration/... -run "SshAgent" -v -timeout 5m
-```
-
-### Key Components
-
-**StartFromDockerfile** - Start container from test Dockerfile:
-```go
-result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-    req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-    req.User = "root"
-    req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-})
-```
-
-**ContainerResult Methods:**
-- `Exec(ctx, cmd)` - Execute command and return `ExecResult`
-- `WaitForFile(ctx, path, timeout)` - Wait for file to exist
-- `GetLogs(ctx)` - Retrieve container logs
-- `CleanOutput()` - Strip Docker stream headers from output
-
-**MockHostProxy** - Mock for testing container-to-host communication:
-```go
-proxy := NewMockHostProxy(t)
-proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
-// proxy.GetOpenedURLs() - Check URLs sent to /open/url
-// proxy.GetGitCreds() - Check git credential requests
-// proxy.SetCallbackReady(sessionID, path, query) - Simulate OAuth callback
-```
-
-### Script Testing Pattern
-
-Tests copy scripts from `pkg/build/templates/` into containers, providing **regression testing** when scripts are modified:
-
-```go
-// Copy script to container
-copyScriptToContainer(ctx, t, result, "init-firewall.sh")
-
-// Run script
-execResult, err := result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
-require.NoError(t, err)
-require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
-```
-
-**IMPORTANT:** These tests use the actual scripts from `pkg/build/templates/`. Any change to those scripts is automatically tested by running the integration tests.
-
----
-
-## Integration Test Patterns
-
-### Basic Command Test
-
-```go
-//go:build integration
-
-package mycommand
-
-import (
-    "testing"
-    "github.com/stretchr/testify/require"
-    "github.com/yourorg/clawker/internal/testutil"
-)
-
-func TestMyCommand_Integration(t *testing.T) {
-    testutil.RequireDocker(t)
-
-    h := testutil.NewHarness(t,
-        testutil.WithProject("test-project"),
-        testutil.WithConfigBuilder(testutil.NewConfigBuilder().
-            WithProject("test-project").
-            WithDefaultImage("alpine:latest"),
-        ),
-    )
-
-    t.Cleanup(func() {
-        ctx := context.Background()
-        client := testutil.NewTestClient(t)
-        testutil.CleanupProjectResources(ctx, client, "test-project")
-    })
-
-    // Test implementation
-}
-```
-
-### Table-Driven Integration Tests
-
-```go
-func TestRunIntegration_ArbitraryCommand(t *testing.T) {
-    testutil.RequireDocker(t)
-
-    tests := []struct {
-        name        string
-        args        []string
-        wantOutput  string
-        wantErr     bool
-        errContains string
-    }{
-        {
-            name:       "echo command",
-            args:       []string{"run", "--rm", "alpine", "echo", "hello"},
-            wantOutput: "hello\n",
-        },
-        {
-            name:        "command not found",
-            args:        []string{"run", "--rm", "alpine", "notacommand"},
-            wantErr:     true,
-            errContains: "not found",
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // ... test implementation
-        })
-    }
-}
-```
-
-### Testing Both Invocation Patterns
-
-All container commands should test BOTH patterns:
-1. `--agent` flag: `clawker container stop --agent ralph`
-2. Container name: `clawker container stop clawker.project.ralph`
-
-```go
-func TestStopIntegration_BothPatterns(t *testing.T) {
-    tests := []struct {
-        name    string
-        useFlag bool // true = --agent, false = container name
-    }{
-        {"with agent flag", true},
-        {"with container name", false},
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // Setup container...
-
-            var args []string
-            if tt.useFlag {
-                args = []string{"container", "stop", "--agent", "ralph"}
-            } else {
-                args = []string{"container", "stop", h.ContainerName("ralph")}
-            }
-
-            // Execute and verify...
-        })
-    }
-}
-```
-
----
-
-## E2E Test Patterns
-
-E2E tests build the actual binary and test full workflows.
-
-```go
-//go:build e2e
-
-func TestRunE2E_InteractiveMode(t *testing.T) {
-    testutil.RequireDocker(t)
-
-    // Build clawker binary
-    binaryPath := buildClawkerBinary(t)
-
-    // Create temp project directory
-    projectDir := t.TempDir()
-    // ... setup clawker.yaml
-
-    // Run binary
-    cmd := exec.Command(binaryPath, "run", "--rm", "alpine", "sh")
-    cmd.Dir = projectDir
-
-    // ... test interactive I/O
-}
-
-func buildClawkerBinary(t *testing.T) string {
-    t.Helper()
-
-    projectRoot := testutil.FindProjectRoot()
-    binaryPath := filepath.Join(t.TempDir(), "clawker")
-
-    cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/clawker")
-    cmd.Dir = projectRoot
-
-    output, err := cmd.CombinedOutput()
-    require.NoError(t, err, "build failed: %s", output)
-
-    return binaryPath
-}
-```
-
----
-
-## Error Handling in Tests
-
-### NEVER Silently Discard Errors
-
-```go
-// BAD - silent failure
-_, _ = client.ContainerRemove(ctx, id, true)
-
-// GOOD - collect and report errors
-if _, err := client.ContainerRemove(ctx, id, true); err != nil {
-    t.Logf("WARNING: cleanup failed: %v", err)
-}
-
-// BETTER - collect all errors
-var errs []error
-for _, c := range containers {
-    if _, err := client.ContainerRemove(ctx, c.ID, true); err != nil {
-        errs = append(errs, fmt.Errorf("remove %s: %w", c.ID[:12], err))
-    }
-}
-if len(errs) > 0 {
-    return errors.Join(errs...)
-}
-```
-
-### Fail Fast on Container Exit
-
-```go
-// When waiting for container readiness, check if it exited
-info, err := cli.ContainerInspect(ctx, containerID)
-if err == nil && !info.State.Running {
-    return fmt.Errorf("container exited (code %d) while waiting", info.State.ExitCode)
-}
-```
+**Timeouts:** `DefaultReadyTimeout` (60s), `CIReadyTimeout` (120s), `E2EReadyTimeout` (180s)
 
 ---
 
 ## Test Naming Conventions
 
 ```go
-// Unit tests
-func TestFunctionName(t *testing.T)
-func TestFunctionName_Scenario(t *testing.T)
-
-// Integration tests
-func TestFeature_Integration(t *testing.T)
-func TestFeatureIntegration_Scenario(t *testing.T)
-
-// E2E tests
-func TestFeature_E2E(t *testing.T)
-func TestFeatureE2E_Scenario(t *testing.T)
+func TestFunctionName(t *testing.T)           // Unit
+func TestFeature_Integration(t *testing.T)    // Integration
+func TestFeature_E2E(t *testing.T)            // E2E
 ```
 
-**Agent name uniqueness:**
-```go
-// Include timestamp AND random suffix for parallel safety
-agentName := fmt.Sprintf("test-%s-%s-%d",
-    t.Name(),
-    time.Now().Format("150405"),
-    rand.Intn(10000),
-)
-```
+**Agent name uniqueness:** Include timestamp AND random suffix for parallel safety.
+
+---
+
+## Error Handling Rules
+
+- **NEVER silently discard errors** — log cleanup failures with `t.Logf`
+- **Fail fast on container exit** — check state, don't wait for timeout
+- All container commands should test BOTH `--agent` flag and container name patterns
 
 ---
 
@@ -674,36 +195,23 @@ agentName := fmt.Sprintf("test-%s-%s-%d",
 6. **Resource leaks**: Always use `t.Cleanup()` for resource cleanup
 7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
 8. **Log streaming**: Connection errors indicate container death, not transient issues
-9. **Don't duplicate testutil functions**: Always check `internal/testutil` before writing wait/helper functions - use `WaitForContainerRunning`, not local implementations
+9. **Don't duplicate testutil functions**: Always check `internal/testutil` first
 
 ---
 
 ## Quick Reference
 
 ```go
-// Setup
 testutil.RequireDocker(t)
 h := testutil.NewHarness(t, testutil.WithProject("test"))
 client := testutil.NewTestClient(t)
 rawClient := testutil.NewRawDockerClient(t)
 
-// Create and start container
-resp, err := rawClient.ContainerCreate(ctx, createOpts)
-require.NoError(t, err)
-_, err = rawClient.ContainerStart(ctx, resp.ID, startOpts)
-require.NoError(t, err)
+// Wait for container (ALWAYS use testutil, never local functions)
+err = testutil.WaitForContainerRunning(ctx, rawClient, containerID)
 
-// Wait for container to be running (ALWAYS use testutil, never local functions)
-readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-defer cancel()
-err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
-require.NoError(t, err)
-
-// For clawker images, also wait for application readiness
+// For clawker images, also wait for readiness
 err = testutil.WaitForReadyFile(ctx, rawClient, containerID)
 
-// Verify
-require.True(t, testutil.ContainerIsRunning(ctx, client, containerID))
-
-// Cleanup (automatic via t.Cleanup in NewHarness)
+// Cleanup is automatic via t.Cleanup in NewHarness
 ```

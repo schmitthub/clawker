@@ -1,12 +1,6 @@
 # Test tmpfs mount flag (--tmpfs)
 # Verifies: Tmpfs filesystem is mounted in container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent tmpfs-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout '/mytmp'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

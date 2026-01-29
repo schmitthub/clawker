@@ -43,35 +43,44 @@ const ManagedLabelValue = "true"
 
 // ContainerLabels returns labels for a new container.
 func ContainerLabels(project, agent, version, image, workdir string) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		LabelManaged: ManagedLabelValue,
-		LabelProject: project,
 		LabelAgent:   agent,
 		LabelVersion: version,
 		LabelImage:   image,
 		LabelCreated: time.Now().Format(time.RFC3339),
 		LabelWorkdir: workdir,
 	}
+	if project != "" {
+		labels[LabelProject] = project
+	}
+	return labels
 }
 
 // VolumeLabels returns labels for a new volume.
 func VolumeLabels(project, agent, purpose string) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		LabelManaged: ManagedLabelValue,
-		LabelProject: project,
 		LabelAgent:   agent,
 		LabelPurpose: purpose,
 	}
+	if project != "" {
+		labels[LabelProject] = project
+	}
+	return labels
 }
 
 // ImageLabels returns labels for a built image.
 func ImageLabels(project, version string) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		LabelManaged: ManagedLabelValue,
-		LabelProject: project,
 		LabelVersion: version,
 		LabelCreated: time.Now().Format(time.RFC3339),
 	}
+	if project != "" {
+		labels[LabelProject] = project
+	}
+	return labels
 }
 
 // NetworkLabels returns labels for a new network.

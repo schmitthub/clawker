@@ -660,9 +660,7 @@ func TestImageArg(t *testing.T) {
 				var settings *config.Settings
 				if tt.defaultImage != "" {
 					settings = &config.Settings{
-						Project: config.ProjectDefaults{
-							DefaultImage: tt.defaultImage,
-						},
+						DefaultImage: tt.defaultImage,
 					}
 				}
 

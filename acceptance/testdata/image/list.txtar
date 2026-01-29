@@ -1,12 +1,6 @@
 # Test image list command
 # Verifies: images can be listed
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Build a test image first
 exec clawker image build --tag test-img-list-$RANDOM_STRING:latest
 
@@ -23,7 +17,6 @@ stdout 'test-img-list-'$RANDOM_STRING
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

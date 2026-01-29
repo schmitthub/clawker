@@ -7,6 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
@@ -22,8 +23,8 @@ func ResolveDefaultImage(cfg *config.Config, settings *config.Settings) string {
 	}
 
 	// Fall back to user settings
-	if settings != nil && settings.Project.DefaultImage != "" {
-		return settings.Project.DefaultImage
+	if settings != nil && settings.DefaultImage != "" {
+		return settings.DefaultImage
 	}
 
 	return ""
@@ -119,6 +120,17 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 	return nil, nil
 }
 
+// ImageValidationDeps holds the dependencies needed by ResolveAndValidateImage.
+type ImageValidationDeps struct {
+	IOStreams       *iostreams.IOStreams
+	Prompter       func() *prompts.Prompter
+	SettingsLoader func() (*config.SettingsLoader, error)
+
+	// InvalidateSettingsCache clears the cached settings so the next
+	// Settings() call reloads from disk. May be nil.
+	InvalidateSettingsCache func()
+}
+
 // ResolveAndValidateImage resolves an image and validates it exists (for default images).
 // For explicit and project images, no validation is performed.
 // For default images, checks if the image exists in Docker and prompts to rebuild if missing.
@@ -128,11 +140,13 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 // - Default image doesn't exist and rebuild fails or is declined
 func ResolveAndValidateImage(
 	ctx context.Context,
-	f *Factory,
+	deps ImageValidationDeps,
 	dockerClient *docker.Client,
 	cfg *config.Config,
 	settings *config.Settings,
 ) (*ResolvedImage, error) {
+	ios := deps.IOStreams
+
 	// Resolve the image
 	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings)
 	if err != nil {
@@ -162,9 +176,9 @@ func ResolveAndValidateImage(
 	}
 
 	// Default image doesn't exist - prompt to rebuild or error
-	if !f.IOStreams.IsInteractive() {
-		PrintError(f.IOStreams, "Default image %q not found", result.Reference)
-		PrintNextSteps(f.IOStreams,
+	if !ios.IsInteractive() {
+		PrintError(ios, "Default image %q not found", result.Reference)
+		PrintNextSteps(ios,
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -173,7 +187,7 @@ func ResolveAndValidateImage(
 	}
 
 	// Interactive mode - prompt to rebuild
-	prompter := f.Prompter()
+	prompter := deps.Prompter()
 	options := []prompts.SelectOption{
 		{Label: "Yes", Description: "Rebuild the default base image now"},
 		{Label: "No", Description: "Cancel and fix manually"},
@@ -189,7 +203,7 @@ func ResolveAndValidateImage(
 	}
 
 	if idx != 0 {
-		PrintNextSteps(f.IOStreams,
+		PrintNextSteps(ios,
 			"Run 'clawker init' to rebuild the base image",
 			"Or specify an image explicitly: clawker run IMAGE",
 			"Or build a project image: clawker build",
@@ -214,27 +228,29 @@ func ResolveAndValidateImage(
 
 	selectedFlavor := flavors[flavorIdx].Name
 
-	fmt.Fprintf(f.IOStreams.ErrOut, "Building %s...\n", DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", DefaultImageTag)
 
 	if err := BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		PrintError(f.IOStreams, "Failed to build image: %v", err)
+		PrintError(ios, "Failed to build image: %v", err)
 		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
-	fmt.Fprintf(f.IOStreams.ErrOut, "Build complete! Using image: %s\n", DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", DefaultImageTag)
 
 	// Update settings with the built image
-	settingsLoader, err := f.SettingsLoader()
+	settingsLoader, err := deps.SettingsLoader()
 	if err == nil && settingsLoader != nil {
 		currentSettings, loadErr := settingsLoader.Load()
 		if loadErr != nil {
 			currentSettings = config.DefaultSettings()
 		}
-		currentSettings.Project.DefaultImage = DefaultImageTag
+		currentSettings.DefaultImage = DefaultImageTag
 		if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
 			logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 		}
-		f.InvalidateSettingsCache()
+		if deps.InvalidateSettingsCache != nil {
+			deps.InvalidateSettingsCache()
+		}
 	}
 
 	// Return the rebuilt image
@@ -278,56 +294,31 @@ func AgentArgsValidatorExact(n int) cobra.PositionalArgs {
 	}
 }
 
-// ResolveContainerName resolves an agent name to a full container name using the project config.
-// Returns the full container name in format: clawker.<project>.<agent>
-func ResolveContainerName(f *Factory, agentName string) (string, error) {
-	cfg, err := f.Config()
-	if err != nil {
-		return "", fmt.Errorf("failed to load config: %w", err)
-	}
-	if cfg.Project == "" {
-		return "", fmt.Errorf("project name not configured in clawker.yaml")
-	}
-	return docker.ContainerName(cfg.Project, agentName), nil
+// ResolveContainerName resolves an agent name to a full container name.
+// Returns the container name in format: clawker.<project>.<agent> (or clawker.<agent> if project is empty).
+func ResolveContainerName(project, agentName string) string {
+	return docker.ContainerName(project, agentName)
 }
 
-// ResolveContainerNames resolves container names based on --agent flag or positional args.
+// ResolveContainerNames resolves container names based on agent flag or positional args.
 // If agentName is non-empty, it resolves it to a container name and returns a single-element slice.
 // Otherwise, it returns the containerArgs as-is (they're expected to be full container names).
-func ResolveContainerNames(f *Factory, agentName string, containerArgs []string) ([]string, error) {
+func ResolveContainerNames(project, agentName string, containerArgs []string) []string {
 	if agentName != "" {
-		container, err := ResolveContainerName(f, agentName)
-		if err != nil {
-			PrintError(f.IOStreams, "Failed to resolve agent name: %v", err)
-			PrintNextSteps(f.IOStreams,
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return nil, err
-		}
-		return []string{container}, nil
+		return []string{docker.ContainerName(project, agentName)}
 	}
-	return containerArgs, nil
+	return containerArgs
 }
 
 // ResolveContainerNamesFromAgents resolves a slice of agent names to container names.
 // If no agents are provided, returns an empty slice.
-func ResolveContainerNamesFromAgents(f *Factory, agents []string) ([]string, error) {
+func ResolveContainerNamesFromAgents(project string, agents []string) []string {
 	if len(agents) == 0 {
-		return agents, nil
+		return agents
 	}
-	var containers []string
-	for _, agent := range agents {
-		container, err := ResolveContainerName(f, agent)
-		if err != nil {
-			PrintError(f.IOStreams, "Failed to resolve agent name: %v", err)
-			PrintNextSteps(f.IOStreams,
-				"Run 'clawker init' to create a configuration",
-				"Or ensure you're in a directory with clawker.yaml",
-			)
-			return nil, err
-		}
-		containers = append(containers, container)
+	containers := make([]string, len(agents))
+	for i, agent := range agents {
+		containers[i] = docker.ContainerName(project, agent)
 	}
-	return containers, nil
+	return containers
 }

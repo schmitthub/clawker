@@ -32,7 +32,6 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.warnings = []string{}
 
 	v.validateVersion(cfg)
-	v.validateProject(cfg)
 	v.validateBuild(cfg)
 	v.validateWorkspace(cfg)
 	v.validateSecurity(cfg)
@@ -73,22 +72,6 @@ func (v *Validator) validateVersion(cfg *Config) {
 	}
 	if cfg.Version != "1" {
 		v.addError("version", "must be '1' (only supported version)", cfg.Version)
-	}
-}
-
-func (v *Validator) validateProject(cfg *Config) {
-	if cfg.Project == "" {
-		v.addError("project", "is required", nil)
-		return
-	}
-
-	// Project name should be a valid container name component
-	if strings.ContainsAny(cfg.Project, " \t\n/\\:*?\"<>|") {
-		v.addError("project", "contains invalid characters (no spaces or special characters allowed)", cfg.Project)
-	}
-
-	if len(cfg.Project) > 64 {
-		v.addError("project", "must be 64 characters or less", cfg.Project)
 	}
 }
 

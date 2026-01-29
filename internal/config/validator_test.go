@@ -41,7 +41,7 @@ func TestValidatorValidVersion(t *testing.T) {
 	}
 }
 
-func TestValidatorValidProject(t *testing.T) {
+func TestValidatorEmptyProjectPasses(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -50,34 +50,13 @@ func TestValidatorValidProject(t *testing.T) {
 
 	validator := NewValidator(tmpDir)
 
-	tests := []struct {
-		name    string
-		project string
-		wantErr bool
-	}{
-		{"valid project name", "my-project", false},
-		{"valid project with numbers", "project123", false},
-		{"valid project with underscore", "my_project", false},
-		{"empty project", "", true},
-		{"project with spaces", "my project", true},
-		{"project with slash", "my/project", true},
-		{"project with colon", "my:project", true},
-		{"project with asterisk", "my*project", true},
-		{"project too long", string(make([]byte, 65)), true},
-	}
+	// Empty project should pass validation — project comes from registry, not YAML
+	cfg := DefaultConfig()
+	cfg.Version = "1"
+	cfg.Project = ""
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			cfg.Version = "1"
-			cfg.Project = tt.project
-
-			err := validator.Validate(cfg)
-			hasErr := err != nil
-			if hasErr != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	if err := validator.Validate(cfg); err != nil {
+		t.Errorf("Validate() returned error for empty project: %v", err)
 	}
 }
 

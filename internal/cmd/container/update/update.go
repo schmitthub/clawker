@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -13,6 +14,10 @@ import (
 
 // Options defines the options for the update command.
 type Options struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent              bool
 	blkioWeight        uint16
 	cpuPeriod          int64
@@ -36,7 +41,11 @@ type Options struct {
 
 // NewCmd creates a new update command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+	opts := &Options{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "update [OPTIONS] [CONTAINER...]",
@@ -66,14 +75,11 @@ Container names can be:
 
   # Update multiple containers
   clawker container update --memory 256m container1 container2`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			opts.nFlag = cmd.Flags().NFlag()
-			return run(cmd.Context(), f, opts, args)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -104,22 +110,18 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options, _ []string) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 
 	// Resolve container names
 	// When opts.Agent is true, all items in opts.containers are agent names
 	containers := opts.containers
 	if opts.Agent {
-		var err error
-		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
-		if err != nil {
-			return err
-		}
+		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.containers)
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

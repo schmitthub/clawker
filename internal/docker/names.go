@@ -94,21 +94,33 @@ func GenerateRandomName() string {
 
 // ContainerName generates container name: clawker.project.agent
 func ContainerName(project, agent string) string {
+	if project == "" {
+		return fmt.Sprintf("%s.%s", NamePrefix, agent)
+	}
 	return fmt.Sprintf("%s.%s.%s", NamePrefix, project, agent)
 }
 
 // ContainerNamePrefix returns prefix for filtering: clawker.project.
 func ContainerNamePrefix(project string) string {
+	if project == "" {
+		return NamePrefix + "."
+	}
 	return fmt.Sprintf("%s.%s.", NamePrefix, project)
 }
 
 // VolumeName generates volume name: clawker.project.agent-purpose
 func VolumeName(project, agent, purpose string) string {
+	if project == "" {
+		return fmt.Sprintf("%s.%s-%s", NamePrefix, agent, purpose)
+	}
 	return fmt.Sprintf("%s.%s.%s-%s", NamePrefix, project, agent, purpose)
 }
 
 // ImageTag generates image tag: clawker-project:latest
 func ImageTag(project string) string {
+	if project == "" {
+		return NamePrefix + ":latest"
+	}
 	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
 }
 
@@ -122,10 +134,14 @@ func ParseContainerName(name string) (project, agent string, ok bool) {
 	// Remove leading slash if present (Docker adds it)
 	name = strings.TrimPrefix(name, "/")
 	parts := strings.Split(name, ".")
-	if len(parts) != 3 || parts[0] != NamePrefix {
+	switch {
+	case len(parts) == 3 && parts[0] == NamePrefix:
+		return parts[1], parts[2], true
+	case len(parts) == 2 && parts[0] == NamePrefix:
+		return "", parts[1], true
+	default:
 		return "", "", false
 	}
-	return parts[1], parts[2], true
 }
 
 // IsAlpineImage checks if an image reference appears to be Alpine-based.

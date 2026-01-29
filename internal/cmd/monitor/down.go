@@ -7,17 +7,22 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
 
 type downOptions struct {
+	IOStreams *iostreams.IOStreams
+
 	volumes bool
 }
 
 func newCmdDown(f *cmdutil.Factory) *cobra.Command {
-	opts := &downOptions{}
+	opts := &downOptions{
+		IOStreams: f.IOStreams,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "down",
@@ -32,7 +37,7 @@ the clawker-net Docker network for other clawker services.`,
   # Stop and remove volumes
   clawker monitor down --volumes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDown(f, opts)
+			return runDown(opts)
 		},
 	}
 
@@ -41,8 +46,8 @@ the clawker-net Docker network for other clawker services.`,
 	return cmd
 }
 
-func runDown(f *cmdutil.Factory, opts *downOptions) error {
-	ios := f.IOStreams
+func runDown(opts *downOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Resolve monitor directory

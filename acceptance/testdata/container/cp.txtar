@@ -1,12 +1,6 @@
 # Test container cp command
 # Verifies: files can be copied to/from containers
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent cp-$RANDOM_STRING
 defer clawker container stop --agent cp-$RANDOM_STRING
@@ -39,7 +33,6 @@ stdout 'hello from test file'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

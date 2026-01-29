@@ -32,6 +32,7 @@ func TestContainerName(t *testing.T) {
 		{"myproject", "myagent", "clawker.myproject.myagent"},
 		{"test", "agent1", "clawker.test.agent1"},
 		{"backend", "worker", "clawker.backend.worker"},
+		{"", "ralph", "clawker.ralph"},
 	}
 
 	for _, tt := range tests {
@@ -51,6 +52,7 @@ func TestContainerNamePrefix(t *testing.T) {
 	}{
 		{"myproject", "clawker.myproject."},
 		{"test", "clawker.test."},
+		{"", "clawker."},
 	}
 
 	for _, tt := range tests {
@@ -73,6 +75,7 @@ func TestVolumeName(t *testing.T) {
 		{"myproject", "myagent", "workspace", "clawker.myproject.myagent-workspace"},
 		{"test", "agent1", "config", "clawker.test.agent1-config"},
 		{"backend", "worker", "history", "clawker.backend.worker-history"},
+		{"", "ralph", "workspace", "clawker.ralph-workspace"},
 	}
 
 	for _, tt := range tests {
@@ -93,6 +96,7 @@ func TestImageTag(t *testing.T) {
 	}{
 		{"myproject", "clawker-myproject:latest"},
 		{"test", "clawker-test:latest"},
+		{"", "clawker:latest"},
 	}
 
 	for _, tt := range tests {
@@ -112,14 +116,17 @@ func TestParseContainerName(t *testing.T) {
 		wantAgent   string
 		wantOK      bool
 	}{
-		// Valid names
+		// Valid 3-segment names
 		{"clawker.myproject.myagent", "myproject", "myagent", true},
 		{"clawker.test.agent1", "test", "agent1", true},
 		{"/clawker.backend.worker", "backend", "worker", true}, // Docker adds leading slash
 
+		// Valid 2-segment orphan names
+		{"clawker.ralph", "", "ralph", true},
+		{"/clawker.ralph", "", "ralph", true}, // Docker adds leading slash
+
 		// Invalid names
 		{"invalid", "", "", false},
-		{"clawker.only-two-parts", "", "", false},
 		{"notclawker.project.agent", "", "", false},
 		{"clawker.a.b.c", "", "", false}, // Too many parts
 		{"", "", "", false},

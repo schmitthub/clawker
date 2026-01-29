@@ -1,12 +1,6 @@
 # Test restart policy flag (--restart)
 # Verifies: Restart policy is applied to container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent restart-$RANDOM_STRING
 
@@ -22,7 +16,6 @@ stdout '3'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

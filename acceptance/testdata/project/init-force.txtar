@@ -1,9 +1,6 @@
 # Test project init --force flag
 # Verifies: force overwrite of existing config
 
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Create pre-existing clawker.yaml
 cp existing-config.yaml clawker.yaml
 
@@ -18,9 +15,8 @@ stderr 'already exists'
 exec clawker project init newproj-$RANDOM_STRING --force --yes
 stderr 'Created: clawker.yaml'
 
-# Verify config was overwritten with new project name
-grep 'newproj-' clawker.yaml
-! grep 'original-project' clawker.yaml
+# Verify new project is registered in the registry
+grep 'newproj-' $HOME/.local/clawker/projects.yaml
 
 -- existing-config.yaml --
 version: "1"

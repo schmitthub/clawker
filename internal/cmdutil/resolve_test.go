@@ -2,11 +2,9 @@ package cmdutil
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
@@ -31,9 +29,7 @@ func TestResolveDefaultImage(t *testing.T) {
 				DefaultImage: "config-image:latest",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "settings-image:latest",
-				},
+				DefaultImage: "settings-image:latest",
 			},
 			want: "config-image:latest",
 		},
@@ -43,9 +39,7 @@ func TestResolveDefaultImage(t *testing.T) {
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "settings-image:latest",
-				},
+				DefaultImage: "settings-image:latest",
 			},
 			want: "settings-image:latest",
 		},
@@ -53,9 +47,7 @@ func TestResolveDefaultImage(t *testing.T) {
 			name: "settings only (nil config)",
 			cfg:  nil,
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "settings-only:latest",
-				},
+				DefaultImage: "settings-only:latest",
 			},
 			want: "settings-only:latest",
 		},
@@ -73,9 +65,7 @@ func TestResolveDefaultImage(t *testing.T) {
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "",
-				},
+				DefaultImage: "",
 			},
 			want: "",
 		},
@@ -122,9 +112,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "settings-default:latest",
-				},
+				DefaultImage: "settings-default:latest",
 			},
 			want: "settings-default:latest",
 		},
@@ -134,9 +122,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 				DefaultImage: "config-default:latest",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "settings-default:latest",
-				},
+				DefaultImage: "settings-default:latest",
 			},
 			want: "config-default:latest",
 		},
@@ -380,59 +366,32 @@ func TestAgentArgsValidatorExact(t *testing.T) {
 
 func TestResolveContainerName(t *testing.T) {
 	tests := []struct {
-		name       string
-		project    string
-		agentName  string
-		wantResult string
-		wantErr    bool
+		name      string
+		project   string
+		agentName string
+		want      string
 	}{
 		{
-			name:       "valid resolution",
-			project:    "myapp",
-			agentName:  "ralph",
-			wantResult: "clawker.myapp.ralph",
-			wantErr:    false,
+			name:      "with project",
+			project:   "myapp",
+			agentName: "ralph",
+			want:      "clawker.myapp.ralph",
 		},
 		{
-			name:       "empty project returns error",
-			project:    "",
-			agentName:  "ralph",
-			wantResult: "",
-			wantErr:    true,
+			name:      "empty project produces orphan name",
+			project:   "",
+			agentName: "ralph",
+			want:      "clawker.ralph",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &Factory{}
-			f.configData = &config.Config{Project: tt.project}
-
-			result, err := ResolveContainerName(f, tt.agentName)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("ResolveContainerName() expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ResolveContainerName() unexpected error: %v", err)
-					return
-				}
-				if result != tt.wantResult {
-					t.Errorf("ResolveContainerName() = %q, want %q", result, tt.wantResult)
-				}
+			got := ResolveContainerName(tt.project, tt.agentName)
+			if got != tt.want {
+				t.Errorf("ResolveContainerName(%q, %q) = %q, want %q", tt.project, tt.agentName, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestResolveContainerName_ConfigError(t *testing.T) {
-	f := &Factory{}
-	f.configErr = fmt.Errorf("config load error")
-
-	_, err := ResolveContainerName(f, "ralph")
-	if err == nil {
-		t.Errorf("ResolveContainerName() expected error when config fails, got nil")
 	}
 }
 
@@ -442,68 +401,91 @@ func TestResolveContainerNames(t *testing.T) {
 		project       string
 		agentName     string
 		containerArgs []string
-		wantResult    []string
-		wantErr       bool
+		want          []string
 	}{
 		{
 			name:          "with agent name",
 			project:       "myapp",
 			agentName:     "ralph",
 			containerArgs: nil,
-			wantResult:    []string{"clawker.myapp.ralph"},
-			wantErr:       false,
+			want:          []string{"clawker.myapp.ralph"},
 		},
 		{
 			name:          "with container args",
 			project:       "myapp",
 			agentName:     "",
 			containerArgs: []string{"container1", "container2"},
-			wantResult:    []string{"container1", "container2"},
-			wantErr:       false,
+			want:          []string{"container1", "container2"},
 		},
 		{
 			name:          "empty agent and empty args",
 			project:       "myapp",
 			agentName:     "",
 			containerArgs: []string{},
-			wantResult:    []string{},
-			wantErr:       false,
+			want:          []string{},
 		},
 		{
-			name:          "agent with empty project returns error",
+			name:          "agent with empty project produces orphan name",
 			project:       "",
 			agentName:     "ralph",
 			containerArgs: nil,
-			wantResult:    nil,
-			wantErr:       true,
+			want:          []string{"clawker.ralph"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
-			f := &Factory{IOStreams: ios.IOStreams}
-			f.configData = &config.Config{Project: tt.project}
+			got := ResolveContainerNames(tt.project, tt.agentName, tt.containerArgs)
+			if len(got) != len(tt.want) {
+				t.Errorf("ResolveContainerNames() len = %d, want %d", len(got), len(tt.want))
+				return
+			}
+			for i, r := range got {
+				if r != tt.want[i] {
+					t.Errorf("ResolveContainerNames()[%d] = %q, want %q", i, r, tt.want[i])
+				}
+			}
+		})
+	}
+}
 
-			result, err := ResolveContainerNames(f, tt.agentName, tt.containerArgs)
+func TestResolveContainerNamesFromAgents(t *testing.T) {
+	tests := []struct {
+		name    string
+		project string
+		agents  []string
+		want    []string
+	}{
+		{
+			name:    "resolves multiple agents",
+			project: "myapp",
+			agents:  []string{"ralph", "writer"},
+			want:    []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+		},
+		{
+			name:    "empty agents returns empty",
+			project: "myapp",
+			agents:  []string{},
+			want:    []string{},
+		},
+		{
+			name:    "empty project produces orphan names",
+			project: "",
+			agents:  []string{"ralph"},
+			want:    []string{"clawker.ralph"},
+		},
+	}
 
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("ResolveContainerNames() expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("ResolveContainerNames() unexpected error: %v", err)
-					return
-				}
-				if len(result) != len(tt.wantResult) {
-					t.Errorf("ResolveContainerNames() len = %d, want %d", len(result), len(tt.wantResult))
-					return
-				}
-				for i, r := range result {
-					if r != tt.wantResult[i] {
-						t.Errorf("ResolveContainerNames()[%d] = %q, want %q", i, r, tt.wantResult[i])
-					}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveContainerNamesFromAgents(tt.project, tt.agents)
+			if len(got) != len(tt.want) {
+				t.Errorf("ResolveContainerNamesFromAgents() len = %d, want %d", len(got), len(tt.want))
+				return
+			}
+			for i, r := range got {
+				if r != tt.want[i] {
+					t.Errorf("ResolveContainerNamesFromAgents()[%d] = %q, want %q", i, r, tt.want[i])
 				}
 			}
 		})
@@ -533,7 +515,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		{
 			name:       "falls back to default from settings",
 			cfg:        &config.Config{DefaultImage: ""},
-			settings:   &config.Settings{Project: config.ProjectDefaults{DefaultImage: "settings-default:latest"}},
+			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
 			wantRef:    "settings-default:latest",
 			wantSource: ImageSourceDefault,
 			wantNil:    false,
@@ -541,7 +523,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		{
 			name:       "config default takes precedence over settings",
 			cfg:        &config.Config{DefaultImage: "config-default:latest"},
-			settings:   &config.Settings{Project: config.ProjectDefaults{DefaultImage: "settings-default:latest"}},
+			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
 			wantRef:    "config-default:latest",
 			wantSource: ImageSourceDefault,
 			wantNil:    false,
@@ -561,9 +543,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 				Project:      "",
 			},
 			settings: &config.Settings{
-				Project: config.ProjectDefaults{
-					DefaultImage: "",
-				},
+				DefaultImage: "",
 			},
 			wantRef:    "",
 			wantSource: "",

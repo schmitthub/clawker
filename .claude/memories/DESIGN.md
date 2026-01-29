@@ -29,8 +29,8 @@ A clawker project is defined by configuration files. Every clawker command requi
 
 1. CLI flags
 2. Environment variables
-3. Repository root config (`./clawker.yaml`)
-4. User home config (`~/.config/clawker/clawker.yaml`)
+3. Project config (`./clawker.yaml`)
+4. User defaults (from settings)
 
 Higher precedence wins silently (no warnings on override).
 
@@ -38,11 +38,11 @@ Higher precedence wins silently (no warnings on override).
 
 | Location | Purpose |
 |----------|---------|
-| `./clawker.yaml` | Project-specific settings |
-| `~/.config/clawker/clawker.yaml` | Global project defaults |
-| `~/.config/clawker/config.yaml` | CLI/user settings (separate schema) |
+| `./clawker.yaml` | Project-specific config (schema: `Config`) |
+| `~/.local/clawker/settings.yaml` | User settings (`Settings`: default_image, logging) |
+| `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
 
-*Note: Detailed config schema TBD.*
+**Project Resolution**: The `Resolver` uses the project registry to resolve the current working directory to a registered project via longest-prefix path matching. This replaces directory walking. The result is a `Resolution` containing `ProjectKey`, `ProjectEntry`, and `WorkDir`. `Config.Project` is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
 
 ### 2.2 Agent
 
@@ -73,11 +73,21 @@ Three mechanisms identify clawker-managed resources:
 
 ```
 com.clawker.managed=true
-com.clawker.project=<project-name>
+com.clawker.project=<project-name>   # omitted when project is empty
 com.clawker.agent=<agent-name>
 ```
 
+**Naming Segments**:
+- 3-segment: `clawker.project.agent` (e.g., `clawker.myapp.ralph`) — when project is set
+- 2-segment: `clawker.agent` (e.g., `clawker.ralph`) — when project is empty (orphan project)
+
 **Strict Ownership**: Clawker refuses to operate on resources without `com.clawker.managed=true` label, even if they have the `clawker.` name prefix.
+
+### Project Registry Lifecycle
+
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `projects.yaml`
+2. **Lookup**: `Factory.Resolution()` calls `Resolver.Resolve(workDir)` to find the matching project by longest-prefix path match
+3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 
 ## 3. System Architecture
 

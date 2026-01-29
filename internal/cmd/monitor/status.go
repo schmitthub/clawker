@@ -8,12 +8,15 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
 
 func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
+	ios := f.IOStreams
+
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show monitoring stack status",
@@ -23,15 +26,14 @@ Displays running/stopped state and service URLs when the stack is running.`,
 		Example: `  # Check monitoring stack status
   clawker monitor status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(f)
+			return runStatus(ios)
 		},
 	}
 
 	return cmd
 }
 
-func runStatus(f *cmdutil.Factory) error {
-	ios := f.IOStreams
+func runStatus(ios *iostreams.IOStreams) error {
 	cs := ios.ColorScheme()
 
 	// Resolve monitor directory

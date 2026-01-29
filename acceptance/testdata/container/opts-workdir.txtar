@@ -1,12 +1,6 @@
 # Test working directory flag (-w/--workdir)
 # Verifies: Container starts in specified working directory
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test -w shorthand
 exec clawker container run --rm -w /tmp alpine:latest pwd
 stdout '/tmp'
@@ -17,7 +11,6 @@ stdout '/var'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test DNS configuration flag (--dns)
 # Verifies: Custom DNS servers are set on container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent dns-$RANDOM_STRING
 
@@ -20,7 +14,6 @@ stdout '8.8.4.4'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

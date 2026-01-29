@@ -1,12 +1,6 @@
 # Test container ID file flag (--cidfile)
 # Verifies: Container ID is written to the specified file
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent cid-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout '[0-9a-f]{12}'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test volume create and remove commands
 # Verifies: volumes can be created and removed
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Create a volume
 exec clawker volume create vol-test-$RANDOM_STRING
 stdout 'vol-test-'$RANDOM_STRING
@@ -25,7 +19,6 @@ exec clawker volume ls
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

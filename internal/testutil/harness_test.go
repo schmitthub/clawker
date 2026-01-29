@@ -239,19 +239,16 @@ func TestHarness_UpdateConfig(t *testing.T) {
 
 	// Update the config
 	h.UpdateConfig(func(cfg *config.Config) {
-		cfg.Project = "updated"
 		cfg.Build.Image = "new:image"
 	})
 
 	// Verify in-memory config updated
-	assert.Equal(t, "updated", h.Config.Project)
 	assert.Equal(t, "new:image", h.Config.Build.Image)
 
 	// Verify file was rewritten - reload and check
 	loader := config.NewLoader(h.ProjectDir)
 	reloaded, err := loader.Load()
 	require.NoError(t, err)
-	assert.Equal(t, "updated", reloaded.Project)
 	assert.Equal(t, "new:image", reloaded.Build.Image)
 }
 

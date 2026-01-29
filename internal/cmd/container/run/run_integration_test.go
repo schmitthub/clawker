@@ -554,3 +554,117 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs, "container-name-test-output", "expected echo output in logs")
 }
+
+// TestRunIntegration_AttachThenStart tests that non-detached run mode properly
+// attaches to a short-lived container, receives its output, and exits cleanly.
+// This exercises the attachThenStart flow including the waitForContainerExit helper.
+func TestRunIntegration_AttachThenStart(t *testing.T) {
+	testutil.RequireDocker(t)
+	ctx := context.Background()
+
+	h := testutil.NewHarness(t,
+		testutil.WithConfigBuilder(
+			testutil.MinimalValidConfig().
+				WithProject("run-attach-test").
+				WithSecurity(testutil.SecurityFirewallDisabled()),
+		),
+	)
+	h.Chdir()
+
+	client := testutil.NewTestClient(t)
+	defer testutil.CleanupProjectResources(ctx, client, "run-attach-test")
+
+	agentName := "test-attach-" + time.Now().Format("150405.000000")
+
+	ios := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		WorkDir:  h.ProjectDir,
+		IOStreams: ios.IOStreams,
+	}
+
+	// Run without --detach: this goes through attachThenStart
+	// Use --rm so container is cleaned up automatically
+	// Do NOT use -t (TTY) since test stdin is not a terminal
+	cmd := NewCmd(f)
+	cmd.SetArgs([]string{
+		"--rm",
+		"--agent", agentName,
+		"alpine:latest",
+		"sh", "-c", "echo attach-test-output && echo second-line",
+	})
+
+	// Execute in a goroutine with timeout since attachThenStart blocks
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Execute()
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "run command failed: stderr=%s", ios.ErrBuf.String())
+	case <-time.After(30 * time.Second):
+		t.Fatal("run command timed out - attachThenStart did not return")
+	}
+
+	// Verify output was captured
+	output := ios.OutBuf.String()
+	require.Contains(t, output, "attach-test-output",
+		"expected container output to be streamed to stdout, got: %q", output)
+	require.Contains(t, output, "second-line",
+		"expected all container output to be captured")
+}
+
+// TestRunIntegration_AttachThenStart_NonZeroExit tests that non-detached run mode
+// properly reports non-zero exit codes from the container.
+func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
+	testutil.RequireDocker(t)
+	ctx := context.Background()
+
+	h := testutil.NewHarness(t,
+		testutil.WithConfigBuilder(
+			testutil.MinimalValidConfig().
+				WithProject("run-exit-test").
+				WithSecurity(testutil.SecurityFirewallDisabled()),
+		),
+	)
+	h.Chdir()
+
+	client := testutil.NewTestClient(t)
+	defer testutil.CleanupProjectResources(ctx, client, "run-exit-test")
+
+	agentName := "test-exit-" + time.Now().Format("150405.000000")
+
+	ios := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		WorkDir:  h.ProjectDir,
+		IOStreams: ios.IOStreams,
+	}
+
+	cmd := NewCmd(f)
+	cmd.SetArgs([]string{
+		"--rm",
+		"--agent", agentName,
+		"alpine:latest",
+		"sh", "-c", "echo before-exit && exit 42",
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Execute()
+	}()
+
+	select {
+	case err := <-done:
+		// Should get an error for non-zero exit
+		require.Error(t, err, "expected error for non-zero exit code")
+		require.Contains(t, err.Error(), "42",
+			"error should contain exit code 42")
+	case <-time.After(30 * time.Second):
+		t.Fatal("run command timed out")
+	}
+
+	// Verify output was still captured before exit
+	output := ios.OutBuf.String()
+	require.Contains(t, output, "before-exit",
+		"expected output before exit to be captured")
+}

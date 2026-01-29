@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -16,6 +18,12 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
+	IOStreams        *iostreams.IOStreams
+	Client          func(context.Context) (*docker.Client, error)
+	Config          func() (*config.Config, error)
+	Resolution      func() *config.Resolution
+	EnsureHostProxy func() error
+
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
 	Containers  []string
@@ -24,7 +32,13 @@ type StartOptions struct {
 
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
-	opts := &StartOptions{}
+	opts := &StartOptions{
+		IOStreams:        f.IOStreams,
+		Client:          f.Client,
+		Config:          f.Config,
+		Resolution:      f.Resolution,
+		EnsureHostProxy: f.EnsureHostProxy,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "start [OPTIONS] CONTAINER [CONTAINER...]",
@@ -48,13 +62,10 @@ Container names can be:
 
   # Start and attach to container output
   clawker container start --attach clawker.myapp.ralph`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args
-			return runStart(cmd.Context(), f, opts)
+			return runStart(cmd.Context(), opts)
 		},
 	}
 
@@ -65,19 +76,19 @@ Container names can be:
 	return cmd
 }
 
-func runStart(ctx context.Context, f *cmdutil.Factory, opts *StartOptions) error {
+func runStart(ctx context.Context, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
-	ios := f.IOStreams
+	ios := opts.IOStreams
 
 	// Load config to check host proxy setting
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load config, using defaults for host proxy")
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -92,22 +103,22 @@ func runStart(ctx context.Context, f *cmdutil.Factory, opts *StartOptions) error
 
 	// Ensure host proxy is running for container-to-host communication (if enabled)
 	if cfg == nil || cfg.Security.HostProxyEnabled() {
-		if err := f.EnsureHostProxy(); err != nil {
+		if err := opts.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+		} else {
+			logger.Debug().Msg("host proxy started successfully")
 		}
+	} else {
+		logger.Debug().Msg("host proxy disabled by config")
 	}
 
 	// Resolve container names if --agent provided
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		var err error
-		containers, err = cmdutil.ResolveContainerNamesFromAgents(f, containers)
-		if err != nil {
-			return err
-		}
+		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// If attach or interactive mode, can only work with one container
@@ -183,7 +194,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	}
 
 	// Set up wait channel for container exit
-	waitResult := client.ContainerWait(ctx, containerID, docker.WaitConditionNotRunning)
+	waitResult := client.ContainerWait(ctx, containerID, docker.WaitConditionNextExit)
 
 	// Handle I/O
 	if hasTTY && pty != nil {
@@ -202,13 +213,31 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 		// Wait for either stream to end or container to exit
 		select {
 		case err := <-streamDone:
-			return err
+			if err != nil {
+				return err
+			}
+			// Stream ended cleanly — check for exit code
+			select {
+			case result := <-waitResult.Result:
+				if result.Error != nil {
+					return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
+				}
+				if result.StatusCode != 0 {
+					return &cmdutil.ExitError{Code: int(result.StatusCode)}
+				}
+				return nil
+			case err := <-waitResult.Error:
+				return err
+			case <-time.After(2 * time.Second):
+				// No exit status — container still running (Ctrl+P Ctrl+Q detach)
+				return nil
+			}
 		case result := <-waitResult.Result:
 			if result.Error != nil {
 				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+				return &cmdutil.ExitError{Code: int(result.StatusCode)}
 			}
 			return nil
 		case err := <-waitResult.Error:
@@ -252,7 +281,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 				return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 			}
 			if result.StatusCode != 0 {
-				return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+				return &cmdutil.ExitError{Code: int(result.StatusCode)}
 			}
 			return nil
 		case err := <-waitResult.Error:
@@ -266,7 +295,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 			return fmt.Errorf("container %s exit error: %s", containerID[:12], result.Error.Message)
 		}
 		if result.StatusCode != 0 {
-			return fmt.Errorf("container %s exited with status %d", containerID[:12], result.StatusCode)
+			return &cmdutil.ExitError{Code: int(result.StatusCode)}
 		}
 		return nil
 	case err := <-waitResult.Error:

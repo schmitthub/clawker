@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
 )
 
@@ -41,6 +42,14 @@ type Factory struct {
 	settingsLoader *config.SettingsLoader
 	settingsData   *config.Settings
 	settingsErr    error
+
+	registryOnce   sync.Once
+	registryLoader *config.RegistryLoader
+	registryData   *config.ProjectRegistry
+	registryErr    error
+
+	resolutionOnce sync.Once
+	resolution     *config.Resolution
 
 	hostProxyOnce    sync.Once
 	hostProxyManager *hostproxy.Manager
@@ -90,9 +99,25 @@ func (f *Factory) CloseClient() {
 }
 
 // ConfigLoader returns a config loader for the working directory.
+// It uses registry-based resolution to determine the project root and
+// loads user-level defaults from $CLAWKER_HOME/clawker.yaml.
 func (f *Factory) ConfigLoader() *config.Loader {
 	f.configOnce.Do(func() {
-		f.configLoader = config.NewLoader(f.WorkDir)
+		var opts []config.LoaderOption
+
+		// Use registry resolution to determine project root and key
+		res := f.Resolution()
+		if res.Found() {
+			opts = append(opts,
+				config.WithProjectRoot(res.ProjectRoot()),
+				config.WithProjectKey(res.ProjectKey),
+			)
+		}
+
+		// Enable user-level defaults from $CLAWKER_HOME/clawker.yaml
+		opts = append(opts, config.WithUserDefaults(""))
+
+		f.configLoader = config.NewLoader(f.WorkDir, opts...)
 	})
 	return f.configLoader
 }
@@ -114,9 +139,19 @@ func (f *Factory) ResetConfig() {
 }
 
 // SettingsLoader returns the user settings loader (lazily initialized).
+// If a project root is resolved from the registry, it enables project-level
+// settings override via .clawker.settings.yaml.
 func (f *Factory) SettingsLoader() (*config.SettingsLoader, error) {
 	f.settingsOnce.Do(func() {
-		f.settingsLoader, f.settingsErr = config.NewSettingsLoader()
+		var opts []config.SettingsLoaderOption
+
+		// Enable project-level settings override if in a project
+		res := f.Resolution()
+		if res.Found() {
+			opts = append(opts, config.WithProjectSettingsRoot(res.ProjectRoot()))
+		}
+
+		f.settingsLoader, f.settingsErr = config.NewSettingsLoader(opts...)
 	})
 	return f.settingsLoader, f.settingsErr
 }
@@ -143,6 +178,46 @@ func (f *Factory) Settings() (*config.Settings, error) {
 func (f *Factory) InvalidateSettingsCache() {
 	f.settingsData = nil
 	f.settingsErr = nil
+}
+
+// RegistryLoader returns the project registry loader (lazily initialized).
+func (f *Factory) RegistryLoader() (*config.RegistryLoader, error) {
+	f.registryOnce.Do(func() {
+		f.registryLoader, f.registryErr = config.NewRegistryLoader()
+		if f.registryErr == nil {
+			f.registryData, f.registryErr = f.registryLoader.Load()
+		}
+	})
+	return f.registryLoader, f.registryErr
+}
+
+// Registry returns the loaded project registry (loads on first call).
+func (f *Factory) Registry() (*config.ProjectRegistry, error) {
+	if _, err := f.RegistryLoader(); err != nil {
+		return nil, err
+	}
+	return f.registryData, f.registryErr
+}
+
+// Resolution returns the project resolution for the current working directory.
+// Uses the registry to determine if WorkDir is inside a registered project.
+// Never returns nil — returns an empty Resolution if no project is found.
+func (f *Factory) Resolution() *config.Resolution {
+	f.resolutionOnce.Do(func() {
+		registry, err := f.Registry()
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
+			f.resolution = &config.Resolution{WorkDir: f.WorkDir}
+			return
+		}
+		if registry == nil {
+			f.resolution = &config.Resolution{WorkDir: f.WorkDir}
+			return
+		}
+		resolver := config.NewResolver(registry)
+		f.resolution = resolver.Resolve(f.WorkDir)
+	})
+	return f.resolution
 }
 
 // HostProxy returns the host proxy manager (lazily initialized).

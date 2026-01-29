@@ -1,12 +1,6 @@
 # Test volume list command
 # Verifies: volumes can be listed with various options
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker volume rm vol-list1-$RANDOM_STRING
 defer clawker volume rm vol-list2-$RANDOM_STRING
@@ -22,7 +16,6 @@ stdout 'vol-list2-'$RANDOM_STRING
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

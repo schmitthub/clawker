@@ -1,12 +1,6 @@
 # Test container logs command
 # Verifies: logs are retrieved from container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent logs-$RANDOM_STRING
 
@@ -29,7 +23,6 @@ stdout 'line3'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

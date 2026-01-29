@@ -37,7 +37,7 @@
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
 │   ├── cmdutil/               # Factory, error handling, output utilities
-│   ├── config/                # Viper config loading + validation
+│   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware (wraps pkg/whail)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
@@ -79,6 +79,9 @@ go test -tags=acceptance ./acceptance -v -timeout 15m
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
 | `prompts.Prompter` | Interactive prompts with TTY/CI awareness |
+| `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
+| `Resolver` | Resolves working directory to registered project via longest-prefix match |
+| `Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
@@ -88,7 +91,7 @@ See `.claude/memories/CLI-VERBS.md` for complete command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`
 
-**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *`
+**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`)
 
 Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
 
@@ -97,10 +100,19 @@ Commands use positional arguments for resource names (e.g., `clawker container s
 ### User Settings (~/.local/clawker/settings.yaml)
 
 ```yaml
-project:
-  default_image: "node:20-slim"
-projects: []  # Managed by 'clawker init'
+default_image: "node:20-slim"
 ```
+
+### Project Registry (~/.local/clawker/projects.yaml)
+
+```yaml
+projects:
+  my-app:
+    name: "my-app"
+    root: "/Users/dev/my-app"
+```
+
+Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths. `Config.Project` is computed from the registry (never read from YAML — it is `yaml:"-"`).
 
 ### Project Config (clawker.yaml)
 
@@ -143,6 +155,9 @@ ralph:
 4. Hierarchical naming: `clawker.project.agent`
 5. Labels (`com.clawker.*`) are authoritative for filtering
 6. stdout for data, stderr for status
+7. Project registry replaces directory walking for resolution
+8. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
+9. Commands receive function references on Options structs, not `*Factory` directly
 
 ## Important Gotchas
 
@@ -156,6 +171,8 @@ ralph:
 - Acceptance test assertions are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
 - Go import cycles: `internal/cmd/container/opts/` exists because parent imports subcommands and subcommands need shared types
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
+- `Config.Project` is `yaml:"-"` — injected by loader from registry, never persisted
+- Empty projects generate 2-segment names (`clawker.ralph`), not 3 (`clawker..ralph`)
 
 ## Context Management (Critical)
 

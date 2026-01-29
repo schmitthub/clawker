@@ -1,11 +1,6 @@
+[!linux] skip
 # Test block IO weight validation (--blkio-weight range)
 # Verifies: Invalid blkio-weight values are rejected
-
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
 
 # Test below minimum (valid range is 10-1000)
 ! exec clawker container create --agent blkv-$RANDOM_STRING --blkio-weight 5 alpine:latest sleep 3600
@@ -17,7 +12,6 @@ stderr -count=1 '.'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

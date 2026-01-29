@@ -1,12 +1,6 @@
 # Test volumes-from flag (--volumes-from)
 # Verifies: Volumes from another container are mounted
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent vfsrc-$RANDOM_STRING
 defer clawker container rm --force --agent vfdst-$RANDOM_STRING
@@ -24,7 +18,6 @@ stdout 'vfsrc'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test CPU limit flag (--cpus)
 # Verifies: CPU limit is applied to container via inspect
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent cpu-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout '1500000000'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

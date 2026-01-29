@@ -1,12 +1,6 @@
 # Test DNS search flag (--dns-search)
 # Verifies: DNS search domains are configured in the container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test via /etc/resolv.conf
 exec clawker container run --rm --dns-search example.com alpine:latest cat /etc/resolv.conf
 stdout 'example.com'
@@ -19,7 +13,6 @@ stdout 'test.local'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

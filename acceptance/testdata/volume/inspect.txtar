@@ -1,12 +1,6 @@
 # Test volume inspect command
 # Verifies: volume details can be inspected
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker volume rm vol-inspect-$RANDOM_STRING
 
@@ -21,7 +15,6 @@ stdout '"Driver": "local"'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

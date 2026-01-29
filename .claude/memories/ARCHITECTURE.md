@@ -75,7 +75,7 @@ clawker image     [list|inspect|build|remove|prune]
 Shared utilities for all CLI commands.
 
 **Key abstractions:**
-- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, host proxy, IOStreams, Prompter)
+- `Factory` - Lazy-initialized dependencies (Docker client, config, settings, registry, resolution, host proxy, IOStreams, Prompter)
 - Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`)
 - Image resolution (`ResolveImageWithSource`, `FindProjectImage`)
 - Project utilities
@@ -117,7 +117,7 @@ User interaction utilities with TTY and CI awareness.
 |---------|---------|
 | `internal/workspace` | Bind vs Snapshot strategies for host-container file sharing |
 | `internal/term` | PTY handling for interactive sessions |
-| `internal/config` | Viper config loading and validation |
+| `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`) |
 | `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
@@ -156,9 +156,24 @@ Runs Claude Code in non-interactive Docker exec with circuit breaker protection.
 - `RateLimiter` - Sliding window rate limiting
 - `Analyzer` - RALPH_STATUS parser and completion detection
 
+## Command Dependency Injection Pattern
+
+Commands receive function references on their Options structs rather than `*Factory` directly. `NewCmd` still takes `*Factory` and wires the function references during command setup:
+
+```go
+type StopOptions struct {
+    IOStreams   *iostreams.IOStreams
+    Client     func(context.Context) (*docker.Client, error)
+    Resolution func() *config.Resolution
+    // ... command-specific fields
+}
+```
+
+Run functions only accept `*Options`, keeping them testable without a full Factory.
+
 ## Container Naming & Labels
 
-**Container names**: `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
+**Container names**: `clawker.project.agent` (3-segment) or `clawker.agent` (2-segment when project is empty)
 **Volume names**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
 
 **Labels** (all `com.clawker.*`):
@@ -166,7 +181,7 @@ Runs Claude Code in non-interactive Docker exec with circuit breaker protection.
 | Label | Purpose |
 |-------|---------|
 | `managed` | `true` — authoritative ownership marker |
-| `project` | Project name |
+| `project` | Project name (omitted when project is empty) |
 | `agent` | Agent name |
 | `version` | Clawker version |
 | `image` | Source image reference |

@@ -8,11 +8,22 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	ralphtui "github.com/schmitthub/clawker/internal/ralph/tui"
 )
 
+type tuiOptions struct {
+	IOStreams *iostreams.IOStreams
+	Config   func() (*config.Config, error)
+}
+
 // NewCmdTUI creates the `clawker ralph tui` command.
 func NewCmdTUI(f *cmdutil.Factory) *cobra.Command {
+	opts := &tuiOptions{
+		IOStreams: f.IOStreams,
+		Config:   f.Config,
+	}
+
 	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch interactive TUI dashboard",
@@ -29,17 +40,17 @@ Features:
 		Example: `  # Launch TUI for current project
   clawker ralph tui`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI(f)
+			return runTUI(opts)
 		},
 	}
 
 	return cmd
 }
 
-func runTUI(f *cmdutil.Factory) error {
-	ios := f.IOStreams
+func runTUI(opts *tuiOptions) error {
+	ios := opts.IOStreams
 
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
 			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")

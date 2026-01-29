@@ -6,12 +6,18 @@ import (
 	"io"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // LogsOptions holds options for the logs command.
 type LogsOptions struct {
+	IOStreams   *iostreams.IOStreams
+	Client     func(context.Context) (*docker.Client, error)
+	Resolution func() *config.Resolution
+
 	Agent      bool
 	Follow     bool
 	Timestamps bool
@@ -25,7 +31,11 @@ type LogsOptions struct {
 
 // NewCmdLogs creates the container logs command.
 func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
-	opts := &LogsOptions{}
+	opts := &LogsOptions{
+		IOStreams:   f.IOStreams,
+		Client:     f.Client,
+		Resolution: f.Resolution,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "logs [CONTAINER]",
@@ -58,7 +68,7 @@ Container name can be:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return runLogs(cmd.Context(), f, opts)
+			return runLogs(cmd.Context(), opts)
 		},
 	}
 
@@ -73,21 +83,18 @@ Container name can be:
 	return cmd
 }
 
-func runLogs(ctx context.Context, f *cmdutil.Factory, opts *LogsOptions) error {
-	ios := f.IOStreams
+func runLogs(ctx context.Context, opts *LogsOptions) error {
+	ios := opts.IOStreams
 
 	// Resolve container name
 	containerName := opts.containers[0]
 	if opts.Agent {
-		containers, err := cmdutil.ResolveContainerNamesFromAgents(f, opts.containers)
-		if err != nil {
-			return err
-		}
+		containers := cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.containers)
 		containerName = containers[0]
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

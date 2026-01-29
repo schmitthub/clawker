@@ -1,12 +1,6 @@
 # Test container pause and unpause commands
 # Verifies: container can be paused and unpaused
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent pause-$RANDOM_STRING
 defer clawker container stop --agent pause-$RANDOM_STRING
@@ -31,7 +25,6 @@ stdout 'false'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -1,12 +1,6 @@
 # Test image inspect command
 # Verifies: image details can be inspected
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Build a test image first
 exec clawker image build --tag test-img-inspect-$RANDOM_STRING:latest
 
@@ -20,7 +14,6 @@ stdout 'test-img-inspect-'$RANDOM_STRING
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

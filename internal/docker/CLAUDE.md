@@ -24,15 +24,18 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 
 ## Naming Convention
 
-- **Containers**: `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
+- **3-segment** (with project): `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
+- **2-segment** (orphan/empty project): `clawker.agent` (e.g., `clawker.ralph`)
 - **Volumes**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
+
+`ContainerName("", "ralph")` → `"clawker.ralph"` (2-segment, no empty segment)
 
 ## Labels (`com.clawker.*`)
 
 | Label | Example |
 |-------|---------|
 | `com.clawker.managed` | `true` |
-| `com.clawker.project` | `myapp` |
+| `com.clawker.project` | `myapp` (omitted when project is empty) |
 | `com.clawker.agent` | `ralph` |
 | `com.clawker.version` | `1.0.0` |
 | `com.clawker.image` | `clawker-myapp:dev` |
@@ -58,16 +61,7 @@ client.ContainerStop(ctx, id, nil)
 
 ## Whail Engine Method Pattern
 
-```go
-func (e *Engine) ContainerXxx(ctx context.Context, containerID string, ...) error {
-    isManaged, err := e.IsContainerManaged(ctx, containerID)
-    if err != nil { return ErrContainerXxxFailed(containerID, err) }
-    if !isManaged { return ErrContainerNotFound(containerID) }
-    return e.APIClient.ContainerXxx(ctx, containerID, ...)
-}
-```
-
-**`IsContainerManaged` returns `(false, nil)` for non-existent containers** — callers cannot distinguish "not found" from "exists but unmanaged". Both result in `ErrContainerNotFound`.
+The `whail.Engine` checks `IsContainerManaged` before operating. See `pkg/whail/` for details. Key behavior: callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
 
 ## Channel-Based Methods (ContainerWait)
 

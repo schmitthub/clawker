@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/ralph"
 	"github.com/spf13/cobra"
@@ -16,6 +18,10 @@ import (
 
 // RunOptions holds options for the ralph run command.
 type RunOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client   func(context.Context) (*docker.Client, error)
+	Config   func() (*config.Config, error)
+
 	Agent               string
 	Prompt              string
 	PromptFile          string
@@ -39,7 +45,11 @@ type RunOptions struct {
 }
 
 func newCmdRun(f *cmdutil.Factory) *cobra.Command {
-	opts := &RunOptions{}
+	opts := &RunOptions{
+		IOStreams: f.IOStreams,
+		Client:   f.Client,
+		Config:   f.Config,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -83,7 +93,7 @@ The container must already be running. Use 'clawker start' first.`,
   # Run in YOLO mode (skip all permission prompts)
   clawker ralph run --agent dev --skip-permissions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRalph(f, opts)
+			return runRalph(opts)
 		},
 	}
 
@@ -118,12 +128,12 @@ The container must already be running. Use 'clawker start' first.`,
 	return cmd
 }
 
-func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
+func runRalph(opts *RunOptions) error {
 	ctx := context.Background()
-	ios := f.IOStreams
+	ios := opts.IOStreams
 
 	// Load config
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err
@@ -176,7 +186,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 	containerName := docker.ContainerName(cfg.Project, opts.Agent)
 
 	// Get docker client
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -321,7 +331,7 @@ func runRalph(f *cmdutil.Factory, opts *RunOptions) error {
 			cmdutil.PrintError(ios, "Failed to encode JSON output: %v", jsonErr)
 			return fmt.Errorf("json encoding failed: %w", jsonErr)
 		}
-		fmt.Fprintln(f.IOStreams.Out, string(data))
+		fmt.Fprintln(ios.Out, string(data))
 		if result.Error != nil {
 			return result.Error
 		}

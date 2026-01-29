@@ -1,12 +1,6 @@
 # Test container inspect command
 # Verifies: detailed container information is returned
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent inspect-$RANDOM_STRING
 defer clawker container stop --agent inspect-$RANDOM_STRING
@@ -29,7 +23,6 @@ stdout 'alpine'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

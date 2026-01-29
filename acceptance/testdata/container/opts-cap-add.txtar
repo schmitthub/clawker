@@ -1,12 +1,6 @@
 # Test capability add flag (--cap-add)
 # Verifies: Linux capabilities are added to container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent capadd-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'SYS_PTRACE'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

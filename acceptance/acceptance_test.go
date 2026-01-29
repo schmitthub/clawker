@@ -207,6 +207,19 @@ func sharedSetup(env testEnv, category string) func(*testscript.Env) error {
 		// Set clawker-specific env vars for testing
 		e.Setenv("CLAWKER_SPINNER_DISABLED", "1") // Disable spinners for cleaner test output
 
+		// Set CLAWKER_HOME so ClawkerHome() resolves to the sandbox
+		clawkerHome := filepath.Join(e.WorkDir, ".local", "clawker")
+		e.Setenv("CLAWKER_HOME", clawkerHome)
+
+		// Create the clawker home directory and register the test project
+		if err := os.MkdirAll(clawkerHome, 0o755); err != nil {
+			return fmt.Errorf("creating clawker home: %w", err)
+		}
+		registryContent := fmt.Sprintf("projects:\n  %s:\n    name: %q\n    root: %q\n", project, project, e.WorkDir)
+		if err := os.WriteFile(filepath.Join(clawkerHome, "projects.yaml"), []byte(registryContent), 0o644); err != nil {
+			return fmt.Errorf("writing projects.yaml: %w", err)
+		}
+
 		return nil
 	}
 }

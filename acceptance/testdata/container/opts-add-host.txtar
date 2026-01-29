@@ -1,12 +1,6 @@
 # Test extra hosts flag (--add-host)
 # Verifies: Custom host-to-IP mappings are added to /etc/hosts
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test via cat /etc/hosts
 exec clawker container run --rm --add-host myservice:192.168.1.100 alpine:latest cat /etc/hosts
 stdout 'myservice'
@@ -20,7 +14,6 @@ stdout 'db:10.0.0.5'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

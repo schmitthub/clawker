@@ -1,12 +1,6 @@
 # Test health check flags (--health-cmd, --health-interval, etc.)
 # Verifies: Health check configuration is applied to container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent health-$RANDOM_STRING
 
@@ -20,7 +14,6 @@ stdout 'exit 0'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

@@ -5,18 +5,26 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/ralph"
 	"github.com/spf13/cobra"
 )
 
 // StatusOptions holds options for the ralph status command.
 type StatusOptions struct {
+	IOStreams *iostreams.IOStreams
+	Config   func() (*config.Config, error)
+
 	Agent string
 	JSON  bool
 }
 
 func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
-	opts := &StatusOptions{}
+	opts := &StatusOptions{
+		IOStreams: f.IOStreams,
+		Config:   f.Config,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -33,7 +41,7 @@ Shows information about:
   # Output as JSON
   clawker ralph status --agent dev --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(f, opts)
+			return runStatus(opts)
 		},
 	}
 
@@ -45,11 +53,11 @@ Shows information about:
 	return cmd
 }
 
-func runStatus(f *cmdutil.Factory, opts *StatusOptions) error {
-	ios := f.IOStreams
+func runStatus(opts *StatusOptions) error {
+	ios := opts.IOStreams
 
 	// Load config
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err

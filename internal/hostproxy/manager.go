@@ -52,6 +52,7 @@ func (m *Manager) EnsureRunning() error {
 	if err := m.server.Start(); err != nil {
 		return fmt.Errorf("failed to start host proxy server: %w", err)
 	}
+	logger.Debug().Int("port", m.port).Msg("host proxy server started on port")
 
 	// Wait briefly for server to be ready
 	time.Sleep(50 * time.Millisecond)
@@ -64,6 +65,7 @@ func (m *Manager) EnsureRunning() error {
 		_ = m.server.Stop(ctx)
 		return fmt.Errorf("host proxy server not responding: %w", err)
 	}
+	logger.Debug().Msg("host proxy health check passed")
 
 	return nil
 }

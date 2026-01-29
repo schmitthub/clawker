@@ -8,6 +8,17 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
+// ExitError represents a container exit with a non-zero status code.
+// Commands should return this instead of calling os.Exit() directly,
+// allowing deferred cleanup to run. The root command handles os.Exit().
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
 // HandleError prints an error to stderr with user-friendly formatting.
 // If the error is a DockerError, it uses FormatUserError for rich output.
 // Otherwise, it prints a simple error message.

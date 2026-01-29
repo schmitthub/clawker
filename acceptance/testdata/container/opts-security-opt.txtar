@@ -1,12 +1,6 @@
 # Test security options flag (--security-opt)
 # Verifies: Security options are passed to container
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Register cleanup
 defer clawker container rm --force --agent secopt-$RANDOM_STRING
 
@@ -19,7 +13,6 @@ stdout 'no-new-privileges'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

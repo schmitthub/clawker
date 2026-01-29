@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -12,7 +13,9 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -22,6 +25,16 @@ import (
 // Options holds options for the run command.
 type Options struct {
 	*copts.ContainerOptions
+
+	IOStreams                *iostreams.IOStreams
+	Client                  func(context.Context) (*docker.Client, error)
+	Config                  func() (*config.Config, error)
+	Settings                func() (*config.Settings, error)
+	Prompter                func() *prompts.Prompter
+	SettingsLoader          func() (*config.SettingsLoader, error)
+	InvalidateSettingsCache func()
+	EnsureHostProxy         func() error
+	HostProxyEnvVar         func() string
 
 	// Run-specific options
 	Detach bool // Run in background
@@ -36,7 +49,18 @@ type Options struct {
 // NewCmd creates a new container run command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
-	opts := &Options{ContainerOptions: containerOpts}
+	opts := &Options{
+		ContainerOptions:        containerOpts,
+		IOStreams:                f.IOStreams,
+		Client:                  f.Client,
+		Config:                  f.Config,
+		Settings:                f.Settings,
+		Prompter:                f.Prompter,
+		SettingsLoader:          f.SettingsLoader,
+		InvalidateSettingsCache: f.InvalidateSettingsCache,
+		EnsureHostProxy:         f.EnsureHostProxy,
+		HostProxyEnvVar:         f.HostProxyEnvVar,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
@@ -73,9 +97,6 @@ If IMAGE is "@", clawker will use (in order of precedence):
 
   # Run and automatically remove on exit
   clawker container run --rm -it @ sh`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerOpts.Image = args[0]
@@ -83,7 +104,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 				containerOpts.Command = args[1:]
 			}
 			opts.flags = cmd.Flags()
-			return run(cmd.Context(), f, opts)
+			return run(cmd.Context(), opts)
 		},
 	}
 
@@ -106,12 +127,12 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
-	ios := f.IOStreams
+func run(ctx context.Context, opts *Options) error {
+	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
 	// Load config for project name
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		cmdutil.PrintNextSteps(ios,
@@ -122,14 +143,14 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	}
 
 	// Load user settings for defaults
-	settings, err := f.Settings()
+	settings, err := opts.Settings()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
 		settings = config.DefaultSettings()
 	}
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -137,7 +158,12 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, f, client, cfg, settings)
+		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, cmdutil.ImageValidationDeps{
+			IOStreams:                opts.IOStreams,
+			Prompter:                opts.Prompter,
+			SettingsLoader:          opts.SettingsLoader,
+			InvalidateSettingsCache: opts.InvalidateSettingsCache,
+		}, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
 			return err
@@ -183,17 +209,21 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 	// Start host proxy server for container-to-host communication (if enabled)
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
-		if err := f.EnsureHostProxy(); err != nil {
+		if err := opts.EnsureHostProxy(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
+			logger.Debug().Msg("host proxy started successfully")
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
-			if envVar := f.HostProxyEnvVar(); envVar != "" {
+			if envVar := opts.HostProxyEnvVar(); envVar != "" {
 				containerOpts.Env = append(containerOpts.Env, envVar)
+				logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
 			}
 		}
+	} else {
+		logger.Debug().Msg("host proxy disabled by config")
 	}
 
 	// Setup git credential forwarding
@@ -239,7 +269,7 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 
 	// Print warnings if any
 	for _, warning := range resp.Warnings {
-		fmt.Fprintln(f.IOStreams.ErrOut, "Warning:", warning)
+		fmt.Fprintln(ios.ErrOut, "Warning:", warning)
 	}
 
 	// If detached, just start and print container ID
@@ -248,22 +278,22 @@ func run(ctx context.Context, f *cmdutil.Factory, opts *Options) error {
 			cmdutil.HandleError(ios, err)
 			return err
 		}
-		fmt.Fprintln(f.IOStreams.Out, containerID[:12])
+		fmt.Fprintln(ios.Out, containerID[:12])
 		return nil
 	}
 
 	// For non-detached mode, attach BEFORE starting to handle short-lived containers
 	// and containers with --rm that may exit and be removed before we can attach.
 	// See: https://labs.iximiuz.com/tutorials/docker-run-vs-attach-vs-exec
-	return attachThenStart(ctx, f, client, containerID, opts)
+	return attachThenStart(ctx, client, containerID, opts)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
 // This ensures we don't miss output from short-lived containers, especially with --rm.
 // The sequence follows Docker CLI's approach: attach -> start I/O streaming -> start container -> wait.
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
-func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Client, containerID string, opts *Options) error {
-	ios := f.IOStreams
+func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
+	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
 	// Create attach options
@@ -287,103 +317,152 @@ func attachThenStart(ctx context.Context, f *cmdutil.Factory, client *docker.Cli
 	// Attach to container BEFORE starting it
 	// This is critical for short-lived containers (especially with --rm) where the container
 	// might exit and be removed before we can attach if we start first.
+	logger.Debug().Msg("attaching to container before start")
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
+		logger.Debug().Err(err).Msg("container attach failed")
 		cmdutil.HandleError(ios, err)
 		return err
 	}
 	defer hijacked.Close()
+	logger.Debug().Msg("container attach succeeded")
 
-	// Set up wait channel for container exit (use a context that won't be cancelled
-	// when we cancel the attach context, following Docker CLI pattern)
-	waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	// Set up wait channel for container exit following Docker CLI's waitExitOrRemoved pattern.
+	// This wraps the dual-channel ContainerWait into a single status channel.
+	// Must use WaitConditionNextExit (not WaitConditionNotRunning) because this is called
+	// before the container starts — a "created" container is already not-running.
+	logger.Debug().Msg("setting up container wait")
+	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove)
 
-	// Start I/O streaming BEFORE starting the container
-	// This ensures we're ready to receive output immediately when the container starts
-	var outputDone chan error
-	var streamDone chan error
+	// Start I/O streaming BEFORE starting the container.
+	// This ensures we're ready to receive output immediately when the container starts.
+	// Following Docker CLI pattern: I/O goroutines start pre-start, resize happens post-start.
+	streamDone := make(chan error, 1)
 
 	if containerOpts.TTY && pty != nil {
-		// TTY mode: use PTY handler for bidirectional streaming with resize support
-		resizeFunc := func(height, width uint) error {
-			_, err := client.ContainerResize(ctx, containerID, height, width)
-			return err
-		}
-		streamDone = make(chan error, 1)
+		// TTY mode: use Stream (I/O only, no resize — resize happens after start)
 		go func() {
-			streamDone <- pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+			streamDone <- pty.Stream(ctx, hijacked.HijackedResponse)
 		}()
 	} else {
 		// Non-TTY mode: demux the multiplexed stream
-		outputDone = make(chan error, 1)
 		go func() {
-			_, err := stdcopy.StdCopy(f.IOStreams.Out, f.IOStreams.ErrOut, hijacked.Reader)
-			outputDone <- err
+			_, err := stdcopy.StdCopy(ios.Out, ios.ErrOut, hijacked.Reader)
+			streamDone <- err
 		}()
 
 		// Copy stdin to container if enabled
 		if containerOpts.Stdin {
 			go func() {
-				io.Copy(hijacked.Conn, f.IOStreams.In)
+				io.Copy(hijacked.Conn, ios.In)
 				hijacked.CloseWrite()
 			}()
 		}
 	}
 
-	// Now start the container - the I/O streaming goroutines are already running
+	// Now start the container — the I/O streaming goroutines are already running
+	logger.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		logger.Debug().Err(err).Msg("container start failed")
 		cmdutil.HandleError(ios, err)
 		return err
 	}
+	logger.Debug().Msg("container started successfully")
 
-	// Wait for completion based on mode
+	// Set up TTY resize AFTER container is running (Docker CLI's MonitorTtySize pattern).
+	// The +1/-1 trick forces a SIGWINCH to trigger TUI redraw on re-attach.
 	if containerOpts.TTY && pty != nil {
-		// TTY mode: wait for stream or container exit
-		select {
-		case err := <-streamDone:
+		resizeFunc := func(height, width uint) error {
+			_, err := client.ContainerResize(ctx, containerID, height, width)
 			return err
-		case result := <-waitResult.Result:
-			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
+		}
+
+		if pty.IsTerminal() {
+			width, height, err := pty.GetSize()
+			if err != nil {
+				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+			} else {
+				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+				}
+				if err := resizeFunc(uint(height), uint(width)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+				}
 			}
-			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
-			}
-			return nil
-		case err := <-waitResult.Error:
-			return err
+
+			// Monitor for window resize events (SIGWINCH)
+			resizeHandler := term.NewResizeHandler(resizeFunc, pty.GetSize)
+			resizeHandler.Start()
+			defer resizeHandler.Stop()
 		}
 	}
 
-	// Non-TTY mode: wait for output to complete or container to exit
+	// Wait for stream completion or container exit.
+	// Following Docker CLI's run.go pattern: when stream ends, check exit status;
+	// when exit status arrives first, drain the stream.
 	select {
-	case err := <-outputDone:
-		// Output stream closed, check container status
+	case err := <-streamDone:
+		logger.Debug().Err(err).Msg("stream completed")
 		if err != nil {
 			return err
 		}
+		// Stream done — check for container exit status.
+		// For normal container exits, the status is available almost immediately.
+		// For detach (Ctrl+P Ctrl+Q), the container is still running so no status
+		// arrives. We use a timeout to distinguish the two cases without blocking
+		// forever. This is necessary because we don't do client-side detach key
+		// detection (Docker CLI uses term.EscapeError for this).
 		select {
+		case status := <-statusCh:
+			logger.Debug().Int("exitCode", status).Msg("container exited")
+			if status != 0 {
+				return fmt.Errorf("container exited with status %d", status)
+			}
+			return nil
+		case <-time.After(2 * time.Second):
+			// No exit status within timeout — stream ended due to detach, not exit.
+			logger.Debug().Msg("no exit status received after stream ended, assuming detach")
+			return nil
+		}
+	case status := <-statusCh:
+		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
+		if status != 0 {
+			return fmt.Errorf("container exited with status %d", status)
+		}
+		return nil
+	}
+}
+
+// waitForContainerExit sets up a channel that receives the container's exit status code.
+// It follows Docker CLI's waitExitOrRemoved pattern:
+//   - Uses WaitConditionNextExit (not WaitConditionNotRunning) so it can be called
+//     BEFORE the container starts without returning immediately for "created" containers.
+//   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
+//     when the container is removed after exit.
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int {
+	condition := container.WaitConditionNextExit
+	if autoRemove {
+		condition = container.WaitConditionRemoved
+	}
+
+	statusCh := make(chan int, 1)
+	go func() {
+		defer close(statusCh)
+		waitResult := client.ContainerWait(ctx, containerID, condition)
+		select {
+		case <-ctx.Done():
+			return
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				return fmt.Errorf("container exit error: %s", result.Error.Message)
-			}
-			if result.StatusCode != 0 {
-				return fmt.Errorf("container exited with status %d", result.StatusCode)
+				logger.Error().Str("message", result.Error.Message).Msg("container wait error")
+				statusCh <- 125
+			} else {
+				statusCh <- int(result.StatusCode)
 			}
 		case err := <-waitResult.Error:
-			return err
-		default:
+			logger.Error().Err(err).Msg("error waiting for container")
+			statusCh <- 125
 		}
-		return nil
-	case result := <-waitResult.Result:
-		if result.Error != nil {
-			return fmt.Errorf("container exit error: %s", result.Error.Message)
-		}
-		if result.StatusCode != 0 {
-			return fmt.Errorf("container exited with status %d", result.StatusCode)
-		}
-		return nil
-	case err := <-waitResult.Error:
-		return err
-	}
+	}()
+	return statusCh
 }

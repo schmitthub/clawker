@@ -1,12 +1,6 @@
 # Test user flag (-u/--user)
 # Verifies: Container runs as specified user
 
-# Substitute project name in config
-replace clawker.yaml PROJECT=$PROJECT
-
-# Create settings directory
-mkdir $HOME/.local/clawker
-
 # Test -u shorthand with root
 exec clawker container run --rm -u root alpine:latest whoami
 stdout 'root'
@@ -17,7 +11,6 @@ stdout '0'
 
 -- clawker.yaml --
 version: "1"
-project: "$PROJECT"
 
 build:
   image: "alpine:latest"

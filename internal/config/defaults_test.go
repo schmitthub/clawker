@@ -71,10 +71,9 @@ func TestDefaultConfigYAML(t *testing.T) {
 		t.Error("DefaultConfigYAML should not be empty")
 	}
 
-	// Check for required sections
+	// Check for required sections (project is no longer in YAML — set by registry)
 	requiredSections := []string{
 		"version:",
-		"project:",
 		"build:",
 		"agent:",
 		"workspace:",
@@ -87,9 +86,9 @@ func TestDefaultConfigYAML(t *testing.T) {
 		}
 	}
 
-	// Check for placeholder
-	if !strings.Contains(DefaultConfigYAML, "%s") {
-		t.Error("DefaultConfigYAML should contain placeholder for project name")
+	// project: should NOT be in the YAML template
+	if strings.Contains(DefaultConfigYAML, "project:") {
+		t.Error("DefaultConfigYAML should NOT contain project: (project is set by registry)")
 	}
 
 	// Verify security defaults are documented correctly

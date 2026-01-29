@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/docker"
@@ -87,7 +88,7 @@ func (p *PTYHandler) resetVisualStateUnlocked() {
 
 // Stream handles bidirectional I/O between local terminal and container
 func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedResponse) error {
-	defer hijacked.Close()
+	// NOTE: caller owns hijacked.Close() — do not close here to avoid double-close.
 
 	outputDone := make(chan struct{})
 	errCh := make(chan error, 2)
@@ -95,7 +96,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedRespons
 	// Copy container output to stdout
 	go func() {
 		_, err := io.Copy(p.stdout, hijacked.Reader)
-		if err != nil && err != io.EOF {
+		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			errCh <- err
 		}
 		close(outputDone)
@@ -104,7 +105,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedRespons
 	// Copy stdin to container input
 	go func() {
 		_, err := io.Copy(hijacked.Conn, p.stdin)
-		if err != nil && err != io.EOF {
+		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			errCh <- err
 		}
 		// Close write side when stdin is done
@@ -130,7 +131,7 @@ func (p *PTYHandler) StreamWithResize(
 	hijacked docker.HijackedResponse,
 	resizeFunc func(height, width uint) error,
 ) error {
-	defer hijacked.Close()
+	// NOTE: caller owns hijacked.Close() — do not close here to avoid double-close.
 
 	outputDone := make(chan struct{})
 	errCh := make(chan error, 2)
@@ -161,7 +162,7 @@ func (p *PTYHandler) StreamWithResize(
 	// Copy container output to stdout
 	go func() {
 		_, err := io.Copy(p.stdout, hijacked.Reader)
-		if err != nil && err != io.EOF {
+		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			logger.Debug().Err(err).Msg("error copying container output")
 			errCh <- err
 		}
@@ -171,7 +172,7 @@ func (p *PTYHandler) StreamWithResize(
 	// Copy stdin to container input
 	go func() {
 		_, err := io.Copy(hijacked.Conn, p.stdin)
-		if err != nil && err != io.EOF {
+		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			logger.Debug().Err(err).Msg("error copying stdin to container")
 			errCh <- err
 		}
@@ -203,4 +204,14 @@ func (p *PTYHandler) GetSize() (width, height int, err error) {
 // IsTerminal returns true if stdin is a terminal
 func (p *PTYHandler) IsTerminal() bool {
 	return p.rawMode.IsTerminal()
+}
+
+// isClosedConnectionError checks if the error is a "use of closed network connection" error.
+// This happens when the hijacked Docker socket connection is closed (e.g., container exit)
+// while a goroutine is still reading from it. This is expected behavior, not an error.
+func isClosedConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "use of closed network connection")
 }

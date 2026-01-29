@@ -38,9 +38,6 @@ Use with caution as this will permanently delete images.`,
 
   # Remove without confirmation prompt
   clawker image prune --force`,
-		Annotations: map[string]string{
-			cmdutil.AnnotationRequiresProject: "true",
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, f, opts)
 		},

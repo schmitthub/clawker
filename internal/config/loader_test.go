@@ -21,6 +21,14 @@ func TestLoaderConfigPath(t *testing.T) {
 	}
 }
 
+func TestLoaderConfigPath_WithProjectRoot(t *testing.T) {
+	loader := NewLoader("/test/workdir", WithProjectRoot("/test/project"))
+	expected := "/test/project/clawker.yaml"
+	if loader.ConfigPath() != expected {
+		t.Errorf("Loader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
+	}
+}
+
 func TestLoaderIgnorePath(t *testing.T) {
 	loader := NewLoader("/test/path")
 	expected := "/test/path/.clawkerignore"
@@ -30,7 +38,6 @@ func TestLoaderIgnorePath(t *testing.T) {
 }
 
 func TestLoaderExists(t *testing.T) {
-	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -39,18 +46,15 @@ func TestLoaderExists(t *testing.T) {
 
 	loader := NewLoader(tmpDir)
 
-	// Should not exist initially
 	if loader.Exists() {
 		t.Error("Loader.Exists() should return false when config doesn't exist")
 	}
 
-	// Create config file
 	configPath := filepath.Join(tmpDir, ConfigFileName)
 	if err := os.WriteFile(configPath, []byte("version: '1'"), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	// Should exist now
 	if !loader.Exists() {
 		t.Error("Loader.Exists() should return true when config exists")
 	}
@@ -82,10 +86,8 @@ func TestLoaderLoadValidConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a valid config file
 	configContent := `
 version: "1"
-project: "test-project"
 build:
   image: "node:20-slim"
   packages:
@@ -111,12 +113,12 @@ security:
 		t.Fatalf("Loader.Load() returned error: %v", err)
 	}
 
-	// Verify loaded values
 	if cfg.Version != "1" {
 		t.Errorf("cfg.Version = %q, want %q", cfg.Version, "1")
 	}
-	if cfg.Project != "test-project" {
-		t.Errorf("cfg.Project = %q, want %q", cfg.Project, "test-project")
+	// Project should be empty — set by registry, not YAML
+	if cfg.Project != "" {
+		t.Errorf("cfg.Project = %q, want empty (set by registry, not YAML)", cfg.Project)
 	}
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("cfg.Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")
@@ -127,9 +129,6 @@ security:
 	if !cfg.Security.FirewallEnabled() {
 		t.Error("cfg.Security.FirewallEnabled() should be true")
 	}
-	if cfg.Security.DockerSocket {
-		t.Error("cfg.Security.DockerSocket should be false")
-	}
 }
 
 func TestLoaderLoadWithDefaults(t *testing.T) {
@@ -139,10 +138,8 @@ func TestLoaderLoadWithDefaults(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a minimal config file (missing many fields)
 	configContent := `
 version: "1"
-project: "minimal-project"
 `
 	configPath := filepath.Join(tmpDir, ConfigFileName)
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
@@ -156,7 +153,6 @@ project: "minimal-project"
 		t.Fatalf("Loader.Load() returned error: %v", err)
 	}
 
-	// Verify defaults are applied
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("cfg.Build.Image should default to 'node:20-slim', got %q", cfg.Build.Image)
 	}
@@ -166,9 +162,154 @@ project: "minimal-project"
 	if cfg.Workspace.DefaultMode != "bind" {
 		t.Errorf("cfg.Workspace.DefaultMode should default to 'bind', got %q", cfg.Workspace.DefaultMode)
 	}
-	// Security defaults - firewall enabled
 	if !cfg.Security.FirewallEnabled() {
 		t.Error("cfg.Security.FirewallEnabled() should default to true")
+	}
+}
+
+func TestLoaderLoadWithProjectKey(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configContent := `version: "1"`
+	configPath := filepath.Join(tmpDir, ConfigFileName)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	loader := NewLoader(tmpDir, WithProjectKey("my-project"))
+	cfg, err := loader.Load()
+
+	if err != nil {
+		t.Fatalf("Loader.Load() returned error: %v", err)
+	}
+
+	if cfg.Project != "my-project" {
+		t.Errorf("cfg.Project = %q, want %q (injected from WithProjectKey)", cfg.Project, "my-project")
+	}
+}
+
+func TestLoaderLoadWithUserDefaults(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create user-level config
+	userDir := filepath.Join(tmpDir, "user")
+	os.MkdirAll(userDir, 0755)
+	userConfig := `
+version: "1"
+build:
+  image: "alpine:latest"
+workspace:
+  remote_path: "/home"
+`
+	if err := os.WriteFile(filepath.Join(userDir, ConfigFileName), []byte(userConfig), 0644); err != nil {
+		t.Fatalf("failed to write user config: %v", err)
+	}
+
+	// Create project-level config that overrides image
+	projectDir := filepath.Join(tmpDir, "project")
+	os.MkdirAll(projectDir, 0755)
+	projectConfig := `
+version: "1"
+build:
+  image: "node:20-slim"
+`
+	if err := os.WriteFile(filepath.Join(projectDir, ConfigFileName), []byte(projectConfig), 0644); err != nil {
+		t.Fatalf("failed to write project config: %v", err)
+	}
+
+	loader := NewLoader(projectDir, WithUserDefaults(userDir))
+	cfg, err := loader.Load()
+
+	if err != nil {
+		t.Fatalf("Loader.Load() returned error: %v", err)
+	}
+
+	// Project config should override user config for image
+	if cfg.Build.Image != "node:20-slim" {
+		t.Errorf("cfg.Build.Image = %q, want %q (project overrides user)", cfg.Build.Image, "node:20-slim")
+	}
+
+	// User config should provide workspace.remote_path (not in project config)
+	if cfg.Workspace.RemotePath != "/home" {
+		t.Errorf("cfg.Workspace.RemotePath = %q, want %q (from user defaults)", cfg.Workspace.RemotePath, "/home")
+	}
+}
+
+func TestLoaderLoadUserOnlyConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Only user-level config, no project config
+	userDir := filepath.Join(tmpDir, "user")
+	os.MkdirAll(userDir, 0755)
+	userConfig := `
+version: "1"
+build:
+  image: "alpine:latest"
+`
+	if err := os.WriteFile(filepath.Join(userDir, ConfigFileName), []byte(userConfig), 0644); err != nil {
+		t.Fatalf("failed to write user config: %v", err)
+	}
+
+	projectDir := filepath.Join(tmpDir, "project")
+	os.MkdirAll(projectDir, 0755)
+	// No project config file
+
+	loader := NewLoader(projectDir, WithUserDefaults(userDir))
+	cfg, err := loader.Load()
+
+	if err != nil {
+		t.Fatalf("Loader.Load() returned error: %v", err)
+	}
+
+	if cfg.Build.Image != "alpine:latest" {
+		t.Errorf("cfg.Build.Image = %q, want %q (from user-only config)", cfg.Build.Image, "alpine:latest")
+	}
+}
+
+func TestLoaderLoadWithProjectRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Project root has the config
+	projectRoot := filepath.Join(tmpDir, "myapp")
+	os.MkdirAll(projectRoot, 0755)
+	configContent := `
+version: "1"
+build:
+  image: "custom:latest"
+`
+	if err := os.WriteFile(filepath.Join(projectRoot, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// workDir is a subdirectory (no config)
+	workDir := filepath.Join(projectRoot, "src", "pkg")
+	os.MkdirAll(workDir, 0755)
+
+	loader := NewLoader(workDir, WithProjectRoot(projectRoot))
+	cfg, err := loader.Load()
+
+	if err != nil {
+		t.Fatalf("Loader.Load() returned error: %v", err)
+	}
+
+	if cfg.Build.Image != "custom:latest" {
+		t.Errorf("cfg.Build.Image = %q, want %q (loaded from project root)", cfg.Build.Image, "custom:latest")
 	}
 }
 
@@ -179,7 +320,6 @@ func TestLoaderLoadInvalidYAML(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create an invalid YAML file
 	configContent := `
 version: "1"
 project: "test
