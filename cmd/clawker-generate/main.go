@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// Create and execute the generate command
-	cmd := generate.NewCmdGenerate(f)
+	cmd := generate.NewCmdGenerate(f, nil)
 	cmd.Use = "clawkergenerate" // Override for standalone use
 	cmd.Version = Version
 

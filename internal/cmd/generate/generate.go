@@ -19,19 +19,21 @@ import (
 
 // GenerateOptions contains the options for the generate command.
 type GenerateOptions struct {
-	IOStreams       *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	Debug          bool
 	BuildOutputDir string
 
+	Versions  []string // Positional args: version patterns
 	SkipFetch bool
 	Cleanup   bool
 	OutputDir string // Explicit output directory override
 }
 
 // NewCmdGenerate creates a new generate command.
-func NewCmdGenerate(f *cmdutil.Factory) *cobra.Command {
+func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOptions) error) *cobra.Command {
 	opts := &GenerateOptions{
-		IOStreams:       f.IOStreams,
+		IOStreams:      f.IOStreams,
+		Debug:          f.Debug,
 		BuildOutputDir: f.BuildOutputDir,
 	}
 
@@ -62,8 +64,11 @@ Version patterns:
   # Show existing versions.json
   clawker generate`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Debug = f.Debug
-			return runGenerate(opts, args)
+			opts.Versions = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return generateRun(cmd.Context(), opts)
 		},
 	}
 
@@ -74,9 +79,10 @@ Version patterns:
 	return cmd
 }
 
-func runGenerate(opts *GenerateOptions, versions []string) error {
-	ctx, cancel := term.SetupSignalContext(context.Background())
+func generateRun(ctx context.Context, opts *GenerateOptions) error {
+	ctx, cancel := term.SetupSignalContext(ctx)
 	defer cancel()
+	versions := opts.Versions
 	ios := opts.IOStreams
 
 	// Determine output directory: explicit flag > factory default

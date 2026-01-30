@@ -1,6 +1,7 @@
 package init
 
 import (
+	"context"
 	"testing"
 
 	intbuild "github.com/schmitthub/clawker/internal/build"
@@ -10,26 +11,55 @@ import (
 
 func TestNewCmdInit(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
-	cmd := NewCmdInit(f)
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-	// Check command use (user-only setup, no args)
-	if cmd.Use != "init" {
-		t.Errorf("expected Use 'init', got '%s'", cmd.Use)
+	var gotOpts *InitOptions
+	cmd := NewCmdInit(f, func(_ context.Context, opts *InitOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check yes flag exists
-	yesFlag := cmd.Flags().Lookup("yes")
-	if yesFlag == nil {
-		t.Error("expected --yes flag to exist")
-	}
-	if yesFlag.Shorthand != "y" {
-		t.Errorf("expected --yes shorthand 'y', got '%s'", yesFlag.Shorthand)
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
 	}
 
-	// Check that args are not accepted (NoArgs)
-	if cmd.Args == nil {
-		t.Error("expected Args to be set (NoArgs)")
+	if gotOpts.IOStreams != tio.IOStreams {
+		t.Error("expected IOStreams to be set from factory")
+	}
+
+	if gotOpts.Yes {
+		t.Error("expected Yes to be false by default")
+	}
+}
+
+func TestNewCmdInit_YesFlag(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+
+	var gotOpts *InitOptions
+	cmd := NewCmdInit(f, func(_ context.Context, opts *InitOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--yes"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
+	}
+
+	if !gotOpts.Yes {
+		t.Error("expected Yes to be true when --yes flag is set")
 	}
 }
 

@@ -2,6 +2,7 @@
 package register
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -20,11 +21,12 @@ type RegisterOptions struct {
 	RegistryLoader func() (*config.RegistryLoader, error)
 	WorkDir        string
 
-	Yes bool
+	Name string // Positional arg: project name
+	Yes  bool
 }
 
 // NewCmdProjectRegister creates the project register command.
-func NewCmdProjectRegister(f *cmdutil.Factory) *cobra.Command {
+func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command {
 	opts := &RegisterOptions{
 		IOStreams:      f.IOStreams,
 		Prompter:       f.Prompter,
@@ -54,7 +56,13 @@ machine, or already exists and you want to register it locally.`,
   clawker project register --yes`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProjectRegister(opts, args)
+			if len(args) > 0 {
+				opts.Name = args[0]
+			}
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return projectRegisterRun(cmd.Context(), opts)
 		},
 	}
 
@@ -63,7 +71,7 @@ machine, or already exists and you want to register it locally.`,
 	return cmd
 }
 
-func runProjectRegister(opts *RegisterOptions, args []string) error {
+func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -85,8 +93,8 @@ func runProjectRegister(opts *RegisterOptions, args []string) error {
 	dirName := filepath.Base(absPath)
 
 	var projectName string
-	if len(args) > 0 {
-		projectName = args[0]
+	if opts.Name != "" {
+		projectName = opts.Name
 	} else if opts.Yes || !ios.IsInteractive() {
 		projectName = dirName
 	} else {

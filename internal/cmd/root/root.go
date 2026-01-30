@@ -82,11 +82,11 @@ Workspace modes:
 	registerAliases(cmd, f)
 
 	// Add non-alias top-level commands
-	cmd.AddCommand(initcmd.NewCmdInit(f))
+	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 	cmd.AddCommand(project.NewCmdProject(f))
 	cmd.AddCommand(config.NewCmdConfig(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
-	cmd.AddCommand(generate.NewCmdGenerate(f))
+	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 	cmd.AddCommand(ralph.NewCmdRalph(f))
 
 	// Add management commands

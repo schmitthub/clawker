@@ -222,10 +222,10 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 45 | init | NOT STARTED | — |
-| 46 | project/init | NOT STARTED | — |
-| 47 | project/register | NOT STARTED | — |
-| 48 | generate | NOT STARTED | — |
+| 45 | init | DONE | — |
+| 46 | project/init | DONE | — |
+| 47 | project/register | DONE | — |
+| 48 | generate | DONE | — |
 
 ### Parent Command Registrations (update after children migrate)
 
@@ -238,8 +238,8 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | ralph/ralph.go | 4 | DONE |
 | monitor/monitor.go | 4 | DONE |
 | config/config.go | 1 | DONE |
-| project/project.go | 2 | NOT STARTED |
-| root/root.go | 2 | NOT STARTED |
+| project/project.go | 2 | DONE |
+| root/root.go | 2 | DONE |
 
 ---
 
@@ -322,6 +322,15 @@ Go allows `init` as a package name, but importing it requires an alias since `in
 
 ### Entire monitor group in one session
 All 4 monitor commands (init, up, down, status) were migrated in a single session with package extraction. The status command had no Options struct — just `runStatus(ios *iostreams.IOStreams)` — so a `StatusOptions` struct was created during migration. This is straightforward when the command has no flags.
+
+### Standalone binaries referencing command constructors
+Commands used by standalone binaries (e.g., `cmd/clawker-generate/main.go` calling `generate.NewCmdGenerate`) must also be updated to pass `nil` for `runF`. Always check `find_referencing_symbols` output for non-test, non-parent callers.
+
+### Commands creating their own context.Background()
+Some run functions create `context.Background()` internally (e.g., `initRun`, `generateRun`). During migration, replace with the `ctx` parameter passed from `cmd.Context()`. For signal-aware contexts like `term.SetupSignalContext(context.Background())`, change to `term.SetupSignalContext(ctx)` to preserve the pattern while using the passed-in context.
+
+### Four remaining top-level commands in one session
+All 4 remaining commands (init, project/init, project/register, generate) were migrated in a single session. This was efficient because they all followed the same pattern, and the two parent registrations (project.go, root.go) were updated incrementally as each child was migrated.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 

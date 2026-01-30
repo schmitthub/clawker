@@ -2,6 +2,7 @@
 package init
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,12 +25,13 @@ type ProjectInitOptions struct {
 	RegistryLoader func() (*config.RegistryLoader, error)
 	WorkDir        string
 
+	Name  string // Positional arg: project name
 	Force bool
 	Yes   bool // Non-interactive mode
 }
 
 // NewCmdProjectInit creates the project init command.
-func NewCmdProjectInit(f *cmdutil.Factory) *cobra.Command {
+func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
 		IOStreams:      f.IOStreams,
 		Prompter:       f.Prompter,
@@ -65,7 +67,13 @@ Use --yes/-y to skip prompts and accept all defaults.`,
   clawker project init --force`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProjectInit(opts, args)
+			if len(args) > 0 {
+				opts.Name = args[0]
+			}
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return projectInitRun(cmd.Context(), opts)
 		},
 	}
 
@@ -75,7 +83,7 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 	return cmd
 }
 
-func runProjectInit(opts *ProjectInitOptions, args []string) error {
+func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
@@ -135,8 +143,8 @@ func runProjectInit(opts *ProjectInitOptions, args []string) error {
 
 	// Determine project name
 	var projectName string
-	if len(args) > 0 {
-		projectName = args[0]
+	if opts.Name != "" {
+		projectName = opts.Name
 	} else if opts.Yes || !ios.IsInteractive() {
 		// Non-interactive: use directory name
 		projectName = dirName

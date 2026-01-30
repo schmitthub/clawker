@@ -1,52 +1,46 @@
 package init
 
 import (
-	"bytes"
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/spf13/cobra"
 )
 
 func TestNewCmdProjectInit(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
-	cmd := NewCmdProjectInit(f)
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-	// Check command use
-	if cmd.Use != "init [project-name]" {
-		t.Errorf("expected Use 'init [project-name]', got '%s'", cmd.Use)
-	}
+	var gotOpts *ProjectInitOptions
+	cmd := NewCmdProjectInit(f, func(_ context.Context, opts *ProjectInitOptions) error {
+		gotOpts = opts
+		return nil
+	})
 
-	// Check force flag exists
-	forceFlag := cmd.Flags().Lookup("force")
-	if forceFlag == nil {
-		t.Error("expected --force flag to exist")
-	}
-	if forceFlag.Shorthand != "f" {
-		t.Errorf("expected --force shorthand 'f', got '%s'", forceFlag.Shorthand)
-	}
-	if forceFlag.DefValue != "false" {
-		t.Errorf("expected --force default 'false', got '%s'", forceFlag.DefValue)
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check yes flag exists
-	yesFlag := cmd.Flags().Lookup("yes")
-	if yesFlag == nil {
-		t.Error("expected --yes flag to exist")
-	}
-	if yesFlag.Shorthand != "y" {
-		t.Errorf("expected --yes shorthand 'y', got '%s'", yesFlag.Shorthand)
-	}
-	if yesFlag.DefValue != "false" {
-		t.Errorf("expected --yes default 'false', got '%s'", yesFlag.DefValue)
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
 	}
 
-	// Check that at most 1 arg is accepted
-	if cmd.Args == nil {
-		t.Error("expected Args to be set")
+	if gotOpts.IOStreams != tio.IOStreams {
+		t.Error("expected IOStreams to be set from factory")
+	}
+
+	if gotOpts.Force {
+		t.Error("expected Force to be false by default")
+	}
+	if gotOpts.Yes {
+		t.Error("expected Yes to be false by default")
+	}
+	if gotOpts.Name != "" {
+		t.Errorf("expected Name to be empty, got %q", gotOpts.Name)
 	}
 }
 
@@ -54,6 +48,7 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 	tests := []struct {
 		name      string
 		args      []string
+		wantName  string
 		wantForce bool
 		wantYes   bool
 		wantErr   bool
@@ -63,93 +58,64 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 			args:      []string{},
 			wantForce: false,
 			wantYes:   false,
-			wantErr:   false,
 		},
 		{
 			name:      "force flag",
 			args:      []string{"--force"},
 			wantForce: true,
-			wantYes:   false,
-			wantErr:   false,
 		},
 		{
 			name:      "force shorthand",
 			args:      []string{"-f"},
 			wantForce: true,
-			wantYes:   false,
-			wantErr:   false,
 		},
 		{
-			name:      "yes flag",
-			args:      []string{"--yes"},
-			wantForce: false,
-			wantYes:   true,
-			wantErr:   false,
+			name:    "yes flag",
+			args:    []string{"--yes"},
+			wantYes: true,
 		},
 		{
-			name:      "yes shorthand",
-			args:      []string{"-y"},
-			wantForce: false,
-			wantYes:   true,
-			wantErr:   false,
+			name:    "yes shorthand",
+			args:    []string{"-y"},
+			wantYes: true,
 		},
 		{
 			name:      "both flags",
 			args:      []string{"--force", "--yes"},
 			wantForce: true,
 			wantYes:   true,
-			wantErr:   false,
 		},
 		{
-			name:      "with project name",
-			args:      []string{"my-project"},
-			wantForce: false,
-			wantYes:   false,
-			wantErr:   false,
+			name:     "with project name",
+			args:     []string{"my-project"},
+			wantName: "my-project",
 		},
 		{
 			name:      "with project name and flags",
 			args:      []string{"my-project", "-f", "-y"},
+			wantName:  "my-project",
 			wantForce: true,
 			wantYes:   true,
-			wantErr:   false,
 		},
 		{
-			name:      "too many args",
-			args:      []string{"project1", "project2"},
-			wantForce: false,
-			wantYes:   false,
-			wantErr:   true,
+			name:    "too many args",
+			args:    []string{"project1", "project2"},
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tio := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-			var capturedOpts *ProjectInitOptions
-			cmd := NewCmdProjectInit(f)
-			// Replace RunE to capture options
-			originalRunE := cmd.RunE
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				// Parse flags manually to capture options
-				forceVal, _ := cmd.Flags().GetBool("force")
-				yesVal, _ := cmd.Flags().GetBool("yes")
-				capturedOpts = &ProjectInitOptions{
-					Force: forceVal,
-					Yes:   yesVal,
-				}
-				// Don't actually run the command
+			var gotOpts *ProjectInitOptions
+			cmd := NewCmdProjectInit(f, func(_ context.Context, opts *ProjectInitOptions) error {
+				gotOpts = opts
 				return nil
-			}
-			_ = originalRunE // silence unused warning
+			})
 
 			cmd.SetArgs(tt.args)
-			cmd.SetIn(&bytes.Buffer{})
-			cmd.SetOut(&bytes.Buffer{})
-			cmd.SetErr(&bytes.Buffer{})
-
 			err := cmd.Execute()
 
 			if tt.wantErr {
@@ -160,19 +126,21 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
+				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if capturedOpts == nil {
-				t.Fatal("options not captured")
+			if gotOpts == nil {
+				t.Fatal("expected runF to be called")
 			}
 
-			if capturedOpts.Force != tt.wantForce {
-				t.Errorf("Force = %v, want %v", capturedOpts.Force, tt.wantForce)
+			if gotOpts.Name != tt.wantName {
+				t.Errorf("Name = %q, want %q", gotOpts.Name, tt.wantName)
 			}
-			if capturedOpts.Yes != tt.wantYes {
-				t.Errorf("Yes = %v, want %v", capturedOpts.Yes, tt.wantYes)
+			if gotOpts.Force != tt.wantForce {
+				t.Errorf("Force = %v, want %v", gotOpts.Force, tt.wantForce)
+			}
+			if gotOpts.Yes != tt.wantYes {
+				t.Errorf("Yes = %v, want %v", gotOpts.Yes, tt.wantYes)
 			}
 		})
 	}
