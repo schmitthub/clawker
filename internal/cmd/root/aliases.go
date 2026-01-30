@@ -65,7 +65,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "kill [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerKill.NewCmdKill,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerKill.NewCmdKill(f, nil) },
 	},
 	{
 		Use:     "logs [OPTIONS] CONTAINER",
