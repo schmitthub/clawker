@@ -49,7 +49,7 @@ var topLevelAliases = []Alias{
 	{
 		Use:     "build [OPTIONS]",
 		Example: buildExample,
-		Command: imagebuild.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return imagebuild.NewCmdBuild(f, nil) },
 	},
 	{
 		Use:     "create [OPTIONS] IMAGE [COMMAND] [ARG...]",

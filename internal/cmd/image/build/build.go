@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
@@ -17,6 +18,11 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
+	IOStreams *iostreams.IOStreams
+	Config    func() (*config.Config, error)
+	Client    func(context.Context) (*docker.Client, error)
+	WorkDir   string
+
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
 	NoCache   bool     // --no-cache
@@ -29,9 +35,14 @@ type BuildOptions struct {
 	Network   string   // --network
 }
 
-// NewCmd creates the image build command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &BuildOptions{}
+// NewCmdBuild creates the image build command.
+func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
+	opts := &BuildOptions{
+		IOStreams: f.IOStreams,
+		Config:    f.Config,
+		Client:    f.Client,
+		WorkDir:   f.WorkDir,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "build",
@@ -68,7 +79,10 @@ Build-time variables can be passed using --build-arg.`,
   # Always pull base image
   clawker image build --pull`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBuild(f, opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return buildRun(cmd.Context(), opts)
 		},
 	}
 
@@ -87,15 +101,15 @@ Build-time variables can be passed using --build-arg.`,
 	return cmd
 }
 
-func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
-	ctx, cancel := term.SetupSignalContext(context.Background())
+func buildRun(ctx context.Context, opts *BuildOptions) error {
+	ctx, cancel := term.SetupSignalContext(ctx)
 	defer cancel()
 
-	ios := f.IOStreams
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Load configuration
-	cfg, err := f.Config()
+	cfg, err := opts.Config()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
 			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
@@ -109,7 +123,7 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	}
 
 	// Validate configuration
-	validator := config.NewValidator(f.WorkDir)
+	validator := config.NewValidator(opts.WorkDir)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut, err)
@@ -135,7 +149,7 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 		Msg("starting build")
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -152,7 +166,7 @@ func runBuild(f *cmdutil.Factory, opts *BuildOptions) error {
 	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
 	labels := mergeLabels(userLabels, clawkerLabels)
 
-	builder := build.NewBuilder(client, cfg, f.WorkDir)
+	builder := build.NewBuilder(client, cfg, opts.WorkDir)
 
 	logger.Info().
 		Str("project", cfg.Project).

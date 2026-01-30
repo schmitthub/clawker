@@ -39,7 +39,7 @@ image management commands.`,
 	}
 
 	// Add subcommands
-	cmd.AddCommand(build.NewCmd(f))
+	cmd.AddCommand(build.NewCmdBuild(f, nil))
 	cmd.AddCommand(inspect.NewCmd(f))
 	cmd.AddCommand(list.NewCmd(f))
 	cmd.AddCommand(prune.NewCmd(f))
