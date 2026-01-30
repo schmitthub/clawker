@@ -89,7 +89,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "rm [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerRemove.NewCmdRemove,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerRemove.NewCmdRemove(f, nil) },
 	},
 	{
 		Use:     "run [OPTIONS] IMAGE [COMMAND] [ARG...]",

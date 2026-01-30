@@ -25,7 +25,7 @@ type RemoveOptions struct {
 }
 
 // NewCmdRemove creates the container remove command.
-func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
+func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -64,6 +64,9 @@ Container names can be:
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
 			return runRemove(cmd.Context(), opts)
 		},
 	}
