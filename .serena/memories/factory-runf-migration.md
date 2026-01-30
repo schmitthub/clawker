@@ -1,0 +1,266 @@
+# Factory runF Migration — Master Initiative
+
+## Overview
+
+Migrate all 48 CLI commands to the standardized runF pattern. Each command gets its own session. This memory is the single source of truth for the initiative.
+
+## Naming Conventions
+
+| Element | Pattern | Example (verb=`stop`) |
+|---------|---------|----------------------|
+| Options struct | `<Verb>Options` | `StopOptions` |
+| Constructor | `NewCmd<Verb>` | `NewCmdStop` |
+| Run function | `<verb>Run` | `stopRun` |
+| Test hook parameter | `runF` (always) | constructor param, not on Options |
+
+Special case: `run` command → `runRun` (no exceptions).
+
+## Universal Workflow (per command)
+
+### Step 0: Inventory & Blast Radius
+- Use Serena `find_symbol` + `find_referencing_symbols` to map all references to constructor, Options, run function
+- Document blast radius in command tracking memory
+- Identify: parent registration site, test files, integration test files
+
+### Step 0.5: Package Extraction (if needed)
+- Only for commands with **unexported constructors** (ralph/*, monitor/*, config/check)
+- Create subpackage: `internal/cmd/<group>/<verb>/`
+- Export constructor: `newCmdX` → `NewCmdX`
+- Export Options: `xOptions` → `XOptions`  
+- Export run: keep unexported but ensure proper signature
+- Update parent to import subpackage and call exported constructor
+
+### Step 1: Naming Standardization
+- Rename Options struct → `<Verb>Options` (if not already)
+- Rename constructor → `NewCmd<Verb>` (if not already)
+- Rename run function → `<verb>Run` (if not already)
+- Use Serena `rename_symbol` for codebase-wide renames
+
+### Step 2: Options Factory Deps
+- Options struct gets **only the Factory deps it actually uses**
+- Assign deps to `opts` at the top of `NewCmd<Verb>`, before cmd declaration
+- Pattern:
+  ```go
+  func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
+      opts := &StopOptions{
+          IOStreams: f.IOStreams,
+          Client:   f.Client,
+      }
+      // ... cmd declaration follows
+  ```
+
+### Step 3: Positional Args & Flags
+- All positional args and flag values must be assigned to `opts` fields
+- Assignment happens **in RunE**, before the `runF` dispatch
+- Pattern:
+  ```go
+  RunE: func(cmd *cobra.Command, args []string) error {
+      opts.Names = args  // positional args → opts field
+      if runF != nil {
+          return runF(cmd.Context(), opts)
+      }
+      return stopRun(cmd.Context(), opts)
+  },
+  ```
+
+### Step 4: Add runF Test Hook
+- Constructor signature: `NewCmdX(f *cmdutil.Factory, runF func(context.Context, *XOptions) error) *cobra.Command`
+- RunE dispatches to `runF` if non-nil, otherwise calls `<verb>Run`
+- Parent registration passes `nil`:
+  ```go
+  cmd.AddCommand(stop.NewCmdStop(f, nil))
+  ```
+
+### Step 5: Rewrite Unit Tests
+- Tests use runF capture pattern:
+  ```go
+  var gotOpts *StopOptions
+  cmd := NewCmdStop(&cmdutil.Factory{IOStreams: ios}, func(_ context.Context, opts *StopOptions) error {
+      gotOpts = opts
+      return nil
+  })
+  ```
+- **No RunE overrides** — test via runF capture only
+- Assert opts fields populated correctly from args/flags
+
+### Step 6: Adapt Integration Tests
+- Update constructor calls to include `nil` runF parameter
+- `NewCmdStop(f, nil)` in integration tests
+
+### Step 7: Verify All Tests Pass
+```bash
+go build ./...
+go test ./internal/cmd/<group>/<verb>/... -v -count=1
+go test -tags=integration ./internal/cmd/<group>/<verb>/... -v -timeout 10m
+go test -tags=acceptance ./acceptance -v -timeout 15m -run <relevant>
+go test ./... -count=1
+```
+Work is NOT complete until all test tiers pass.
+
+### Step 8: Session Closure
+1. Ask user to review changes
+2. User approves → update this memory's inventory (status → DONE)
+3. Generate handoff prompt (see below)
+4. Stop work
+
+## Handoff Prompt Template
+
+```
+Continue the factory runF migration. Read the Serena memory
+`factory-runf-migration` for the master initiative, find the
+next NOT STARTED command, and execute the universal workflow.
+```
+
+## Acceptance Criteria (per command)
+
+- [ ] Naming: `<Verb>Options`, `NewCmd<Verb>`, `<verb>Run`
+- [ ] Options has only-used Factory deps, assigned at top of NewCmd
+- [ ] Args/flags assigned to opts in RunE before runF dispatch
+- [ ] runF test hook wired; parent passes nil
+- [ ] Unit tests use runF capture (no RunE overrides)
+- [ ] Integration tests updated with new constructor signature
+- [ ] `go build ./...` passes
+- [ ] `go test ./...` passes
+- [ ] `go test -tags=integration` passes (if applicable)
+- [ ] `go test -tags=acceptance` passes
+
+---
+
+## Command Inventory
+
+Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
+
+### Container Commands (20)
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 1 | container/attach | NOT STARTED | — |
+| 2 | container/cp | NOT STARTED | — |
+| 3 | container/create | NOT STARTED | — |
+| 4 | container/exec | NOT STARTED | — |
+| 5 | container/inspect | NOT STARTED | — |
+| 6 | container/kill | NOT STARTED | — |
+| 7 | container/list | NOT STARTED | — |
+| 8 | container/logs | NOT STARTED | — |
+| 9 | container/pause | NOT STARTED | — |
+| 10 | container/remove | NOT STARTED | — |
+| 11 | container/rename | NOT STARTED | — |
+| 12 | container/restart | NOT STARTED | — |
+| 13 | container/run | NOT STARTED | — |
+| 14 | container/start | NOT STARTED | — |
+| 15 | container/stats | NOT STARTED | — |
+| 16 | container/stop | NOT STARTED | — |
+| 17 | container/top | NOT STARTED | — |
+| 18 | container/unpause | NOT STARTED | — |
+| 19 | container/update | NOT STARTED | — |
+| 20 | container/wait | NOT STARTED | — |
+
+### Image Commands (5)
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 21 | image/build | NOT STARTED | — |
+| 22 | image/list | NOT STARTED | — |
+| 23 | image/inspect | NOT STARTED | — |
+| 24 | image/prune | NOT STARTED | — |
+| 25 | image/remove | NOT STARTED | — |
+
+### Volume Commands (5)
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 26 | volume/create | NOT STARTED | — |
+| 27 | volume/list | NOT STARTED | — |
+| 28 | volume/inspect | NOT STARTED | — |
+| 29 | volume/prune | NOT STARTED | — |
+| 30 | volume/remove | NOT STARTED | — |
+
+### Network Commands (5)
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 31 | network/create | NOT STARTED | — |
+| 32 | network/list | NOT STARTED | — |
+| 33 | network/inspect | NOT STARTED | — |
+| 34 | network/prune | NOT STARTED | — |
+| 35 | network/remove | NOT STARTED | — |
+
+### Ralph Commands (4) — NEEDS PACKAGE EXTRACTION
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 36 | ralph/run | NOT STARTED | — |
+| 37 | ralph/status | NOT STARTED | — |
+| 38 | ralph/reset | NOT STARTED | — |
+| 39 | ralph/tui | NOT STARTED | — |
+
+### Monitor Commands (4) — NEEDS PACKAGE EXTRACTION
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 40 | monitor/init | NOT STARTED | — |
+| 41 | monitor/up | NOT STARTED | — |
+| 42 | monitor/down | NOT STARTED | — |
+| 43 | monitor/status | NOT STARTED | — |
+
+### Config Commands (1) — NEEDS PACKAGE EXTRACTION
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 44 | config/check | NOT STARTED | — |
+
+### Top-Level Commands (4)
+
+| # | Package | Status | Session Memory |
+|---|---------|--------|----------------|
+| 45 | init | NOT STARTED | — |
+| 46 | project/init | NOT STARTED | — |
+| 47 | project/register | NOT STARTED | — |
+| 48 | generate | NOT STARTED | — |
+
+### Parent Command Registrations (update after children migrate)
+
+| Parent | Children Count | Status |
+|--------|---------------|--------|
+| container/container.go | 20 | NOT STARTED |
+| image/image.go | 5 | NOT STARTED |
+| volume/volume.go | 5 | NOT STARTED |
+| network/network.go | 5 | NOT STARTED |
+| ralph/ralph.go | 4 | NOT STARTED |
+| monitor/monitor.go | 4 | NOT STARTED |
+| config/config.go | 1 | NOT STARTED |
+| project/project.go | 2 | NOT STARTED |
+| root/root.go | 2 | NOT STARTED |
+
+---
+
+## Group Classification
+
+**Group A** — Commands that already exist in own subpackages with exported constructors. Standard workflow applies.
+
+**Group B** — Commands with extra run parameters (positional args passed as separate params, or `*cobra.Command` for confirmation prompts). These need args folded into Options and confirmation moved to Prompter on Options.
+
+**Needs Package Extraction** — Ralph, Monitor, Config commands have unexported constructors inline in parent. Step 0.5 required.
+
+## Decision Tree: Extra Run Parameters
+
+```
+Does run() take params beyond (ctx, opts)?
+    │
+    ├─ Positional args (names, volumes, etc.)
+    │   → Add field to Options, assign in RunE from args
+    │
+    ├─ *cobra.Command (for confirmation prompts)
+    │   → Add Prompter to Options, use opts.Prompter.Confirm()
+    │   → Remove cmd parameter from run function
+    │
+    └─ No extra params → standard workflow
+```
+
+## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
+
+Current pattern uses `cmd.OutOrStdout()` for confirmation. Migration:
+1. Add `Prompter prompts.Prompter` to Options
+2. Replace `fmt.Fprintf(cmd.OutOrStdout(), ...)` with `opts.Prompter.Confirm(...)`
+3. Remove `*cobra.Command` from run signature
+4. Assign Prompter from Factory in NewCmd
