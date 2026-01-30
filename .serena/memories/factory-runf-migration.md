@@ -162,7 +162,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 17 | container/top | DONE | — |
 | 18 | container/unpause | DONE | — |
 | 19 | container/update | DONE | — |
-| 20 | container/wait | NOT STARTED | — |
+| 20 | container/wait | DONE | — |
 
 ### Image Commands (5)
 
@@ -231,7 +231,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | Parent | Children Count | Status |
 |--------|---------------|--------|
-| container/container.go | 20 | NOT STARTED |
+| container/container.go | 20 | DONE |
 | image/image.go | 5 | NOT STARTED |
 | volume/volume.go | 5 | NOT STARTED |
 | network/network.go | 5 | NOT STARTED |
