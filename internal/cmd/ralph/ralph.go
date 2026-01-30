@@ -2,6 +2,7 @@
 package ralph
 
 import (
+	"github.com/schmitthub/clawker/internal/cmd/ralph/run"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -35,7 +36,7 @@ Available commands:
   clawker ralph reset --agent dev`,
 	}
 
-	cmd.AddCommand(newCmdRun(f))
+	cmd.AddCommand(run.NewCmdRun(f, nil))
 	cmd.AddCommand(newCmdStatus(f))
 	cmd.AddCommand(newCmdReset(f))
 	cmd.AddCommand(NewCmdTUI(f))

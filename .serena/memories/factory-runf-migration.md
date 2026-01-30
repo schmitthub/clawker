@@ -198,7 +198,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 36 | ralph/run | NOT STARTED | — |
+| 36 | ralph/run | DONE | — |
 | 37 | ralph/status | NOT STARTED | — |
 | 38 | ralph/reset | NOT STARTED | — |
 | 39 | ralph/tui | NOT STARTED | — |
@@ -307,6 +307,12 @@ Commands like `container/run` that take many Factory deps on Options (IOStreams,
 
 ### Batching an entire command group in one session
 When all commands in a group (e.g., network/*) follow the same straightforward pattern (own subpackages, exported constructors, no package extraction needed), migrating all 5 in a single session is efficient. The parent registration update happens naturally as each child is migrated, and the final `go test ./...` validates everything at once.
+
+### Package extraction: iostreams test helper
+The project uses `iostreams.NewTestIOStreams()` returning `*TestIOStreams` (which embeds `*IOStreams`). Access the embedded field via `tio.IOStreams` for `Factory.IOStreams`. There is no `iostreams.Test()` four-return function.
+
+### Package extraction: import naming for `run` subpackage
+When creating `internal/cmd/ralph/run/`, the Go package name is `run` which imports cleanly as `run.NewCmdRun(f, nil)` in the parent. No alias needed despite the common name.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 

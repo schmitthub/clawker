@@ -1,4 +1,4 @@
-package ralph
+package run
 
 import (
 	"context"
@@ -19,8 +19,8 @@ import (
 // RunOptions holds options for the ralph run command.
 type RunOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client   func(context.Context) (*docker.Client, error)
-	Config   func() (*config.Config, error)
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() (*config.Config, error)
 
 	Agent               string
 	Prompt              string
@@ -32,7 +32,6 @@ type RunOptions struct {
 	Quiet               bool
 	JSON                bool
 
-	// New flags
 	CallsPerHour            int
 	Monitor                 bool
 	Verbose                 bool
@@ -44,11 +43,11 @@ type RunOptions struct {
 	SkipPermissions         bool
 }
 
-func newCmdRun(f *cmdutil.Factory) *cobra.Command {
+func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error) *cobra.Command {
 	opts := &RunOptions{
 		IOStreams: f.IOStreams,
-		Client:   f.Client,
-		Config:   f.Config,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -93,7 +92,10 @@ The container must already be running. Use 'clawker start' first.`,
   # Run in YOLO mode (skip all permission prompts)
   clawker ralph run --agent dev --skip-permissions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRalph(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return runRun(cmd.Context(), opts)
 		},
 	}
 
@@ -128,8 +130,7 @@ The container must already be running. Use 'clawker start' first.`,
 	return cmd
 }
 
-func runRalph(opts *RunOptions) error {
-	ctx := context.Background()
+func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 
 	// Load config
