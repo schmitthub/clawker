@@ -23,8 +23,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Options holds options for the run command.
-type Options struct {
+// RunOptions holds options for the run command.
+type RunOptions struct {
 	*copts.ContainerOptions
 
 	IOStreams               *iostreams.IOStreams
@@ -47,10 +47,10 @@ type Options struct {
 	flags *pflag.FlagSet
 }
 
-// NewCmd creates a new container run command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
+// NewCmdRun creates a new container run command.
+func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
-	opts := &Options{
+	opts := &RunOptions{
 		ContainerOptions:        containerOpts,
 		IOStreams:               f.IOStreams,
 		Client:                  f.Client,
@@ -105,7 +105,10 @@ If IMAGE is "@", clawker will use (in order of precedence):
 				containerOpts.Command = args[1:]
 			}
 			opts.flags = cmd.Flags()
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return runRun(cmd.Context(), opts)
 		},
 	}
 
@@ -128,7 +131,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 
@@ -293,7 +296,7 @@ func run(ctx context.Context, opts *Options) error {
 // This ensures we don't miss output from short-lived containers, especially with --rm.
 // The sequence follows Docker CLI's approach: attach -> start I/O streaming -> start container -> wait.
 // See: https://github.com/docker/cli/blob/master/cli/command/container/run.go
-func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *Options) error {
+func attachThenStart(ctx context.Context, client *docker.Client, containerID string, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 

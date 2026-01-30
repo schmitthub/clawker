@@ -3,7 +3,6 @@ package run
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -13,263 +12,314 @@ import (
 	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/whail"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
-
-// testOptions is a flat struct for test comparisons
-// It mirrors the fields from the embedded copts.ContainerOptions plus run-specific fields
-type testOptions struct {
-	// From copts.ContainerOptions
-	Agent      string
-	Name       string
-	Env        []string
-	Volumes    []string
-	Publish    []string // String representation for comparison
-	Workdir    string
-	User       string
-	Entrypoint string
-	TTY        bool
-	Stdin      bool
-	Network    string
-	Labels     []string
-	AutoRemove bool
-	Mode       string
-	Image      string
-	Command    []string
-
-	// Run-specific
-	Detach bool
-}
 
 func TestNewCmdRun(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		args       []string
-		output     testOptions
 		wantErr    bool
 		wantErrMsg string
+		// Expected values (checked only when wantErr is false)
+		wantAgent      string
+		wantName       string
+		wantDetach     bool
+		wantMode       string
+		wantImage      string
+		wantCommand    []string
+		wantEnv        []string
+		wantVolumes    []string
+		wantPublish    []string
+		wantWorkdir    string
+		wantUser       string
+		wantEntrypoint string
+		wantTTY        bool
+		wantStdin      bool
+		wantNetwork    string
+		wantLabels     []string
+		wantAutoRemove bool
 	}{
 		{
 			name:    "no image specified",
 			input:   "",
 			args:    []string{},
-			output:  testOptions{},
 			wantErr: true, // RequiresMinArgs(1) rejects empty args
 		},
 		{
-			name:   "basic image only",
-			input:  "",
-			args:   []string{"alpine"},
-			output: testOptions{Image: "alpine"},
+			name:      "basic image only",
+			args:      []string{"alpine"},
+			wantImage: "alpine",
 		},
 		{
-			name:   "image with tag",
-			input:  "",
-			args:   []string{"alpine:latest"},
-			output: testOptions{Image: "alpine:latest"},
+			name:      "image with tag",
+			args:      []string{"alpine:latest"},
+			wantImage: "alpine:latest",
 		},
 		{
-			name:   "image with command",
-			input:  "",
-			args:   []string{"alpine", "echo", "hello"},
-			output: testOptions{Image: "alpine", Command: []string{"echo", "hello"}},
+			name:        "image with command",
+			args:        []string{"alpine", "echo", "hello"},
+			wantImage:   "alpine",
+			wantCommand: []string{"echo", "hello"},
 		},
 		{
-			name:   "with agent flag",
-			input:  "--agent myagent",
-			args:   []string{"alpine"},
-			output: testOptions{Agent: "myagent", Image: "alpine"},
+			name:      "with agent flag",
+			input:     "--agent myagent",
+			args:      []string{"alpine"},
+			wantAgent: "myagent",
+			wantImage: "alpine",
 		},
 		{
-			name:   "with name flag",
-			input:  "--name mycontainer",
-			args:   []string{"alpine"},
-			output: testOptions{Name: "mycontainer", Image: "alpine"},
+			name:      "with name flag",
+			input:     "--name mycontainer",
+			args:      []string{"alpine"},
+			wantName:  "mycontainer",
+			wantImage: "alpine",
 		},
 		{
-			name:   "with detach flag",
-			input:  "--detach",
-			args:   []string{"alpine"},
-			output: testOptions{Detach: true, Image: "alpine"},
+			name:       "with detach flag",
+			input:      "--detach",
+			args:       []string{"alpine"},
+			wantDetach: true,
+			wantImage:  "alpine",
 		},
 		{
-			name:   "with environment variable",
-			input:  "-e FOO=bar",
-			args:   []string{"alpine"},
-			output: testOptions{Env: []string{"FOO=bar"}, Image: "alpine"},
+			name:      "with environment variable",
+			input:     "-e FOO=bar",
+			args:      []string{"alpine"},
+			wantEnv:   []string{"FOO=bar"},
+			wantImage: "alpine",
 		},
 		{
-			name:   "with multiple env vars",
-			input:  "-e FOO=bar -e BAZ=qux",
-			args:   []string{"alpine"},
-			output: testOptions{Env: []string{"FOO=bar", "BAZ=qux"}, Image: "alpine"},
+			name:      "with multiple env vars",
+			input:     "-e FOO=bar -e BAZ=qux",
+			args:      []string{"alpine"},
+			wantEnv:   []string{"FOO=bar", "BAZ=qux"},
+			wantImage: "alpine",
 		},
 		{
-			name:   "with volume",
-			input:  "-v /host:/container",
-			args:   []string{"alpine"},
-			output: testOptions{Volumes: []string{"/host:/container"}, Image: "alpine"},
+			name:        "with volume",
+			input:       "-v /host:/container",
+			args:        []string{"alpine"},
+			wantVolumes: []string{"/host:/container"},
+			wantImage:   "alpine",
 		},
 		{
-			name:   "with port",
-			input:  "-p 8080:80",
-			args:   []string{"alpine"},
-			output: testOptions{Publish: []string{"8080:80"}, Image: "alpine"},
+			name:        "with port",
+			input:       "-p 8080:80",
+			args:        []string{"alpine"},
+			wantPublish: []string{"8080:80"},
+			wantImage:   "alpine",
 		},
 		{
-			name:   "with workdir",
-			input:  "-w /app",
-			args:   []string{"alpine"},
-			output: testOptions{Workdir: "/app", Image: "alpine"},
+			name:        "with workdir",
+			input:       "-w /app",
+			args:        []string{"alpine"},
+			wantWorkdir: "/app",
+			wantImage:   "alpine",
 		},
 		{
-			name:   "with user",
-			input:  "-u nobody",
-			args:   []string{"alpine"},
-			output: testOptions{User: "nobody", Image: "alpine"},
+			name:      "with user",
+			input:     "-u nobody",
+			args:      []string{"alpine"},
+			wantUser:  "nobody",
+			wantImage: "alpine",
 		},
 		{
-			name:   "with entrypoint",
-			input:  "--entrypoint /bin/sh",
-			args:   []string{"alpine"},
-			output: testOptions{Entrypoint: "/bin/sh", Image: "alpine"},
+			name:           "with entrypoint",
+			input:          "--entrypoint /bin/sh",
+			args:           []string{"alpine"},
+			wantEntrypoint: "/bin/sh",
+			wantImage:      "alpine",
 		},
 		{
-			name:   "with tty",
-			input:  "-t",
-			args:   []string{"alpine"},
-			output: testOptions{TTY: true, Image: "alpine"},
+			name:      "with tty",
+			input:     "-t",
+			args:      []string{"alpine"},
+			wantTTY:   true,
+			wantImage: "alpine",
 		},
 		{
-			name:   "with interactive",
-			input:  "-i",
-			args:   []string{"alpine"},
-			output: testOptions{Stdin: true, Image: "alpine"},
+			name:      "with interactive",
+			input:     "-i",
+			args:      []string{"alpine"},
+			wantStdin: true,
+			wantImage: "alpine",
 		},
 		{
-			name:   "with tty and interactive",
-			input:  "-it",
-			args:   []string{"alpine"},
-			output: testOptions{TTY: true, Stdin: true, Image: "alpine"},
+			name:      "with tty and interactive",
+			input:     "-it",
+			args:      []string{"alpine"},
+			wantTTY:   true,
+			wantStdin: true,
+			wantImage: "alpine",
 		},
 		{
-			name:   "with network",
-			input:  "--network mynet",
-			args:   []string{"alpine"},
-			output: testOptions{Network: "mynet", Image: "alpine"},
+			name:        "with network",
+			input:       "--network mynet",
+			args:        []string{"alpine"},
+			wantNetwork: "mynet",
+			wantImage:   "alpine",
 		},
 		{
-			name:   "with label",
-			input:  "-l foo=bar",
-			args:   []string{"alpine"},
-			output: testOptions{Labels: []string{"foo=bar"}, Image: "alpine"},
+			name:       "with label",
+			input:      "-l foo=bar",
+			args:       []string{"alpine"},
+			wantLabels: []string{"foo=bar"},
+			wantImage:  "alpine",
 		},
 		{
-			name:   "with auto-remove",
-			input:  "--rm",
-			args:   []string{"alpine"},
-			output: testOptions{AutoRemove: true, Image: "alpine"},
+			name:           "with auto-remove",
+			input:          "--rm",
+			args:           []string{"alpine"},
+			wantAutoRemove: true,
+			wantImage:      "alpine",
 		},
 		{
-			name:   "interactive detached with rm",
-			input:  "-it --detach --rm",
-			args:   []string{"alpine", "sh"},
-			output: testOptions{TTY: true, Stdin: true, Detach: true, AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+			name:           "interactive detached with rm",
+			input:          "-it --detach --rm",
+			args:           []string{"alpine", "sh"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantDetach:     true,
+			wantAutoRemove: true,
+			wantImage:      "alpine",
+			wantCommand:    []string{"sh"},
 		},
 		{
 			name:    "no image requires error",
-			input:   "",
 			args:    []string{},
-			output:  testOptions{},
 			wantErr: true, // RequiresMinArgs(1) rejects empty args
 		},
 		// @ symbol tests - triggers default image resolution at runtime
 		{
-			name:   "@ symbol as image",
-			input:  "",
-			args:   []string{"@"},
-			output: testOptions{Image: "@"},
+			name:      "@ symbol as image",
+			args:      []string{"@"},
+			wantImage: "@",
 		},
 		{
-			name:   "@ symbol with agent flag",
-			input:  "--agent ralph",
-			args:   []string{"@"},
-			output: testOptions{Agent: "ralph", Image: "@"},
+			name:      "@ symbol with agent flag",
+			input:     "--agent ralph",
+			args:      []string{"@"},
+			wantAgent: "ralph",
+			wantImage: "@",
 		},
 		{
-			name:   "@ symbol with common flags",
-			input:  "-it --rm",
-			args:   []string{"@"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "@"},
+			name:           "@ symbol with common flags",
+			input:          "-it --rm",
+			args:           []string{"@"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantImage:      "@",
 		},
 		{
-			name:   "@ symbol with command",
-			input:  "",
-			args:   []string{"@", "echo", "hello"},
-			output: testOptions{Image: "@", Command: []string{"echo", "hello"}},
+			name:        "@ symbol with command",
+			args:        []string{"@", "echo", "hello"},
+			wantImage:   "@",
+			wantCommand: []string{"echo", "hello"},
 		},
 		{
-			name:   "@ symbol with mode",
-			input:  "--agent dev --mode=snapshot",
-			args:   []string{"@"},
-			output: testOptions{Agent: "dev", Mode: "snapshot", Image: "@"},
+			name:      "@ symbol with mode",
+			input:     "--agent dev --mode=snapshot",
+			args:      []string{"@"},
+			wantAgent: "dev",
+			wantMode:  "snapshot",
+			wantImage: "@",
 		},
 		{
-			name:   "with mode bind",
-			input:  "--agent dev --mode=bind",
-			args:   []string{"alpine"},
-			output: testOptions{Agent: "dev", Mode: "bind", Image: "alpine"},
+			name:      "with mode bind",
+			input:     "--agent dev --mode=bind",
+			args:      []string{"alpine"},
+			wantAgent: "dev",
+			wantMode:  "bind",
+			wantImage: "alpine",
 		},
 		{
-			name:   "with mode snapshot",
-			input:  "--agent dev --mode=snapshot",
-			args:   []string{"alpine"},
-			output: testOptions{Agent: "dev", Mode: "snapshot", Image: "alpine"},
+			name:      "with mode snapshot",
+			input:     "--agent dev --mode=snapshot",
+			args:      []string{"alpine"},
+			wantAgent: "dev",
+			wantMode:  "snapshot",
+			wantImage: "alpine",
 		},
 		{
-			name:   "with mode and other flags",
-			input:  "-it --agent sandbox --mode=snapshot --rm",
-			args:   []string{"alpine", "sh"},
-			output: testOptions{TTY: true, Stdin: true, Agent: "sandbox", Mode: "snapshot", AutoRemove: true, Image: "alpine", Command: []string{"sh"}},
+			name:           "with mode and other flags",
+			input:          "-it --agent sandbox --mode=snapshot --rm",
+			args:           []string{"alpine", "sh"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAgent:      "sandbox",
+			wantMode:       "snapshot",
+			wantAutoRemove: true,
+			wantImage:      "alpine",
+			wantCommand:    []string{"sh"},
 		},
 		{
-			name:   "flags after image passed as command",
-			input:  "-it --rm",
-			args:   []string{"alpine", "--version"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--version"}},
+			name:           "flags after image passed as command",
+			input:          "-it --rm",
+			args:           []string{"alpine", "--version"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantImage:      "alpine",
+			wantCommand:    []string{"--version"},
 		},
 		{
-			name:   "mixed clawker and container flags",
-			input:  "-it --rm -e FOO=bar",
-			args:   []string{"alpine", "-p", "prompt"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Env: []string{"FOO=bar"}, Image: "alpine", Command: []string{"-p", "prompt"}},
+			name:           "mixed clawker and container flags",
+			input:          "-it --rm -e FOO=bar",
+			args:           []string{"alpine", "-p", "prompt"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantEnv:        []string{"FOO=bar"},
+			wantImage:      "alpine",
+			wantCommand:    []string{"-p", "prompt"},
 		},
 		{
-			name:   "claude flags passthrough",
-			input:  "-it --rm",
-			args:   []string{"clawker-image:latest", "--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "clawker-image:latest", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+			name:           "claude flags passthrough",
+			input:          "-it --rm",
+			args:           []string{"clawker-image:latest", "--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantImage:      "clawker-image:latest",
+			wantCommand:    []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
 		},
 		{
-			name:   "flags only as command with -- separator",
-			input:  "-it --rm --agent ralph --",
-			args:   []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Command: []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"}},
+			// After --, all remaining args are positional. The real RunE always
+			// treats args[0] as Image, so a flag-like arg becomes the image.
+			name:           "flags only as command with -- separator",
+			input:          "-it --rm --agent ralph --",
+			args:           []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantAgent:      "ralph",
+			wantImage:      "--allow-dangerously-skip-permissions",
+			wantCommand:    []string{"-p", "Fix bugs"},
 		},
 		{
-			name:   "arg starting with dash treated as command after -- separator",
-			input:  "-it --rm --",
-			args:   []string{"-unusual-image:v1"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Command: []string{"-unusual-image:v1"}},
+			// After --, args[0] is always Image regardless of leading dash.
+			name:           "arg starting with dash treated as image after -- separator",
+			input:          "-it --rm --",
+			args:           []string{"-unusual-image:v1"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantImage:      "-unusual-image:v1",
 		},
 		{
-			name:   "multiple flag-value pairs after image",
-			input:  "-it --rm",
-			args:   []string{"alpine", "--flag1", "value1", "--flag2", "value2"},
-			output: testOptions{TTY: true, Stdin: true, AutoRemove: true, Image: "alpine", Command: []string{"--flag1", "value1", "--flag2", "value2"}},
+			name:           "multiple flag-value pairs after image",
+			input:          "-it --rm",
+			args:           []string{"alpine", "--flag1", "value1", "--flag2", "value2"},
+			wantTTY:        true,
+			wantStdin:      true,
+			wantAutoRemove: true,
+			wantImage:      "alpine",
+			wantCommand:    []string{"--flag1", "value1", "--flag2", "value2"},
 		},
 	}
 
@@ -277,47 +327,11 @@ func TestNewCmdRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts testOptions
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts.Agent, _ = cmd.Flags().GetString("agent")
-				cmdOpts.Name, _ = cmd.Flags().GetString("name")
-				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
-				cmdOpts.Mode, _ = cmd.Flags().GetString("mode")
-				cmdOpts.Env, _ = cmd.Flags().GetStringArray("env")
-				cmdOpts.Volumes, _ = cmd.Flags().GetStringArray("volume")
-				// Note: Publish is now a PortOpts, but flag value is still accessible
-				if publishFlag := cmd.Flags().Lookup("publish"); publishFlag != nil {
-					if portOpts, ok := publishFlag.Value.(*copts.PortOpts); ok {
-						cmdOpts.Publish = portOpts.GetAsStrings()
-					}
-				}
-				cmdOpts.Workdir, _ = cmd.Flags().GetString("workdir")
-				cmdOpts.User, _ = cmd.Flags().GetString("user")
-				cmdOpts.Entrypoint, _ = cmd.Flags().GetString("entrypoint")
-				cmdOpts.TTY, _ = cmd.Flags().GetBool("tty")
-				cmdOpts.Stdin, _ = cmd.Flags().GetBool("interactive")
-				if netFlag := cmd.Flags().Lookup("network"); netFlag != nil {
-					cmdOpts.Network = netFlag.Value.String()
-				}
-				cmdOpts.Labels, _ = cmd.Flags().GetStringArray("label")
-				cmdOpts.AutoRemove, _ = cmd.Flags().GetBool("rm")
-				if len(args) > 0 {
-					// Match the actual command logic: if first arg starts with "-",
-					// it's a container command, not an image name
-					if strings.HasPrefix(args[0], "-") {
-						cmdOpts.Command = args
-					} else {
-						cmdOpts.Image = args[0]
-						if len(args) > 1 {
-							cmdOpts.Command = args[1:]
-						}
-					}
-				}
+			var gotOpts *RunOptions
+			cmd := NewCmdRun(f, func(_ context.Context, opts *RunOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -347,23 +361,25 @@ func TestNewCmdRun(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.output.Name, cmdOpts.Name)
-			require.Equal(t, tt.output.Detach, cmdOpts.Detach)
-			require.Equal(t, tt.output.Mode, cmdOpts.Mode)
-			require.Equal(t, tt.output.Image, cmdOpts.Image)
-			require.Equal(t, tt.output.Command, cmdOpts.Command)
-			requireSliceEqual(t, tt.output.Env, cmdOpts.Env)
-			requireSliceEqual(t, tt.output.Volumes, cmdOpts.Volumes)
-			requireSliceEqual(t, tt.output.Publish, cmdOpts.Publish)
-			require.Equal(t, tt.output.Workdir, cmdOpts.Workdir)
-			require.Equal(t, tt.output.User, cmdOpts.User)
-			require.Equal(t, tt.output.Entrypoint, cmdOpts.Entrypoint)
-			require.Equal(t, tt.output.TTY, cmdOpts.TTY)
-			require.Equal(t, tt.output.Stdin, cmdOpts.Stdin)
-			require.Equal(t, tt.output.Network, cmdOpts.Network)
-			requireSliceEqual(t, tt.output.Labels, cmdOpts.Labels)
-			require.Equal(t, tt.output.AutoRemove, cmdOpts.AutoRemove)
+			require.NotNil(t, gotOpts)
+
+			require.Equal(t, tt.wantAgent, gotOpts.ContainerOptions.Agent)
+			require.Equal(t, tt.wantName, gotOpts.ContainerOptions.Name)
+			require.Equal(t, tt.wantDetach, gotOpts.Detach)
+			require.Equal(t, tt.wantMode, gotOpts.ContainerOptions.Mode)
+			require.Equal(t, tt.wantImage, gotOpts.ContainerOptions.Image)
+			require.Equal(t, tt.wantCommand, gotOpts.ContainerOptions.Command)
+			requireSliceEqual(t, tt.wantEnv, gotOpts.ContainerOptions.Env)
+			requireSliceEqual(t, tt.wantVolumes, gotOpts.ContainerOptions.Volumes)
+			requireSliceEqual(t, tt.wantPublish, gotOpts.ContainerOptions.Publish.GetAsStrings())
+			require.Equal(t, tt.wantWorkdir, gotOpts.ContainerOptions.Workdir)
+			require.Equal(t, tt.wantUser, gotOpts.ContainerOptions.User)
+			require.Equal(t, tt.wantEntrypoint, gotOpts.ContainerOptions.Entrypoint)
+			require.Equal(t, tt.wantTTY, gotOpts.ContainerOptions.TTY)
+			require.Equal(t, tt.wantStdin, gotOpts.ContainerOptions.Stdin)
+			require.Equal(t, tt.wantNetwork, gotOpts.ContainerOptions.NetMode.NetworkMode())
+			requireSliceEqual(t, tt.wantLabels, gotOpts.ContainerOptions.Labels)
+			require.Equal(t, tt.wantAutoRemove, gotOpts.ContainerOptions.AutoRemove)
 		})
 	}
 }
@@ -371,7 +387,7 @@ func TestNewCmdRun(t *testing.T) {
 // TestCmdRun_NoDetachShorthand verifies --detach does NOT have -d shorthand (conflicts with --debug)
 func TestCmdRun_NoDetachShorthand(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 
 	// Verify --detach does NOT have -d shorthand (conflicts with --debug)
 	require.Nil(t, cmd.Flags().ShorthandLookup("d"))
@@ -720,16 +736,11 @@ func TestImageArg(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				f := &cmdutil.Factory{}
 
-				var capturedImage string
-				cmd := NewCmd(f)
-
-				// Override RunE to capture the image instead of executing
-				cmd.RunE = func(cmd *cobra.Command, args []string) error {
-					if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-						capturedImage = args[0]
-					}
+				var gotOpts *RunOptions
+				cmd := NewCmdRun(f, func(_ context.Context, opts *RunOptions) error {
+					gotOpts = opts
 					return nil
-				}
+				})
 
 				// Cobra hack-around for help flag
 				cmd.Flags().BoolP("help", "x", false, "")
@@ -741,18 +752,16 @@ func TestImageArg(t *testing.T) {
 
 				_, err := cmd.ExecuteC()
 				require.NoError(t, err)
-				require.Equal(t, tt.wantImage, capturedImage, "explicit image should pass through unchanged")
+				require.NotNil(t, gotOpts)
+				require.Equal(t, tt.wantImage, gotOpts.ContainerOptions.Image, "explicit image should pass through unchanged")
 			})
 		}
 	})
 
 	// Test for empty image (no image argument provided)
-	// NOTE: This test documents a known bug in run.go where args[0] causes panic when args is empty.
-	// The test is written to expect proper error handling, but will fail/panic until the bug is fixed.
-	// DO NOT FIX THE BUG IN THIS PR - it should be addressed separately.
 	t.Run("empty image shows error", func(t *testing.T) {
 		f := &cmdutil.Factory{}
-		cmd := NewCmd(f)
+		cmd := NewCmdRun(f, nil)
 
 		// Cobra hack-around for help flag
 		cmd.Flags().BoolP("help", "x", false, "")

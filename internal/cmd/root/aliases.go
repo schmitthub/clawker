@@ -93,7 +93,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
-		Command: containerrun.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerrun.NewCmdRun(f, nil) },
 	},
 	{
 		Use:     "start [CONTAINER...]",

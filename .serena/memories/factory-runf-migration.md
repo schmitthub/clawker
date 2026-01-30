@@ -155,7 +155,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 10 | container/remove | DONE | — |
 | 11 | container/rename | DONE | — |
 | 12 | container/restart | DONE | — |
-| 13 | container/run | NOT STARTED | — |
+| 13 | container/run | DONE | — |
 | 14 | container/start | NOT STARTED | — |
 | 15 | container/stats | NOT STARTED | — |
 | 16 | container/stop | NOT STARTED | — |
@@ -291,7 +291,13 @@ Example: `container/create` had tests treating args starting with `-` as Command
 Aliases in `aliases.go` that use direct function references (`Command: pkg.NewCmd`) must be changed to wrapper closures (`Command: func(f *cmdutil.Factory) *cobra.Command { return pkg.NewCmdX(f, nil) }`) after adding the `runF` parameter.
 
 ### Commands with embedded ContainerOptions
-For commands embedding `*copts.ContainerOptions`, the runF capture gives direct access to all flag values via the embedded struct. Tests assert on `gotOpts.Agent`, `gotOpts.NetMode.NetworkMode()`, etc. — no need for `cmd.Flags().GetString()` extraction.
+For commands embedding `*copts.ContainerOptions`, the runF capture gives direct access to all flag values via the embedded struct. Tests assert on `gotOpts.ContainerOptions.Agent`, `gotOpts.ContainerOptions.NetMode.NetworkMode()`, etc. — no need for `cmd.Flags().GetString()` extraction.
+
+### RunE override tests with custom arg-handling logic
+Old tests that override RunE may implement their own arg-parsing logic that diverges from the real RunE. For example, `container/run` tests had special `strings.HasPrefix(args[0], "-")` logic treating dash-prefixed args as Command instead of Image, but the real RunE always treats `args[0]` as Image. The runF pattern captures actual command behavior, so test expectations must be updated to match real behavior (not the old override's behavior).
+
+### Alias wrapper closures for commands with many Factory deps
+Commands like `container/run` that take many Factory deps on Options (IOStreams, Client, Config, Settings, Prompter, SettingsLoader, etc.) work fine with the standard closure wrapper pattern in aliases.go. The alias closure just passes `nil` for runF — no special handling needed regardless of how many Factory deps the command uses.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 

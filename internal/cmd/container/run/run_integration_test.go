@@ -52,7 +52,7 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	}
 
 	// Create and execute the run command in detached mode
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -120,7 +120,7 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 	}
 
 	// Run a container that exits immediately with --rm
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--rm",
@@ -172,7 +172,7 @@ func TestRunIntegration_Labels(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -250,7 +250,7 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 		sleep 30
 	`
 
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -357,7 +357,7 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 			}
 			cmdArgs = append(cmdArgs, tt.args...)
 
-			cmd := NewCmd(f)
+			cmd := NewCmdRun(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()
@@ -427,7 +427,7 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 	}
 
 	// Run env command with a custom environment variable
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -501,7 +501,7 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	}
 
 	// Run with --agent flag and verify naming convention
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -578,14 +578,14 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 
 	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
-		WorkDir:  h.ProjectDir,
+		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
 
 	// Run without --detach: this goes through attachThenStart
 	// Use --rm so container is cleaned up automatically
 	// Do NOT use -t (TTY) since test stdin is not a terminal
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--rm",
 		"--agent", agentName,
@@ -636,11 +636,11 @@ func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
 
 	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
-		WorkDir:  h.ProjectDir,
+		WorkDir:   h.ProjectDir,
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--rm",
 		"--agent", agentName,
