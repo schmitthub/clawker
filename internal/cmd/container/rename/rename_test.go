@@ -2,25 +2,27 @@ package rename
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdRename(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantAgent  bool
+		wantOpts   RenameOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
-			name:  "valid rename",
-			input: "oldname newname",
+			name:     "valid rename",
+			input:    "oldname newname",
+			wantOpts: RenameOptions{container: "oldname", newName: "newname"},
 		},
 		{
 			name:       "missing new name",
@@ -35,29 +37,28 @@ func TestNewCmd(t *testing.T) {
 			wantErrMsg: "rename: 'rename' requires at least 2 arguments",
 		},
 		{
-			name:      "with agent flag",
-			input:     "--agent ralph newname",
-			wantAgent: true,
+			name:     "with agent flag",
+			input:    "--agent ralph newname",
+			wantOpts: RenameOptions{Agent: true, container: "ralph", newName: "newname"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			cmd := NewCmd(f)
-
-			var capturedAgent bool
-			// Override RunE to capture agent and not actually execute
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				capturedAgent, _ = cmd.Flags().GetBool("agent")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
 
-			// Cobra hack-around for help flag
+			var gotOpts *RenameOptions
+			cmd := NewCmdRename(f, func(_ context.Context, opts *RenameOptions) error {
+				gotOpts = opts
+				return nil
+			})
+
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := []string{}
 			if tt.input != "" {
 				argv = testutil.SplitArgs(tt.input)
@@ -76,19 +77,23 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantAgent, capturedAgent)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.container, gotOpts.container)
+			require.Equal(t, tt.wantOpts.newName, gotOpts.newName)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdRename_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdRename(f, nil)
 
-	// Test command basics
 	require.Equal(t, "rename CONTAINER NEW_NAME", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
+
+	require.NotNil(t, cmd.Flags().Lookup("agent"))
 }

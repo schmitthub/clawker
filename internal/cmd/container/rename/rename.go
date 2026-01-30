@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the rename command.
-type Options struct {
+// RenameOptions defines the options for the rename command.
+type RenameOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -23,9 +23,9 @@ type Options struct {
 	newName   string
 }
 
-// NewCmd creates a new rename command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdRename creates a new rename command.
+func NewCmdRename(f *cmdutil.Factory, runF func(context.Context, *RenameOptions) error) *cobra.Command {
+	opts := &RenameOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -51,7 +51,10 @@ Container names can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
 			opts.newName = args[1]
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return renameRun(cmd.Context(), opts)
 		},
 	}
 
@@ -60,7 +63,7 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func renameRun(ctx context.Context, opts *RenameOptions) error {
 	ios := opts.IOStreams
 	oldName := opts.container
 	newName := opts.newName
