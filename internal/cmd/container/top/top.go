@@ -22,11 +22,11 @@ type Options struct {
 
 	Agent bool
 
-	args []string
+	Args []string
 }
 
-// NewCmd creates a new top command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
+// NewCmdTop creates a new top command.
+func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *Options) error) *cobra.Command {
 	opts := &Options{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -59,8 +59,11 @@ Container name can be:
   clawker container top --agent ralph -ef`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.args = args
-			return run(cmd.Context(), opts)
+			opts.Args = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return topRun(cmd.Context(), opts)
 		},
 	}
 
@@ -69,12 +72,12 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func topRun(ctx context.Context, opts *Options) error {
 	ios := opts.IOStreams
 
 	// First arg is container/agent name, rest are ps options
-	containerName := opts.args[0]
-	psArgs := opts.args[1:]
+	containerName := opts.Args[0]
+	psArgs := opts.Args[1:]
 
 	if opts.Agent {
 		// Resolve agent name to full container name

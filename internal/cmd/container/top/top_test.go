@@ -2,33 +2,38 @@ package top
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdTop(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		wantAgent  bool
+		wantArgs   []string
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
-			name:  "with container name",
-			input: "mycontainer",
+			name:     "with container name",
+			input:    "mycontainer",
+			wantArgs: []string{"mycontainer"},
 		},
 		{
-			name:  "with container name and ps args",
-			input: "mycontainer aux",
+			name:     "with container name and ps args",
+			input:    "mycontainer aux",
+			wantArgs: []string{"mycontainer", "aux"},
 		},
 		{
-			name:  "with container name and multiple ps args",
-			input: "mycontainer -- -e -f",
+			name:     "with container name and multiple ps args",
+			input:    "mycontainer -- -e -f",
+			wantArgs: []string{"mycontainer", "-e", "-f"},
 		},
 		{
 			name:       "no arguments",
@@ -40,26 +45,29 @@ func TestNewCmd(t *testing.T) {
 			name:      "with agent flag",
 			input:     "--agent ralph",
 			wantAgent: true,
+			wantArgs:  []string{"ralph"},
 		},
 		{
 			name:      "with agent flag and ps args",
 			input:     "--agent ralph aux",
 			wantAgent: true,
+			wantArgs:  []string{"ralph", "aux"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			cmd := NewCmd(f)
-
-			var capturedAgent bool
-			// Override RunE to capture agent and not actually execute
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				capturedAgent, _ = cmd.Flags().GetBool("agent")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
+
+			var gotOpts *Options
+			cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+				gotOpts = opts
+				return nil
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -80,14 +88,16 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantAgent, capturedAgent)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantAgent, gotOpts.Agent)
+			require.Equal(t, tt.wantArgs, gotOpts.Args)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdTop_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdTop(f, nil)
 
 	// Test command basics
 	require.Equal(t, "top CONTAINER [ps OPTIONS]", cmd.Use)
@@ -97,14 +107,14 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotNil(t, cmd.RunE)
 }
 
-func TestCmd_ArgsValidation(t *testing.T) {
+func TestCmdTop_ArgsValidation(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
 
-	// Override RunE to not actually execute
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+	var gotOpts *Options
+	cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+		gotOpts = opts
 		return nil
-	}
+	})
 
 	// Test with container and ps args (using -- to separate flags from args)
 	cmd.SetArgs([]string{"container1", "--", "aux"})
@@ -114,9 +124,11 @@ func TestCmd_ArgsValidation(t *testing.T) {
 
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	require.Equal(t, []string{"container1", "aux"}, gotOpts.Args)
 }
 
-func TestCmd_ArgsParsing(t *testing.T) {
+func TestCmdTop_ArgsParsing(t *testing.T) {
 	tests := []struct {
 		name              string
 		args              []string
@@ -146,19 +158,12 @@ func TestCmd_ArgsParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
-			cmd := NewCmd(f)
 
-			var capturedContainer string
-			var capturedPsArgsCount int
-
-			// Override RunE to capture args
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				if len(args) > 0 {
-					capturedContainer = args[0]
-					capturedPsArgsCount = len(args) - 1
-				}
+			var gotOpts *Options
+			cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			cmd.SetArgs(tt.args)
 			cmd.SetIn(&bytes.Buffer{})
@@ -167,8 +172,9 @@ func TestCmd_ArgsParsing(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.Equal(t, tt.expectedContainer, capturedContainer)
-			require.Equal(t, tt.expectedPsArgs, capturedPsArgsCount)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.expectedContainer, gotOpts.Args[0])
+			require.Equal(t, tt.expectedPsArgs, len(gotOpts.Args)-1)
 		})
 	}
 }
