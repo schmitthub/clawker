@@ -156,7 +156,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 11 | container/rename | DONE | — |
 | 12 | container/restart | DONE | — |
 | 13 | container/run | DONE | — |
-| 14 | container/start | NOT STARTED | — |
+| 14 | container/start | DONE | — |
 | 15 | container/stats | NOT STARTED | — |
 | 16 | container/stop | NOT STARTED | — |
 | 17 | container/top | NOT STARTED | — |

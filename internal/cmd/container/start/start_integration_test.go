@@ -63,7 +63,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f)
+	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
 
 	err = cmd.Execute()
@@ -135,7 +135,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 				IOStreams: ios.IOStreams,
 			}
 
-			cmd := NewCmdStart(f)
+			cmd := NewCmdStart(f, nil)
 			if tt.useAgent {
 				cmd.SetArgs([]string{"--agent", agentName})
 			} else {
@@ -217,7 +217,7 @@ func TestStartIntegration_BothImages(t *testing.T) {
 				IOStreams: ios.IOStreams,
 			}
 
-			cmd := NewCmdStart(f)
+			cmd := NewCmdStart(f, nil)
 			cmd.SetArgs([]string{containerName})
 
 			err = cmd.Execute()
@@ -283,7 +283,7 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f)
+	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs(containerNames)
 
 	err := cmd.Execute()
@@ -355,7 +355,7 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f)
+	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
 
 	err = cmd.Execute()
@@ -385,7 +385,7 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f)
+	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.start-nonexist-test.doesnotexist"})
 
 	err := cmd.Execute()
@@ -442,7 +442,7 @@ func TestStartIntegration_MultipleWithAttach(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f)
+	cmd := NewCmdStart(f, nil)
 	cmd.SetArgs(append([]string{"--attach"}, containerNames...))
 
 	err := cmd.Execute()
