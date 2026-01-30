@@ -256,6 +256,29 @@ Rules:
 
 See also `.claude/rules/dependency-placement.md` (auto-loaded).
 
+#### Pattern A vs Pattern B — Side-by-Side
+
+```
+                    PATTERN A                      PATTERN B
+                    Factory Field                  Options Nil-Guard
+                    ─────────────                  ─────────────────
+  Declared in       cmdutil/factory.go             cmd/<verb>/<verb>.go
+  Constructed in    cmd/factory/default.go         run function (nil-guard)
+  Constructed       once, at startup               per command execution
+  Depends on        config, other Factory fields   CLI args, resolved targets
+  Test injection    stub closure on Factory        set field on Options directly
+
+  Production flow   factory.New() → closure        if opts.X == nil {
+                    → stored on Factory                opts.X = real.New(...)
+                    → extracted to Options          }
+
+  Test flow         f := &cmdutil.Factory{          opts := &VerbOptions{
+                        SomeDep: mockFn,                SomeDep: &mock{},
+                    }                               }
+```
+
+**Key rule**: Breadth of use does NOT determine the pattern. A dependency used by 40 commands still uses Pattern B if it needs runtime context (CLI args, resolved targets, user selections).
+
 ### 3.2 Internal Client (`internal/docker`)
 
 Clawker-specific middleware that builds on the External Engine:
