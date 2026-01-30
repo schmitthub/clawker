@@ -77,7 +77,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "ps [OPTIONS]",
-		Command: containerlist.NewCmdList,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerlist.NewCmdList(f, nil) },
 	},
 	{
 		Use:     "rename CONTAINER NEW_NAME",
