@@ -1,6 +1,10 @@
 package monitor
 
 import (
+	"github.com/schmitthub/clawker/internal/cmd/monitor/down"
+	monitorinit "github.com/schmitthub/clawker/internal/cmd/monitor/init"
+	"github.com/schmitthub/clawker/internal/cmd/monitor/status"
+	"github.com/schmitthub/clawker/internal/cmd/monitor/up"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -33,10 +37,10 @@ Available commands:
   clawker monitor down`,
 	}
 
-	cmd.AddCommand(newCmdInit(f))
-	cmd.AddCommand(newCmdUp(f))
-	cmd.AddCommand(newCmdDown(f))
-	cmd.AddCommand(newCmdStatus(f))
+	cmd.AddCommand(monitorinit.NewCmdInit(f, nil))
+	cmd.AddCommand(up.NewCmdUp(f, nil))
+	cmd.AddCommand(down.NewCmdDown(f, nil))
+	cmd.AddCommand(status.NewCmdStatus(f, nil))
 
 	return cmd
 }

@@ -1,4 +1,4 @@
-package monitor
+package up
 
 import (
 	"context"
@@ -15,17 +15,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type upOptions struct {
+type UpOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client   func(context.Context) (*docker.Client, error)
+	Client    func(context.Context) (*docker.Client, error)
 
-	detach bool
+	Detach bool
 }
 
-func newCmdUp(f *cmdutil.Factory) *cobra.Command {
-	opts := &upOptions{
+func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
+	opts := &UpOptions{
 		IOStreams: f.IOStreams,
-		Client:   f.Client,
+		Client:    f.Client,
 	}
 
 	cmd := &cobra.Command{
@@ -47,16 +47,19 @@ Claude Code containers to send telemetry automatically.`,
   # Start in foreground (see logs)
   clawker monitor up --detach=false`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUp(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return upRun(cmd.Context(), opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&opts.detach, "detach", true, "Run in detached mode")
+	cmd.Flags().BoolVar(&opts.Detach, "detach", true, "Run in detached mode")
 
 	return cmd
 }
 
-func runUp(opts *upOptions) error {
+func upRun(_ context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -93,7 +96,7 @@ func runUp(opts *upOptions) error {
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "up"}
-	if opts.detach {
+	if opts.Detach {
 		composeArgs = append(composeArgs, "-d")
 	}
 
@@ -111,7 +114,7 @@ func runUp(opts *upOptions) error {
 		return fmt.Errorf("failed to start monitoring stack: %w", err)
 	}
 
-	if opts.detach {
+	if opts.Detach {
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		fmt.Fprintln(ios.ErrOut)

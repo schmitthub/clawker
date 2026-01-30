@@ -1,6 +1,7 @@
-package monitor
+package init
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,14 +14,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type initOptions struct {
+type InitOptions struct {
 	IOStreams *iostreams.IOStreams
 
-	force bool
+	Force bool
 }
 
-func newCmdInit(f *cmdutil.Factory) *cobra.Command {
-	opts := &initOptions{
+func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
+	opts := &InitOptions{
 		IOStreams: f.IOStreams,
 	}
 
@@ -46,16 +47,19 @@ The monitoring stack includes:
   # Overwrite existing configuration
   clawker monitor init --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return initRun(cmd.Context(), opts)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Overwrite existing configuration files")
+	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Overwrite existing configuration files")
 
 	return cmd
 }
 
-func runInit(opts *initOptions) error {
+func initRun(_ context.Context, opts *InitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -92,7 +96,7 @@ func runInit(opts *initOptions) error {
 		filePath := filepath.Join(monitorDir, file.name)
 
 		// Check if file exists
-		if _, err := os.Stat(filePath); err == nil && !opts.force {
+		if _, err := os.Stat(filePath); err == nil && !opts.Force {
 			fmt.Fprintf(ios.ErrOut, "%s %s already exists (use --force to overwrite)\n", cs.Muted("Skipped:"), file.name)
 			continue
 		}

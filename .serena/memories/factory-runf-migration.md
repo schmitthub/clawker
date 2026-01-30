@@ -207,10 +207,10 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 40 | monitor/init | NOT STARTED | — |
-| 41 | monitor/up | NOT STARTED | — |
-| 42 | monitor/down | NOT STARTED | — |
-| 43 | monitor/status | NOT STARTED | — |
+| 40 | monitor/init | DONE | — |
+| 41 | monitor/up | DONE | — |
+| 42 | monitor/down | DONE | — |
+| 43 | monitor/status | DONE | — |
 
 ### Config Commands (1) — NEEDS PACKAGE EXTRACTION
 
@@ -236,7 +236,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | volume/volume.go | 5 | DONE |
 | network/network.go | 5 | DONE |
 | ralph/ralph.go | 4 | DONE |
-| monitor/monitor.go | 4 | NOT STARTED |
+| monitor/monitor.go | 4 | DONE |
 | config/config.go | 1 | NOT STARTED |
 | project/project.go | 2 | NOT STARTED |
 | root/root.go | 2 | NOT STARTED |
@@ -316,6 +316,12 @@ The project uses `iostreams.NewTestIOStreams()` returning `*TestIOStreams` (whic
 
 ### Package extraction: import naming for `run` subpackage
 When creating `internal/cmd/ralph/run/`, the Go package name is `run` which imports cleanly as `run.NewCmdRun(f, nil)` in the parent. No alias needed despite the common name.
+
+### Package extraction: `init` subpackage requires import alias
+Go allows `init` as a package name, but importing it requires an alias since `init` is a predeclared identifier. Use `monitorinit "github.com/.../monitor/init"` in the parent. The package compiles and tests fine otherwise.
+
+### Entire monitor group in one session
+All 4 monitor commands (init, up, down, status) were migrated in a single session with package extraction. The status command had no Options struct — just `runStatus(ios *iostreams.IOStreams)` — so a `StatusOptions` struct was created during migration. This is straightforward when the command has no flags.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 

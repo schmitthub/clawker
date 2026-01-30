@@ -1,6 +1,7 @@
-package monitor
+package down
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,14 +14,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type downOptions struct {
+type DownOptions struct {
 	IOStreams *iostreams.IOStreams
 
-	volumes bool
+	Volumes bool
 }
 
-func newCmdDown(f *cmdutil.Factory) *cobra.Command {
-	opts := &downOptions{
+func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command {
+	opts := &DownOptions{
 		IOStreams: f.IOStreams,
 	}
 
@@ -37,16 +38,19 @@ the clawker-net Docker network for other clawker services.`,
   # Stop and remove volumes
   clawker monitor down --volumes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDown(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return downRun(cmd.Context(), opts)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.volumes, "volumes", "v", false, "Remove named volumes declared in compose.yaml")
+	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove named volumes declared in compose.yaml")
 
 	return cmd
 }
 
-func runDown(opts *downOptions) error {
+func downRun(_ context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -68,7 +72,7 @@ func runDown(opts *downOptions) error {
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "down"}
-	if opts.volumes {
+	if opts.Volumes {
 		composeArgs = append(composeArgs, "-v")
 	}
 
@@ -88,7 +92,7 @@ func runDown(opts *downOptions) error {
 
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
-	if !opts.volumes {
+	if !opts.Volumes {
 		fmt.Fprintf(ios.ErrOut, "%s Volumes were preserved. Use --volumes to remove them.\n", cs.InfoIcon())
 	}
 
