@@ -18,7 +18,7 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams        *iostreams.IOStreams
+	IOStreams       *iostreams.IOStreams
 	Client          func(context.Context) (*docker.Client, error)
 	Config          func() (*config.Config, error)
 	Resolution      func() *config.Resolution
@@ -33,7 +33,7 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:        f.IOStreams,
+		IOStreams:       f.IOStreams,
 		Client:          f.Client,
 		Config:          f.Config,
 		Resolution:      f.Resolution,
@@ -118,7 +118,7 @@ func runStart(ctx context.Context, opts *StartOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// If attach or interactive mode, can only work with one container

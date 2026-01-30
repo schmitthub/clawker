@@ -1,16 +1,16 @@
-package cmdutil
+package resolver
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
-	"github.com/spf13/cobra"
 )
 
 // ResolveDefaultImage returns the default_image from merged config/settings.
@@ -64,21 +64,6 @@ func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project 
 	return "", nil
 }
 
-// ImageSource indicates where an image reference was resolved from.
-type ImageSource string
-
-const (
-	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
-	ImageSourceProject  ImageSource = "project"  // Found via project label search
-	ImageSourceDefault  ImageSource = "default"  // From config/settings default_image
-)
-
-// ResolvedImage contains the result of image resolution with source tracking.
-type ResolvedImage struct {
-	Reference string      // The image reference (name:tag)
-	Source    ImageSource // Where the image was resolved from
-}
-
 // ResolveImage resolves the image to use for container creation.
 // Resolution order:
 // 1. Explicitly provided image (from CLI or opts)
@@ -122,7 +107,7 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 
 // ImageValidationDeps holds the dependencies needed by ResolveAndValidateImage.
 type ImageValidationDeps struct {
-	IOStreams       *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	Prompter       func() *prompts.Prompter
 	SettingsLoader func() (*config.SettingsLoader, error)
 
@@ -177,12 +162,11 @@ func ResolveAndValidateImage(
 
 	// Default image doesn't exist - prompt to rebuild or error
 	if !ios.IsInteractive() {
-		PrintError(ios, "Default image %q not found", result.Reference)
-		PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker run IMAGE",
-			"Or build a project image: clawker build",
-		)
+		fmt.Fprintf(ios.ErrOut, "Error: Default image %q not found\n", result.Reference)
+		fmt.Fprintln(ios.ErrOut, "\nNext Steps:")
+		fmt.Fprintln(ios.ErrOut, "  1. Run 'clawker init' to rebuild the base image")
+		fmt.Fprintln(ios.ErrOut, "  2. Or specify an image explicitly: clawker run IMAGE")
+		fmt.Fprintln(ios.ErrOut, "  3. Or build a project image: clawker build")
 		return nil, fmt.Errorf("default image %q not found", result.Reference)
 	}
 
@@ -203,16 +187,15 @@ func ResolveAndValidateImage(
 	}
 
 	if idx != 0 {
-		PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker run IMAGE",
-			"Or build a project image: clawker build",
-		)
+		fmt.Fprintln(ios.ErrOut, "\nNext Steps:")
+		fmt.Fprintln(ios.ErrOut, "  1. Run 'clawker init' to rebuild the base image")
+		fmt.Fprintln(ios.ErrOut, "  2. Or specify an image explicitly: clawker run IMAGE")
+		fmt.Fprintln(ios.ErrOut, "  3. Or build a project image: clawker build")
 		return nil, fmt.Errorf("default image %q not found", result.Reference)
 	}
 
 	// User chose to rebuild - get flavor selection
-	flavors := DefaultFlavorOptions()
+	flavors := intbuild.DefaultFlavorOptions()
 	flavorOptions := make([]prompts.SelectOption, len(flavors))
 	for i, opt := range flavors {
 		flavorOptions[i] = prompts.SelectOption{
@@ -228,25 +211,28 @@ func ResolveAndValidateImage(
 
 	selectedFlavor := flavors[flavorIdx].Name
 
-	fmt.Fprintf(ios.ErrOut, "Building %s...\n", DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", intbuild.DefaultImageTag)
 
-	if err := BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		PrintError(ios, "Failed to build image: %v", err)
+	if err := intbuild.BuildDefaultImage(ctx, selectedFlavor); err != nil {
+		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
 		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
-	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", intbuild.DefaultImageTag)
 
 	// Update settings with the built image
 	settingsLoader, err := deps.SettingsLoader()
-	if err == nil && settingsLoader != nil {
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load settings loader; default image will not be persisted")
+	} else if settingsLoader != nil {
 		currentSettings, loadErr := settingsLoader.Load()
 		if loadErr != nil {
-			currentSettings = config.DefaultSettings()
-		}
-		currentSettings.DefaultImage = DefaultImageTag
-		if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
-			logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update to avoid data loss")
+		} else {
+			currentSettings.DefaultImage = intbuild.DefaultImageTag
+			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
+				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+			}
 		}
 		if deps.InvalidateSettingsCache != nil {
 			deps.InvalidateSettingsCache()
@@ -254,71 +240,5 @@ func ResolveAndValidateImage(
 	}
 
 	// Return the rebuilt image
-	return &ResolvedImage{Reference: DefaultImageTag, Source: ImageSourceDefault}, nil
-}
-
-// AgentArgsValidator creates a Cobra Args validator for commands with --agent flag.
-// When --agent is provided, no positional arguments are allowed (mutually exclusive).
-// When --agent is not provided, at least minArgs positional arguments are required.
-func AgentArgsValidator(minArgs int) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		agentFlag, _ := cmd.Flags().GetString("agent")
-		if agentFlag != "" && len(args) > 0 {
-			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
-		}
-		if agentFlag == "" && len(args) < minArgs {
-			if minArgs == 1 {
-				return fmt.Errorf("requires at least 1 container argument or --agent flag")
-			}
-			return fmt.Errorf("requires at least %d container arguments or --agent flag", minArgs)
-		}
-		return nil
-	}
-}
-
-// AgentArgsValidatorExact creates a Cobra Args validator for commands with --agent flag
-// that require exactly N positional arguments when --agent is not provided.
-func AgentArgsValidatorExact(n int) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		agentFlag, _ := cmd.Flags().GetString("agent")
-		if agentFlag != "" && len(args) > 0 {
-			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
-		}
-		if agentFlag == "" && len(args) != n {
-			if n == 1 {
-				return fmt.Errorf("requires exactly 1 container argument or --agent flag")
-			}
-			return fmt.Errorf("requires exactly %d container arguments or --agent flag", n)
-		}
-		return nil
-	}
-}
-
-// ResolveContainerName resolves an agent name to a full container name.
-// Returns the container name in format: clawker.<project>.<agent> (or clawker.<agent> if project is empty).
-func ResolveContainerName(project, agentName string) string {
-	return docker.ContainerName(project, agentName)
-}
-
-// ResolveContainerNames resolves container names based on agent flag or positional args.
-// If agentName is non-empty, it resolves it to a container name and returns a single-element slice.
-// Otherwise, it returns the containerArgs as-is (they're expected to be full container names).
-func ResolveContainerNames(project, agentName string, containerArgs []string) []string {
-	if agentName != "" {
-		return []string{docker.ContainerName(project, agentName)}
-	}
-	return containerArgs
-}
-
-// ResolveContainerNamesFromAgents resolves a slice of agent names to container names.
-// If no agents are provided, returns an empty slice.
-func ResolveContainerNamesFromAgents(project string, agents []string) []string {
-	if len(agents) == 0 {
-		return agents
-	}
-	containers := make([]string, len(agents))
-	for i, agent := range agents {
-		containers[i] = docker.ContainerName(project, agent)
-	}
-	return containers
+	return &ResolvedImage{Reference: intbuild.DefaultImageTag, Source: ImageSourceDefault}, nil
 }

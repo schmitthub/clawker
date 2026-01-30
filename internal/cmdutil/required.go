@@ -99,6 +99,43 @@ func ExactArgs(number int) cobra.PositionalArgs {
 	}
 }
 
+// AgentArgsValidator creates a Cobra Args validator for commands with --agent flag.
+// When --agent is provided, no positional arguments are allowed (mutually exclusive).
+// When --agent is not provided, at least minArgs positional arguments are required.
+func AgentArgsValidator(minArgs int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		agentFlag, _ := cmd.Flags().GetString("agent")
+		if agentFlag != "" && len(args) > 0 {
+			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+		}
+		if agentFlag == "" && len(args) < minArgs {
+			if minArgs == 1 {
+				return fmt.Errorf("requires at least 1 container argument or --agent flag")
+			}
+			return fmt.Errorf("requires at least %d container arguments or --agent flag", minArgs)
+		}
+		return nil
+	}
+}
+
+// AgentArgsValidatorExact creates a Cobra Args validator for commands with --agent flag
+// that require exactly N positional arguments when --agent is not provided.
+func AgentArgsValidatorExact(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		agentFlag, _ := cmd.Flags().GetString("agent")
+		if agentFlag != "" && len(args) > 0 {
+			return fmt.Errorf("--agent and positional container arguments are mutually exclusive")
+		}
+		if agentFlag == "" && len(args) != n {
+			if n == 1 {
+				return fmt.Errorf("requires exactly 1 container argument or --agent flag")
+			}
+			return fmt.Errorf("requires exactly %d container arguments or --agent flag", n)
+		}
+		return nil
+	}
+}
+
 // binName returns the name of the binary / root command (usually 'docker').
 func binName(cmd *cobra.Command) string {
 	return cmd.Root().Name()

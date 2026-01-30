@@ -14,7 +14,7 @@ import (
 
 // Options defines the options for the rename command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -26,7 +26,7 @@ type Options struct {
 // NewCmd creates a new rename command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -66,7 +66,7 @@ func run(ctx context.Context, opts *Options) error {
 	newName := opts.newName
 
 	if opts.Agent {
-		oldName = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, oldName)
+		oldName = docker.ContainerName(opts.Resolution().ProjectKey, oldName)
 	}
 
 	// Connect to Docker

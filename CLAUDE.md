@@ -37,15 +37,17 @@
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
-│   ├── cmdutil/               # Factory struct, error handling, output utilities
+│   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware (wraps pkg/whail)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   ├── iostreams/             # Testable I/O: TTY, colors, progress, pager
 │   ├── logger/                # Zerolog setup
+│   ├── project/               # Project registration in user registry
 │   ├── prompts/               # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
+│   ├── resolver/              # Image resolution (project image, default, validation)
 │   ├── term/                  # PTY/terminal handling
 │   ├── testutil/              # Test utilities + integration helpers
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)

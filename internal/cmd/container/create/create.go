@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -22,7 +23,7 @@ import (
 type Options struct {
 	*copts.ContainerOptions
 
-	IOStreams                *iostreams.IOStreams
+	IOStreams               *iostreams.IOStreams
 	Client                  func(context.Context) (*docker.Client, error)
 	Config                  func() (*config.Config, error)
 	Settings                func() (*config.Settings, error)
@@ -41,7 +42,7 @@ func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
 	opts := &Options{
 		ContainerOptions:        containerOpts,
-		IOStreams:                f.IOStreams,
+		IOStreams:               f.IOStreams,
 		Client:                  f.Client,
 		Config:                  f.Config,
 		Settings:                f.Settings,
@@ -142,8 +143,8 @@ func run(ctx context.Context, opts *Options) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := cmdutil.ResolveAndValidateImage(ctx, cmdutil.ImageValidationDeps{
-			IOStreams:                opts.IOStreams,
+		resolvedImage, err := resolver.ResolveAndValidateImage(ctx, resolver.ImageValidationDeps{
+			IOStreams:               opts.IOStreams,
 			Prompter:                opts.Prompter,
 			SettingsLoader:          opts.SettingsLoader,
 			InvalidateSettingsCache: opts.InvalidateSettingsCache,

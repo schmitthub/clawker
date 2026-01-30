@@ -3,6 +3,7 @@ package init
 import (
 	"testing"
 
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
@@ -35,14 +36,14 @@ func TestNewCmdInit(t *testing.T) {
 func TestDefaultImageTag(t *testing.T) {
 	// Verify the default image tag constant from cmdutil
 	expected := "clawker-default:latest"
-	if cmdutil.DefaultImageTag != expected {
-		t.Errorf("expected DefaultImageTag %q, got %q", expected, cmdutil.DefaultImageTag)
+	if intbuild.DefaultImageTag != expected {
+		t.Errorf("expected DefaultImageTag %q, got %q", expected, intbuild.DefaultImageTag)
 	}
 }
 
 func TestFlavorOptions(t *testing.T) {
 	// Verify flavor options are defined
-	flavorOptions := cmdutil.DefaultFlavorOptions()
+	flavorOptions := intbuild.DefaultFlavorOptions()
 	if len(flavorOptions) == 0 {
 		t.Error("expected flavor options to be defined")
 	}

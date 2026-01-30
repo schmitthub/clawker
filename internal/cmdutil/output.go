@@ -2,11 +2,17 @@ package cmdutil
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
+
+// userFormattedError is a duck-typed interface for errors that can format
+// themselves for user display. docker.DockerError satisfies this interface.
+type userFormattedError interface {
+	FormatUserError() string
+}
 
 // ExitError represents a container exit with a non-zero status code.
 // Commands should return this instead of calling os.Exit() directly,
@@ -20,15 +26,16 @@ func (e *ExitError) Error() string {
 }
 
 // HandleError prints an error to stderr with user-friendly formatting.
-// If the error is a DockerError, it uses FormatUserError for rich output.
+// If the error implements FormatUserError() string, it uses that for rich output.
 // Otherwise, it prints a simple error message.
 func HandleError(ios *iostreams.IOStreams, err error) {
 	if err == nil {
 		return
 	}
 
-	if dockerErr, ok := err.(*docker.DockerError); ok {
-		fmt.Fprint(ios.ErrOut, dockerErr.FormatUserError())
+	var ufErr userFormattedError
+	if errors.As(err, &ufErr) {
+		fmt.Fprint(ios.ErrOut, ufErr.FormatUserError())
 		return
 	}
 

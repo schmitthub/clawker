@@ -15,7 +15,7 @@ import (
 
 // Options defines the options for the wait command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -26,7 +26,7 @@ type Options struct {
 // NewCmd creates a new wait command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -69,7 +69,7 @@ func run(ctx context.Context, opts *Options) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

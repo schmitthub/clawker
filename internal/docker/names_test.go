@@ -45,6 +45,54 @@ func TestContainerName(t *testing.T) {
 	}
 }
 
+func TestContainerNamesFromAgents(t *testing.T) {
+	tests := []struct {
+		name    string
+		project string
+		agents  []string
+		want    []string
+	}{
+		{
+			name:    "multiple agents with project",
+			project: "myproject",
+			agents:  []string{"ralph", "worker"},
+			want:    []string{"clawker.myproject.ralph", "clawker.myproject.worker"},
+		},
+		{
+			name:    "empty agents slice",
+			project: "myproject",
+			agents:  []string{},
+			want:    []string{},
+		},
+		{
+			name:    "nil agents slice",
+			project: "myproject",
+			agents:  nil,
+			want:    nil,
+		},
+		{
+			name:    "empty project gives 2-segment names",
+			project: "",
+			agents:  []string{"ralph", "worker"},
+			want:    []string{"clawker.ralph", "clawker.worker"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ContainerNamesFromAgents(tt.project, tt.agents)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ContainerNamesFromAgents(%q, %v) returned %d items, want %d", tt.project, tt.agents, len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("ContainerNamesFromAgents(%q, %v)[%d] = %q, want %q", tt.project, tt.agents, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestContainerNamePrefix(t *testing.T) {
 	tests := []struct {
 		project string

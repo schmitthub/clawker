@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
@@ -106,7 +108,7 @@ func runProjectInit(opts *ProjectInitOptions, args []string) error {
 				return nil
 			}
 			dirName := filepath.Base(absPath)
-			slug, err := cmdutil.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, dirName)
+			slug, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, dirName)
 			if err != nil {
 				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
@@ -161,10 +163,10 @@ func runProjectInit(opts *ProjectInitOptions, args []string) error {
 	var buildImage string
 	if opts.Yes || !ios.IsInteractive() {
 		// Non-interactive: use buildpack-deps:bookworm-scm as default
-		buildImage = cmdutil.FlavorToImage("bookworm")
+		buildImage = intbuild.FlavorToImage("bookworm")
 	} else {
 		// Interactive: show flavor options + Custom option
-		flavors := cmdutil.DefaultFlavorOptions()
+		flavors := intbuild.DefaultFlavorOptions()
 		selectOptions := make([]prompts.SelectOption, len(flavors)+1)
 		for i, opt := range flavors {
 			selectOptions[i] = prompts.SelectOption{
@@ -194,7 +196,7 @@ func runProjectInit(opts *ProjectInitOptions, args []string) error {
 			buildImage = customImage
 		} else {
 			// Map flavor name to full image reference
-			buildImage = cmdutil.FlavorToImage(selectOptions[idx].Label)
+			buildImage = intbuild.FlavorToImage(selectOptions[idx].Label)
 		}
 	}
 
@@ -260,7 +262,7 @@ func runProjectInit(opts *ProjectInitOptions, args []string) error {
 	}
 
 	// Register project in user settings
-	if _, err := cmdutil.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName); err != nil {
+	if _, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName); err != nil {
 		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 

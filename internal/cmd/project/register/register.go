@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +101,7 @@ func runProjectRegister(opts *RegisterOptions, args []string) error {
 		}
 	}
 
-	slug, err := cmdutil.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName)
+	slug, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName)
 	if err != nil {
 		return err
 	}

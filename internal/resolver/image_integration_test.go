@@ -1,6 +1,6 @@
 //go:build integration
 
-package cmdutil
+package resolver
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 )
 
-// Integration tests for resolve.go functions that require Docker
+// Integration tests for image resolution functions that require Docker
 
 // Test images created during setup for FindProjectImage tests
 var (
@@ -52,10 +52,10 @@ func TestMain(m *testing.M) {
 
 	// Create unique identifiers for this test run
 	timestamp := time.Now().UnixNano()
-	testProjectName = fmt.Sprintf("cmdutil-test-%d", timestamp)
-	testLatestImageTag = fmt.Sprintf("cmdutil-test-%d:latest", timestamp)        // :latest suffix for matching
-	testVersionedTag = fmt.Sprintf("cmdutil-test-%d:v1.0", timestamp)            // versioned tag (no :latest)
-	testOtherProjectTag = fmt.Sprintf("cmdutil-test-other-%d:latest", timestamp) // different project with :latest
+	testProjectName = fmt.Sprintf("resolver-test-%d", timestamp)
+	testLatestImageTag = fmt.Sprintf("resolver-test-%d:latest", timestamp)
+	testVersionedTag = fmt.Sprintf("resolver-test-%d:v1.0", timestamp)
+	testOtherProjectTag = fmt.Sprintf("resolver-test-other-%d:latest", timestamp)
 
 	// Setup: Create test client and images
 	if err := setupDockerTests(ctx, cli); err != nil {
@@ -213,12 +213,10 @@ func TestFindProjectImage_Integration(t *testing.T) {
 			t.Errorf("FindProjectImage() unexpected error = %v", err)
 			return
 		}
-		// Our test image tag ends with ":latest"
 		if result == "" {
 			t.Errorf("FindProjectImage() returned empty string, expected image with :latest suffix")
 			return
 		}
-		// Verify the result ends with ":latest"
 		expectedSuffix := ":latest"
 		if len(result) < len(expectedSuffix) || result[len(result)-len(expectedSuffix):] != expectedSuffix {
 			t.Errorf("FindProjectImage() = %q, want suffix %q", result, expectedSuffix)
@@ -237,18 +235,15 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		// Test that it correctly filters by project label
 		result, err := FindProjectImage(ctx, testDockerClient, "other-project")
 		if err != nil {
 			t.Errorf("FindProjectImage() unexpected error = %v", err)
 			return
 		}
-		// other-project also has a :latest tag
 		if result == "" {
 			t.Errorf("FindProjectImage() returned empty string, expected image for other-project")
 			return
 		}
-		// Verify it ends with :latest and is the other project's image
 		if result != testOtherProjectTag {
 			t.Errorf("FindProjectImage() = %q, want %q", result, testOtherProjectTag)
 		}
@@ -258,8 +253,6 @@ func TestFindProjectImage_Integration(t *testing.T) {
 func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	ctx := context.Background()
 
-	// Test with a project name that has no images at all
-	// This verifies the function returns empty string when no :latest tag exists
 	result, err := FindProjectImage(ctx, testDockerClient, "project-with-absolutely-no-images")
 	if err != nil {
 		t.Errorf("FindProjectImage() unexpected error: %v", err)
@@ -292,7 +285,6 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, ImageSourceProject)
 		}
 
-		// Should match our test image tag
 		if result.Reference != testLatestImageTag {
 			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, testLatestImageTag)
 		}
@@ -321,7 +313,4 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, "fallback:latest")
 		}
 	})
-
-	// Note: Explicit image precedence is handled by callers before calling
-	// ResolveImageWithSource. This function only handles project/default resolution.
 }
