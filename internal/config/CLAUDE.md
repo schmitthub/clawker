@@ -15,6 +15,72 @@ Configuration loading, validation, project registry, and resolver.
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 
+## Home Paths (`home.go`)
+
+```go
+func ClawkerHome() (string, error)      // ~/.local/clawker
+func MonitorDir() (string, error)       // ~/.local/clawker/monitor
+func BuildDir() (string, error)         // ~/.local/clawker/build
+func DockerfilesDir() (string, error)   // ~/.local/clawker/dockerfiles
+func LogsDir() (string, error)          // ~/.local/clawker/logs
+func EnsureDir(path string) error       // mkdir -p equivalent
+```
+
+## Defaults (`defaults.go`)
+
+```go
+func DefaultConfig() *Config
+func DefaultSettings() *Settings
+
+var DefaultFirewallDomains []string          // Pre-approved domains
+const DefaultConfigYAML    string            // Template clawker.yaml
+const DefaultSettingsYAML  string            // Template settings.yaml
+const DefaultRegistryYAML  string            // Template projects.yaml
+const DefaultIgnoreFile    string            // Template .clawkerignore
+```
+
+## Validation (`validator.go`, `loader.go`)
+
+```go
+func NewValidator(workDir string) *Validator
+
+type MultiValidationError struct { Errors []error }
+
+type ConfigNotFoundError struct { Path string }
+func IsConfigNotFound(err error) bool
+```
+
+## Additional Schema Types (`schema.go`)
+
+```go
+type AgentConfig struct {
+    Includes []string; Env map[string]string
+    Memory, Editor, Visual, Shell string
+}
+
+type ExposePort struct { Port int; Protocol string }
+type ArgDefinition struct { Name, Default string }
+
+type HealthcheckConfig struct {
+    Cmd []string; Interval, Timeout, StartPeriod string; Retries int
+}
+
+type Mode string
+func ParseMode(s string) (Mode, error)
+
+type ValidationError struct { Field, Message string; Value interface{} }
+```
+
+## Settings Types (`settings.go`)
+
+```go
+type LoggingConfig struct {
+    FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int
+}
+
+type SettingsLoaderOption func(*SettingsLoader)
+```
+
 ## Registry (`registry.go`)
 
 Persistent project registry at `~/.local/clawker/projects.yaml`.
@@ -37,6 +103,7 @@ type ProjectRegistry struct {
 - `(*RegistryLoader).Register(key, entry)` / `Unregister(key)` — add/remove projects
 - `(*ProjectRegistry).Lookup(path)` — find project by longest-prefix path match
 - `(*ProjectRegistry).LookupByKey(key)` — find project by slug key
+- `(*ProjectRegistry).HasKey(key)` — check if slug exists in registry
 
 ## Resolver (`resolver.go`)
 

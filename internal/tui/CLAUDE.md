@@ -112,6 +112,68 @@ func (m Model) View() string {
 }
 ```
 
+## API Quick Reference
+
+### Text Utilities (`text.go`)
+
+`Truncate`, `TruncateMiddle`, `PadRight`, `PadLeft`, `PadCenter`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`
+
+### Components (`components.go`)
+
+`RenderHeader`, `RenderStatus`, `RenderBadge`, `RenderCountBadge`, `RenderProgress`, `RenderDivider`, `RenderLabeledDivider`, `RenderEmptyState`, `RenderError`, `RenderLabelValue`, `RenderKeyValueTable`, `RenderTable`, `RenderPercentage`, `RenderBytes`, `RenderTag`, `RenderTags`
+
+### Styles (`styles.go`)
+
+**Colors**: `ColorPrimary`, `ColorSecondary`, `ColorSuccess`, `ColorWarning`, `ColorError`, `ColorInfo`, `ColorMuted`, `ColorSurface`, `ColorBorder`, `ColorText`, `ColorTextDim`
+
+**Text**: `Bold`, `Dim`, `Italic`, `Underline`, `Code`
+
+**Borders**: `PanelStyle`, `PanelActiveStyle`, `PanelFocusedStyle`
+
+**Components**: `HeaderStyle`, `FooterStyle`, `ListItemStyle`, `ListItemSelectedStyle`, `TableHeaderStyle`, `TableRowStyle`
+
+**Badges**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`
+
+**Status**: `StatusRunningStyle`, `StatusStoppedStyle`, `StatusErrorStyle`, `StatusPendingStyle`
+
+### Keys (`keys.go`)
+
+`DefaultKeyMap()`, `IsQuit`, `IsUp`, `IsDown`, `IsLeft`, `IsRight`, `IsEnter`, `IsEscape`, `IsHelp`, `IsTab`
+
+### Panel (`panel.go`)
+
+`PanelModel`, `NewPanel(PanelConfig)`, `PanelGroup`, `NewPanelGroup(...PanelModel)`
+
+### StatusBar (`statusbar.go`)
+
+`StatusBarModel`, `NewStatusBar(width)`, `RenderStatusBar`, `RenderStatusBarWithSections`, `ModeIndicator`, `ConnectionIndicator`, `TimerIndicator`, `CounterIndicator`
+
+### Help (`help.go`)
+
+`HelpModel`, `NewHelp(bindings, width)`, `RenderHelpBar`, `RenderHelpGrid`, `QuickHelp`
+
+### Spinner (`spinner.go`)
+
+`SpinnerModel`, `NewSpinner(spinnerType, label)`, `NewDefaultSpinner(label)`
+
+Spinner types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDot`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`, `SpinnerMeter`
+
+### Layout (`layout.go`)
+
+`SplitHorizontal`, `SplitVertical`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid`, `Box`, `CenterInRect`, `AlignLeft`, `AlignCenter`, `AlignRight`, `ResponsiveLayout`
+
+### List (`list.go`)
+
+`ListModel`, `NewList(ListConfig)`, `ListItem` (interface), `SimpleListItem`
+
+### Tokens (`tokens.go`)
+
+Spacing: `SpaceNone`, `SpaceXS`, `SpaceSM`, `SpaceMD`, `SpaceLG`
+
+Width breakpoints: `WidthCompact`, `WidthNormal`, `WidthWide`
+
+`GetLayoutMode(width)`, `GetContentWidth(width)`, `GetContentHeight(height)`, `MinInt`, `MaxInt`, `ClampInt`
+
 ## Known Limitations
 
 - `CountVisibleWidth` counts runes, not true visual width (CJK chars counted as 1)

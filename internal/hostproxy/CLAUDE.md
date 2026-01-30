@@ -13,6 +13,47 @@ HTTP service mesh mediating interactions between containers and the host machine
 | `GitCredential` | `git_credential.go` | Git credential forwarding handler |
 | `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler |
 
+## Constants
+
+```go
+const DefaultPort          = 18374
+const SessionIDLength      = 16
+const CallbackSessionType  = "callback"
+const DefaultCallbackTTL   = 5 * time.Minute
+```
+
+## Types
+
+```go
+type CallbackData struct {
+    Method     string            `json:"method"`
+    Path       string            `json:"path"`
+    Query      string            `json:"query"`
+    Headers    map[string]string `json:"headers,omitempty"`
+    Body       string            `json:"body,omitempty"`
+    ReceivedAt time.Time         `json:"received_at"`
+}
+
+type CallbackChannel struct { store *SessionStore }
+```
+
+## Constructors
+
+```go
+func NewServer(port int) *Server
+func NewManagerWithPort(port int) *Manager
+```
+
+## Manager Methods
+
+```go
+(*Manager).ProxyURL() string            // Returns http://host.docker.internal:<port>
+(*Manager).IsRunning() bool
+(*Manager).Port() int
+(*Manager).EnsureRunning() error        // Lazy start with sync.Once
+(*Manager).Stop(ctx context.Context) error
+```
+
 ## API Endpoints
 
 | Endpoint | Method | Purpose |

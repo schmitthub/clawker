@@ -58,6 +58,115 @@ case <-ctx.Done():  hijacked.Close(); <-done  // force unblock
 
 **Boolean flag config override**: Can't use default value comparison. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
 
+## API Reference
+
+### Config (`config.go`)
+
+```go
+type Config struct {
+    MaxLoops, StagnationThreshold, TimeoutMinutes int
+    AutoConfirm bool; CallsPerHour, CompletionThreshold int
+    SessionExpirationHours, SameErrorThreshold int
+    OutputDeclineThreshold, MaxConsecutiveTestLoops int
+    LoopDelaySeconds, SafetyCompletionThreshold int
+}
+func DefaultConfig() Config
+func (c Config) Timeout() time.Duration
+```
+
+Default constants: `DefaultMaxLoops`, `DefaultStagnationThreshold`, `DefaultTimeoutMinutes`, `DefaultCallsPerHour`, `DefaultCompletionThreshold`, `DefaultSessionExpirationHours`, `DefaultSameErrorThreshold`, `DefaultOutputDeclineThreshold`, `DefaultMaxConsecutiveTestLoops`, `DefaultSafetyCompletionThreshold`, `DefaultLoopDelaySeconds`
+
+### Analyzer (`analyzer.go`)
+
+```go
+type AnalysisResult struct { ... }
+func AnalyzeOutput(output string) AnalysisResult
+func CountCompletionIndicators(output string) int
+func DetectRateLimitError(output string) bool
+func ExtractErrorSignature(output string) string
+func ParseStatus(output string) (Status, error)
+```
+
+Status constants: `StatusPending`, `StatusComplete`, `StatusBlocked`, `TestsPassing`, `TestsFailing`, `TestsNotRun`, `WorkTypeImplementation`, `WorkTypeTesting`, `WorkTypeDocumentation`, `WorkTypeRefactoring`
+
+### Circuit Breaker (`circuit.go`)
+
+```go
+type CircuitBreakerConfig struct {
+    StagnationThreshold, SameErrorThreshold, OutputDeclineThreshold int
+    MaxConsecutiveTestLoops, CompletionThreshold, SafetyCompletionThreshold int
+}
+func DefaultCircuitBreakerConfig() CircuitBreakerConfig
+func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker
+
+type UpdateResult struct { ... }
+func (cb *CircuitBreaker) Update(analysis AnalysisResult) UpdateResult
+func (cb *CircuitBreaker) Check() error
+func (cb *CircuitBreaker) IsTripped() bool
+func (cb *CircuitBreaker) Reset()
+func (cb *CircuitBreaker) State() string
+```
+
+### Rate Limiter (`ratelimit.go`)
+
+```go
+type RateLimiter struct { ... }
+type RateLimitState struct { ... }
+func NewRateLimiter(limit int) *RateLimiter
+func (rl *RateLimiter) Allow() bool
+func (rl *RateLimiter) Record()
+func (rl *RateLimiter) Remaining() int
+func (rl *RateLimiter) State() RateLimitState
+```
+
+### History (`history.go`)
+
+```go
+type HistoryStore struct { ... }
+func NewHistoryStore(baseDir string) *HistoryStore
+func DefaultHistoryStore() (*HistoryStore, error)
+
+type SessionHistoryEntry struct { ... }
+type SessionHistory struct { ... }
+type CircuitHistoryEntry struct { ... }
+type CircuitHistory struct { ... }
+```
+
+### Loop (`loop.go`)
+
+```go
+type Runner struct { ... }
+type LoopOptions struct { Monitor *Monitor }
+type LoopResult struct { ... }
+func NewRunner(...) *Runner
+func (r *Runner) Run(ctx context.Context) (LoopResult, error)
+func (r *Runner) ResetCircuit() error
+func (r *Runner) ResetSession() error
+```
+
+### Monitor (`monitor.go`)
+
+```go
+type Monitor struct { ... }
+type MonitorOptions struct { RateLimiter *RateLimiter }
+func NewMonitor(opts MonitorOptions) *Monitor
+func (m *Monitor) FormatLoopStart(loopNum int) string
+func (m *Monitor) FormatResult(result LoopResult) string
+```
+
+### Session (`session.go`)
+
+```go
+type Session struct { ... }
+type CircuitState struct { ... }
+func NewSession() *Session
+func (s *Session) IsExpired(expirationHours int) bool
+
+type SessionStore struct { ... }
+func NewSessionStore(...) *SessionStore
+func DefaultSessionStore() (*SessionStore, error)
+```
+
 ## CLI Commands (`internal/cmd/ralph/`)
 
 | Command | Purpose |

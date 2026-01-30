@@ -19,6 +19,22 @@ func (b *Builder) EnsureImage(ctx, opts) (string, error) // Build if needed
 func (b *Builder) Build(ctx, opts) (string, error)        // Always build
 ```
 
+## Build Options (`build.go`)
+
+```go
+type Options struct {
+    ForceBuild     bool
+    NoCache        bool
+    Labels         map[string]string
+    Target         string
+    Pull           bool
+    SuppressOutput bool
+    NetworkMode    string
+    BuildArgs      map[string]*string
+    Tags           []string           // Additional tags (merged with imageTag)
+}
+```
+
 ## Default Image Utilities (`defaults.go`)
 
 ```go

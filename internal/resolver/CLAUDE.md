@@ -12,7 +12,13 @@ Image resolution for container creation. Resolves which Docker image to use base
 ## Types (`types.go`)
 
 ```go
-type ImageSource string // "explicit", "project", "default"
+type ImageSource string
+
+const (
+    ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
+    ImageSourceProject  ImageSource = "project"  // Found via project label search
+    ImageSourceDefault  ImageSource = "default"  // From config/settings default_image
+)
 
 type ResolvedImage struct {
     Reference string      // e.g., "clawker-myproject:latest"
