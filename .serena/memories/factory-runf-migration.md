@@ -168,7 +168,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 21 | image/build | NOT STARTED | — |
+| 21 | image/build | DONE | — |
 | 22 | image/list | NOT STARTED | — |
 | 23 | image/inspect | NOT STARTED | — |
 | 24 | image/prune | NOT STARTED | — |
