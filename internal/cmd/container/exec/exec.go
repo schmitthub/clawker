@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the exec command.
-type Options struct {
+// ExecOptions holds options for the exec command.
+type ExecOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -35,9 +35,9 @@ type Options struct {
 	command       []string
 }
 
-// NewCmd creates a new exec command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdExec creates a new exec command.
+func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
+	opts := &ExecOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -87,7 +87,10 @@ Container name can be:
 			if len(args) > 1 {
 				opts.command = args[1:]
 			}
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return execRun(cmd.Context(), opts)
 		},
 	}
 
@@ -107,7 +110,7 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func execRun(ctx context.Context, opts *ExecOptions) error {
 	ios := opts.IOStreams
 	containerName := opts.containerName
 	command := opts.command

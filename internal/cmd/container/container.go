@@ -54,7 +54,7 @@ container management commands.`,
 	cmd.AddCommand(attach.NewCmdAttach(f, nil))
 	cmd.AddCommand(cp.NewCmdCp(f, nil))
 	cmd.AddCommand(create.NewCmdCreate(f, nil))
-	cmd.AddCommand(exec.NewCmd(f))
+	cmd.AddCommand(exec.NewCmdExec(f, nil))
 	cmd.AddCommand(inspect.NewCmdInspect(f))
 	cmd.AddCommand(kill.NewCmdKill(f))
 	cmd.AddCommand(list.NewCmdList(f))

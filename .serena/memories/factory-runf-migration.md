@@ -146,7 +146,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 1 | container/attach | DONE | — |
 | 2 | container/cp | DONE | — |
 | 3 | container/create | DONE | — |
-| 4 | container/exec | NOT STARTED | — |
+| 4 | container/exec | DONE | — |
 | 5 | container/inspect | NOT STARTED | — |
 | 6 | container/kill | NOT STARTED | — |
 | 7 | container/list | NOT STARTED | — |
@@ -267,6 +267,16 @@ Does run() take params beyond (ctx, opts)?
 ```
 
 ## Key Learnings
+
+### Agent flag tests need Resolution on Factory
+Tests with `--agent` flag call `opts.Resolution().ProjectKey` in RunE before the runF dispatch. The Factory must have a Resolution function set, otherwise it panics with nil pointer dereference. Use:
+```go
+f := &cmdutil.Factory{
+    Resolution: func() *config.Resolution {
+        return &config.Resolution{ProjectKey: "testproject"}
+    },
+}
+```
 
 ### Integration tests with build tags
 Serena's `rename_symbol` does NOT reach files excluded by build tags (e.g., `//go:build integration`).

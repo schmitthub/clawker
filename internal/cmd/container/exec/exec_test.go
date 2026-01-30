@@ -2,81 +2,82 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdExec(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantOpts   Options
+		wantOpts   ExecOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
 			name:     "container and command",
 			input:    "mycontainer ls",
-			wantOpts: Options{},
+			wantOpts: ExecOptions{containerName: "mycontainer", command: []string{"ls"}},
 		},
 		{
 			name:     "interactive flag",
 			input:    "-i mycontainer /bin/sh",
-			wantOpts: Options{Interactive: true},
+			wantOpts: ExecOptions{Interactive: true, containerName: "mycontainer", command: []string{"/bin/sh"}},
 		},
 		{
 			name:     "tty flag",
 			input:    "-t mycontainer /bin/sh",
-			wantOpts: Options{TTY: true},
+			wantOpts: ExecOptions{TTY: true, containerName: "mycontainer", command: []string{"/bin/sh"}},
 		},
 		{
 			name:     "interactive and tty flags",
 			input:    "-it mycontainer /bin/bash",
-			wantOpts: Options{Interactive: true, TTY: true},
+			wantOpts: ExecOptions{Interactive: true, TTY: true, containerName: "mycontainer", command: []string{"/bin/bash"}},
 		},
 		{
 			name:     "detach flag",
 			input:    "--detach mycontainer sleep 100",
-			wantOpts: Options{Detach: true},
+			wantOpts: ExecOptions{Detach: true, containerName: "mycontainer", command: []string{"sleep", "100"}},
 		},
 		{
 			name:     "env flag",
 			input:    "-e FOO=bar mycontainer env",
-			wantOpts: Options{Env: []string{"FOO=bar"}},
+			wantOpts: ExecOptions{Env: []string{"FOO=bar"}, containerName: "mycontainer", command: []string{"env"}},
 		},
 		{
 			name:     "multiple env flags",
 			input:    "-e FOO=bar -e BAZ=qux mycontainer env",
-			wantOpts: Options{Env: []string{"FOO=bar", "BAZ=qux"}},
+			wantOpts: ExecOptions{Env: []string{"FOO=bar", "BAZ=qux"}, containerName: "mycontainer", command: []string{"env"}},
 		},
 		{
 			name:     "workdir flag",
 			input:    "-w /tmp mycontainer pwd",
-			wantOpts: Options{Workdir: "/tmp"},
+			wantOpts: ExecOptions{Workdir: "/tmp", containerName: "mycontainer", command: []string{"pwd"}},
 		},
 		{
 			name:     "user flag",
 			input:    "-u root mycontainer whoami",
-			wantOpts: Options{User: "root"},
+			wantOpts: ExecOptions{User: "root", containerName: "mycontainer", command: []string{"whoami"}},
 		},
 		{
 			name:     "privileged flag",
 			input:    "--privileged mycontainer ls",
-			wantOpts: Options{Privileged: true},
+			wantOpts: ExecOptions{Privileged: true, containerName: "mycontainer", command: []string{"ls"}},
 		},
 		{
 			name:     "with agent flag",
 			input:    "--agent ralph ls",
-			wantOpts: Options{Agent: true},
+			wantOpts: ExecOptions{Agent: true},
 		},
 		{
 			name:     "agent with interactive and tty",
 			input:    "-it --agent ralph /bin/bash",
-			wantOpts: Options{Agent: true, Interactive: true, TTY: true},
+			wantOpts: ExecOptions{Agent: true, Interactive: true, TTY: true},
 		},
 		{
 			name:       "no arguments",
@@ -87,30 +88,23 @@ func TestNewCmd(t *testing.T) {
 		{
 			name:     "container only (now valid - container is arg, no command)",
 			input:    "mycontainer",
-			wantOpts: Options{},
+			wantOpts: ExecOptions{containerName: "mycontainer"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *Options
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
-				cmdOpts.Interactive, _ = cmd.Flags().GetBool("interactive")
-				cmdOpts.TTY, _ = cmd.Flags().GetBool("tty")
-				cmdOpts.Detach, _ = cmd.Flags().GetBool("detach")
-				cmdOpts.Env, _ = cmd.Flags().GetStringArray("env")
-				cmdOpts.Workdir, _ = cmd.Flags().GetString("workdir")
-				cmdOpts.User, _ = cmd.Flags().GetString("user")
-				cmdOpts.Privileged, _ = cmd.Flags().GetBool("privileged")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
+
+			var gotOpts *ExecOptions
+			cmd := NewCmdExec(f, func(_ context.Context, opts *ExecOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -131,26 +125,34 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.wantOpts.Interactive, cmdOpts.Interactive)
-			require.Equal(t, tt.wantOpts.TTY, cmdOpts.TTY)
-			require.Equal(t, tt.wantOpts.Detach, cmdOpts.Detach)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.Interactive, gotOpts.Interactive)
+			require.Equal(t, tt.wantOpts.TTY, gotOpts.TTY)
+			require.Equal(t, tt.wantOpts.Detach, gotOpts.Detach)
 			// Compare env slices - handle nil vs empty slice
 			if len(tt.wantOpts.Env) == 0 {
-				require.Empty(t, cmdOpts.Env)
+				require.Empty(t, gotOpts.Env)
 			} else {
-				require.Equal(t, tt.wantOpts.Env, cmdOpts.Env)
+				require.Equal(t, tt.wantOpts.Env, gotOpts.Env)
 			}
-			require.Equal(t, tt.wantOpts.Workdir, cmdOpts.Workdir)
-			require.Equal(t, tt.wantOpts.User, cmdOpts.User)
-			require.Equal(t, tt.wantOpts.Privileged, cmdOpts.Privileged)
+			require.Equal(t, tt.wantOpts.Workdir, gotOpts.Workdir)
+			require.Equal(t, tt.wantOpts.User, gotOpts.User)
+			require.Equal(t, tt.wantOpts.Privileged, gotOpts.Privileged)
+			// Verify container name and command are populated (when not using --agent which needs Resolution)
+			if !tt.wantOpts.Agent {
+				require.Equal(t, tt.wantOpts.containerName, gotOpts.containerName)
+				if len(tt.wantOpts.command) > 0 {
+					require.Equal(t, tt.wantOpts.command, gotOpts.command)
+				}
+			}
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdExec_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdExec(f, nil)
 
 	// Test command basics
 	require.Equal(t, "exec [OPTIONS] [CONTAINER] COMMAND [ARG...]", cmd.Use)
@@ -177,7 +179,7 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotNil(t, cmd.Flags().ShorthandLookup("u"))
 }
 
-func TestCmd_ArgsParsing(t *testing.T) {
+func TestCmdExec_ArgsParsing(t *testing.T) {
 	tests := []struct {
 		name              string
 		args              []string
@@ -207,19 +209,12 @@ func TestCmd_ArgsParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
-			cmd := NewCmd(f)
 
-			var capturedContainer string
-			var capturedCmdLen int
-
-			// Override RunE to capture args
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				if len(args) >= 1 {
-					capturedContainer = args[0]
-					capturedCmdLen = len(args) - 1
-				}
+			var gotOpts *ExecOptions
+			cmd := NewCmdExec(f, func(_ context.Context, opts *ExecOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			cmd.SetArgs(tt.args)
 			cmd.SetIn(&bytes.Buffer{})
@@ -228,8 +223,9 @@ func TestCmd_ArgsParsing(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.Equal(t, tt.expectedContainer, capturedContainer)
-			require.Equal(t, tt.expectedCmdLen, capturedCmdLen)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.expectedContainer, gotOpts.containerName)
+			require.Equal(t, tt.expectedCmdLen, len(gotOpts.command))
 		})
 	}
 }
