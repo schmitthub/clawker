@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the top command.
-type Options struct {
+// TopOptions holds options for the top command.
+type TopOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -26,8 +26,8 @@ type Options struct {
 }
 
 // NewCmdTop creates a new top command.
-func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *Options) error) *cobra.Command {
-	opts := &Options{
+func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
+	opts := &TopOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -72,7 +72,7 @@ Container name can be:
 	return cmd
 }
 
-func topRun(ctx context.Context, opts *Options) error {
+func topRun(ctx context.Context, opts *TopOptions) error {
 	ios := opts.IOStreams
 
 	// First arg is container/agent name, rest are ps options

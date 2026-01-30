@@ -153,7 +153,7 @@ func TestNewCmdUpdate(t *testing.T) {
 			require.NotNil(t, gotOpts)
 
 			// Verify containers
-			require.Equal(t, tt.wantContainers, gotOpts.containers)
+			require.Equal(t, tt.wantContainers, gotOpts.Containers)
 
 			// Verify agent flag
 			require.Equal(t, tt.wantAgent, gotOpts.Agent)

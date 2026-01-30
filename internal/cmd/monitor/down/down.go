@@ -50,7 +50,7 @@ the clawker-net Docker network for other clawker services.`,
 	return cmd
 }
 
-func downRun(_ context.Context, opts *DownOptions) error {
+func downRun(ctx context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -78,7 +78,7 @@ func downRun(_ context.Context, opts *DownOptions) error {
 
 	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
-	cmd := exec.Command("docker", composeArgs...)
+	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out
 	cmd.Stderr = ios.ErrOut
 

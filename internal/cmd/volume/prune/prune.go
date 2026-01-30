@@ -69,8 +69,7 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	if !opts.Force {
 		confirmed, err := opts.Prompter().Confirm(fmt.Sprintf("%s This will remove all unused clawker-managed volumes.", cs.WarningIcon()), false)
 		if err != nil {
-			fmt.Fprintln(ios.ErrOut, "Aborted.")
-			return nil
+			return err
 		}
 		if !confirmed {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")

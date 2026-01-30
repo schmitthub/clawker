@@ -80,8 +80,7 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		}
 		confirmed, err := opts.Prompter().Confirm(fmt.Sprintf("%s %s", cs.WarningIcon(), warning), false)
 		if err != nil {
-			fmt.Fprintln(ios.ErrOut, "Aborted.")
-			return nil
+			return err
 		}
 		if !confirmed {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")

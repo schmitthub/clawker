@@ -108,7 +108,7 @@ func TestNewCmdStats(t *testing.T) {
 			require.Equal(t, tt.wantAgent, gotOpts.Agent)
 			require.Equal(t, tt.wantStream, gotOpts.NoStream)
 			require.Equal(t, tt.wantTrunc, gotOpts.NoTrunc)
-			require.Equal(t, tt.wantArgs, gotOpts.containers)
+			require.Equal(t, tt.wantArgs, gotOpts.Containers)
 		})
 	}
 }
@@ -150,7 +150,7 @@ func TestCmdStats_AllowsNoArgs(t *testing.T) {
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
-	require.Empty(t, gotOpts.containers)
+	require.Empty(t, gotOpts.Containers)
 }
 
 func TestCmdStats_MultipleContainers(t *testing.T) {
@@ -170,7 +170,7 @@ func TestCmdStats_MultipleContainers(t *testing.T) {
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
-	require.Equal(t, []string{"container1", "container2", "container3"}, gotOpts.containers)
+	require.Equal(t, []string{"container1", "container2", "container3"}, gotOpts.Containers)
 }
 
 func TestFormatBytes(t *testing.T) {

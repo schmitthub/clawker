@@ -23,48 +23,48 @@ func TestNewCmdRemove(t *testing.T) {
 		{
 			name:     "single container",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "multiple containers",
 			args:     []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			wantOpts: RemoveOptions{containers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"}},
+			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"}},
 		},
 		{
 			name:     "with force flag",
 			input:    "--force",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "with shorthand force flag",
 			input:    "-f",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "with volumes flag",
 			input:    "--volumes",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Volumes: true, containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "with shorthand volumes flag",
 			input:    "-v",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Volumes: true, containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "with force and volumes flags",
 			input:    "-f -v",
 			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, Volumes: true, containers: []string{"clawker.myapp.ralph"}},
+			wantOpts: RemoveOptions{Force: true, Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
 		},
 		{
 			name:     "with agent flag",
 			input:    "--agent",
 			args:     []string{"ralph"},
-			wantOpts: RemoveOptions{Agent: true, containers: []string{"ralph"}},
+			wantOpts: RemoveOptions{Agent: true, Containers: []string{"ralph"}},
 		},
 		{
 			name:       "no container specified",
@@ -112,7 +112,7 @@ func TestNewCmdRemove(t *testing.T) {
 			require.Equal(t, tt.wantOpts.Force, gotOpts.Force)
 			require.Equal(t, tt.wantOpts.Volumes, gotOpts.Volumes)
 			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
-			require.Equal(t, tt.wantOpts.containers, gotOpts.containers)
+			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}
 }

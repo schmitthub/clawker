@@ -26,7 +26,7 @@ type StatsOptions struct {
 	Agent      bool // if set to true, treat arguments as agent name
 	NoStream   bool
 	NoTrunc    bool
-	containers []string
+	Containers []string
 }
 
 // NewCmdStats creates a new stats command.
@@ -66,7 +66,7 @@ Container names can be:
   clawker container stats --no-stream --agent ralph`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
+			opts.Containers = args
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
@@ -85,7 +85,7 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names if --agent provided
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

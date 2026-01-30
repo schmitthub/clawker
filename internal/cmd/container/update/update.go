@@ -37,7 +37,7 @@ type UpdateOptions struct {
 
 	nFlag int
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdUpdate creates a new update command.
@@ -78,7 +78,7 @@ Container names can be:
   clawker container update --memory 256m container1 container2`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
+			opts.Containers = args
 			opts.nFlag = cmd.Flags().NFlag()
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -118,10 +118,10 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	// When opts.Agent is true, all items in opts.containers are agent names
-	containers := opts.containers
+	// When opts.Agent is true, all items in opts.Containers are agent names
+	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.Containers)
 	}
 
 	// Connect to Docker

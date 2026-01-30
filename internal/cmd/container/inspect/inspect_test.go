@@ -111,7 +111,7 @@ func TestNewCmdInspect(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
-			require.Equal(t, tt.wantContainers, gotOpts.containers)
+			require.Equal(t, tt.wantContainers, gotOpts.Containers)
 			require.Equal(t, tt.wantFormat, gotOpts.Format)
 			require.Equal(t, tt.wantSize, gotOpts.Size)
 			require.Equal(t, tt.wantAgent, gotOpts.Agent)

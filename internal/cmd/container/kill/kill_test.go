@@ -3,10 +3,12 @@ package kill
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +102,19 @@ func TestNewCmdKill(t *testing.T) {
 			require.Equal(t, tt.output.Signal, gotOpts.Signal)
 		})
 	}
+}
+
+func TestNewCmdKill_ErrorPropagation(t *testing.T) {
+	f := &cmdutil.Factory{IOStreams: iostreams.NewTestIOStreams().IOStreams}
+	expectedErr := fmt.Errorf("simulated failure")
+	cmd := NewCmdKill(f, func(_ context.Context, _ *KillOptions) error {
+		return expectedErr
+	})
+	cmd.SetArgs([]string{"container1"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	require.ErrorIs(t, err, expectedErr)
 }
 
 func TestCmdKill_Properties(t *testing.T) {

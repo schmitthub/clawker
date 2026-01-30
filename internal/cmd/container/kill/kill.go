@@ -20,7 +20,7 @@ type KillOptions struct {
 	Agent  bool
 	Signal string
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdKill creates the container kill command.
@@ -59,11 +59,11 @@ Container names can be:
   clawker container kill -s SIGINT clawker.myapp.ralph`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
+			opts.Containers = args
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
-			return runKill(cmd.Context(), opts)
+			return killRun(cmd.Context(), opts)
 		},
 	}
 
@@ -73,11 +73,11 @@ Container names can be:
 	return cmd
 }
 
-func runKill(ctx context.Context, opts *KillOptions) error {
+func killRun(ctx context.Context, opts *KillOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

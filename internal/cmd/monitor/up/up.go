@@ -59,7 +59,7 @@ Claude Code containers to send telemetry automatically.`,
 	return cmd
 }
 
-func upRun(_ context.Context, opts *UpOptions) error {
+func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -80,12 +80,10 @@ func upRun(_ context.Context, opts *UpOptions) error {
 	}
 
 	// Ensure clawker-net network exists (creates with managed labels if needed)
-	ctx := context.Background()
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	defer client.Close()
 
 	if _, err := client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{
 		Name: config.ClawkerNetwork,
@@ -102,7 +100,7 @@ func upRun(_ context.Context, opts *UpOptions) error {
 
 	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
-	cmd := exec.Command("docker", composeArgs...)
+	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out
 	cmd.Stderr = ios.ErrOut
 
@@ -126,13 +124,7 @@ func upRun(_ context.Context, opts *UpOptions) error {
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 
 		// Check for running clawker containers that need restart
-		ctx := context.Background()
-		client, err := opts.Client(ctx)
-		if err != nil {
-			logger.Debug().Err(err).Msg("failed to connect to docker for container check")
-		} else {
-			checkRunningContainers(ctx, client, ios)
-		}
+		checkRunningContainers(ctx, client, ios)
 	}
 
 	return nil

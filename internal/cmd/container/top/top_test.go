@@ -63,8 +63,8 @@ func TestNewCmdTop(t *testing.T) {
 				},
 			}
 
-			var gotOpts *Options
-			cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+			var gotOpts *TopOptions
+			cmd := NewCmdTop(f, func(_ context.Context, opts *TopOptions) error {
 				gotOpts = opts
 				return nil
 			})
@@ -110,8 +110,8 @@ func TestCmdTop_Properties(t *testing.T) {
 func TestCmdTop_ArgsValidation(t *testing.T) {
 	f := &cmdutil.Factory{}
 
-	var gotOpts *Options
-	cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+	var gotOpts *TopOptions
+	cmd := NewCmdTop(f, func(_ context.Context, opts *TopOptions) error {
 		gotOpts = opts
 		return nil
 	})
@@ -159,8 +159,8 @@ func TestCmdTop_ArgsParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var gotOpts *Options
-			cmd := NewCmdTop(f, func(_ context.Context, opts *Options) error {
+			var gotOpts *TopOptions
+			cmd := NewCmdTop(f, func(_ context.Context, opts *TopOptions) error {
 				gotOpts = opts
 				return nil
 			})
