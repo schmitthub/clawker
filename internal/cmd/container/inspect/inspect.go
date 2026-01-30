@@ -28,7 +28,7 @@ type InspectOptions struct {
 }
 
 // NewCmdInspect creates the container inspect command.
-func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
+func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOptions) error) *cobra.Command {
 	opts := &InspectOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -65,7 +65,10 @@ Container names can be:
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return runInspect(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return inspectRun(cmd.Context(), opts)
 		},
 	}
 
@@ -76,7 +79,7 @@ Container names can be:
 	return cmd
 }
 
-func runInspect(ctx context.Context, opts *InspectOptions) error {
+func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
