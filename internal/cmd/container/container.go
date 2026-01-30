@@ -66,7 +66,7 @@ container management commands.`,
 	cmd.AddCommand(run.NewCmdRun(f, nil))
 	cmd.AddCommand(start.NewCmdStart(f, nil))
 	cmd.AddCommand(stats.NewCmdStats(f, nil))
-	cmd.AddCommand(stop.NewCmdStop(f))
+	cmd.AddCommand(stop.NewCmdStop(f, nil))
 	cmd.AddCommand(top.NewCmd(f))
 	cmd.AddCommand(unpause.NewCmdUnpause(f))
 	cmd.AddCommand(update.NewCmd(f))

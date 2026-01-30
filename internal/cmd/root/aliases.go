@@ -105,7 +105,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "stop [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerStop.NewCmdStop,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerStop.NewCmdStop(f, nil) },
 	},
 	{
 		Use:     "rmi [OPTIONS]",
