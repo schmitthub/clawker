@@ -170,7 +170,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 |---|---------|--------|----------------|
 | 21 | image/build | DONE | — |
 | 22 | image/list | DONE | — |
-| 23 | image/inspect | NOT STARTED | — |
+| 23 | image/inspect | DONE | — |
 | 24 | image/prune | NOT STARTED | — |
 | 25 | image/remove | NOT STARTED | — |
 
