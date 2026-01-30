@@ -85,7 +85,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "restart [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerRestart.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerRestart.NewCmdRestart(f, nil) },
 	},
 	{
 		Use:     "rm [OPTIONS] CONTAINER [CONTAINER...]",
