@@ -42,7 +42,7 @@ image management commands.`,
 	cmd.AddCommand(build.NewCmdBuild(f, nil))
 	cmd.AddCommand(inspect.NewCmdInspect(f, nil))
 	cmd.AddCommand(list.NewCmdList(f, nil))
-	cmd.AddCommand(prune.NewCmd(f))
+	cmd.AddCommand(prune.NewCmdPrune(f, nil))
 	cmd.AddCommand(remove.NewCmd(f))
 
 	return cmd
