@@ -150,7 +150,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 5 | container/inspect | DONE | — |
 | 6 | container/kill | DONE | — |
 | 7 | container/list | DONE | — |
-| 8 | container/logs | NOT STARTED | — |
+| 8 | container/logs | DONE | — |
 | 9 | container/pause | NOT STARTED | — |
 | 10 | container/remove | NOT STARTED | — |
 | 11 | container/rename | NOT STARTED | — |

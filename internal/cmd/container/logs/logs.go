@@ -30,7 +30,7 @@ type LogsOptions struct {
 }
 
 // NewCmdLogs creates the container logs command.
-func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
+func NewCmdLogs(f *cmdutil.Factory, runF func(context.Context, *LogsOptions) error) *cobra.Command {
 	opts := &LogsOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -68,6 +68,9 @@ Container name can be:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
 			return runLogs(cmd.Context(), opts)
 		},
 	}
