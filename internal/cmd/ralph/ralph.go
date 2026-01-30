@@ -3,6 +3,7 @@ package ralph
 
 import (
 	"github.com/schmitthub/clawker/internal/cmd/ralph/run"
+	"github.com/schmitthub/clawker/internal/cmd/ralph/status"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -37,7 +38,7 @@ Available commands:
 	}
 
 	cmd.AddCommand(run.NewCmdRun(f, nil))
-	cmd.AddCommand(newCmdStatus(f))
+	cmd.AddCommand(status.NewCmdStatus(f, nil))
 	cmd.AddCommand(newCmdReset(f))
 	cmd.AddCommand(NewCmdTUI(f))
 

@@ -1,6 +1,7 @@
-package ralph
+package status
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -14,16 +15,16 @@ import (
 // StatusOptions holds options for the ralph status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() (*config.Config, error)
+	Config    func() (*config.Config, error)
 
 	Agent string
 	JSON  bool
 }
 
-func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
+func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -41,7 +42,10 @@ Shows information about:
   # Output as JSON
   clawker ralph status --agent dev --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return statusRun(cmd.Context(), opts)
 		},
 	}
 
@@ -53,7 +57,7 @@ Shows information about:
 	return cmd
 }
 
-func runStatus(opts *StatusOptions) error {
+func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 
 	// Load config

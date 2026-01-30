@@ -199,7 +199,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
 | 36 | ralph/run | DONE | — |
-| 37 | ralph/status | NOT STARTED | — |
+| 37 | ralph/status | DONE | — |
 | 38 | ralph/reset | NOT STARTED | — |
 | 39 | ralph/tui | NOT STARTED | — |
 
