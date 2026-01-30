@@ -109,7 +109,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "rmi [OPTIONS]",
-		Command: imageRemove.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return imageRemove.NewCmdRemove(f, nil) },
 	},
 	{
 		Use:     "top [OPTIONS] CONTAINER",

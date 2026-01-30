@@ -172,7 +172,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 22 | image/list | DONE | — |
 | 23 | image/inspect | DONE | — |
 | 24 | image/prune | DONE | — |
-| 25 | image/remove | NOT STARTED | — |
+| 25 | image/remove | DONE | — |
 
 ### Volume Commands (5)
 
@@ -232,7 +232,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | Parent | Children Count | Status |
 |--------|---------------|--------|
 | container/container.go | 20 | DONE |
-| image/image.go | 5 | NOT STARTED |
+| image/image.go | 5 | DONE |
 | volume/volume.go | 5 | NOT STARTED |
 | network/network.go | 5 | NOT STARTED |
 | ralph/ralph.go | 4 | NOT STARTED |

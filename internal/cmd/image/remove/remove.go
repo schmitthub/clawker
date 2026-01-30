@@ -7,18 +7,26 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the remove command.
-type Options struct {
+// RemoveOptions holds options for the remove command.
+type RemoveOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
+	Images  []string
 	Force   bool
 	NoPrune bool
 }
 
-// NewCmd creates the image remove command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdRemove creates the image remove command.
+func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
+	opts := &RemoveOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:     "remove IMAGE [IMAGE...]",
@@ -43,7 +51,11 @@ Note: Only clawker-managed images can be removed with this command.`,
   clawker image rm --no-prune clawker-myapp:latest`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.Images = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return removeRun(cmd.Context(), opts)
 		},
 	}
 
@@ -53,13 +65,12 @@ Note: Only clawker-managed images can be removed with this command.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, images []string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func removeRun(ctx context.Context, opts *RemoveOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -71,7 +82,7 @@ func run(f *cmdutil.Factory, opts *Options, images []string) error {
 	}
 
 	var errs []error
-	for _, ref := range images {
+	for _, ref := range opts.Images {
 		responses, err := client.ImageRemove(ctx, ref, removeOpts)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove image %q: %w", ref, err))
