@@ -200,7 +200,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 |---|---------|--------|----------------|
 | 36 | ralph/run | DONE | — |
 | 37 | ralph/status | DONE | — |
-| 38 | ralph/reset | NOT STARTED | — |
+| 38 | ralph/reset | DONE | — |
 | 39 | ralph/tui | NOT STARTED | — |
 
 ### Monitor Commands (4) — NEEDS PACKAGE EXTRACTION
