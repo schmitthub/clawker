@@ -161,7 +161,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 16 | container/stop | DONE | — |
 | 17 | container/top | DONE | — |
 | 18 | container/unpause | DONE | — |
-| 19 | container/update | NOT STARTED | — |
+| 19 | container/update | DONE | — |
 | 20 | container/wait | NOT STARTED | — |
 
 ### Image Commands (5)

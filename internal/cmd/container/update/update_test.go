@@ -2,92 +2,112 @@ package update
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdUpdate(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		wantErr    bool
 		wantErrMsg string
-		// Expected flag values (we check these via flag lookups, not Options struct)
+		// Expected opts fields
+		wantContainers        []string
+		wantAgent             bool
 		wantCPUs              float64
 		wantCPUShares         int64
 		wantCPUsetCPUs        string
 		wantCPUsetMems        string
-		wantMemory            string
-		wantMemoryReservation string
-		wantMemorySwap        string
+		wantMemory            int64
+		wantMemoryReservation int64
+		wantMemorySwap        int64
 		wantPidsLimit         int64
 		wantBlkioWeight       uint16
 	}{
 		{
-			name:  "no flags",
-			input: "mycontainer",
+			name:           "no flags",
+			input:          "mycontainer",
+			wantContainers: []string{"mycontainer"},
 		},
 		{
-			name:     "with cpus flag",
-			input:    "--cpus 2 mycontainer",
-			wantCPUs: 2,
+			name:           "with cpus flag",
+			input:          "--cpus 2 mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantCPUs:       2,
 		},
 		{
-			name:       "with memory flag",
-			input:      "--memory 512m mycontainer",
-			wantMemory: "512MiB",
+			name:           "with memory flag",
+			input:          "--memory 512m mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantMemory:     512 * 1024 * 1024,
 		},
 		{
-			name:       "with memory shorthand",
-			input:      "-m 1g mycontainer",
-			wantMemory: "1GiB",
+			name:           "with memory shorthand",
+			input:          "-m 1g mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantMemory:     1024 * 1024 * 1024,
 		},
 		{
-			name:          "with cpu-shares flag",
-			input:         "--cpu-shares 512 mycontainer",
-			wantCPUShares: 512,
+			name:           "with cpu-shares flag",
+			input:          "--cpu-shares 512 mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantCPUShares:  512,
 		},
 		{
 			name:           "with cpuset-cpus flag",
 			input:          "--cpuset-cpus 0-3 mycontainer",
+			wantContainers: []string{"mycontainer"},
 			wantCPUsetCPUs: "0-3",
 		},
 		{
 			name:           "with cpuset-mems flag",
 			input:          "--cpuset-mems 0,1 mycontainer",
+			wantContainers: []string{"mycontainer"},
 			wantCPUsetMems: "0,1",
 		},
 		{
 			name:                  "with memory-reservation flag",
 			input:                 "--memory-reservation 256m mycontainer",
-			wantMemoryReservation: "256MiB",
+			wantContainers:        []string{"mycontainer"},
+			wantMemoryReservation: 256 * 1024 * 1024,
 		},
 		{
 			name:           "with memory-swap flag",
 			input:          "--memory-swap 1g mycontainer",
-			wantMemorySwap: "1GiB",
+			wantContainers: []string{"mycontainer"},
+			wantMemorySwap: 1024 * 1024 * 1024,
 		},
 		{
-			name:          "with pids-limit flag",
-			input:         "--pids-limit 100 mycontainer",
-			wantPidsLimit: 100,
+			name:           "with pids-limit flag",
+			input:          "--pids-limit 100 mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantPidsLimit:  100,
 		},
 		{
 			name:            "with blkio-weight flag",
 			input:           "--blkio-weight 500 mycontainer",
+			wantContainers:  []string{"mycontainer"},
 			wantBlkioWeight: 500,
 		},
 		{
-			name:          "with multiple flags",
-			input:         "--cpus 1.5 --memory 512m --pids-limit 200 mycontainer",
-			wantCPUs:      1.5,
-			wantMemory:    "512MiB",
-			wantPidsLimit: 200,
+			name:           "with multiple flags",
+			input:          "--cpus 1.5 --memory 512m --pids-limit 200 mycontainer",
+			wantContainers: []string{"mycontainer"},
+			wantCPUs:       1.5,
+			wantMemory:     512 * 1024 * 1024,
+			wantPidsLimit:  200,
+		},
+		{
+			name:           "with agent flag",
+			input:          "--agent ralph",
+			wantContainers: []string{"ralph"},
+			wantAgent:      true,
 		},
 		{
 			name:       "no arguments",
@@ -95,25 +115,28 @@ func TestNewCmd(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "requires at least 1 container argument or --agent flag",
 		},
+		{
+			name:           "multiple containers",
+			input:          "container1 container2 container3",
+			wantContainers: []string{"container1", "container2", "container3"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			cmd := NewCmd(f)
-
-			// Override RunE to prevent actual execution
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
 
-			// Cobra hack-around for help flag
-			cmd.Flags().BoolP("help", "x", false, "")
+			var gotOpts *UpdateOptions
+			cmd := NewCmdUpdate(f, func(_ context.Context, opts *UpdateOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
-			// Parse arguments
 			argv := testutil.SplitArgs(tt.input)
-
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -127,59 +150,50 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NotNil(t, gotOpts)
 
-			// Verify flag values were parsed correctly
+			// Verify containers
+			require.Equal(t, tt.wantContainers, gotOpts.containers)
+
+			// Verify agent flag
+			require.Equal(t, tt.wantAgent, gotOpts.Agent)
+
+			// Verify flag values via opts fields
 			if tt.wantCPUs != 0 {
-				cpusFlag := cmd.Flags().Lookup("cpus")
-				require.NotNil(t, cpusFlag)
-				cpus := cpusFlag.Value.(*docker.NanoCPUs)
-				// NanoCPUs stores value in nanoseconds, convert back
-				require.InDelta(t, tt.wantCPUs, float64(cpus.Value())/1e9, 0.001)
+				require.InDelta(t, tt.wantCPUs, float64(gotOpts.cpus.Value())/1e9, 0.001)
 			}
 			if tt.wantCPUShares != 0 {
-				v, _ := cmd.Flags().GetInt64("cpu-shares")
-				require.Equal(t, tt.wantCPUShares, v)
+				require.Equal(t, tt.wantCPUShares, gotOpts.cpuShares)
 			}
 			if tt.wantCPUsetCPUs != "" {
-				v, _ := cmd.Flags().GetString("cpuset-cpus")
-				require.Equal(t, tt.wantCPUsetCPUs, v)
+				require.Equal(t, tt.wantCPUsetCPUs, gotOpts.cpusetCpus)
 			}
 			if tt.wantCPUsetMems != "" {
-				v, _ := cmd.Flags().GetString("cpuset-mems")
-				require.Equal(t, tt.wantCPUsetMems, v)
+				require.Equal(t, tt.wantCPUsetMems, gotOpts.cpusetMems)
 			}
-			if tt.wantMemory != "" {
-				memFlag := cmd.Flags().Lookup("memory")
-				require.NotNil(t, memFlag)
-				require.Equal(t, tt.wantMemory, memFlag.Value.String())
+			if tt.wantMemory != 0 {
+				require.Equal(t, tt.wantMemory, gotOpts.memory.Value())
 			}
-			if tt.wantMemoryReservation != "" {
-				memFlag := cmd.Flags().Lookup("memory-reservation")
-				require.NotNil(t, memFlag)
-				require.Equal(t, tt.wantMemoryReservation, memFlag.Value.String())
+			if tt.wantMemoryReservation != 0 {
+				require.Equal(t, tt.wantMemoryReservation, gotOpts.memoryReservation.Value())
 			}
-			if tt.wantMemorySwap != "" {
-				memFlag := cmd.Flags().Lookup("memory-swap")
-				require.NotNil(t, memFlag)
-				require.Equal(t, tt.wantMemorySwap, memFlag.Value.String())
+			if tt.wantMemorySwap != 0 {
+				require.Equal(t, tt.wantMemorySwap, gotOpts.memorySwap.Value())
 			}
 			if tt.wantPidsLimit != 0 {
-				v, _ := cmd.Flags().GetInt64("pids-limit")
-				require.Equal(t, tt.wantPidsLimit, v)
+				require.Equal(t, tt.wantPidsLimit, gotOpts.pidsLimit)
 			}
 			if tt.wantBlkioWeight != 0 {
-				v, _ := cmd.Flags().GetUint16("blkio-weight")
-				require.Equal(t, tt.wantBlkioWeight, v)
+				require.Equal(t, tt.wantBlkioWeight, gotOpts.blkioWeight)
 			}
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdUpdate_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdUpdate(f, nil)
 
-	// Test command basics
 	require.Equal(t, "update [OPTIONS] [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
@@ -201,32 +215,10 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotNil(t, cmd.Flags().ShorthandLookup("m"))
 }
 
-func TestCmd_MultipleContainers(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
-
-	var capturedArgs []string
-	// Override RunE to capture args
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		capturedArgs = args
-		return nil
-	}
-
-	// Update can be called with multiple containers
-	cmd.SetArgs([]string{"container1", "container2", "container3"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-
-	_, err := cmd.ExecuteC()
-	require.NoError(t, err)
-	require.Equal(t, []string{"container1", "container2", "container3"}, capturedArgs)
-}
-
 func TestBuildUpdateResources(t *testing.T) {
 	tests := []struct {
 		name        string
-		setupOpts   func() *Options
+		setupOpts   func() *UpdateOptions
 		expectCPUs  int64
 		expectMem   int64
 		expectPids  *int64
@@ -234,12 +226,12 @@ func TestBuildUpdateResources(t *testing.T) {
 	}{
 		{
 			name:      "empty options",
-			setupOpts: func() *Options { return &Options{} },
+			setupOpts: func() *UpdateOptions { return &UpdateOptions{} },
 		},
 		{
 			name: "with CPUs",
-			setupOpts: func() *Options {
-				opts := &Options{}
+			setupOpts: func() *UpdateOptions {
+				opts := &UpdateOptions{}
 				_ = opts.cpus.Set("2")
 				return opts
 			},
@@ -247,8 +239,8 @@ func TestBuildUpdateResources(t *testing.T) {
 		},
 		{
 			name: "with memory",
-			setupOpts: func() *Options {
-				opts := &Options{}
+			setupOpts: func() *UpdateOptions {
+				opts := &UpdateOptions{}
 				_ = opts.memory.Set("512m")
 				return opts
 			},
@@ -256,8 +248,8 @@ func TestBuildUpdateResources(t *testing.T) {
 		},
 		{
 			name: "with pids limit",
-			setupOpts: func() *Options {
-				return &Options{pidsLimit: 100}
+			setupOpts: func() *UpdateOptions {
+				return &UpdateOptions{pidsLimit: 100}
 			},
 			expectPids: int64Ptr(100),
 		},

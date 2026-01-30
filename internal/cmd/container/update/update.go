@@ -12,8 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the update command.
-type Options struct {
+// TODO might be able to replace with container opts
+// UpdateOptions defines the options for the update command.
+type UpdateOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -39,9 +40,9 @@ type Options struct {
 	containers []string
 }
 
-// NewCmd creates a new update command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdUpdate creates a new update command.
+func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions) error) *cobra.Command {
+	opts := &UpdateOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -79,7 +80,10 @@ Container names can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
 			opts.nFlag = cmd.Flags().NFlag()
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return updateRun(cmd.Context(), opts)
 		},
 	}
 
@@ -110,7 +114,7 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
@@ -170,7 +174,7 @@ func updateContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 	return nil
 }
 
-func buildUpdateResources(opts *Options) (*docker.Resources, *docker.RestartPolicy) {
+func buildUpdateResources(opts *UpdateOptions) (*docker.Resources, *docker.RestartPolicy) {
 	resources := &docker.Resources{}
 
 	// CPU settings - cpus is a NanoCPUs type which is already in nanoseconds
