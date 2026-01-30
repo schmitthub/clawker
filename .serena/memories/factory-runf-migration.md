@@ -188,11 +188,11 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 31 | network/create | NOT STARTED | — |
-| 32 | network/list | NOT STARTED | — |
-| 33 | network/inspect | NOT STARTED | — |
-| 34 | network/prune | NOT STARTED | — |
-| 35 | network/remove | NOT STARTED | — |
+| 31 | network/create | DONE | — |
+| 32 | network/list | DONE | — |
+| 33 | network/inspect | DONE | — |
+| 34 | network/prune | DONE | — |
+| 35 | network/remove | DONE | — |
 
 ### Ralph Commands (4) — NEEDS PACKAGE EXTRACTION
 
@@ -234,7 +234,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | container/container.go | 20 | DONE |
 | image/image.go | 5 | DONE |
 | volume/volume.go | 5 | DONE |
-| network/network.go | 5 | NOT STARTED |
+| network/network.go | 5 | DONE |
 | ralph/ralph.go | 4 | NOT STARTED |
 | monitor/monitor.go | 4 | NOT STARTED |
 | config/config.go | 1 | NOT STARTED |
@@ -304,6 +304,9 @@ Volume/prune had manual `bufio.NewReader(cmd.InOrStdin())` confirmation. The mig
 
 ### Alias wrapper closures for commands with many Factory deps
 Commands like `container/run` that take many Factory deps on Options (IOStreams, Client, Config, Settings, Prompter, SettingsLoader, etc.) work fine with the standard closure wrapper pattern in aliases.go. The alias closure just passes `nil` for runF — no special handling needed regardless of how many Factory deps the command uses.
+
+### Batching an entire command group in one session
+When all commands in a group (e.g., network/*) follow the same straightforward pattern (own subpackages, exported constructors, no package extraction needed), migrating all 5 in a single session is efficient. The parent registration update happens naturally as each child is migrated, and the final `go test ./...` validates everything at once.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 
