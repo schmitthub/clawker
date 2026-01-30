@@ -2,28 +2,32 @@ package wait
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdWait(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantErr    bool
-		wantErrMsg string
+		name           string
+		input          string
+		wantErr        bool
+		wantErrMsg     string
+		wantContainers []string
 	}{
 		{
-			name:  "single container",
-			input: "mycontainer",
+			name:           "single container",
+			input:          "mycontainer",
+			wantContainers: []string{"mycontainer"},
 		},
 		{
-			name:  "multiple containers",
-			input: "container1 container2 container3",
+			name:           "multiple containers",
+			input:          "container1 container2 container3",
+			wantContainers: []string{"container1", "container2", "container3"},
 		},
 		{
 			name:       "no arguments",
@@ -35,19 +39,18 @@ func TestNewCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			cmd := NewCmd(f)
-
-			// Override RunE to not actually execute
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
 
-			// Cobra hack-around for help flag
-			cmd.Flags().BoolP("help", "x", false, "")
+			var gotOpts *WaitOptions
+			cmd := NewCmdWait(f, func(_ context.Context, opts *WaitOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
-			// Parse arguments
 			argv := []string{}
 			if tt.input != "" {
 				argv = testutil.SplitArgs(tt.input)
@@ -66,15 +69,41 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantContainers, gotOpts.Containers)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+func TestNewCmdWait_AgentFlag(t *testing.T) {
+	f := &cmdutil.Factory{
+		Resolution: func() *config.Resolution {
+			return &config.Resolution{ProjectKey: "testproject"}
+		},
+	}
 
-	// Test command basics
+	var gotOpts *WaitOptions
+	cmd := NewCmdWait(f, func(_ context.Context, opts *WaitOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--agent", "ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	_, err := cmd.ExecuteC()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	require.True(t, gotOpts.Agent)
+	require.Equal(t, []string{"ralph"}, gotOpts.Containers)
+}
+
+func TestNewCmdWait_Properties(t *testing.T) {
+	f := &cmdutil.Factory{}
+	cmd := NewCmdWait(f, nil)
+
 	require.Equal(t, "wait [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)

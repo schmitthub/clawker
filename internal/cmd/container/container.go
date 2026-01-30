@@ -70,7 +70,7 @@ container management commands.`,
 	cmd.AddCommand(top.NewCmdTop(f, nil))
 	cmd.AddCommand(unpause.NewCmdUnpause(f, nil))
 	cmd.AddCommand(update.NewCmdUpdate(f, nil))
-	cmd.AddCommand(wait.NewCmd(f))
+	cmd.AddCommand(wait.NewCmdWait(f, nil))
 
 	return cmd
 }

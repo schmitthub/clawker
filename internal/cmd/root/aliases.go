@@ -121,7 +121,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "wait CONTAINER [CONTAINER...]",
-		Command: containerWait.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerWait.NewCmdWait(f, nil) },
 	},
 }
 
