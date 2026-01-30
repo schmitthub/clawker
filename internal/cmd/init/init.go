@@ -22,7 +22,7 @@ type InitOptions struct {
 }
 
 // NewCmdInit creates the init command for user-level setup.
-func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
+func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
 		Prompter:  f.Prompter,
@@ -48,7 +48,10 @@ To initialize a project in the current directory, use 'clawker project init' ins
   clawker init --yes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return initRun(cmd.Context(), opts)
 		},
 	}
 
@@ -57,8 +60,7 @@ To initialize a project in the current directory, use 'clawker project init' ins
 	return cmd
 }
 
-func runInit(opts *InitOptions) error {
-	ctx := context.Background()
+func initRun(ctx context.Context, opts *InitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()

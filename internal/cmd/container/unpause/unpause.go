@@ -11,20 +11,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the unpause command.
-type Options struct {
+// UnpauseOptions holds options for the unpause command.
+type UnpauseOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
 	Agent bool
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdUnpause creates the container unpause command.
-func NewCmdUnpause(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+func NewCmdUnpause(f *cmdutil.Factory, runF func(context.Context, *UnpauseOptions) error) *cobra.Command {
+	opts := &UnpauseOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -51,8 +51,11 @@ Container names can be:
   clawker container unpause clawker.myapp.ralph clawker.myapp.writer`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runUnpause(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return unpauseRun(cmd.Context(), opts)
 		},
 	}
 
@@ -61,11 +64,11 @@ Container names can be:
 	return cmd
 }
 
-func runUnpause(ctx context.Context, opts *Options) error {
+func unpauseRun(ctx context.Context, opts *UnpauseOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

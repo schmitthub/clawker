@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the wait command.
-type Options struct {
+// WaitOptions defines the options for the wait command.
+type WaitOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -23,9 +23,9 @@ type Options struct {
 	Containers []string
 }
 
-// NewCmd creates a new wait command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdWait creates a new wait command.
+func NewCmdWait(f *cmdutil.Factory, runF func(context.Context, *WaitOptions) error) *cobra.Command {
+	opts := &WaitOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -53,7 +53,10 @@ Container names can be:
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return waitRun(cmd.Context(), opts)
 		},
 	}
 
@@ -62,7 +65,7 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func waitRun(ctx context.Context, opts *WaitOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names

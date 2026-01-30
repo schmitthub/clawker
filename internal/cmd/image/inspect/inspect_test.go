@@ -2,28 +2,32 @@ package inspect
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdInspect(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		wantErr    bool
 		wantErrMsg string
+		wantImages []string
 	}{
 		{
-			name:  "single image",
-			input: "myimage:latest",
+			name:       "single image",
+			input:      "myimage:latest",
+			wantImages: []string{"myimage:latest"},
 		},
 		{
-			name:  "multiple images",
-			input: "img1:latest img2:latest",
+			name:       "multiple images",
+			input:      "img1:latest img2:latest",
+			wantImages: []string{"img1:latest", "img2:latest"},
 		},
 		{
 			name:       "no arguments",
@@ -35,21 +39,18 @@ func TestNewCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			tio := iostreams.NewTestIOStreams()
+			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			var gotOpts *InspectOptions
+			cmd := NewCmdInspect(f, func(_ context.Context, opts *InspectOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
-			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := testutil.SplitArgs(tt.input)
-
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -63,15 +64,18 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantImages, gotOpts.Images)
+			require.NotNil(t, gotOpts.IOStreams)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+func TestCmdInspect_Properties(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	cmd := NewCmdInspect(f, nil)
 
-	// Test command basics
 	require.Equal(t, "inspect IMAGE [IMAGE...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)

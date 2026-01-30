@@ -52,7 +52,7 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	}
 
 	// Create and execute the create command with --agent flag
-	cmd := NewCmd(f)
+	cmd := NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"--agent", agentName,
 		"alpine:latest",
@@ -119,7 +119,7 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"--name", agentName,
 		"alpine:latest",
@@ -166,7 +166,7 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 	}
 
 	// Create without --agent flag
-	cmd := NewCmd(f)
+	cmd := NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"alpine:latest",
 	})

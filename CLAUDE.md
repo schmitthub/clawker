@@ -83,6 +83,7 @@ go test -tags=acceptance ./acceptance -v -timeout 15m
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
 | `prompts.Prompter` | Interactive prompts with TTY/CI awareness |
+| `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `Resolver` | Resolves working directory to registered project via longest-prefix match |
 | `Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir |

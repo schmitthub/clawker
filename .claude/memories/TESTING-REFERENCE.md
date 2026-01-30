@@ -2,6 +2,168 @@
 
 > Extended test patterns and examples. For essential rules, see `.claude/rules/testing.md`.
 
+## Command Test Tiers
+
+Command testing breaks into three tiers, each with distinct purpose and setup cost:
+
+```
+┌───────────────────┬────────────────────────────┬──────────────────────────────┐
+│  TIER 1            │  TIER 2                    │  TIER 3                      │
+│  Flag Parsing      │  Integration               │  Internal Function           │
+│                    │  (Full Pipeline)            │  (Direct Unit Tests)         │
+├───────────────────┼────────────────────────────┼──────────────────────────────┤
+│  runF trapdoor     │  nil runF → real execution │  Call domain function        │
+│  Intercepts opts   │  Mock Docker client         │  No Factory, no Cobra       │
+│  No run function   │  IOStreams capture          │  Just inputs → outputs      │
+│  No Docker mocks   │                             │                              │
+├───────────────────┼────────────────────────────┼──────────────────────────────┤
+│  Tests that        │  Tests that                 │  Tests that                  │
+│  flags → Options   │  flags + Docker → output    │  inputs → Docker calls →     │
+│  mapping works     │  works end-to-end           │  results work correctly      │
+└───────────────────┴────────────────────────────┴──────────────────────────────┘
+```
+
+### Test File Organization
+
+Each command verb has a single co-located test file:
+
+```
+cmd/<group>/<verb>/
+├── <verb>.go           # Options + NewCmd + run function
+└── <verb>_test.go      # All three tiers in one file
+```
+
+Within the test file:
+- **Top**: `runCommand` helper (if Tier 2 tests exist)
+- **Middle**: Tier 1 + Tier 2 test functions (named `TestVerb_*`)
+- **Bottom**: Tier 3 table-driven tests (named `Test_verbLogic`)
+
+---
+
+## runF Trapdoor Pattern
+
+The `runF` parameter on every `NewCmd` constructor is the primary test injection point.
+
+### Tier 1 — Flag Capture Test
+
+Intercepts the Options struct *before* the run function executes. Verifies CLI flags map correctly to Options fields.
+
+```go
+func TestNewCmdStop_FlagParsing(t *testing.T) {
+    tio := iostreams.NewTestIOStreams()
+    f := &cmdutil.Factory{
+        IOStreams: tio.IOStreams,
+        Resolution: func() *config.Resolution {
+            return &config.Resolution{ProjectKey: "testproject"}
+        },
+    }
+
+    var gotOpts *StopOptions
+    cmd := NewCmdStop(f, func(_ context.Context, opts *StopOptions) error {
+        gotOpts = opts
+        return nil
+    })
+    cmd.SetArgs([]string{"--force", "clawker.myapp.ralph"})
+    cmd.SetIn(&bytes.Buffer{})
+    cmd.SetOut(&bytes.Buffer{})
+    cmd.SetErr(&bytes.Buffer{})
+
+    err := cmd.Execute()
+    require.NoError(t, err)
+    assert.True(t, gotOpts.Force)
+    assert.Equal(t, []string{"clawker.myapp.ralph"}, gotOpts.Names)
+```
+
+**What this tests**: flag registration, defaults, enum validation, mutual exclusion, required args, positional arg mapping.
+**What this does NOT test**: Docker calls, output formatting, error handling in the run function.
+**Factory needs**: minimal — often just `IOStreams`. Add `Resolution` if the command uses `--agent` flag (it calls `opts.Resolution().ProjectKey` in RunE).
+
+### Hybrid Injection Test
+
+Uses `runF` to inject Pattern B deps while still calling the real run function:
+
+```go
+cmd := NewCmdBuild(f, func(ctx context.Context, opts *BuildOptions) error {
+    opts.Builder = &mockBuilder{}    // inject Pattern B dep
+    return buildRun(ctx, opts)       // still calls real function
+})
+```
+
+This bypasses the nil-guard's real construction path while exercising the full run function logic.
+
+---
+
+## Shared Test Helper Pattern
+
+For Tier 2 (full pipeline) tests, define a private `runCommand` helper per command test file:
+
+```go
+func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut, error) {
+    tio := iostreams.NewTestIOStreams()
+    tio.IOStreams.SetStdoutTTY(isTTY)
+    tio.IOStreams.SetStdinTTY(isTTY)
+    tio.IOStreams.SetStderrTTY(isTTY)
+
+    factory := &cmdutil.Factory{
+        IOStreams: tio.IOStreams,
+        Client: func(_ context.Context) (*docker.Client, error) {
+            return mockClient, nil
+        },
+        Config: func() (*config.Config, error) {
+            return testConfig(), nil
+        },
+        Resolution: func() *config.Resolution {
+            return &config.Resolution{ProjectKey: "testproject"}
+        },
+    }
+
+    cmd := NewCmdStop(factory, nil)    // nil runF → full execution
+
+    argv, _ := shlex.Split(cli)
+    cmd.SetArgs(argv)
+    cmd.SetIn(&bytes.Buffer{})
+    cmd.SetOut(io.Discard)
+    cmd.SetErr(io.Discard)
+
+    _, err := cmd.ExecuteC()
+    return &testCmdOut{
+        OutBuf: tio.OutBuf,
+        ErrBuf: tio.ErrBuf,
+    }, err
+}
+```
+
+**Key design choices**:
+- `nil` for `runF` → real run function executes the full pipeline
+- I/O capture via `iostreams.NewTestIOStreams()` → access `tio.IOStreams`, `tio.OutBuf`, `tio.ErrBuf`
+- TTY toggling — tests both interactive and non-interactive paths
+- Cobra output discarded (`io.Discard`) — real output goes through `iostreams`
+- Docker mock client injected via Factory closure
+
+---
+
+## Which Tier to Use
+
+```
+┌───────────────────────────────┬─────────┬─────────┬─────────┐
+│  What you're testing          │ Tier 1  │ Tier 2  │ Tier 3  │
+├───────────────────────────────┼─────────┼─────────┼─────────┤
+│  Flag default values          │   ✓     │         │         │
+│  Flag enum validation         │   ✓     │         │         │
+│  Mutual flag exclusion        │   ✓     │         │         │
+│  Required/positional args     │   ✓     │         │         │
+│  TTY vs non-TTY output        │         │   ✓     │         │
+│  Docker API call parameters   │         │   ✓     │   ✓     │
+│  Output formatting            │         │   ✓     │         │
+│  Error messages to user       │         │   ✓     │         │
+│  Container naming logic       │         │   ✓     │   ✓     │
+│  Data transformation          │         │         │   ✓     │
+│  Edge cases in domain logic   │         │         │   ✓     │
+└───────────────────────────────┴─────────┴─────────┴─────────┘
+```
+
+---
+
 ## Mock Docker Client — Full Example
 
 ```go

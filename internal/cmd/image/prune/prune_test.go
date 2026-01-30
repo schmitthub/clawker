@@ -2,11 +2,13 @@ package prune
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,61 +16,56 @@ func TestNewCmd(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		wantOpts Options
+		wantOpts PruneOptions
 	}{
 		{
 			name:     "no flags",
 			input:    "",
-			wantOpts: Options{},
+			wantOpts: PruneOptions{},
 		},
 		{
 			name:     "force flag",
 			input:    "-f",
-			wantOpts: Options{Force: true},
+			wantOpts: PruneOptions{Force: true},
 		},
 		{
 			name:     "force flag long",
 			input:    "--force",
-			wantOpts: Options{Force: true},
+			wantOpts: PruneOptions{Force: true},
 		},
 		{
 			name:     "all flag",
 			input:    "-a",
-			wantOpts: Options{All: true},
+			wantOpts: PruneOptions{All: true},
 		},
 		{
 			name:     "all flag long",
 			input:    "--all",
-			wantOpts: Options{All: true},
+			wantOpts: PruneOptions{All: true},
 		},
 		{
 			name:     "both flags",
 			input:    "-f -a",
-			wantOpts: Options{Force: true, All: true},
+			wantOpts: PruneOptions{Force: true, All: true},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *Options
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Force, _ = cmd.Flags().GetBool("force")
-				cmdOpts.All, _ = cmd.Flags().GetBool("all")
-				return nil
+			f := &cmdutil.Factory{
+				IOStreams: iostreams.NewTestIOStreams().IOStreams,
+				Prompter:  func() *prompts.Prompter { return nil },
 			}
 
-			// Cobra hack-around for help flag
+			var gotOpts *PruneOptions
+			cmd := NewCmdPrune(f, func(_ context.Context, opts *PruneOptions) error {
+				gotOpts = opts
+				return nil
+			})
+
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := testutil.SplitArgs(tt.input)
-
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -76,15 +73,18 @@ func TestNewCmd(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Force, cmdOpts.Force)
-			require.Equal(t, tt.wantOpts.All, cmdOpts.All)
+			require.Equal(t, tt.wantOpts.Force, gotOpts.Force)
+			require.Equal(t, tt.wantOpts.All, gotOpts.All)
 		})
 	}
 }
 
 func TestCmd_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	f := &cmdutil.Factory{
+		IOStreams: iostreams.NewTestIOStreams().IOStreams,
+		Prompter:  func() *prompts.Prompter { return nil },
+	}
+	cmd := NewCmdPrune(f, nil)
 
 	// Test command basics
 	require.Equal(t, "prune [OPTIONS]", cmd.Use)

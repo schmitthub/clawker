@@ -2,11 +2,12 @@ package logs
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,23 +98,17 @@ func TestNewCmdLogs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *LogsOptions
-			cmd := NewCmdLogs(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &LogsOptions{}
-				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
-				cmdOpts.Follow, _ = cmd.Flags().GetBool("follow")
-				cmdOpts.Timestamps, _ = cmd.Flags().GetBool("timestamps")
-				cmdOpts.Details, _ = cmd.Flags().GetBool("details")
-				cmdOpts.Since, _ = cmd.Flags().GetString("since")
-				cmdOpts.Until, _ = cmd.Flags().GetString("until")
-				cmdOpts.Tail, _ = cmd.Flags().GetString("tail")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
+
+			var gotOpts *LogsOptions
+			cmd := NewCmdLogs(f, func(_ context.Context, opts *LogsOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -137,20 +132,21 @@ func TestNewCmdLogs(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.output.Follow, cmdOpts.Follow)
-			require.Equal(t, tt.output.Timestamps, cmdOpts.Timestamps)
-			require.Equal(t, tt.output.Details, cmdOpts.Details)
-			require.Equal(t, tt.output.Since, cmdOpts.Since)
-			require.Equal(t, tt.output.Until, cmdOpts.Until)
-			require.Equal(t, tt.output.Tail, cmdOpts.Tail)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.output.Agent, gotOpts.Agent)
+			require.Equal(t, tt.output.Follow, gotOpts.Follow)
+			require.Equal(t, tt.output.Timestamps, gotOpts.Timestamps)
+			require.Equal(t, tt.output.Details, gotOpts.Details)
+			require.Equal(t, tt.output.Since, gotOpts.Since)
+			require.Equal(t, tt.output.Until, gotOpts.Until)
+			require.Equal(t, tt.output.Tail, gotOpts.Tail)
 		})
 	}
 }
 
 func TestCmdLogs_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdLogs(f)
+	cmd := NewCmdLogs(f, nil)
 
 	// Test command basics
 	require.Equal(t, "logs [CONTAINER]", cmd.Use)

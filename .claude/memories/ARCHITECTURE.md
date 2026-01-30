@@ -240,6 +240,172 @@ func stopRun(opts *StopOptions) error {
 
 Factory fields are closures, so `opts.Client = f.Client` assigns the closure value directly — syntactically identical to a bound method reference.
 
+## Command Scaffolding Template
+
+Every command follows this 4-step pattern. No exceptions.
+
+**Step 1 — Options struct** (declares only what this command needs):
+
+```go
+type StopOptions struct {
+    // From Factory (assigned in constructor)
+    IOStreams   *iostreams.IOStreams
+    Client     func(context.Context) (*docker.Client, error)
+    Resolution func() *config.Resolution
+
+    // From flags (bound by Cobra)
+    Force bool
+
+    // From positional args (assigned in RunE)
+    Names []string
+}
+```
+
+**Step 2 — Constructor** accepts Factory + runF test hook:
+
+```go
+func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
+    opts := &StopOptions{
+        IOStreams:   f.IOStreams,
+        Client:     f.Client,
+        Resolution: f.Resolution,
+    }
+```
+
+**Step 3 — RunE** assigns positional args/flags to opts, then dispatches:
+
+```go
+    cmd := &cobra.Command{
+        Use:   "stop [flags] [NAME...]",
+        RunE: func(cmd *cobra.Command, args []string) error {
+            opts.Names = args
+            if runF != nil {
+                return runF(cmd.Context(), opts)
+            }
+            return stopRun(cmd.Context(), opts)
+        },
+    }
+    cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force stop")
+    return cmd
+```
+
+**Step 4 — Unexported run function** receives only Options:
+
+```go
+func stopRun(ctx context.Context, opts *StopOptions) error {
+    client, err := opts.Client(ctx)
+    if err != nil {
+        return err
+    }
+    // Business logic using only opts fields
+}
+```
+
+**Nil-guard for runtime-context deps** (Pattern B — see DESIGN.md §3.4):
+
+```go
+func buildRun(ctx context.Context, opts *BuildOptions) error {
+    if opts.Builder == nil {
+        opts.Builder = build.NewBuilder(/* runtime args */)
+    }
+    // ...
+}
+```
+
+**Parent registration** always passes `nil` for runF:
+
+```go
+cmd.AddCommand(stop.NewCmdStop(f, nil))
+```
+
+## Package Import DAG
+
+Domain packages in `internal/` form a directed acyclic graph with three tiers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  LEAF PACKAGES — "Pure Utilities"                               │
+│                                                                 │
+│  Import: standard library only, no internal siblings            │
+│  Imported by: anyone                                            │
+│                                                                 │
+│  Clawker examples: logger, testutil (helpers)                   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ imported by
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  MIDDLE PACKAGES — "Core Domain Services"                       │
+│                                                                 │
+│  Import: leaves only                                            │
+│  Imported by: commands, composites, entry point                 │
+│                                                                 │
+│  Clawker examples:                                              │
+│    config/ → (leaf deps only)                                   │
+│    iostreams/ → (leaf deps only)                                │
+│    prompts/ → iostreams                                         │
+│    cmdutil/ → iostreams, config types                            │
+│    docker/ → pkg/whail                                          │
+│    workspace/ → config                                          │
+│    credentials/ → config                                        │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ imported by
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  COMPOSITE PACKAGES — "Subsystems"                              │
+│                                                                 │
+│  Import: leaves + middles + own sub-packages                    │
+│  Imported by: commands only                                     │
+│                                                                 │
+│  Clawker examples:                                              │
+│    hostproxy/ → config, docker, iostreams, logger               │
+│    ralph/ → docker, config, iostreams, tui, workspace           │
+│    build/ → config, docker, pkg/build                           │
+│    resolver/ → config, docker                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Import Direction Rules
+
+```
+  ✓  middle → leaf                 prompts imports iostreams
+  ✓  composite → middle            ralph imports config
+  ✓  composite → leaf              hostproxy imports logger
+  ✓  composite → own children      ralph imports ralph/tui
+
+  ✗  leaf → middle                 logger must never import config
+  ✗  leaf → leaf (sibling)         leaves have zero internal imports
+  ✗  middle ↔ middle (unrelated)   config must never import prompts
+  ✗  Any cycle                     A → B → A is always wrong
+```
+
+**Lateral imports** between unrelated middle packages are the most common violation. If two middle packages need shared behavior, extract the shared part into a leaf package.
+
+### Where `cmdutil` Fits
+
+`cmdutil` is a **middle package** that commands and the entry point import. It touches the command framework (cobra, Factory type), so it sits above pure leaves.
+
+If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
+
+```
+BEFORE (leaky):  docker/naming.go ──imports──▶ cmdutil
+AFTER  (clean):  docker/naming.go ──imports──▶ naming/ (standalone leaf)
+                 cmdutil/resolve.go ──imports──▶ naming/
+```
+
+**Rule**: If a helper touches the command framework, it stays in `cmdutil`. If it's a pure data utility, extract it.
+
+## Anti-Patterns
+
+| # | Anti-Pattern | Why It's Wrong |
+|---|-------------|----------------|
+| 1 | Run function depending on `*Factory` | Breaks interface segregation; use `*Options` only |
+| 2 | Calling closure fields during construction | Defeats lazy initialization; closures are evaluated on use |
+| 3 | Tests importing `internal/cmd/factory` | Construct minimal `&cmdutil.Factory{}` struct literals instead |
+| 4 | Mutating Factory closures at runtime | Closures are set once in the constructor, never reassigned |
+| 5 | Adding methods to Factory | Factory is a pure struct; use closure fields for all dependency providers |
+| 6 | Skipping `runF` parameter | Every `NewCmd` MUST accept `runF` even if not yet tested |
+| 7 | Direct Factory field access in run functions | Extract into Options first; run function never sees Factory |
+
 ## Container Naming & Labels
 
 **Container names**: `clawker.project.agent` (3-segment) or `clawker.agent` (2-segment when project is empty)

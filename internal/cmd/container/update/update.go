@@ -12,8 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the update command.
-type Options struct {
+// TODO might be able to replace with container opts
+// UpdateOptions defines the options for the update command.
+type UpdateOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -36,12 +37,12 @@ type Options struct {
 
 	nFlag int
 
-	containers []string
+	Containers []string
 }
 
-// NewCmd creates a new update command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdUpdate creates a new update command.
+func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions) error) *cobra.Command {
+	opts := &UpdateOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -77,9 +78,12 @@ Container names can be:
   clawker container update --memory 256m container1 container2`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
+			opts.Containers = args
 			opts.nFlag = cmd.Flags().NFlag()
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return updateRun(cmd.Context(), opts)
 		},
 	}
 
@@ -110,14 +114,14 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	// When opts.Agent is true, all items in opts.containers are agent names
-	containers := opts.containers
+	// When opts.Agent is true, all items in opts.Containers are agent names
+	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.Containers)
 	}
 
 	// Connect to Docker
@@ -170,7 +174,7 @@ func updateContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 	return nil
 }
 
-func buildUpdateResources(opts *Options) (*docker.Resources, *docker.RestartPolicy) {
+func buildUpdateResources(opts *UpdateOptions) (*docker.Resources, *docker.RestartPolicy) {
 	resources := &docker.Resources{}
 
 	// CPU settings - cpus is a NanoCPUs type which is already in nanoseconds

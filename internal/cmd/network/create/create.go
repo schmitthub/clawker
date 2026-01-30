@@ -7,11 +7,16 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the create command.
-type Options struct {
+// CreateOptions holds options for the create command.
+type CreateOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(ctx context.Context) (*docker.Client, error)
+
+	Name       string
 	Driver     string
 	DriverOpts []string
 	Labels     []string
@@ -20,9 +25,12 @@ type Options struct {
 	Attachable bool
 }
 
-// NewCmd creates the network create command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdCreate creates the network create command.
+func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
+	opts := &CreateOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "create [OPTIONS] NETWORK",
@@ -44,7 +52,11 @@ By default, a bridge network driver is used.`,
   clawker network create --label env=test --label project=myapp mynetwork`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args[0])
+			opts.Name = args[0]
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return createRun(cmd.Context(), opts)
 		},
 	}
 
@@ -58,14 +70,11 @@ By default, a bridge network driver is used.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, name string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
-
+func createRun(ctx context.Context, opts *CreateOptions) error {
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		cmdutil.HandleError(opts.IOStreams, err)
 		return err
 	}
 
@@ -80,14 +89,14 @@ func run(f *cmdutil.Factory, opts *Options, name string) error {
 	}
 
 	// Create the network
-	resp, err := client.NetworkCreate(ctx, name, createOpts)
+	resp, err := client.NetworkCreate(ctx, opts.Name, createOpts)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		cmdutil.HandleError(opts.IOStreams, err)
 		return err
 	}
 
 	// Print the network ID
-	fmt.Fprintln(ios.Out, resp.ID)
+	fmt.Fprintln(opts.IOStreams.Out, resp.ID)
 	return nil
 }
 

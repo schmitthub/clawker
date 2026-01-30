@@ -21,11 +21,11 @@ type RemoveOptions struct {
 	Force   bool
 	Volumes bool
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdRemove creates the container remove command.
-func NewCmdRemove(f *cmdutil.Factory) *cobra.Command {
+func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -63,8 +63,11 @@ Container names can be:
   clawker container remove --volumes --agent ralph`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runRemove(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return removeRun(cmd.Context(), opts)
 		},
 	}
 
@@ -75,12 +78,12 @@ Container names can be:
 	return cmd
 }
 
-func runRemove(ctx context.Context, opts *RemoveOptions) error {
+func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

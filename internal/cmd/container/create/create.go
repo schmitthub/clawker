@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Options holds options for the create command.
+// CreateOptions holds options for the create command.
 // It embeds ContainerOptions for shared container configuration.
-type Options struct {
+type CreateOptions struct {
 	*copts.ContainerOptions
 
 	IOStreams               *iostreams.IOStreams
@@ -37,10 +37,10 @@ type Options struct {
 	flags *pflag.FlagSet
 }
 
-// NewCmd creates a new container create command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
+// NewCmdCreate creates a new container create command.
+func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
-	opts := &Options{
+	opts := &CreateOptions{
 		ContainerOptions:        containerOpts,
 		IOStreams:               f.IOStreams,
 		Client:                  f.Client,
@@ -92,7 +92,10 @@ If IMAGE is "@", clawker will use (in order of precedence):
 				containerOpts.Command = args[1:]
 			}
 			opts.flags = cmd.Flags()
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return createRun(cmd.Context(), opts)
 		},
 	}
 
@@ -110,7 +113,7 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func createRun(ctx context.Context, opts *CreateOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 

@@ -11,20 +11,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the pause command.
-type Options struct {
+// PauseOptions holds options for the pause command.
+type PauseOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
 	Agent bool
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdPause creates the container pause command.
-func NewCmdPause(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+func NewCmdPause(f *cmdutil.Factory, runF func(context.Context, *PauseOptions) error) *cobra.Command {
+	opts := &PauseOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -53,8 +53,11 @@ Container names can be:
   clawker container pause clawker.myapp.ralph clawker.myapp.writer`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runPause(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return pauseRun(cmd.Context(), opts)
 		},
 	}
 
@@ -63,11 +66,11 @@ Container names can be:
 	return cmd
 }
 
-func runPause(ctx context.Context, opts *Options) error {
+func pauseRun(ctx context.Context, opts *PauseOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

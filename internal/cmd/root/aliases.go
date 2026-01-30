@@ -44,84 +44,84 @@ type Alias struct {
 var topLevelAliases = []Alias{
 	{
 		Use:     "attach CONTAINER",
-		Command: containerAttach.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerAttach.NewCmdAttach(f, nil) },
 	},
 	{
 		Use:     "build [OPTIONS]",
 		Example: buildExample,
-		Command: imagebuild.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return imagebuild.NewCmdBuild(f, nil) },
 	},
 	{
 		Use:     "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
-		Command: containerCreate.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerCreate.NewCmdCreate(f, nil) },
 	},
 	{
 		Use:     "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH|-\ncp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH",
-		Command: containerCp.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerCp.NewCmdCp(f, nil) },
 	},
 	{
 		Use:     "exec [OPTIONS] CONTAINER COMMAND [ARG...]",
-		Command: containerExec.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerExec.NewCmdExec(f, nil) },
 	},
 	{
 		Use:     "kill [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerKill.NewCmdKill,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerKill.NewCmdKill(f, nil) },
 	},
 	{
 		Use:     "logs [OPTIONS] CONTAINER",
-		Command: containerLogs.NewCmdLogs,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerLogs.NewCmdLogs(f, nil) },
 	},
 	{
 		Use:     "pause [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerPause.NewCmdPause,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerPause.NewCmdPause(f, nil) },
 	},
 	{
 		Use:     "ps [OPTIONS]",
-		Command: containerlist.NewCmdList,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerlist.NewCmdList(f, nil) },
 	},
 	{
 		Use:     "rename CONTAINER NEW_NAME",
-		Command: containerRename.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerRename.NewCmdRename(f, nil) },
 	},
 	{
 		Use:     "restart [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerRestart.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerRestart.NewCmdRestart(f, nil) },
 	},
 	{
 		Use:     "rm [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerRemove.NewCmdRemove,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerRemove.NewCmdRemove(f, nil) },
 	},
 	{
 		Use:     "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
-		Command: containerrun.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerrun.NewCmdRun(f, nil) },
 	},
 	{
 		Use:     "start [CONTAINER...]",
-		Command: containerstart.NewCmdStart,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerstart.NewCmdStart(f, nil) },
 	},
 	{
 		Use:     "stats [OPTIONS] [CONTAINER...]",
-		Command: containerStats.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerStats.NewCmdStats(f, nil) },
 	},
 	{
 		Use:     "stop [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerStop.NewCmdStop,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerStop.NewCmdStop(f, nil) },
 	},
 	{
 		Use:     "rmi [OPTIONS]",
-		Command: imageRemove.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return imageRemove.NewCmdRemove(f, nil) },
 	},
 	{
 		Use:     "top [OPTIONS] CONTAINER",
-		Command: containerTop.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerTop.NewCmdTop(f, nil) },
 	},
 	{
 		Use:     "unpause [OPTIONS] CONTAINER [CONTAINER...]",
-		Command: containerUnpause.NewCmdUnpause,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerUnpause.NewCmdUnpause(f, nil) },
 	},
 	{
 		Use:     "wait CONTAINER [CONTAINER...]",
-		Command: containerWait.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerWait.NewCmdWait(f, nil) },
 	},
 }
 

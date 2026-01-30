@@ -12,22 +12,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the restart command.
-type Options struct {
+// RestartOptions defines the options for the restart command.
+type RestartOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
-	Agent   bool // treat arguments as agents names
-	Timeout int
-	Signal  string
-
-	containers []string
+	Agent      bool // treat arguments as agents names
+	Timeout    int
+	Signal     string
+	Containers []string
 }
 
-// NewCmd creates a new restart command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdRestart creates a new restart command.
+func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOptions) error) *cobra.Command {
+	opts := &RestartOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -60,8 +59,11 @@ Container names can be:
   clawker container restart --time 20 --agent ralph`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return run(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return restartRun(cmd.Context(), opts)
 		},
 	}
 
@@ -72,11 +74,11 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func restartRun(ctx context.Context, opts *RestartOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
@@ -104,7 +106,7 @@ func run(ctx context.Context, opts *Options) error {
 	return nil
 }
 
-func restartContainer(ctx context.Context, client *docker.Client, name string, opts *Options) error {
+func restartContainer(ctx context.Context, client *docker.Client, name string, opts *RestartOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, name)
 	if err != nil {

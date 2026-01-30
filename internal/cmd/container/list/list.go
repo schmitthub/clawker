@@ -11,19 +11,26 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 // ListOptions holds options for the list command.
 type ListOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
 	All     bool
 	Project string
 	Format  string
 }
 
 // NewCmdList creates the container list command.
-func NewCmdList(f *cmdutil.Factory) *cobra.Command {
-	opts := &ListOptions{}
+func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
+	opts := &ListOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -49,7 +56,10 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
   # Custom format showing name and status
   clawker container ls -a --format '{{.Name}} {{.Status}}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(cmd.Context(), f, opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return listRun(cmd.Context(), opts)
 		},
 	}
 
@@ -60,11 +70,11 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 	return cmd
 }
 
-func runList(ctx context.Context, f *cmdutil.Factory, opts *ListOptions) error {
-	ios := f.IOStreams
+func listRun(ctx context.Context, opts *ListOptions) error {
+	ios := opts.IOStreams
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

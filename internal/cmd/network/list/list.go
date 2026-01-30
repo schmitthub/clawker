@@ -7,17 +7,25 @@ import (
 	"text/tabwriter"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the list command.
-type Options struct {
+// ListOptions holds options for the list command.
+type ListOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(ctx context.Context) (*docker.Client, error)
+
 	Quiet bool
 }
 
-// NewCmd creates the network list command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdList creates the network list command.
+func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
+	opts := &ListOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -36,7 +44,10 @@ integration. The primary network is clawker-net.`,
   # List network names only
   clawker network ls -q`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return listRun(cmd.Context(), opts)
 		},
 	}
 
@@ -45,39 +56,36 @@ integration. The primary network is clawker-net.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options) error {
-	ctx := context.Background()
-	ios := f.IOStreams
-
+func listRun(ctx context.Context, opts *ListOptions) error {
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		cmdutil.HandleError(opts.IOStreams, err)
 		return err
 	}
 
 	// List networks
 	networks, err := client.NetworkList(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		cmdutil.HandleError(opts.IOStreams, err)
 		return err
 	}
 
 	if len(networks.Items) == 0 {
-		fmt.Fprintln(ios.ErrOut, "No clawker networks found.")
+		fmt.Fprintln(opts.IOStreams.ErrOut, "No clawker networks found.")
 		return nil
 	}
 
 	// Quiet mode - just print names
 	if opts.Quiet {
 		for _, n := range networks.Items {
-			fmt.Fprintln(ios.Out, n.Name)
+			fmt.Fprintln(opts.IOStreams.Out, n.Name)
 		}
 		return nil
 	}
 
 	// Print table
-	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(opts.IOStreams.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NETWORK ID\tNAME\tDRIVER\tSCOPE")
 
 	for _, n := range networks.Items {

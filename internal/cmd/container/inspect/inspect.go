@@ -24,11 +24,11 @@ type InspectOptions struct {
 	Format string
 	Size   bool
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdInspect creates the container inspect command.
-func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
+func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOptions) error) *cobra.Command {
 	opts := &InspectOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -64,8 +64,11 @@ Container names can be:
   clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent ralph`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runInspect(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return inspectRun(cmd.Context(), opts)
 		},
 	}
 
@@ -76,11 +79,11 @@ Container names can be:
 	return cmd
 }
 
-func runInspect(ctx context.Context, opts *InspectOptions) error {
+func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

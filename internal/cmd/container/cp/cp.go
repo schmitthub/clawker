@@ -17,8 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the cp command.
-type Options struct {
+// CpOptions holds options for the cp command.
+type CpOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -28,13 +28,13 @@ type Options struct {
 	FollowLink bool
 	CopyUIDGID bool
 
-	src string
-	dst string
+	Src string
+	Dst string
 }
 
-// NewCmd creates a new cp command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdCp creates a new cp command.
+func NewCmdCp(f *cmdutil.Factory, runF func(context.Context, *CpOptions) error) *cobra.Command {
+	opts := &CpOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -73,9 +73,12 @@ Local path format: PATH`,
   clawker container cp --agent ralph:/app - > backup.tar`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.src = args[0]
-			opts.dst = args[1]
-			return run(cmd.Context(), opts)
+			opts.Src = args[0]
+			opts.Dst = args[1]
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return cpRun(cmd.Context(), opts)
 		},
 	}
 
@@ -106,12 +109,12 @@ func parseContainerPath(arg string) (string, string, bool) {
 	return "", arg, false
 }
 
-func run(ctx context.Context, opts *Options) error {
+func cpRun(ctx context.Context, opts *CpOptions) error {
 	ios := opts.IOStreams
 
 	// Parse source and destination
-	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.src)
-	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.dst)
+	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.Src)
+	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.Dst)
 
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
@@ -145,7 +148,7 @@ func run(ctx context.Context, opts *Options) error {
 	return copyToContainer(ctx, ios, client, dstContainer, srcPath, dstPath, opts)
 }
 
-func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -173,7 +176,7 @@ func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *do
 	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
-func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *Options) error {
+func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -216,7 +219,7 @@ func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 }
 
 // extractTar extracts a tar archive to a local path.
-func extractTar(reader io.Reader, dstPath, _ string, _ *Options) error {
+func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 	tr := tar.NewReader(reader)
 
 	// Get info about destination
@@ -283,7 +286,7 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *Options) error {
 }
 
 // createTar creates a tar archive from a local path.
-func createTar(srcPath string, opts *Options) (io.Reader, error) {
+func createTar(srcPath string, opts *CpOptions) (io.Reader, error) {
 	srcInfo, err := os.Stat(srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("source path %q not found: %w", srcPath, err)
@@ -331,7 +334,7 @@ func createTar(srcPath string, opts *Options) (io.Reader, error) {
 }
 
 // addToTar adds a file/directory to a tar writer.
-func addToTar(tw *tar.Writer, path, name string, info os.FileInfo, opts *Options) error {
+func addToTar(tw *tar.Writer, path, name string, info os.FileInfo, opts *CpOptions) error {
 	// Handle symlinks
 	link := ""
 	if info.Mode()&os.ModeSymlink != 0 {

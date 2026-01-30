@@ -15,8 +15,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the attach command.
-type Options struct {
+// AttachOptions holds options for the attach command.
+type AttachOptions struct {
 	IOStreams       *iostreams.IOStreams
 	Client          func(context.Context) (*docker.Client, error)
 	Resolution      func() *config.Resolution
@@ -29,9 +29,9 @@ type Options struct {
 	container  string
 }
 
-// NewCmd creates a new attach command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdAttach creates a new attach command.
+func NewCmdAttach(f *cmdutil.Factory, runF func(context.Context, *AttachOptions) error) *cobra.Command {
+	opts := &AttachOptions{
 		IOStreams:       f.IOStreams,
 		Client:          f.Client,
 		Resolution:      f.Resolution,
@@ -66,7 +66,10 @@ Container name can be:
 		Args: cmdutil.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return attachRun(cmd.Context(), opts)
 		},
 	}
 
@@ -78,7 +81,7 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func attachRun(ctx context.Context, opts *AttachOptions) error {
 	ios := opts.IOStreams
 
 	container := opts.container

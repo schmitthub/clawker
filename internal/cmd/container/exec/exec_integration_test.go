@@ -114,7 +114,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 			// Build exec command args: container name, then command
 			cmdArgs := append([]string{containerName}, tt.cmd...)
 
-			cmd := NewCmd(f)
+			cmd := NewCmdExec(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()
@@ -179,7 +179,7 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"--agent", agentName,
 		"echo", "agent-exec-works",
@@ -243,7 +243,7 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"-e", "TEST_VAR=custom_value",
 		containerName,
@@ -308,7 +308,7 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmd(f)
+	cmd := NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"-w", "/tmp",
 		containerName,
@@ -372,7 +372,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			IOStreams: ios.IOStreams,
 		}
 
-		cmd := NewCmd(f)
+		cmd := NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
 			containerName,
 			"notacommand123doesnotexist",
@@ -408,7 +408,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			IOStreams: ios.IOStreams,
 		}
 
-		cmd := NewCmd(f)
+		cmd := NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
 			containerName,
 			"ls",
@@ -535,7 +535,7 @@ chmod +x /tmp/test-script.sh`}
 				cmdArgs = append(cmdArgs, tt.scriptArgs...)
 			}
 
-			cmd := NewCmd(f)
+			cmd := NewCmdExec(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()

@@ -2,45 +2,43 @@ package remove
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdRemove(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantOpts Options
-		wantArgs []string
-		wantErr  bool
+		name         string
+		input        string
+		wantNetworks []string
+		wantForce    bool
+		wantErr      bool
 	}{
 		{
-			name:     "single network",
-			input:    "mynetwork",
-			wantOpts: Options{},
-			wantArgs: []string{"mynetwork"},
+			name:         "single network",
+			input:        "mynetwork",
+			wantNetworks: []string{"mynetwork"},
 		},
 		{
-			name:     "multiple networks",
-			input:    "mynetwork1 mynetwork2",
-			wantOpts: Options{},
-			wantArgs: []string{"mynetwork1", "mynetwork2"},
+			name:         "multiple networks",
+			input:        "mynetwork1 mynetwork2",
+			wantNetworks: []string{"mynetwork1", "mynetwork2"},
 		},
 		{
-			name:     "force flag",
-			input:    "-f mynetwork",
-			wantOpts: Options{Force: true},
-			wantArgs: []string{"mynetwork"},
+			name:         "force flag",
+			input:        "-f mynetwork",
+			wantNetworks: []string{"mynetwork"},
+			wantForce:    true,
 		},
 		{
-			name:     "force flag long",
-			input:    "--force mynetwork",
-			wantOpts: Options{Force: true},
-			wantArgs: []string{"mynetwork"},
+			name:         "force flag long",
+			input:        "--force mynetwork",
+			wantNetworks: []string{"mynetwork"},
+			wantForce:    true,
 		},
 		{
 			name:    "no arguments",
@@ -53,24 +51,15 @@ func TestNewCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *Options
-			var cmdArgs []string
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Force, _ = cmd.Flags().GetBool("force")
-				cmdArgs = args
+			var gotOpts *RemoveOptions
+			cmd := NewCmdRemove(f, func(_ context.Context, opts *RemoveOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
-			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := testutil.SplitArgs(tt.input)
-
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -83,17 +72,17 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Force, cmdOpts.Force)
-			require.Equal(t, tt.wantArgs, cmdArgs)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantForce, gotOpts.Force)
+			require.Equal(t, tt.wantNetworks, gotOpts.Networks)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdRemove_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdRemove(f, nil)
 
-	// Test command basics
 	require.Equal(t, "remove NETWORK [NETWORK...]", cmd.Use)
 	require.Contains(t, cmd.Aliases, "rm")
 	require.NotEmpty(t, cmd.Short)
@@ -101,12 +90,7 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
-	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("force"))
-
-	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
-
-	// Test args validation
 	require.NotNil(t, cmd.Args)
 }

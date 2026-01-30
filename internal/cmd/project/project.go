@@ -33,8 +33,8 @@ Use 'clawker project init' to set up a new project in the current directory.`,
 	}
 
 	// Add subcommands
-	cmd.AddCommand(projectinit.NewCmdProjectInit(f))
-	cmd.AddCommand(projectregister.NewCmdProjectRegister(f))
+	cmd.AddCommand(projectinit.NewCmdProjectInit(f, nil))
+	cmd.AddCommand(projectregister.NewCmdProjectRegister(f, nil))
 
 	return cmd
 }

@@ -2,11 +2,14 @@ package kill
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,18 +63,17 @@ func TestNewCmdKill(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *KillOptions
-			cmd := NewCmdKill(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &KillOptions{}
-				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
-				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
+
+			var gotOpts *KillOptions
+			cmd := NewCmdKill(f, func(_ context.Context, opts *KillOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -95,15 +97,29 @@ func TestNewCmdKill(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.output.Agent, gotOpts.Agent)
+			require.Equal(t, tt.output.Signal, gotOpts.Signal)
 		})
 	}
 }
 
+func TestNewCmdKill_ErrorPropagation(t *testing.T) {
+	f := &cmdutil.Factory{IOStreams: iostreams.NewTestIOStreams().IOStreams}
+	expectedErr := fmt.Errorf("simulated failure")
+	cmd := NewCmdKill(f, func(_ context.Context, _ *KillOptions) error {
+		return expectedErr
+	})
+	cmd.SetArgs([]string{"container1"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	require.ErrorIs(t, err, expectedErr)
+}
+
 func TestCmdKill_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdKill(f)
+	cmd := NewCmdKill(f, nil)
 
 	// Test command basics
 	require.Equal(t, "kill [CONTAINER...]", cmd.Use)

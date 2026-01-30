@@ -2,51 +2,57 @@ package restart
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdRestart(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		output     Options
+		wantOpts   RestartOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
-			name:   "no flags",
-			input:  "mycontainer",
-			output: Options{Timeout: 10, Signal: ""},
+			name:     "no flags",
+			input:    "mycontainer",
+			wantOpts: RestartOptions{Timeout: 10, Signal: "", Containers: []string{"mycontainer"}},
 		},
 		{
-			name:   "with time flag",
-			input:  "--time 20 mycontainer",
-			output: Options{Timeout: 20, Signal: ""},
+			name:     "with time flag",
+			input:    "--time 20 mycontainer",
+			wantOpts: RestartOptions{Timeout: 20, Signal: "", Containers: []string{"mycontainer"}},
 		},
 		{
-			name:   "with shorthand time flag",
-			input:  "-t 30 mycontainer",
-			output: Options{Timeout: 30, Signal: ""},
+			name:     "with shorthand time flag",
+			input:    "-t 30 mycontainer",
+			wantOpts: RestartOptions{Timeout: 30, Signal: "", Containers: []string{"mycontainer"}},
 		},
 		{
-			name:   "with signal flag",
-			input:  "--signal SIGKILL mycontainer",
-			output: Options{Timeout: 10, Signal: "SIGKILL"},
+			name:     "with signal flag",
+			input:    "--signal SIGKILL mycontainer",
+			wantOpts: RestartOptions{Timeout: 10, Signal: "SIGKILL", Containers: []string{"mycontainer"}},
 		},
 		{
-			name:   "with shorthand signal flag",
-			input:  "-s SIGTERM mycontainer",
-			output: Options{Timeout: 10, Signal: "SIGTERM"},
+			name:     "with shorthand signal flag",
+			input:    "-s SIGTERM mycontainer",
+			wantOpts: RestartOptions{Timeout: 10, Signal: "SIGTERM", Containers: []string{"mycontainer"}},
 		},
 		{
-			name:   "with all flags",
-			input:  "-t 15 -s SIGHUP mycontainer",
-			output: Options{Timeout: 15, Signal: "SIGHUP"},
+			name:     "with all flags",
+			input:    "-t 15 -s SIGHUP mycontainer",
+			wantOpts: RestartOptions{Timeout: 15, Signal: "SIGHUP", Containers: []string{"mycontainer"}},
+		},
+		{
+			name:     "with agent flag",
+			input:    "--agent ralph",
+			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"ralph"}},
 		},
 		{
 			name:       "no arguments",
@@ -58,23 +64,18 @@ func TestNewCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *Options
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Timeout, _ = cmd.Flags().GetInt("time")
-				cmdOpts.Signal, _ = cmd.Flags().GetString("signal")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
 
-			// Cobra hack-around for help flag
-			cmd.Flags().BoolP("help", "x", false, "")
+			var gotOpts *RestartOptions
+			cmd := NewCmdRestart(f, func(_ context.Context, opts *RestartOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
-			// Parse arguments
 			argv := []string{}
 			if tt.input != "" {
 				argv = testutil.SplitArgs(tt.input)
@@ -93,15 +94,18 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Timeout, cmdOpts.Timeout)
-			require.Equal(t, tt.output.Signal, cmdOpts.Signal)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantOpts.Timeout, gotOpts.Timeout)
+			require.Equal(t, tt.wantOpts.Signal, gotOpts.Signal)
+			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.Containers, gotOpts.Containers)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdRestart_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdRestart(f, nil)
 
 	// Test command basics
 	require.Equal(t, "restart [CONTAINER...]", cmd.Use)
@@ -126,16 +130,15 @@ func TestCmd_Properties(t *testing.T) {
 	require.Equal(t, "", signal)
 }
 
-func TestCmd_ArgsValidation(t *testing.T) {
+func TestCmdRestart_MultipleContainers(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
 
-	// Override RunE to not actually execute
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+	var gotOpts *RestartOptions
+	cmd := NewCmdRestart(f, func(_ context.Context, opts *RestartOptions) error {
+		gotOpts = opts
 		return nil
-	}
+	})
 
-	// Test with multiple containers
 	cmd.SetArgs([]string{"container1", "container2", "container3"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
@@ -143,27 +146,6 @@ func TestCmd_ArgsValidation(t *testing.T) {
 
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
-}
-
-func TestCmd_MultipleContainers(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
-
-	var capturedArgs []string
-	// Override RunE to capture args
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		capturedArgs = args
-		return nil
-	}
-
-	// Test that multiple container arguments are captured
-	cmd.SetArgs([]string{"container1", "container2", "container3"})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-
-	_, err := cmd.ExecuteC()
-	require.NoError(t, err)
-	require.Len(t, capturedArgs, 3)
-	require.Equal(t, []string{"container1", "container2", "container3"}, capturedArgs)
+	require.NotNil(t, gotOpts)
+	require.Equal(t, []string{"container1", "container2", "container3"}, gotOpts.Containers)
 }

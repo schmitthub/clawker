@@ -6,17 +6,26 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the remove command.
-type Options struct {
-	Force bool
+// RemoveOptions holds options for the remove command.
+type RemoveOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
+	Networks []string
+	Force    bool
 }
 
-// NewCmd creates the network remove command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdRemove creates the network remove command.
+func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
+	opts := &RemoveOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:     "remove NETWORK [NETWORK...]",
@@ -38,7 +47,11 @@ Note: Only clawker-managed networks can be removed with this command.`,
   clawker network remove --force mynetwork`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.Networks = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return removeRun(cmd.Context(), opts)
 		},
 	}
 
@@ -47,20 +60,19 @@ Note: Only clawker-managed networks can be removed with this command.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, _ *Options, networks []string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func removeRun(ctx context.Context, opts *RemoveOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
 	}
 
 	var errs []error
-	for _, name := range networks {
+	for _, name := range opts.Networks {
 		if _, err := client.NetworkRemove(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove network %q: %w", name, err))
 			cmdutil.HandleError(ios, err)

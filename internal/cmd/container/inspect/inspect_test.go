@@ -2,62 +2,74 @@ package inspect
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdInspect(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		args       []string
-		output     InspectOptions
-		wantErr    bool
-		wantErrMsg string
+		name           string
+		input          string
+		args           []string
+		wantContainers []string
+		wantFormat     string
+		wantSize       bool
+		wantAgent      bool
+		wantErr        bool
+		wantErrMsg     string
 	}{
 		{
-			name:   "single container",
-			input:  "",
-			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{},
+			name:           "single container",
+			args:           []string{"clawker.myapp.ralph"},
+			wantContainers: []string{"clawker.myapp.ralph"},
 		},
 		{
-			name:   "multiple containers",
-			input:  "",
-			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: InspectOptions{},
+			name:           "multiple containers",
+			args:           []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+			wantContainers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
 		},
 		{
-			name:   "with format flag",
-			input:  "--format {{.State.Status}}",
-			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Format: "{{.State.Status}}"},
+			name:           "with format flag",
+			input:          "--format {{.State.Status}}",
+			args:           []string{"clawker.myapp.ralph"},
+			wantContainers: []string{"clawker.myapp.ralph"},
+			wantFormat:     "{{.State.Status}}",
 		},
 		{
-			name:   "with shorthand format flag",
-			input:  "-f {{.State.Status}}",
-			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Format: "{{.State.Status}}"},
+			name:           "with shorthand format flag",
+			input:          "-f {{.State.Status}}",
+			args:           []string{"clawker.myapp.ralph"},
+			wantContainers: []string{"clawker.myapp.ralph"},
+			wantFormat:     "{{.State.Status}}",
 		},
 		{
-			name:   "with size flag",
-			input:  "--size",
-			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Size: true},
+			name:           "with size flag",
+			input:          "--size",
+			args:           []string{"clawker.myapp.ralph"},
+			wantContainers: []string{"clawker.myapp.ralph"},
+			wantSize:       true,
 		},
 		{
-			name:   "with shorthand size flag",
-			input:  "-s",
-			args:   []string{"clawker.myapp.ralph"},
-			output: InspectOptions{Size: true},
+			name:           "with shorthand size flag",
+			input:          "-s",
+			args:           []string{"clawker.myapp.ralph"},
+			wantContainers: []string{"clawker.myapp.ralph"},
+			wantSize:       true,
+		},
+		{
+			name:           "with agent flag",
+			input:          "--agent",
+			args:           []string{"ralph"},
+			wantContainers: []string{"ralph"},
+			wantAgent:      true,
 		},
 		{
 			name:       "no container specified",
-			input:      "",
 			args:       []string{},
 			wantErr:    true,
 			wantErrMsg: "requires at least 1 container argument or --agent flag",
@@ -66,23 +78,20 @@ func TestNewCmdInspect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			var cmdOpts *InspectOptions
-			cmd := NewCmdInspect(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &InspectOptions{}
-				cmdOpts.Format, _ = cmd.Flags().GetString("format")
-				cmdOpts.Size, _ = cmd.Flags().GetBool("size")
-				return nil
+			f := &cmdutil.Factory{
+				Resolution: func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				},
 			}
 
-			// Cobra hack-around for help flag
+			var gotOpts *InspectOptions
+			cmd := NewCmdInspect(f, func(_ context.Context, opts *InspectOptions) error {
+				gotOpts = opts
+				return nil
+			})
+
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
 				argv = append(testutil.SplitArgs(tt.input), tt.args...)
@@ -101,28 +110,28 @@ func TestNewCmdInspect(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Format, cmdOpts.Format)
-			require.Equal(t, tt.output.Size, cmdOpts.Size)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantContainers, gotOpts.Containers)
+			require.Equal(t, tt.wantFormat, gotOpts.Format)
+			require.Equal(t, tt.wantSize, gotOpts.Size)
+			require.Equal(t, tt.wantAgent, gotOpts.Agent)
 		})
 	}
 }
 
 func TestCmdInspect_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdInspect(f)
+	cmd := NewCmdInspect(f, nil)
 
-	// Test command basics
 	require.Equal(t, "inspect [OPTIONS] CONTAINER [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
-	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("format"))
 	require.NotNil(t, cmd.Flags().Lookup("size"))
 
-	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
 }

@@ -9,18 +9,25 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the inspect command.
-type Options struct {
-	// Format is reserved for future Go template support
-	Verbose bool
+// InspectOptions holds options for the inspect command.
+type InspectOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(ctx context.Context) (*docker.Client, error)
+
+	Networks []string
+	Verbose  bool
 }
 
-// NewCmd creates the network inspect command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdInspect creates the network inspect command.
+func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOptions) error) *cobra.Command {
+	opts := &InspectOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "inspect NETWORK [NETWORK...]",
@@ -39,7 +46,11 @@ connected containers and configuration.`,
   clawker network inspect --verbose clawker-net`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.Networks = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return inspectRun(cmd.Context(), opts)
 		},
 	}
 
@@ -48,21 +59,18 @@ connected containers and configuration.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, networks []string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
-
+func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		cmdutil.HandleError(opts.IOStreams, err)
 		return err
 	}
 
 	var results []any
 	var errs []error
 
-	for _, name := range networks {
+	for _, name := range opts.Networks {
 		// Inspect the network
 		net, err := client.NetworkInspect(ctx, name, docker.NetworkInspectOptions{
 			Verbose: opts.Verbose,
@@ -77,14 +85,14 @@ func run(f *cmdutil.Factory, opts *Options, networks []string) error {
 
 	// Output results
 	if len(results) > 0 {
-		if err := outputJSON(ios.Out, results); err != nil {
+		if err := outputJSON(opts.IOStreams.Out, results); err != nil {
 			return err
 		}
 	}
 
 	if len(errs) > 0 {
 		for _, e := range errs {
-			cmdutil.HandleError(ios, e)
+			cmdutil.HandleError(opts.IOStreams, e)
 		}
 		return fmt.Errorf("failed to inspect %d network(s)", len(errs))
 	}

@@ -2,45 +2,43 @@ package inspect
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdInspect(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantOpts Options
-		wantArgs []string
-		wantErr  bool
+		name         string
+		input        string
+		wantNetworks []string
+		wantVerbose  bool
+		wantErr      bool
 	}{
 		{
-			name:     "single network",
-			input:    "clawker-net",
-			wantOpts: Options{},
-			wantArgs: []string{"clawker-net"},
+			name:         "single network",
+			input:        "clawker-net",
+			wantNetworks: []string{"clawker-net"},
 		},
 		{
-			name:     "multiple networks",
-			input:    "clawker-net myapp-net",
-			wantOpts: Options{},
-			wantArgs: []string{"clawker-net", "myapp-net"},
+			name:         "multiple networks",
+			input:        "clawker-net myapp-net",
+			wantNetworks: []string{"clawker-net", "myapp-net"},
 		},
 		{
-			name:     "verbose flag",
-			input:    "-v clawker-net",
-			wantOpts: Options{Verbose: true},
-			wantArgs: []string{"clawker-net"},
+			name:         "verbose flag",
+			input:        "-v clawker-net",
+			wantNetworks: []string{"clawker-net"},
+			wantVerbose:  true,
 		},
 		{
-			name:     "verbose flag long",
-			input:    "--verbose clawker-net",
-			wantOpts: Options{Verbose: true},
-			wantArgs: []string{"clawker-net"},
+			name:         "verbose flag long",
+			input:        "--verbose clawker-net",
+			wantNetworks: []string{"clawker-net"},
+			wantVerbose:  true,
 		},
 		{
 			name:    "no arguments",
@@ -53,24 +51,15 @@ func TestNewCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *Options
-			var cmdArgs []string
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Verbose, _ = cmd.Flags().GetBool("verbose")
-				cmdArgs = args
+			var gotOpts *InspectOptions
+			cmd := NewCmdInspect(f, func(_ context.Context, opts *InspectOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
-			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
 			argv := testutil.SplitArgs(tt.input)
-
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -83,17 +72,17 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Verbose, cmdOpts.Verbose)
-			require.Equal(t, tt.wantArgs, cmdArgs)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantVerbose, gotOpts.Verbose)
+			require.Equal(t, tt.wantNetworks, gotOpts.Networks)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdInspect_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdInspect(f, nil)
 
-	// Test command basics
 	require.Equal(t, "inspect NETWORK [NETWORK...]", cmd.Use)
 	require.Empty(t, cmd.Aliases)
 	require.NotEmpty(t, cmd.Short)
@@ -101,12 +90,7 @@ func TestCmd_Properties(t *testing.T) {
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
-	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("verbose"))
-
-	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
-
-	// Test args validation
 	require.NotNil(t, cmd.Args)
 }

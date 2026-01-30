@@ -21,11 +21,11 @@ type StopOptions struct {
 	Timeout int
 	Signal  string
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdStop creates the container stop command.
-func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
+func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
 	opts := &StopOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -59,8 +59,11 @@ Container names can be:
   clawker container stop --time 20 --agent ralph`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runStop(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return stopRun(cmd.Context(), opts)
 		},
 	}
 
@@ -71,11 +74,11 @@ Container names can be:
 	return cmd
 }
 
-func runStop(ctx context.Context, opts *StopOptions) error {
+func stopRun(ctx context.Context, opts *StopOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names
-	containers := opts.containers
+	containers := opts.Containers
 	if opts.Agent {
 		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}

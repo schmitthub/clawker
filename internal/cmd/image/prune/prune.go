@@ -2,24 +2,33 @@
 package prune
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the prune command.
-type Options struct {
+// PruneOptions holds options for the prune command.
+type PruneOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Prompter  func() *prompts.Prompter
+
 	Force bool
 	All   bool
 }
 
-// NewCmd creates the image prune command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdPrune creates the image prune command.
+func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) error) *cobra.Command {
+	opts := &PruneOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Prompter:  f.Prompter,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "prune [OPTIONS]",
@@ -39,7 +48,10 @@ Use with caution as this will permanently delete images.`,
   # Remove without confirmation prompt
   clawker image prune --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd, f, opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return pruneRun(cmd.Context(), opts)
 		},
 	}
 
@@ -49,13 +61,12 @@ Use with caution as this will permanently delete images.`,
 	return cmd
 }
 
-func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func pruneRun(ctx context.Context, opts *PruneOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -67,16 +78,11 @@ func run(cmd *cobra.Command, f *cmdutil.Factory, opts *Options) error {
 		if opts.All {
 			warning = "This will remove all unused clawker-managed images."
 		}
-		fmt.Fprintf(ios.ErrOut, "%s %s\nAre you sure you want to continue? [y/N] ", cs.WarningIcon(), warning)
-		reader := bufio.NewReader(cmd.InOrStdin())
-		response, err := reader.ReadString('\n')
+		confirmed, err := opts.Prompter().Confirm(fmt.Sprintf("%s %s", cs.WarningIcon(), warning), false)
 		if err != nil {
-			// Treat read errors (EOF, etc.) as "no"
-			fmt.Fprintln(ios.ErrOut, "Aborted.")
-			return nil
+			return err
 		}
-		response = strings.TrimSpace(response)
-		if response != "y" && response != "Y" {
+		if !confirmed {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")
 			return nil
 		}

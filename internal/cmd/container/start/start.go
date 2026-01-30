@@ -31,7 +31,7 @@ type StartOptions struct {
 }
 
 // NewCmdStart creates the container start command.
-func NewCmdStart(f *cmdutil.Factory) *cobra.Command {
+func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
 		IOStreams:       f.IOStreams,
 		Client:          f.Client,
@@ -65,7 +65,10 @@ Container names can be:
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args
-			return runStart(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return startRun(cmd.Context(), opts)
 		},
 	}
 
@@ -76,7 +79,7 @@ Container names can be:
 	return cmd
 }
 
-func runStart(ctx context.Context, opts *StartOptions) error {
+func startRun(ctx context.Context, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
 	ios := opts.IOStreams

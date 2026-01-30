@@ -8,17 +8,25 @@ import (
 	"io"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the inspect command.
-type Options struct {
-	// Format is reserved for future Go template support
+// InspectOptions holds options for the inspect command.
+type InspectOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
+	Images []string
 }
 
-// NewCmd creates the image inspect command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdInspect creates the image inspect command.
+func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOptions) error) *cobra.Command {
+	opts := &InspectOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "inspect IMAGE [IMAGE...]",
@@ -33,19 +41,22 @@ Outputs detailed image information in JSON format.`,
   clawker image inspect clawker-myapp:latest clawker-backend:latest`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts, args)
+			opts.Images = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return inspectRun(cmd.Context(), opts)
 		},
 	}
 
 	return cmd
 }
 
-func run(f *cmdutil.Factory, _ *Options, images []string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func inspectRun(ctx context.Context, opts *InspectOptions) error {
+	ios := opts.IOStreams
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -54,7 +65,7 @@ func run(f *cmdutil.Factory, _ *Options, images []string) error {
 	var results []any
 	var errs []error
 
-	for _, ref := range images {
+	for _, ref := range opts.Images {
 		// Inspect the image
 		info, err := client.ImageInspect(ctx, ref)
 		if err != nil {

@@ -2,16 +2,16 @@ package build
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdBuild(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdBuild(f, nil)
 
 	// Test command basics
 	require.Equal(t, "build", cmd.Use)
@@ -41,7 +41,7 @@ func TestCmd_Flags(t *testing.T) {
 	}
 
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdBuild(f, nil)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -283,16 +283,13 @@ func TestCmd_FlagParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
-			cmd := NewCmd(f)
-
-			// Override RunE to prevent actual execution
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			var gotOpts *BuildOptions
+			cmd := NewCmdBuild(f, func(_ context.Context, opts *BuildOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
-			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
-
 			cmd.SetArgs(tt.args)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
@@ -303,6 +300,7 @@ func TestCmd_FlagParsing(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+				require.NotNil(t, gotOpts)
 			}
 		})
 	}
@@ -418,43 +416,11 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var capturedOpts *BuildOptions
-			cmd := NewCmd(f)
-
-			// Extract the original BuildOptions from the closure
-			originalRunE := cmd.RunE
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				// Get the opts pointer from command flags
-				opts := &BuildOptions{
-					File:     cmd.Flags().Lookup("file").Value.String(),
-					NoCache:  cmd.Flags().Lookup("no-cache").Value.String() == "true",
-					Pull:     cmd.Flags().Lookup("pull").Value.String() == "true",
-					Target:   cmd.Flags().Lookup("target").Value.String(),
-					Quiet:    cmd.Flags().Lookup("quiet").Value.String() == "true",
-					Progress: cmd.Flags().Lookup("progress").Value.String(),
-					Network:  cmd.Flags().Lookup("network").Value.String(),
-				}
-				// Handle StringArrayVar flags
-				if tagFlag := cmd.Flags().Lookup("tag"); tagFlag != nil {
-					if arr, ok := tagFlag.Value.(interface{ GetSlice() []string }); ok {
-						opts.Tags = arr.GetSlice()
-					}
-				}
-				if argFlag := cmd.Flags().Lookup("build-arg"); argFlag != nil {
-					if arr, ok := argFlag.Value.(interface{ GetSlice() []string }); ok {
-						opts.BuildArgs = arr.GetSlice()
-					}
-				}
-				if labelFlag := cmd.Flags().Lookup("label"); labelFlag != nil {
-					if arr, ok := labelFlag.Value.(interface{ GetSlice() []string }); ok {
-						opts.Labels = arr.GetSlice()
-					}
-				}
-				capturedOpts = opts
-				// Don't call original - avoid needing config
-				_ = originalRunE
+			var gotOpts *BuildOptions
+			cmd := NewCmdBuild(f, func(_ context.Context, opts *BuildOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			cmd.Flags().BoolP("help", "x", false, "")
 			cmd.SetArgs(tt.args)
@@ -464,9 +430,9 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.NotNil(t, capturedOpts)
+			require.NotNil(t, gotOpts)
 
-			tt.verify(t, capturedOpts)
+			tt.verify(t, gotOpts)
 		})
 	}
 }

@@ -26,11 +26,11 @@ type LogsOptions struct {
 	Until      string
 	Tail       string
 
-	containers []string
+	Containers []string
 }
 
 // NewCmdLogs creates the container logs command.
-func NewCmdLogs(f *cmdutil.Factory) *cobra.Command {
+func NewCmdLogs(f *cmdutil.Factory, runF func(context.Context, *LogsOptions) error) *cobra.Command {
 	opts := &LogsOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
@@ -67,8 +67,11 @@ Container name can be:
   clawker container logs --timestamps --agent ralph`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.containers = args
-			return runLogs(cmd.Context(), opts)
+			opts.Containers = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return logsRun(cmd.Context(), opts)
 		},
 	}
 
@@ -83,13 +86,13 @@ Container name can be:
 	return cmd
 }
 
-func runLogs(ctx context.Context, opts *LogsOptions) error {
+func logsRun(ctx context.Context, opts *LogsOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container name
-	containerName := opts.containers[0]
+	containerName := opts.Containers[0]
 	if opts.Agent {
-		containers := docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.containers)
+		containers := docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.Containers)
 		containerName = containers[0]
 	}
 

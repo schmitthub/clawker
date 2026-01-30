@@ -2,11 +2,11 @@ package list
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,17 +64,11 @@ func TestNewCmdList(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *ListOptions
-			cmd := NewCmdList(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &ListOptions{}
-				cmdOpts.All, _ = cmd.Flags().GetBool("all")
-				cmdOpts.Project, _ = cmd.Flags().GetString("project")
-				cmdOpts.Format, _ = cmd.Flags().GetString("format")
+			var gotOpts *ListOptions
+			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -98,16 +92,17 @@ func TestNewCmdList(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.All, cmdOpts.All)
-			require.Equal(t, tt.output.Project, cmdOpts.Project)
-			require.Equal(t, tt.output.Format, cmdOpts.Format)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.output.All, gotOpts.All)
+			require.Equal(t, tt.output.Project, gotOpts.Project)
+			require.Equal(t, tt.output.Format, gotOpts.Format)
 		})
 	}
 }
 
 func TestCmdList_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdList(f)
+	cmd := NewCmdList(f, nil)
 
 	// Test command basics
 	require.Equal(t, "list", cmd.Use)

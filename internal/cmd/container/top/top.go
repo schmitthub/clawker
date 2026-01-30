@@ -14,20 +14,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the top command.
-type Options struct {
+// TopOptions holds options for the top command.
+type TopOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
 	Agent bool
 
-	args []string
+	Args []string
 }
 
-// NewCmd creates a new top command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdTop creates a new top command.
+func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
+	opts := &TopOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -59,8 +59,11 @@ Container name can be:
   clawker container top --agent ralph -ef`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.args = args
-			return run(cmd.Context(), opts)
+			opts.Args = args
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return topRun(cmd.Context(), opts)
 		},
 	}
 
@@ -69,12 +72,12 @@ Container name can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func topRun(ctx context.Context, opts *TopOptions) error {
 	ios := opts.IOStreams
 
 	// First arg is container/agent name, rest are ps options
-	containerName := opts.args[0]
-	psArgs := opts.args[1:]
+	containerName := opts.Args[0]
+	psArgs := opts.Args[1:]
 
 	if opts.Agent {
 		// Resolve agent name to full container name

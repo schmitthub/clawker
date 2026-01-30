@@ -1,6 +1,7 @@
-package ralph
+package tui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,16 +13,17 @@ import (
 	ralphtui "github.com/schmitthub/clawker/internal/ralph/tui"
 )
 
-type tuiOptions struct {
+// TUIOptions holds options for the ralph tui command.
+type TUIOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() (*config.Config, error)
+	Config    func() (*config.Config, error)
 }
 
 // NewCmdTUI creates the `clawker ralph tui` command.
-func NewCmdTUI(f *cmdutil.Factory) *cobra.Command {
-	opts := &tuiOptions{
+func NewCmdTUI(f *cmdutil.Factory, runF func(context.Context, *TUIOptions) error) *cobra.Command {
+	opts := &TUIOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -40,14 +42,17 @@ Features:
 		Example: `  # Launch TUI for current project
   clawker ralph tui`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI(opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return tuiRun(cmd.Context(), opts)
 		},
 	}
 
 	return cmd
 }
 
-func runTUI(opts *tuiOptions) error {
+func tuiRun(_ context.Context, opts *TUIOptions) error {
 	ios := opts.IOStreams
 
 	cfg, err := opts.Config()

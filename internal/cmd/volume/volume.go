@@ -33,11 +33,11 @@ configuration, and command history between container runs.`,
 	}
 
 	// Add subcommands
-	cmd.AddCommand(create.NewCmd(f))
-	cmd.AddCommand(inspect.NewCmd(f))
-	cmd.AddCommand(list.NewCmd(f))
-	cmd.AddCommand(prune.NewCmd(f))
-	cmd.AddCommand(remove.NewCmd(f))
+	cmd.AddCommand(create.NewCmdCreate(f, nil))
+	cmd.AddCommand(inspect.NewCmdInspect(f, nil))
+	cmd.AddCommand(list.NewCmdList(f, nil))
+	cmd.AddCommand(prune.NewCmdPrune(f, nil))
+	cmd.AddCommand(remove.NewCmdRemove(f, nil))
 
 	return cmd
 }

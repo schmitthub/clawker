@@ -1,6 +1,7 @@
-package monitor
+package status
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,8 +15,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newCmdStatus(f *cmdutil.Factory) *cobra.Command {
-	ios := f.IOStreams
+type StatusOptions struct {
+	IOStreams *iostreams.IOStreams
+}
+
+func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
+	opts := &StatusOptions{
+		IOStreams: f.IOStreams,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -26,14 +33,18 @@ Displays running/stopped state and service URLs when the stack is running.`,
 		Example: `  # Check monitoring stack status
   clawker monitor status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(ios)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return statusRun(cmd.Context(), opts)
 		},
 	}
 
 	return cmd
 }
 
-func runStatus(ios *iostreams.IOStreams) error {
+func statusRun(_ context.Context, opts *StatusOptions) error {
+	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
 	// Resolve monitor directory

@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -9,47 +10,103 @@ import (
 
 func TestNewCmdGenerate(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
-	cmd := NewCmdGenerate(f)
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
-	expectedUse := "generate [versions...]"
-	if cmd.Use != expectedUse {
-		t.Errorf("expected Use '%s', got '%s'", expectedUse, cmd.Use)
+	var gotOpts *GenerateOptions
+	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"latest", "2.1"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check flags exist
-	flags := []struct {
-		name      string
-		shorthand string
-	}{
-		{"skip-fetch", ""},
-		{"cleanup", ""},
-		{"output", "o"},
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
 	}
 
-	for _, fl := range flags {
-		flag := cmd.Flags().Lookup(fl.name)
-		if flag == nil {
-			t.Errorf("expected --%s flag to exist", fl.name)
-		}
-		if fl.shorthand != "" && flag.Shorthand != fl.shorthand {
-			t.Errorf("expected --%s shorthand '%s', got '%s'", fl.name, fl.shorthand, flag.Shorthand)
-		}
+	if gotOpts.IOStreams != tio.IOStreams {
+		t.Error("expected IOStreams to be set from factory")
 	}
 
-	// Check default values
-	skipFetchFlag := cmd.Flags().Lookup("skip-fetch")
-	if skipFetchFlag.DefValue != "false" {
-		t.Errorf("expected --skip-fetch default 'false', got '%s'", skipFetchFlag.DefValue)
+	if len(gotOpts.Versions) != 2 || gotOpts.Versions[0] != "latest" || gotOpts.Versions[1] != "2.1" {
+		t.Errorf("expected Versions [latest, 2.1], got %v", gotOpts.Versions)
 	}
 
-	cleanupFlag := cmd.Flags().Lookup("cleanup")
-	if cleanupFlag.DefValue != "true" {
-		t.Errorf("expected --cleanup default 'true', got '%s'", cleanupFlag.DefValue)
+	if gotOpts.SkipFetch {
+		t.Error("expected SkipFetch to be false by default")
 	}
 
-	outputFlag := cmd.Flags().Lookup("output")
-	if outputFlag.DefValue != "" {
-		t.Errorf("expected --output default '', got '%s'", outputFlag.DefValue)
+	if !gotOpts.Cleanup {
+		t.Error("expected Cleanup to be true by default")
+	}
+
+	if gotOpts.OutputDir != "" {
+		t.Errorf("expected OutputDir to be empty, got %q", gotOpts.OutputDir)
+	}
+}
+
+func TestNewCmdGenerate_NoArgs(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+
+	var gotOpts *GenerateOptions
+	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
+	}
+
+	if len(gotOpts.Versions) != 0 {
+		t.Errorf("expected empty Versions, got %v", gotOpts.Versions)
+	}
+}
+
+func TestNewCmdGenerate_Flags(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+
+	var gotOpts *GenerateOptions
+	cmd := NewCmdGenerate(f, func(_ context.Context, opts *GenerateOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--skip-fetch", "--cleanup=false", "--output", "/tmp/build", "latest"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotOpts == nil {
+		t.Fatal("expected runF to be called")
+	}
+
+	if !gotOpts.SkipFetch {
+		t.Error("expected SkipFetch to be true")
+	}
+
+	if gotOpts.Cleanup {
+		t.Error("expected Cleanup to be false")
+	}
+
+	if gotOpts.OutputDir != "/tmp/build" {
+		t.Errorf("expected OutputDir '/tmp/build', got %q", gotOpts.OutputDir)
+	}
+
+	if len(gotOpts.Versions) != 1 || gotOpts.Versions[0] != "latest" {
+		t.Errorf("expected Versions [latest], got %v", gotOpts.Versions)
 	}
 }
