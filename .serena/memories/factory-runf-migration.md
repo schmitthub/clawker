@@ -178,11 +178,11 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 26 | volume/create | NOT STARTED | — |
-| 27 | volume/list | NOT STARTED | — |
-| 28 | volume/inspect | NOT STARTED | — |
-| 29 | volume/prune | NOT STARTED | — |
-| 30 | volume/remove | NOT STARTED | — |
+| 26 | volume/create | DONE | — |
+| 27 | volume/list | DONE | — |
+| 28 | volume/inspect | DONE | — |
+| 29 | volume/prune | DONE | — |
+| 30 | volume/remove | DONE | — |
 
 ### Network Commands (5)
 
@@ -233,7 +233,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 |--------|---------------|--------|
 | container/container.go | 20 | DONE |
 | image/image.go | 5 | DONE |
-| volume/volume.go | 5 | NOT STARTED |
+| volume/volume.go | 5 | DONE |
 | network/network.go | 5 | NOT STARTED |
 | ralph/ralph.go | 4 | NOT STARTED |
 | monitor/monitor.go | 4 | NOT STARTED |
@@ -295,6 +295,12 @@ For commands embedding `*copts.ContainerOptions`, the runF capture gives direct 
 
 ### RunE override tests with custom arg-handling logic
 Old tests that override RunE may implement their own arg-parsing logic that diverges from the real RunE. For example, `container/run` tests had special `strings.HasPrefix(args[0], "-")` logic treating dash-prefixed args as Command instead of Image, but the real RunE always treats `args[0]` as Image. The runF pattern captures actual command behavior, so test expectations must be updated to match real behavior (not the old override's behavior).
+
+### Multiple commands per session
+When commands in the same group are straightforward (no package extraction needed), migrating 2 commands in a single session is efficient. This is especially true when finishing a group — the parent registration update happens once at the end.
+
+### Prune commands: bufio confirmation → Prompter
+Volume/prune had manual `bufio.NewReader(cmd.InOrStdin())` confirmation. The migration replaces this with `opts.Prompter().Confirm()`, which removes the `*cobra.Command` dependency from the run function and the `bufio`/`strings` imports. Same pattern as image/prune.
 
 ### Alias wrapper closures for commands with many Factory deps
 Commands like `container/run` that take many Factory deps on Options (IOStreams, Client, Config, Settings, Prompter, SettingsLoader, etc.) work fine with the standard closure wrapper pattern in aliases.go. The alias closure just passes `nil` for runF — no special handling needed regardless of how many Factory deps the command uses.

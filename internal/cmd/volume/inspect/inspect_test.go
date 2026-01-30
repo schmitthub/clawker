@@ -2,28 +2,32 @@ package inspect
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdInspect(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
+		wantNames  []string
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
-			name:  "single volume",
-			input: "myvolume",
+			name:      "single volume",
+			input:     "myvolume",
+			wantNames: []string{"myvolume"},
 		},
 		{
-			name:  "multiple volumes",
-			input: "vol1 vol2",
+			name:      "multiple volumes",
+			input:     "vol1 vol2",
+			wantNames: []string{"vol1", "vol2"},
 		},
 		{
 			name:       "no arguments",
@@ -35,14 +39,17 @@ func TestNewCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
-
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				return nil
+			tios := iostreams.NewTestIOStreams()
+			ios := tios.IOStreams
+			f := &cmdutil.Factory{
+				IOStreams: ios,
 			}
+
+			var gotOpts *InspectOptions
+			cmd := NewCmdInspect(f, func(_ context.Context, opts *InspectOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -63,13 +70,18 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantNames, gotOpts.Names)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+func TestCmdInspect_Properties(t *testing.T) {
+	tios := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tios.IOStreams,
+	}
+	cmd := NewCmdInspect(f, nil)
 
 	// Test command basics
 	require.Equal(t, "inspect VOLUME [VOLUME...]", cmd.Use)

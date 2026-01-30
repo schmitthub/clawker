@@ -7,19 +7,27 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the create command.
-type Options struct {
+// CreateOptions holds options for the create command.
+type CreateOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
+	Name       string
 	Driver     string
 	DriverOpts []string
 	Labels     []string
 }
 
-// NewCmd creates the volume create command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdCreate creates the volume create command.
+func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
+	opts := &CreateOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "create [OPTIONS] [VOLUME]",
@@ -41,11 +49,13 @@ The volume will be labeled as a clawker-managed resource.`,
   clawker volume create --label env=test --label project=myapp myvolume`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var name string
 			if len(args) > 0 {
-				name = args[0]
+				opts.Name = args[0]
 			}
-			return run(f, opts, name)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return createRun(cmd.Context(), opts)
 		},
 	}
 
@@ -56,12 +66,11 @@ The volume will be labeled as a clawker-managed resource.`,
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options, name string) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func createRun(ctx context.Context, opts *CreateOptions) error {
+	ios := opts.IOStreams
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
@@ -69,7 +78,7 @@ func run(f *cmdutil.Factory, opts *Options, name string) error {
 
 	// Build create options
 	createOpts := docker.VolumeCreateOptions{
-		Name:       name,
+		Name:       opts.Name,
 		Driver:     opts.Driver,
 		DriverOpts: parseDriverOpts(opts.DriverOpts),
 		Labels:     parseLabels(opts.Labels),

@@ -7,17 +7,25 @@ import (
 	"text/tabwriter"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
-// Options holds options for the list command.
-type Options struct {
+// ListOptions holds options for the list command.
+type ListOptions struct {
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+
 	Quiet bool
 }
 
-// NewCmd creates the volume list command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{}
+// NewCmdList creates the volume list command.
+func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
+	opts := &ListOptions{
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+	}
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -38,7 +46,10 @@ Volumes are used to persist data between container runs, including:
   # List volume names only
   clawker volume ls -q`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(f, opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return listRun(cmd.Context(), opts)
 		},
 	}
 
@@ -47,12 +58,11 @@ Volumes are used to persist data between container runs, including:
 	return cmd
 }
 
-func run(f *cmdutil.Factory, opts *Options) error {
-	ctx := context.Background()
-	ios := f.IOStreams
+func listRun(ctx context.Context, opts *ListOptions) error {
+	ios := opts.IOStreams
 
 	// Connect to Docker
-	client, err := f.Client(ctx)
+	client, err := opts.Client(ctx)
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
