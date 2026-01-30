@@ -160,7 +160,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 15 | container/stats | DONE | — |
 | 16 | container/stop | DONE | — |
 | 17 | container/top | DONE | — |
-| 18 | container/unpause | NOT STARTED | — |
+| 18 | container/unpause | DONE | — |
 | 19 | container/update | NOT STARTED | — |
 | 20 | container/wait | NOT STARTED | — |
 
