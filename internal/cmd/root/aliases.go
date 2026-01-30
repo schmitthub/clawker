@@ -53,7 +53,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "create [OPTIONS] IMAGE [COMMAND] [ARG...]",
-		Command: containerCreate.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerCreate.NewCmdCreate(f, nil) },
 	},
 	{
 		Use:     "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH|-\ncp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH",

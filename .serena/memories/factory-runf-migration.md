@@ -144,8 +144,8 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
 | 1 | container/attach | DONE | — |
-| 2 | container/cp | NOT STARTED | — |
-| 3 | container/create | NOT STARTED | — |
+| 2 | container/cp | DONE | — |
+| 3 | container/create | DONE | — |
 | 4 | container/exec | NOT STARTED | — |
 | 5 | container/inspect | NOT STARTED | — |
 | 6 | container/kill | NOT STARTED | — |
@@ -265,6 +265,23 @@ Does run() take params beyond (ctx, opts)?
     │
     └─ No extra params → standard workflow
 ```
+
+## Key Learnings
+
+### Integration tests with build tags
+Serena's `rename_symbol` does NOT reach files excluded by build tags (e.g., `//go:build integration`).
+After renaming, manually update integration test files with `replace_all` edits.
+
+### RunE override tests expose incorrect behavior
+Old tests that override `RunE` and manually extract flags may have logic that diverges from the actual command's `RunE`.
+The runF pattern captures actual command behavior, so test expectations may need fixing.
+Example: `container/create` had tests treating args starting with `-` as Command (not Image), but the real RunE always treats `args[0]` as Image.
+
+### Root aliases with runF
+Aliases in `aliases.go` that use direct function references (`Command: pkg.NewCmd`) must be changed to wrapper closures (`Command: func(f *cmdutil.Factory) *cobra.Command { return pkg.NewCmdX(f, nil) }`) after adding the `runF` parameter.
+
+### Commands with embedded ContainerOptions
+For commands embedding `*copts.ContainerOptions`, the runF capture gives direct access to all flag values via the embedded struct. Tests assert on `gotOpts.Agent`, `gotOpts.NetMode.NetworkMode()`, etc. — no need for `cmd.Flags().GetString()` extraction.
 
 ## Decision Tree: Prune Commands (image/prune, volume/prune, network/prune)
 
