@@ -216,7 +216,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 44 | config/check | NOT STARTED | — |
+| 44 | config/check | DONE | — |
 
 ### Top-Level Commands (4)
 
@@ -237,7 +237,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | network/network.go | 5 | DONE |
 | ralph/ralph.go | 4 | DONE |
 | monitor/monitor.go | 4 | DONE |
-| config/config.go | 1 | NOT STARTED |
+| config/config.go | 1 | DONE |
 | project/project.go | 2 | NOT STARTED |
 | root/root.go | 2 | NOT STARTED |
 
