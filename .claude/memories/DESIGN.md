@@ -224,6 +224,38 @@ with all closures wired                       *cmdutil.Factory
 
 Factory is a pure struct with closure fields — no methods. The constructor in `internal/cmd/factory/default.go` wires all `sync.Once` lazy closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
+### 3.4 Dependency Placement Decision Tree
+
+When adding a new command helper or heavy dependency:
+
+```
+"Where does my heavy dependency go?"
+              │
+              ▼
+Can it be constructed at startup,
+before any command runs?
+              │
+       ┌──────┴──────┐
+       YES            NO (needs CLI args, runtime context)
+       │              │
+       ▼              ▼
+  3+ commands?    Lives in: internal/<package>/
+       │          Constructed in: run function
+  ┌────┴────┐     Tested via: inject mock on Options
+  YES       NO
+  │         │
+  ▼         ▼
+FACTORY   OPTIONS STRUCT
+FIELD     (command imports package directly)
+```
+
+Rules:
+- Implementation always lives in `internal/<package>/` — never in `cmdutil/`
+- `cmdutil/` contains only: Factory struct (DI container), output utilities, arg validators
+- Heavy command helpers live in dedicated packages: `internal/resolver/` (image resolution), `internal/build/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming)
+
+See also `.claude/rules/dependency-placement.md` (auto-loaded).
+
 ### 3.2 Internal Client (`internal/docker`)
 
 Clawker-specific middleware that builds on the External Engine:

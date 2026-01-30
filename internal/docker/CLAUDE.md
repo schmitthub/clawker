@@ -30,6 +30,21 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 
 `ContainerName("", "ralph")` → `"clawker.ralph"` (2-segment, no empty segment)
 
+## Label Constants (`labels.go`)
+
+```go
+const LabelPrefix       = "com.clawker."
+const LabelManaged      = "com.clawker.managed"
+const LabelProject      = "com.clawker.project"
+const LabelAgent        = "com.clawker.agent"
+const LabelVersion      = "com.clawker.version"
+const LabelImage        = "com.clawker.image"
+const LabelWorkdir      = "com.clawker.workdir"
+const LabelCreated      = "com.clawker.created"
+const LabelPurpose      = "com.clawker.purpose"
+const ManagedLabelValue  = "true"
+```
+
 ## Labels (`com.clawker.*`)
 
 | Label | Example |
@@ -42,6 +57,65 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 | `com.clawker.workdir` | `/Users/dev/myapp` |
 | `com.clawker.created` | RFC3339 timestamp |
 | `com.clawker.purpose` | `workspace` (volumes only) |
+
+## Filter Functions (`labels.go`)
+
+```go
+func ClawkerFilter() whail.Filters                                    // All managed resources
+func ProjectFilter(project string) whail.Filters                      // By project
+func AgentFilter(project, agent string) whail.Filters                  // By project+agent
+func ImageLabels(project, version string) map[string]string            // Labels for built images
+func NetworkLabels(project string) map[string]string                   // Labels for networks
+```
+
+## Additional Name Functions (`names.go`)
+
+```go
+func ImageTag(project string) string                                   // "clawker-<project>:latest"
+func ContainerNamePrefix(project string) string                        // "clawker.<project>."
+func IsAlpineImage(imageRef string) bool                               // Detects Alpine base images
+func ContainerNamesFromAgents(project string, agents []string) []string // Batch name generation
+```
+
+## Opts Types (`opts.go`)
+
+Resource limit types implementing `pflag.Value` for CLI flag parsing:
+
+| Type | Constructor | Purpose |
+|------|-------------|---------|
+| `MemBytes` | — | Memory size (bytes) |
+| `MemSwapBytes` | — | Swap size (bytes) |
+| `NanoCPUs` | — | CPU allocation |
+| `UlimitOpt` | `NewUlimitOpt()` | Ulimit settings |
+| `WeightDeviceOpt` | `NewWeightDeviceOpt()` | Block I/O weight |
+| `ThrottleDeviceOpt` | `NewThrottleDeviceOpt()` | Block I/O throttle |
+| `GpuOpts` | `NewGpuOpts()` | GPU access |
+| `MountOpt` | `NewMountOpt()` | Mount specifications |
+| `DeviceOpt` | `NewDeviceOpt()` | Device access |
+
+## Client Types (`client.go`)
+
+```go
+type Container struct {
+    ID, Name, Project, Agent, Image, Workdir, Status string
+    Created time.Time
+}
+
+type BuildImageOpts struct {
+    Tags []string; Dockerfile string; BuildArgs map[string]*string
+    NoCache bool; Labels map[string]string; Target string
+    Pull, SuppressOutput bool; NetworkMode string
+}
+
+func (c *Client) ImageExists(ctx, imageRef) (bool, error)
+func (c *Client) IsMonitoringActive(ctx) bool
+```
+
+## Volume Utilities (`volume.go`)
+
+```go
+func LoadIgnorePatterns(path string) ([]string, error)  // Parse .clawkerignore
+```
 
 ## Client Usage
 

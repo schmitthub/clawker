@@ -17,7 +17,7 @@ import (
 
 // Options holds options for the attach command.
 type Options struct {
-	IOStreams        *iostreams.IOStreams
+	IOStreams       *iostreams.IOStreams
 	Client          func(context.Context) (*docker.Client, error)
 	Resolution      func() *config.Resolution
 	EnsureHostProxy func() error
@@ -32,7 +32,7 @@ type Options struct {
 // NewCmd creates a new attach command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:        f.IOStreams,
+		IOStreams:       f.IOStreams,
 		Client:          f.Client,
 		Resolution:      f.Resolution,
 		EnsureHostProxy: f.EnsureHostProxy,
@@ -83,7 +83,7 @@ func run(ctx context.Context, opts *Options) error {
 
 	container := opts.container
 	if opts.Agent {
-		container = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, container)
+		container = docker.ContainerName(opts.Resolution().ProjectKey, container)
 	}
 	// Connect to Docker
 	client, err := opts.Client(ctx)

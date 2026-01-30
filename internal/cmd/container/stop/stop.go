@@ -13,7 +13,7 @@ import (
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -27,7 +27,7 @@ type StopOptions struct {
 // NewCmdStop creates the container stop command.
 func NewCmdStop(f *cmdutil.Factory) *cobra.Command {
 	opts := &StopOptions{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -77,7 +77,7 @@ func runStop(ctx context.Context, opts *StopOptions) error {
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
-		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 	// Connect to Docker
 	client, err := opts.Client(ctx)

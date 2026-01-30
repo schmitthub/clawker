@@ -1,4 +1,4 @@
-package cmdutil
+package build
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/pkg/build"
+	pkgbuild "github.com/schmitthub/clawker/pkg/build"
 )
 
 // DefaultImageTag is the tag used for the user's default base image.
@@ -60,15 +60,15 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 
 	// 2. Resolve "latest" version from npm
 	logger.Debug().Msg("resolving latest Claude Code version from npm")
-	mgr := build.NewVersionsManager()
-	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, build.ResolveOptions{})
+	mgr := pkgbuild.NewVersionsManager()
+	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, pkgbuild.ResolveOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to resolve latest version: %w", err)
 	}
 
 	// 3. Generate dockerfiles
 	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
-	dfMgr := build.NewDockerfileManager(buildDir, nil)
+	dfMgr := pkgbuild.NewDockerfileManager(buildDir, nil)
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
 	}
@@ -102,7 +102,7 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 	defer client.Close()
 
 	// 6. Create build context from dockerfiles directory
-	buildContext, err := build.CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
+	buildContext, err := pkgbuild.CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create build context: %w", err)
 	}

@@ -16,7 +16,7 @@ import (
 
 // Options holds options for the top command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -28,7 +28,7 @@ type Options struct {
 // NewCmd creates a new top command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -78,7 +78,7 @@ func run(ctx context.Context, opts *Options) error {
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers := cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, []string{containerName})
+		containers := docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, []string{containerName})
 		containerName = containers[0]
 	}
 

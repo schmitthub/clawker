@@ -1,15 +1,21 @@
 # Cmdutil Package
 
-Shared CLI utilities: Factory struct, project registration, name resolution, error handling.
+Lightweight shared CLI utilities: Factory struct (DI container), output helpers, argument validators.
+
+Heavy command helpers have been extracted to dedicated packages:
+- Image resolution → `internal/resolver/`
+- Build utilities → `internal/build/`
+- Project registration → `internal/project/`
+- Container naming → `internal/docker/` (`ContainerName`, `ContainerNamesFromAgents`)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` — pure struct with closure fields (no methods, no construction logic) |
-| `register.go` | `RegisterProject` — shared helper for project registration |
-| `resolve.go` | Image resolution, container/agent name resolution |
-| `project.go` | Project utilities |
+| `output.go` | `HandleError`, `PrintError`, `PrintNextSteps`, etc. (iostreams only) |
+| `required.go` | `NoArgs`, `ExactArgs`, `AgentArgsValidator` (cobra only) |
+| `project.go` | `ErrAborted` (stdlib only) |
 
 ## Factory (`factory.go`)
 
@@ -59,28 +65,15 @@ f := &cmdutil.Factory{
 }
 ```
 
-## RegisterProject (`register.go`)
+## Error Handling (`output.go`)
 
-Shared helper used by both `project init` and `project register`:
-
-```go
-func RegisterProject(loader func() (*config.RegistryLoader, error), name, root string) error
-```
-
-## Name Resolution (`resolve.go`)
-
-- `ResolveContainerName(resolution, agent)` — builds `clawker.project.agent` or `clawker.agent`
-- `ResolveContainerNames(resolution, names)` — resolve multiple names
-- `ResolveContainerNamesFromAgents(resolution, agents)` — resolve agent names to container names
-- `ResolveImage` / `ResolveImageWithSource` / `ResolveAndValidateImage` — image resolution chain
-- `FindProjectImage(ctx, client, project)` — find `clawker-<project>:latest` image
-- `AgentArgsValidator` / `AgentArgsValidatorExact` — Cobra args validators
-
-## Error Handling
-
-- `HandleError(err)` — format Docker errors for users
-- `PrintError(io, msg)` — print error to stderr
-- `PrintNextSteps(io, steps)` — print next-steps guidance to stderr
+- `HandleError(ios, err)` — format errors for users (duck-typed `FormatUserError()` interface)
+- `PrintError(ios, format, args...)` — print error to stderr
+- `PrintWarning(ios, format, args...)` — print warning to stderr
+- `PrintNextSteps(ios, steps...)` — print next-steps guidance to stderr
+- `PrintStatus(ios, quiet, format, args...)` — print status (suppressed with --quiet)
+- `OutputJSON(ios, data)` — marshal to stdout as indented JSON
+- `PrintHelpHint(ios, cmdPath)` — contextual help hint
 
 ### ExitError (`output.go`)
 
@@ -88,7 +81,17 @@ Type for propagating non-zero container exit codes through Cobra's error chain. 
 
 ```go
 type ExitError struct { Code int }
-func (e *ExitError) Error() string // "container exited with code <N>"
+func (e *ExitError) Error() string // "exit status <N>"
 ```
 
 Commands return `&ExitError{Code: status}` instead of calling `os.Exit()` directly. The root command's `Execute()` checks for `ExitError` and calls `os.Exit(code)` after all defers have run. This is critical because `os.Exit()` does **not** run deferred functions — returning `ExitError` ensures terminal state is restored before exit.
+
+## Argument Validators (`required.go`)
+
+- `NoArgs` — error if any args provided
+- `RequiresMinArgs(n)` — error if fewer than n args
+- `RequiresMaxArgs(n)` — error if more than n args
+- `RequiresRangeArgs(min, max)` — error if out of range
+- `ExactArgs(n)` — error if not exactly n args
+- `AgentArgsValidator(minArgs)` — `--agent` flag mutually exclusive with positional args
+- `AgentArgsValidatorExact(n)` — same but requires exactly n args without `--agent`

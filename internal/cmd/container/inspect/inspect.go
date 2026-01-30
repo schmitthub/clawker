@@ -16,7 +16,7 @@ import (
 
 // InspectOptions holds options for the inspect command.
 type InspectOptions struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -30,7 +30,7 @@ type InspectOptions struct {
 // NewCmdInspect creates the container inspect command.
 func NewCmdInspect(f *cmdutil.Factory) *cobra.Command {
 	opts := &InspectOptions{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -82,7 +82,7 @@ func runInspect(ctx context.Context, opts *InspectOptions) error {
 	// Resolve container names
 	containers := opts.containers
 	if opts.Agent {
-		containers = cmdutil.ResolveContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

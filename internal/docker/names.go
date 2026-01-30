@@ -100,6 +100,19 @@ func ContainerName(project, agent string) string {
 	return fmt.Sprintf("%s.%s.%s", NamePrefix, project, agent)
 }
 
+// ContainerNamesFromAgents resolves a slice of agent names to container names.
+// If no agents are provided, returns the input slice unchanged.
+func ContainerNamesFromAgents(project string, agents []string) []string {
+	if len(agents) == 0 {
+		return agents
+	}
+	containers := make([]string, len(agents))
+	for i, agent := range agents {
+		containers[i] = ContainerName(project, agent)
+	}
+	return containers
+}
+
 // ContainerNamePrefix returns prefix for filtering: clawker.project.
 func ContainerNamePrefix(project string) string {
 	if project == "" {

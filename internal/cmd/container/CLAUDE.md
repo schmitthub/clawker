@@ -38,18 +38,18 @@ containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(wo
 
 ## Image Resolution (@ Symbol)
 
-When `opts.Image == "@"`, call `cmdutil.ResolveAndValidateImage()`:
+When `opts.Image == "@"`, call `resolver.ResolveAndValidateImage()`:
 
 ```go
 if opts.Image == "@" {
-    resolved, err := cmdutil.ResolveAndValidateImage(ctx, client, cfg, settings)
+    resolved, err := resolver.ResolveAndValidateImage(ctx, resolver.ImageValidationDeps{...}, client, cfg, settings)
     opts.Image = resolved.Reference
 }
 ```
 
 **Resolution order**: 1) Project image (`clawker-<project>:latest` with labels) → 2) Settings `default_image` → 3) Config `default_image`.
 
-**Key functions** in `internal/cmdutil/resolve.go`: `ResolveImageWithSource()`, `ResolveAndValidateImage()`, `FindProjectImage()`.
+**Key functions** in `internal/resolver/image.go`: `ResolveImageWithSource()`, `ResolveAndValidateImage()`, `FindProjectImage()`.
 
 ## Workspace Setup Pattern
 

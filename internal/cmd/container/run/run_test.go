@@ -10,6 +10,7 @@ import (
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
@@ -588,7 +589,7 @@ func TestImageArg(t *testing.T) {
 			defaultImage  string
 			mockImages    []string // Images to return from mock ImageList
 			wantReference string
-			wantSource    cmdutil.ImageSource
+			wantSource    resolver.ImageSource
 			wantNil       bool // Expect nil result (no resolution)
 		}{
 			{
@@ -597,7 +598,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    cmdutil.ImageSourceProject,
+				wantSource:    resolver.ImageSourceProject,
 			},
 			{
 				name:          "@ resolves to default image when no project image",
@@ -605,7 +606,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "node:20-slim",
 				mockImages:    []string{}, // No project images
 				wantReference: "node:20-slim",
-				wantSource:    cmdutil.ImageSourceDefault,
+				wantSource:    resolver.ImageSourceDefault,
 			},
 			{
 				name:         "@ returns nil when no default available",
@@ -620,7 +621,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    cmdutil.ImageSourceProject,
+				wantSource:    resolver.ImageSourceProject,
 			},
 			{
 				name:          "@ ignores non-latest project images",
@@ -628,7 +629,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				mockImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
 				wantReference: "alpine:latest",
-				wantSource:    cmdutil.ImageSourceDefault,
+				wantSource:    resolver.ImageSourceDefault,
 			},
 		}
 
@@ -665,7 +666,7 @@ func TestImageArg(t *testing.T) {
 				}
 
 				// Call the resolution function
-				result, err := cmdutil.ResolveImageWithSource(ctx, m.Client, cfg, settings)
+				result, err := resolver.ResolveImageWithSource(ctx, m.Client, cfg, settings)
 				require.NoError(t, err)
 
 				if tt.wantNil {

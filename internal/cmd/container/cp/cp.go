@@ -19,7 +19,7 @@ import (
 
 // Options holds options for the cp command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -35,7 +35,7 @@ type Options struct {
 // NewCmd creates a new cp command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -116,11 +116,11 @@ func run(ctx context.Context, opts *Options) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			srcContainer = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, srcContainer)
+			srcContainer = docker.ContainerName(opts.Resolution().ProjectKey, srcContainer)
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			dstContainer = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, dstContainer)
+			dstContainer = docker.ContainerName(opts.Resolution().ProjectKey, dstContainer)
 		}
 	}
 

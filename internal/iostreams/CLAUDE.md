@@ -78,6 +78,36 @@ defer ios.StopAlternateScreenBuffer()
 | `COLORFGBG` | Terminal theme detection hint |
 | `CLAWKER_SPINNER_DISABLED` | Static text instead of animated spinner |
 
+## Constructors
+
+```go
+func NewIOStreams() *IOStreams                          // Production constructor (real stdin/stdout/stderr)
+func NewColorScheme(enabled bool, theme string) *ColorScheme  // Color scheme with theme awareness
+```
+
+## Additional Methods
+
+```go
+// Theme
+ios.DetectTerminalTheme()             // Probes terminal background color
+ios.TerminalTheme() string            // Returns "light", "dark", or ""
+
+// Cache
+ios.InvalidateTerminalSizeCache()     // Force re-query terminal dimensions
+
+// Getters
+ios.GetSpinnerDisabled() bool         // Check if spinner is in text-only mode
+ios.GetPager() string                 // Get configured pager command
+
+// Screen management
+ios.SetAlternateScreenBufferEnabled(bool)  // Enable/disable alt screen support
+ios.RefreshScreen()                        // Clear and redraw screen
+
+// Prompt control
+ios.SetNeverPrompt(bool)              // Force-disable all prompts
+ios.GetNeverPrompt() bool             // Check if prompts are disabled
+```
+
 ## Testing
 
 ```go

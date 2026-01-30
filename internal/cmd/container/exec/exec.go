@@ -18,7 +18,7 @@ import (
 
 // Options holds options for the exec command.
 type Options struct {
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
 
@@ -38,7 +38,7 @@ type Options struct {
 // NewCmd creates a new exec command.
 func NewCmd(f *cmdutil.Factory) *cobra.Command {
 	opts := &Options{
-		IOStreams:   f.IOStreams,
+		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
 	}
@@ -81,7 +81,7 @@ Container name can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]
 			if opts.Agent {
-				opts.containerName = cmdutil.ResolveContainerName(opts.Resolution().ProjectKey, args[0])
+				opts.containerName = docker.ContainerName(opts.Resolution().ProjectKey, args[0])
 			}
 
 			if len(args) > 1 {

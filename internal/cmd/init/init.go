@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -15,7 +16,7 @@ import (
 // InitOptions contains the options for the init command.
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Prompter func() *prompts.Prompter
+	Prompter  func() *prompts.Prompter
 
 	Yes bool // Non-interactive mode
 }
@@ -24,7 +25,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory) *cobra.Command {
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
-		Prompter: f.Prompter,
+		Prompter:  f.Prompter,
 	}
 
 	cmd := &cobra.Command{
@@ -101,7 +102,7 @@ func runInit(opts *InitOptions) error {
 
 	if buildBaseImage {
 		// Convert flavor options to SelectOption
-		flavors := cmdutil.DefaultFlavorOptions()
+		flavors := intbuild.DefaultFlavorOptions()
 		selectOptions := make([]prompts.SelectOption, len(flavors))
 		for i, opt := range flavors {
 			selectOptions[i] = prompts.SelectOption{
@@ -136,7 +137,7 @@ func runInit(opts *InitOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Starting base image build...\n", cs.InfoIcon())
 
 		go func() {
-			buildResultCh <- buildResult{err: cmdutil.BuildDefaultImage(ctx, selectedFlavor)}
+			buildResultCh <- buildResult{err: intbuild.BuildDefaultImage(ctx, selectedFlavor)}
 		}()
 	}
 
@@ -154,7 +155,7 @@ func runInit(opts *InitOptions) error {
 	// Wait for build if started
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)
-		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", cmdutil.DefaultImageTag))
+		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", intbuild.DefaultImageTag))
 
 		result := <-buildResultCh
 
@@ -169,10 +170,10 @@ func runInit(opts *InitOptions) error {
 			)
 		} else {
 			fmt.Fprintln(ios.ErrOut)
-			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), cmdutil.DefaultImageTag)
+			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), intbuild.DefaultImageTag)
 
 			// Update settings with the built image
-			settings.DefaultImage = cmdutil.DefaultImageTag
+			settings.DefaultImage = intbuild.DefaultImageTag
 			if err := settingsLoader.Save(settings); err != nil {
 				logger.Warn().Err(err).Msg("failed to update settings with default image")
 			}
