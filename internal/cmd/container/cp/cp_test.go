@@ -2,46 +2,46 @@ package cp
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdCp(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantOpts   Options
+		wantOpts   CpOptions
 		wantErr    bool
 		wantErrMsg string
 	}{
 		{
 			name:     "copy from container",
 			input:    "mycontainer:/app/file.txt ./file.txt",
-			wantOpts: Options{},
+			wantOpts: CpOptions{Src: "mycontainer:/app/file.txt", Dst: "./file.txt"},
 		},
 		{
 			name:     "copy to container",
 			input:    "./file.txt mycontainer:/app/file.txt",
-			wantOpts: Options{},
+			wantOpts: CpOptions{Src: "./file.txt", Dst: "mycontainer:/app/file.txt"},
 		},
 		{
 			name:     "archive flag",
 			input:    "-a mycontainer:/app ./app",
-			wantOpts: Options{Archive: true},
+			wantOpts: CpOptions{Archive: true, Src: "mycontainer:/app", Dst: "./app"},
 		},
 		{
 			name:     "follow-link flag",
 			input:    "-L mycontainer:/app ./app",
-			wantOpts: Options{FollowLink: true},
+			wantOpts: CpOptions{FollowLink: true, Src: "mycontainer:/app", Dst: "./app"},
 		},
 		{
 			name:     "copy-uidgid flag",
 			input:    "--copy-uidgid mycontainer:/app ./app",
-			wantOpts: Options{CopyUIDGID: true},
+			wantOpts: CpOptions{CopyUIDGID: true, Src: "mycontainer:/app", Dst: "./app"},
 		},
 		{
 			name:       "no arguments",
@@ -58,12 +58,12 @@ func TestNewCmd(t *testing.T) {
 		{
 			name:     "agent flag with container path",
 			input:    "--agent ralph:/app/file.txt ./file.txt",
-			wantOpts: Options{Agent: true},
+			wantOpts: CpOptions{Agent: true, Src: "ralph:/app/file.txt", Dst: "./file.txt"},
 		},
 		{
 			name:     "agent flag copy to container",
 			input:    "--agent ./file.txt ralph:/app/file.txt",
-			wantOpts: Options{Agent: true},
+			wantOpts: CpOptions{Agent: true, Src: "./file.txt", Dst: "ralph:/app/file.txt"},
 		},
 	}
 
@@ -71,18 +71,11 @@ func TestNewCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 
-			var cmdOpts *Options
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
-				cmdOpts.Archive, _ = cmd.Flags().GetBool("archive")
-				cmdOpts.FollowLink, _ = cmd.Flags().GetBool("follow-link")
-				cmdOpts.CopyUIDGID, _ = cmd.Flags().GetBool("copy-uidgid")
+			var gotOpts *CpOptions
+			cmd := NewCmdCp(f, func(_ context.Context, opts *CpOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
@@ -103,17 +96,20 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.wantOpts.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.wantOpts.Archive, cmdOpts.Archive)
-			require.Equal(t, tt.wantOpts.FollowLink, cmdOpts.FollowLink)
-			require.Equal(t, tt.wantOpts.CopyUIDGID, cmdOpts.CopyUIDGID)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantOpts.Agent, gotOpts.Agent)
+			require.Equal(t, tt.wantOpts.Archive, gotOpts.Archive)
+			require.Equal(t, tt.wantOpts.FollowLink, gotOpts.FollowLink)
+			require.Equal(t, tt.wantOpts.CopyUIDGID, gotOpts.CopyUIDGID)
+			require.Equal(t, tt.wantOpts.Src, gotOpts.Src)
+			require.Equal(t, tt.wantOpts.Dst, gotOpts.Dst)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdCp_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdCp(f, nil)
 
 	// Test command basics
 	require.Contains(t, cmd.Use, "cp")
@@ -209,7 +205,7 @@ func TestParseContainerPath(t *testing.T) {
 	}
 }
 
-func TestCmd_ArgsParsing(t *testing.T) {
+func TestCmdCp_ArgsParsing(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
@@ -239,18 +235,12 @@ func TestCmd_ArgsParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
-			cmd := NewCmd(f)
 
-			var capturedSrc, capturedDst string
-
-			// Override RunE to capture args
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				if len(args) >= 2 {
-					capturedSrc = args[0]
-					capturedDst = args[1]
-				}
+			var gotOpts *CpOptions
+			cmd := NewCmdCp(f, func(_ context.Context, opts *CpOptions) error {
+				gotOpts = opts
 				return nil
-			}
+			})
 
 			cmd.SetArgs(tt.args)
 			cmd.SetIn(&bytes.Buffer{})
@@ -259,8 +249,9 @@ func TestCmd_ArgsParsing(t *testing.T) {
 
 			_, err := cmd.ExecuteC()
 			require.NoError(t, err)
-			require.Equal(t, tt.wantSrc, capturedSrc)
-			require.Equal(t, tt.wantDst, capturedDst)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantSrc, gotOpts.Src)
+			require.Equal(t, tt.wantDst, gotOpts.Dst)
 		})
 	}
 }

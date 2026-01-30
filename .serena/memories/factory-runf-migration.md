@@ -17,12 +17,14 @@ Special case: `run` command → `runRun` (no exceptions).
 
 ## Universal Workflow (per command)
 
-### Step 0: Inventory & Blast Radius
+### Phase 1: Migration
+
+#### Step 0: Inventory & Blast Radius
 - Use Serena `find_symbol` + `find_referencing_symbols` to map all references to constructor, Options, run function
 - Document blast radius in command tracking memory
 - Identify: parent registration site, test files, integration test files
 
-### Step 0.5: Package Extraction (if needed)
+#### Step 0.5: Package Extraction (if needed)
 - Only for commands with **unexported constructors** (ralph/*, monitor/*, config/check)
 - Create subpackage: `internal/cmd/<group>/<verb>/`
 - Export constructor: `newCmdX` → `NewCmdX`
@@ -30,13 +32,13 @@ Special case: `run` command → `runRun` (no exceptions).
 - Export run: keep unexported but ensure proper signature
 - Update parent to import subpackage and call exported constructor
 
-### Step 1: Naming Standardization
+#### Step 1: Naming Standardization
 - Rename Options struct → `<Verb>Options` (if not already)
 - Rename constructor → `NewCmd<Verb>` (if not already)
 - Rename run function → `<verb>Run` (if not already)
 - Use Serena `rename_symbol` for codebase-wide renames
 
-### Step 2: Options Factory Deps
+#### Step 2: Options Factory Deps
 - Options struct gets **only the Factory deps it actually uses**
 - Assign deps to `opts` at the top of `NewCmd<Verb>`, before cmd declaration
 - Pattern:
@@ -49,7 +51,7 @@ Special case: `run` command → `runRun` (no exceptions).
       // ... cmd declaration follows
   ```
 
-### Step 3: Positional Args & Flags
+#### Step 3: Positional Args & Flags
 - All positional args and flag values must be assigned to `opts` fields
 - Assignment happens **in RunE**, before the `runF` dispatch
 - Pattern:
@@ -63,7 +65,7 @@ Special case: `run` command → `runRun` (no exceptions).
   },
   ```
 
-### Step 4: Add runF Test Hook
+#### Step 4: Add runF Test Hook
 - Constructor signature: `NewCmdX(f *cmdutil.Factory, runF func(context.Context, *XOptions) error) *cobra.Command`
 - RunE dispatches to `runF` if non-nil, otherwise calls `<verb>Run`
 - Parent registration passes `nil`:
@@ -71,7 +73,7 @@ Special case: `run` command → `runRun` (no exceptions).
   cmd.AddCommand(stop.NewCmdStop(f, nil))
   ```
 
-### Step 5: Rewrite Unit Tests
+#### Step 5: Rewrite Unit Tests
 - Tests use runF capture pattern:
   ```go
   var gotOpts *StopOptions
@@ -82,26 +84,33 @@ Special case: `run` command → `runRun` (no exceptions).
   ```
 - **No RunE overrides** — test via runF capture only
 - Assert opts fields populated correctly from args/flags
+- If integration tests exist, update constructor calls to include `nil` runF parameter
 
-### Step 6: Adapt Integration Tests
-- Update constructor calls to include `nil` runF parameter
-- `NewCmdStop(f, nil)` in integration tests
+#### Step 6: Verify
 
-### Step 7: Verify All Tests Pass
 ```bash
 go build ./...
 go test ./internal/cmd/<group>/<verb>/... -v -count=1
-go test -tags=integration ./internal/cmd/<group>/<verb>/... -v -timeout 10m
-go test -tags=acceptance ./acceptance -v -timeout 15m -run <relevant>
+go test -tags=integration ./internal/cmd/<group>/<verb>/... -v -timeout 10m  # only if integration tests exist
 go test ./... -count=1
 ```
-Work is NOT complete until all test tiers pass.
 
-### Step 8: Session Closure
-1. Ask user to review changes
-2. User approves → update this memory's inventory (status → DONE)
-3. Generate handoff prompt (see below)
-4. Stop work
+---
+
+## !! CRITICAL — MANDATORY REVIEW GATE !!
+
+**You MUST stop here and present all changes to the user for review.**
+**NEVER proceed to Phase 2 without explicit user approval.**
+Do NOT update the inventory. Do NOT generate a handoff prompt.
+Do NOT mark anything as DONE. **WAIT for the user.**
+
+---
+
+### Phase 2: Closure (after user approval only)
+
+1. Update this memory's inventory (status → DONE)
+2. Generate handoff prompt (see below)
+3. Stop work
 
 ## Handoff Prompt Template
 
@@ -118,11 +127,11 @@ next NOT STARTED command, and execute the universal workflow.
 - [ ] Args/flags assigned to opts in RunE before runF dispatch
 - [ ] runF test hook wired; parent passes nil
 - [ ] Unit tests use runF capture (no RunE overrides)
-- [ ] Integration tests updated with new constructor signature
+- [ ] Integration tests updated with new constructor signature (if they exist)
 - [ ] `go build ./...` passes
 - [ ] `go test ./...` passes
 - [ ] `go test -tags=integration` passes (if applicable)
-- [ ] `go test -tags=acceptance` passes
+- [ ] **User explicitly approved changes in this session**
 
 ---
 
@@ -134,7 +143,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 
 | # | Package | Status | Session Memory |
 |---|---------|--------|----------------|
-| 1 | container/attach | NOT STARTED | — |
+| 1 | container/attach | DONE | — |
 | 2 | container/cp | NOT STARTED | — |
 | 3 | container/create | NOT STARTED | — |
 | 4 | container/exec | NOT STARTED | — |

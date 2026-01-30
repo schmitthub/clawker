@@ -44,7 +44,7 @@ type Alias struct {
 var topLevelAliases = []Alias{
 	{
 		Use:     "attach CONTAINER",
-		Command: containerAttach.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerAttach.NewCmdAttach(f, nil) },
 	},
 	{
 		Use:     "build [OPTIONS]",
@@ -57,7 +57,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "cp [OPTIONS] CONTAINER:SRC_PATH DEST_PATH|-\ncp [OPTIONS] SRC_PATH|- CONTAINER:DEST_PATH",
-		Command: containerCp.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerCp.NewCmdCp(f, nil) },
 	},
 	{
 		Use:     "exec [OPTIONS] CONTAINER COMMAND [ARG...]",
