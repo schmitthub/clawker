@@ -201,7 +201,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | 36 | ralph/run | DONE | — |
 | 37 | ralph/status | DONE | — |
 | 38 | ralph/reset | DONE | — |
-| 39 | ralph/tui | NOT STARTED | — |
+| 39 | ralph/tui | DONE | — |
 
 ### Monitor Commands (4) — NEEDS PACKAGE EXTRACTION
 
@@ -235,7 +235,7 @@ Status values: `NOT STARTED` | `IN PROGRESS` | `DONE` | `SKIP`
 | image/image.go | 5 | DONE |
 | volume/volume.go | 5 | DONE |
 | network/network.go | 5 | DONE |
-| ralph/ralph.go | 4 | NOT STARTED |
+| ralph/ralph.go | 4 | DONE |
 | monitor/monitor.go | 4 | NOT STARTED |
 | config/config.go | 1 | NOT STARTED |
 | project/project.go | 2 | NOT STARTED |
@@ -304,6 +304,9 @@ Volume/prune had manual `bufio.NewReader(cmd.InOrStdin())` confirmation. The mig
 
 ### Alias wrapper closures for commands with many Factory deps
 Commands like `container/run` that take many Factory deps on Options (IOStreams, Client, Config, Settings, Prompter, SettingsLoader, etc.) work fine with the standard closure wrapper pattern in aliases.go. The alias closure just passes `nil` for runF — no special handling needed regardless of how many Factory deps the command uses.
+
+### Package extraction with already-exported constructor
+When a command in a parent package already has an exported constructor (e.g., `NewCmdTUI` in `ralph` package), package extraction is minimal: create subpackage directory, move files, change `package` declaration, export the Options struct, and update the parent import + registration. No Serena `rename_symbol` needed since the constructor name doesn't change — only the Options struct needs exporting.
 
 ### Batching an entire command group in one session
 When all commands in a group (e.g., network/*) follow the same straightforward pattern (own subpackages, exported constructors, no package extraction needed), migrating all 5 in a single session is efficient. The parent registration update happens naturally as each child is migrated, and the final `go test ./...` validates everything at once.

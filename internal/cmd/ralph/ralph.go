@@ -5,6 +5,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/ralph/reset"
 	"github.com/schmitthub/clawker/internal/cmd/ralph/run"
 	"github.com/schmitthub/clawker/internal/cmd/ralph/status"
+	"github.com/schmitthub/clawker/internal/cmd/ralph/tui"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +42,7 @@ Available commands:
 	cmd.AddCommand(run.NewCmdRun(f, nil))
 	cmd.AddCommand(status.NewCmdStatus(f, nil))
 	cmd.AddCommand(reset.NewCmdReset(f, nil))
-	cmd.AddCommand(NewCmdTUI(f))
+	cmd.AddCommand(tui.NewCmdTUI(f, nil))
 
 	return cmd
 }
