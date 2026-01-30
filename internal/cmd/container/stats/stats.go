@@ -17,8 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Options defines the options for the stats command.
-type Options struct {
+// StatsOptions defines the options for the stats command.
+type StatsOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
 	Resolution func() *config.Resolution
@@ -29,9 +29,9 @@ type Options struct {
 	containers []string
 }
 
-// NewCmd creates a new stats command.
-func NewCmd(f *cmdutil.Factory) *cobra.Command {
-	opts := &Options{
+// NewCmdStats creates a new stats command.
+func NewCmdStats(f *cmdutil.Factory, runF func(context.Context, *StatsOptions) error) *cobra.Command {
+	opts := &StatsOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
 		Resolution: f.Resolution,
@@ -67,7 +67,10 @@ Container names can be:
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containers = args
-			return run(cmd.Context(), opts)
+			if runF != nil {
+				return runF(cmd.Context(), opts)
+			}
+			return statsRun(cmd.Context(), opts)
 		},
 	}
 
@@ -78,7 +81,7 @@ Container names can be:
 	return cmd
 }
 
-func run(ctx context.Context, opts *Options) error {
+func statsRun(ctx context.Context, opts *StatsOptions) error {
 	ios := opts.IOStreams
 
 	// Resolve container names if --agent provided
@@ -125,7 +128,7 @@ func run(ctx context.Context, opts *Options) error {
 	return streamStats(ctx, ios, client, containers, opts)
 }
 
-func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StatsOptions) error {
 	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
 
@@ -175,7 +178,7 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 	return nil
 }
 
-func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *Options) error {
+func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StatsOptions) error {
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -284,7 +287,7 @@ func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.C
 	}
 }
 
-func printStats(w *tabwriter.Writer, id, name string, stats *container.StatsResponse, opts *Options) {
+func printStats(w *tabwriter.Writer, id, name string, stats *container.StatsResponse, opts *StatsOptions) {
 	// Format container ID
 	containerID := id
 	if !opts.NoTrunc && len(containerID) > 12 {

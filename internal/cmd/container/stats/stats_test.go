@@ -2,83 +2,96 @@ package stats
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/testutil"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmd(t *testing.T) {
+func TestNewCmdStats(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		output     Options
+		wantAgent  bool
+		wantStream bool
+		wantTrunc  bool
+		wantArgs   []string
 		wantErr    bool
 		wantErrMsg string
+		needRes    bool
 	}{
 		{
-			name:   "no flags",
-			input:  "",
-			output: Options{NoStream: false, NoTrunc: false},
+			name:       "no flags",
+			input:      "",
+			wantStream: false,
+			wantTrunc:  false,
+			wantArgs:   []string{},
 		},
 		{
-			name:   "with no-stream flag",
-			input:  "--no-stream",
-			output: Options{NoStream: true, NoTrunc: false},
+			name:       "with no-stream flag",
+			input:      "--no-stream",
+			wantStream: true,
+			wantTrunc:  false,
+			wantArgs:   []string{},
 		},
 		{
-			name:   "with no-trunc flag",
-			input:  "--no-trunc",
-			output: Options{NoStream: false, NoTrunc: true},
+			name:       "with no-trunc flag",
+			input:      "--no-trunc",
+			wantStream: false,
+			wantTrunc:  true,
+			wantArgs:   []string{},
 		},
 		{
-			name:   "with all flags",
-			input:  "--no-stream --no-trunc",
-			output: Options{NoStream: true, NoTrunc: true},
+			name:       "with all flags",
+			input:      "--no-stream --no-trunc",
+			wantStream: true,
+			wantTrunc:  true,
+			wantArgs:   []string{},
 		},
 		{
-			name:   "with container names",
-			input:  "--no-stream container1 container2",
-			output: Options{NoStream: true, NoTrunc: false},
+			name:       "with container names",
+			input:      "--no-stream container1 container2",
+			wantStream: true,
+			wantTrunc:  false,
+			wantArgs:   []string{"container1", "container2"},
 		},
 		{
-			name:   "with agent flag",
-			input:  "--agent ralph",
-			output: Options{Agent: true, NoStream: false, NoTrunc: false},
+			name:      "with agent flag",
+			input:     "--agent ralph",
+			wantAgent: true,
+			wantArgs:  []string{"ralph"},
+			needRes:   true,
 		},
 		{
-			name:   "with agent and no-stream flags",
-			input:  "--agent ralph --no-stream",
-			output: Options{Agent: true, NoStream: true, NoTrunc: false},
+			name:       "with agent and no-stream flags",
+			input:      "--agent ralph --no-stream",
+			wantAgent:  true,
+			wantStream: true,
+			wantArgs:   []string{"ralph"},
+			needRes:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
-
-			var cmdOpts *Options
-			cmd := NewCmd(f)
-
-			// Override RunE to capture options instead of executing
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				cmdOpts = &Options{}
-				cmdOpts.Agent, _ = cmd.Flags().GetBool("agent")
-				cmdOpts.NoStream, _ = cmd.Flags().GetBool("no-stream")
-				cmdOpts.NoTrunc, _ = cmd.Flags().GetBool("no-trunc")
-				return nil
+			if tt.needRes {
+				f.Resolution = func() *config.Resolution {
+					return &config.Resolution{ProjectKey: "testproject"}
+				}
 			}
 
-			// Cobra hack-around for help flag
-			cmd.Flags().BoolP("help", "x", false, "")
+			var gotOpts *StatsOptions
+			cmd := NewCmdStats(f, func(_ context.Context, opts *StatsOptions) error {
+				gotOpts = opts
+				return nil
+			})
 
-			// Parse arguments
-			argv := testutil.SplitArgs(tt.input)
-
-			cmd.SetArgs(argv)
+			cmd.SetArgs(testutil.SplitArgs(tt.input))
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
@@ -91,29 +104,28 @@ func TestNewCmd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, tt.output.Agent, cmdOpts.Agent)
-			require.Equal(t, tt.output.NoStream, cmdOpts.NoStream)
-			require.Equal(t, tt.output.NoTrunc, cmdOpts.NoTrunc)
+			require.NotNil(t, gotOpts)
+			require.Equal(t, tt.wantAgent, gotOpts.Agent)
+			require.Equal(t, tt.wantStream, gotOpts.NoStream)
+			require.Equal(t, tt.wantTrunc, gotOpts.NoTrunc)
+			require.Equal(t, tt.wantArgs, gotOpts.containers)
 		})
 	}
 }
 
-func TestCmd_Properties(t *testing.T) {
+func TestCmdStats_Properties(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
+	cmd := NewCmdStats(f, nil)
 
-	// Test command basics
 	require.Equal(t, "stats [OPTIONS] [CONTAINER...]", cmd.Use)
 	require.NotEmpty(t, cmd.Short)
 	require.NotEmpty(t, cmd.Long)
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
-	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("no-stream"))
 	require.NotNil(t, cmd.Flags().Lookup("no-trunc"))
 
-	// Test default values
 	noStream, _ := cmd.Flags().GetBool("no-stream")
 	require.False(t, noStream)
 
@@ -121,16 +133,15 @@ func TestCmd_Properties(t *testing.T) {
 	require.False(t, noTrunc)
 }
 
-func TestCmd_AllowsNoArgs(t *testing.T) {
+func TestCmdStats_AllowsNoArgs(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
 
-	// Override RunE to not actually execute
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+	var gotOpts *StatsOptions
+	cmd := NewCmdStats(f, func(_ context.Context, opts *StatsOptions) error {
+		gotOpts = opts
 		return nil
-	}
+	})
 
-	// Stats can be called with no args (shows all containers)
 	cmd.SetArgs([]string{})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
@@ -138,20 +149,19 @@ func TestCmd_AllowsNoArgs(t *testing.T) {
 
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	require.Empty(t, gotOpts.containers)
 }
 
-func TestCmd_MultipleContainers(t *testing.T) {
+func TestCmdStats_MultipleContainers(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmd(f)
 
-	var capturedArgs []string
-	// Override RunE to capture args
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		capturedArgs = args
+	var gotOpts *StatsOptions
+	cmd := NewCmdStats(f, func(_ context.Context, opts *StatsOptions) error {
+		gotOpts = opts
 		return nil
-	}
+	})
 
-	// Stats can be called with multiple containers
 	cmd.SetArgs([]string{"container1", "container2", "container3"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
@@ -159,7 +169,8 @@ func TestCmd_MultipleContainers(t *testing.T) {
 
 	_, err := cmd.ExecuteC()
 	require.NoError(t, err)
-	require.Equal(t, []string{"container1", "container2", "container3"}, capturedArgs)
+	require.NotNil(t, gotOpts)
+	require.Equal(t, []string{"container1", "container2", "container3"}, gotOpts.containers)
 }
 
 func TestFormatBytes(t *testing.T) {
@@ -228,7 +239,7 @@ func TestCalculateCPUPercent(t *testing.T) {
 			systemUsage:    20000000000,
 			preSystemUsage: 10000000000,
 			onlineCPUs:     1,
-			expected:       10.0, // (1B / 10B) * 1 * 100 = 10%
+			expected:       10.0,
 		},
 		{
 			name:           "normal usage multi core",
@@ -237,7 +248,7 @@ func TestCalculateCPUPercent(t *testing.T) {
 			systemUsage:    20000000000,
 			preSystemUsage: 10000000000,
 			onlineCPUs:     4,
-			expected:       40.0, // (1B / 10B) * 4 * 100 = 40%
+			expected:       40.0,
 		},
 		{
 			name:           "100% single core",
@@ -246,7 +257,7 @@ func TestCalculateCPUPercent(t *testing.T) {
 			systemUsage:    2000000000,
 			preSystemUsage: 1000000000,
 			onlineCPUs:     1,
-			expected:       100.0, // (1B / 1B) * 1 * 100 = 100%
+			expected:       100.0,
 		},
 		{
 			name:           "50% of 8 cores",
@@ -255,7 +266,7 @@ func TestCalculateCPUPercent(t *testing.T) {
 			systemUsage:    9000000000,
 			preSystemUsage: 1000000000,
 			onlineCPUs:     8,
-			expected:       400.0, // (4B / 8B) * 8 * 100 = 400%
+			expected:       400.0,
 		},
 	}
 

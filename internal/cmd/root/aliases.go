@@ -101,7 +101,7 @@ var topLevelAliases = []Alias{
 	},
 	{
 		Use:     "stats [OPTIONS] [CONTAINER...]",
-		Command: containerStats.NewCmd,
+		Command: func(f *cmdutil.Factory) *cobra.Command { return containerStats.NewCmdStats(f, nil) },
 	},
 	{
 		Use:     "stop [OPTIONS] CONTAINER [CONTAINER...]",
