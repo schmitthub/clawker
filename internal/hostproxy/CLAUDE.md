@@ -13,13 +13,15 @@ HTTP service mesh mediating interactions between containers and the host machine
 | `GitCredential` | `git_credential.go` | Git credential forwarding handler |
 | `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler |
 
-## Constants
+## Constants & Errors
 
 ```go
 const DefaultPort          = 18374
 const SessionIDLength      = 16
 const CallbackSessionType  = "callback"
 const DefaultCallbackTTL   = 5 * time.Minute
+
+var ErrCallbackAlreadyReceived  // Returned when capturing a callback for a session that already has one
 ```
 
 ## Types

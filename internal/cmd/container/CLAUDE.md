@@ -32,7 +32,7 @@ containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(wo
 
 **Key flag categories**: Basic (`Agent`, `Name`, `Image`, `TTY`, `Stdin`, `AutoRemove`, `Mode`), Environment (`Env`, `Labels`), Volumes (`Volumes`, `Tmpfs`, `ReadOnly`, `VolumesFrom`), Networking (`Publish`, `Hostname`, `DNS`, `ExtraHosts`), Resources (`Memory`, `MemorySwap`, `CPUs`, `CPUShares`), Security (`CapAdd`, `CapDrop`, `Privileged`, `SecurityOpt`), Health Checks, Process & Runtime (`Restart`, `StopSignal`, `Init`).
 
-**Custom flag types in opts/**: `PortOpts` (port mappings), `ListOpts` (repeatable strings), `MapOpts` (key=value), `MemBytes`/`MemSwapBytes` (memory sizes), `NanoCPUs` (CPU limits).
+**Custom flag types in opts/**: `PortOpts` (port mappings), `ListOpts` (repeatable strings), `MapOpts` (key=value), `MemBytes`/`MemSwapBytes` (memory sizes), `NanoCPUs` (CPU limits), `NetworkOpt` (advanced `--network` syntax with `NetworkAttachmentOpts`).
 
 **BuildConfigs validation**: `--memory-swap` requires `--memory`; `--no-healthcheck` conflicts with `--health-*`; `--restart` (except "no") conflicts with `--rm`.
 
