@@ -140,7 +140,7 @@ Regenerate: `make generate-mocks`
 For new command tests, use `dockertest.NewFakeClient` instead of gomock.
 It composes a real `*docker.Client` backed by function-field fakes, so
 docker-layer methods (ListContainers, FindContainerByAgent, etc.) run real
-code through the whail jail.
+code through the whail jail. Used directly in Options structs or via the Cobra+Factory pattern below.
 
 ```go
 import "github.com/schmitthub/clawker/internal/docker/dockertest"
@@ -148,20 +148,13 @@ import "github.com/schmitthub/clawker/internal/docker/dockertest"
 fake := dockertest.NewFakeClient()
 fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 
-// Inject into command Options
-opts := &RunOptions{
-    Client: func(ctx context.Context) (*docker.Client, error) {
-        return fake.Client, nil
-    },
-}
-
-// After execution, verify calls
+// Inject into command Options or Factory.Client closure
 fake.AssertCalled(t, "ContainerList")
 ```
 
-**Setup helpers**: `SetupContainerList(...)`, `SetupFindContainer(name, summary)`, `SetupImageExists(ref, bool)`
+**Setup helpers**: `SetupContainerList(...)`, `SetupFindContainer(name, summary)`, `SetupImageExists(ref, bool)`, `SetupContainerCreate()`, `SetupContainerStart()`, `SetupVolumeExists()`, `SetupNetworkExists()`
 
-**Fixtures**: `ContainerFixture(project, agent, image)`, `RunningContainerFixture(project, agent)`
+**Fixtures**: `ContainerFixture(project, agent, image)`, `RunningContainerFixture(project, agent)`, `MinimalCreateOpts()`, `MinimalStartOpts()`, `ImageSummaryFixture()`
 
 **Assertions**: `AssertCalled(t, method)`, `AssertNotCalled(t, method)`, `AssertCalledN(t, method, n)`, `Reset()`
 
@@ -169,6 +162,38 @@ fake.AssertCalled(t, "ContainerList")
 - Real docker-layer code runs (label filtering, name parsing)
 - No codegen needed (`make generate-mocks` not required)
 - Function-field pattern matches Options struct injection
+
+### Command-Level Testing (Cobra+Factory Pattern)
+
+The canonical pattern for testing commands end-to-end without Docker daemon. Uses `dockertest.FakeClient` within a faked `*cmdutil.Factory`, passed to `NewCmd(f, nil)` — `nil` runF means the real run function executes.
+
+```go
+func TestRunRun(t *testing.T) {
+    t.Run("detached mode prints container ID", func(t *testing.T) {
+        fake := dockertest.NewFakeClient()
+        fake.SetupContainerCreate()
+        fake.SetupContainerStart()
+
+        f, tio := testFactory(t, fake) // per-package helper
+        cmd := NewCmdRun(f, nil)       // nil runF → real run function
+
+        cmd.SetArgs([]string{"--detach", "alpine"})
+        cmd.SetIn(&bytes.Buffer{})
+        cmd.SetOut(tio.OutBuf)
+        cmd.SetErr(tio.ErrBuf)
+
+        err := cmd.Execute()
+        require.NoError(t, err)
+        fake.AssertCalled(t, "ContainerCreate")
+    })
+}
+```
+
+**Key points:**
+- `testFactory` and `testConfig` are **per-package** (not shared) — each command package creates its own
+- Factory closures must include all fields the command's run function calls (Config, Client, Settings, etc.)
+- Reference implementation: `internal/cmd/container/run/run_test.go` (`TestRunRun`)
+- See `.claude/memories/TESTING-REFERENCE.md` for full templates and rationale
 
 ### Cleanup (CRITICAL)
 

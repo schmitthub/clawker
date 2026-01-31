@@ -40,9 +40,9 @@ Within the test file:
 
 ---
 
-## runF Trapdoor Pattern
+## runF Trapdoor Pattern (Tier 1 Only)
 
-The `runF` parameter on every `NewCmd` constructor is the primary test injection point.
+The `runF` parameter on every `NewCmd` constructor intercepts the Options struct before the run function executes. **Use this for Tier 1 (flag parsing) tests only** — it validates that CLI flags map correctly to Options fields without executing any business logic. For full pipeline testing, use the Cobra+Factory Pattern below.
 
 ### Tier 1 — Flag Capture Test
 
@@ -142,25 +142,156 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
 
 ---
 
+## Cobra+Factory Pattern (Recommended for Command Tests)
+
+The canonical pattern for Tier 2 (integration) command tests. Exercises the full CLI pipeline — cobra lifecycle, real flag parsing, real run function, and real docker-layer code through whail jail — without a Docker daemon.
+
+### When to Use
+
+- Testing commands end-to-end without Docker daemon
+- Verifying Docker API calls, output formatting, error handling
+- Replacing gomock-based command tests incrementally
+
+### How It Works
+
+`NewCmd(f, nil)` — passing `nil` as `runF` means the real run function executes. The Factory is populated with faked closures that return test doubles:
+
+```go
+// testFactory constructs a minimal *cmdutil.Factory for command-level testing.
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+    t.Helper()
+    tio := iostreams.NewTestIOStreams()
+    tmpDir := t.TempDir()
+    return &cmdutil.Factory{
+        IOStreams: tio.IOStreams,
+        WorkDir:  tmpDir,
+        Client: func(_ context.Context) (*docker.Client, error) {
+            return fake.Client, nil
+        },
+        Config: func() (*config.Config, error) {
+            return testConfig(tmpDir), nil
+        },
+        Settings: func() (*config.Settings, error) {
+            return config.DefaultSettings(), nil
+        },
+        EnsureHostProxy:         func() error { return nil },
+        HostProxyEnvVar:         func() string { return "" },
+        SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
+        InvalidateSettingsCache: func() {},
+        Prompter:                func() *prompts.Prompter { return nil },
+    }, tio
+}
+
+// testConfig returns a minimal *config.Config for test use.
+func testConfig(workDir string) *config.Config {
+    hostProxyDisabled := false
+    return &config.Config{
+        Version: "1",
+        Project: "",
+        Workspace: config.WorkspaceConfig{
+            RemotePath:  "/workspace",
+            DefaultMode: "bind",
+        },
+        Security: config.SecurityConfig{
+            EnableHostProxy: &hostProxyDisabled,
+            Firewall: &config.FirewallConfig{
+                Enable: false,
+            },
+        },
+    }
+}
+```
+
+### Test Structure
+
+```go
+func TestRunRun(t *testing.T) {
+    t.Run("detached mode prints container ID", func(t *testing.T) {
+        fake := dockertest.NewFakeClient()
+        fake.SetupContainerCreate()
+        fake.SetupContainerStart()
+
+        f, tio := testFactory(t, fake)
+        cmd := NewCmdRun(f, nil) // nil runF → real run function
+
+        cmd.SetArgs([]string{"--detach", "alpine"})
+        cmd.SetIn(&bytes.Buffer{})
+        cmd.SetOut(tio.OutBuf)
+        cmd.SetErr(tio.ErrBuf)
+
+        err := cmd.Execute()
+        require.NoError(t, err)
+
+        // Assert output
+        out := tio.OutBuf.String()
+        require.Contains(t, out, "sha256:fakec")
+
+        // Assert Docker calls
+        fake.AssertCalled(t, "ContainerCreate")
+        fake.AssertCalled(t, "ContainerStart")
+    })
+
+    t.Run("container create failure returns error", func(t *testing.T) {
+        fake := dockertest.NewFakeClient()
+        fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+            return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
+        }
+
+        f, tio := testFactory(t, fake)
+        cmd := NewCmdRun(f, nil)
+        cmd.SetArgs([]string{"--detach", "alpine"})
+        cmd.SetIn(&bytes.Buffer{})
+        cmd.SetOut(tio.OutBuf)
+        cmd.SetErr(tio.ErrBuf)
+
+        err := cmd.Execute()
+        require.Error(t, err)
+        fake.AssertNotCalled(t, "ContainerStart")
+    })
+}
+```
+
+### Why This Replaces FakeCli
+
+The cobra+Factory pattern exercises the same pipeline FakeCli would test:
+- **Cobra lifecycle**: `PersistentPreRunE` → `RunE` chain runs naturally via `cmd.Execute()`
+- **Real flag parsing**: cobra parses flags, `Changed()` works, mutual exclusion enforced
+- **Real run function**: `nil` runF means `runRun` (or equivalent) executes with all its logic
+- **Real docker-layer code**: `dockertest.FakeClient` composes through `whail.Engine` jail — label filtering, name generation, and middleware all run real code
+
+FakeCli would only add: (1) command routing tests (cobra's responsibility) and (2) PersistentPreRunE chain tests (simple/stable). Neither justifies the maintenance cost of a CLI test shell.
+
+### Key Points
+
+- **`testFactory` and `testConfig` are per-package** — each command package creates its own suited to its dependencies
+- **Reference implementation**: `internal/cmd/container/run/run_test.go` (`TestRunRun`)
+- Factory fields must include all closures the command's run function calls (Config, Client, Settings, etc.)
+- Use `t.TempDir()` for `WorkDir` to avoid `os.Getwd()` issues in tests
+
+---
+
 ## Which Tier to Use
 
 ```
-┌───────────────────────────────┬─────────┬─────────┬─────────┐
-│  What you're testing          │ Tier 1  │ Tier 2  │ Tier 3  │
-├───────────────────────────────┼─────────┼─────────┼─────────┤
-│  Flag default values          │   ✓     │         │         │
-│  Flag enum validation         │   ✓     │         │         │
-│  Mutual flag exclusion        │   ✓     │         │         │
-│  Required/positional args     │   ✓     │         │         │
-│  TTY vs non-TTY output        │         │   ✓     │         │
-│  Docker API call parameters   │         │   ✓     │   ✓     │
-│  Output formatting            │         │   ✓     │         │
-│  Error messages to user       │         │   ✓     │         │
-│  Container naming logic       │         │   ✓     │   ✓     │
-│  Data transformation          │         │         │   ✓     │
-│  Edge cases in domain logic   │         │         │   ✓     │
-└───────────────────────────────┴─────────┴─────────┴─────────┘
+┌───────────────────────────────┬─────────┬──────────────────┬─────────┐
+│  What you're testing          │ Tier 1  │ Tier 2           │ Tier 3  │
+│                               │ runF    │ Cobra+Factory    │ Direct  │
+├───────────────────────────────┼─────────┼──────────────────┼─────────┤
+│  Flag default values          │   ✓     │                  │         │
+│  Flag enum validation         │   ✓     │                  │         │
+│  Mutual flag exclusion        │   ✓     │                  │         │
+│  Required/positional args     │   ✓     │                  │         │
+│  TTY vs non-TTY output        │         │   ✓              │         │
+│  Docker API call parameters   │         │   ✓              │   ✓     │
+│  Output formatting            │         │   ✓              │         │
+│  Error messages to user       │         │   ✓              │         │
+│  Container naming logic       │         │   ✓              │   ✓     │
+│  Data transformation          │         │                  │   ✓     │
+│  Edge cases in domain logic   │         │                  │   ✓     │
+└───────────────────────────────┴─────────┴──────────────────┴─────────┘
 ```
+
+**Tier 2 uses the Cobra+Factory pattern** — see section above for full details and templates.
 
 ---
 

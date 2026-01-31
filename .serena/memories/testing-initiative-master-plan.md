@@ -36,6 +36,7 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 | 7 | Factory constructor separation | `internal/cmd/factory/` constructor, `internal/cmdutil/` struct — enables test injection |
 | 8 | Phase 2 reduced to pure functions only | `internal/docker/` likely needs refactoring; mock-heavy tests for orchestration methods would be wasted. 5 pure functions with real logic tested instead. |
 | 9 | Composite fake over interface extraction for docker.Client | `docker.Client` is a concrete struct with 11+ methods; extracting a 45+ method interface would touch 35+ command files. Composing `whailtest.FakeAPIClient` into a real `*docker.Client` gives better coverage (real docker-layer code runs) with zero risk to existing code. |
+| 10 | Cancel FakeCli — cobra+Factory pattern sufficient | `NewCmd(f, nil)` with faked Factory closures exercises the full CLI pipeline (cobra lifecycle, real flag parsing, real run function, real docker-layer code through whail jail). FakeCli would only add command routing (cobra's job) and PersistentPreRunE chain tests (simple/stable). Maintenance cost not justified. |
 
 ---
 
@@ -48,7 +49,7 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 | 3 | `internal/docker/dockertest/` | `dockertest.FakeClient` (docker.Client method fakes) | `docker.Client` methods | **COMPLETE** |
 | 4 | `internal/cmd/*/` command tests | Function-field fakes on Options structs via `runF` | Options struct function refs | NOT STARTED |
 | 5 | Golden file tests | File-based output snapshots | CLI stdout/stderr | NOT STARTED |
-| 6 | `FakeCli` integration | Top-level CLI test shell (Docker CLI pattern) | Full CLI pipeline | NOT STARTED |
+| 6 | `FakeCli` integration | Top-level CLI test shell (Docker CLI pattern) | Full CLI pipeline | **CANCELLED** |
 
 ### Phase Details
 
@@ -91,9 +92,13 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 - File-based output snapshots for CLI commands
 - Detect unintended output changes in CI
 
-**Phase 6 — FakeCli (NOT STARTED)**
-- Top-level test shell factory (Docker CLI pattern)
-- Full CLI pipeline testing without Docker daemon
+**Phase 6 — FakeCli (CANCELLED)**
+- **Rationale:** The cobra+Factory pattern (proven in Phase 4a) already covers the full CLI pipeline.
+  `NewCmdRun(f, nil)` exercises real run functions through cobra with real flag parsing, workspace setup,
+  and Docker calls via `dockertest.FakeClient`. FakeCli would only add command routing tests (cobra's own
+  responsibility) and PersistentPreRunE chain tests (simple/stable code). The overhead of building and
+  maintaining a CLI test shell is not justified given the coverage already achieved.
+- See Decision #10 in Decision Log.
 
 ---
 
