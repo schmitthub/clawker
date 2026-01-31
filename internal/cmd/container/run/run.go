@@ -27,7 +27,7 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams               *iostreams.IOStreams
+	IOStreams                *iostreams.IOStreams
 	Client                  func(context.Context) (*docker.Client, error)
 	Config                  func() (*config.Config, error)
 	Settings                func() (*config.Settings, error)
@@ -36,14 +36,15 @@ type RunOptions struct {
 	InvalidateSettingsCache func()
 	EnsureHostProxy         func() error
 	HostProxyEnvVar         func() string
+	WorkDir                 string
 
 	// Run-specific options
-	Detach bool // Run in background
+	Detach bool
 
-	// Internal (resolved from ContainerOptions)
-	AgentName string // Resolved container name or id
+	// Computed fields (set during execution)
+	AgentName string
 
-	// flags stores the pflag.FlagSet for detecting explicitly changed flags
+	// Internal (set by RunE before calling runRun)
 	flags *pflag.FlagSet
 }
 
@@ -61,6 +62,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		InvalidateSettingsCache: f.InvalidateSettingsCache,
 		EnsureHostProxy:         f.EnsureHostProxy,
 		HostProxyEnvVar:         f.HostProxyEnvVar,
+		WorkDir:                 f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -198,6 +200,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
+		WorkDir:      opts.WorkDir,
 	})
 	if err != nil {
 		return err

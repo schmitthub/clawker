@@ -19,6 +19,9 @@ type SetupMountsConfig struct {
 	Config *config.Config
 	// AgentName is the agent name for volume naming
 	AgentName string
+	// WorkDir is the host working directory for workspace mounts.
+	// If empty, falls back to os.Getwd() for backward compatibility.
+	WorkDir string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -29,10 +32,14 @@ type SetupMountsConfig struct {
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error) {
 	var mounts []mount.Mount
 
-	// Get host path (current working directory)
-	hostPath, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	// Get host path (working directory)
+	hostPath := cfg.WorkDir
+	if hostPath == "" {
+		var err error
+		hostPath, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get working directory: %w", err)
+		}
 	}
 
 	// Determine workspace mode (CLI flag overrides config default)

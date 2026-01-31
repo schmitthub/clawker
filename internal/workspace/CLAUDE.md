@@ -2,6 +2,9 @@
 
 Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials, SSH agent, and Docker socket forwarding.
 
+## TODO
+- [ ] Consider migrating this into docker pkg, seems to fit there better.
+
 ## Strategy Pattern
 
 ```go
@@ -31,12 +34,19 @@ func NewSnapshotStrategy(cfg Config) *SnapshotStrategy
 ## Mount Setup
 
 ```go
-func SetupMounts(ctx context.Context, cfg SetupMountsConfig) ([]mount.Mount, error)
+type SetupMountsConfig struct {
+    ModeOverride string        // CLI flag value (empty = use config default)
+    Config       *config.Config
+    AgentName    string
+    WorkDir      string        // Host working directory (empty = os.Getwd() fallback)
+}
+
+func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error)
 func GetConfigVolumeMounts(cfg *config.Config) []mount.Mount
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, cfg *config.Config) ([]string, error)
 ```
 
-`SetupMounts` is the main entry point — combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list.
+`SetupMounts` is the main entry point — combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 ## Git Credentials
 

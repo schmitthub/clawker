@@ -78,10 +78,14 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 - 16 smoke tests across 7 test functions in `fake_client_test.go`
 - Branch: `a/docker-internal-testing`
 
-**Phase 4 — Command test migration (NOT STARTED)**
-- Replace GoMock-based command tests with function-field fakes
-- Inject through existing `runF` hook on Options structs
-- ~60+ tests to migrate incrementally
+**Phase 4 — Command test migration (IN PROGRESS — Phase 4a complete)**
+- Phase 4a (branch `a/command-tests`): dockertest expansion + container/run proof-of-concept
+  - Task 0: Added `WorkDir` to `SetupMountsConfig` for testability (removes `os.Getwd()` call)
+  - Task 1: Fixed `NewFakeClient` label bug (volume/network/image inspect defaults now use `com.clawker` labels); added 5 new helpers: `SetupContainerCreate`, `SetupContainerStart`, `SetupVolumeExists`, `SetupNetworkExists`, `SetupImageList`; plus `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture` test fixtures
+  - Task 2: Proof-of-concept `TestRunRun` with cobra+fake Factory pattern (3 subtests: detached mode, create failure, start failure)
+  - Task 3: Migrated `TestImageArg` `@ symbol resolution` from gomock to dockertest; removed gomock import from `run_test.go`
+- Canonical test pattern: cobra cmd.Execute() with faked Factory closures (no runF bypass)
+- ~55+ remaining tests to migrate incrementally
 
 **Phase 5 — Golden file tests (NOT STARTED)**
 - File-based output snapshots for CLI commands
@@ -120,3 +124,9 @@ This ensures each task gets a fresh context window. Each task is designed to be 
 - **Phase 3**: `FindContainerByName` (whail Engine method) uses `ContainerList` with name filter + `ContainerInspect` for management check — `SetupFindContainer` must configure both Fn fields
 - **Phase 3**: No import cycles: `internal/docker/dockertest` → `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean; `internal/cmd/*/` → `internal/docker/dockertest` will also be clean for Phase 4
 - **Phase 3**: `dockertest` test file uses `package dockertest_test` (external) — tests only exercise public API, validating the consumer experience
+- **Phase 4a**: `workspace.SetupMounts` previously called `os.Getwd()` internally — added `WorkDir` field to `SetupMountsConfig` with empty-string fallback to `os.Getwd()` for backward compat
+- **Phase 4a**: `NewFakeClient` had latent label bug: only overrode `ContainerInspectFn`, leaving volume/network/image inspect with whailtest's `com.whailtest.managed` labels. Fixed all four inspect defaults.
+- **Phase 4a**: Cobra+Factory test pattern works: `NewCmdRun(f, nil)` + `cmd.Execute()` exercises the real `runRun` with all flag parsing, `Changed()` support, and workspace setup. No runF bypass needed.
+- **Phase 4a**: Default `NewFakeClient` volume/network inspect defaults are sufficient for `EnsureConfigVolumes` and `EnsureNetwork` flows — volumes appear to "already exist", network appears managed.
+- **Phase 4a**: `config.FirewallConfig.Enable` is `bool` (not `*bool`), while `SecurityConfig.EnableHostProxy` is `*bool` — inconsistent nullability
+- **Phase 4a**: The `*copts.ContainerOptions` embedded field promotes fields to parent structs (e.g., `opts.Agent`). When re-writing struct with `replace_symbol_body`, must keep anonymous embedding syntax (`*copts.ContainerOptions` not `ContainerOptions *copts.ContainerOptions`)

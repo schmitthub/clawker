@@ -18,8 +18,13 @@ import (
 	"context"
 	"testing"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
+	dockerimage "github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	moby "github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -67,6 +72,55 @@ func NewFakeClient() *FakeClient {
 				Config: &container.Config{
 					Labels: map[string]string{
 						docker.LabelManaged: docker.ManagedLabelValue,
+					},
+				},
+			},
+		}, nil
+	}
+
+	// Override whailtest's default VolumeInspect to return clawker labels.
+	// Without this, EnsureVolume/IsVolumeManaged would see "com.whailtest.managed"
+	// labels and fail management checks.
+	fakeAPI.VolumeInspectFn = func(_ context.Context, name string, _ moby.VolumeInspectOptions) (moby.VolumeInspectResult, error) {
+		return moby.VolumeInspectResult{
+			Volume: volume.Volume{
+				Name: name,
+				Labels: map[string]string{
+					docker.LabelManaged: docker.ManagedLabelValue,
+				},
+			},
+		}, nil
+	}
+
+	// Override whailtest's default NetworkInspect to return clawker labels.
+	// Without this, EnsureNetwork/IsNetworkManaged would see "com.whailtest.managed"
+	// labels and fail management checks.
+	fakeAPI.NetworkInspectFn = func(_ context.Context, name string, _ moby.NetworkInspectOptions) (moby.NetworkInspectResult, error) {
+		return moby.NetworkInspectResult{
+			Network: network.Inspect{
+				Network: network.Network{
+					Name: name,
+					ID:   "net-" + name,
+					Labels: map[string]string{
+						docker.LabelManaged: docker.ManagedLabelValue,
+					},
+				},
+			},
+		}, nil
+	}
+
+	// Override whailtest's default ImageInspect to return clawker labels.
+	// Without this, isManagedImage/ImageRemove would see "com.whailtest.managed"
+	// labels and fail management checks.
+	fakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...moby.ImageInspectOption) (moby.ImageInspectResult, error) {
+		return moby.ImageInspectResult{
+			InspectResponse: dockerimage.InspectResponse{
+				ID: ref,
+				Config: &dockerspec.DockerOCIImageConfig{
+					ImageConfig: ocispec.ImageConfig{
+						Labels: map[string]string{
+							docker.LabelManaged: docker.ManagedLabelValue,
+						},
 					},
 				},
 			},

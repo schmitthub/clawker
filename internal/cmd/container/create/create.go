@@ -23,7 +23,7 @@ import (
 type CreateOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams               *iostreams.IOStreams
+	IOStreams                *iostreams.IOStreams
 	Client                  func(context.Context) (*docker.Client, error)
 	Config                  func() (*config.Config, error)
 	Settings                func() (*config.Settings, error)
@@ -32,6 +32,7 @@ type CreateOptions struct {
 	InvalidateSettingsCache func()
 	EnsureHostProxy         func() error
 	HostProxyEnvVar         func() string
+	WorkDir                 string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
 	flags *pflag.FlagSet
@@ -51,6 +52,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		InvalidateSettingsCache: f.InvalidateSettingsCache,
 		EnsureHostProxy:         f.EnsureHostProxy,
 		HostProxyEnvVar:         f.HostProxyEnvVar,
+		WorkDir:                 f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -185,6 +187,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
+		WorkDir:      opts.WorkDir,
 	})
 	if err != nil {
 		return err
