@@ -13,10 +13,10 @@ description: Code style guidelines for the clawker codebase
 - Never use `logger.Fatal()` in Cobra hooks — return errors instead
 
 ## Whail Client Enforcement
-- No package imports `github.com/moby/moby/client` directly except `pkg/whail`
+- No package imports APIClient from `github.com/moby/moby/client` directly except `pkg/whail`
 - No package imports `pkg/whail` directly except `internal/docker`
 - `pkg/whail` decorates moby client, exposing the same interface — all moby methods available through whail
-- In tests: use `whail.ImageListResult`, `whail.ImageSummary` etc. from `pkg/whail/types.go`, never import moby types
+- It is ok to import `github.com/moby/moby/api/types` and related types directly as needed
 
 ## Output Conventions
 - User output: `cmdutil.PrintError()`, `cmdutil.PrintNextSteps()` → stderr

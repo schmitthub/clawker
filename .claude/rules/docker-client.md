@@ -5,7 +5,7 @@ paths: ["internal/docker/**", "pkg/whail/**"]
 
 # Docker Client Rules
 
-- Never import `github.com/moby/moby/client` outside `pkg/whail`
+- Never import `APIClient` from `github.com/moby/moby/client` outside `pkg/whail`
 - Never import `pkg/whail` outside `internal/docker`
 - Per-operation `context.Context` as first parameter — never store context in structs
 - Use `context.Background()` in deferred cleanup (original context may be cancelled)

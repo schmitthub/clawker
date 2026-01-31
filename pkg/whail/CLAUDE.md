@@ -2,6 +2,10 @@
 
 Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — **no other package may import moby directly**.
 
+## TODO
+- [ ] Remove type refs and allow callers to use moby types directly
+
+
 ## Architecture
 
 ```

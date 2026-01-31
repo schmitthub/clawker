@@ -1,6 +1,6 @@
 # Phase 2: internal/docker/ Testing Plan
 
-Detailed sub-plan for the testing initiative Phase 2. Tests `internal/docker/` methods using `whailtest.FakeAPIClient` injected through `whail.NewFromExisting`.
+Detailed sub-plan for the testing initiative Phase 2. Pure function unit tests for `internal/docker/` — no mocks, no Docker dependency.
 
 **Branch:** `a/docker-internal-testing`
 **Parent memory:** `testing-initiative-master-plan`
@@ -12,10 +12,7 @@ Detailed sub-plan for the testing initiative Phase 2. Tests `internal/docker/` m
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: Pure function tests | `pending` | — |
-| Task 2: Build output parsing tests | `pending` | — |
-| Task 3: Client methods with faked engine | `pending` | — |
-| Task 4: Volume methods with faked engine | `pending` | — |
+| Task 1: Pure function unit tests (5 functions) | `complete` | Claude Opus 4.5 |
 
 ---
 
@@ -27,242 +24,113 @@ Detailed sub-plan for the testing initiative Phase 2. Tests `internal/docker/` m
 | `names_test.go` | 100% | Container/volume naming conventions |
 | `opts_test.go` | 100% | Container options building |
 | `client_integration_test.go` | Partial | Integration tests (requires Docker) |
-| `client.go` | **Partial** | 11 methods/functions, many untested at unit level |
-| `volume.go` | **ZERO** | 6 functions/methods, no unit tests |
+| `client_test.go` | NEW | `parseContainers` (6 subtests), `isNotFoundError` (8 subtests) |
+| `volume_test.go` | NEW | `matchPattern` (12 subtests), `shouldIgnore` (11 subtests), `LoadIgnorePatterns` (4 subtests) |
+| `client.go` | **Partial** | Pure functions now tested; orchestration methods deferred |
+| `volume.go` | **Partial** | Pure functions now tested; `EnsureVolume`/`CopyToVolume`/`createTarArchive` deferred |
 
-## Target Functions/Methods
+## Audit Summary (Jan 30 2025)
 
-### client.go — Untested
+Package likely needs refactoring — comprehensive mock-heavy tests for orchestration methods would be wasted effort.
+Scope reduced to **pure function unit tests only**. No mocks, no FakeAPIClient, no Docker dependency.
 
-| Symbol | Type | Mock Needs |
-|--------|------|------------|
-| `parseContainers` | Function | None (pure) |
-| `isNotFoundError` | Function | None (pure) |
-| `(*Client).IsMonitoringActive` | Method | FakeAPIClient (ContainerListFn — bypasses whail) |
-| `(*Client).ImageExists` | Method | FakeAPIClient (ImageInspectFn — bypasses whail) |
-| `(*Client).ListContainers` | Method | FakeAPIClient (ContainerListFn — through whail) |
-| `(*Client).ListContainersByProject` | Method | FakeAPIClient (ContainerListFn — through whail) |
-| `(*Client).FindContainerByAgent` | Method | FakeAPIClient (ContainerListFn — through whail) |
-| `(*Client).BuildImage` | Method | FakeAPIClient (ImageBuildFn) |
-| `(*Client).processBuildOutput` | Method | io.Reader only (no Docker) |
-| `(*Client).processBuildOutputQuiet` | Method | io.Reader only (no Docker) |
-| `(*Client).RemoveContainerWithVolumes` | Method | FakeAPIClient (multi-method: ContainerInspect, ContainerRemove, VolumeList, VolumeRemove) |
+### In Scope — 5 Pure Functions
 
-### volume.go — Untested (ALL)
+| Symbol | File | Why It Matters |
+|--------|------|---------------|
+| `parseContainers` | client.go | Label extraction, slash stripping. Silent empty strings if label constants change. |
+| `isNotFoundError` | client.go | Error classification controlling fatal vs ignorable in cleanup paths. |
+| `shouldIgnore` | volume.go | Gitignore-style matching for `.clawkerignore`. Wrong files copied if broken. |
+| `matchPattern` | volume.go | `**`, `*`, basename, prefix matching. Core logic for ignore filtering. |
+| `LoadIgnorePatterns` | volume.go | File parsing (comments, blanks, defaults). Patterns silently disappear if broken. |
 
-| Symbol | Type | Mock Needs |
-|--------|------|------------|
-| `(*Client).EnsureVolume` | Method | FakeAPIClient (VolumeInspect, VolumeCreate) |
-| `(*Client).CopyToVolume` | Method | FakeAPIClient (ContainerCreate, CopyToContainer, ContainerRemove) + tar creation |
-| `createTarArchive` | Function | None (pure — filesystem + io) |
-| `shouldIgnore` | Function | None (pure) |
-| `matchPattern` | Function | None (pure) |
-| `LoadIgnorePatterns` | Function | None (pure — filesystem read) |
+### Explicitly Deferred (refactoring expected)
 
----
-
-## Test Helper Pattern
-
-All tests requiring a Docker client use this pattern:
-
-```go
-// newTestClient creates a docker.Client backed by a FakeAPIClient for unit testing.
-// Configure fake.XxxFn fields before calling client methods.
-func newTestClient(t *testing.T) (*Client, *whailtest.FakeAPIClient) {
-    t.Helper()
-    fake := whailtest.NewFakeAPIClient()
-    engine := whail.NewFromExisting(fake,
-        whail.WithLabelPrefix("com.clawker"),
-        whail.WithManagedLabel("managed"),
-    )
-    client := &Client{Engine: engine}
-    return client, fake
-}
-```
-
-**Key insight:** `docker.Client` embeds `*whail.Engine`. Some methods call the moby API directly via `c.Engine.Client()` (bypassing whail jail), while others call whail methods (which go through jail logic). Both ultimately hit the same `FakeAPIClient` Fn fields.
-
-- **APIClient-direct:** `IsMonitoringActive`, `ImageExists` — call `c.Engine.Client().ContainerList(...)` / `c.Engine.Client().ImageInspect(...)` directly
-- **Whail-delegating:** `ListContainers`, `FindContainerByAgent`, `BuildImage`, `RemoveContainerWithVolumes`, `EnsureVolume`, `CopyToVolume` — call whail methods which apply jail logic (labels, filters)
+| Symbol | Reason |
+|--------|--------|
+| `ListContainers`, `ListContainersByProject` | 5-line wrappers; mock test just re-tests `parseContainers` |
+| `BuildImage`, `RemoveContainerWithVolumes` | Orchestration glue, likely to change |
+| `EnsureVolume`, `CopyToVolume` | "Mock always passes" — tests verify Go's `if` statement |
+| `ImageExists`, `IsMonitoringActive`, `FindContainerByAgent` | Thin wrappers; error classification covered by `isNotFoundError` |
+| `processBuildOutput`, `processBuildOutputQuiet` | Worth testing but cut to keep scope minimal |
+| `createTarArchive` | Worth testing but cut — filesystem + tar, higher effort |
 
 ---
 
-## Task 1: Pure Function Tests
+## Test Approach
 
-**Creates:** `internal/docker/client_test.go` (new unit test file, no build tag)
+**No mocks, no FakeAPIClient, no Docker dependency.** All 5 functions are pure — they take inputs and return outputs with no side effects beyond filesystem reads (`LoadIgnorePatterns`).
+
+- Test file: `internal/docker/client_test.go` (pure functions from client.go) and `internal/docker/volume_test.go` (pure functions from volume.go)
+- Package: `package docker` (internal — access unexported functions)
+- Pattern: table-driven subtests with `t.Run`
+- Filesystem tests: use `t.TempDir()` for `LoadIgnorePatterns`
+
+---
+
+## Task 1: Pure Function Unit Tests
+
+**Creates/modifies:** `internal/docker/client_test.go`, `internal/docker/volume_test.go`
 **Mock needs:** None — all pure functions
+**Single task — completes Phase 2.**
 
 ### Test Table
 
-| Test | Function | Subtests |
-|------|----------|----------|
-| `TestParseContainers` | `parseContainers` | empty list; single container; multiple containers; missing labels graceful |
-| `TestIsNotFoundError` | `isNotFoundError` | nil error; non-not-found error; errdefs.NotFoundError; wrapped not-found |
-| `TestShouldIgnore` | `shouldIgnore` | empty patterns; exact match; glob match; no match; `.git` default |
-| `TestMatchPattern` | `matchPattern` | exact match; wildcard; directory glob; no match; case sensitivity |
-| `TestLoadIgnorePatterns` | `LoadIgnorePatterns` | file not found (returns defaults); valid file; comments stripped; empty lines stripped |
-| `TestCreateTarArchive` | `createTarArchive` | single file; multiple files; respects ignore patterns; empty directory |
+| Test | Function | File | Subtests |
+|------|----------|------|----------|
+| `TestParseContainers` | `parseContainers` | client_test.go | empty list; single container; multiple containers; missing labels graceful |
+| `TestIsNotFoundError` | `isNotFoundError` | client_test.go | nil error; non-not-found error; errdefs.NotFoundError; wrapped not-found |
+| `TestShouldIgnore` | `shouldIgnore` | volume_test.go | empty patterns; exact match; glob match; no match; `.git` default |
+| `TestMatchPattern` | `matchPattern` | volume_test.go | exact match; wildcard; directory glob `**`; no match; case sensitivity; basename |
+| `TestLoadIgnorePatterns` | `LoadIgnorePatterns` | volume_test.go | file not found (returns defaults); valid file; comments stripped; empty lines stripped |
 
 ### Implementation Notes
 
-- `parseContainers` takes `[]container.Summary` and returns `[]Container` — need to construct input with labels `com.clawker.project`, `com.clawker.agent`
-- `isNotFoundError` uses `errdefs.IsNotFound()` from moby — check exact import
+- `parseContainers` takes `[]container.Summary` → `[]Container` — construct input with labels `com.clawker.project`, `com.clawker.agent`
+- `isNotFoundError` uses `errdefs.IsNotFound()` from moby — check exact import path
 - `shouldIgnore`/`matchPattern`/`LoadIgnorePatterns` are in `volume.go`
-- `createTarArchive` needs a temp directory with test files — use `t.TempDir()`
+- `LoadIgnorePatterns` needs `t.TempDir()` for filesystem tests
+- All use `package docker` (internal) for access to unexported functions
 
 ### Acceptance Criteria
 
 ```bash
-go test ./internal/docker/ -v -run "TestParseContainers|TestIsNotFoundError|TestShouldIgnore|TestMatchPattern|TestLoadIgnorePatterns|TestCreateTarArchive" -count=1
+go test ./internal/docker/ -v -run "TestParseContainers|TestIsNotFoundError|TestShouldIgnore|TestMatchPattern|TestLoadIgnorePatterns" -count=1
 go test ./internal/docker/... -count=1
+go test ./... -count=1  # no regressions
 ```
 
 ### Wrap Up
 1. Update Progress Tracker: Task 1 → `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
-
-> **Next agent prompt:** "Continue the docker testing initiative. Read Serena memory `internal-docker-testing-plan` — Task 1 is complete. Begin Task 2: Build output parsing tests."
-
----
-
-## Task 2: Build Output Parsing Tests
-
-**Modifies:** `internal/docker/client_test.go`
-**Mock needs:** `io.Reader` only — no Docker client needed
-
-### Test Table
-
-| Test | Method | Subtests |
-|------|--------|----------|
-| `TestProcessBuildOutput` | `processBuildOutput` | success stream; error in stream; mixed stream+error; empty stream |
-| `TestProcessBuildOutputQuiet` | `processBuildOutputQuiet` | success (no output); error in stream; returns error message |
-
-### Implementation Notes
-
-- Both methods read from `io.Reader` containing JSON-encoded `buildEvent` structs (one per line)
-- `processBuildOutput` writes stream output to `c.Engine`... actually check — it may write to an `io.Writer` parameter or use the client's IOStreams
-- `processBuildOutputQuiet` suppresses output, only returns errors
-- Create test input as `bytes.NewReader` with JSON lines:
-  ```go
-  input := `{"stream":"Step 1/3 : FROM node:20\n"}` + "\n" +
-           `{"stream":"Step 2/3 : RUN echo hello\n"}` + "\n"
-  ```
-- For error cases:
-  ```go
-  input := `{"error":"build failed","errorDetail":{"message":"build failed"}}` + "\n"
-  ```
-
-### Acceptance Criteria
-
-```bash
-go test ./internal/docker/ -v -run "TestProcessBuildOutput" -count=1
-go test ./internal/docker/... -count=1
-```
-
-### Wrap Up
-1. Update Progress Tracker: Task 2 → `complete`
-2. Append key learnings (exact processBuildOutput signature, how it handles io.Writer)
-3. **STOP.** Present handoff prompt:
-
-> **Next agent prompt:** "Continue the docker testing initiative. Read Serena memory `internal-docker-testing-plan` — Tasks 1-2 are complete. Begin Task 3: Client methods with faked engine."
-
----
-
-## Task 3: Client Methods with Faked Engine
-
-**Modifies:** `internal/docker/client_test.go`
-**Mock needs:** `whailtest.FakeAPIClient` via `newTestClient()` helper
-
-### Test Table
-
-| Test | Method | Fn Fields | Subtests |
-|------|--------|-----------|----------|
-| `TestImageExists` | `ImageExists` | `ImageInspectFn` | exists; not found; other error |
-| `TestIsMonitoringActive` | `IsMonitoringActive` | `ContainerListFn` | active (containers found); inactive (empty list); error returns false |
-| `TestListContainers` | `ListContainers` | `ContainerListFn` | empty; with containers; filters applied correctly |
-| `TestListContainersByProject` | `ListContainersByProject` | `ContainerListFn` | project filter applied; empty result |
-| `TestFindContainerByAgent` | `FindContainerByAgent` | `ContainerListFn` | found; not found; multiple (returns first) |
-| `TestBuildImage` | `BuildImage` | `ImageBuildFn` | success; build error; labels applied |
-| `TestRemoveContainerWithVolumes` | `RemoveContainerWithVolumes` | `ContainerInspectFn`, `ContainerRemoveFn`, `VolumeListFn`, `VolumeRemoveFn` | removes container + volumes; container not found; no volumes |
-
-### Implementation Notes
-
-- `ImageExists` calls `c.Engine.Client().ImageInspect(ctx, ref)` directly — bypasses whail jail
-- `IsMonitoringActive` calls `c.Engine.Client().ContainerList(ctx, opts)` directly — check exact filter it uses
-- `ListContainers` goes through whail — whail injects managed label filter. The FakeAPIClient `ContainerListFn` receives the post-injection filters
-- `FindContainerByAgent` adds agent label filter on top of managed filter
-- `BuildImage` needs `ImageBuildFn` to return an `io.ReadCloser` with JSON build events
-- `RemoveContainerWithVolumes` is complex: inspects container for mounts, removes container, lists volumes matching mount names, removes each volume
-
-### Acceptance Criteria
-
-```bash
-go test ./internal/docker/ -v -run "TestImageExists|TestIsMonitoringActive|TestListContainers|TestFindContainerByAgent|TestBuildImage|TestRemoveContainerWithVolumes" -count=1
-go test ./internal/docker/... -count=1
-```
-
-### Wrap Up
-1. Update Progress Tracker: Task 3 → `complete`
-2. Append key learnings
-3. **STOP.** Present handoff prompt:
-
-> **Next agent prompt:** "Continue the docker testing initiative. Read Serena memory `internal-docker-testing-plan` — Tasks 1-3 are complete. Begin Task 4: Volume methods with faked engine."
-
----
-
-## Task 4: Volume Methods with Faked Engine
-
-**Modifies:** `internal/docker/volume_test.go` (new file)
-**Mock needs:** `whailtest.FakeAPIClient` via `newTestClient()` helper
-
-### Test Table
-
-| Test | Method | Fn Fields | Subtests |
-|------|--------|-----------|----------|
-| `TestEnsureVolume` | `EnsureVolume` | `VolumeInspectFn`, `VolumeCreateFn` | volume exists (no create); volume not found (creates); create error |
-| `TestCopyToVolume` | `CopyToVolume` | `ContainerCreateFn`, `CopyToContainerFn`, `ContainerRemoveFn` | success; creates temp container with volume mount; copies tar; removes container; copy error cleans up |
-
-### Implementation Notes
-
-- `EnsureVolume` checks if volume exists via `VolumeInspect`, creates if not found
-- `CopyToVolume` is the most complex method:
-  1. Calls `LoadIgnorePatterns` to get ignore list
-  2. Calls `createTarArchive` to create tar of source directory
-  3. Creates a temporary container with the target volume mounted
-  4. Copies the tar archive into the container
-  5. Removes the temporary container
-- For testing `CopyToVolume`, create a real temp directory with files, but fake the Docker operations
-- The container create/copy/remove all go through whail, so FakeAPIClient Fn fields are used
-- Need to set up `ContainerCreateFn` to return a valid container ID
-- `CopyToContainerFn` should verify the tar content is correct (input-spy pattern)
-- `ContainerRemoveFn` should be called even on copy failure (cleanup)
-
-### Acceptance Criteria
-
-```bash
-go test ./internal/docker/ -v -run "TestEnsureVolume|TestCopyToVolume" -count=1
-go test ./internal/docker/... -count=1
-go test ./... -count=1  # full suite, no regressions
-```
-
-### Wrap Up
-1. Update Progress Tracker: Task 4 → `complete`
-2. Append key learnings
 3. Update `internal/docker/CLAUDE.md` with new test file references
 4. Update `testing-initiative-master-plan` memory: Phase 2 → `COMPLETE`
-5. Run final verification:
-   ```bash
-   go test ./internal/docker/... -v -count=1  # all docker tests
-   go test ./... -count=1                       # full suite
-   ```
-6. **STOP.** Inform the user Phase 2 is complete. Suggest Phase 3 (dockertest package) as next step.
+5. **STOP.** Inform the user Phase 2 is complete. Suggest Phase 3 (dockertest package) as next step.
 
 ---
 
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+### Task 1 (Jan 30 2025)
+- `matchPattern` had a bug: `**/*.ext` didn't work because the `**` handler split on `**` and did literal `HasSuffix`. Fixed by using `filepath.Match` against basename when the suffix contains wildcards. Both `**/literal.ext` and `**/*.ext` now work correctly.
+- `isNotFoundError` checks both `whail.DockerError` (via `errors.As`) and raw error strings — wrapped errors work correctly for both paths.
+- `LoadIgnorePatterns` returns `[]string{}` (not nil) on file-not-found, which is the correct behavior for callers.
+- `container.Summary.State` is a `string` type (not an enum), maps directly to `Container.Status`.
+- Docker names always have leading `/` in the API response — `parseContainers` strips it correctly.
+- New test files: `client_test.go` (8 subtests across 2 tests), `volume_test.go` (21 subtests across 3 tests). Total: 29 subtests.
+
+---
+
+## Phase 3 Completion (Jan 30 2025)
+
+Phase 3 (`internal/docker/dockertest/`) is COMPLETE. Created:
+- `fake_client.go` — `FakeClient` struct + `NewFakeClient()` + assertion wrappers
+- `helpers.go` — `ContainerFixture`, `RunningContainerFixture`, `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`
+- `fake_client_test.go` — 16 smoke tests across 7 test functions
+
+Key design: Uses `com.clawker` label prefix (not `com.whailtest`) so docker-layer methods exercise real label filtering through the whail jail. The `errNotFound` type in helpers.go satisfies `errdefs.IsNotFound` via `NotFound()` method interface.
 
 ---
 

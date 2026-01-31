@@ -17,9 +17,9 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 
 | Pattern | Source | Usage |
 |---------|--------|-------|
-| Function-field mocks | Docker CLI `fakeClient` | `whailtest.FakeAPIClient`, future `dockertest.FakeClient` |
+| Function-field mocks | Docker CLI `fakeClient` | `whailtest.FakeAPIClient`, `dockertest.FakeClient` |
 | Factory + runF seams | GitHub CLI `cmdutil.Factory` | Per-command Options structs with function references |
-| `*test` subpackage | Go stdlib (`net/http/httptest`) | `pkg/whail/whailtest/`, future `internal/docker/dockertest/` |
+| `*test` subpackage | Go stdlib (`net/http/httptest`) | `pkg/whail/whailtest/`, `internal/docker/dockertest/` |
 | Input-spy closures | Docker CLI test patterns | Assign closures to Fn fields to inspect args passed to dependencies |
 | Table-driven subtests | Go convention | All test files use `t.Run` with named subtests |
 
@@ -34,6 +34,8 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 | 5 | Tasks ordered by mock complexity | Pure functions first (instant wins), complex fakes last |
 | 6 | Keep GoMock until Phase 4 | Existing tests work; replacing them is a separate phase |
 | 7 | Factory constructor separation | `internal/cmd/factory/` constructor, `internal/cmdutil/` struct — enables test injection |
+| 8 | Phase 2 reduced to pure functions only | `internal/docker/` likely needs refactoring; mock-heavy tests for orchestration methods would be wasted. 5 pure functions with real logic tested instead. |
+| 9 | Composite fake over interface extraction for docker.Client | `docker.Client` is a concrete struct with 11+ methods; extracting a 45+ method interface would touch 35+ command files. Composing `whailtest.FakeAPIClient` into a real `*docker.Client` gives better coverage (real docker-layer code runs) with zero risk to existing code. |
 
 ---
 
@@ -42,8 +44,8 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 | Phase | Scope | Test Double | Seam Boundary | Status |
 |-------|-------|-------------|---------------|--------|
 | 1 | `pkg/whail/` | `whailtest.FakeAPIClient` | moby `client.APIClient` | **COMPLETE** |
-| 2 | `internal/docker/` | `whailtest.FakeAPIClient` via `whail.NewFromExisting` | `whail.Engine.APIClient` | **IN PROGRESS** |
-| 3 | `internal/docker/dockertest/` | `dockertest.FakeClient` (docker.Client method fakes) | `docker.Client` methods | NOT STARTED |
+| 2 | `internal/docker/` | None (pure function tests only) | N/A (reduced scope) | **COMPLETE** |
+| 3 | `internal/docker/dockertest/` | `dockertest.FakeClient` (docker.Client method fakes) | `docker.Client` methods | **COMPLETE** |
 | 4 | `internal/cmd/*/` command tests | Function-field fakes on Options structs via `runF` | Options struct function refs | NOT STARTED |
 | 5 | Golden file tests | File-based output snapshots | CLI stdout/stderr | NOT STARTED |
 | 6 | `FakeCli` integration | Top-level CLI test shell (Docker CLI pattern) | Full CLI pipeline | NOT STARTED |
@@ -58,15 +60,23 @@ Comprehensive testing overhaul for clawker, adopting patterns from Docker CLI (f
 - Branch: `a/testing` (merged)
 - Memory: `whail-testing-master-plan`
 
-**Phase 2 — internal/docker/ (IN PROGRESS)**
-- Pure function tests, build output parsing, client methods with faked engine, volume methods
+**Phase 2 — internal/docker/ (COMPLETE)**
+- Pure function unit tests for 5 functions: `parseContainers`, `isNotFoundError`, `shouldIgnore`, `matchPattern`, `LoadIgnorePatterns`
+- 29 subtests across `client_test.go` and `volume_test.go`
+- Bug fix: `matchPattern` `**/*.ext` glob matching (was doing literal HasSuffix, now uses filepath.Match)
+- Audit concluded package likely needs refactoring — mock-heavy tests for orchestration methods deferred
+- Deferred: `BuildImage`, `RemoveContainerWithVolumes`, `EnsureVolume`, `CopyToVolume`, `ListContainers`, `processBuildOutput`, `createTarArchive`, etc.
 - Branch: `a/docker-internal-testing`
 - Memory: `internal-docker-testing-plan`
 
-**Phase 3 — dockertest package (NOT STARTED)**
-- Create `internal/docker/dockertest/` with `FakeClient` struct
-- Function-field fakes for every `docker.Client` public method
-- Used by command tests (Phase 4) to avoid reaching through to whail layer
+**Phase 3 — dockertest package (COMPLETE)**
+- Created `internal/docker/dockertest/` with `FakeClient` struct
+- Composite pattern: `whailtest.FakeAPIClient` → `whail.NewFromExisting` → `&docker.Client{Engine: engine}`
+- Uses `com.clawker` label prefix (production-equivalent) so docker-layer methods run real label filtering
+- Helpers: `ContainerFixture`, `RunningContainerFixture`, `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`
+- Assertion wrappers: `AssertCalled`, `AssertNotCalled`, `AssertCalledN`, `Reset`
+- 16 smoke tests across 7 test functions in `fake_client_test.go`
+- Branch: `a/docker-internal-testing`
 
 **Phase 4 — Command test migration (NOT STARTED)**
 - Replace GoMock-based command tests with function-field fakes
@@ -104,3 +114,9 @@ This ensures each task gets a fresh context window. Each task is designed to be 
 - Module path: `github.com/schmitthub/clawker`
 - `jail_test.go` must use `package whail_test` (external) to avoid import cycle with `whailtest`
 - Integration tests use `package whail` (internal) and `//go:build integration` tag
+- **Phase 3**: `dockertest.FakeClient` must use `com.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `com.clawker.managed`; using test labels would cause zero results
+- **Phase 3**: `container.Summary.State` is `container.ContainerState` (a string typedef), not `string` — `assert.Equal` requires `string()` cast
+- **Phase 3**: `docker.Client.ImageExists` calls `c.APIClient.ImageInspect` directly (bypasses whail Engine jail) — the `errNotFound` type in `dockertest/helpers.go` must satisfy `errdefs.IsNotFound` via `NotFound()` method interface
+- **Phase 3**: `FindContainerByName` (whail Engine method) uses `ContainerList` with name filter + `ContainerInspect` for management check — `SetupFindContainer` must configure both Fn fields
+- **Phase 3**: No import cycles: `internal/docker/dockertest` → `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean; `internal/cmd/*/` → `internal/docker/dockertest` will also be clean for Phase 4
+- **Phase 3**: `dockertest` test file uses `package dockertest_test` (external) — tests only exercise public API, validating the consumer experience
