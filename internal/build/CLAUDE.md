@@ -14,9 +14,9 @@ Image building orchestration. Wraps `pkg/build` with Docker client integration.
 ```go
 type Builder struct { client, config, workDir }
 
-func NewBuilder(client *docker.Client, cfg *config.Config, workDir string) *Builder
-func (b *Builder) EnsureImage(ctx, opts) (string, error) // Build if needed
-func (b *Builder) Build(ctx, opts) (string, error)        // Always build
+func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder
+func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error  // Build if needed (skips if image exists unless ForceBuild)
+func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error         // Always build
 ```
 
 ## Build Options (`build.go`)

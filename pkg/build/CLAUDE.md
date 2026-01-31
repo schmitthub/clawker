@@ -11,6 +11,13 @@ Dockerfile generation, version management, and build configuration for clawker c
 | `versions.go` | Claude Code version resolution via npm registry |
 | `errors.go` | Error types (`NetworkError`, `RegistryError`, `ErrVersionNotFound`, etc.) |
 
+## Subpackages
+
+| Package | Purpose |
+|---------|---------|
+| `semver/` | Semantic version parsing and comparison |
+| `registry/` | npm registry client for version resolution |
+
 ## Dockerfile Generation (`dockerfile.go`)
 
 ```go
@@ -22,6 +29,9 @@ gen := build.NewProjectGenerator(config, workDir)
 gen.Generate() error                  // Generate project Dockerfile
 gen.GenerateBuildContext() error       // Create build context tar
 gen.UseCustomDockerfile() bool         // Check for custom Dockerfile
+
+// Standalone build context helper
+build.CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  // Create tar from directory for custom Dockerfiles
 ```
 
 ### DockerfileContext

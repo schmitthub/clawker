@@ -37,6 +37,7 @@ Available commands:
   clawker monitor down`,
 	}
 
+	// TODO: resources need clawker management labels
 	cmd.AddCommand(monitorinit.NewCmdInit(f, nil))
 	cmd.AddCommand(up.NewCmdUp(f, nil))
 	cmd.AddCommand(down.NewCmdDown(f, nil))

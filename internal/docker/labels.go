@@ -38,6 +38,13 @@ const (
 	LabelPurpose = LabelPrefix + "purpose"
 )
 
+// EngineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).
+// Use this when configuring the whail Engine; it adds its own dot separator.
+const EngineLabelPrefix = "com.clawker"
+
+// EngineManagedLabel is the managed label key for whail.EngineOptions.
+const EngineManagedLabel = "managed"
+
 // ManagedLabelValue is the value for the managed label.
 const ManagedLabelValue = "true"
 

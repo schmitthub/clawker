@@ -73,7 +73,10 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	}
 
 	// Pull busybox if needed
-	exists, _ := c.ImageExists(ctx, "busybox:latest")
+	exists, err := c.ImageExists(ctx, "busybox:latest")
+	if err != nil {
+		return fmt.Errorf("checking for busybox image: %w", err)
+	}
 	if !exists {
 		pullResp, err := c.APIClient.ImagePull(ctx, "busybox:latest", whail.ImagePullOptions{})
 		if err != nil {
@@ -242,21 +245,49 @@ func matchPattern(path, pattern string) bool {
 
 	// Handle ** pattern
 	if strings.Contains(pattern, "**") {
-		// Replace ** with a regex-like match
 		parts := strings.Split(pattern, "**")
 		if len(parts) == 2 {
-			return strings.HasPrefix(path, parts[0]) && strings.HasSuffix(path, parts[1])
+			prefix := parts[0]
+			suffix := parts[1]
+
+			if !strings.HasPrefix(path, prefix) {
+				return false
+			}
+
+			// Strip the leading "/" from suffix if present (e.g., "**/*.log" → suffix "/*.log" → "*.log")
+			suffixPattern := strings.TrimPrefix(suffix, "/")
+
+			// If the suffix contains wildcards, glob-match against the basename
+			if strings.Contains(suffixPattern, "*") || strings.Contains(suffixPattern, "?") {
+				matched, err := filepath.Match(suffixPattern, filepath.Base(path))
+				if err != nil {
+					logger.Warn().Err(err).Str("pattern", suffixPattern).Msg("invalid ignore pattern")
+					return false
+				}
+				return matched
+			}
+
+			// Otherwise do a literal suffix check
+			return strings.HasSuffix(path, suffix)
 		}
 	}
 
 	// Handle * pattern
 	if strings.Contains(pattern, "*") {
-		matched, _ := filepath.Match(pattern, filepath.Base(path))
+		matched, err := filepath.Match(pattern, filepath.Base(path))
+		if err != nil {
+			logger.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
+			return false
+		}
 		if matched {
 			return true
 		}
 		// Also try matching the full path
-		matched, _ = filepath.Match(pattern, path)
+		matched, err = filepath.Match(pattern, path)
+		if err != nil {
+			logger.Warn().Err(err).Str("pattern", pattern).Msg("invalid ignore pattern")
+			return false
+		}
 		return matched
 	}
 

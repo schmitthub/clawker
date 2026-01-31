@@ -117,7 +117,9 @@ client := testutil.NewTestClient(t)  // whail.Engine with test labels
 rawClient := testutil.NewRawDockerClient(t)  // Low-level Docker client
 ```
 
-### Mock Docker Client (Unit Tests)
+### Mock Docker Client (Legacy — gomock)
+
+> **For new command tests, prefer dockertest below.** Existing gomock tests will be migrated incrementally.
 
 For unit testing without Docker:
 
@@ -132,6 +134,41 @@ m.Mock.EXPECT().ImageList(gomock.Any(), gomock.Any()).Return(whail.ImageListResu
 **Fields:** `Mock` (gomock expectations), `Client` (`*docker.Client`), `Ctrl` (gomock controller)
 
 Regenerate: `make generate-mocks`
+
+### Docker Test Fakes (Recommended for New Command Tests)
+
+For new command tests, use `dockertest.NewFakeClient` instead of gomock.
+It composes a real `*docker.Client` backed by function-field fakes, so
+docker-layer methods (ListContainers, FindContainerByAgent, etc.) run real
+code through the whail jail.
+
+```go
+import "github.com/schmitthub/clawker/internal/docker/dockertest"
+
+fake := dockertest.NewFakeClient()
+fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
+
+// Inject into command Options
+opts := &RunOptions{
+    Client: func(ctx context.Context) (*docker.Client, error) {
+        return fake.Client, nil
+    },
+}
+
+// After execution, verify calls
+fake.AssertCalled(t, "ContainerList")
+```
+
+**Setup helpers**: `SetupContainerList(...)`, `SetupFindContainer(name, summary)`, `SetupImageExists(ref, bool)`
+
+**Fixtures**: `ContainerFixture(project, agent, image)`, `RunningContainerFixture(project, agent)`
+
+**Assertions**: `AssertCalled(t, method)`, `AssertNotCalled(t, method)`, `AssertCalledN(t, method, n)`, `Reset()`
+
+**Why dockertest over gomock:**
+- Real docker-layer code runs (label filtering, name parsing)
+- No codegen needed (`make generate-mocks` not required)
+- Function-field pattern matches Options struct injection
 
 ### Cleanup (CRITICAL)
 

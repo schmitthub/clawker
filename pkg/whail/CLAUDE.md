@@ -2,6 +2,10 @@
 
 Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — **no other package may import moby directly**.
 
+## TODO
+- [ ] Remove type refs and allow callers to use moby types directly
+
+
 ## Architecture
 
 ```
@@ -31,6 +35,39 @@ type DockerError struct {
     Op, Message string; Err error; NextSteps []string
 }
 func (e *DockerError) FormatUserError() string
+```
+
+## Constants
+
+```go
+const DefaultManagedLabel = "managed"  // Default label suffix for marking managed resources
+```
+
+## Composite Options Types
+
+```go
+type ContainerCreateOptions struct {
+    Config           *container.Config
+    HostConfig       *container.HostConfig
+    NetworkingConfig *network.NetworkingConfig
+    Platform         *ocispec.Platform
+    Name             string
+    ExtraLabels      Labels
+    EnsureNetwork    *EnsureNetworkOptions
+}
+
+type ContainerStartOptions struct {
+    client.ContainerStartOptions              // Embedded: CheckpointID, CheckpointDir
+    ContainerID   string
+    EnsureNetwork *EnsureNetworkOptions
+}
+
+type EnsureNetworkOptions struct {
+    client.NetworkCreateOptions               // Embedded: Driver, Options, Labels, Scope, etc.
+    Name        string
+    Verbose     bool
+    ExtraLabels Labels
+}
 ```
 
 ## Factory Functions
