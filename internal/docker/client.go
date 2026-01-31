@@ -26,8 +26,8 @@ type Client struct {
 // It configures the whail.Engine with clawker's label prefix and conventions.
 func NewClient(ctx context.Context) (*Client, error) {
 	opts := whail.EngineOptions{
-		LabelPrefix:  "com.clawker",
-		ManagedLabel: "managed",
+		LabelPrefix:  EngineLabelPrefix,
+		ManagedLabel: EngineManagedLabel,
 	}
 
 	engine, err := whail.NewWithOptions(ctx, opts)
@@ -47,6 +47,7 @@ func (c *Client) Close() error {
 // It looks for the otel-collector container on the clawker-net network.
 // Note: This method bypasses whail's label filtering because monitoring
 // containers are not clawker-managed resources.
+// TODO monitoring containers need to be given clawker labels
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	// Use raw API client to bypass managed label filtering
 	// since monitoring containers aren't clawker-managed
@@ -77,6 +78,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 // ImageExists checks if an image exists locally.
 // Returns true if the image exists, false if not found.
 // Note: This bypasses whail's label filtering since images may or may not be managed.
+// TODO: need to better understand why we'd want or need unmanaged image support
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
 	_, err := c.APIClient.ImageInspect(ctx, imageRef)
 	if err != nil {
@@ -392,6 +394,9 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 
 // isNotFoundError checks if an error indicates a resource was not found.
 func isNotFoundError(err error) bool {
+	if cerrdefs.IsNotFound(err) {
+		return true
+	}
 	var dockerErr *whail.DockerError
 	if errors.As(err, &dockerErr) {
 		return strings.Contains(dockerErr.Message, "not found") ||

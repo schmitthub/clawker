@@ -2,6 +2,10 @@
 
 Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and naming conventions.
 
+## TODO
+- [ ] This package overall seems like it needs a review and possible simplification or refactor. it seems confused at times about what its purpose is and bypasses whail at times which might not be appropriate. output parsing for example should probably be handled by command consumers using a separate parsing package etc
+- [ ] Remove type refs and allow callers to use moby types directly
+
 ## Architecture
 
 ```
@@ -17,10 +21,13 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 | File | Purpose |
 |------|---------|
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
+| `client_test.go` | Unit tests for `parseContainers`, `isNotFoundError` |
 | `labels.go` | Label constants (`com.clawker.*`), `ContainerLabels()`, `VolumeLabels()`, filter helpers |
 | `names.go` | `ContainerName()` → `clawker.project.agent`, `VolumeName()`, `ParseContainerName()`, `GenerateRandomName()` |
-| `volume.go` | `EnsureVolume()`, `CopyToVolume()` |
+| `volume.go` | `EnsureVolume()`, `CopyToVolume()`, `matchPattern()`, `shouldIgnore()`, `LoadIgnorePatterns()` |
+| `volume_test.go` | Unit tests for `matchPattern`, `shouldIgnore`, `LoadIgnorePatterns` |
 | `opts.go` | `MemBytes`, `MemSwapBytes`, `NanoCPUs`, `ParseCPUs` for Docker API use |
+| `dockertest/` | Test doubles: `FakeClient` composing `whailtest.FakeAPIClient` into real `*docker.Client` |
 
 ## Naming Convention
 
@@ -167,6 +174,23 @@ engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
 // See pkg/whail/CLAUDE.md for full whailtest API
 ```
 
+### Function-Field Fakes (dockertest — recommended for new command tests)
+
+Composes `whailtest.FakeAPIClient` into a real `*docker.Client` with clawker labels.
+Docker-layer methods (ListContainers, FindContainerByAgent, etc.) run real code through the whail jail.
+
+```go
+fake := dockertest.NewFakeClient()
+fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
+// fake.Client → inject into command Options
+// fake.FakeAPI → set Fn fields for custom behavior
+// fake.AssertCalled(t, "ContainerList")
+```
+
+Helpers: `ContainerFixture(project, agent, image)`, `RunningContainerFixture(project, agent)`,
+`SetupContainerList(...)`, `SetupFindContainer(name, summary)`, `SetupImageExists(ref, bool)`.
+
 **When to use which:**
-- **gomock** (`testutil.NewMockDockerClient`): Testing `internal/docker.Client` methods, CLI command behavior
+- **dockertest** (`dockertest.NewFakeClient`): **Recommended** for new CLI command tests — real docker-layer code runs, better coverage
+- **gomock** (`testutil.NewMockDockerClient`): Legacy — existing CLI command tests (Phase 4 migrates to dockertest)
 - **whailtest** (`whailtest.NewFakeAPIClient`): Testing whail Engine jail behavior (label injection, rejection, filtering)
