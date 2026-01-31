@@ -807,7 +807,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			return fake.Client, nil
 		},
 		Config: func() (*config.Config, error) {
-			return testConfig(tmpDir), nil
+			return testConfig(), nil
 		},
 		Settings: func() (*config.Settings, error) {
 			return config.DefaultSettings(), nil
@@ -822,7 +822,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 // testConfig returns a minimal *config.Config for test use.
 // Host proxy disabled, bind mode, empty project, firewall disabled.
-func testConfig(workDir string) *config.Config {
+func testConfig() *config.Config {
 	hostProxyDisabled := false
 	return &config.Config{
 		Version: "1",

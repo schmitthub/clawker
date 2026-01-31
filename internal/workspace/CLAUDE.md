@@ -42,8 +42,8 @@ type SetupMountsConfig struct {
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error)
-func GetConfigVolumeMounts(cfg *config.Config) []mount.Mount
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, cfg *config.Config) ([]string, error)
+func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error
 ```
 
 `SetupMounts` is the main entry point — combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
