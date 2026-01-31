@@ -150,7 +150,7 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 - Testing commands end-to-end without Docker daemon
 - Verifying Docker API calls, output formatting, error handling
-- Replacing gomock-based command tests incrementally
+- All command tests (gomock fully removed from codebase)
 
 ### How It Works
 
@@ -292,40 +292,6 @@ FakeCli would only add: (1) command routing tests (cobra's responsibility) and (
 ```
 
 **Tier 2 uses the Cobra+Factory pattern** — see section above for full details and templates.
-
----
-
-## Mock Docker Client — Full Example
-
-```go
-import (
-    "context"
-    "testing"
-
-    "github.com/schmitthub/clawker/internal/testutil"
-    "github.com/schmitthub/clawker/pkg/whail"
-    "github.com/stretchr/testify/require"
-    "go.uber.org/mock/gomock"
-)
-
-func TestImageResolution(t *testing.T) {
-    ctx := context.Background()
-    m := testutil.NewMockDockerClient(t)
-
-    m.Mock.EXPECT().
-        ImageList(gomock.Any(), gomock.Any()).
-        Return(whail.ImageListResult{
-            Items: []whail.ImageSummary{
-                {RepoTags: []string{"clawker-myproject:latest"}},
-            },
-        }, nil)
-
-    result, err := SomeFunctionThatNeedsDocker(ctx, m.Client)
-    require.NoError(t, err)
-}
-```
-
-> **Note:** The mock is generated from `github.com/moby/moby/client.APIClient`. Post-processing is required because mockgen copies unnamed variadic parameters (`_`) which is invalid Go. The Makefile handles this automatically.
 
 ---
 

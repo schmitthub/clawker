@@ -167,8 +167,7 @@ All methods accept `ctx context.Context` as first parameter. Never store context
 
 | Pattern | Package | Use Case |
 |---------|---------|----------|
-| **dockertest** (recommended) | `internal/docker/dockertest` | New CLI command tests — real docker-layer code through whail jail |
-| **gomock** (legacy) | `internal/testutil` | Existing CLI command tests (migrating to dockertest) |
+| **dockertest** (recommended) | `internal/docker/dockertest` | CLI command tests — real docker-layer code through whail jail |
 | **whailtest** | `pkg/whail/whailtest` | Testing whail Engine jail behavior directly |
 
 ```go

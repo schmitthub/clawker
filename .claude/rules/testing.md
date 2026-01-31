@@ -92,8 +92,6 @@ fake.AssertCalled(t, "ContainerList")
 
 **Assertions**: `AssertCalled`, `AssertNotCalled`, `AssertCalledN`, `Reset`
 
-> **Legacy gomock** (`testutil.NewMockDockerClient`): Existing command tests. Regenerate: `make generate-mocks`. New tests should use dockertest.
-
 ### Cobra+Factory Pattern (Command Tests)
 
 Canonical pattern for testing commands end-to-end without Docker. Uses `NewCmd(f, nil)` — nil runF means real run function executes.

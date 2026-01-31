@@ -1,8 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
         cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-staticcheck cli-install cli-clean \
-        test test-integration test-e2e acceptance test-coverage test-clean golden-update \
-        generate-mocks
+        test test-integration test-e2e acceptance test-coverage test-clean golden-update
 
 # Variables
 IMAGE_NAME ?= clawker
@@ -71,9 +70,6 @@ help:
 	@echo "Info targets:"
 	@echo "  list-versions       List available versions in versions.json"
 	@echo "  list-variants       List variants for a VERSION"
-	@echo ""
-	@echo "Code generation targets:"
-	@echo "  generate-mocks      Regenerate mock files for testing"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  clean               Remove generated Dockerfiles"
@@ -339,17 +335,3 @@ golden-update:
 	@echo "Regenerating golden files..."
 	GOLDEN_UPDATE=1 $(TEST_CMD) ./...
 
-# ============================================================================
-# Code Generation Targets
-# ============================================================================
-
-# Generate mock files for testing
-# NOTE: Post-processing is required because mockgen copies the Docker SDK's
-# unnamed variadic parameters (using `_`) which is invalid Go syntax.
-generate-mocks:
-	@echo "Generating mocks..."
-	@mkdir -p internal/docker/mocks
-	mockgen -destination internal/docker/mocks/mock_client.go -package mock github.com/moby/moby/client APIClient
-	@echo "Post-processing mocks (fixing unnamed variadic params)..."
-	sed -i '' 's/_ \.\.\.client\./opts ...client./g; s/_ \.\.\.any/opts ...any/g; s/range _ {/range opts {/g; s/}, _\.\.\.)/}, opts...)/g' internal/docker/mocks/mock_client.go
-	@echo "Mocks generated successfully!"
