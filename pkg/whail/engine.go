@@ -84,10 +84,20 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 }
 
 // NewFromExisting wraps an existing APIClient (useful for testing with mocks).
-func NewFromExisting(c client.APIClient) *Engine {
+func NewFromExisting(c client.APIClient, opts ...EngineOptions) *Engine {
+	var o EngineOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.ManagedLabel == "" {
+		o.ManagedLabel = DefaultManagedLabel
+	}
+
 	return &Engine{
-		APIClient: c,
-		// logger:    log.Default(),
+		APIClient:         c,
+		options:           o,
+		managedLabelKey:   o.LabelPrefix + "." + o.ManagedLabel,
+		managedLabelValue: "true",
 	}
 }
 

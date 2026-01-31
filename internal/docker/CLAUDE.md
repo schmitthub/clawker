@@ -145,13 +145,28 @@ Return `nil` for response channel when unmanaged. Use buffered error channels. W
 
 All methods accept `ctx context.Context` as first parameter. Never store context in structs. Use `context.Background()` in deferred cleanup.
 
-## Testing with Mocks
+## Testing
+
+### High-Level Mocks (gomock — for testing CLI commands)
 
 ```go
 m := testutil.NewMockDockerClient(t)
-// Use whail types, NOT moby types
 m.Mock.EXPECT().ImageList(gomock.Any(), gomock.Any()).Return(whail.ImageListResult{
     Items: []whail.ImageSummary{{RepoTags: []string{"clawker-myproject:latest"}}},
 }, nil)
 // m.Mock for expectations, m.Client for code under test
 ```
+
+### Low-Level Fakes (whailtest — for testing whail jail behavior)
+
+For testing whail's label isolation directly, use `pkg/whail/whailtest`:
+
+```go
+fake := whailtest.NewFakeAPIClient()
+engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
+// See pkg/whail/CLAUDE.md for full whailtest API
+```
+
+**When to use which:**
+- **gomock** (`testutil.NewMockDockerClient`): Testing `internal/docker.Client` methods, CLI command behavior
+- **whailtest** (`whailtest.NewFakeAPIClient`): Testing whail Engine jail behavior (label injection, rejection, filtering)

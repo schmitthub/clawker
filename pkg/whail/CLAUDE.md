@@ -83,8 +83,56 @@ Wait conditions: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitCondit
 
 ## Testing
 
+### Type Re-exports (always use whail types, never moby)
+
 ```go
-// In tests, always use whail types — never import moby types
 import "github.com/anthropics/clawker/pkg/whail"
 whail.ImageListResult{Items: []whail.ImageSummary{...}}
 ```
+
+### whailtest Package (`pkg/whail/whailtest/`)
+
+Test infrastructure for whail's label-based isolation without Docker. **Only `pkg/whail` and `internal/docker` should import this package.**
+
+#### FakeAPIClient
+
+Function-field test double implementing `moby/moby/client.APIClient`. Embeds nil `*client.Client` (fail-loud on unexpected calls).
+
+```go
+fake := whailtest.NewFakeAPIClient()
+// Override specific methods:
+fake.ContainerStopFn = func(ctx context.Context, id string, opts container.StopOptions) error {
+    return nil
+}
+engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
+
+// Assert calls:
+whailtest.AssertCalled(t, fake, "ContainerStop")
+whailtest.AssertNotCalled(t, fake, "ContainerRemove")
+whailtest.AssertCalledN(t, fake, "ContainerInspect", 1)
+```
+
+#### Managed/Unmanaged Resource Helpers
+
+```go
+whailtest.ManagedContainerInspect(id)    // Returns inspect with managed labels
+whailtest.UnmanagedContainerInspect(id)  // Returns inspect WITHOUT managed labels
+// Also: ManagedVolumeInspect, ManagedNetworkInspect, ManagedImageInspect
+// And:  UnmanagedVolumeInspect, UnmanagedNetworkInspect, UnmanagedImageInspect
+```
+
+#### Wait Helpers
+
+```go
+whailtest.FakeContainerWaitOK()          // Exit code 0
+whailtest.FakeContainerWaitExit(code)    // Custom exit code
+```
+
+#### Test Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| Rejection | Set unmanaged inspect → verify DockerError, `AssertNotCalled` on moby |
+| Label injection | Spy on create args → assert managed labels present |
+| Filter injection | Spy on list/prune args → assert managed filter injected |
+| Override prevention | Pass `managed=false` in labels → assert `managed=true` reaches moby |

@@ -1777,12 +1777,12 @@ func TestContainerExecResize(t *testing.T) {
 
 func TestContainerCreateWithEnsureNetwork(t *testing.T) {
 	tests := []struct {
-		name               string
-		containerName      string
-		networkName        string
-		preCreateNetwork   bool // whether to create network before container
-		shouldErr          bool
-		verifyNetworkConn  bool // whether to verify container is connected to network
+		name              string
+		containerName     string
+		networkName       string
+		preCreateNetwork  bool // whether to create network before container
+		shouldErr         bool
+		verifyNetworkConn bool // whether to verify container is connected to network
 	}{
 		{
 			name:              "should create container and connect to new network",
@@ -2041,7 +2041,6 @@ func getNetworkNames(networks map[string]*network.EndpointSettings) []string {
 	return names
 }
 
-
 // TestContainerStartWithEnsureNetworkAfterCreateWithEnsureNetwork tests the specific scenario
 // where a container is created with EnsureNetwork (which configures NetworkingConfig), then
 // stopped, and then started again with EnsureNetwork. This is the real-world flow where
@@ -2117,5 +2116,87 @@ func TestContainerStartWithEnsureNetworkAfterCreateWithEnsureNetwork(t *testing.
 	if _, ok := inspect.Container.NetworkSettings.Networks[networkName]; !ok {
 		t.Errorf("Container is not connected to network %q after second start, connected to: %v",
 			networkName, getNetworkNames(inspect.Container.NetworkSettings.Networks))
+	}
+}
+
+func TestContainerResize_RejectsUnmanaged(t *testing.T) {
+	ctx := context.Background()
+
+	name := generateContainerName("test-resize-unmanaged")
+	containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
+	defer cleanupUnmanagedContainer(ctx, t, containerID)
+
+	// Start the container so resize is meaningful
+	if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+		t.Fatalf("Failed to start container: %v", err)
+	}
+
+	_, err := testEngine.ContainerResize(ctx, containerID, 24, 80)
+	if err == nil {
+		t.Fatal("Expected error resizing unmanaged container, got nil")
+	}
+
+	var dockerErr *DockerError
+	if !isDockerError(err, &dockerErr) {
+		t.Fatalf("Expected DockerError, got %T: %v", err, err)
+	}
+}
+
+func TestExecCreate_RejectsUnmanaged(t *testing.T) {
+	ctx := context.Background()
+
+	name := generateContainerName("test-exec-unmanaged")
+	containerID := setupUnmanagedContainer(ctx, t, name, map[string]string{"other.label": "value"})
+	defer cleanupUnmanagedContainer(ctx, t, containerID)
+
+	// Start the container so exec is valid
+	if _, err := testEngine.APIClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+		t.Fatalf("Failed to start container: %v", err)
+	}
+
+	_, err := testEngine.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		Cmd: []string{"echo", "test"},
+	})
+	if err == nil {
+		t.Fatal("Expected error creating exec in unmanaged container, got nil")
+	}
+
+	var dockerErr *DockerError
+	if !isDockerError(err, &dockerErr) {
+		t.Fatalf("Expected DockerError, got %T: %v", err, err)
+	}
+}
+
+func TestContainerCreate_LabelOverridePrevention(t *testing.T) {
+	ctx := context.Background()
+
+	name := generateContainerName("test-label-override")
+
+	// Attempt to override the managed label to false via ExtraLabels
+	managedKey := testLabelPrefix + ".managed"
+	resp, err := testEngine.ContainerCreate(ctx, ContainerCreateOptions{
+		Config: &container.Config{
+			Image: testImageTag,
+			Cmd:   []string{"sleep", "300"},
+		},
+		Name: name,
+		ExtraLabels: Labels{
+			{managedKey: "false"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContainerCreate failed: %v", err)
+	}
+	defer cleanupManagedContainer(ctx, t, resp.ID)
+
+	// Inspect and verify the managed label was NOT overridden
+	inspect, err := testEngine.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatalf("ContainerInspect failed: %v", err)
+	}
+
+	got := inspect.Container.Config.Labels[managedKey]
+	if got != "true" {
+		t.Errorf("Expected managed label %q to be %q, got %q", managedKey, "true", got)
 	}
 }

@@ -29,6 +29,8 @@ func (e *Engine) NetworkCreate(ctx context.Context, name string, options client.
 	} else {
 		options.Labels = MergeLabels(options.Labels, labels)
 	}
+	// Ensure managed label cannot be overridden by extra labels.
+	options.Labels[e.managedLabelKey] = e.managedLabelValue
 
 	// Set default driver if not specified
 	if options.Driver == "" {

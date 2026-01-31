@@ -18,6 +18,8 @@ func (e *Engine) VolumeCreate(ctx context.Context, options client.VolumeCreateOp
 	} else {
 		options.Labels = MergeLabels(options.Labels, labels)
 	}
+	// Ensure managed label cannot be overridden by extra labels.
+	options.Labels[e.managedLabelKey] = e.managedLabelValue
 
 	result, err := e.APIClient.VolumeCreate(ctx, options)
 	if err != nil {
