@@ -16,6 +16,8 @@ func (e *Engine) ImageBuild(ctx context.Context, buildContext io.Reader, options
 		e.imageLabels(),
 		options.Labels,
 	)
+	// Ensure managed label cannot be overridden by caller labels.
+	optsCopy.Labels[e.managedLabelKey] = e.managedLabelValue
 
 	resp, err := e.APIClient.ImageBuild(ctx, buildContext, optsCopy)
 	if err != nil {

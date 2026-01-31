@@ -482,3 +482,39 @@ func TestVolumesPrune(t *testing.T) {
 		})
 	}
 }
+
+func TestVolumeListAll_OnlyManaged(t *testing.T) {
+	ctx := context.Background()
+
+	managedName := generateVolumeName("test-listall-managed")
+	unmanagedName := generateVolumeName("test-listall-unmanaged")
+
+	setupManagedVolume(ctx, t, managedName)
+	defer cleanupManagedVolume(ctx, t, managedName)
+
+	setupUnmanagedVolume(ctx, t, unmanagedName, map[string]string{"other.label": "value"})
+	defer cleanupUnmanagedVolume(ctx, t, unmanagedName)
+
+	resp, err := testEngine.VolumeListAll(ctx)
+	if err != nil {
+		t.Fatalf("VolumeListAll failed: %v", err)
+	}
+
+	foundManaged := false
+	foundUnmanaged := false
+	for _, vol := range resp.Items {
+		if vol.Name == managedName {
+			foundManaged = true
+		}
+		if vol.Name == unmanagedName {
+			foundUnmanaged = true
+		}
+	}
+
+	if !foundManaged {
+		t.Errorf("Expected managed volume %q to be in VolumeListAll results", managedName)
+	}
+	if foundUnmanaged {
+		t.Errorf("Unmanaged volume %q should NOT appear in VolumeListAll results", unmanagedName)
+	}
+}

@@ -94,6 +94,8 @@ func (e *Engine) ContainerCreate(ctx context.Context, opts ContainerCreateOption
 			e.containerLabels(opts.ExtraLabels...),
 			opts.Config.Labels,
 		)
+		// Ensure managed label cannot be overridden by extra or user labels.
+		configCopy.Labels[e.managedLabelKey] = e.managedLabelValue
 	}
 
 	sdkOpts := client.ContainerCreateOptions{

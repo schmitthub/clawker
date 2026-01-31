@@ -184,3 +184,79 @@ func TestAddLabelFilter(t *testing.T) {
 		t.Errorf("AddLabelFilter() should have 2 filters, got %d", len(labelFilters))
 	}
 }
+
+func TestMergeLabelFilters(t *testing.T) {
+	base := LabelFilter("base.key", "base-value")
+	extra := map[string]string{
+		"extra1": "val1",
+		"extra2": "val2",
+	}
+
+	got := MergeLabelFilters(base, extra)
+
+	labelFilters, ok := got["label"]
+	if !ok {
+		t.Fatal("MergeLabelFilters() should contain label filters")
+	}
+
+	// Should have 3 filters total: 1 base + 2 extras
+	if len(labelFilters) != 3 {
+		t.Errorf("MergeLabelFilters() should have 3 filters, got %d", len(labelFilters))
+	}
+
+	// Verify original base filter preserved
+	if _, exists := labelFilters["base.key=base-value"]; !exists {
+		t.Error("MergeLabelFilters() should preserve base filter")
+	}
+	// Verify extra filters added
+	if _, exists := labelFilters["extra1=val1"]; !exists {
+		t.Error("MergeLabelFilters() missing extra1 filter")
+	}
+	if _, exists := labelFilters["extra2=val2"]; !exists {
+		t.Error("MergeLabelFilters() missing extra2 filter")
+	}
+}
+
+func TestLabelConfig_Precedence(t *testing.T) {
+	cfg := LabelConfig{
+		Default:   map[string]string{"shared": "default", "default-only": "yes"},
+		Container: map[string]string{"shared": "container", "container-only": "yes"},
+	}
+
+	// Extra labels should override both Default and Container
+	extra := map[string]string{"shared": "extra", "extra-only": "yes"}
+	got := cfg.ContainerLabels(extra)
+
+	if got["shared"] != "extra" {
+		t.Errorf("extra labels should override config labels, got %q", got["shared"])
+	}
+	if got["default-only"] != "yes" {
+		t.Error("default-only label should be preserved")
+	}
+	if got["container-only"] != "yes" {
+		t.Error("container-only label should be preserved")
+	}
+	if got["extra-only"] != "yes" {
+		t.Error("extra-only label should be preserved")
+	}
+}
+
+func TestLabels_Merge(t *testing.T) {
+	l := Labels{
+		{"a": "1", "b": "first"},
+		{"b": "second", "c": "3"},
+		{"c": "override"},
+	}
+
+	got := l.Merge()
+
+	want := map[string]string{"a": "1", "b": "second", "c": "override"}
+	if len(got) != len(want) {
+		t.Errorf("Labels.Merge() length = %d, want %d", len(got), len(want))
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("Labels.Merge()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
