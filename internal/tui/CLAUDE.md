@@ -23,18 +23,16 @@ Reusable BubbleTea components for building terminal user interfaces in clawker.
 
 ```go
 // Colors
-tui.ColorPrimary   // Purple (#7C3AED)
-tui.ColorSuccess   // Green (#10B981)
-tui.ColorWarning   // Amber (#F59E0B)
-tui.ColorError     // Red (#EF4444)
-tui.ColorInfo      // Sky blue (#87CEEB)
-tui.ColorMuted     // Gray (#6B7280)
+tui.ColorPrimary, tui.ColorSecondary, tui.ColorSuccess, tui.ColorWarning
+tui.ColorError, tui.ColorInfo, tui.ColorMuted, tui.ColorHighlight
+tui.ColorDisabled, tui.ColorSelected, tui.ColorBorder, tui.ColorAccent
+tui.ColorBg, tui.ColorBgAlt
 
 // Component styles
 tui.HeaderStyle, tui.PanelStyle, tui.PanelActiveStyle
-tui.ListItemStyle, tui.ListItemSelectedStyle
+tui.ListItemStyle, tui.ListItemSelectedStyle, tui.ListItemDimStyle
 tui.HelpKeyStyle, tui.HelpDescStyle
-tui.BadgeStyle, tui.StatusRunningStyle, tui.StatusStoppedStyle
+tui.BadgeStyle, tui.StatusRunningStyle, tui.StatusStoppedStyle, tui.StatusErrorStyle
 ```
 
 ## Layout Helpers
@@ -124,17 +122,21 @@ func (m Model) View() string {
 
 ### Styles (`styles.go`)
 
-**Colors**: `ColorPrimary`, `ColorSecondary`, `ColorSuccess`, `ColorWarning`, `ColorError`, `ColorInfo`, `ColorMuted`, `ColorSurface`, `ColorBorder`, `ColorText`, `ColorTextDim`
+**Colors**: `ColorPrimary`, `ColorSecondary`, `ColorSuccess`, `ColorWarning`, `ColorError`, `ColorInfo`, `ColorMuted`, `ColorHighlight`, `ColorDisabled`, `ColorSelected`, `ColorBorder`, `ColorAccent`, `ColorBg`, `ColorBgAlt`
 
-**Text**: `Bold`, `Dim`, `Italic`, `Underline`, `Code`
+**Text**: `TitleStyle`, `SubtitleStyle`, `ErrorStyle`, `SuccessStyle`, `WarningStyle`, `MutedStyle`, `HighlightStyle`
 
-**Borders**: `PanelStyle`, `PanelActiveStyle`, `PanelFocusedStyle`
+**Borders**: `BorderStyle`, `BorderActiveStyle`, `BorderMutedStyle`, `PanelStyle`, `PanelActiveStyle`, `PanelTitleStyle`
 
-**Components**: `HeaderStyle`, `FooterStyle`, `ListItemStyle`, `ListItemSelectedStyle`, `TableHeaderStyle`, `TableRowStyle`
+**Components**: `HeaderStyle`, `HeaderTitleStyle`, `HeaderSubtitleStyle`, `ListItemStyle`, `ListItemSelectedStyle`, `ListItemDimStyle`
 
-**Badges**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`
+**Badges**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`, `BadgeMutedStyle`
 
-**Status**: `StatusRunningStyle`, `StatusStoppedStyle`, `StatusErrorStyle`, `StatusPendingStyle`
+**Status**: `StatusRunningStyle`, `StatusStoppedStyle`, `StatusErrorStyle`, `StatusWarningStyle`, `StatusInfoStyle`
+
+**Other**: `LabelStyle`, `ValueStyle`, `CountStyle`, `DividerStyle`, `EmptyStateStyle`, `HelpKeyStyle`, `HelpDescStyle`, `HelpSeparatorStyle`
+
+**Functions**: `StatusStyle(status)`, `StatusText(status)`, `StatusIndicator(status)`
 
 ### Keys (`keys.go`)
 
@@ -156,7 +158,7 @@ func (m Model) View() string {
 
 `SpinnerModel`, `NewSpinner(spinnerType, label)`, `NewDefaultSpinner(label)`
 
-Spinner types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDot`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`, `SpinnerMeter`
+Spinner types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDots`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`
 
 ### Layout (`layout.go`)
 

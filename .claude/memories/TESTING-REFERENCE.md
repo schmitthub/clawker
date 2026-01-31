@@ -535,6 +535,62 @@ if len(errs) > 0 {
 
 ---
 
+## Cross-Phase Learnings (Testing Initiative)
+
+Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
+
+### Moby API Quirks
+
+- `client.Filters` is `map[string]map[string]bool` — label entries stored as `"key=value": true` under `"label"` key
+- `Filters.Add()` returns a new Filters (immutable) — must capture return value
+- `ContainerWait` returns `ContainerWaitResult` (no error), containing Result/Error channels
+- `ImageInspect` uses variadic options: `ImageInspect(ctx, ref, ...ImageInspectOption)`
+- `container.Summary.State` is `container.ContainerState` (string typedef) — `assert.Equal` requires `string()` cast
+- Docker names always have leading `/` in API responses
+- `ContainerInspectResult` wraps response — labels at `inspect.Container.Config.Labels`
+- `VolumeListAll` delegates to `VolumeList` — both return `VolumeListResult` with `.Items`
+- `config.FirewallConfig.Enable` is `bool` (not `*bool`), while `SecurityConfig.EnableHostProxy` is `*bool` — inconsistent nullability
+
+### FakeAPIClient Pattern
+
+- Embeds nil `*client.Client` for unexported moby interface methods — unoverridden methods panic (fail-loud)
+- Module path: `github.com/schmitthub/clawker`
+- Container labels at `InspectResponse.Config.Labels`, volume at `Volume.Labels`, network at `Network.Labels`, image at `InspectResponse.Config.Labels` (OCI ImageConfig)
+
+### dockertest (Composite Fake) Pattern
+
+- Must use `com.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `com.clawker.managed`; using test labels would cause zero results
+- `docker.Client.ImageExists` calls `c.APIClient.ImageInspect` directly (bypasses whail Engine jail) — the `errNotFound` type must satisfy `errdefs.IsNotFound` via `NotFound()` method
+- `FindContainerByName` uses `ContainerList` + `ContainerInspect` — `SetupFindContainer` must configure both Fn fields
+- No import cycles: `internal/docker/dockertest` -> `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean
+
+### Cobra+Factory Test Pattern
+
+- `NewCmd(f, nil)` with faked Factory closures exercises full CLI pipeline (cobra lifecycle, real flag parsing, real run function, real docker-layer code through whail jail)
+- Default `NewFakeClient` volume/network inspect defaults sufficient for `EnsureConfigVolumes` and `EnsureNetwork` flows
+- `workspace.SetupMounts` has `WorkDir` field (empty-string fallback to `os.Getwd()` for backward compat)
+- `*copts.ContainerOptions` anonymous embedding promotes fields — must keep embedding syntax in `replace_symbol_body`
+
+### Whail Jail Testing
+
+- `jail_test.go` must use `package whail_test` (external) to avoid import cycle with `whailtest`
+- Integration tests use `package whail` (internal) and `//go:build integration` tag
+- Label override prevention: add `labels[e.managedLabelKey] = e.managedLabelValue` AFTER final label merge (caller labels have highest precedence)
+- `ContainerStatsOneShot` delegates to `APIClient.ContainerStats` — spy on `"ContainerStats"` not `"ContainerStatsOneShot"`
+
+### Context Window Management
+
+- Multi-task initiatives should use stop-after-task protocol with handoff prompts (see `.claude/templates/initiative.md`)
+- Each task gets a fresh context window with self-contained handoff prompt providing all needed context
+
+### Pure Function Testing (internal/docker)
+
+- `matchPattern` had a bug: `**/*.ext` didn't work (literal HasSuffix). Fixed with `filepath.Match` against basename when suffix contains wildcards
+- `isNotFoundError` checks both `whail.DockerError` (via `errors.As`) and raw error strings
+- `LoadIgnorePatterns` returns `[]string{}` (not nil) on file-not-found
+
+---
+
 ## Testcontainers Integration Tests (`internal/testutil/integration/`)
 
 Uses [testcontainers-go](https://golang.testcontainers.org/) for testing scripts in lightweight containers.

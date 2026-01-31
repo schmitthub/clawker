@@ -10,8 +10,8 @@ HTTP service mesh mediating interactions between containers and the host machine
 | `SessionStore` | `session.go` | Generic session management with TTL and cleanup |
 | `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
 | `Manager` | `manager.go` | Lifecycle management of the proxy server |
-| `GitCredential` | `git_credential.go` | Git credential forwarding handler |
-| `SSHAgent` | `ssh_agent.go` | SSH agent forwarding handler |
+| — | `git_credential.go` | Git credential forwarding handler (route on Server) |
+| — | `ssh_agent.go` | SSH agent forwarding handler (route on Server) |
 
 ## Constants & Errors
 
