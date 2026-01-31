@@ -1,3 +1,5 @@
+> **Artifact of [testing-initiative-master-plan.md](testing-initiative-master-plan.md)** — Phases complete. Retained as reference for Phase 4+ migration.
+
 # Master Plan: Whail Jail Testing Infrastructure
 
 Adapted from Docker CLI's function-field mock pattern. Whail-only scope — clawker consumer tests deferred to future PR.

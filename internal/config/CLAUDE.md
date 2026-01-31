@@ -15,6 +15,15 @@ Configuration loading, validation, project registry, and resolver.
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 
+## Filename Constants
+
+```go
+const ConfigFileName          = "clawker.yaml"             // loader.go — default project config file
+const IgnoreFileName          = ".clawkerignore"           // loader.go — default ignore file
+const SettingsFileName        = "settings.yaml"            // settings_loader.go — user settings file
+const ProjectSettingsFileName = ".clawker.settings.yaml"   // settings_loader.go — project-level settings override
+```
+
 ## Home Paths (`home.go`)
 
 ```go

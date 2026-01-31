@@ -1,3 +1,5 @@
+> **Artifact of [testing-initiative-master-plan.md](testing-initiative-master-plan.md)** — Phases complete. Retained as reference for Phase 4+ migration.
+
 # Phase 2: internal/docker/ Testing Plan
 
 Detailed sub-plan for the testing initiative Phase 2. Pure function unit tests for `internal/docker/` — no mocks, no Docker dependency.

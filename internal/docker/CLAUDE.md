@@ -39,17 +39,28 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 
 ## Label Constants (`labels.go`)
 
+Clawker label keys (exported, used by label/filter helpers):
+
 ```go
-const LabelPrefix       = "com.clawker."
-const LabelManaged      = "com.clawker.managed"
-const LabelProject      = "com.clawker.project"
-const LabelAgent        = "com.clawker.agent"
-const LabelVersion      = "com.clawker.version"
-const LabelImage        = "com.clawker.image"
-const LabelWorkdir      = "com.clawker.workdir"
-const LabelCreated      = "com.clawker.created"
-const LabelPurpose      = "com.clawker.purpose"
-const ManagedLabelValue  = "true"
+const (
+    LabelPrefix  = "com.clawker."        // Prefix for all clawker labels (with trailing dot)
+    LabelManaged = LabelPrefix + "managed"
+    LabelProject = LabelPrefix + "project"
+    LabelAgent   = LabelPrefix + "agent"
+    LabelVersion = LabelPrefix + "version"
+    LabelImage   = LabelPrefix + "image"
+    LabelCreated = LabelPrefix + "created"
+    LabelWorkdir = LabelPrefix + "workdir"
+    LabelPurpose = LabelPrefix + "purpose"
+)
+```
+
+Engine configuration constants (passed to `whail.EngineOptions`):
+
+```go
+const EngineLabelPrefix  = "com.clawker"  // Without trailing dot — whail adds separator
+const EngineManagedLabel = "managed"       // Managed label key for EngineOptions
+const ManagedLabelValue  = "true"          // Value for managed label
 ```
 
 ## Labels (`com.clawker.*`)

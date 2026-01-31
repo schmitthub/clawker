@@ -41,7 +41,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, cfg *config.Co
 ## Git Credentials
 
 ```go
-func SetupGitCredentials(ctx context.Context, cfg *config.SecurityConfig) (GitCredentialSetupResult, error)
+func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult
 func GitConfigExists() bool
 func GetGitConfigMount(cfg *config.SecurityConfig) (*mount.Mount, error)
 ```
@@ -53,8 +53,8 @@ func GetGitConfigMount(cfg *config.SecurityConfig) (*mount.Mount, error)
 
 ```go
 func IsSSHAgentAvailable() bool
-func UseSSHAgentProxy(cfg *config.SecurityConfig) bool
-func GetSSHAgentMounts(cfg *config.SecurityConfig) ([]mount.Mount, error)
+func UseSSHAgentProxy() bool
+func GetSSHAgentMounts() []mount.Mount
 func GetSSHAgentEnvVar() string
 ```
 
@@ -64,7 +64,7 @@ func GetSSHAgentEnvVar() string
 ## Docker Socket
 
 ```go
-func GetDockerSocketMount(cfg *config.Config) (*mount.Mount, error)
+func GetDockerSocketMount() mount.Mount
 ```
 
 Only available when `security.docker_socket: true`.
