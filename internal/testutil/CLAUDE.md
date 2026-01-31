@@ -1,6 +1,6 @@
 # Testutil Package
 
-Test utilities for unit and integration testing. Provides isolated test harnesses, config builders, mock Docker clients, container readiness helpers, and golden file testing.
+Test utilities for unit and integration testing. Provides isolated test harnesses, config builders, container readiness helpers, and golden file testing.
 
 ## Harness
 
@@ -43,20 +43,6 @@ Chain methods: `WithVersion`, `WithProject`, `WithDefaultImage`, `WithBuild`, `W
 | `DefaultWorkspace()` | Default workspace config |
 | `WorkspaceSnapshot(remotePath)` | Snapshot workspace |
 
-## Mock Docker Client
-
-```go
-func NewMockDockerClient(t *testing.T) *MockDockerClient
-
-type MockDockerClient struct {
-    Mock   *mock.MockAPIClient  // For expectations
-    Client *docker.Client       // For code under test
-    Ctrl   *gomock.Controller
-}
-```
-
-Always use `whail` types in expectations, never moby types directly.
-
 ## Docker Availability
 
 ```go
@@ -97,4 +83,4 @@ const DefaultReadyTimeout, E2EReadyTimeout, CIReadyTimeout
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/docker`, `pkg/whail`, `gomock`
+Imports: `internal/config`, `internal/docker`, `pkg/whail`

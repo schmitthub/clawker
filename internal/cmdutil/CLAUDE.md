@@ -6,7 +6,7 @@ Heavy command helpers have been extracted to dedicated packages:
 - Image resolution → `internal/resolver/`
 - Build utilities → `internal/build/`
 - Project registration → `internal/project/`
-- Container naming → `internal/docker/` (`ContainerName`, `ContainerNamesFromAgents`)
+- Container naming → `internal/docker/`
 
 ## Key Files
 

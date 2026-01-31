@@ -165,43 +165,21 @@ All methods accept `ctx context.Context` as first parameter. Never store context
 
 ## Testing
 
-### High-Level Mocks (gomock — for testing CLI commands)
+| Pattern | Package | Use Case |
+|---------|---------|----------|
+| **dockertest** (recommended) | `internal/docker/dockertest` | CLI command tests — real docker-layer code through whail jail |
+| **whailtest** | `pkg/whail/whailtest` | Testing whail Engine jail behavior directly |
 
 ```go
-m := testutil.NewMockDockerClient(t)
-m.Mock.EXPECT().ImageList(gomock.Any(), gomock.Any()).Return(whail.ImageListResult{
-    Items: []whail.ImageSummary{{RepoTags: []string{"clawker-myproject:latest"}}},
-}, nil)
-// m.Mock for expectations, m.Client for code under test
-```
-
-### Low-Level Fakes (whailtest — for testing whail jail behavior)
-
-For testing whail's label isolation directly, use `pkg/whail/whailtest`:
-
-```go
-fake := whailtest.NewFakeAPIClient()
-engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
-// See pkg/whail/CLAUDE.md for full whailtest API
-```
-
-### Function-Field Fakes (dockertest — recommended for new command tests)
-
-Composes `whailtest.FakeAPIClient` into a real `*docker.Client` with clawker labels.
-Docker-layer methods (ListContainers, FindContainerByAgent, etc.) run real code through the whail jail.
-
-```go
+// dockertest (recommended)
 fake := dockertest.NewFakeClient()
 fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
-// fake.Client → inject into command Options
-// fake.FakeAPI → set Fn fields for custom behavior
-// fake.AssertCalled(t, "ContainerList")
+// fake.Client -> inject into command Options; fake.FakeAPI -> set Fn fields
+fake.AssertCalled(t, "ContainerList")
+
+// whailtest (whail jail testing)
+fake := whailtest.NewFakeAPIClient()
+engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
 ```
 
-Helpers: `ContainerFixture(project, agent, image)`, `RunningContainerFixture(project, agent)`,
-`SetupContainerList(...)`, `SetupFindContainer(name, summary)`, `SetupImageExists(ref, bool)`.
-
-**When to use which:**
-- **dockertest** (`dockertest.NewFakeClient`): **Recommended** for new CLI command tests — real docker-layer code runs, better coverage
-- **gomock** (`testutil.NewMockDockerClient`): Legacy — existing CLI command tests (Phase 4 migrates to dockertest)
-- **whailtest** (`whailtest.NewFakeAPIClient`): Testing whail Engine jail behavior (label injection, rejection, filtering)
+See `.claude/rules/testing.md` and `.claude/memories/TESTING-REFERENCE.md` for full patterns.

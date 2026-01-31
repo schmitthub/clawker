@@ -4,11 +4,13 @@ import (
 	"context"
 
 	"github.com/moby/moby/api/types/container"
+	dockerimage "github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 
-	dockerimage "github.com/moby/moby/api/types/image"
-
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // ContainerFixture builds a container.Summary with proper clawker labels.
@@ -100,6 +102,107 @@ func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 			}, nil
 		}
 		return client.ImageInspectResult{}, notFoundError(image)
+	}
+}
+
+// SetupContainerCreate configures the fake to succeed on ContainerCreate,
+// returning a container with the given fake ID.
+func (f *FakeClient) SetupContainerCreate() {
+	f.FakeAPI.ContainerCreateFn = func(_ context.Context, _ client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+		return client.ContainerCreateResult{
+			ID: "sha256:fakecontainer1234567890abcdef",
+		}, nil
+	}
+}
+
+// SetupContainerStart configures the fake to succeed on ContainerStart.
+func (f *FakeClient) SetupContainerStart() {
+	f.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
+		return client.ContainerStartResult{}, nil
+	}
+}
+
+// SetupVolumeExists configures the fake to report whether a volume exists.
+// When exists is true, VolumeInspect returns a managed volume.
+// When exists is false, VolumeInspect returns a not-found error.
+// If name is empty, the behavior applies to all volume names.
+func (f *FakeClient) SetupVolumeExists(name string, exists bool) {
+	f.FakeAPI.VolumeInspectFn = func(_ context.Context, volumeID string, _ client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
+		if name != "" && volumeID != name {
+			return client.VolumeInspectResult{}, notFoundError(volumeID)
+		}
+		if exists {
+			return client.VolumeInspectResult{
+				Volume: volume.Volume{
+					Name: volumeID,
+					Labels: map[string]string{
+						docker.LabelManaged: docker.ManagedLabelValue,
+					},
+				},
+			}, nil
+		}
+		return client.VolumeInspectResult{}, notFoundError(volumeID)
+	}
+}
+
+// SetupNetworkExists configures the fake to report whether a network exists.
+// When exists is true, NetworkInspect returns a managed network.
+// When exists is false, NetworkInspect returns a not-found error.
+// If name is empty, the behavior applies to all network names.
+func (f *FakeClient) SetupNetworkExists(name string, exists bool) {
+	f.FakeAPI.NetworkInspectFn = func(_ context.Context, networkName string, _ client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+		if name != "" && networkName != name {
+			return client.NetworkInspectResult{}, notFoundError(networkName)
+		}
+		if exists {
+			return client.NetworkInspectResult{
+				Network: network.Inspect{
+					Network: network.Network{
+						Name: networkName,
+						ID:   "net-" + networkName,
+						Labels: map[string]string{
+							docker.LabelManaged: docker.ManagedLabelValue,
+						},
+					},
+				},
+			}, nil
+		}
+		return client.NetworkInspectResult{}, notFoundError(networkName)
+	}
+}
+
+// SetupImageList configures the fake to return the given image summaries
+// from ImageList calls.
+func (f *FakeClient) SetupImageList(summaries ...whail.ImageSummary) {
+	f.FakeAPI.ImageListFn = func(_ context.Context, _ client.ImageListOptions) (client.ImageListResult, error) {
+		return client.ImageListResult{
+			Items: summaries,
+		}, nil
+	}
+}
+
+// MinimalCreateOpts returns the minimum ContainerCreateOptions needed for
+// whail's ContainerCreate to succeed (requires non-nil Config for label merging).
+func MinimalCreateOpts() docker.ContainerCreateOptions {
+	return docker.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: "alpine:latest",
+		},
+		Name: "test-container",
+	}
+}
+
+// MinimalStartOpts returns ContainerStartOptions for a given container ID.
+func MinimalStartOpts(containerID string) docker.ContainerStartOptions {
+	return docker.ContainerStartOptions{
+		ContainerID: containerID,
+	}
+}
+
+// ImageSummaryFixture returns an ImageSummary with the given repo tag.
+func ImageSummaryFixture(repoTag string) whail.ImageSummary {
+	return whail.ImageSummary{
+		RepoTags: []string{repoTag},
 	}
 }
 

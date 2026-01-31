@@ -3,17 +3,24 @@ package run
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	moby "github.com/moby/moby/client"
+
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
 func TestNewCmdRun(t *testing.T) {
@@ -597,13 +604,13 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // TestImageArg tests image argument handling for the run command.
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
-	// Tests for @ symbol resolution (requires mock Docker client)
+	// Tests for @ symbol resolution (uses dockertest.FakeClient)
 	t.Run("@ symbol resolution", func(t *testing.T) {
 		tests := []struct {
 			name          string
 			projectName   string
 			defaultImage  string
-			mockImages    []string // Images to return from mock ImageList
+			fakeImages    []string // Images to return from fake ImageList
 			wantReference string
 			wantSource    resolver.ImageSource
 			wantNil       bool // Expect nil result (no resolution)
@@ -612,7 +619,7 @@ func TestImageArg(t *testing.T) {
 				name:          "@ resolves to project image when exists",
 				projectName:   "myproject",
 				defaultImage:  "alpine:latest",
-				mockImages:    []string{"clawker-myproject:latest"},
+				fakeImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    resolver.ImageSourceProject,
 			},
@@ -620,7 +627,7 @@ func TestImageArg(t *testing.T) {
 				name:          "@ resolves to default image when no project image",
 				projectName:   "myproject",
 				defaultImage:  "node:20-slim",
-				mockImages:    []string{}, // No project images
+				fakeImages:    []string{}, // No project images
 				wantReference: "node:20-slim",
 				wantSource:    resolver.ImageSourceDefault,
 			},
@@ -628,14 +635,14 @@ func TestImageArg(t *testing.T) {
 				name:         "@ returns nil when no default available",
 				projectName:  "myproject",
 				defaultImage: "", // No default configured
-				mockImages:   []string{},
+				fakeImages:   []string{},
 				wantNil:      true,
 			},
 			{
 				name:          "@ prefers project image over default",
 				projectName:   "myproject",
 				defaultImage:  "alpine:latest",
-				mockImages:    []string{"clawker-myproject:latest", "other:tag"},
+				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
 				wantSource:    resolver.ImageSourceProject,
 			},
@@ -643,7 +650,7 @@ func TestImageArg(t *testing.T) {
 				name:          "@ ignores non-latest project images",
 				projectName:   "myproject",
 				defaultImage:  "alpine:latest",
-				mockImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
+				fakeImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
 				wantReference: "alpine:latest",
 				wantSource:    resolver.ImageSourceDefault,
 			},
@@ -653,22 +660,17 @@ func TestImageArg(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := context.Background()
 
-				// Create mock Docker client
-				m := testutil.NewMockDockerClient(t)
+				// Create fake Docker client
+				fake := dockertest.NewFakeClient()
 
-				// Build mock image summaries
-				var imageSummaries []whail.ImageSummary
-				for _, ref := range tt.mockImages {
-					imageSummaries = append(imageSummaries, whail.ImageSummary{
+				// Build image summaries and configure fake
+				var summaries []whail.ImageSummary
+				for _, ref := range tt.fakeImages {
+					summaries = append(summaries, whail.ImageSummary{
 						RepoTags: []string{ref},
 					})
 				}
-
-				// Set expectation: ImageList will be called to find project images
-				m.Mock.EXPECT().
-					ImageList(gomock.Any(), gomock.Any()).
-					Return(whail.ImageListResult{Items: imageSummaries}, nil).
-					AnyTimes()
+				fake.SetupImageList(summaries...)
 
 				// Build config and settings
 				cfg := &config.Config{
@@ -682,7 +684,7 @@ func TestImageArg(t *testing.T) {
 				}
 
 				// Call the resolution function
-				result, err := resolver.ResolveImageWithSource(ctx, m.Client, cfg, settings)
+				result, err := resolver.ResolveImageWithSource(ctx, fake.Client, cfg, settings)
 				require.NoError(t, err)
 
 				if tt.wantNil {
@@ -782,5 +784,125 @@ func TestImageArg(t *testing.T) {
 		require.Equal(t, argsErr.Error(), err.Error(), "error should match RequiresMinArgs output")
 		// Verify stderr contains the error message (without "Error: " prefix that cobra adds to err)
 		require.Contains(t, stderr.String(), "requires at least 1 argument", "stderr should show argument requirement")
+	})
+}
+
+// --- Cobra + fake Factory tests (Task 2: Phase 4a proof-of-concept) ---
+//
+// These tests go through cmd.Execute() with a faked *cmdutil.Factory.
+// The real runRun executes (runF is nil), exercising the full command path
+// including flag parsing, config loading, workspace setup, and Docker calls.
+// Docker operations are faked via dockertest.FakeClient.
+
+// testFactory constructs a minimal *cmdutil.Factory for command-level testing.
+// The returned Factory wires fake Docker client, test config, and test IOStreams.
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	tmpDir := t.TempDir()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		WorkDir:  tmpDir,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() (*config.Config, error) {
+			return testConfig(), nil
+		},
+		Settings: func() (*config.Settings, error) {
+			return config.DefaultSettings(), nil
+		},
+		EnsureHostProxy:         func() error { return nil },
+		HostProxyEnvVar:         func() string { return "" },
+		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
+		InvalidateSettingsCache: func() {},
+		Prompter:                func() *prompts.Prompter { return nil },
+	}, tio
+}
+
+// testConfig returns a minimal *config.Config for test use.
+// Host proxy disabled, bind mode, empty project, firewall disabled.
+func testConfig() *config.Config {
+	hostProxyDisabled := false
+	return &config.Config{
+		Version: "1",
+		Project: "",
+		Workspace: config.WorkspaceConfig{
+			RemotePath:  "/workspace",
+			DefaultMode: "bind",
+		},
+		Security: config.SecurityConfig{
+			EnableHostProxy: &hostProxyDisabled,
+			Firewall: &config.FirewallConfig{
+				Enable: false,
+			},
+		},
+	}
+}
+
+func TestRunRun(t *testing.T) {
+	t.Run("detached mode prints container ID", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+		fake.SetupContainerStart()
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.NoError(t, err)
+
+		// Detached mode prints 12-char container ID to stdout
+		out := tio.OutBuf.String()
+		require.Contains(t, out, "sha256:fakec")
+		require.Len(t, strings.TrimSpace(out), 12)
+
+		fake.AssertCalled(t, "ContainerCreate")
+		fake.AssertCalled(t, "ContainerStart")
+	})
+
+	t.Run("container create failure returns error", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+			return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
+		}
+		fake.SetupContainerStart()
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		fake.AssertNotCalled(t, "ContainerStart")
+	})
+
+	t.Run("container start failure returns error", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
+			return moby.ContainerStartResult{}, fmt.Errorf("port already in use")
+		}
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		fake.AssertCalled(t, "ContainerCreate")
 	})
 }

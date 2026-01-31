@@ -95,6 +95,35 @@ func runStop(opts *StopOptions) error {
 }
 ```
 
+## Testing
+
+Container command tests use the **Cobra+Factory pattern** — the canonical approach for testing commands end-to-end without a Docker daemon.
+
+### Pattern
+
+1. Create `dockertest.NewFakeClient()` and configure needed setup helpers
+2. Build a `*cmdutil.Factory` with faked closures (`testFactory` helper)
+3. Call `NewCmdRun(f, nil)` — `nil` runF means the real run function executes
+4. Set args, execute, assert on output and `fake.AssertCalled`
+
+### Reference Implementation
+
+See `run/run_test.go` — `TestRunRun` and its `testFactory`/`testConfig` helpers.
+
+### Per-Package Helpers
+
+`testFactory` and `testConfig` are **per-package** (not shared). Each command package creates its own helpers suited to its specific dependencies. Copy and adapt from `run/run_test.go` when adding tests to other subcommands.
+
+### Test Tiers
+
+- **Tier 1** (flag parsing): Use `runF` trapdoor to capture Options without execution
+- **Tier 2** (integration): Use Cobra+Factory pattern with `nil` runF for full pipeline
+- **Tier 3** (unit): Call domain functions directly without Cobra or Factory
+
+See `.claude/memories/TESTING-REFERENCE.md` for full templates and decision matrix.
+
+---
+
 ## Exit Code Handling
 
 Use `cmdutil.ExitError` (defined in `internal/cmdutil/output.go`) to propagate non-zero container exit codes. This allows deferred cleanup (terminal restore, container removal) to run before the process exits.

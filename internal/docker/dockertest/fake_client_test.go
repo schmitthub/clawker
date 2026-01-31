@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	moby "github.com/moby/moby/client"
+
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 )
 
@@ -193,6 +195,145 @@ func TestImageExists(t *testing.T) {
 		}
 		if exists {
 			t.Error("ImageExists() = true, want false")
+		}
+	})
+}
+
+func TestSetupContainerCreate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns fake container ID", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+
+		resp, err := fake.Client.ContainerCreate(ctx, dockertest.MinimalCreateOpts())
+		if err != nil {
+			t.Fatalf("ContainerCreate() error: %v", err)
+		}
+		if resp.ID == "" {
+			t.Fatal("ContainerCreate() returned empty ID")
+		}
+		fake.AssertCalled(t, "ContainerCreate")
+	})
+}
+
+func TestSetupContainerStart(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds without error", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerStart()
+
+		_, err := fake.Client.ContainerStart(ctx, dockertest.MinimalStartOpts("sha256:fakecontainer1234567890abcdef"))
+		if err != nil {
+			t.Fatalf("ContainerStart() error: %v", err)
+		}
+		fake.AssertCalled(t, "ContainerStart")
+	})
+}
+
+func TestSetupVolumeExists(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns true when volume exists", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupVolumeExists("myvolume", true)
+
+		exists, err := fake.Client.VolumeExists(ctx, "myvolume")
+		if err != nil {
+			t.Fatalf("VolumeExists() error: %v", err)
+		}
+		if !exists {
+			t.Error("VolumeExists() = false, want true")
+		}
+	})
+
+	t.Run("returns false when volume not found", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupVolumeExists("myvolume", false)
+
+		exists, err := fake.Client.VolumeExists(ctx, "myvolume")
+		if err != nil {
+			t.Fatalf("VolumeExists() error: %v", err)
+		}
+		if exists {
+			t.Error("VolumeExists() = true, want false")
+		}
+	})
+
+	t.Run("wildcard applies to all volumes", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupVolumeExists("", false)
+
+		exists, err := fake.Client.VolumeExists(ctx, "any-volume")
+		if err != nil {
+			t.Fatalf("VolumeExists() error: %v", err)
+		}
+		if exists {
+			t.Error("VolumeExists() = true, want false for wildcard not-found")
+		}
+	})
+}
+
+func TestSetupNetworkExists(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns true when network exists", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupNetworkExists("clawker-net", true)
+
+		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		if err != nil {
+			t.Fatalf("NetworkExists() error: %v", err)
+		}
+		if !exists {
+			t.Error("NetworkExists() = false, want true")
+		}
+	})
+
+	t.Run("returns false when network not found", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupNetworkExists("clawker-net", false)
+
+		exists, err := fake.Client.NetworkExists(ctx, "clawker-net")
+		if err != nil {
+			t.Fatalf("NetworkExists() error: %v", err)
+		}
+		if exists {
+			t.Error("NetworkExists() = true, want false")
+		}
+	})
+}
+
+func TestSetupImageList(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns image summaries", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupImageList(dockertest.ImageSummaryFixture("alpine:latest"))
+
+		result, err := fake.Client.ImageList(ctx, moby.ImageListOptions{})
+		if err != nil {
+			t.Fatalf("ImageList() error: %v", err)
+		}
+		if len(result.Items) != 1 {
+			t.Fatalf("ImageList() returned %d items, want 1", len(result.Items))
+		}
+		if result.Items[0].RepoTags[0] != "alpine:latest" {
+			t.Errorf("result.Items[0].RepoTags[0] = %q, want %q", result.Items[0].RepoTags[0], "alpine:latest")
+		}
+	})
+
+	t.Run("returns empty list", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupImageList()
+
+		result, err := fake.Client.ImageList(ctx, moby.ImageListOptions{})
+		if err != nil {
+			t.Fatalf("ImageList() error: %v", err)
+		}
+		if len(result.Items) != 0 {
+			t.Errorf("ImageList() returned %d items, want 0", len(result.Items))
 		}
 	})
 }

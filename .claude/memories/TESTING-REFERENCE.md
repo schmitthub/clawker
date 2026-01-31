@@ -40,9 +40,9 @@ Within the test file:
 
 ---
 
-## runF Trapdoor Pattern
+## runF Trapdoor Pattern (Tier 1 Only)
 
-The `runF` parameter on every `NewCmd` constructor is the primary test injection point.
+The `runF` parameter on every `NewCmd` constructor intercepts the Options struct before the run function executes. **Use this for Tier 1 (flag parsing) tests only** — it validates that CLI flags map correctly to Options fields without executing any business logic. For full pipeline testing, use the Cobra+Factory Pattern below.
 
 ### Tier 1 — Flag Capture Test
 
@@ -142,59 +142,156 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
 
 ---
 
-## Which Tier to Use
+## Cobra+Factory Pattern (Recommended for Command Tests)
 
-```
-┌───────────────────────────────┬─────────┬─────────┬─────────┐
-│  What you're testing          │ Tier 1  │ Tier 2  │ Tier 3  │
-├───────────────────────────────┼─────────┼─────────┼─────────┤
-│  Flag default values          │   ✓     │         │         │
-│  Flag enum validation         │   ✓     │         │         │
-│  Mutual flag exclusion        │   ✓     │         │         │
-│  Required/positional args     │   ✓     │         │         │
-│  TTY vs non-TTY output        │         │   ✓     │         │
-│  Docker API call parameters   │         │   ✓     │   ✓     │
-│  Output formatting            │         │   ✓     │         │
-│  Error messages to user       │         │   ✓     │         │
-│  Container naming logic       │         │   ✓     │   ✓     │
-│  Data transformation          │         │         │   ✓     │
-│  Edge cases in domain logic   │         │         │   ✓     │
-└───────────────────────────────┴─────────┴─────────┴─────────┘
-```
+The canonical pattern for Tier 2 (integration) command tests. Exercises the full CLI pipeline — cobra lifecycle, real flag parsing, real run function, and real docker-layer code through whail jail — without a Docker daemon.
 
----
+### When to Use
 
-## Mock Docker Client — Full Example
+- Testing commands end-to-end without Docker daemon
+- Verifying Docker API calls, output formatting, error handling
+- All command tests (gomock fully removed from codebase)
+
+### How It Works
+
+`NewCmd(f, nil)` — passing `nil` as `runF` means the real run function executes. The Factory is populated with faked closures that return test doubles:
 
 ```go
-import (
-    "context"
-    "testing"
+// testFactory constructs a minimal *cmdutil.Factory for command-level testing.
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+    t.Helper()
+    tio := iostreams.NewTestIOStreams()
+    tmpDir := t.TempDir()
+    return &cmdutil.Factory{
+        IOStreams: tio.IOStreams,
+        WorkDir:  tmpDir,
+        Client: func(_ context.Context) (*docker.Client, error) {
+            return fake.Client, nil
+        },
+        Config: func() (*config.Config, error) {
+            return testConfig(tmpDir), nil
+        },
+        Settings: func() (*config.Settings, error) {
+            return config.DefaultSettings(), nil
+        },
+        EnsureHostProxy:         func() error { return nil },
+        HostProxyEnvVar:         func() string { return "" },
+        SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
+        InvalidateSettingsCache: func() {},
+        Prompter:                func() *prompts.Prompter { return nil },
+    }, tio
+}
 
-    "github.com/schmitthub/clawker/internal/testutil"
-    "github.com/schmitthub/clawker/pkg/whail"
-    "github.com/stretchr/testify/require"
-    "go.uber.org/mock/gomock"
-)
-
-func TestImageResolution(t *testing.T) {
-    ctx := context.Background()
-    m := testutil.NewMockDockerClient(t)
-
-    m.Mock.EXPECT().
-        ImageList(gomock.Any(), gomock.Any()).
-        Return(whail.ImageListResult{
-            Items: []whail.ImageSummary{
-                {RepoTags: []string{"clawker-myproject:latest"}},
+// testConfig returns a minimal *config.Config for test use.
+func testConfig(workDir string) *config.Config {
+    hostProxyDisabled := false
+    return &config.Config{
+        Version: "1",
+        Project: "",
+        Workspace: config.WorkspaceConfig{
+            RemotePath:  "/workspace",
+            DefaultMode: "bind",
+        },
+        Security: config.SecurityConfig{
+            EnableHostProxy: &hostProxyDisabled,
+            Firewall: &config.FirewallConfig{
+                Enable: false,
             },
-        }, nil)
-
-    result, err := SomeFunctionThatNeedsDocker(ctx, m.Client)
-    require.NoError(t, err)
+        },
+    }
 }
 ```
 
-> **Note:** The mock is generated from `github.com/moby/moby/client.APIClient`. Post-processing is required because mockgen copies unnamed variadic parameters (`_`) which is invalid Go. The Makefile handles this automatically.
+### Test Structure
+
+```go
+func TestRunRun(t *testing.T) {
+    t.Run("detached mode prints container ID", func(t *testing.T) {
+        fake := dockertest.NewFakeClient()
+        fake.SetupContainerCreate()
+        fake.SetupContainerStart()
+
+        f, tio := testFactory(t, fake)
+        cmd := NewCmdRun(f, nil) // nil runF → real run function
+
+        cmd.SetArgs([]string{"--detach", "alpine"})
+        cmd.SetIn(&bytes.Buffer{})
+        cmd.SetOut(tio.OutBuf)
+        cmd.SetErr(tio.ErrBuf)
+
+        err := cmd.Execute()
+        require.NoError(t, err)
+
+        // Assert output
+        out := tio.OutBuf.String()
+        require.Contains(t, out, "sha256:fakec")
+
+        // Assert Docker calls
+        fake.AssertCalled(t, "ContainerCreate")
+        fake.AssertCalled(t, "ContainerStart")
+    })
+
+    t.Run("container create failure returns error", func(t *testing.T) {
+        fake := dockertest.NewFakeClient()
+        fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+            return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
+        }
+
+        f, tio := testFactory(t, fake)
+        cmd := NewCmdRun(f, nil)
+        cmd.SetArgs([]string{"--detach", "alpine"})
+        cmd.SetIn(&bytes.Buffer{})
+        cmd.SetOut(tio.OutBuf)
+        cmd.SetErr(tio.ErrBuf)
+
+        err := cmd.Execute()
+        require.Error(t, err)
+        fake.AssertNotCalled(t, "ContainerStart")
+    })
+}
+```
+
+### Why This Replaces FakeCli
+
+The cobra+Factory pattern exercises the same pipeline FakeCli would test:
+- **Cobra lifecycle**: `PersistentPreRunE` → `RunE` chain runs naturally via `cmd.Execute()`
+- **Real flag parsing**: cobra parses flags, `Changed()` works, mutual exclusion enforced
+- **Real run function**: `nil` runF means `runRun` (or equivalent) executes with all its logic
+- **Real docker-layer code**: `dockertest.FakeClient` composes through `whail.Engine` jail — label filtering, name generation, and middleware all run real code
+
+FakeCli would only add: (1) command routing tests (cobra's responsibility) and (2) PersistentPreRunE chain tests (simple/stable). Neither justifies the maintenance cost of a CLI test shell.
+
+### Key Points
+
+- **`testFactory` and `testConfig` are per-package** — each command package creates its own suited to its dependencies
+- **Reference implementation**: `internal/cmd/container/run/run_test.go` (`TestRunRun`)
+- Factory fields must include all closures the command's run function calls (Config, Client, Settings, etc.)
+- Use `t.TempDir()` for `WorkDir` to avoid `os.Getwd()` issues in tests
+
+---
+
+## Which Tier to Use
+
+```
+┌───────────────────────────────┬─────────┬──────────────────┬─────────┐
+│  What you're testing          │ Tier 1  │ Tier 2           │ Tier 3  │
+│                               │ runF    │ Cobra+Factory    │ Direct  │
+├───────────────────────────────┼─────────┼──────────────────┼─────────┤
+│  Flag default values          │   ✓     │                  │         │
+│  Flag enum validation         │   ✓     │                  │         │
+│  Mutual flag exclusion        │   ✓     │                  │         │
+│  Required/positional args     │   ✓     │                  │         │
+│  TTY vs non-TTY output        │         │   ✓              │         │
+│  Docker API call parameters   │         │   ✓              │   ✓     │
+│  Output formatting            │         │   ✓              │         │
+│  Error messages to user       │         │   ✓              │         │
+│  Container naming logic       │         │   ✓              │   ✓     │
+│  Data transformation          │         │                  │   ✓     │
+│  Edge cases in domain logic   │         │                  │   ✓     │
+└───────────────────────────────┴─────────┴──────────────────┴─────────┘
+```
+
+**Tier 2 uses the Cobra+Factory pattern** — see section above for full details and templates.
 
 ---
 
@@ -401,6 +498,62 @@ if len(errs) > 0 {
     return errors.Join(errs...)
 }
 ```
+
+---
+
+## Cross-Phase Learnings (Testing Initiative)
+
+Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
+
+### Moby API Quirks
+
+- `client.Filters` is `map[string]map[string]bool` — label entries stored as `"key=value": true` under `"label"` key
+- `Filters.Add()` returns a new Filters (immutable) — must capture return value
+- `ContainerWait` returns `ContainerWaitResult` (no error), containing Result/Error channels
+- `ImageInspect` uses variadic options: `ImageInspect(ctx, ref, ...ImageInspectOption)`
+- `container.Summary.State` is `container.ContainerState` (string typedef) — `assert.Equal` requires `string()` cast
+- Docker names always have leading `/` in API responses
+- `ContainerInspectResult` wraps response — labels at `inspect.Container.Config.Labels`
+- `VolumeListAll` delegates to `VolumeList` — both return `VolumeListResult` with `.Items`
+- `config.FirewallConfig.Enable` is `bool` (not `*bool`), while `SecurityConfig.EnableHostProxy` is `*bool` — inconsistent nullability
+
+### FakeAPIClient Pattern
+
+- Embeds nil `*client.Client` for unexported moby interface methods — unoverridden methods panic (fail-loud)
+- Module path: `github.com/schmitthub/clawker`
+- Container labels at `InspectResponse.Config.Labels`, volume at `Volume.Labels`, network at `Network.Labels`, image at `InspectResponse.Config.Labels` (OCI ImageConfig)
+
+### dockertest (Composite Fake) Pattern
+
+- Must use `com.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `com.clawker.managed`; using test labels would cause zero results
+- `docker.Client.ImageExists` calls `c.APIClient.ImageInspect` directly (bypasses whail Engine jail) — the `errNotFound` type must satisfy `errdefs.IsNotFound` via `NotFound()` method
+- `FindContainerByName` uses `ContainerList` + `ContainerInspect` — `SetupFindContainer` must configure both Fn fields
+- No import cycles: `internal/docker/dockertest` -> `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean
+
+### Cobra+Factory Test Pattern
+
+- `NewCmd(f, nil)` with faked Factory closures exercises full CLI pipeline (cobra lifecycle, real flag parsing, real run function, real docker-layer code through whail jail)
+- Default `NewFakeClient` volume/network inspect defaults sufficient for `EnsureConfigVolumes` and `EnsureNetwork` flows
+- `workspace.SetupMounts` has `WorkDir` field (empty-string fallback to `os.Getwd()` for backward compat)
+- `*copts.ContainerOptions` anonymous embedding promotes fields — must keep embedding syntax in `replace_symbol_body`
+
+### Whail Jail Testing
+
+- `jail_test.go` must use `package whail_test` (external) to avoid import cycle with `whailtest`
+- Integration tests use `package whail` (internal) and `//go:build integration` tag
+- Label override prevention: add `labels[e.managedLabelKey] = e.managedLabelValue` AFTER final label merge (caller labels have highest precedence)
+- `ContainerStatsOneShot` delegates to `APIClient.ContainerStats` — spy on `"ContainerStats"` not `"ContainerStatsOneShot"`
+
+### Context Window Management
+
+- Multi-task initiatives should use stop-after-task protocol with handoff prompts (see `.claude/templates/initiative.md`)
+- Each task gets a fresh context window with self-contained handoff prompt providing all needed context
+
+### Pure Function Testing (internal/docker)
+
+- `matchPattern` had a bug: `**/*.ext` didn't work (literal HasSuffix). Fixed with `filepath.Match` against basename when suffix contains wildcards
+- `isNotFoundError` checks both `whail.DockerError` (via `errors.As`) and raw error strings
+- `LoadIgnorePatterns` returns `[]string{}` (not nil) on file-not-found
 
 ---
 
