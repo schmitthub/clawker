@@ -1,4 +1,4 @@
-package integration
+package internals
 
 import (
 	"context"
@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmd/container/create"
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -49,11 +47,7 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	expectedContainerName := "clawker.create-agent-test." + agentName
 
 	// Create factory pointing to harness project directory
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Create and execute the create command with --agent flag
 	cmd := create.NewCmdCreate(f, nil)
@@ -121,11 +115,7 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 	expectedContainerName := "clawker.create-name-test." + agentName
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
@@ -171,11 +161,7 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 		}
 	}()
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Create without --agent flag
 	cmd := create.NewCmdCreate(f, nil)
