@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
-	testutil "github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -273,7 +273,7 @@ type ExecResult struct {
 
 // CleanOutput returns the Stdout with Docker stream headers stripped.
 func (r *ExecResult) CleanOutput() string {
-	return testutil.StripDockerStreamHeaders(r.Stdout)
+	return harness.StripDockerStreamHeaders(r.Stdout)
 }
 
 // Exec executes a command in the container and returns the result.

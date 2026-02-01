@@ -1,6 +1,4 @@
-//go:build integration
-
-package start
+package integration
 
 import (
 	"context"
@@ -10,30 +8,32 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/cmd/container/start"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
 // TestStartIntegration_BasicStart tests starting a stopped container.
 func TestStartIntegration_BasicStart(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("start-basic-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "start-basic-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "start-basic-test")
 
 	agentName := "test-start-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -54,7 +54,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	require.NoError(t, err, "failed to create container")
 
 	// Verify container is not running
-	require.False(t, testutil.ContainerIsRunning(ctx, rawClient, containerName), "container should be stopped initially")
+	require.False(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should be stopped initially")
 
 	// Run start command
 	ios := iostreams.NewTestIOStreams()
@@ -63,7 +63,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f, nil)
+	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
 
 	err = cmd.Execute()
@@ -72,7 +72,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
 	require.NoError(t, err, "container did not start")
 
 	// Container is now running - verified by WaitForContainerRunning above
@@ -82,7 +82,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 
 // TestStartIntegration_BothPatterns tests that both --agent flag and full container name work.
 func TestStartIntegration_BothPatterns(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -96,19 +96,19 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			project := "start-pattern-" + tt.name
-			h := testutil.NewHarness(t,
-				testutil.WithConfigBuilder(
-					testutil.MinimalValidConfig().
+			h := harness.NewHarness(t,
+				harness.WithConfigBuilder(
+					builders.MinimalValidConfig().
 						WithProject(project).
-						WithSecurity(testutil.SecurityFirewallDisabled()),
+						WithSecurity(builders.SecurityFirewallDisabled()),
 				),
 			)
 			h.Chdir()
 
-			dockerClient := testutil.NewTestClient(t)
-			rawClient := testutil.NewRawDockerClient(t)
+			dockerClient := harness.NewTestClient(t)
+			rawClient := harness.NewRawDockerClient(t)
 			defer rawClient.Close()
-			defer testutil.CleanupProjectResources(ctx, dockerClient, project)
+			defer harness.CleanupProjectResources(ctx, dockerClient, project)
 
 			agentName := "test-pattern-" + time.Now().Format("150405.000000")
 			containerName := h.ContainerName(agentName)
@@ -135,7 +135,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 				IOStreams: ios.IOStreams,
 			}
 
-			cmd := NewCmdStart(f, nil)
+			cmd := start.NewCmdStart(f, nil)
 			if tt.useAgent {
 				cmd.SetArgs([]string{"--agent", agentName})
 			} else {
@@ -148,7 +148,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 			// Wait for container to be running
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			err = testutil.WaitForContainerRunning(readyCtx, rawClient, containerName)
+			err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
 			require.NoError(t, err, "container did not start")
 		})
 	}
@@ -156,7 +156,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 
 // TestStartIntegration_BothImages tests that both Alpine and Debian images start correctly.
 func TestStartIntegration_BothImages(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -170,19 +170,19 @@ func TestStartIntegration_BothImages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			project := "start-image-" + tt.name
-			h := testutil.NewHarness(t,
-				testutil.WithConfigBuilder(
-					testutil.MinimalValidConfig().
+			h := harness.NewHarness(t,
+				harness.WithConfigBuilder(
+					builders.MinimalValidConfig().
 						WithProject(project).
-						WithSecurity(testutil.SecurityFirewallDisabled()),
+						WithSecurity(builders.SecurityFirewallDisabled()),
 				),
 			)
 			h.Chdir()
 
-			dockerClient := testutil.NewTestClient(t)
-			rawClient := testutil.NewRawDockerClient(t)
+			dockerClient := harness.NewTestClient(t)
+			rawClient := harness.NewRawDockerClient(t)
 			defer rawClient.Close()
-			defer testutil.CleanupProjectResources(ctx, dockerClient, project)
+			defer harness.CleanupProjectResources(ctx, dockerClient, project)
 
 			agentName := "test-image-" + time.Now().Format("150405.000000")
 			containerName := h.ContainerName(agentName)
@@ -217,7 +217,7 @@ func TestStartIntegration_BothImages(t *testing.T) {
 				IOStreams: ios.IOStreams,
 			}
 
-			cmd := NewCmdStart(f, nil)
+			cmd := start.NewCmdStart(f, nil)
 			cmd.SetArgs([]string{containerName})
 
 			err = cmd.Execute()
@@ -226,7 +226,7 @@ func TestStartIntegration_BothImages(t *testing.T) {
 			// Wait for container to be running
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			err = testutil.WaitForContainerRunning(readyCtx, rawClient, containerName)
+			err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
 			require.NoError(t, err, "container did not start for image %s", tt.image)
 		})
 	}
@@ -234,22 +234,22 @@ func TestStartIntegration_BothImages(t *testing.T) {
 
 // TestStartIntegration_MultipleContainers tests starting multiple containers at once.
 func TestStartIntegration_MultipleContainers(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("start-multi-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "start-multi-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "start-multi-test")
 
 	timestamp := time.Now().Format("150405.000000")
 	containerNames := []string{
@@ -283,7 +283,7 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f, nil)
+	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs(containerNames)
 
 	err := cmd.Execute()
@@ -292,7 +292,7 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 	// Wait for all containers to be running
 	for _, name := range containerNames {
 		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err = testutil.WaitForContainerRunning(readyCtx, rawClient, name)
+		err = harness.WaitForContainerRunning(readyCtx, rawClient, name)
 		cancel()
 		require.NoError(t, err, "container %s did not start", name)
 	}
@@ -304,22 +304,22 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 
 // TestStartIntegration_AlreadyRunning tests that starting an already-running container is idempotent.
 func TestStartIntegration_AlreadyRunning(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("start-running-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "start-running-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "start-running-test")
 
 	agentName := "test-running-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -345,7 +345,7 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
 	require.NoError(t, err, "container did not start")
 
 	// Try to start it again - should succeed (idempotent)
@@ -355,25 +355,25 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f, nil)
+	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
 
 	err = cmd.Execute()
 	require.NoError(t, err, "start command should succeed for already-running container: stderr=%s", ios.ErrBuf.String())
 
 	// Container should still be running
-	require.True(t, testutil.ContainerIsRunning(ctx, rawClient, containerName), "container should still be running")
+	require.True(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should still be running")
 }
 
 // TestStartIntegration_NonExistent tests that starting a non-existent container returns an error.
 func TestStartIntegration_NonExistent(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("start-nonexist-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
@@ -385,7 +385,7 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f, nil)
+	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.start-nonexist-test.doesnotexist"})
 
 	err := cmd.Execute()
@@ -394,22 +394,22 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 
 // TestStartIntegration_MultipleWithAttach tests that using --attach with multiple containers returns an error.
 func TestStartIntegration_MultipleWithAttach(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("start-attach-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "start-attach-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "start-attach-test")
 
 	timestamp := time.Now().Format("150405.000000")
 	containerNames := []string{
@@ -442,7 +442,7 @@ func TestStartIntegration_MultipleWithAttach(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdStart(f, nil)
+	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs(append([]string{"--attach"}, containerNames...))
 
 	err := cmd.Execute()

@@ -255,10 +255,10 @@ func skipIfNoDocker(t *testing.T) *client.Client {
 
 // TestFirewallContainerDoesNotExitImmediately verifies that a container with firewall
 // configuration runs without immediately exiting due to script errors.
-// This is an internals test that requires Docker.
+// This is an integration test that requires Docker.
 func TestFirewallContainerDoesNotExitImmediately(t *testing.T) {
 	if os.Getenv("CLAWKER_INTEGRATION_TESTS") == "" {
-		t.Skip("Skipping internals test: set CLAWKER_INTEGRATION_TESTS=1 to run")
+		t.Skip("Skipping integration test: set CLAWKER_INTEGRATION_TESTS=1 to run")
 	}
 
 	cli := skipIfNoDocker(t)
@@ -363,7 +363,7 @@ sleep 2
 // both success and "already exists" cases without exiting.
 func TestIpsetExistFlagPattern(t *testing.T) {
 	if os.Getenv("CLAWKER_INTEGRATION_TESTS") == "" {
-		t.Skip("Skipping internals test: set CLAWKER_INTEGRATION_TESTS=1 to run")
+		t.Skip("Skipping integration test: set CLAWKER_INTEGRATION_TESTS=1 to run")
 	}
 
 	cli := skipIfNoDocker(t)

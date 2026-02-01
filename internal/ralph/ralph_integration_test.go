@@ -1,5 +1,3 @@
-//go:build integration
-
 package ralph
 
 import (
@@ -12,7 +10,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +20,7 @@ import (
 // This was a bug where the session was only saved after the first loop finished,
 // causing "ralph status" to show "No session found" during long-running loops.
 func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Setup temp directories for session store
@@ -29,20 +28,20 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	storeDir := filepath.Join(tempDir, "ralph")
 
 	// Create a harness for test container
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("ralph-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	rawClient := testutil.NewRawDockerClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
 
-	dockerClient := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "ralph-test")
+	dockerClient := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, dockerClient, "ralph-test")
 
 	// Generate unique container name
 	agentName := "test-ralph-" + time.Now().Format("150405.000000")
@@ -68,7 +67,7 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Create runner with custom store directory
@@ -119,26 +118,26 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 // TestRalphIntegration_ExecCaptureTimeout verifies that the execCapture function
 // properly respects context cancellation and doesn't hang forever.
 func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	tempDir := t.TempDir()
 	storeDir := filepath.Join(tempDir, "ralph")
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("ralph-timeout-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	rawClient := testutil.NewRawDockerClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
 
-	dockerClient := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "ralph-timeout-test")
+	dockerClient := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, dockerClient, "ralph-timeout-test")
 
 	agentName := "test-timeout-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -163,7 +162,7 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err)
 
 	store := NewSessionStore(storeDir)
