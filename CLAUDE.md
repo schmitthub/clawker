@@ -133,43 +133,25 @@ project: "my-app"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages: ["git", "ripgrep"]
-  instructions:
-    env: { NODE_ENV: "production" }
-    copy: [{ src: "./config.json", dest: "/etc/app/" }]
-    root_run: [{ cmd: "mkdir -p /opt/app" }]
-    user_run: [{ cmd: "npm install -g typescript" }]
+  instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
-agent:
-  includes: ["./docs/architecture.md"]
-  env: { NODE_ENV: "development" }
-workspace:
-  remote_path: "/workspace"
-  default_mode: "snapshot"
-security:
-  firewall: { enable: true }
-  docker_socket: false
-  git_credentials: { forward_https: true, forward_ssh: true, copy_git_config: true }
-ralph:
-  max_loops: 50
-  stagnation_threshold: 3
-  timeout_minutes: 15
-  skip_permissions: false
+agent: { includes: [], env: {} }
+workspace: { remote_path: "/workspace", default_mode: "snapshot" }
+security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, copy_git_config: true } }
+ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
 **Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
 
 ## Design Decisions
 
-1. Firewall enabled by default
-2. Docker socket disabled by default
-3. `run` and `start` are aliases for `container run` (Docker CLI pattern)
-4. Hierarchical naming: `clawker.project.agent`
-5. Labels (`com.clawker.*`) are authoritative for filtering
-6. stdout for data, stderr for status
-7. Project registry replaces directory walking for resolution
-8. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
-9. Commands receive function references on Options structs, not `*Factory` directly
-10. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands follow NewCmd(f, runF) pattern with per-command Options structs
+1. Firewall enabled, Docker socket disabled by default
+2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
+3. Hierarchical naming: `clawker.project.agent`; labels (`com.clawker.*`) authoritative for filtering
+4. stdout for data, stderr for status
+5. Project registry replaces directory walking for resolution
+6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
+7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 
 ## Important Gotchas
 
@@ -188,31 +170,11 @@ ralph:
 
 ## Context Management (Critical)
 
-**NEVER** store `context.Context` in struct fields. Pass as first parameter to I/O methods.
-
-```go
-// ✅ Per-operation context
-func (e *Engine) ContainerStart(ctx context.Context, id string) error { ... }
-
-// ✅ Cleanup with fresh context
-defer func() {
-    client.ContainerRemove(context.Background(), containerID, true)
-}()
-```
+**NEVER** store `context.Context` in struct fields. Pass as first parameter to I/O methods. Use `context.Background()` for cleanup in deferred functions.
 
 ## Testing Requirements
 
-**All tests must pass before any change is complete.**
-
-```bash
-make test                                        # Unit tests (no Docker)
-go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
-go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
-go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
-make test-all                                    # All test suites
-```
-
-Test categories use directory separation — no build tags needed. See `.claude/rules/testing.md` for conventions and utilities.
+**All tests must pass before any change is complete.** Run `make test` (unit) or `make test-all` (all suites). See Build Commands above for individual test suites. See `.claude/rules/testing.md` for conventions.
 
 ## Documentation
 

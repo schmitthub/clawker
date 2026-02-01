@@ -14,6 +14,8 @@ Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" techni
 | `loop.go` | Main loop orchestration, non-TTY exec with output capture |
 | `monitor.go` | Progress output formatting |
 | `history.go` | Session and circuit event logs |
+| `tui/model.go` | BubbleTea TUI model for ralph monitor dashboard |
+| `tui/messages.go` | Internal message types for TUI updates |
 
 ## Key Architecture
 
@@ -44,19 +46,9 @@ Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" techni
 
 ## Critical Patterns
 
-**StdCopy doesn't respect context cancellation**: Wrap in goroutine, close hijacked connection on context cancel:
-
-```go
-go func() { _, err := stdcopy.StdCopy(out, errOut, hijacked.Reader); done <- err }()
-select {
-case err = <-done:  // normal
-case <-ctx.Done():  hijacked.Close(); <-done  // force unblock
-}
-```
-
-**Fresh context for cleanup**: Use `context.Background()` with timeout for ExecInspect after loop timeout.
-
-**Boolean flag config override**: Can't use default value comparison. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
+- **StdCopy doesn't respect context cancellation**: Wrap in goroutine, close hijacked connection on `ctx.Done()` to force unblock
+- **Fresh context for cleanup**: Use `context.Background()` with timeout for ExecInspect after loop timeout
+- **Boolean flag config override**: Can't use default value comparison. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
 
 ## API Reference
 
@@ -189,6 +181,14 @@ func NewSessionStore(baseDir string) *SessionStore
 func DefaultSessionStore() (*SessionStore, error)
 // Load/Save/Delete Session(project, agent) and CircuitState(project, agent)
 func (s *SessionStore) LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)
+```
+
+### TUI (`tui/`)
+
+```go
+type Model struct { ... }  // BubbleTea model for ralph monitor dashboard
+func NewModel(opts ModelOptions) Model
+// Implements tea.Model: Init(), Update(tea.Msg), View() string
 ```
 
 ## CLI Commands (`internal/cmd/ralph/`)

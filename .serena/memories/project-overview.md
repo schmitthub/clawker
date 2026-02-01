@@ -26,6 +26,9 @@ make test-all                                    # All test suites
 
 No build tags — directory separation only.
 
+## Last Documentation Audit
+Date: 2026-01-31. All 30 doc files fresh. Root CLAUDE.md trimmed to 193 lines (under 200-line budget). Symbol accuracy gaps addressed in ralph, config, tui, iostreams, whail, docker, hostproxy, workspace CLAUDE.md files. No dead rules or stale WIP memories found.
+
 ## Architecture
 - Factory pattern: `cmdutil.Factory` struct with closure fields, constructor in `internal/cmd/factory/`
 - Commands: `NewCmd(f, runF)` pattern — `runF` is the test seam

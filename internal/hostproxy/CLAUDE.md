@@ -39,6 +39,21 @@ type CallbackData struct {
 type CallbackChannel struct { store *SessionStore }
 ```
 
+## SessionStore (`session.go`)
+
+Generic TTL-based session management with automatic cleanup.
+
+```go
+func NewSessionStore() *SessionStore
+
+(*SessionStore).Create(sessionType string, ttl time.Duration, metadata map[string]any) (*Session, error)
+(*SessionStore).Get(id string) *Session
+(*SessionStore).Delete(id string)
+(*SessionStore).Count() int
+(*SessionStore).Stop()                              // Stop cleanup goroutine
+(*SessionStore).SetOnDelete(fn func(*Session))       // Hook for session deletion
+```
+
 ## Constructors
 
 ```go

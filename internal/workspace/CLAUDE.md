@@ -51,6 +51,11 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 ## Git Credentials
 
 ```go
+type GitCredentialSetupResult struct {
+    Mounts []mount.Mount   // Credential helper mounts
+    Env    []string        // Environment variables (e.g., git credential helper config)
+}
+
 func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult
 func GitConfigExists() bool
 func GetGitConfigMount(cfg *config.SecurityConfig) (*mount.Mount, error)
