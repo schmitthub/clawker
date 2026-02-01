@@ -588,7 +588,7 @@ golangci-lint run --version v2.6.0
 - Checkout code
 - Setup Go 1.25.5 (from go.mod)
 - Download dependencies (go mod download)
-- Run tests: go test -race -tags=internals ./...
+- Run tests: go test -race -tags=integration ./...
 - Build: go build -v ./cmd/gh
 ```
 
