@@ -5,8 +5,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,13 +45,14 @@ func TestNewCmdList(t *testing.T) {
 
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			argv := testutil.SplitArgs(tt.input)
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 
-			_, err := cmd.ExecuteC()
+			_, err = cmd.ExecuteC()
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
 			require.Equal(t, tt.wantOpts.Quiet, gotOpts.Quiet)

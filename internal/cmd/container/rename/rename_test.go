@@ -5,9 +5,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,7 +61,9 @@ func TestNewCmdRename(t *testing.T) {
 
 			argv := []string{}
 			if tt.input != "" {
-				argv = testutil.SplitArgs(tt.input)
+				parsed, err := shlex.Split(tt.input)
+				require.NoError(t, err)
+				argv = parsed
 			}
 
 			cmd.SetArgs(argv)

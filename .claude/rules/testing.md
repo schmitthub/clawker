@@ -53,7 +53,6 @@ CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance \
 | `ready.go` | Application readiness detection |
 | `config_builder.go` | Fluent config construction |
 | `golden.go` | Golden file comparison |
-| `args.go` | Argument parsing helpers |
 
 ### Test Harness
 
