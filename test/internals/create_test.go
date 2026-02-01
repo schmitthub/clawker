@@ -38,7 +38,11 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 
 	// Create Docker client for verification and cleanup
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "create-agent-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "create-agent-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for create-agent-test: %v", err)
+		}
+	}()
 
 	// Generate unique agent name for this test
 	agentName := "test-agent-" + time.Now().Format("150405.000000")
@@ -107,7 +111,11 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "create-name-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "create-name-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for create-name-test: %v", err)
+		}
+	}()
 
 	// Use --name flag (should work the same as --agent)
 	agentName := "test-name-" + time.Now().Format("150405.000000")
@@ -157,7 +165,11 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "create-random-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "create-random-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for create-random-test: %v", err)
+		}
+	}()
 
 	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{

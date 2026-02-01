@@ -38,7 +38,11 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 
 	// Create Docker client for verification and cleanup
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-test: %v", err)
+		}
+	}()
 
 	// Generate unique agent name for this test
 	agentName := "test-echo-" + time.Now().Format("150405.000000")
@@ -109,7 +113,11 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-rm-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-rm-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-rm-test: %v", err)
+		}
+	}()
 
 	agentName := "test-rm-" + time.Now().Format("150405.000000")
 
@@ -162,7 +170,11 @@ func TestRunIntegration_Labels(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-label-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-label-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-label-test: %v", err)
+		}
+	}()
 
 	agentName := "test-labels-" + time.Now().Format("150405.000000")
 
@@ -230,7 +242,11 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-ready-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-ready-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-ready-test: %v", err)
+		}
+	}()
 
 	agentName := "test-ready-" + time.Now().Format("150405.000000")
 
@@ -306,7 +322,11 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-arbitrary-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-arbitrary-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-arbitrary-test: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name        string
@@ -416,7 +436,11 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-env-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-env-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-env-test: %v", err)
+		}
+	}()
 
 	agentName := "test-env-" + time.Now().Format("150405.000000")
 
@@ -490,7 +514,11 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-name-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-name-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-name-test: %v", err)
+		}
+	}()
 
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 
@@ -560,7 +588,6 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 // This exercises the attachThenStart flow including the waitForContainerExit helper.
 func TestRunIntegration_AttachThenStart(t *testing.T) {
 	harness.RequireDocker(t)
-	ctx := context.Background()
 
 	h := harness.NewHarness(t,
 		harness.WithConfigBuilder(
@@ -572,7 +599,11 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-attach-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-attach-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-attach-test: %v", err)
+		}
+	}()
 
 	agentName := "test-attach-" + time.Now().Format("150405.000000")
 
@@ -618,7 +649,6 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 // properly reports non-zero exit codes from the container.
 func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
 	harness.RequireDocker(t)
-	ctx := context.Background()
 
 	h := harness.NewHarness(t,
 		harness.WithConfigBuilder(
@@ -630,7 +660,11 @@ func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
 	h.Chdir()
 
 	client := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-exit-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-exit-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-exit-test: %v", err)
+		}
+	}()
 
 	agentName := "test-exit-" + time.Now().Format("150405.000000")
 

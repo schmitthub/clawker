@@ -33,7 +33,11 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "start-basic-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-basic-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for start-basic-test: %v", err)
+		}
+	}()
 
 	agentName := "test-start-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -108,7 +112,11 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 			dockerClient := harness.NewTestClient(t)
 			rawClient := harness.NewRawDockerClient(t)
 			defer rawClient.Close()
-			defer harness.CleanupProjectResources(ctx, dockerClient, project)
+			defer func() {
+				if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
+					t.Logf("WARNING: cleanup failed for %s: %v", project, err)
+				}
+			}()
 
 			agentName := "test-pattern-" + time.Now().Format("150405.000000")
 			containerName := h.ContainerName(agentName)
@@ -182,7 +190,11 @@ func TestStartIntegration_BothImages(t *testing.T) {
 			dockerClient := harness.NewTestClient(t)
 			rawClient := harness.NewRawDockerClient(t)
 			defer rawClient.Close()
-			defer harness.CleanupProjectResources(ctx, dockerClient, project)
+			defer func() {
+				if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
+					t.Logf("WARNING: cleanup failed for %s: %v", project, err)
+				}
+			}()
 
 			agentName := "test-image-" + time.Now().Format("150405.000000")
 			containerName := h.ContainerName(agentName)
@@ -249,7 +261,11 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "start-multi-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-multi-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for start-multi-test: %v", err)
+		}
+	}()
 
 	timestamp := time.Now().Format("150405.000000")
 	containerNames := []string{
@@ -319,7 +335,11 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "start-running-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-running-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for start-running-test: %v", err)
+		}
+	}()
 
 	agentName := "test-running-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -409,7 +429,11 @@ func TestStartIntegration_MultipleWithAttach(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "start-attach-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-attach-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for start-attach-test: %v", err)
+		}
+	}()
 
 	timestamp := time.Now().Format("150405.000000")
 	containerNames := []string{

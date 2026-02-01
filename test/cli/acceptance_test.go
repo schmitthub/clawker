@@ -1,7 +1,7 @@
 // Package acceptance provides acceptance tests using testscript.
 // These tests validate CLI workflows against a real Docker daemon.
 //
-// Run with: go test -tags=acceptance ./acceptance -v
+// Run with: go test ./test/cli/... -v -timeout 15m
 package acceptance
 
 import (

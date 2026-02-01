@@ -34,7 +34,11 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-test: %v", err)
+		}
+	}()
 
 	// Generate unique container name
 	agentName := "test-exec-" + time.Now().Format("150405.000000")
@@ -143,7 +147,11 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-agent-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-agent-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-agent-test: %v", err)
+		}
+	}()
 
 	agentName := "test-agent-exec-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -207,7 +215,11 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-env-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-env-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-env-test: %v", err)
+		}
+	}()
 
 	agentName := "test-exec-env-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -272,7 +284,11 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-workdir-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-workdir-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-workdir-test: %v", err)
+		}
+	}()
 
 	agentName := "test-exec-wd-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -338,7 +354,11 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-error-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-error-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-error-test: %v", err)
+		}
+	}()
 
 	t.Run("command not found", func(t *testing.T) {
 		agentName := "test-err-notfound-" + time.Now().Format("150405.000000")
@@ -445,7 +465,11 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	dockerClient := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-script-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-script-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exec-script-test: %v", err)
+		}
+	}()
 
 	agentName := "test-script-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)

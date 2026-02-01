@@ -61,9 +61,9 @@ CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test \
 ### Test Harness
 
 ```go
-h := testutil.NewHarness(t, testutil.WithProject("myproject"),
-    testutil.WithConfigBuilder(testutil.NewConfigBuilder().
-        WithProject("myproject").WithDefaultImage("alpine:latest").WithBuild(testutil.DefaultBuild())))
+h := harness.NewHarness(t, harness.WithProject("myproject"),
+    harness.WithConfigBuilder(builders.NewConfigBuilder().
+        WithProject("myproject").WithDefaultImage("alpine:latest").WithBuild(builders.DefaultBuild())))
 ```
 
 ### Config Builder Presets
@@ -73,10 +73,10 @@ h := testutil.NewHarness(t, testutil.WithProject("myproject"),
 ### Docker Helpers
 
 ```go
-testutil.SkipIfNoDocker(t)           // Skip if no Docker
-testutil.RequireDocker(t)            // Fail if no Docker
-client := testutil.NewTestClient(t)  // whail.Engine with test labels
-rawClient := testutil.NewRawDockerClient(t)  // Low-level Docker client
+harness.SkipIfNoDocker(t)           // Skip if no Docker
+harness.RequireDocker(t)            // Fail if no Docker
+client := harness.NewTestClient(t)  // whail.Engine with test labels
+rawClient := harness.NewRawDockerClient(t)  // Low-level Docker client
 ```
 
 ### Docker Test Fakes (Recommended for New Command Tests)
@@ -116,7 +116,7 @@ err := cmd.Execute()
 
 ### Cleanup (CRITICAL)
 
-Always clean up via `t.Cleanup()`. Use `context.Background()` in cleanup functions. Never write local wait functions — use `testutil.WaitForContainerRunning`, `WaitForContainerExit`, `WaitForReadyFile`, etc.
+Always clean up via `t.Cleanup()`. Use `context.Background()` in cleanup functions. Never write local wait functions — use `harness.WaitForContainerRunning`, `WaitForContainerExit`, `WaitForReadyFile`, etc.
 
 ---
 
@@ -142,17 +142,18 @@ Agent names: include timestamp AND random suffix for parallel safety.
 6. **Don't duplicate harness functions**: Always check `test/harness` first
 7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
 8. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
+9. **Unit test imports**: Co-located unit tests (`*_test.go` in source packages) should NOT import `test/harness` or heavy test infrastructure. Use standard library + `shlex` + `testify` + `cmdutil` directly. The `test/harness` package transitively pulls in Docker SDK, whail, config, yaml — acceptable for `test/internals/` and `test/agents/` but too heavy for flag-parsing unit tests. Prefer 3-line boilerplate over a convenience helper that drags in the world.
 
 ---
 
 ## Quick Reference
 
 ```go
-testutil.RequireDocker(t)
-h := testutil.NewHarness(t, testutil.WithProject("test"))
-client := testutil.NewTestClient(t)
-rawClient := testutil.NewRawDockerClient(t)
-err = testutil.WaitForContainerRunning(ctx, rawClient, containerID)
-err = testutil.WaitForReadyFile(ctx, rawClient, containerID)
+harness.RequireDocker(t)
+h := harness.NewHarness(t, harness.WithProject("test"))
+client := harness.NewTestClient(t)
+rawClient := harness.NewRawDockerClient(t)
+err = harness.WaitForContainerRunning(ctx, rawClient, containerID)
+err = harness.WaitForReadyFile(ctx, rawClient, containerID)
 // Cleanup is automatic via t.Cleanup in NewHarness
 ```

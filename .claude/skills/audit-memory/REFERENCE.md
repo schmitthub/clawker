@@ -20,7 +20,7 @@ Packages that **should** have a CLAUDE.md (contain significant public API):
 Packages that **don't need** a CLAUDE.md (thin wiring or test-only):
 
 - `internal/cmd/*/` — Covered by `.claude/rules/container-commands.md` and similar rules
-- `internal/testutil/` — Covered by `.claude/rules/testing.md`
+- `test/harness/` — Covered by `.claude/rules/testing.md`
 - `internal/logger/` — Simple setup, covered in code-style rule
 - `internal/credentials/` — Small, self-documenting
 - `internal/prompts/` — Small, self-documenting

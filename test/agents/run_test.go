@@ -49,7 +49,11 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 	// Ensure cleanup even if test fails
 	client := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "run-interactive-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "run-interactive-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for run-interactive-test: %v", err)
+		}
+	}()
 
 	agentName := "test-interactive-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -232,7 +236,11 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 
 	client := harness.NewTestClient(t)
 	rawClient := harness.NewRawDockerClient(t)
-	defer harness.CleanupProjectResources(ctx, client, "exit-detection-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), client, "exit-detection-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for exit-detection-test: %v", err)
+		}
+	}()
 
 	agentName := "exit-test-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)

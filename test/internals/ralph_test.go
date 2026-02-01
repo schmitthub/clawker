@@ -42,7 +42,11 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	defer rawClient.Close()
 
 	dockerClient := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, dockerClient, "ralph-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for ralph-test: %v", err)
+		}
+	}()
 
 	// Generate unique container name
 	agentName := "test-ralph-" + time.Now().Format("150405.000000")
@@ -81,9 +85,10 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	runStarted := make(chan struct{})
 
 	// Run ralph in a goroutine
+	errCh := make(chan error, 1)
 	go func() {
 		close(runStarted)
-		_, _ = runner.Run(ctx, ralph.LoopOptions{
+		_, err := runner.Run(ctx, ralph.LoopOptions{
 			ContainerName: containerName,
 			Project:       "ralph-test",
 			Agent:         agentName,
@@ -91,6 +96,7 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 			MaxLoops:      1,
 			Timeout:       30 * time.Second,
 		})
+		errCh <- err
 	}()
 
 	// Wait for Run to start
@@ -134,7 +140,11 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 	defer rawClient.Close()
 
 	dockerClient := harness.NewTestClient(t)
-	defer harness.CleanupProjectResources(ctx, dockerClient, "ralph-timeout-test")
+	defer func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-timeout-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for ralph-timeout-test: %v", err)
+		}
+	}()
 
 	agentName := "test-timeout-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)

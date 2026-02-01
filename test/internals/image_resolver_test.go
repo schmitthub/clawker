@@ -98,11 +98,15 @@ func setupImageResolverTests(t *testing.T) *imageResolverState {
 
 		for _, id := range []string{latestID, versionedID, otherID} {
 			if id != "" {
-				_, _ = cli.ImageRemove(cleanupCtx, id, client.ImageRemoveOptions{Force: true, PruneChildren: true})
+				if _, err := cli.ImageRemove(cleanupCtx, id, client.ImageRemoveOptions{Force: true, PruneChildren: true}); err != nil {
+					t.Logf("WARNING: failed to remove test image %s: %v", id[:12], err)
+				}
 			}
 		}
 		for _, tag := range []string{state.latestImageTag, state.versionedTag, state.otherProjectTag} {
-			_, _ = cli.ImageRemove(cleanupCtx, tag, client.ImageRemoveOptions{Force: true})
+			if _, err := cli.ImageRemove(cleanupCtx, tag, client.ImageRemoveOptions{Force: true}); err != nil {
+				t.Logf("WARNING: failed to remove test image %s: %v", tag, err)
+			}
 		}
 		cli.Close()
 	})
