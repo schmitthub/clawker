@@ -15,7 +15,6 @@ Packages that **should** have a CLAUDE.md (contain significant public API):
 - `internal/term/`
 - `internal/hostproxy/`
 - `pkg/whail/`
-- `pkg/build/`
 
 Packages that **don't need** a CLAUDE.md (thin wiring or test-only):
 

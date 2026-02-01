@@ -33,7 +33,7 @@
 ```
 ├── cmd/clawker/              # Main CLI binary
 ├── internal/
-│   ├── build/                 # Image building orchestration
+│   ├── build/                 # Image building, Dockerfile generation, semver, npm registry
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
@@ -52,7 +52,6 @@
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
-│   ├── build/                 # Dockerfile templates, semver, npm registry
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 ├── test/
 │   ├── harness/               # Test harness, config builders, helpers (golden files, docker)

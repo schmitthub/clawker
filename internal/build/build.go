@@ -8,7 +8,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	pkgbuild "github.com/schmitthub/clawker/pkg/build"
 )
 
 // Builder handles Docker image building for clawker projects.
@@ -43,7 +42,7 @@ func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder
 // EnsureImage ensures an image is available, building if necessary.
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error {
-	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
+	gen := NewProjectGenerator(b.config, b.workDir)
 
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
@@ -52,7 +51,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 			Msg("building from custom Dockerfile")
 
 		// Create build context from directory
-		buildCtx, err := pkgbuild.CreateBuildContextFromDir(
+		buildCtx, err := CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)
@@ -91,7 +90,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error {
-	gen := pkgbuild.NewProjectGenerator(b.config, b.workDir)
+	gen := NewProjectGenerator(b.config, b.workDir)
 
 	// Merge tags: primary tag + any additional tags from options
 	tags := mergeTags(imageTag, opts.Tags)
@@ -102,7 +101,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
-		buildCtx, err := pkgbuild.CreateBuildContextFromDir(
+		buildCtx, err := CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)

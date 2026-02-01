@@ -32,7 +32,7 @@ func findProjectRoot() (string, error) {
 	}
 }
 
-// copyScriptToContainer copies a script from pkg/build/templates/ into the container
+// copyScriptToContainer copies a script from internal/build/templates/ into the container
 func copyScriptToContainer(ctx context.Context, t *testing.T, result *ContainerResult, scriptName string) {
 	t.Helper()
 

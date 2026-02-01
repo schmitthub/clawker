@@ -597,7 +597,7 @@ proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
 ### Script Testing Pattern
 
-Tests copy scripts from `pkg/build/templates/` into containers:
+Tests copy scripts from `internal/build/templates/` into containers:
 
 ```go
 copyScriptToContainer(ctx, t, result, "init-firewall.sh")
@@ -605,4 +605,4 @@ execResult, err := result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
 require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
 ```
 
-**IMPORTANT:** Tests use actual scripts from `pkg/build/templates/`. Script changes are automatically tested.
+**IMPORTANT:** Tests use actual scripts from `internal/build/templates/`. Script changes are automatically tested.
