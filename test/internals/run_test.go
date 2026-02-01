@@ -1,4 +1,4 @@
-package integration
+package internals
 
 import (
 	"context"
@@ -9,9 +9,7 @@ import (
 
 	dockerclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/run"
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -49,11 +47,7 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	containerName := h.ContainerName(agentName)
 
 	// Create factory pointing to harness project directory
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Create and execute the run command in detached mode
 	cmd := run.NewCmdRun(f, nil)
@@ -121,11 +115,7 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 
 	agentName := "test-rm-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Run a container that exits immediately with --rm
 	cmd := run.NewCmdRun(f, nil)
@@ -178,11 +168,7 @@ func TestRunIntegration_Labels(t *testing.T) {
 
 	agentName := "test-labels-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
@@ -250,11 +236,7 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 
 	agentName := "test-ready-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Run a container that creates the ready file after a brief delay
 	// This simulates what the clawker entrypoint does
@@ -363,11 +345,7 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 			sanitizedName := strings.ReplaceAll(tt.name, " ", "-")
 			agentName := "test-arb-" + sanitizedName + "-" + time.Now().Format("150405.000000")
 
-			ios := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{
-				WorkDir:   h.ProjectDir,
-				IOStreams: ios.IOStreams,
-			}
+			f, ios := harness.NewTestFactory(t, h)
 
 			// Build command args: --detach, --agent, alpine, then the command
 			cmdArgs := []string{
@@ -444,11 +422,7 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 
 	agentName := "test-env-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Run env command with a custom environment variable
 	cmd := run.NewCmdRun(f, nil)
@@ -522,11 +496,7 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Run with --agent flag and verify naming convention
 	cmd := run.NewCmdRun(f, nil)
@@ -607,11 +577,7 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 
 	agentName := "test-attach-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	// Run without --detach: this goes through attachThenStart
 	// Use --rm so container is cleaned up automatically
@@ -668,11 +634,7 @@ func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
 
 	agentName := "test-exit-" + time.Now().Format("150405.000000")
 
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{

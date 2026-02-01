@@ -1,6 +1,6 @@
 // Package integration provides reusable test infrastructure for internals testing
 // clawker scripts and components in lightweight containers.
-package integration
+package internals
 
 import (
 	"context"

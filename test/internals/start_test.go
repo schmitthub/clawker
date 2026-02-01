@@ -1,4 +1,4 @@
-package integration
+package internals
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/start"
-	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -61,11 +59,7 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	require.False(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should be stopped initially")
 
 	// Run start command
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
@@ -137,11 +131,7 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 			require.NoError(t, err, "failed to create container")
 
 			// Run start command with appropriate args
-			ios := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{
-				WorkDir:   h.ProjectDir,
-				IOStreams: ios.IOStreams,
-			}
+			f, ios := harness.NewTestFactory(t, h)
 
 			cmd := start.NewCmdStart(f, nil)
 			if tt.useAgent {
@@ -223,11 +213,7 @@ func TestStartIntegration_BothImages(t *testing.T) {
 			require.NoError(t, err, "failed to create container with image %s", tt.image)
 
 			// Run start command
-			ios := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{
-				WorkDir:   h.ProjectDir,
-				IOStreams: ios.IOStreams,
-			}
+			f, ios := harness.NewTestFactory(t, h)
 
 			cmd := start.NewCmdStart(f, nil)
 			cmd.SetArgs([]string{containerName})
@@ -293,11 +279,7 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 	}
 
 	// Run start command with all 3 containers
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs(containerNames)
@@ -369,11 +351,7 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Try to start it again - should succeed (idempotent)
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{containerName})
@@ -399,11 +377,7 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 	h.Chdir()
 
 	// Try to start a container that doesn't exist
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, _ := harness.NewTestFactory(t, h)
 
 	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs([]string{"clawker.start-nonexist-test.doesnotexist"})
@@ -460,11 +434,7 @@ func TestStartIntegration_MultipleWithAttach(t *testing.T) {
 	}
 
 	// Try to start with --attach and multiple containers
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, _ := harness.NewTestFactory(t, h)
 
 	cmd := start.NewCmdStart(f, nil)
 	cmd.SetArgs(append([]string{"--attach"}, containerNames...))

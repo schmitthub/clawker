@@ -1,4 +1,4 @@
-package integration
+package internals
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/exec"
-	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -109,11 +107,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{
-				WorkDir:   h.ProjectDir,
-				IOStreams: ios.IOStreams,
-			}
+			f, ios := harness.NewTestFactory(t, h)
 
 			// Build exec command args: container name, then command
 			cmdArgs := append([]string{containerName}, tt.cmd...)
@@ -181,11 +175,7 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with --agent flag
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
@@ -249,11 +239,7 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -e flag to set environment variable
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
@@ -318,11 +304,7 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -w flag to set working directory
-	ios := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
-		IOStreams: ios.IOStreams,
-	}
+	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
@@ -386,11 +368,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		require.NoError(t, err, "container did not start")
 
 		// Try to exec a command that doesn't exist
-		ios := iostreams.NewTestIOStreams()
-		f := &cmdutil.Factory{
-			WorkDir:   h.ProjectDir,
-			IOStreams: ios.IOStreams,
-		}
+		f, _ := harness.NewTestFactory(t, h)
 
 		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
@@ -422,11 +400,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		// Deliberately NOT starting the container
 
 		// Try to exec into the stopped container
-		ios := iostreams.NewTestIOStreams()
-		f := &cmdutil.Factory{
-			WorkDir:   h.ProjectDir,
-			IOStreams: ios.IOStreams,
-		}
+		f, ios := harness.NewTestFactory(t, h)
 
 		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
@@ -544,11 +518,7 @@ chmod +x /tmp/test-script.sh`}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
-			f := &cmdutil.Factory{
-				WorkDir:   h.ProjectDir,
-				IOStreams: ios.IOStreams,
-			}
+			f, ios := harness.NewTestFactory(t, h)
 
 			var cmdArgs []string
 			if tt.useAgentFlag {
