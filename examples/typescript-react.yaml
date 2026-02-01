@@ -26,7 +26,7 @@ build:
       - cmd: |
           curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 
-      # Install Node.js via nvm and set up shell internals
+      # Install Node.js via nvm and set up shell integration
       - cmd: |
           . "$NVM_DIR/nvm.sh" && \
           nvm install $NODE_VERSION && \
