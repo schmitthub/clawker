@@ -62,12 +62,12 @@ func TestTemplateHashShort(t *testing.T) {
 func TestHashChangesWhenFileChanges(t *testing.T) {
 	// Create a temp directory with mock templates
 	tmpDir := t.TempDir()
-	templatesDir := filepath.Join(tmpDir, "pkg", "build", "templates")
+	templatesDir := filepath.Join(tmpDir, "internal", "build", "templates")
 	require.NoError(t, os.MkdirAll(templatesDir, 0755))
 
 	// Create mock files
 	require.NoError(t, os.WriteFile(filepath.Join(templatesDir, "test.tmpl"), []byte("original"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "pkg", "build", "dockerfile.go"), []byte("type Foo struct{}"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "internal", "build", "dockerfile.go"), []byte("type Foo struct{}"), 0644))
 
 	// Get initial hash
 	hash1, err := ComputeTemplateHashFromDir(tmpDir)
@@ -85,19 +85,19 @@ func TestHashChangesWhenFileChanges(t *testing.T) {
 func TestHashChangesWhenDockerfileGoChanges(t *testing.T) {
 	// Create a temp directory with mock templates
 	tmpDir := t.TempDir()
-	templatesDir := filepath.Join(tmpDir, "pkg", "build", "templates")
+	templatesDir := filepath.Join(tmpDir, "internal", "build", "templates")
 	require.NoError(t, os.MkdirAll(templatesDir, 0755))
 
 	// Create mock files
 	require.NoError(t, os.WriteFile(filepath.Join(templatesDir, "test.tmpl"), []byte("template"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "pkg", "build", "dockerfile.go"), []byte("type Foo struct{}"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "internal", "build", "dockerfile.go"), []byte("type Foo struct{}"), 0644))
 
 	// Get initial hash
 	hash1, err := ComputeTemplateHashFromDir(tmpDir)
 	require.NoError(t, err)
 
 	// Modify the dockerfile.go file
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "pkg", "build", "dockerfile.go"), []byte("type Foo struct { NewField string }"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "internal", "build", "dockerfile.go"), []byte("type Foo struct { NewField string }"), 0644))
 
 	// Hash should change
 	hash2, err := ComputeTemplateHashFromDir(tmpDir)
@@ -108,14 +108,14 @@ func TestHashChangesWhenDockerfileGoChanges(t *testing.T) {
 func TestHashStableAcrossFileOrder(t *testing.T) {
 	// Create a temp directory with mock templates
 	tmpDir := t.TempDir()
-	templatesDir := filepath.Join(tmpDir, "pkg", "build", "templates")
+	templatesDir := filepath.Join(tmpDir, "internal", "build", "templates")
 	require.NoError(t, os.MkdirAll(templatesDir, 0755))
 
 	// Create multiple mock files
 	require.NoError(t, os.WriteFile(filepath.Join(templatesDir, "a.tmpl"), []byte("content a"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(templatesDir, "b.tmpl"), []byte("content b"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(templatesDir, "c.tmpl"), []byte("content c"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "pkg", "build", "dockerfile.go"), []byte("struct def"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "internal", "build", "dockerfile.go"), []byte("struct def"), 0644))
 
 	// Hash should be deterministic regardless of internal ordering
 	hash1, err := ComputeTemplateHashFromDir(tmpDir)
@@ -136,8 +136,8 @@ func TestFindProjectRoot(t *testing.T) {
 	_, err = os.Stat(goMod)
 	require.NoError(t, err, "go.mod should exist at project root")
 
-	// Should also have pkg/build/templates
-	templatesDir := filepath.Join(root, "pkg", "build", "templates")
+	// Should also have internal/build/templates
+	templatesDir := filepath.Join(root, "internal", "build", "templates")
 	stat, err := os.Stat(templatesDir)
 	require.NoError(t, err, "templates directory should exist")
 	require.True(t, stat.IsDir(), "templates should be a directory")

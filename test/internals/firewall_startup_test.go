@@ -188,14 +188,14 @@ chmod +x /tmp/test-firewall.sh`}
 		"firewall script should exit with non-zero when iptables fails without NET_ADMIN")
 }
 
-// copyFirewallScriptToContainer copies the firewall script from pkg/build/templates to the container.
+// copyFirewallScriptToContainer copies the firewall script from internal/build/templates to the container.
 func copyFirewallScriptToContainer(ctx context.Context, t *testing.T, result *ContainerResult, scriptName string) {
 	t.Helper()
 
 	projectRoot, err := findProjectRoot()
 	require.NoError(t, err, "failed to find project root")
 
-	scriptPath := filepath.Join(projectRoot, "pkg", "build", "templates", scriptName)
+	scriptPath := filepath.Join(projectRoot, "internal", "build", "templates", scriptName)
 	content, err := os.ReadFile(scriptPath)
 	require.NoError(t, err, "failed to read script %s", scriptName)
 

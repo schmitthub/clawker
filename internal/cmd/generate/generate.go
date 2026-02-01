@@ -12,8 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
-	"github.com/schmitthub/clawker/pkg/build"
-	"github.com/schmitthub/clawker/pkg/build/registry"
+	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/build/registry"
 	"github.com/spf13/cobra"
 )
 

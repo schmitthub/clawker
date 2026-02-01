@@ -24,7 +24,7 @@ type LightContainer struct {
 	// BaseImage is the container base image (e.g., "alpine:latest", "debian:bookworm-slim")
 	BaseImage string
 
-	// Scripts are script files to copy into the container from pkg/build/templates/
+	// Scripts are script files to copy into the container from internal/build/templates/
 	Scripts []string
 
 	// Env are environment variables to set in the container
@@ -71,7 +71,7 @@ func (c *LightContainer) WithBaseImage(image string) *LightContainer {
 	return c
 }
 
-// WithScripts adds scripts to copy from pkg/build/templates/.
+// WithScripts adds scripts to copy from internal/build/templates/.
 func (c *LightContainer) WithScripts(scripts ...string) *LightContainer {
 	c.Scripts = append(c.Scripts, scripts...)
 	return c

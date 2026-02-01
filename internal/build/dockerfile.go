@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/pkg/build/registry"
+	"github.com/schmitthub/clawker/internal/build/registry"
 )
 
 // Embedded templates for Dockerfile generation

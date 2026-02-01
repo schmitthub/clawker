@@ -176,7 +176,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/prompts` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
-| `pkg/build` | Dockerfile generation, semver, npm registry client |
+| `internal/build` | Image building, Dockerfile generation, semver, npm registry client |
 
 ### internal/hostproxy - Host Proxy Service
 
@@ -359,7 +359,7 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 │  Clawker examples:                                              │
 │    hostproxy/ → config, docker, iostreams, logger               │
 │    ralph/ → docker, config, iostreams, tui, workspace           │
-│    build/ → config, docker, pkg/build                           │
+│    build/ → config, docker, build/registry, build/semver        │
 │    resolver/ → config, docker                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
