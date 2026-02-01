@@ -1,6 +1,4 @@
-//go:build integration
-
-package docker
+package integration
 
 import (
 	"context"
@@ -9,23 +7,21 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/schmitthub/clawker/test/harness"
 )
 
-// Integration tests for docker client - these require Docker to be running.
-
-// testCleanup removes all test containers and volumes
-func testCleanup(ctx context.Context, t *testing.T, c *Client) {
+// testDockerCleanup removes all test containers and volumes created by the client.
+func testDockerCleanup(ctx context.Context, t *testing.T, c *docker.Client) {
 	t.Helper()
 
-	// List all test containers
 	containers, err := c.ListContainers(ctx, true)
 	if err != nil {
 		t.Logf("cleanup: failed to list containers: %v", err)
 		return
 	}
 
-	// Remove each container with volumes
 	for _, ctr := range containers {
 		if err := c.RemoveContainerWithVolumes(ctx, ctr.ID, true); err != nil {
 			t.Logf("cleanup: failed to remove container %s: %v", ctr.Name, err)
@@ -34,9 +30,10 @@ func testCleanup(ctx context.Context, t *testing.T, c *Client) {
 }
 
 func TestNewClient_Integration(t *testing.T) {
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := NewClient(ctx)
+	client, err := docker.NewClient(ctx)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -48,25 +45,26 @@ func TestNewClient_Integration(t *testing.T) {
 	}
 
 	// Verify managed label key matches clawker convention
-	if got := client.ManagedLabelKey(); got != LabelManaged {
-		t.Errorf("ManagedLabelKey() = %q, want %q", got, LabelManaged)
+	if got := client.ManagedLabelKey(); got != docker.LabelManaged {
+		t.Errorf("ManagedLabelKey() = %q, want %q", got, docker.LabelManaged)
 	}
 
 	// Verify managed label value
-	if got := client.ManagedLabelValue(); got != ManagedLabelValue {
-		t.Errorf("ManagedLabelValue() = %q, want %q", got, ManagedLabelValue)
+	if got := client.ManagedLabelValue(); got != docker.ManagedLabelValue {
+		t.Errorf("ManagedLabelValue() = %q, want %q", got, docker.ManagedLabelValue)
 	}
 }
 
 func TestListContainersEmpty_Integration(t *testing.T) {
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := NewClient(ctx)
+	client, err := docker.NewClient(ctx)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	defer client.Close()
-	defer testCleanup(ctx, t, client)
+	t.Cleanup(func() { testDockerCleanup(context.Background(), t, client) })
 
 	// List should work even when no containers exist
 	containers, err := client.ListContainers(ctx, true)
@@ -78,30 +76,30 @@ func TestListContainersEmpty_Integration(t *testing.T) {
 }
 
 func TestClientContainerLifecycle_Integration(t *testing.T) {
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := NewClient(ctx)
+	client, err := docker.NewClient(ctx)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	defer client.Close()
-	defer testCleanup(ctx, t, client)
+	t.Cleanup(func() { testDockerCleanup(context.Background(), t, client) })
 
 	// Pull alpine image first to ensure it's available
 	pullReader, err := client.ImagePull(ctx, "alpine:latest", dockerclient.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("ImagePull() error = %v", err)
 	}
-	// Drain the reader to complete the pull
 	io.Copy(io.Discard, pullReader)
 	pullReader.Close()
 
 	project := "clienttest"
 	agent := "lifecycle"
-	containerName := ContainerName(project, agent)
+	containerName := docker.ContainerName(project, agent)
 
 	// Create container using embedded engine methods with our labels
-	labels := ContainerLabels(project, agent, "test", "alpine:latest", "/test")
+	labels := docker.ContainerLabels(project, agent, "test", "alpine:latest", "/test")
 
 	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Config: &container.Config{
@@ -170,9 +168,10 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 }
 
 func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := NewClient(ctx)
+	client, err := docker.NewClient(ctx)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -187,7 +186,7 @@ func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 		t.Error("FindContainerByAgent() should return nil for non-existent container")
 	}
 	// Name should still be returned even if container doesn't exist
-	expectedName := ContainerName("nonexistent", "container")
+	expectedName := docker.ContainerName("nonexistent", "container")
 	if name != expectedName {
 		t.Errorf("FindContainerByAgent() name = %q, want %q", name, expectedName)
 	}
