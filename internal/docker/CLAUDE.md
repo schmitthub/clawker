@@ -90,6 +90,7 @@ func NetworkLabels(project string) map[string]string                   // Labels
 
 ```go
 func ImageTag(project string) string                                   // "clawker-<project>:latest"
+func ImageTagWithHash(project, hash string) string                     // "clawker-<project>:sha-<hash>"
 func ContainerNamePrefix(project string) string                        // "clawker.<project>."
 func IsAlpineImage(imageRef string) bool                               // Detects Alpine base images
 func ContainerNamesFromAgents(project string, agents []string) []string // Batch name generation
@@ -126,6 +127,7 @@ type BuildImageOpts struct {
 }
 
 func (c *Client) ImageExists(ctx, imageRef) (bool, error)
+func (c *Client) TagImage(ctx, source, target string) error
 func (c *Client) IsMonitoringActive(ctx) bool
 func (c *Client) BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts) error
 func (c *Client) ListContainers(ctx, project string, allStates bool) ([]Container, error)

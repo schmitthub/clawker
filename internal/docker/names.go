@@ -137,6 +137,14 @@ func ImageTag(project string) string {
 	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
 }
 
+// ImageTagWithHash generates a content-addressed image tag: clawker-project:sha-<hash>
+func ImageTagWithHash(project, hash string) string {
+	if project == "" {
+		return fmt.Sprintf("%s:sha-%s", NamePrefix, hash)
+	}
+	return fmt.Sprintf("%s-%s:sha-%s", NamePrefix, project, hash)
+}
+
 // NetworkName is the name of the clawker network.
 const NetworkName = "clawker-net"
 

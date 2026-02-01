@@ -7,6 +7,7 @@ Image building orchestration, Dockerfile generation, version management, and bui
 | File | Purpose |
 |------|---------|
 | `build.go` | `Builder` — project image building (EnsureImage, Build) |
+| `hash.go` | Content-addressed hashing for Dockerfile + includes |
 | `defaults.go` | Default image building, flavor selection |
 | `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
 | `config.go` | Variant configuration (Debian/Alpine) |
@@ -28,7 +29,7 @@ Image building orchestration, Dockerfile generation, version management, and bui
 type Builder struct { client, config, workDir }
 
 func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder
-func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error  // Build if needed (skips if image exists unless ForceBuild)
+func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error  // Content-addressed: skips if hash matches, tags :latest
 func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error         // Always build
 ```
 
@@ -47,6 +48,14 @@ type Options struct {
     Tags           []string           // Additional tags (merged with imageTag)
 }
 ```
+
+## Content Hashing (`hash.go`)
+
+```go
+func ContentHash(dockerfile []byte, includes []string, workDir string) (string, error)
+```
+
+SHA-256 of rendered Dockerfile + sorted include file contents. Returns 12-char hex prefix. Used by `EnsureImage` to detect when rebuilds are actually needed. Images are tagged `clawker-<project>:sha-<hash>` with `:latest` aliased to the current hash.
 
 ## Default Image Utilities (`defaults.go`)
 

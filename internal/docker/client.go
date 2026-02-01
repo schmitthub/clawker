@@ -75,6 +75,16 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	return false
 }
 
+// TagImage adds an additional tag to an existing image.
+// source is the existing image reference, target is the new tag to apply.
+func (c *Client) TagImage(ctx context.Context, source, target string) error {
+	_, err := c.APIClient.ImageTag(ctx, whail.ImageTagOptions{
+		Source: source,
+		Target: target,
+	})
+	return err
+}
+
 // ImageExists checks if an image exists locally.
 // Returns true if the image exists, false if not found.
 // Note: This bypasses whail's label filtering since images may or may not be managed.

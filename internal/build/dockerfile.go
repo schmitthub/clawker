@@ -339,14 +339,19 @@ func (g *ProjectGenerator) Generate() ([]byte, error) {
 
 // GenerateBuildContext creates a tar archive containing the Dockerfile and scripts.
 func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-
-	// Generate Dockerfile
 	dockerfile, err := g.Generate()
 	if err != nil {
 		return nil, err
 	}
+	return g.GenerateBuildContextFromDockerfile(dockerfile)
+}
+
+// GenerateBuildContextFromDockerfile builds a tar archive build context using
+// pre-rendered Dockerfile bytes. This avoids re-generating the Dockerfile when
+// the caller (e.g. EnsureImage) has already rendered it for content hashing.
+func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error) {
+	buf := new(bytes.Buffer)
+	tw := tar.NewWriter(buf)
 
 	// Add Dockerfile to archive
 	if err := addFileToTar(tw, "Dockerfile", dockerfile); err != nil {

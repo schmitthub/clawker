@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -28,6 +29,7 @@ type Options struct {
 	NetworkMode    string             // Network mode for build
 	BuildArgs      map[string]*string // Build-time variables
 	Tags           []string           // Additional tags for the image (merged with imageTag)
+	Dockerfile     []byte             // Pre-rendered Dockerfile bytes (avoids re-generation)
 }
 
 // NewBuilder creates a new Builder instance.
@@ -40,17 +42,17 @@ func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder
 }
 
 // EnsureImage ensures an image is available, building if necessary.
+// Uses content-addressed tags to detect whether config actually changed.
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error {
 	gen := NewProjectGenerator(b.config, b.workDir)
 
-	// Check if we should use a custom Dockerfile
+	// Custom Dockerfiles bypass content hashing — always use legacy behavior
 	if gen.UseCustomDockerfile() {
 		logger.Info().
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
-		// Create build context from directory
 		buildCtx, err := CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
@@ -72,19 +74,41 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 		})
 	}
 
-	// Check if image exists and we don't need to rebuild
+	// Render Dockerfile and compute content hash
+	dockerfile, err := gen.Generate()
+	if err != nil {
+		return fmt.Errorf("failed to generate Dockerfile: %w", err)
+	}
+
+	hash, err := ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
+	if err != nil {
+		return fmt.Errorf("failed to compute content hash: %w", err)
+	}
+
+	hashTag := docker.ImageTagWithHash(b.config.Project, hash)
+
+	// Check if content-addressed image already exists
 	if !opts.ForceBuild {
-		exists, err := b.client.ImageExists(ctx, imageTag)
+		exists, err := b.client.ImageExists(ctx, hashTag)
 		if err != nil {
 			return err
 		}
 		if exists {
-			logger.Debug().Str("image", imageTag).Msg("image exists, skipping build")
+			logger.Debug().
+				Str("image", hashTag).
+				Msg("image up-to-date, skipping build")
+
+			// Ensure :latest points to this hash
+			if err := b.client.TagImage(ctx, hashTag, imageTag); err != nil {
+				return fmt.Errorf("failed to update :latest alias: %w", err)
+			}
 			return nil
 		}
 	}
 
-	// Generate and build Dockerfile
+	// Build with both :latest and content-addressed tags
+	opts.Tags = append(opts.Tags, hashTag)
+	opts.Dockerfile = dockerfile
 	return b.Build(ctx, imageTag, opts)
 }
 
@@ -124,7 +148,15 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 
 	logger.Info().Str("image", imageTag).Msg("building container image")
 
-	buildCtx, err := gen.GenerateBuildContext()
+	var (
+		buildCtx io.Reader
+		err      error
+	)
+	if len(opts.Dockerfile) > 0 {
+		buildCtx, err = gen.GenerateBuildContextFromDockerfile(opts.Dockerfile)
+	} else {
+		buildCtx, err = gen.GenerateBuildContext()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}

@@ -112,7 +112,7 @@ func MergeLabelFilters(filters ...map[string]string) map[string]string
 
 ## Type Aliases (re-exported Docker SDK types)
 
-Key re-exports: `Filters`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
+Key re-exports: `Filters`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
 
 Wait conditions: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
 

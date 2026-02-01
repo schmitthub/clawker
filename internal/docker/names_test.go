@@ -157,6 +157,27 @@ func TestImageTag(t *testing.T) {
 	}
 }
 
+func TestImageTagWithHash(t *testing.T) {
+	tests := []struct {
+		project string
+		hash    string
+		want    string
+	}{
+		{"myproject", "abc123def456", "clawker-myproject:sha-abc123def456"},
+		{"test", "deadbeef0000", "clawker-test:sha-deadbeef0000"},
+		{"", "abc123def456", "clawker:sha-abc123def456"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.project+"_"+tt.hash, func(t *testing.T) {
+			got := ImageTagWithHash(tt.project, tt.hash)
+			if got != tt.want {
+				t.Errorf("ImageTagWithHash(%q, %q) = %q, want %q", tt.project, tt.hash, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseContainerName(t *testing.T) {
 	tests := []struct {
 		name        string

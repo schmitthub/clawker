@@ -105,6 +105,13 @@ func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 	}
 }
 
+// SetupImageTag configures the fake to succeed on ImageTag.
+func (f *FakeClient) SetupImageTag() {
+	f.FakeAPI.ImageTagFn = func(_ context.Context, _ client.ImageTagOptions) (client.ImageTagResult, error) {
+		return client.ImageTagResult{}, nil
+	}
+}
+
 // SetupContainerCreate configures the fake to succeed on ContainerCreate,
 // returning a container with the given fake ID.
 func (f *FakeClient) SetupContainerCreate() {
