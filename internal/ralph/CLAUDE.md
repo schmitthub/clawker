@@ -138,8 +138,10 @@ type CircuitHistory struct { ... }
 type Runner struct { ... }
 type LoopOptions struct { Monitor *Monitor }
 type LoopResult struct { ... }
-func NewRunner(...) *Runner
-func (r *Runner) Run(ctx context.Context) (LoopResult, error)
+func NewRunner(client *docker.Client) (*Runner, error)
+func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner
+func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
+func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)
 func (r *Runner) ResetCircuit() error
 func (r *Runner) ResetSession() error
 ```
