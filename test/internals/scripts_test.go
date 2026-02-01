@@ -39,7 +39,7 @@ func copyScriptToContainer(ctx context.Context, t *testing.T, result *ContainerR
 	projectRoot, err := findProjectRoot()
 	require.NoError(t, err, "failed to find project root")
 
-	scriptPath := filepath.Join(projectRoot, "pkg", "build", "templates", scriptName)
+	scriptPath := filepath.Join(projectRoot, "internal", "build", "templates", scriptName)
 	content, err := os.ReadFile(scriptPath)
 	require.NoError(t, err, "failed to read script %s", scriptName)
 

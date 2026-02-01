@@ -85,10 +85,10 @@ build.CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)
 
 ```go
 vm := build.NewVersionsManager()
-vm.ResolveVersions(ctx, patterns, opts) (*VersionsFile, error)
+vm.ResolveVersions(ctx, patterns, opts) (*registry.VersionsFile, error)
 
-build.LoadVersionsFile(path) (*VersionsFile, error)
-build.SaveVersionsFile(path, vf) error
+build.LoadVersionsFile(path) (*registry.VersionsFile, error)
+build.SaveVersionsFile(path, vf) error  // vf is *registry.VersionsFile
 ```
 
 ## Variant Configuration (`config.go`)
