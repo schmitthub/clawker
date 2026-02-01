@@ -356,8 +356,6 @@ imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
 ### Basic Command Test
 
 ```go
-//go:build integration
-
 package mycommand
 
 func TestMyCommand_Integration(t *testing.T) {
@@ -445,11 +443,9 @@ func TestStopIntegration_BothPatterns(t *testing.T) {
 
 ---
 
-## E2E Test Patterns
+## E2E Test Patterns (`test/agents/`)
 
 ```go
-//go:build e2e
-
 func TestRunE2E_InteractiveMode(t *testing.T) {
     testutil.RequireDocker(t)
     binaryPath := buildClawkerBinary(t)
@@ -540,7 +536,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 ### Whail Jail Testing
 
 - `jail_test.go` must use `package whail_test` (external) to avoid import cycle with `whailtest`
-- Integration tests use `package whail` (internal) and `//go:build integration` tag
+- Integration tests use `package whail` (internal) and are located in `test/internals/`
 - Label override prevention: add `labels[e.managedLabelKey] = e.managedLabelValue` AFTER final label merge (caller labels have highest precedence)
 - `ContainerStatsOneShot` delegates to `APIClient.ContainerStats` — spy on `"ContainerStats"` not `"ContainerStatsOneShot"`
 
@@ -557,7 +553,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 
 ---
 
-## Testcontainers Integration Tests (`internal/testutil/integration/`)
+## Testcontainers Integration Tests (`test/internals/`)
 
 Uses [testcontainers-go](https://golang.testcontainers.org/) for testing scripts in lightweight containers.
 
@@ -576,8 +572,8 @@ Uses [testcontainers-go](https://golang.testcontainers.org/) for testing scripts
 ### Running
 
 ```bash
-go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
-go test -tags=integration ./internal/testutil/integration/... -run "Firewall" -v -timeout 10m
+go test ./test/internals/... -v -timeout 10m
+go test ./test/internals/... -run "Firewall" -v -timeout 10m
 ```
 
 ### Key Components

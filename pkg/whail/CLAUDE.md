@@ -88,6 +88,10 @@ func NewFromExisting(client APIClient, opts EngineOptions) *Engine           // 
 
 `ImageBuild`, `ImageRemove`, `ImageList`, `ImageInspect`, `ImagesPrune`
 
+### Copy
+
+`CopyToContainer`, `CopyFromContainer`, `ContainerStatPath`
+
 ### Volume
 
 `VolumeCreate`, `VolumeRemove`, `VolumeInspect`, `VolumeExists`, `VolumeList`, `VolumeListAll`, `IsVolumeManaged`, `VolumesPrune`
@@ -108,13 +112,13 @@ func MergeLabelFilters(filters ...map[string]string) map[string]string
 
 ## Type Aliases (re-exported Docker SDK types)
 
-Key re-exports: `Filters`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ExecCreateOptions`, `ExecStartOptions`, `ImageBuildOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `VolumeCreateOptions`, `NetworkCreateOptions`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`
+Key re-exports: `Filters`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
 
 Wait conditions: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
 
 ## Error Factories
 
-31+ error constructors for user-friendly messages with remediation steps:
+47 error constructors for user-friendly messages with remediation steps:
 
 `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageBuildFailed`, `ErrContainerNotFound`, `ErrContainerNotManaged`, `ErrContainerStartFailed`, `ErrContainerCreateFailed`, `ErrVolumeCreateFailed`, `ErrNetworkError`, `ErrAttachFailed`, etc.
 

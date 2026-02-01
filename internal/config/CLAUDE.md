@@ -27,7 +27,12 @@ const ProjectSettingsFileName = ".clawker.settings.yaml"   // settings_loader.go
 ## Home Paths (`home.go`)
 
 ```go
-func ClawkerHome() (string, error)      // ~/.local/clawker
+const ClawkerHomeEnv   = "CLAWKER_HOME"           // Override home directory
+const DefaultClawkerDir = "clawker"                // Default dir name under ~/.local/
+const MonitorSubdir, BuildSubdir, DockerfilesSubdir, LogsSubdir = "monitor", "build", "dockerfiles", "logs"
+const ClawkerNetwork = "clawker"                   // Default Docker network name
+
+func ClawkerHome() (string, error)      // ~/.local/clawker (or $CLAWKER_HOME)
 func MonitorDir() (string, error)       // ~/.local/clawker/monitor
 func BuildDir() (string, error)         // ~/.local/clawker/build
 func DockerfilesDir() (string, error)   // ~/.local/clawker/dockerfiles
@@ -83,11 +88,28 @@ type ValidationError struct { Field, Message string; Value interface{} }
 ## Settings Types (`settings.go`)
 
 ```go
+type Settings struct {
+    DefaultImage string `yaml:"default_image"`
+    Logging      LoggingConfig `yaml:"logging"`
+}
+
 type LoggingConfig struct {
     FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int
 }
+// LoggingConfig methods: IsFileEnabled, GetMaxSizeMB, GetMaxAgeDays, GetMaxBackups — return defaults if zero
+
+func DefaultSettings() *Settings
 
 type SettingsLoaderOption func(*SettingsLoader)
+```
+
+## SettingsLoader (`settings_loader.go`)
+
+```go
+func NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error)
+func WithProjectSettingsRoot(path string) SettingsLoaderOption
+
+// Methods: Path, ProjectSettingsPath, Exists, Load, Save, EnsureExists
 ```
 
 ## Registry (`registry.go`)

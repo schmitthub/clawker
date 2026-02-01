@@ -127,6 +127,11 @@ type BuildImageOpts struct {
 
 func (c *Client) ImageExists(ctx, imageRef) (bool, error)
 func (c *Client) IsMonitoringActive(ctx) bool
+func (c *Client) BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts) error
+func (c *Client) ListContainers(ctx, project string, allStates bool) ([]Container, error)
+func (c *Client) ListContainersByProject(ctx, project string, allStates bool) ([]Container, error)
+func (c *Client) FindContainerByAgent(ctx, project, agent string) (*Container, error)
+func (c *Client) RemoveContainerWithVolumes(ctx, containerID string, force bool) error
 ```
 
 ## Volume Utilities (`volume.go`)
@@ -134,6 +139,10 @@ func (c *Client) IsMonitoringActive(ctx) bool
 ```go
 func LoadIgnorePatterns(path string) ([]string, error)  // Parse .clawkerignore
 ```
+
+## Type Re-exports (`types.go`)
+
+Re-exports whail types for use by command packages: `Filters`, `Labels`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerCreateOptions`, `SDKContainerCreateOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ContainerWaitCondition`, `ContainerStartOptions`, `EnsureNetworkOptions`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageListOptions`, `ImageRemoveOptions`, `ImageBuildOptions`, `ImagePullOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `DockerError`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`, `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
 
 ## Client Usage
 

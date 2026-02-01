@@ -5,9 +5,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,13 +77,14 @@ func TestNewCmdRemove(t *testing.T) {
 
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			argv := testutil.SplitArgs(tt.input)
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 
-			_, err := cmd.ExecuteC()
+			_, err = cmd.ExecuteC()
 			if tt.wantErr {
 				require.Error(t, err)
 				require.EqualError(t, err, tt.wantErrMsg)

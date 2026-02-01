@@ -25,7 +25,8 @@
   "go.testFlags": ["-v"],
   "go.testTimeout": "120s",
 
-  // Build tags for integration tests (optional, uncomment to enable)
+  // Additional build tags for tests (optional, uncomment to enable; must match //go:build tags in code)
+  // Example: enable integration tests
   // "go.buildTags": "integration",
 
   // Gopls settings

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,13 +110,14 @@ func TestNewCmdRun_FlagParsing(t *testing.T) {
 				return nil
 			})
 
-			argv := testutil.SplitArgs(tt.input)
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 
-			err := cmd.Execute()
+			err = cmd.Execute()
 			if tt.wantErr {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.wantErrMsg)
@@ -144,12 +145,14 @@ func TestNewCmdRun_MutuallyExclusiveFlags(t *testing.T) {
 	})
 	_ = gotOpts
 
-	cmd.SetArgs(testutil.SplitArgs("--agent dev --prompt test --prompt-file test.md"))
+	args, err := shlex.Split("--agent dev --prompt test --prompt-file test.md")
+	require.NoError(t, err)
+	cmd.SetArgs(args)
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "if any flags in the group [prompt prompt-file] are set none of the others can be")
 }

@@ -17,7 +17,7 @@ func TestHistoryStore_SessionHistory(t *testing.T) {
 	project := "test-project"
 	agent := "test-agent"
 
-	// Load empty history
+	// Load empty History
 	history, err := store.LoadSessionHistory(project, agent)
 	require.NoError(t, err)
 	assert.Equal(t, project, history.Project)
@@ -76,7 +76,7 @@ func TestHistoryStore_CircuitHistory(t *testing.T) {
 	project := "test-project"
 	agent := "test-agent"
 
-	// Load empty history
+	// Load empty History
 	history, err := store.LoadCircuitHistory(project, agent)
 	require.NoError(t, err)
 	assert.Equal(t, project, history.Project)

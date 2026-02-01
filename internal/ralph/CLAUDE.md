@@ -14,6 +14,8 @@ Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" techni
 | `loop.go` | Main loop orchestration, non-TTY exec with output capture |
 | `monitor.go` | Progress output formatting |
 | `history.go` | Session and circuit event logs |
+| `tui/model.go` | BubbleTea TUI model for ralph monitor dashboard |
+| `tui/messages.go` | Internal message types for TUI updates |
 
 ## Key Architecture
 
@@ -44,19 +46,9 @@ Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" techni
 
 ## Critical Patterns
 
-**StdCopy doesn't respect context cancellation**: Wrap in goroutine, close hijacked connection on context cancel:
-
-```go
-go func() { _, err := stdcopy.StdCopy(out, errOut, hijacked.Reader); done <- err }()
-select {
-case err = <-done:  // normal
-case <-ctx.Done():  hijacked.Close(); <-done  // force unblock
-}
-```
-
-**Fresh context for cleanup**: Use `context.Background()` with timeout for ExecInspect after loop timeout.
-
-**Boolean flag config override**: Can't use default value comparison. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
+- **StdCopy doesn't respect context cancellation**: Wrap in goroutine, close hijacked connection on `ctx.Done()` to force unblock
+- **Fresh context for cleanup**: Use `context.Background()` with timeout for ExecInspect after loop timeout
+- **Boolean flag config override**: Can't use default value comparison. Use: `if !opts.Flag && cfg.Flag { opts.Flag = true }`
 
 ## API Reference
 
@@ -72,19 +64,23 @@ type Config struct {
 }
 func DefaultConfig() Config
 func (c Config) Timeout() time.Duration
+// Get<Field>() int — getter for each field, returns default if zero
 ```
 
-Default constants: `DefaultMaxLoops`, `DefaultStagnationThreshold`, `DefaultTimeoutMinutes`, `DefaultCallsPerHour`, `DefaultCompletionThreshold`, `DefaultSessionExpirationHours`, `DefaultSameErrorThreshold`, `DefaultOutputDeclineThreshold`, `DefaultMaxConsecutiveTestLoops`, `DefaultSafetyCompletionThreshold`, `DefaultLoopDelaySeconds`
+Default constants: `Default<Field>` for each Config field (e.g. `DefaultMaxLoops`, `DefaultStagnationThreshold`)
 
 ### Analyzer (`analyzer.go`)
 
 ```go
-type AnalysisResult struct { ... }
-func AnalyzeOutput(output string) AnalysisResult
+type Status struct { Status, TasksCompleted, FilesModified, TestsStatus, WorkType, ExitSignal, Recommendation string; CompletionIndicators int }
+func ParseStatus(output string) *Status  // returns nil if no valid block found
+// Status methods: IsComplete, IsCompleteStrict, IsBlocked, HasProgress, IsTestOnly() bool; String() string
+
+type AnalysisResult struct { Status *Status; RateLimitHit bool; ErrorSignature string; OutputSize, CompletionCount int }
+func AnalyzeOutput(output string) *AnalysisResult
 func CountCompletionIndicators(output string) int
 func DetectRateLimitError(output string) bool
 func ExtractErrorSignature(output string) string
-func ParseStatus(output string) (Status, error)
 ```
 
 Status constants: `StatusPending`, `StatusComplete`, `StatusBlocked`, `TestsPassing`, `TestsFailing`, `TestsNotRun`, `WorkTypeImplementation`, `WorkTypeTesting`, `WorkTypeDocumentation`, `WorkTypeRefactoring`
@@ -92,19 +88,22 @@ Status constants: `StatusPending`, `StatusComplete`, `StatusBlocked`, `TestsPass
 ### Circuit Breaker (`circuit.go`)
 
 ```go
-type CircuitBreakerConfig struct {
-    StagnationThreshold, SameErrorThreshold, OutputDeclineThreshold int
-    MaxConsecutiveTestLoops, CompletionThreshold, SafetyCompletionThreshold int
-}
+type CircuitBreakerConfig struct { StagnationThreshold, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, CompletionThreshold, SafetyCompletionThreshold int }
+type CircuitBreakerState struct { ... }
+type UpdateResult struct { Tripped bool; Reason string; IsComplete bool; CompletionMsg string }
 func DefaultCircuitBreakerConfig() CircuitBreakerConfig
+func NewCircuitBreaker(threshold int) *CircuitBreaker
 func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker
 
-type UpdateResult struct { ... }
-func (cb *CircuitBreaker) Update(analysis AnalysisResult) UpdateResult
-func (cb *CircuitBreaker) Check() error
+func (cb *CircuitBreaker) Update(status *Status) (tripped bool, reason string)
+func (cb *CircuitBreaker) UpdateWithAnalysis(status *Status, analysis *AnalysisResult) UpdateResult
+func (cb *CircuitBreaker) Check() bool           // true if tripped
 func (cb *CircuitBreaker) IsTripped() bool
+func (cb *CircuitBreaker) TripReason() string
 func (cb *CircuitBreaker) Reset()
-func (cb *CircuitBreaker) State() string
+// Getters: NoProgressCount, Threshold, SameErrorCount, ConsecutiveTestLoops → int
+func (cb *CircuitBreaker) State() CircuitBreakerState
+func (cb *CircuitBreaker) RestoreState(state CircuitBreakerState)
 ```
 
 ### Rate Limiter (`ratelimit.go`)
@@ -113,10 +112,12 @@ func (cb *CircuitBreaker) State() string
 type RateLimiter struct { ... }
 type RateLimitState struct { ... }
 func NewRateLimiter(limit int) *RateLimiter
-func (rl *RateLimiter) Allow() bool
-func (rl *RateLimiter) Record()
-func (rl *RateLimiter) Remaining() int
-func (rl *RateLimiter) State() RateLimitState
+func (r *RateLimiter) Allow() bool
+func (r *RateLimiter) Record()
+func (r *RateLimiter) Remaining() int
+// Getters: ResetTime() time.Time, CallCount/Limit() int, IsEnabled() bool
+func (r *RateLimiter) State() RateLimitState
+func (r *RateLimiter) RestoreState(state RateLimitState) bool
 ```
 
 ### History (`history.go`)
@@ -130,28 +131,39 @@ type SessionHistoryEntry struct { ... }
 type SessionHistory struct { ... }
 type CircuitHistoryEntry struct { ... }
 type CircuitHistory struct { ... }
+
+// Session history: Load/Save/Add/Delete SessionHistory(project, agent string)
+func (h *HistoryStore) AddSessionEntry(project, agent, event, status, errorMsg string, loopCount int) error
+// Circuit history: Load/Save/Add/Delete CircuitHistory(project, agent string)
+func (h *HistoryStore) AddCircuitEntry(project, agent, fromState, toState, reason string, noProgressCount, sameErrorCount, testLoopCount, completionCount int) error
 ```
 
 ### Loop (`loop.go`)
 
 ```go
 type Runner struct { ... }
-type LoopOptions struct { Monitor *Monitor }
+type LoopOptions struct { ... }  // ContainerName, Project, Agent, Prompt, MaxLoops, Monitor, callbacks, etc.
 type LoopResult struct { ... }
-func NewRunner(...) *Runner
-func (r *Runner) Run(ctx context.Context) (LoopResult, error)
-func (r *Runner) ResetCircuit() error
-func (r *Runner) ResetSession() error
+func NewRunner(client *docker.Client) (*Runner, error)
+func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner
+func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
+func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)
+func (r *Runner) ResetCircuit(project, agent string) error
+func (r *Runner) ResetSession(project, agent string) error
+func (r *Runner) GetSession(project, agent string) (*Session, error)
+func (r *Runner) GetCircuitState(project, agent string) (*CircuitState, error)
 ```
 
 ### Monitor (`monitor.go`)
 
 ```go
-type Monitor struct { ... }
-type MonitorOptions struct { RateLimiter *RateLimiter }
+type MonitorOptions struct { Writer io.Writer; MaxLoops int; ShowRateLimit bool; RateLimiter *RateLimiter; Verbose bool }
 func NewMonitor(opts MonitorOptions) *Monitor
-func (m *Monitor) FormatLoopStart(loopNum int) string
-func (m *Monitor) FormatResult(result LoopResult) string
+// Format*/Print* pairs: LoopStart(loopNum), LoopProgress(loopNum, *Status, *CircuitBreaker),
+// LoopEnd(loopNum, *Status, err, outputSize, elapsed), Result(*LoopResult)
+// Format* return string; Print* write to opts.Writer
+func (m *Monitor) FormatRateLimitWait(resetTime time.Time) string
+func (m *Monitor) FormatAPILimitError(isInteractive bool) string
 ```
 
 ### Session (`session.go`)
@@ -159,12 +171,24 @@ func (m *Monitor) FormatResult(result LoopResult) string
 ```go
 type Session struct { ... }
 type CircuitState struct { ... }
-func NewSession() *Session
-func (s *Session) IsExpired(expirationHours int) bool
+func NewSession(project, agent, prompt string) *Session
+func (sess *Session) IsExpired(hours int) bool
+func (sess *Session) Age() time.Duration
+func (sess *Session) Update(status *Status, loopErr error)
 
 type SessionStore struct { ... }
-func NewSessionStore(...) *SessionStore
+func NewSessionStore(baseDir string) *SessionStore
 func DefaultSessionStore() (*SessionStore, error)
+// Load/Save/Delete Session(project, agent) and CircuitState(project, agent)
+func (s *SessionStore) LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)
+```
+
+### TUI (`tui/`)
+
+```go
+type Model struct { ... }  // BubbleTea model for ralph monitor dashboard
+func NewModel(opts ModelOptions) Model
+// Implements tea.Model: Init(), Update(tea.Msg), View() string
 ```
 
 ## CLI Commands (`internal/cmd/ralph/`)

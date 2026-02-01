@@ -1,3 +1,9 @@
+---
+paths:
+  - "internal/**"
+  - "cmd/**"
+---
+
 # Dependency Placement Decision Tree
 
 When adding a new heavy dependency or command helper, use this decision tree:

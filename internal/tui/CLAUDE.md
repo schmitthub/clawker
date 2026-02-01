@@ -8,7 +8,7 @@ Reusable BubbleTea components for building terminal user interfaces in clawker.
 |------|---------|
 | `tokens.go` | Design tokens: spacing constants (`SpaceNone`-`SpaceLG`), layout breakpoints (`WidthCompact`/`WidthNormal`/`WidthWide`), `GetLayoutMode()`, `GetContentWidth()` |
 | `text.go` | Text manipulation: `Truncate`, `TruncateMiddle`, `PadRight`/`PadLeft`/`PadCenter`, `WordWrap`, `CountVisibleWidth`, `StripANSI` |
-| `time.go` | Time formatting: `FormatRelative`, `FormatDuration`, `FormatUptime`, `FormatTimestamp`, `FormatDate` |
+| `time.go` | Time formatting: `FormatRelative`, `FormatDuration`, `FormatUptime`, `FormatTimestamp`, `FormatDate`, `FormatDateTime`, `ParseDurationOrDefault` |
 | `styles.go` | Lipgloss styles and colors |
 | `keys.go` | Key bindings: `DefaultKeyMap()`, `IsQuit`/`IsUp`/`IsDown`/`IsLeft`/`IsRight`/`IsEnter`/`IsEscape`/`IsTab` |
 | `layout.go` | Layout composition: `SplitHorizontal`/`SplitVertical`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid`, `Box`, `ResponsiveLayout` |
@@ -17,7 +17,7 @@ Reusable BubbleTea components for building terminal user interfaces in clawker.
 | `panel.go` | Bordered panels with focus states, `PanelGroup` for multi-panel layouts |
 | `list.go` | Selectable list with scrolling: `ListItem` interface, `SimpleListItem`, navigation methods |
 | `statusbar.go` | Status bar with left/center/right sections, pre-built indicators (`ModeIndicator`, `ConnectionIndicator`, `TimerIndicator`) |
-| `help.go` | Help bar from `[]key.Binding`, `RenderHelpBar`, `QuickHelp` |
+| `help.go` | Help bar: `RenderHelpBar`, `RenderHelpGrid`, `QuickHelp`, `NavigationBindings`, `QuitBindings`, `AllBindings`, `HelpBinding` |
 
 ## Colors & Styles
 

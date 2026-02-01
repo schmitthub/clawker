@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
@@ -18,7 +19,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompts"
 	"github.com/schmitthub/clawker/internal/resolver"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
 )
@@ -346,7 +346,9 @@ func TestNewCmdRun(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(testutil.SplitArgs(tt.input), tt.args...)
+				parsed, err := shlex.Split(tt.input)
+				require.NoError(t, err)
+				argv = append(parsed, tt.args...)
 			}
 
 			cmd.SetArgs(argv)

@@ -130,6 +130,16 @@ func NewRunner(client *docker.Client) (*Runner, error) {
 	}, nil
 }
 
+// NewRunnerWith creates a Runner with explicit store and history dependencies.
+// This is useful for testing with custom storage directories.
+func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner {
+	return &Runner{
+		client:  client,
+		store:   store,
+		history: history,
+	}
+}
+
 // Run executes the Ralph loop until completion, error, or max loops.
 func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
 	// Set defaults
@@ -331,7 +341,7 @@ mainLoop:
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		output, exitCode, loopErr := r.execCapture(loopCtx, opts.ContainerName, cmd, opts.OnOutput)
+		output, exitCode, loopErr := r.ExecCapture(loopCtx, opts.ContainerName, cmd, opts.OnOutput)
 		cancel()
 
 		loopDuration := time.Since(loopStart)
@@ -492,8 +502,8 @@ mainLoop:
 	return result, nil
 }
 
-// execCapture executes a command in the container and captures output.
-func (r *Runner) execCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error) {
+// ExecCapture executes a command in the container and captures output.
+func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error) {
 	// Find container
 	c, err := r.client.FindContainerByName(ctx, containerName)
 	if err != nil {

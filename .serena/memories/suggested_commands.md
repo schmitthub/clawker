@@ -4,23 +4,23 @@
 # Build
 go build -o bin/clawker ./cmd/clawker
 
-# Unit tests
-go test ./...
+# Unit tests (no Docker)
+make test
 
-# Integration tests (Docker required)
-go test -tags=integration ./internal/cmd/... -v -timeout 10m
+# Internal integration tests (Docker required)
+go test ./test/internals/... -v -timeout 10m
 
-# E2E tests (Docker required)
-go test -tags=e2e ./internal/cmd/... -v -timeout 15m
+# CLI workflow tests (Docker required)
+go test ./test/cli/... -v -timeout 15m
 
-# Acceptance tests
-go test -tags=acceptance ./acceptance -v -timeout 15m
+# Agent E2E tests (Docker required)
+go test ./test/agents/... -v -timeout 15m
 
-# Specific acceptance category
-go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+# Specific CLI test category
+go test -run ^TestContainer$ ./test/cli/... -v
 
-# Generate mocks
-make generate-mocks
+# All test suites
+make test-all
 
 # Lint
 golangci-lint run

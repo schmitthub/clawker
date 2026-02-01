@@ -2,6 +2,10 @@
 
 Dockerfile generation, version management, and build configuration for clawker container images.
 
+## TODO
+
+- [ ] This imports from internal packages; consider refactoring to avoid this.
+
 ## Key Files
 
 | File | Purpose |

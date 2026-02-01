@@ -5,11 +5,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -209,7 +209,9 @@ func TestNewCmdCreate(t *testing.T) {
 			// Parse arguments
 			argv := tt.args
 			if tt.input != "" {
-				argv = append(testutil.SplitArgs(tt.input), tt.args...)
+				parsed, err := shlex.Split(tt.input)
+				require.NoError(t, err)
+				argv = append(parsed, tt.args...)
 			}
 
 			cmd.SetArgs(argv)

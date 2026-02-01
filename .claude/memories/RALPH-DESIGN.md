@@ -130,7 +130,7 @@ npm test
 
 # Run specific test suites
 npm run test:unit
-npm run test:integration
+npm run test:internals
 
 # Run individual test files
 bats tests/unit/test_cli_parsing.bats
