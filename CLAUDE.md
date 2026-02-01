@@ -49,12 +49,16 @@
 │   ├── ralph/                 # Autonomous loop core logic
 │   ├── resolver/              # Image resolution (project image, default, validation)
 │   ├── term/                  # PTY/terminal handling
-│   ├── testutil/              # Test utilities + integration helpers
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   ├── build/                 # Dockerfile templates, semver, npm registry
 │   └── whail/                 # Reusable Docker engine with label-based isolation
+├── test/
+│   ├── harness/               # Test harness, config builders, helpers (golden files, docker)
+│   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
+│   ├── internals/             # Container scripts/services tests (Docker)
+│   └── agents/                # Full agent E2E tests (Docker)
 └── templates/                 # clawker.yaml scaffolding
 ```
 
@@ -62,12 +66,14 @@
 
 ```bash
 go build -o bin/clawker ./cmd/clawker  # Build CLI
-go test ./...                             # Run tests
+make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
 ./bin/clawker --debug run @              # Debug logging
 go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
 
-# Acceptance tests (requires Docker)
-go test -tags=acceptance ./acceptance -v -timeout 15m
+# Docker-required tests (directory separation, no build tags)
+go test ./test/cli/... -v -timeout 15m        # CLI workflow tests
+go test ./test/internals/... -v -timeout 10m  # Internal integration tests
+go test ./test/agents/... -v -timeout 15m     # Agent E2E tests
 ```
 
 ## Key Concepts
@@ -174,7 +180,7 @@ ralph:
 - Docker hijacked connections need cleanup of both read and write sides
 - Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
 - Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
-- Acceptance test assertions are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
+- CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
 - Go import cycles: `internal/cmd/container/opts/` exists because parent imports subcommands and subcommands need shared types
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 - `Config.Project` is `yaml:"-"` — injected by loader from registry, never persisted
@@ -199,12 +205,14 @@ defer func() {
 **All tests must pass before any change is complete.**
 
 ```bash
-go test ./...                                                  # Unit tests
-go test -tags=internals ./internal/cmd/... -v -timeout 10m  # Integration (Docker)
-go test -tags=acceptance ./acceptance -v -timeout 15m          # Acceptance (Docker)
+make test                                        # Unit tests (no Docker)
+go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
+go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
+go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
+make test-all                                    # All test suites
 ```
 
-See `.claude/rules/testing.md` for testing conventions and utilities.
+Test categories use directory separation — no build tags needed. See `.claude/rules/testing.md` for conventions and utilities.
 
 ## Documentation
 

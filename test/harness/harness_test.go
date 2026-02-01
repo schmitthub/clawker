@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,9 +52,9 @@ func TestNewHarness_WithConfig(t *testing.T) {
 func TestNewHarness_WithConfigBuilder(t *testing.T) {
 	h := NewHarness(t,
 		WithConfigBuilder(
-			NewConfigBuilder().
+			builders.NewConfigBuilder().
 				WithProject("builder-project").
-				WithBuild(AlpineBuild()),
+				WithBuild(builders.AlpineBuild()),
 		),
 	)
 

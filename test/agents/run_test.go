@@ -1,5 +1,3 @@
-//go:build e2e
-
 package e2e
 
 import (
@@ -12,7 +10,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ import (
 // If the container exits when it shouldn't, the test fails - the "why" will be apparent from
 // recent code changes. This test detects regressions in the full startup flow.
 func TestRunE2E_InteractiveMode(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Build the clawker binary
@@ -32,25 +31,25 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 	// Create harness with firewall ENABLED - this tests the real-world scenario
 	// If the firewall blocks required domains (like api.anthropic.com), the container
 	// will exit and this test will fail - which is exactly what we want to detect
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-interactive-test").
-				WithSecurity(testutil.SecurityFirewallEnabled()),
+				WithSecurity(builders.SecurityFirewallEnabled()),
 		),
 	)
 
 	// Build a fresh test image with the harness configuration
 	// This ensures the image respects the firewall.enable=false setting
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{
+	imageTag := harness.BuildTestImage(t, h, harness.BuildTestImageOptions{
 		SuppressOutput: true,
 	})
 	t.Logf("Built test image: %s", imageTag)
 
 	// Ensure cleanup even if test fails
-	client := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-interactive-test")
+	client := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-interactive-test")
 
 	agentName := "test-interactive-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -112,14 +111,14 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 	readyCh := make(chan error, 1)
 	go func() {
 		// First wait for container to exist and be running
-		if err := testutil.WaitForContainerRunning(waitCtx, rawClient, containerName); err != nil {
+		if err := harness.WaitForContainerRunning(waitCtx, rawClient, containerName); err != nil {
 			readyCh <- err
 			return
 		}
 		t.Logf("Container %s is running, waiting for ready file...", containerName)
 
 		// Then wait for the ready file which indicates entrypoint completed
-		readyCh <- testutil.WaitForReadyFile(waitCtx, rawClient, containerName)
+		readyCh <- harness.WaitForReadyFile(waitCtx, rawClient, containerName)
 	}()
 
 	// Wait for either ready signal or error
@@ -154,7 +153,7 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 
 	// Verify Claude Code process is actually running inside the container
 	// This catches issues where the container starts but Claude Code fails to launch
-	err = testutil.VerifyClaudeCodeRunning(ctx, rawClient, containerName)
+	err = harness.VerifyClaudeCodeRunning(ctx, rawClient, containerName)
 	require.NoError(t, err, "Claude Code process verification failed - process not found in container")
 	t.Logf("Claude Code process verified running in container %s", containerName)
 
@@ -215,25 +214,25 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 // This test intentionally creates a container that will exit quickly to verify the
 // improved WaitForContainerRunning fail-fast behavior.
 func TestRunE2E_ContainerExitDetection(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	clawkerBin := buildClawkerBinary(t)
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exit-detection-test").
-				WithSecurity(testutil.SecurityFirewallEnabled()),
+				WithSecurity(builders.SecurityFirewallEnabled()),
 		),
 	)
 
 	// Build a test image
-	imageTag := testutil.BuildTestImage(t, h, testutil.BuildTestImageOptions{SuppressOutput: true})
+	imageTag := harness.BuildTestImage(t, h, harness.BuildTestImageOptions{SuppressOutput: true})
 
-	client := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "exit-detection-test")
+	client := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "exit-detection-test")
 
 	agentName := "exit-test-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -258,7 +257,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 
 	// Key test: WaitForContainerRunning should either succeed or fail with exit code info
 	// It should NOT timeout silently if the container exited
-	err = testutil.WaitForContainerRunning(waitCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(waitCtx, rawClient, containerName)
 
 	if err != nil {
 		// Container exited - verify we got useful exit code info
@@ -269,7 +268,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 			t.Logf("Container exit properly detected: %v", err)
 
 			// Get full diagnostics to verify the utility works
-			diag, diagErr := testutil.GetContainerExitDiagnostics(ctx, rawClient, containerName, 50)
+			diag, diagErr := harness.GetContainerExitDiagnostics(ctx, rawClient, containerName, 50)
 			if diagErr == nil {
 				t.Logf("Diagnostics: code=%d, OOM=%v, firewall=%v, hasError=%v",
 					diag.ExitCode, diag.OOMKilled, diag.FirewallFailed, diag.HasClawkerError)
@@ -303,7 +302,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 		t.Log("Container started successfully (didn't exit immediately as expected)")
 
 		// Clean up the running container
-		readyErr := testutil.WaitForReadyFile(waitCtx, rawClient, containerName)
+		readyErr := harness.WaitForReadyFile(waitCtx, rawClient, containerName)
 		if readyErr != nil {
 			// Container may have exited after WaitForContainerRunning but before ready file
 			t.Logf("Container exited before ready: %v", readyErr)
@@ -321,7 +320,7 @@ func buildClawkerBinary(t *testing.T) string {
 	binPath := filepath.Join(tmpDir, "clawker")
 
 	// Find the project root (where go.mod is)
-	projectRoot, err := testutil.FindProjectRoot()
+	projectRoot, err := harness.FindProjectRoot()
 	require.NoError(t, err, "failed to find project root")
 
 	// Build the binary

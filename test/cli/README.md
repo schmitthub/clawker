@@ -1,33 +1,33 @@
-# Acceptance Tests
+# CLI Workflow Tests
 
-This directory contains acceptance tests using Go's [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript) framework. Tests validate clawker CLI workflows against a real Docker daemon.
+This directory contains CLI workflow tests using Go's [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript) framework. Tests validate clawker CLI workflows against a real Docker daemon.
 
 ## Running Tests
 
 ```bash
-# All acceptance tests
-go test -tags=acceptance ./acceptance -v -timeout 15m
+# All CLI workflow tests
+go test ./test/cli/... -v -timeout 15m
 
 # Specific category
-go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
-go test -tags=acceptance -run ^TestVolume$ ./acceptance -v
-go test -tags=acceptance -run ^TestNetwork$ ./acceptance -v
-go test -tags=acceptance -run ^TestImage$ ./acceptance -v
-go test -tags=acceptance -run ^TestRalph$ ./acceptance -v
-go test -tags=acceptance -run ^TestProject$ ./acceptance -v
-go test -tags=acceptance -run ^TestRoot$ ./acceptance -v
+go test -run ^TestContainer$ ./test/cli/... -v
+go test -run ^TestVolume$ ./test/cli/... -v
+go test -run ^TestNetwork$ ./test/cli/... -v
+go test -run ^TestImage$ ./test/cli/... -v
+go test -run ^TestRalph$ ./test/cli/... -v
+go test -run ^TestProject$ ./test/cli/... -v
+go test -run ^TestRoot$ ./test/cli/... -v
 
 # Single test script
-CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -run ^TestContainer$ ./test/cli/... -v
 
 # Via Makefile
-make acceptance
+make test-cli
 ```
 
 ## Directory Structure
 
 ```
-acceptance/
+test/cli/
 ├── acceptance_test.go           # Test harness and custom commands
 ├── README.md                    # This file
 └── testdata/
@@ -271,7 +271,7 @@ Know where commands output:
 ### Preserve Work Directory
 
 ```bash
-CLAWKER_ACCEPTANCE_PRESERVE_WORK_DIR=true go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+CLAWKER_ACCEPTANCE_PRESERVE_WORK_DIR=true go test -run ^TestContainer$ ./test/cli/... -v
 ```
 
 The work directory path is logged at the start of each test.
@@ -279,7 +279,7 @@ The work directory path is logged at the start of each test.
 ### Skip Cleanup
 
 ```bash
-CLAWKER_ACCEPTANCE_SKIP_DEFER=true go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+CLAWKER_ACCEPTANCE_SKIP_DEFER=true go test -run ^TestContainer$ ./test/cli/... -v
 ```
 
 Useful for inspecting container/resource state after test failure.
@@ -287,7 +287,7 @@ Useful for inspecting container/resource state after test failure.
 ### Run Single Script
 
 ```bash
-CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -tags=acceptance -run ^TestContainer$ ./acceptance -v
+CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -run ^TestContainer$ ./test/cli/... -v
 ```
 
 ### View Detailed Output
@@ -300,8 +300,9 @@ Acceptance tests require Docker. In CI:
 
 ```yaml
 # GitHub Actions example
-- name: Run acceptance tests
-  run: go test -tags=acceptance ./acceptance -v -timeout 15m
+- name: Run CLI workflow tests
+  run: go test ./test/cli/... -v -timeout 15m
+
   env:
     CLAWKER_SPINNER_DISABLED: "1"
 ```

@@ -1,7 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
-        cli cli-build cli-generate cli-test cli-test-integration cli-lint cli-staticcheck cli-install cli-clean \
-        test test-integration test-e2e acceptance test-coverage test-clean golden-update
+        cli cli-build cli-generate cli-test cli-test-internals cli-lint cli-staticcheck cli-install cli-clean \
+        test test-internals test-agents test-cli test-all test-coverage test-clean golden-update
 
 # Variables
 IMAGE_NAME ?= clawker
@@ -40,9 +40,10 @@ help:
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test                Unit tests only (fast, no Docker)"
-	@echo "  test-integration    Unit + integration tests (requires Docker)"
-	@echo "  test-e2e            All tests including E2E (requires Docker)"
-	@echo "  acceptance          Acceptance tests - CLI workflow validation (requires Docker)"
+	@echo "  test-internals      Internal integration tests (requires Docker)"
+	@echo "  test-cli            CLI workflow tests via testscript (requires Docker)"
+	@echo "  test-agents         Agent E2E tests (requires Docker)"
+	@echo "  test-all            Run all test suites"
 	@echo "  test-coverage       Unit tests with coverage"
 	@echo "  test-clean          Remove test Docker resources"
 	@echo "  golden-update       Regenerate golden files"
@@ -51,7 +52,7 @@ help:
 	@echo "  cli                 Build the clawker CLI binary"
 	@echo "  cli-generate        Build the standalone clawker-generate binary"
 	@echo "  cli-test            Run CLI tests (alias for 'test')"
-	@echo "  cli-test-integration Run CLI integration tests (alias for 'test-integration')"
+	@echo "  cli-test-internals  Run CLI internal integration tests"
 	@echo "  cli-lint            Run golangci-lint on CLI code"
 	@echo "  cli-staticcheck     Run staticcheck on CLI code"
 	@echo "  cli-install         Install CLI to GOPATH/bin"
@@ -209,12 +210,12 @@ endif
 	$(TEST_CMD_VERBOSE) ./...
 
 # Run CLI internals tests
-cli-test-integration:
-	@echo "Running CLI integration tests (requires Docker)..."
+cli-test-internals:
+	@echo "Running CLI internal integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -tags=integration -timeout 10m ./internal/cmd/...
+	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
 
 # Run CLI tests with coverage
 cli-test-coverage:
@@ -281,36 +282,40 @@ cli-clean:
 # ============================================================================
 
 # Unit tests only (fast, no Docker)
+# Excludes test/cli, test/internals, test/agents which require Docker
 test:
 	@echo "Running unit tests..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD) -short ./...
+	$(TEST_CMD) $$(go list ./... | grep -v '/test/cli' | grep -v '/test/internals' | grep -v '/test/agents')
 
-# Unit + internals tests (requires Docker)
-test-integration:
-	@echo "Running unit + integration tests..."
+# Internal integration tests (requires Docker)
+test-internals:
+	@echo "Running internal integration tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -tags=integration ./...
+	$(TEST_CMD_VERBOSE) -timeout 10m ./test/internals/...
 
-# All tests including E2E
-test-e2e:
-	@echo "Running all tests including E2E..."
+# CLI workflow tests via testscript (requires Docker)
+test-cli:
+	@echo "Running CLI workflow tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -tags=integration,e2e -timeout 15m ./...
+	$(TEST_CMD_VERBOSE) -timeout 15m ./test/cli/...
 
-# Acceptance tests (CLI workflow validation)
-acceptance:
-	@echo "Running acceptance tests..."
+# Agent E2E tests (requires Docker)
+test-agents:
+	@echo "Running agent E2E tests (requires Docker)..."
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD_VERBOSE) -tags=acceptance -timeout 15m ./acceptance
+	$(TEST_CMD_VERBOSE) -timeout 15m ./test/agents/...
+
+# All test suites
+test-all: test test-internals test-cli test-agents
 
 # Unit tests with coverage
 test-coverage:

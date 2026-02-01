@@ -1,5 +1,3 @@
-//go:build integration
-
 package integration
 
 import (
@@ -10,31 +8,33 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/cmd/container/exec"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
 // TestExecIntegration_BasicCommands tests executing commands in an already-running container.
 // This validates that exec works correctly and that commands are executed properly.
 func TestExecIntegration_BasicCommands(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-test")
 
 	// Generate unique container name
 	agentName := "test-exec-" + time.Now().Format("150405.000000")
@@ -61,7 +61,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Define test cases for exec commands
@@ -114,7 +114,7 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 			// Build exec command args: container name, then command
 			cmdArgs := append([]string{containerName}, tt.cmd...)
 
-			cmd := NewCmdExec(f, nil)
+			cmd := exec.NewCmdExec(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()
@@ -128,22 +128,22 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 
 // TestExecIntegration_WithAgent tests the --agent flag for exec commands.
 func TestExecIntegration_WithAgent(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-agent-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-agent-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-agent-test")
 
 	agentName := "test-agent-exec-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -169,7 +169,7 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with --agent flag
@@ -179,7 +179,7 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdExec(f, nil)
+	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"--agent", agentName,
 		"echo", "agent-exec-works",
@@ -192,22 +192,22 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 
 // TestExecIntegration_EnvFlag tests passing environment variables via exec.
 func TestExecIntegration_EnvFlag(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-env-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-env-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-env-test")
 
 	agentName := "test-exec-env-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -233,7 +233,7 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -e flag to set environment variable
@@ -243,7 +243,7 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdExec(f, nil)
+	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"-e", "TEST_VAR=custom_value",
 		containerName,
@@ -257,22 +257,22 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 
 // TestExecIntegration_WorkdirFlag tests executing commands in a specific directory.
 func TestExecIntegration_WorkdirFlag(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-workdir-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-workdir-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-workdir-test")
 
 	agentName := "test-exec-wd-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -298,7 +298,7 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -w flag to set working directory
@@ -308,7 +308,7 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdExec(f, nil)
+	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
 		"-w", "/tmp",
 		containerName,
@@ -323,22 +323,22 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 // TestExecIntegration_ErrorCases tests error scenarios for the exec command.
 // These tests verify that clear, useful error messages are provided when things fail.
 func TestExecIntegration_ErrorCases(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-error-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-error-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-error-test")
 
 	t.Run("command not found", func(t *testing.T) {
 		agentName := "test-err-notfound-" + time.Now().Format("150405.000000")
@@ -350,8 +350,8 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
-				Labels: testutil.AddClawkerLabels(map[string]string{
-					testutil.TestLabel: testutil.TestLabelValue,
+				Labels: harness.AddClawkerLabels(map[string]string{
+					harness.TestLabel: harness.TestLabelValue,
 				}, "exec-error-test", agentName),
 			},
 		})
@@ -362,7 +362,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 		// Wait for container to be running
 		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+		err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 		require.NoError(t, err, "container did not start")
 
 		// Try to exec a command that doesn't exist
@@ -372,7 +372,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			IOStreams: ios.IOStreams,
 		}
 
-		cmd := NewCmdExec(f, nil)
+		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
 			containerName,
 			"notacommand123doesnotexist",
@@ -393,8 +393,8 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
-				Labels: testutil.AddClawkerLabels(map[string]string{
-					testutil.TestLabel: testutil.TestLabelValue,
+				Labels: harness.AddClawkerLabels(map[string]string{
+					harness.TestLabel: harness.TestLabelValue,
 				}, "exec-error-test", agentName),
 			},
 		})
@@ -408,7 +408,7 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 			IOStreams: ios.IOStreams,
 		}
 
-		cmd := NewCmdExec(f, nil)
+		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
 			containerName,
 			"ls",
@@ -430,22 +430,22 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 // TestExecIntegration_ScriptExecution tests running scripts via exec command.
 // This verifies that scripts created in the container can be executed via exec.
 func TestExecIntegration_ScriptExecution(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("exec-script-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	dockerClient := testutil.NewTestClient(t)
-	rawClient := testutil.NewRawDockerClient(t)
+	dockerClient := harness.NewTestClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
-	defer testutil.CleanupProjectResources(ctx, dockerClient, "exec-script-test")
+	defer harness.CleanupProjectResources(ctx, dockerClient, "exec-script-test")
 
 	agentName := "test-script-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
@@ -456,8 +456,8 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
-			Labels: testutil.AddClawkerLabels(map[string]string{
-				testutil.TestLabel: testutil.TestLabelValue,
+			Labels: harness.AddClawkerLabels(map[string]string{
+				harness.TestLabel: harness.TestLabelValue,
 			}, "exec-script-test", agentName),
 		},
 	})
@@ -468,7 +468,7 @@ func TestExecIntegration_ScriptExecution(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = testutil.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Create a test script in the container
@@ -535,7 +535,7 @@ chmod +x /tmp/test-script.sh`}
 				cmdArgs = append(cmdArgs, tt.scriptArgs...)
 			}
 
-			cmd := NewCmdExec(f, nil)
+			cmd := exec.NewCmdExec(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()

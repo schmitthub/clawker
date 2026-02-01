@@ -1,5 +1,3 @@
-//go:build acceptance
-
 // Package acceptance provides acceptance tests using testscript.
 // These tests validate CLI workflows against a real Docker daemon.
 //

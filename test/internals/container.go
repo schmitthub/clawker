@@ -1,6 +1,4 @@
-//go:build integration
-
-// Package internals provides reusable test infrastructure for internals testing
+// Package integration provides reusable test infrastructure for internals testing
 // clawker scripts and components in lightweight containers.
 package integration
 
@@ -14,7 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
-	"github.com/schmitthub/clawker/internal/testutil"
+	testutil "github.com/schmitthub/clawker/test/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )

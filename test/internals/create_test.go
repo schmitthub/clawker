@@ -1,5 +1,3 @@
-//go:build integration
-
 package integration
 
 import (
@@ -7,10 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/cmd/container/create"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,15 +21,15 @@ import (
 // opts.Agent field, causing containers to get random names instead of the
 // specified agent name.
 func TestCreateIntegration_AgentNameApplied(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Create harness with minimal config (no firewall, no host proxy)
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("create-agent-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
@@ -37,8 +37,8 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	h.Chdir()
 
 	// Create Docker client for verification and cleanup
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "create-agent-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "create-agent-test")
 
 	// Generate unique agent name for this test
 	agentName := "test-agent-" + time.Now().Format("150405.000000")
@@ -52,7 +52,7 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	}
 
 	// Create and execute the create command with --agent flag
-	cmd := NewCmdCreate(f, nil)
+	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"--agent", agentName,
 		"alpine:latest",
@@ -93,21 +93,21 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 // TestCreateIntegration_NameFlagApplied tests that the --name flag (alias for --agent)
 // is also properly applied to the container name and labels.
 func TestCreateIntegration_NameFlagApplied(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("create-name-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "create-name-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "create-name-test")
 
 	// Use --name flag (should work the same as --agent)
 	agentName := "test-name-" + time.Now().Format("150405.000000")
@@ -119,7 +119,7 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdCreate(f, nil)
+	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"--name", agentName,
 		"alpine:latest",
@@ -143,21 +143,21 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 // TestCreateIntegration_NoAgentGetsRandomName tests that when no --agent flag is
 // provided, the container gets a randomly generated name.
 func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("create-random-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "create-random-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "create-random-test")
 
 	ios := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
@@ -166,7 +166,7 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 	}
 
 	// Create without --agent flag
-	cmd := NewCmdCreate(f, nil)
+	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
 		"alpine:latest",
 	})

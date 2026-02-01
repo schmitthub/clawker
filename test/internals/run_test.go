@@ -1,5 +1,3 @@
-//go:build integration
-
 package integration
 
 import (
@@ -10,10 +8,12 @@ import (
 	"time"
 
 	dockerclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/cmd/container/run"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/testutil"
+	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,15 +21,15 @@ import (
 // that bypasses the entrypoint (e.g., "echo hello"). This validates the basic container
 // lifecycle: create, start, run command, and cleanup.
 func TestRunIntegration_EntrypointBypass(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Create harness with minimal config (no firewall, no host proxy)
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
@@ -37,8 +37,8 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	h.Chdir()
 
 	// Create Docker client for verification and cleanup
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-test")
 
 	// Generate unique agent name for this test
 	agentName := "test-echo-" + time.Now().Format("150405.000000")
@@ -52,7 +52,7 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	}
 
 	// Create and execute the run command in detached mode
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -94,22 +94,22 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 // TestRunIntegration_AutoRemove tests that --rm flag properly removes the container
 // after it exits.
 func TestRunIntegration_AutoRemove(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Create harness with minimal config
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-rm-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-rm-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-rm-test")
 
 	agentName := "test-rm-" + time.Now().Format("150405.000000")
 
@@ -120,7 +120,7 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 	}
 
 	// Run a container that exits immediately with --rm
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--rm",
@@ -148,21 +148,21 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 // TestRunIntegration_Labels tests that custom labels are applied to the container
 // alongside the required clawker labels.
 func TestRunIntegration_Labels(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-label-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-label-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-label-test")
 
 	agentName := "test-labels-" + time.Now().Format("150405.000000")
 
@@ -172,7 +172,7 @@ func TestRunIntegration_Labels(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -216,21 +216,21 @@ func TestRunIntegration_Labels(t *testing.T) {
 // can detect when a container creates the ready file. This tests the utilities
 // without requiring the full clawker entrypoint.
 func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-ready-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-ready-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-ready-test")
 
 	agentName := "test-ready-" + time.Now().Format("150405.000000")
 
@@ -250,7 +250,7 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 		sleep 30
 	`
 
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -269,23 +269,23 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 	container := containers[0]
 
 	// Wait for ready file with timeout
-	readyCtx, cancel := context.WithTimeout(ctx, testutil.BypassCommandTimeout)
+	readyCtx, cancel := context.WithTimeout(ctx, harness.BypassCommandTimeout)
 	defer cancel()
 
 	// Get raw Docker client for the utility functions
-	rawClient := testutil.NewRawDockerClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
 
-	err = testutil.WaitForReadyFile(readyCtx, rawClient, container.ID)
+	err = harness.WaitForReadyFile(readyCtx, rawClient, container.ID)
 	require.NoError(t, err, "ready file was not created")
 
 	// Also verify the ready log pattern
-	logs, err := testutil.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
 	require.NoError(t, err, "failed to get container logs")
-	require.Contains(t, logs, testutil.ReadyLogPrefix, "expected ready log pattern in output")
+	require.Contains(t, logs, harness.ReadyLogPrefix, "expected ready log pattern in output")
 
 	// Verify no error patterns in logs
-	hasError, errorMsg := testutil.CheckForErrorPattern(logs)
+	hasError, errorMsg := harness.CheckForErrorPattern(logs)
 	require.False(t, hasError, "unexpected error in logs: %s", errorMsg)
 }
 
@@ -293,20 +293,20 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 // This verifies the Docker client internals: commands are passed through correctly
 // to the container.
 func TestRunIntegration_ArbitraryCommand(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-arbitrary-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-arbitrary-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-arbitrary-test")
 
 	tests := []struct {
 		name        string
@@ -357,7 +357,7 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 			}
 			cmdArgs = append(cmdArgs, tt.args...)
 
-			cmd := NewCmdRun(f, nil)
+			cmd := run.NewCmdRun(f, nil)
 			cmd.SetArgs(cmdArgs)
 
 			err := cmd.Execute()
@@ -378,20 +378,20 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 			require.NotNil(t, container, "container not found for agent %s", agentName)
 
 			// Wait for container to complete (short-lived commands)
-			rawClient := testutil.NewRawDockerClient(t)
+			rawClient := harness.NewRawDockerClient(t)
 			defer rawClient.Close()
 
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			err = testutil.WaitForContainerExit(readyCtx, rawClient, container.ID)
+			err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
 			require.NoError(t, err, "container did not complete")
 
 			// Wait a moment for logs to be available
 			time.Sleep(200 * time.Millisecond)
 
 			// Get logs and verify output
-			logs, err := testutil.GetContainerLogs(ctx, rawClient, container.ID)
+			logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
 			require.NoError(t, err, "failed to get container logs")
 
 			// Run the test-specific output check
@@ -403,20 +403,20 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 // TestRunIntegration_ArbitraryCommand_EnvVars tests that environment variables are
 // properly passed to containers via the -e flag.
 func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-env-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-env-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-env-test")
 
 	agentName := "test-env-" + time.Now().Format("150405.000000")
 
@@ -427,7 +427,7 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 	}
 
 	// Run env command with a custom environment variable
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -447,19 +447,19 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 	container := containers[0]
 
 	// Wait for container completion
-	rawClient := testutil.NewRawDockerClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	err = testutil.WaitForContainerExit(readyCtx, rawClient, container.ID)
+	err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
 	require.NoError(t, err, "container did not complete")
 
 	time.Sleep(200 * time.Millisecond)
 
 	// Get logs with env output
-	logs, err := testutil.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
 	require.NoError(t, err, "failed to get container logs")
 
 	// Verify our custom environment variable was set
@@ -477,20 +477,20 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 // TestRunIntegration_ContainerNameResolution tests that container names follow the
 // clawker.project.agent naming convention.
 func TestRunIntegration_ContainerNameResolution(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-name-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-name-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-name-test")
 
 	agentName := "test-name-" + time.Now().Format("150405.000000")
 
@@ -501,7 +501,7 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	}
 
 	// Run with --agent flag and verify naming convention
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--detach",
 		"--agent", agentName,
@@ -539,18 +539,18 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	require.Equal(t, agentName, labels["com.clawker.agent"], "agent label mismatch")
 
 	// Wait for container completion and verify output
-	rawClient := testutil.NewRawDockerClient(t)
+	rawClient := harness.NewRawDockerClient(t)
 	defer rawClient.Close()
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	err = testutil.WaitForContainerExit(readyCtx, rawClient, container.ID)
+	err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
 	require.NoError(t, err, "container did not complete")
 
 	time.Sleep(200 * time.Millisecond)
 
-	logs, err := testutil.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
 	require.NoError(t, err)
 	require.Contains(t, logs, "container-name-test-output", "expected echo output in logs")
 }
@@ -559,20 +559,20 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 // attaches to a short-lived container, receives its output, and exits cleanly.
 // This exercises the attachThenStart flow including the waitForContainerExit helper.
 func TestRunIntegration_AttachThenStart(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-attach-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-attach-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-attach-test")
 
 	agentName := "test-attach-" + time.Now().Format("150405.000000")
 
@@ -585,7 +585,7 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 	// Run without --detach: this goes through attachThenStart
 	// Use --rm so container is cleaned up automatically
 	// Do NOT use -t (TTY) since test stdin is not a terminal
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--rm",
 		"--agent", agentName,
@@ -617,20 +617,20 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 // TestRunIntegration_AttachThenStart_NonZeroExit tests that non-detached run mode
 // properly reports non-zero exit codes from the container.
 func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
-	testutil.RequireDocker(t)
+	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	h := testutil.NewHarness(t,
-		testutil.WithConfigBuilder(
-			testutil.MinimalValidConfig().
+	h := harness.NewHarness(t,
+		harness.WithConfigBuilder(
+			builders.MinimalValidConfig().
 				WithProject("run-exit-test").
-				WithSecurity(testutil.SecurityFirewallDisabled()),
+				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
 	h.Chdir()
 
-	client := testutil.NewTestClient(t)
-	defer testutil.CleanupProjectResources(ctx, client, "run-exit-test")
+	client := harness.NewTestClient(t)
+	defer harness.CleanupProjectResources(ctx, client, "run-exit-test")
 
 	agentName := "test-exit-" + time.Now().Format("150405.000000")
 
@@ -640,7 +640,7 @@ func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
 		IOStreams: ios.IOStreams,
 	}
 
-	cmd := NewCmdRun(f, nil)
+	cmd := run.NewCmdRun(f, nil)
 	cmd.SetArgs([]string{
 		"--rm",
 		"--agent", agentName,
