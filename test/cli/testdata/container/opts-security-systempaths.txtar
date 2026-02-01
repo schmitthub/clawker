@@ -1,0 +1,26 @@
+# Test --security-opt systempaths=unconfined
+# Verifies: systempaths=unconfined clears MaskedPaths and ReadonlyPaths
+
+# Register cleanup
+defer clawker container rm --force --agent syspath-$RANDOM_STRING
+
+# Create container with systempaths=unconfined
+exec clawker container create --agent syspath-$RANDOM_STRING --security-opt systempaths=unconfined alpine:latest sleep 3600
+
+# Verify MaskedPaths is empty (system paths unconfined)
+exec clawker container inspect --format '{{len .HostConfig.MaskedPaths}}' --agent syspath-$RANDOM_STRING
+stdout '0'
+
+# Verify ReadonlyPaths is empty
+exec clawker container inspect --format '{{len .HostConfig.ReadonlyPaths}}' --agent syspath-$RANDOM_STRING
+stdout '0'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,23 @@
+# Test DNS configuration flag (--dns)
+# Verifies: Custom DNS servers are set on container
+
+# Register cleanup
+defer clawker container rm --force --agent dns-$RANDOM_STRING
+
+# Create container with custom DNS
+exec clawker container create --agent dns-$RANDOM_STRING --dns 8.8.8.8 --dns 8.8.4.4 alpine:latest sleep 3600
+
+# Verify DNS via inspect
+exec clawker container inspect --format '{{.HostConfig.DNS}}' --agent dns-$RANDOM_STRING
+stdout '8.8.8.8'
+stdout '8.8.4.4'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

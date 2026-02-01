@@ -1,0 +1,34 @@
+# Test container pause and unpause commands
+# Verifies: container can be paused and unpaused
+
+# Register cleanup
+defer clawker container rm --force --agent pause-$RANDOM_STRING
+defer clawker container stop --agent pause-$RANDOM_STRING
+
+# Start a container
+exec clawker container run --detach --agent pause-$RANDOM_STRING alpine:latest sleep 3600
+wait_container_running clawker.$PROJECT.pause-$RANDOM_STRING 30
+
+# Pause the container
+exec clawker container pause --agent pause-$RANDOM_STRING
+
+# Verify paused state
+exec clawker container inspect --format '{{.State.Paused}}' --agent pause-$RANDOM_STRING
+stdout 'true'
+
+# Unpause the container
+exec clawker container unpause --agent pause-$RANDOM_STRING
+
+# Verify unpaused state
+exec clawker container inspect --format '{{.State.Paused}}' --agent pause-$RANDOM_STRING
+stdout 'false'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

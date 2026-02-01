@@ -1,0 +1,27 @@
+# Test --expose with port range
+# Verifies: --expose 3000-3005 exposes 6 ports
+
+# Register cleanup
+defer clawker container rm --force --agent exprange-$RANDOM_STRING
+
+# Create container with exposed port range
+exec clawker container create --agent exprange-$RANDOM_STRING --expose 3000-3005 alpine:latest sleep 3600
+
+# Verify all ports in range are exposed
+exec clawker container inspect --format '{{json .Config.ExposedPorts}}' --agent exprange-$RANDOM_STRING
+stdout '3000'
+stdout '3001'
+stdout '3002'
+stdout '3003'
+stdout '3004'
+stdout '3005'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

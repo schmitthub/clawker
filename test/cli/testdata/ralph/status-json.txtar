@@ -1,0 +1,16 @@
+# Test ralph status --json output
+# Verifies: JSON output format when no session exists
+
+# Run ralph status with --json flag
+exec clawker ralph status --agent testdev --json
+stdout '{"exists": false}'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

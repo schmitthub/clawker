@@ -1,0 +1,23 @@
+# Test port publishing flag (-p/--publish)
+# Verifies: Port mappings are created correctly
+
+# Register cleanup
+defer clawker container rm --force --agent port-$RANDOM_STRING
+
+# Create container with port mapping
+exec clawker container create --agent port-$RANDOM_STRING -p 8080:80 alpine:latest sleep 3600
+
+# Verify port binding via inspect (PortBindings is a map)
+exec clawker container inspect --format '{{json .HostConfig.PortBindings}}' --agent port-$RANDOM_STRING
+stdout '80/tcp'
+stdout '8080'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

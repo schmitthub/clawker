@@ -1,0 +1,32 @@
+# Test container logs command
+# Verifies: logs are retrieved from container
+
+# Register cleanup
+defer clawker container rm --force --agent logs-$RANDOM_STRING
+
+# Run container that outputs something then exits
+exec clawker container run --agent logs-$RANDOM_STRING alpine:latest sh -c 'echo line1 && echo line2 && echo line3'
+
+# Wait for container to exit
+wait_container_exit clawker.$PROJECT.logs-$RANDOM_STRING 30 0
+
+# Get logs
+exec clawker container logs --agent logs-$RANDOM_STRING
+stdout 'line1'
+stdout 'line2'
+stdout 'line3'
+
+# Test --tail flag
+exec clawker container logs --tail 1 --agent logs-$RANDOM_STRING
+stdout 'line3'
+! stdout 'line1'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

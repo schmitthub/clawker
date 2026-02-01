@@ -1,0 +1,23 @@
+# Test image build command
+# Verifies: clawker build creates an image
+
+# Build the image
+exec clawker build
+stderr 'building container image'
+
+# Defer cleanup - remove image after test
+defer clawker image rm --force clawker-$PROJECT:latest
+
+# Verify image exists in list
+exec clawker image list
+stdout 'clawker-'$PROJECT
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

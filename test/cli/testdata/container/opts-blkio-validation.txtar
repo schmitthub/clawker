@@ -1,0 +1,21 @@
+[!linux] skip
+# Test block IO weight validation (--blkio-weight range)
+# Verifies: Invalid blkio-weight values are rejected
+
+# Test below minimum (valid range is 10-1000)
+! exec clawker container create --agent blkv-$RANDOM_STRING --blkio-weight 5 alpine:latest sleep 3600
+stderr -count=1 '.'
+
+# Test above maximum
+! exec clawker container create --agent blkv2-$RANDOM_STRING --blkio-weight 1500 alpine:latest sleep 3600
+stderr -count=1 '.'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,34 @@
+# Test network IP and alias flags (--ip, --network-alias)
+# Verifies: Static IP and network aliases are configured on user-defined networks
+
+# Create a custom network with a known subnet
+defer clawker network rm netip-$RANDOM_STRING
+exec clawker network create --subnet 172.28.0.0/16 netip-$RANDOM_STRING
+
+# Register cleanup for containers
+defer clawker container rm --force --agent netip-$RANDOM_STRING
+defer clawker container rm --force --agent netalias-$RANDOM_STRING
+
+# Create container with static IP on custom network
+exec clawker container create --agent netip-$RANDOM_STRING --network netip-$RANDOM_STRING --ip 172.28.0.10 alpine:latest sleep 3600
+
+# Verify IP via inspect
+exec clawker container inspect --format '{{json .NetworkSettings.Networks}}' --agent netip-$RANDOM_STRING
+stdout '172.28.0.10'
+
+# Create container with network alias
+exec clawker container create --agent netalias-$RANDOM_STRING --network netip-$RANDOM_STRING --network-alias myalias alpine:latest sleep 3600
+
+# Verify alias via inspect
+exec clawker container inspect --format '{{json .NetworkSettings.Networks}}' --agent netalias-$RANDOM_STRING
+stdout 'myalias'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

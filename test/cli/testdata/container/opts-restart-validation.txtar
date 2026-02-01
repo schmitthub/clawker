@@ -1,0 +1,20 @@
+# Test restart policy validation
+# Verifies: Invalid restart policy names are rejected by Docker daemon
+
+# Test invalid restart policy is rejected via create (no --rm to avoid conflict check)
+! exec clawker container create --agent rv-$RANDOM_STRING --restart garbage alpine:latest sleep 3600
+stderr 'invalid restart policy'
+
+# Test another invalid policy
+! exec clawker container create --agent rv2-$RANDOM_STRING --restart sometimes alpine:latest sleep 3600
+stderr 'invalid restart policy'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

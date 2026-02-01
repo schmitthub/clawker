@@ -1,0 +1,22 @@
+# Test user namespace and cgroup namespace flags (--userns, --cgroupns)
+# Verifies: Namespace mode settings are applied
+
+# Register cleanup
+defer clawker container rm --force --agent cgns-$RANDOM_STRING
+
+# Create container with cgroupns private
+exec clawker container create --agent cgns-$RANDOM_STRING --cgroupns private alpine:latest sleep 3600
+
+# Verify cgroupns mode via inspect
+exec clawker container inspect --format '{{.HostConfig.CgroupnsMode}}' --agent cgns-$RANDOM_STRING
+stdout 'private'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

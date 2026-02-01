@@ -1,0 +1,25 @@
+# Test attach flag (--attach / -a)
+# Verifies: Attach options control which streams are connected
+
+# Register cleanup
+defer clawker container rm --force --agent att-$RANDOM_STRING
+
+# Create container with -a stdout only
+exec clawker container create --agent att-$RANDOM_STRING -a stdout alpine:latest sleep 3600
+
+# Verify attach flags via inspect
+exec clawker container inspect --format '{{.Config.AttachStdout}}' --agent att-$RANDOM_STRING
+stdout 'true'
+
+exec clawker container inspect --format '{{.Config.AttachStderr}}' --agent att-$RANDOM_STRING
+stdout 'false'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

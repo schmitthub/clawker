@@ -1,0 +1,16 @@
+# Test memory swappiness validation (--memory-swappiness range)
+# Verifies: Invalid memory swappiness values are rejected (valid range 0-100)
+
+# Test above maximum
+! exec clawker container create --agent swpv-$RANDOM_STRING --memory-swappiness 200 alpine:latest sleep 3600
+stderr 'swappiness'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

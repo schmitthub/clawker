@@ -208,7 +208,7 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD_VERBOSE) ./...
 
-# Run CLI integration tests
+# Run CLI internals tests
 cli-test-integration:
 	@echo "Running CLI integration tests (requires Docker)..."
 ifndef GOTESTSUM
@@ -225,7 +225,7 @@ endif
 	$(TEST_CMD) -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
-# Run short tests (skip integration tests)
+# Run short tests (skip internals tests)
 cli-test-short:
 	@echo "Running short CLI tests..."
 	$(TEST_CMD) -short ./...
@@ -288,7 +288,7 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD) -short ./...
 
-# Unit + integration tests (requires Docker)
+# Unit + internals tests (requires Docker)
 test-integration:
 	@echo "Running unit + integration tests..."
 ifndef GOTESTSUM

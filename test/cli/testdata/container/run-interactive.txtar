@@ -1,0 +1,28 @@
+# Test interactive container run (non-detached, attach-then-start flow)
+# Verifies: container attaches before start, captures output, handles exit codes
+# This exercises the attachThenStart flow with the waitForContainerExit helper.
+
+# Test 1: Non-detached run captures container output via attach-then-start
+exec clawker container run --rm alpine:latest sh -c 'echo interactive-output && echo second-line'
+stdout 'interactive-output'
+stdout 'second-line'
+
+# Test 2: Non-zero exit code is reported
+! exec clawker container run --rm alpine:latest sh -c 'echo before-exit && exit 1'
+stdout 'before-exit'
+
+# Test 3: Multi-line output from longer-running command
+exec clawker container run --rm alpine:latest sh -c 'for i in 1 2 3; do echo "line-$i"; done'
+stdout 'line-1'
+stdout 'line-2'
+stdout 'line-3'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

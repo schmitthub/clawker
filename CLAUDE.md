@@ -200,7 +200,7 @@ defer func() {
 
 ```bash
 go test ./...                                                  # Unit tests
-go test -tags=integration ./internal/cmd/... -v -timeout 10m  # Integration (Docker)
+go test -tags=internals ./internal/cmd/... -v -timeout 10m  # Integration (Docker)
 go test -tags=acceptance ./acceptance -v -timeout 15m          # Acceptance (Docker)
 ```
 

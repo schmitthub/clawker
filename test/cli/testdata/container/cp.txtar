@@ -1,0 +1,45 @@
+# Test container cp command
+# Verifies: files can be copied to/from containers
+
+# Register cleanup
+defer clawker container rm --force --agent cp-$RANDOM_STRING
+defer clawker container stop --agent cp-$RANDOM_STRING
+
+# Create a test file to copy
+cp testfile.txt $WORK/testfile.txt
+
+# Start a container
+exec clawker container run --detach --agent cp-$RANDOM_STRING alpine:latest sleep 3600
+wait_container_running clawker.$PROJECT.cp-$RANDOM_STRING 30
+
+# Copy file to container
+# --agent flag makes cp resolve "cp-$RANDOM_STRING" as agent name
+# Note: destination must be a directory path when using tar-based copy
+exec clawker container cp --agent $WORK/testfile.txt cp-$RANDOM_STRING:/tmp/
+
+# Verify file exists in container
+exec clawker container exec --agent cp-$RANDOM_STRING cat /tmp/testfile.txt
+stdout 'hello from test file'
+
+# Rename file in container to verify copy-from works independently
+exec clawker container exec --agent cp-$RANDOM_STRING mv /tmp/testfile.txt /tmp/copied.txt
+
+# Copy file back from container to a directory
+exec clawker container cp --agent cp-$RANDOM_STRING:/tmp/copied.txt $WORK/
+
+# Verify copied file content (this is the file copied FROM the container)
+exec cat $WORK/copied.txt
+stdout 'hello from test file'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
+
+-- testfile.txt --
+hello from test file

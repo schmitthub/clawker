@@ -1,0 +1,22 @@
+# Test memory limit flag (-m/--memory)
+# Verifies: Memory limit is applied to container via inspect
+
+# Register cleanup
+defer clawker container rm --force --agent mem-$RANDOM_STRING
+
+# Create container with memory limit
+exec clawker container create --agent mem-$RANDOM_STRING -m 128m alpine:latest sleep 3600
+
+# Verify memory limit via inspect (128MB = 134217728 bytes)
+exec clawker container inspect --format '{{.HostConfig.Memory}}' --agent mem-$RANDOM_STRING
+stdout '134217728'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

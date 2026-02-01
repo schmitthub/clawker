@@ -1,0 +1,22 @@
+# Test block IO weight flag (--blkio-weight)
+# Verifies: Block IO weight is applied to container
+
+# Register cleanup
+defer clawker container rm --force --agent blkio-$RANDOM_STRING
+
+# Create container with blkio weight
+exec clawker container create --agent blkio-$RANDOM_STRING --blkio-weight 500 alpine:latest sleep 3600
+
+# Verify blkio weight via inspect
+exec clawker container inspect --format '{{.HostConfig.BlkioWeight}}' --agent blkio-$RANDOM_STRING
+stdout '500'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

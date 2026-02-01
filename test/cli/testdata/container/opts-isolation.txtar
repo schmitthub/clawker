@@ -1,0 +1,22 @@
+# Test isolation flag (--isolation)
+# Verifies: Container isolation technology is set
+
+# Register cleanup
+defer clawker container rm --force --agent iso-$RANDOM_STRING
+
+# Create container with default isolation
+exec clawker container create --agent iso-$RANDOM_STRING --isolation default alpine:latest sleep 3600
+
+# Verify isolation via inspect
+exec clawker container inspect --format '{{.HostConfig.Isolation}}' --agent iso-$RANDOM_STRING
+stdout 'default'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

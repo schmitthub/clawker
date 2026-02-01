@@ -1,0 +1,16 @@
+# Test ralph status when no session exists
+# Verifies: status command handles missing session gracefully
+
+# Run ralph status - no session should exist
+exec clawker ralph status --agent testdev
+stderr 'No ralph session found'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,23 @@
+# Test health check flags (--health-cmd, --health-interval, etc.)
+# Verifies: Health check configuration is applied to container
+
+# Register cleanup
+defer clawker container rm --force --agent health-$RANDOM_STRING
+
+# Create container with health check
+exec clawker container create --agent health-$RANDOM_STRING --health-cmd 'exit 0' --health-interval 30s --health-retries 3 alpine:latest sleep 3600
+
+# Verify health check via inspect
+exec clawker container inspect --format '{{.Config.Healthcheck.Test}}' --agent health-$RANDOM_STRING
+stdout 'CMD-SHELL'
+stdout 'exit 0'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

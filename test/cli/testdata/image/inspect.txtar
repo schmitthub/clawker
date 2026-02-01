@@ -1,0 +1,23 @@
+# Test image inspect command
+# Verifies: image details can be inspected
+
+# Build a test image first
+exec clawker image build --tag test-img-inspect-$RANDOM_STRING:latest
+
+# Register cleanup
+defer clawker image rm test-img-inspect-$RANDOM_STRING:latest
+
+# Inspect the image (outputs JSON)
+exec clawker image inspect test-img-inspect-$RANDOM_STRING:latest
+stdout '"RepoTags":'
+stdout 'test-img-inspect-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

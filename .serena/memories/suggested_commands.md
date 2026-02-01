@@ -8,7 +8,7 @@ go build -o bin/clawker ./cmd/clawker
 go test ./...
 
 # Integration tests (Docker required)
-go test -tags=integration ./internal/cmd/... -v -timeout 10m
+go test -tags=internals ./internal/cmd/... -v -timeout 10m
 
 # E2E tests (Docker required)
 go test -tags=e2e ./internal/cmd/... -v -timeout 15m

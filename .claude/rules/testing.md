@@ -13,7 +13,7 @@ paths:
 
 ```bash
 go test ./...                                                  # Unit tests (fast, no Docker)
-go test -tags=integration ./internal/cmd/... -v -timeout 10m  # Integration (Docker)
+go test -tags=internals ./internal/cmd/... -v -timeout 10m  # Integration (Docker)
 go test -tags=e2e ./internal/cmd/... -v -timeout 15m          # E2E (Docker, builds binary)
 go test -tags=acceptance ./acceptance -v -timeout 15m          # Acceptance (Docker, CLI workflows)
 ```

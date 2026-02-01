@@ -92,7 +92,7 @@ func TestHistoryAndSessionConsistencyInvariant(t *testing.T) {
 	// the STORES in isolation, not the actual loop.go code path.
 	// To truly test the bug, we need to:
 	// 1. Either mock the loop.go startup behavior
-	// 2. Or run integration tests with actual Runner
+	// 2. Or run internals tests with actual Runner
 
 	// For unit test purposes, we verify the invariant:
 	// After "created" event, a save SHOULD happen

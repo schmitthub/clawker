@@ -1,0 +1,22 @@
+# Test privileged mode flag (--privileged)
+# Verifies: Container runs in privileged mode
+
+# Register cleanup
+defer clawker container rm --force --agent priv-$RANDOM_STRING
+
+# Create container in privileged mode
+exec clawker container create --agent priv-$RANDOM_STRING --privileged alpine:latest sleep 3600
+
+# Verify privileged via inspect
+exec clawker container inspect --format '{{.HostConfig.Privileged}}' --agent priv-$RANDOM_STRING
+stdout 'true'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

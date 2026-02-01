@@ -1,0 +1,33 @@
+# Test container rename command
+# Verifies: container can be renamed
+
+# Register cleanup (use new name since we'll rename)
+defer clawker container rm --force clawker.$PROJECT.renamed-$RANDOM_STRING
+defer clawker container stop clawker.$PROJECT.renamed-$RANDOM_STRING
+
+# Create a container
+exec clawker container create --agent original-$RANDOM_STRING alpine:latest sleep 3600
+
+# Verify original name
+exec clawker container ls -a
+stdout 'original-'$RANDOM_STRING
+
+# Rename the container
+exec clawker container rename --agent original-$RANDOM_STRING clawker.$PROJECT.renamed-$RANDOM_STRING
+
+# Verify new name exists
+# Note: The agent label still shows the original name since Docker doesn't allow label updates
+exec clawker container ls -a
+stdout 'renamed-'$RANDOM_STRING
+# The NAME column should show the new name (renamed-)
+# We can't assert the old name isn't there because the AGENT label retains the original value
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

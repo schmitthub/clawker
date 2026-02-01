@@ -1,0 +1,25 @@
+# Test volume list command
+# Verifies: volumes can be listed with various options
+
+# Register cleanup
+defer clawker volume rm vol-list1-$RANDOM_STRING
+defer clawker volume rm vol-list2-$RANDOM_STRING
+
+# Create two volumes
+exec clawker volume create vol-list1-$RANDOM_STRING
+exec clawker volume create vol-list2-$RANDOM_STRING
+
+# List volumes (default) - verify both exist
+exec clawker volume ls
+stdout 'vol-list1-'$RANDOM_STRING
+stdout 'vol-list2-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

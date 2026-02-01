@@ -356,7 +356,7 @@ imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
 ### Basic Command Test
 
 ```go
-//go:build integration
+//go:build internals
 
 package mycommand
 
@@ -576,8 +576,8 @@ Uses [testcontainers-go](https://golang.testcontainers.org/) for testing scripts
 ### Running
 
 ```bash
-go test -tags=integration ./internal/testutil/integration/... -v -timeout 10m
-go test -tags=integration ./internal/testutil/integration/... -run "Firewall" -v -timeout 10m
+go test -tags=internals ./internal/testutil/internals/... -v -timeout 10m
+go test -tags=internals ./internal/testutil/internals/... -run "Firewall" -v -timeout 10m
 ```
 
 ### Key Components

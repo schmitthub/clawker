@@ -12,7 +12,7 @@ CLI tool for managing Docker-based development containers, with Claude Code inte
 ```bash
 go build -o bin/clawker ./cmd/clawker
 go test ./...
-go test -tags=integration ./internal/cmd/... -v -timeout 10m
+go test -tags=internals ./internal/cmd/... -v -timeout 10m
 go test -tags=e2e ./internal/cmd/... -v -timeout 15m
 go test -tags=acceptance ./acceptance -v -timeout 15m
 ```

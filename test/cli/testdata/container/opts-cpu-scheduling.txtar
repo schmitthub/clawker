@@ -1,0 +1,39 @@
+[!linux] skip
+# Test CPU scheduling flags (--cpu-shares, --cpu-period, --cpu-quota, --cpuset-mems)
+# Verifies: CPU scheduling parameters are applied to container
+
+# Register cleanup
+defer clawker container rm --force --agent cpush-$RANDOM_STRING
+defer clawker container rm --force --agent cpuper-$RANDOM_STRING
+defer clawker container rm --force --agent cpuqt-$RANDOM_STRING
+defer clawker container rm --force --agent cpumem-$RANDOM_STRING
+
+# Test --cpu-shares
+exec clawker container create --agent cpush-$RANDOM_STRING --cpu-shares 512 alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.CPUShares}}' --agent cpush-$RANDOM_STRING
+stdout '512'
+
+# Test --cpu-period
+exec clawker container create --agent cpuper-$RANDOM_STRING --cpu-period 100000 alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.CPUPeriod}}' --agent cpuper-$RANDOM_STRING
+stdout '100000'
+
+# Test --cpu-quota
+exec clawker container create --agent cpuqt-$RANDOM_STRING --cpu-quota 50000 alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.CPUQuota}}' --agent cpuqt-$RANDOM_STRING
+stdout '50000'
+
+# Test --cpuset-mems
+exec clawker container create --agent cpumem-$RANDOM_STRING --cpuset-mems 0 alpine:latest sleep 3600
+exec clawker container inspect --format '{{.HostConfig.CpusetMems}}' --agent cpumem-$RANDOM_STRING
+stdout '0'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

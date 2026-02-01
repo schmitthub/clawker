@@ -1,0 +1,24 @@
+# Test healthcheck negative value validation
+# Verifies: Negative health check values are rejected by clawker
+
+# Test negative --health-retries is rejected
+! exec clawker container run --rm --health-cmd 'exit 0' --health-retries -1 alpine:latest echo test
+stderr 'health-retries'
+
+# Test negative --health-interval is rejected
+! exec clawker container run --rm --health-cmd 'exit 0' --health-interval -1s alpine:latest echo test
+stderr 'health-interval'
+
+# Test negative --health-timeout is rejected
+! exec clawker container run --rm --health-cmd 'exit 0' --health-timeout -1s alpine:latest echo test
+stderr 'health-timeout'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

@@ -1,0 +1,24 @@
+# Test volume inspect command
+# Verifies: volume details can be inspected
+
+# Register cleanup
+defer clawker volume rm vol-inspect-$RANDOM_STRING
+
+# Create a volume
+exec clawker volume create vol-inspect-$RANDOM_STRING
+
+# Inspect the volume (outputs JSON)
+exec clawker volume inspect vol-inspect-$RANDOM_STRING
+stdout '"Name":'
+stdout 'vol-inspect-'$RANDOM_STRING
+stdout '"Driver": "local"'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

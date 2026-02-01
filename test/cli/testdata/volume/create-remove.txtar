@@ -1,0 +1,28 @@
+# Test volume create and remove commands
+# Verifies: volumes can be created and removed
+
+# Create a volume
+exec clawker volume create vol-test-$RANDOM_STRING
+stdout 'vol-test-'$RANDOM_STRING
+
+# Verify volume exists in list
+exec clawker volume ls
+stdout 'vol-test-'$RANDOM_STRING
+
+# Remove the volume (output goes to stderr)
+exec clawker volume rm vol-test-$RANDOM_STRING
+stderr 'vol-test-'$RANDOM_STRING
+
+# Verify volume is gone
+exec clawker volume ls
+! stdout 'vol-test-'$RANDOM_STRING
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

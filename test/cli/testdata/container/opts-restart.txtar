@@ -1,0 +1,25 @@
+# Test restart policy flag (--restart)
+# Verifies: Restart policy is applied to container
+
+# Register cleanup
+defer clawker container rm --force --agent restart-$RANDOM_STRING
+
+# Create container with restart policy
+exec clawker container create --agent restart-$RANDOM_STRING --restart on-failure:3 alpine:latest sleep 3600
+
+# Verify restart policy via inspect
+exec clawker container inspect --format '{{.HostConfig.RestartPolicy.Name}}' --agent restart-$RANDOM_STRING
+stdout 'on-failure'
+
+exec clawker container inspect --format '{{.HostConfig.RestartPolicy.MaximumRetryCount}}' --agent restart-$RANDOM_STRING
+stdout '3'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

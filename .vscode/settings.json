@@ -25,8 +25,8 @@
   "go.testFlags": ["-v"],
   "go.testTimeout": "120s",
 
-  // Build tags for integration tests (optional, uncomment to enable)
-  // "go.buildTags": "integration",
+  // Build tags for internals tests (optional, uncomment to enable)
+  // "go.buildTags": "internals",
 
   // Gopls settings
   "gopls": {

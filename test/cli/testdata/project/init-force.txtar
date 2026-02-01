@@ -1,0 +1,26 @@
+# Test project init --force flag
+# Verifies: force overwrite of existing config
+
+# Create pre-existing clawker.yaml
+cp existing-config.yaml clawker.yaml
+
+# Verify existing config has original project name
+grep 'original-project' clawker.yaml
+
+# Try init without --force (should fail in non-interactive mode)
+! exec clawker project init newproj-$RANDOM_STRING --yes
+stderr 'already exists'
+
+# Now use --force to overwrite
+exec clawker project init newproj-$RANDOM_STRING --force --yes
+stderr 'Created: clawker.yaml'
+
+# Verify new project is registered in the registry
+grep 'newproj-' $HOME/.local/clawker/projects.yaml
+
+-- existing-config.yaml --
+version: "1"
+project: "original-project"
+
+build:
+  image: "alpine:latest"

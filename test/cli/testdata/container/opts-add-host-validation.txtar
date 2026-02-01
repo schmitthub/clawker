@@ -1,0 +1,24 @@
+# Test --add-host format validation
+# Verifies: Invalid --add-host values are rejected by Docker daemon
+
+# Test missing IP portion is rejected
+! exec clawker container run --rm --add-host badformat alpine:latest echo test
+stderr 'bad format'
+
+# Test missing host portion is rejected
+! exec clawker container run --rm --add-host :192.168.1.1 alpine:latest echo test
+stderr 'bad format'
+
+# Test invalid IP is rejected
+! exec clawker container run --rm --add-host myhost:notanip alpine:latest echo test
+stderr 'invalid IP'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

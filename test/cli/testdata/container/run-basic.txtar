@@ -1,0 +1,16 @@
+# Test basic container run with echo command
+# Verifies: container runs, produces output, exits cleanly
+
+# Run container with simple command
+exec clawker container run --rm alpine:latest echo hello
+stdout 'hello'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false
