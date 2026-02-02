@@ -344,7 +344,7 @@ func (opts *ContainerOptions) GetAgentName() string {
 // This consolidates the duplicated buildConfigs logic from run.go and create.go.
 // The flags parameter is used to detect whether certain flags were explicitly set
 // (e.g., --entrypoint="" to reset entrypoint, --stop-timeout, --init).
-func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.Mount, projectCfg *config.Config) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
+func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.Mount, projectCfg *config.Project) (*container.Config, *container.HostConfig, *network.NetworkingConfig, error) {
 	// Determine attach modes
 	attachStdin := opts.Stdin
 	attachStdout := true

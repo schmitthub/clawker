@@ -17,8 +17,8 @@ var DefaultFirewallDomains = []string{
 }
 
 // DefaultConfig returns a Config with sensible default values
-func DefaultConfig() *Config {
-	return &Config{
+func DefaultConfig() *Project {
+	return &Project{
 		Version: "1",
 		Build: BuildConfig{
 			Image:    "node:20-slim",

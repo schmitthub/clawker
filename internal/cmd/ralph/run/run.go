@@ -20,7 +20,7 @@ import (
 type RunOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (*config.Config, error)
+	Config    func() *config.Config
 
 	Agent               string
 	Prompt              string
@@ -134,7 +134,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 
 	// Load config
-	cfg, err := opts.Config()
+	cfg, err := opts.Config().Project()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err

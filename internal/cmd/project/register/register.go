@@ -10,16 +10,16 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/prompts"
+	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
 // RegisterOptions contains the options for the project register command.
 type RegisterOptions struct {
-	IOStreams      *iostreams.IOStreams
-	Prompter       func() *prompts.Prompter
-	RegistryLoader func() (*config.RegistryLoader, error)
-	WorkDir        string
+	IOStreams *iostreams.IOStreams
+	Prompter func() *prompterpkg.Prompter
+	Config   func() *config.Config
+	WorkDir  func() (string, error)
 
 	Name string // Positional arg: project name
 	Yes  bool
@@ -28,10 +28,10 @@ type RegisterOptions struct {
 // NewCmdProjectRegister creates the project register command.
 func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command {
 	opts := &RegisterOptions{
-		IOStreams:      f.IOStreams,
-		Prompter:       f.Prompter,
-		RegistryLoader: f.RegistryLoader,
-		WorkDir:        f.WorkDir,
+		IOStreams: f.IOStreams,
+		Prompter: f.Prompter,
+		Config:   f.Config,
+		WorkDir:  f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -75,8 +75,15 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	cfgGateway := opts.Config()
+
 	// Require an existing clawker.yaml
-	loader := config.NewLoader(opts.WorkDir)
+	loader := config.NewLoader(wd)
 	if !loader.Exists() {
 		cmdutil.PrintError(ios, "No %s found in the current directory", config.ConfigFileName)
 		cmdutil.PrintNextSteps(ios,
@@ -86,7 +93,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	}
 
 	// Determine project name
-	absPath, err := filepath.Abs(opts.WorkDir)
+	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -99,7 +106,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		projectName = dirName
 	} else {
 		prompter := opts.Prompter()
-		projectName, err = prompter.String(prompts.PromptConfig{
+		projectName, err = prompter.String(prompterpkg.PromptConfig{
 			Message:  "Project name",
 			Default:  dirName,
 			Required: true,
@@ -109,7 +116,8 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		}
 	}
 
-	slug, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName)
+	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+	slug, err := project.RegisterProject(ios, registryLoader, wd, projectName)
 	if err != nil {
 		return err
 	}

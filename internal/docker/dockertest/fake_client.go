@@ -26,6 +26,7 @@ import (
 	moby "github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -53,11 +54,21 @@ type FakeClient struct {
 	FakeAPI *whailtest.FakeAPIClient
 }
 
+// FakeClientOption configures a FakeClient.
+type FakeClientOption func(*FakeClient)
+
+// WithConfig sets a config gateway on the fake client for image resolution tests.
+func WithConfig(cfg *config.Config) FakeClientOption {
+	return func(fc *FakeClient) {
+		fc.Client.SetConfig(cfg)
+	}
+}
+
 // NewFakeClient constructs a FakeClient with production-equivalent label
 // configuration. The returned Client.Engine uses clawker's "com.clawker"
 // label prefix, so docker-layer methods (ListContainers, FindContainerByAgent,
 // etc.) exercise real label filtering logic.
-func NewFakeClient() *FakeClient {
+func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 	fakeAPI := whailtest.NewFakeAPIClient()
 	engine := whail.NewFromExisting(fakeAPI, clawkerEngineOptions())
 	client := &docker.Client{Engine: engine}
@@ -127,10 +138,16 @@ func NewFakeClient() *FakeClient {
 		}, nil
 	}
 
-	return &FakeClient{
+	fc := &FakeClient{
 		Client:  client,
 		FakeAPI: fakeAPI,
 	}
+
+	for _, opt := range opts {
+		opt(fc)
+	}
+
+	return fc
 }
 
 // AssertCalled asserts that the given method was called at least once.

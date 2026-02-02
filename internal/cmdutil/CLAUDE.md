@@ -3,10 +3,10 @@
 Lightweight shared CLI utilities: Factory struct (DI container), output helpers, argument validators.
 
 Heavy command helpers have been extracted to dedicated packages:
-- Image resolution: `internal/resolver/`
+- Image resolution: `internal/docker/` (image_resolve.go)
 - Build utilities: `internal/build/`
 - Project registration: `internal/project/`
-- Container naming: `internal/docker/`
+- Container naming/middleware: `internal/docker/`
 
 ## Key Files
 
@@ -19,31 +19,33 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 9 fields total: 3 eager values + 5 lazy nouns + 1 lazy client. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
-    WorkDir, BuildOutputDir string
-    Debug                   bool
-    Version, Commit         string
-    IOStreams                *iostreams.IOStreams
+    // Eager (set at construction)
+    Version  string
+    Commit   string
+    IOStreams *iostreams.IOStreams
 
-    // Closure fields (wired by factory constructor, lazy internally)
-    Client      func(context.Context) (*docker.Client, error)
-    CloseClient func()
-    // ... 18 closure fields total (see source for full list)
+    // Lazy nouns (each returns a thing; commands call methods on the thing)
+    WorkDir   func() string
+    Client    func(context.Context) (*docker.Client, error)
+    Config    func() *config.Config
+    HostProxy func() *hostproxy.Manager
+    Prompter  func() *prompter.Prompter
 }
 ```
 
-**Closure Fields:**
-- `Client(ctx)`, `CloseClient()` -- Docker client lifecycle
-- `ConfigLoader()`, `Config()`, `ResetConfig()` -- project config
-- `SettingsLoader()`, `Settings()`, `InvalidateSettingsCache()` -- user settings
-- `RegistryLoader()`, `Registry()`, `Resolution()` -- project registry
-- `HostProxy()`, `EnsureHostProxy()`, `StopHostProxy(ctx)`, `HostProxyEnvVar()` -- host proxy
-- `Prompter()` -- interactive prompter (`*prompts.Prompter`)
-- `RuntimeEnv()` -- runtime environment variables
-- `BuildKitEnabled(ctx)` -- detect BuildKit support (env var > daemon ping > OS)
+**Field semantics:**
+- `Version`, `Commit`, `IOStreams` -- set eagerly at construction
+- `WorkDir()` -- lazy closure returning current working directory
+- `Client(ctx)` -- lazy Docker client (connects on first call)
+- `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
+- `HostProxy()` -- returns `*hostproxy.Manager`; commands call `.EnsureRunning()` / `.Stop(ctx)` on it
+- `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
+
+**Config gateway pattern:** Instead of separate `f.Settings()`, `f.Registry()`, `f.Resolution()` fields, commands now use `f.Config().Settings()`, `f.Config().Registry()`, `f.Config().Resolution()`, etc.
 
 **Testing:** Construct minimal Factory structs directly:
 ```go

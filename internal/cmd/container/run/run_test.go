@@ -16,9 +16,10 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/prompts"
-	"github.com/schmitthub/clawker/internal/resolver"
+	"github.com/schmitthub/clawker/internal/prompter"
+
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
 )
@@ -580,7 +581,7 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Image:   "alpine",
 		Publish: copts.NewPortOpts(),
 	}
-	projectCfg := &config.Config{
+	projectCfg := &config.Project{
 		Project: "test",
 		Security: config.SecurityConfig{
 			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
@@ -614,7 +615,7 @@ func TestImageArg(t *testing.T) {
 			defaultImage  string
 			fakeImages    []string // Images to return from fake ImageList
 			wantReference string
-			wantSource    resolver.ImageSource
+			wantSource    docker.ImageSource
 			wantNil       bool // Expect nil result (no resolution)
 		}{
 			{
@@ -623,7 +624,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    resolver.ImageSourceProject,
+				wantSource:    docker.ImageSourceProject,
 			},
 			{
 				name:          "@ resolves to default image when no project image",
@@ -631,7 +632,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "node:20-slim",
 				fakeImages:    []string{}, // No project images
 				wantReference: "node:20-slim",
-				wantSource:    resolver.ImageSourceDefault,
+				wantSource:    docker.ImageSourceDefault,
 			},
 			{
 				name:         "@ returns nil when no default available",
@@ -646,7 +647,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    resolver.ImageSourceProject,
+				wantSource:    docker.ImageSourceProject,
 			},
 			{
 				name:          "@ ignores non-latest project images",
@@ -654,7 +655,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
 				wantReference: "alpine:latest",
-				wantSource:    resolver.ImageSourceDefault,
+				wantSource:    docker.ImageSourceDefault,
 			},
 		}
 
@@ -674,8 +675,8 @@ func TestImageArg(t *testing.T) {
 				}
 				fake.SetupImageList(summaries...)
 
-				// Build config and settings
-				cfg := &config.Config{
+				// Build config and settings, inject into fake client
+				cfg := &config.Project{
 					Project: tt.projectName,
 				}
 				var settings *config.Settings
@@ -684,9 +685,11 @@ func TestImageArg(t *testing.T) {
 						DefaultImage: tt.defaultImage,
 					}
 				}
+				testCfg := config.NewConfigForTest("", cfg, settings)
+				fake.Client.SetConfig(testCfg)
 
-				// Call the resolution function
-				result, err := resolver.ResolveImageWithSource(ctx, fake.Client, cfg, settings)
+				// Call the resolution method on the client
+				result, err := fake.Client.ResolveImageWithSource(ctx)
 				require.NoError(t, err)
 
 				if tt.wantNil {
@@ -804,30 +807,25 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:   tmpDir,
+		WorkDir:  func() (string, error) { return tmpDir, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() (*config.Config, error) {
-			return testConfig(), nil
+		Config: func() *config.Config {
+			return config.NewConfigForTest(tmpDir, testConfig(), config.DefaultSettings())
 		},
-		Settings: func() (*config.Settings, error) {
-			return config.DefaultSettings(), nil
+		HostProxy: func() *hostproxy.Manager {
+			return hostproxy.NewManager()
 		},
-		EnsureHostProxy:         func() error { return nil },
-		HostProxyEnvVar:         func() string { return "" },
-		RuntimeEnv:              func() ([]string, error) { return nil, nil },
-		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
-		InvalidateSettingsCache: func() {},
-		Prompter:                func() *prompts.Prompter { return nil },
+		Prompter: func() *prompter.Prompter { return nil },
 	}, tio
 }
 
-// testConfig returns a minimal *config.Config for test use.
+// testConfig returns a minimal *config.Project for test use.
 // Host proxy disabled, bind mode, empty project, firewall disabled.
-func testConfig() *config.Config {
+func testConfig() *config.Project {
 	hostProxyDisabled := false
-	return &config.Config{
+	return &config.Project{
 		Version: "1",
 		Project: "",
 		Workspace: config.WorkspaceConfig{
@@ -907,5 +905,49 @@ func TestRunRun(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		fake.AssertCalled(t, "ContainerCreate")
+	})
+
+	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
+		cfgProject := testConfig()
+		cfgProject.DefaultImage = "node:20-slim"
+
+		fake := dockertest.NewFakeClient(
+			dockertest.WithConfig(config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())),
+		)
+		fake.SetupImageList()                          // empty — no project image found
+		fake.SetupImageExists("node:20-slim", false)   // default image missing
+		fake.SetupContainerCreate()
+		fake.SetupContainerStart()
+
+		tio := iostreams.NewTestIOStreams() // non-interactive
+		f := &cmdutil.Factory{
+			IOStreams: tio.IOStreams,
+			WorkDir:  func() (string, error) { return t.TempDir(), nil },
+			Client: func(_ context.Context) (*docker.Client, error) {
+				return fake.Client, nil
+			},
+			Config: func() *config.Config {
+				return config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())
+			},
+			HostProxy: func() *hostproxy.Manager {
+				return hostproxy.NewManager()
+			},
+			Prompter: func() *prompter.Prompter { return nil },
+		}
+
+		cmd := NewCmdRun(f, nil)
+		cmd.SetArgs([]string{"--detach", "@"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not found")
+
+		errOutput := tio.ErrBuf.String()
+		require.Contains(t, errOutput, "node:20-slim")
+
+		fake.AssertNotCalled(t, "ContainerCreate")
 	})
 }

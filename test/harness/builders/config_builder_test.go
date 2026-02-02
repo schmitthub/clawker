@@ -21,45 +21,45 @@ func TestConfigBuilder_NewConfigBuilder(t *testing.T) {
 func TestConfigBuilder_Fluent(t *testing.T) {
 	tests := []struct {
 		name   string
-		build  func() *config.Config
-		verify func(t *testing.T, cfg *config.Config)
+		build  func() *config.Project
+		verify func(t *testing.T, cfg *config.Project)
 	}{
 		{
 			name: "WithProject",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithProject("my-project").
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "my-project", cfg.Project)
 			},
 		},
 		{
 			name: "WithVersion",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithVersion("2").
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "2", cfg.Version)
 			},
 		},
 		{
 			name: "WithDefaultImage",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithDefaultImage("clawker-custom:v1").
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "clawker-custom:v1", cfg.DefaultImage)
 			},
 		},
 		{
 			name: "WithBuild",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithBuild(config.BuildConfig{
 						Image:    "node:20-slim",
@@ -67,14 +67,14 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					}).
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "node:20-slim", cfg.Build.Image)
 				assert.Equal(t, []string{"git", "curl"}, cfg.Build.Packages)
 			},
 		},
 		{
 			name: "WithAgent",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithAgent(config.AgentConfig{
 						Env:      map[string]string{"FOO": "bar"},
@@ -82,14 +82,14 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					}).
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "bar", cfg.Agent.Env["FOO"])
 				assert.Equal(t, []string{"./README.md"}, cfg.Agent.Includes)
 			},
 		},
 		{
 			name: "WithWorkspace",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithWorkspace(config.WorkspaceConfig{
 						RemotePath:  "/app",
@@ -97,14 +97,14 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					}).
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "/app", cfg.Workspace.RemotePath)
 				assert.Equal(t, "snapshot", cfg.Workspace.DefaultMode)
 			},
 		},
 		{
 			name: "WithSecurity",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithSecurity(config.SecurityConfig{
 						DockerSocket: true,
@@ -114,7 +114,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					}).
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.True(t, cfg.Security.DockerSocket)
 				require.NotNil(t, cfg.Security.Firewall)
 				assert.True(t, cfg.Security.Firewall.Enable)
@@ -122,7 +122,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 		},
 		{
 			name: "Chained fluent calls",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithProject("chained").
 					WithDefaultImage("test:latest").
@@ -130,7 +130,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					WithSecurity(SecurityFirewallEnabled()).
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "chained", cfg.Project)
 				assert.Equal(t, "test:latest", cfg.DefaultImage)
 				assert.Equal(t, "buildpack-deps:bookworm-scm", cfg.Build.Image)
@@ -140,7 +140,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 		},
 		{
 			name: "ForTestBaseImage",
-			build: func() *config.Config {
+			build: func() *config.Project {
 				return NewConfigBuilder().
 					WithProject("test").
 					WithBuild(config.BuildConfig{
@@ -150,7 +150,7 @@ func TestConfigBuilder_Fluent(t *testing.T) {
 					ForTestBaseImage().
 					Build()
 			},
-			verify: func(t *testing.T, cfg *config.Config) {
+			verify: func(t *testing.T, cfg *config.Project) {
 				assert.Equal(t, "alpine:latest", cfg.Build.Image)
 				assert.Nil(t, cfg.Build.Packages)
 			},

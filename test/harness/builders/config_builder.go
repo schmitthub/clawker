@@ -5,16 +5,16 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 )
 
-// ConfigBuilder provides a fluent API for constructing config.Config objects in tests.
+// ConfigBuilder provides a fluent API for constructing config.Project objects in tests.
 // It ensures type-safety at compile time - config schema changes cause compile errors.
 type ConfigBuilder struct {
-	cfg config.Config
+	cfg config.Project
 }
 
 // NewConfigBuilder creates a new ConfigBuilder with sensible defaults.
 func NewConfigBuilder() *ConfigBuilder {
 	return &ConfigBuilder{
-		cfg: config.Config{
+		cfg: config.Project{
 			Version: "1",
 			Workspace: config.WorkspaceConfig{
 				RemotePath:  "/workspace",
@@ -67,7 +67,7 @@ func (b *ConfigBuilder) WithSecurity(security config.SecurityConfig) *ConfigBuil
 }
 
 // Build returns the constructed Config.
-func (b *ConfigBuilder) Build() *config.Config {
+func (b *ConfigBuilder) Build() *config.Project {
 	// Return a copy to prevent mutation
 	cfg := b.cfg
 	return &cfg

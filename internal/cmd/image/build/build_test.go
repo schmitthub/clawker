@@ -437,38 +437,8 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 	}
 }
 
-func TestBuildKitEnabled_WiredFromFactory(t *testing.T) {
-	called := false
-	f := &cmdutil.Factory{
-		BuildKitEnabled: func(_ context.Context) (bool, error) {
-			called = true
-			return true, nil
-		},
-	}
-
-	var gotOpts *BuildOptions
-	cmd := NewCmdBuild(f, func(_ context.Context, opts *BuildOptions) error {
-		gotOpts = opts
-		return nil
-	})
-
-	cmd.Flags().BoolP("help", "x", false, "")
-	cmd.SetArgs([]string{})
-	cmd.SetIn(&bytes.Buffer{})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-
-	_, err := cmd.ExecuteC()
-	require.NoError(t, err)
-	require.NotNil(t, gotOpts)
-	require.NotNil(t, gotOpts.BuildKitEnabled, "BuildKitEnabled should be wired from Factory")
-
-	// Invoke the closure to verify it delegates to the factory
-	enabled, err := gotOpts.BuildKitEnabled(context.Background())
-	require.NoError(t, err)
-	require.True(t, enabled)
-	require.True(t, called, "Factory.BuildKitEnabled should have been called")
-}
+// BuildKitEnabled is now resolved directly in buildRun via docker.BuildKitEnabled,
+// no longer wired through Factory. The test for factory wiring is removed.
 
 // strPtr returns a pointer to the given string.
 func strPtr(s string) *string {

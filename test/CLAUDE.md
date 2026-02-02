@@ -58,7 +58,7 @@ No build tags needed — directory separation provides test categorization.
 ```go
 func NewHarness(t *testing.T, opts ...HarnessOption) *Harness
 func WithProject(name string) HarnessOption
-func WithConfig(cfg *config.Config) HarnessOption
+func WithConfig(cfg *config.Project) HarnessOption
 func WithConfigBuilder(builder *ConfigBuilder) HarnessOption
 ```
 

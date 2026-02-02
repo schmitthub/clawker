@@ -94,7 +94,7 @@ func (l *Loader) resolveUserConfigDir() string {
 
 // Load reads and parses the clawker.yaml configuration file.
 // Loading order: hardcoded defaults → user clawker.yaml → project clawker.yaml → env vars
-func (l *Loader) Load() (*Config, error) {
+func (l *Loader) Load() (*Project, error) {
 	projectConfigPath := filepath.Join(l.effectiveProjectRoot(), ConfigFileName)
 	hasProjectConfig := fileExists(projectConfigPath)
 
@@ -158,7 +158,7 @@ func (l *Loader) Load() (*Config, error) {
 	}
 
 	// Unmarshal into Config struct
-	var cfg Config
+	var cfg Project
 	if err := l.viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToSliceHookFunc(","),
@@ -187,7 +187,7 @@ func (l *Loader) Load() (*Config, error) {
 
 // fixEnvKeyCase re-reads the YAML to preserve original case for env var keys
 // Viper/mapstructure lowercases all map keys, but env vars are case-sensitive
-func (l *Loader) fixEnvKeyCase(cfg *Config, configPath string) error {
+func (l *Loader) fixEnvKeyCase(cfg *Project, configPath string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err

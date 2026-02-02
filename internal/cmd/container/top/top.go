@@ -18,7 +18,7 @@ import (
 type TopOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent bool
 
@@ -30,7 +30,7 @@ func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error
 	opts := &TopOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -81,7 +81,7 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers := docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, []string{containerName})
+		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, []string{containerName})
 		containerName = containers[0]
 	}
 

@@ -66,7 +66,7 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 	}
 
 	// 3. Create Docker client (needed for BuildKit detection before Dockerfile generation)
-	client, err := docker.NewClient(ctx)
+	client, err := docker.NewClient(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
 	}

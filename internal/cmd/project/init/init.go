@@ -13,17 +13,16 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/prompts"
+	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
-	IOStreams      *iostreams.IOStreams
-	Prompter       func() *prompts.Prompter
-	Settings       func() (*config.Settings, error)
-	RegistryLoader func() (*config.RegistryLoader, error)
-	WorkDir        string
+	IOStreams *iostreams.IOStreams
+	Prompter func() *prompterpkg.Prompter
+	Config   func() *config.Config
+	WorkDir  func() (string, error)
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -33,11 +32,10 @@ type ProjectInitOptions struct {
 // NewCmdProjectInit creates the project init command.
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
-		IOStreams:      f.IOStreams,
-		Prompter:       f.Prompter,
-		Settings:       f.Settings,
-		RegistryLoader: f.RegistryLoader,
-		WorkDir:        f.WorkDir,
+		IOStreams: f.IOStreams,
+		Prompter: f.Prompter,
+		Config:   f.Config,
+		WorkDir:  f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -88,8 +86,15 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
 
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	cfgGateway := opts.Config()
+
 	// Check if configuration already exists
-	loader := config.NewLoader(opts.WorkDir)
+	loader := config.NewLoader(wd)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
 			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
@@ -110,13 +115,14 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		}
 		if !overwrite {
 			// Don't overwrite config, but still register the project using directory name
-			absPath, absErr := filepath.Abs(opts.WorkDir)
+			absPath, absErr := filepath.Abs(wd)
 			if absErr != nil {
 				fmt.Fprintln(ios.ErrOut, "Aborted.")
 				return nil
 			}
 			dirName := filepath.Base(absPath)
-			slug, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, dirName)
+			registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
 			if err != nil {
 				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
@@ -135,7 +141,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 
 	// Get absolute path of working directory
-	absPath, err := filepath.Abs(opts.WorkDir)
+	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -150,7 +156,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		projectName = dirName
 	} else {
 		// Interactive: prompt for project name
-		projectName, err = prompter.String(prompts.PromptConfig{
+		projectName, err = prompter.String(prompterpkg.PromptConfig{
 			Message:  "Project name",
 			Default:  dirName,
 			Required: true,
@@ -162,7 +168,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings, err := opts.Settings()
+	settings, err := cfgGateway.Settings()
 	if err == nil && settings != nil && settings.DefaultImage != "" {
 		userDefaultImage = settings.DefaultImage
 	}
@@ -175,14 +181,14 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	} else {
 		// Interactive: show flavor options + Custom option
 		flavors := intbuild.DefaultFlavorOptions()
-		selectOptions := make([]prompts.SelectOption, len(flavors)+1)
+		selectOptions := make([]prompterpkg.SelectOption, len(flavors)+1)
 		for i, opt := range flavors {
-			selectOptions[i] = prompts.SelectOption{
+			selectOptions[i] = prompterpkg.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}
 		}
-		selectOptions[len(flavors)] = prompts.SelectOption{
+		selectOptions[len(flavors)] = prompterpkg.SelectOption{
 			Label:       "Custom",
 			Description: "Enter a custom base image (e.g., node:20, python:3.12)",
 		}
@@ -194,7 +200,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 		if idx == len(flavors) {
 			// Custom option selected - prompt for custom image
-			customImage, err := prompter.String(prompts.PromptConfig{
+			customImage, err := prompter.String(prompterpkg.PromptConfig{
 				Message:  "Custom base image",
 				Required: true,
 			})
@@ -215,7 +221,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		defaultImage = userDefaultImage
 	} else {
 		// Interactive: prompt with user's default_image as default, allow override or empty
-		defaultImage, err = prompter.String(prompts.PromptConfig{
+		defaultImage, err = prompter.String(prompterpkg.PromptConfig{
 			Message:  "Default fallback image (leave empty if none)",
 			Default:  userDefaultImage,
 			Required: false,
@@ -230,7 +236,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	if opts.Yes || !ios.IsInteractive() {
 		workspaceMode = "bind"
 	} else {
-		options := []prompts.SelectOption{
+		options := []prompterpkg.SelectOption{
 			{Label: "bind", Description: "live sync - changes immediately affect host filesystem"},
 			{Label: "snapshot", Description: "isolated copy - use git to sync changes"},
 		}
@@ -246,7 +252,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		Str("build_image", buildImage).
 		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
-		Str("workdir", opts.WorkDir).
+		Str("workdir", wd).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
@@ -270,7 +276,8 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	}
 
 	// Register project in user settings
-	if _, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName); err != nil {
+	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+	if _, err := project.RegisterProject(ios, registryLoader, wd, projectName); err != nil {
 		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 

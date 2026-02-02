@@ -283,7 +283,7 @@ func TestValidatorCompleteConfig(t *testing.T) {
 	validator := NewValidator(tmpDir)
 
 	// Test a completely valid configuration
-	cfg := &Config{
+	cfg := &Project{
 		Version: "1",
 		Project: "complete-project",
 		Build: BuildConfig{

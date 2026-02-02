@@ -10,7 +10,7 @@ import (
 )
 
 func TestRuntimeEnv_Defaults(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: false},
 		},
@@ -24,7 +24,7 @@ func TestRuntimeEnv_Defaults(t *testing.T) {
 }
 
 func TestRuntimeEnv_EditorOverride(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Agent: config.AgentConfig{
 			Editor: "vim",
 			Visual: "code",
@@ -42,7 +42,7 @@ func TestRuntimeEnv_EditorOverride(t *testing.T) {
 }
 
 func TestRuntimeEnv_FirewallDomains(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{
 				Enable:     true,
@@ -73,7 +73,7 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 }
 
 func TestRuntimeEnv_FirewallOverride(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{
 				Enable:          true,
@@ -89,7 +89,7 @@ func TestRuntimeEnv_FirewallOverride(t *testing.T) {
 }
 
 func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: false},
 		},
@@ -105,7 +105,7 @@ func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
 }
 
 func TestRuntimeEnv_AgentEnv(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Agent: config.AgentConfig{
 			Env: map[string]string{
 				"FOO": "bar",
@@ -125,7 +125,7 @@ func TestRuntimeEnv_AgentEnv(t *testing.T) {
 }
 
 func TestRuntimeEnv_InstructionEnv(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Build: config.BuildConfig{
 			Instructions: &config.DockerInstructions{
 				Env: map[string]string{
@@ -145,7 +145,7 @@ func TestRuntimeEnv_InstructionEnv(t *testing.T) {
 }
 
 func TestRuntimeEnv_NilInstructions(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Build: config.BuildConfig{
 			Instructions: nil,
 		},
@@ -162,7 +162,7 @@ func TestRuntimeEnv_NilInstructions(t *testing.T) {
 }
 
 func TestRuntimeEnv_Deterministic(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Agent: config.AgentConfig{
 			Editor: "vim",
 			Env:    map[string]string{"A": "1", "B": "2"},
@@ -182,7 +182,7 @@ func TestRuntimeEnv_Deterministic(t *testing.T) {
 }
 
 func TestRuntimeEnv_Precedence(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Agent: config.AgentConfig{
 			Env: map[string]string{
 				"EDITOR": "vim",        // Overrides base default of "nano"

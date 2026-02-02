@@ -9,14 +9,16 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompts"
-	"github.com/schmitthub/clawker/internal/resolver"
+	"github.com/schmitthub/clawker/internal/prompter"
+
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -27,17 +29,12 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams               *iostreams.IOStreams
-	Client                  func(context.Context) (*docker.Client, error)
-	Config                  func() (*config.Config, error)
-	Settings                func() (*config.Settings, error)
-	Prompter                func() *prompts.Prompter
-	SettingsLoader          func() (*config.SettingsLoader, error)
-	InvalidateSettingsCache func()
-	EnsureHostProxy         func() error
-	HostProxyEnvVar         func() string
-	RuntimeEnv              func() ([]string, error)
-	WorkDir                 string
+	IOStreams  *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
+	Prompter  func() *prompter.Prompter
+	WorkDir   func() (string, error)
 
 	// Run-specific options
 	Detach bool
@@ -53,18 +50,13 @@ type RunOptions struct {
 func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
 	opts := &RunOptions{
-		ContainerOptions:        containerOpts,
-		IOStreams:               f.IOStreams,
-		Client:                  f.Client,
-		Config:                  f.Config,
-		Settings:                f.Settings,
-		Prompter:                f.Prompter,
-		SettingsLoader:          f.SettingsLoader,
-		InvalidateSettingsCache: f.InvalidateSettingsCache,
-		EnsureHostProxy:         f.EnsureHostProxy,
-		HostProxyEnvVar:         f.HostProxyEnvVar,
-		RuntimeEnv:              f.RuntimeEnv,
-		WorkDir:                 f.WorkDir,
+		ContainerOptions: containerOpts,
+		IOStreams:         f.IOStreams,
+		Client:           f.Client,
+		Config:           f.Config,
+		HostProxy:        f.HostProxy,
+		Prompter:         f.Prompter,
+		WorkDir:          f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -138,9 +130,10 @@ If IMAGE is "@", clawker will use (in order of precedence):
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
+	cfgGateway := opts.Config()
 
 	// Load config for project name
-	cfg, err := opts.Config()
+	cfg, err := cfgGateway.Project()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		cmdutil.PrintNextSteps(ios,
@@ -148,13 +141,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			"Or ensure you're in a directory with clawker.yaml",
 		)
 		return err
-	}
-
-	// Load user settings for defaults
-	settings, err := opts.Settings()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
-		settings = config.DefaultSettings()
 	}
 
 	// Connect to Docker
@@ -166,14 +152,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := resolver.ResolveAndValidateImage(ctx, resolver.ImageValidationDeps{
-			IOStreams:               opts.IOStreams,
-			Prompter:                opts.Prompter,
-			SettingsLoader:          opts.SettingsLoader,
-			InvalidateSettingsCache: opts.InvalidateSettingsCache,
-		}, client, cfg, settings)
+		resolvedImage, err := client.ResolveImageWithSource(ctx)
 		if err != nil {
-			// ResolveAndValidateImage already prints appropriate errors
 			return err
 		}
 		if resolvedImage == nil {
@@ -186,6 +166,19 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			)
 			return fmt.Errorf("no image specified")
 		}
+
+		// For default images, verify the image exists and offer to rebuild if missing
+		if resolvedImage.Source == docker.ImageSourceDefault {
+			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
+			if err != nil {
+				logger.Warn().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
+			} else if !exists {
+				if err := handleMissingDefaultImage(ctx, opts, cfgGateway, resolvedImage.Reference); err != nil {
+					return err
+				}
+			}
+		}
+
 		containerOpts.Image = resolvedImage.Reference
 	}
 
@@ -197,12 +190,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	opts.AgentName = agentName
 	containerName := docker.ContainerName(cfg.Project, agentName)
 
+	// Get working directory
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
-		WorkDir:      opts.WorkDir,
+		WorkDir:      wd,
 	})
 	if err != nil {
 		return err
@@ -218,7 +217,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// Start host proxy server for container-to-host communication (if enabled)
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
-		if err := opts.EnsureHostProxy(); err != nil {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
@@ -226,7 +226,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			logger.Debug().Msg("host proxy started successfully")
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
-			if envVar := opts.HostProxyEnvVar(); envVar != "" {
+			if hp.IsRunning() {
+				envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
 				containerOpts.Env = append(containerOpts.Env, envVar)
 				logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
 			}
@@ -241,13 +242,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
 	// Inject config-derived runtime env vars (editor, firewall domains, agent env, instruction env)
-	if opts.RuntimeEnv != nil {
-		runtimeEnv, err := opts.RuntimeEnv()
-		if err != nil {
-			return err
-		}
-		containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	runtimeEnv, err := docker.RuntimeEnv(cfg)
+	if err != nil {
+		return err
 	}
+	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
 
 	// Validate cross-field constraints before building configs
 	if err := containerOpts.ValidateFlags(); err != nil {
@@ -483,4 +482,88 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 		}
 	}()
 	return statusCh
+}
+
+// handleMissingDefaultImage prompts the user to rebuild a missing default image.
+// In non-interactive mode, it prints instructions and returns an error.
+func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway *config.Config, imageRef string) error {
+	ios := opts.IOStreams
+
+	if !ios.IsInteractive() {
+		cmdutil.PrintError(ios, "Default image %q not found", imageRef)
+		cmdutil.PrintNextSteps(ios,
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return fmt.Errorf("default image %q not found", imageRef)
+	}
+
+	// Interactive mode — prompt to rebuild
+	p := opts.Prompter()
+	options := []prompter.SelectOption{
+		{Label: "Yes", Description: "Rebuild the default base image now"},
+		{Label: "No", Description: "Cancel and fix manually"},
+	}
+
+	idx, err := p.Select(
+		fmt.Sprintf("Default image %q not found. Rebuild now?", imageRef),
+		options,
+		0,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to prompt for rebuild: %w", err)
+	}
+
+	if idx != 0 {
+		cmdutil.PrintNextSteps(ios,
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return fmt.Errorf("default image %q not found", imageRef)
+	}
+
+	// Get flavor selection
+	flavors := intbuild.DefaultFlavorOptions()
+	flavorOptions := make([]prompter.SelectOption, len(flavors))
+	for i, f := range flavors {
+		flavorOptions[i] = prompter.SelectOption{
+			Label:       f.Name,
+			Description: f.Description,
+		}
+	}
+
+	flavorIdx, err := p.Select("Select Linux flavor", flavorOptions, 0)
+	if err != nil {
+		return fmt.Errorf("failed to select flavor: %w", err)
+	}
+
+	selectedFlavor := flavors[flavorIdx].Name
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", intbuild.DefaultImageTag)
+
+	if err := intbuild.BuildDefaultImage(ctx, selectedFlavor); err != nil {
+		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
+		return fmt.Errorf("failed to rebuild default image: %w", err)
+	}
+
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", intbuild.DefaultImageTag)
+
+	// Persist the default image in settings
+	settingsLoader, err := cfgGateway.SettingsLoader()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load settings loader; default image will not be persisted")
+	} else if settingsLoader != nil {
+		currentSettings, loadErr := settingsLoader.Load()
+		if loadErr != nil {
+			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
+		} else {
+			currentSettings.DefaultImage = intbuild.DefaultImageTag
+			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
+				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+			}
+		}
+	}
+
+	return nil
 }

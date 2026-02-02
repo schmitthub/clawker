@@ -252,13 +252,13 @@ func (m *DockerfileManager) DockerfilesDir() string {
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
-	config          *config.Config
+	config          *config.Project
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
-func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator {
+func NewProjectGenerator(cfg *config.Project, workDir string) *ProjectGenerator {
 	return &ProjectGenerator{
 		config:  cfg,
 		workDir: workDir,

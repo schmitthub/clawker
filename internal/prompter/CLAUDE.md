@@ -1,4 +1,4 @@
-# Prompts Package
+# Prompter Package
 
 Interactive user prompts with TTY and CI awareness. Access via `f.Prompter()` from Factory.
 
@@ -29,9 +29,9 @@ In CI or non-TTY environments (checked via `ios.IsInteractive()`):
 ## Usage
 
 ```go
-prompter := f.Prompter()  // prompts.NewPrompter(ios)
+prompter := f.Prompter()  // prompter.NewPrompter(ios)
 
-name, err := prompter.String(prompts.PromptConfig{
+name, err := prompter.String(prompter.PromptConfig{
     Message:  "Project name",
     Default:  "my-project",
     Required: true,
@@ -39,7 +39,7 @@ name, err := prompter.String(prompts.PromptConfig{
 
 proceed, err := prompter.Confirm("Continue?", false)
 
-idx, err := prompter.Select("Choose base image", []prompts.SelectOption{
+idx, err := prompter.Select("Choose base image", []prompter.SelectOption{
     {Label: "Debian Bookworm", Description: "Recommended"},
     {Label: "Alpine 3.22", Description: "Smaller image"},
 }, 0)
@@ -52,7 +52,7 @@ ios := iostreams.NewTestIOStreams()
 ios.SetInteractive(true)
 ios.InBuf.SetInput("y\n")
 
-prompter := prompts.NewPrompter(ios.IOStreams)
+prompter := prompter.NewPrompter(ios.IOStreams)
 result, err := prompter.Confirm("Continue?", false)
 // result == true, ios.ErrBuf.String() contains "Continue?"
 ```
@@ -67,4 +67,4 @@ result, err := prompter.Confirm("Continue?", false)
 
 ## Tests
 
-`prompts_test.go` -- unit tests for all prompt types and non-interactive fallback
+`prompter_test.go` -- unit tests for all prompt types and non-interactive fallback

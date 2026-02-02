@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
@@ -18,11 +19,10 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams       *iostreams.IOStreams
-	Client          func(context.Context) (*docker.Client, error)
-	Config          func() (*config.Config, error)
-	Resolution      func() *config.Resolution
-	EnsureHostProxy func() error
+	IOStreams  *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
 
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
@@ -33,11 +33,10 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:       f.IOStreams,
-		Client:          f.Client,
-		Config:          f.Config,
-		Resolution:      f.Resolution,
-		EnsureHostProxy: f.EnsureHostProxy,
+		IOStreams:  f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
+		HostProxy: f.HostProxy,
 	}
 
 	cmd := &cobra.Command{
@@ -83,9 +82,10 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	ctx, cancelFun := context.WithCancel(ctx)
 	defer cancelFun()
 	ios := opts.IOStreams
+	cfgGateway := opts.Config()
 
 	// Load config to check host proxy setting
-	cfg, err := opts.Config()
+	cfg, err := cfgGateway.Project()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load config, using defaults for host proxy")
 	}
@@ -106,7 +106,8 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 
 	// Ensure host proxy is running for container-to-host communication (if enabled)
 	if cfg == nil || cfg.Security.HostProxyEnabled() {
-		if err := opts.EnsureHostProxy(); err != nil {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
@@ -121,7 +122,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(cfgGateway.Resolution().ProjectKey, containers)
 	}
 
 	// If attach or interactive mode, can only work with one container

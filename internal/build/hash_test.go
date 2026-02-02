@@ -105,8 +105,8 @@ func TestContentHash_PermissionError(t *testing.T) {
 // These values are now injected at container creation time or via build API labels,
 // keeping the Dockerfile (and hash) purely structural.
 func TestContentHash_MetadataStability(t *testing.T) {
-	baseConfig := func() *config.Config {
-		return &config.Config{
+	baseConfig := func() *config.Project {
+		return &config.Project{
 			Version: "1",
 			Project: "testproj",
 			Build: config.BuildConfig{
@@ -196,7 +196,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 // produce different content hashes because the Dockerfile structure differs
 // (--mount=type=cache directives vs plain RUN commands).
 func TestContentHash_BuildKitVsLegacy(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -237,7 +237,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 // TestContentHash_StableBuildKit verifies that BuildKit Dockerfiles produce
 // stable hashes across multiple generations with the same config.
 func TestContentHash_StableBuildKit(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -270,7 +270,7 @@ func TestContentHash_StableBuildKit(t *testing.T) {
 // TestContentHash_StableLegacy verifies that legacy Dockerfiles produce
 // stable hashes across multiple generations with the same config.
 func TestContentHash_StableLegacy(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -303,7 +303,7 @@ func TestContentHash_StableLegacy(t *testing.T) {
 // TestContentHash_BuildKitAlpineVsLegacy verifies BuildKit vs legacy divergence
 // on Alpine base images (different cache mount paths than Debian).
 func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{

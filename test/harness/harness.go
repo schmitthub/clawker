@@ -22,7 +22,7 @@ type Harness struct {
 	ConfigDir   string            // Isolated ~/.local/clawker/
 	OriginalEnv map[string]string // For restoration
 	OriginalDir string            // Original working directory
-	Config      *config.Config    // The test config
+	Config      *config.Project    // The test config
 	Project     string            // Project name
 	envKeys     []string          // Keys we've set for cleanup
 	changedDir  bool              // Whether we changed directory
@@ -41,7 +41,7 @@ func WithProject(name string) HarnessOption {
 }
 
 // WithConfig sets the config directly.
-func WithConfig(cfg *config.Config) HarnessOption {
+func WithConfig(cfg *config.Project) HarnessOption {
 	return func(h *Harness) {
 		h.Config = cfg
 		if cfg != nil {
@@ -308,7 +308,7 @@ func (h *Harness) FileExists(relPath string) bool {
 }
 
 // UpdateConfig updates the config and rewrites clawker.yaml.
-func (h *Harness) UpdateConfig(fn func(*config.Config)) {
+func (h *Harness) UpdateConfig(fn func(*config.Project)) {
 	h.T.Helper()
 	fn(h.Config)
 	if err := h.writeConfig(); err != nil {

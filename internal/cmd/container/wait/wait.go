@@ -17,7 +17,7 @@ import (
 type WaitOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent      bool
 	Containers []string
@@ -28,7 +28,7 @@ func NewCmdWait(f *cmdutil.Factory, runF func(context.Context, *WaitOptions) err
 	opts := &WaitOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -72,7 +72,7 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

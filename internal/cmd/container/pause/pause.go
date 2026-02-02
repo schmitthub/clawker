@@ -15,7 +15,7 @@ import (
 type PauseOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent bool
 
@@ -27,7 +27,7 @@ func NewCmdPause(f *cmdutil.Factory, runF func(context.Context, *PauseOptions) e
 	opts := &PauseOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -72,7 +72,7 @@ func pauseRun(ctx context.Context, opts *PauseOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

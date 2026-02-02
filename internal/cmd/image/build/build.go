@@ -19,10 +19,10 @@ import (
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
 	IOStreams       *iostreams.IOStreams
-	Config          func() (*config.Config, error)
+	Config func() *config.Config
 	Client          func(context.Context) (*docker.Client, error)
-	BuildKitEnabled func(context.Context) (bool, error)
-	WorkDir         string
+	
+	WorkDir func() (string, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -40,10 +40,10 @@ type BuildOptions struct {
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
 	opts := &BuildOptions{
 		IOStreams:       f.IOStreams,
-		Config:          f.Config,
+		Config: f.Config,
 		Client:          f.Client,
-		BuildKitEnabled: f.BuildKitEnabled,
-		WorkDir:         f.WorkDir,
+		
+		WorkDir: f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -111,7 +111,8 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	cs := ios.ColorScheme()
 
 	// Load configuration
-	cfg, err := opts.Config()
+	cfgGateway := opts.Config()
+	cfg, err := cfgGateway.Project()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
 			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
@@ -124,8 +125,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Get working directory
+	wd, wdErr := opts.WorkDir()
+	if wdErr != nil {
+		return fmt.Errorf("failed to get working directory: %w", wdErr)
+	}
+
 	// Validate configuration
-	validator := config.NewValidator(opts.WorkDir)
+	validator := config.NewValidator(wd)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut, err)
@@ -159,14 +166,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// Check BuildKit availability — cache mounts in Dockerfile require it
 	var buildkitEnabled bool
-	if opts.BuildKitEnabled != nil {
-		var bkErr error
-		buildkitEnabled, bkErr = opts.BuildKitEnabled(ctx)
-		if bkErr != nil {
-			logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
-		} else if !buildkitEnabled {
-			cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
-		}
+	buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
+	if bkErr != nil {
+		logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+	} else if !buildkitEnabled {
+		cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
 	}
 
 	// Determine image tag(s)
@@ -180,7 +184,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
 	labels := mergeLabels(userLabels, clawkerLabels)
 
-	builder := build.NewBuilder(client, cfg, opts.WorkDir)
+	builder := build.NewBuilder(client, cfg, wd)
 
 	logger.Info().
 		Str("project", cfg.Project).

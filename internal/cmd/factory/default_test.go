@@ -1,6 +1,7 @@
 package factory
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,36 +19,42 @@ func TestNew(t *testing.T) {
 	if f.Commit != "abc123" {
 		t.Errorf("expected commit 'abc123', got '%s'", f.Commit)
 	}
-	if f.WorkDir != "" {
-		t.Errorf("expected empty WorkDir, got '%s'", f.WorkDir)
-	}
-	if f.Debug != false {
-		t.Errorf("expected Debug false, got true")
+	if f.IOStreams == nil {
+		t.Error("expected IOStreams to be non-nil")
 	}
 }
 
-func TestFactory_ConfigLoader(t *testing.T) {
+func TestFactory_WorkDir(t *testing.T) {
 	f := New("1.0.0", "abc123")
-	f.WorkDir = "/tmp/test"
 
-	loader1 := f.ConfigLoader()
-	loader2 := f.ConfigLoader()
-
-	// Should return same instance (lazy initialization)
-	if loader1 != loader2 {
-		t.Error("ConfigLoader should return the same instance on subsequent calls")
+	wd, err := f.WorkDir()
+	if err != nil {
+		t.Fatalf("WorkDir() returned error: %v", err)
+	}
+	if wd == "" {
+		t.Error("expected WorkDir() to return non-empty string")
 	}
 }
 
-func TestFactory_Resolution_NoRegistry(t *testing.T) {
+func TestFactory_Config_Gateway(t *testing.T) {
+	f := New("1.0.0", "abc123")
+
+	cfg := f.Config()
+	if cfg == nil {
+		t.Fatal("Config() returned nil")
+	}
+}
+
+func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Point CLAWKER_HOME to an empty dir (no registry file)
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = tmpDir
+	f.WorkDir = func() (string, error) { return tmpDir, nil }
 
-	res := f.Resolution()
+	cfg := f.Config()
+	res := cfg.Resolution()
 	if res == nil {
 		t.Fatal("Resolution() returned nil")
 	}
@@ -59,7 +66,7 @@ func TestFactory_Resolution_NoRegistry(t *testing.T) {
 	}
 }
 
-func TestFactory_Resolution_WithProject(t *testing.T) {
+func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
@@ -83,9 +90,10 @@ func TestFactory_Resolution_WithProject(t *testing.T) {
 	}
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = projectRoot
+	f.WorkDir = func() (string, error) { return projectRoot, nil }
 
-	res := f.Resolution()
+	cfg := f.Config()
+	res := cfg.Resolution()
 	if res == nil {
 		t.Fatal("Resolution() returned nil")
 	}
@@ -97,61 +105,43 @@ func TestFactory_Resolution_WithProject(t *testing.T) {
 	}
 }
 
-func TestFactory_Resolution_Caching(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
-
-	f := New("1.0.0", "abc")
-	f.WorkDir = tmpDir
-
-	res1 := f.Resolution()
-	res2 := f.Resolution()
-	if res1 != res2 {
-		t.Error("Resolution() should return the same pointer on subsequent calls")
-	}
-}
-
-func TestFactory_Registry_Empty(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
-
-	f := New("1.0.0", "abc")
-	f.WorkDir = tmpDir
-
-	reg, err := f.Registry()
-	if err != nil {
-		t.Fatalf("Registry() error: %v", err)
-	}
-	if reg == nil {
-		t.Fatal("Registry() returned nil, want empty registry")
-	}
-	if len(reg.Projects) != 0 {
-		t.Errorf("Registry().Projects has %d entries, want 0", len(reg.Projects))
-	}
-}
-
-func TestFactory_ResetConfig(t *testing.T) {
+func TestFactory_Client(t *testing.T) {
 	f := New("1.0.0", "abc123")
-	f.WorkDir = "/tmp/nonexistent"
 
-	// First call will fail (no config file)
-	_, err1 := f.Config()
-	if err1 == nil {
-		t.Skip("Config unexpectedly succeeded, skipping reset test")
+	// Client() should be non-nil (it's a closure)
+	if f.Client == nil {
+		t.Fatal("Client should be non-nil")
 	}
 
-	// Reset clears cached error
-	f.ResetConfig()
+	// We can't easily test the actual client creation without Docker,
+	// but we can verify the closure is callable
+	_, err := f.Client(context.Background())
+	// It may fail if Docker isn't available, but shouldn't panic
+	_ = err
+}
 
-	// After reset, Config() should attempt to load again (and fail again
-	// since there's still no config file) rather than returning the old
-	// cached error.
-	_, err2 := f.Config()
-	if err2 == nil {
-		t.Skip("Config unexpectedly succeeded after reset, skipping")
+func TestFactory_HostProxy(t *testing.T) {
+	f := New("1.0.0", "abc123")
+
+	if f.HostProxy == nil {
+		t.Fatal("HostProxy should be non-nil")
 	}
 
-	// Both errors should be non-nil (no config file exists). The key
-	// assertion is that ResetConfig() cleared the cache and allowed a
-	// fresh load attempt rather than returning the old cached error.
+	hp := f.HostProxy()
+	if hp == nil {
+		t.Fatal("HostProxy() returned nil")
+	}
+}
+
+func TestFactory_Prompter(t *testing.T) {
+	f := New("1.0.0", "abc123")
+
+	if f.Prompter == nil {
+		t.Fatal("Prompter should be non-nil")
+	}
+
+	p := f.Prompter()
+	if p == nil {
+		t.Fatal("Prompter() returned nil")
+	}
 }
