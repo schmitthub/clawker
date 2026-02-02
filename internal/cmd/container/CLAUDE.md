@@ -79,16 +79,20 @@ containerOpts.ValidateFlags()                      // Cross-field validation
 
 ## Image Resolution (@ Symbol)
 
-When `opts.Image == "@"`, call `docker.ResolveAndValidateImage()`:
+When `opts.Image == "@"`, call `client.ResolveImageWithSource(ctx)`:
 
 ```go
 if opts.Image == "@" {
-    resolved, err := docker.ResolveAndValidateImage(ctx, docker.ImageValidationDeps{...}, client, cfg, settings)
-    opts.Image = resolved.Reference
+    resolvedImage, err := client.ResolveImageWithSource(ctx)
+    // nil → no image found; caller prints error + next steps
+    // Source == ImageSourceDefault → verify exists, offer rebuild via handleMissingDefaultImage
+    opts.Image = resolvedImage.Reference
 }
 ```
 
-**Resolution order**: 1) Project image (`clawker-<project>:latest` with labels) -> 2) Settings `default_image` -> 3) Config `default_image`.
+**Resolution order**: 1) Project image with `:latest` tag (by label lookup) -> 2) Merged `default_image` from config/settings.
+
+Interactive rebuild logic (`handleMissingDefaultImage`) lives in each command package (`run/run.go`, `create/create.go`), not in the docker package.
 
 ## Workspace Setup Pattern
 

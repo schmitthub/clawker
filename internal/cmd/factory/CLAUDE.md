@@ -28,7 +28,7 @@ f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
 `New()` delegates to extracted helper functions for each Factory field:
 - `ioStreams()` -- creates IOStreams (eager)
 - `workDirFunc()` -- returns lazy `func() string` closure
-- `clientFunc()` -- returns lazy Docker client constructor
+- `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
 - `configFunc(workDirFn)` -- returns lazy `*config.Config` gateway constructor (the gateway itself lazy-loads Project, Settings, Resolution, Registry internally via `sync.Once`)
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
 - `prompterFunc(ios)` -- returns lazy prompter constructor
@@ -36,3 +36,5 @@ f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
 Each helper is a standalone function in `default.go`, making the wiring easy to read and test.
 
 All closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves.
+
+**Dependency ordering in `New()`**: `Config` must be assigned before `Client` because `clientFunc(f)` reads `f.Config()` at call time.

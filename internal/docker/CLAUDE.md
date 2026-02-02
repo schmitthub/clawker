@@ -10,7 +10,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and n
 
 | File | Purpose |
 |------|---------|
-| `image_resolve.go` | Image resolution chain, validation, interactive rebuild prompts |
+| `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
@@ -62,10 +62,11 @@ Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
 ## Client (`client.go`)
 
 ```go
-func NewClient(ctx context.Context) (*Client, error)
+func NewClient(ctx context.Context, cfg *config.Config) (*Client, error)
 
 type Client struct {
     *whail.Engine  // embedded — all whail methods available
+    cfg *config.Config // lazily provides Project() and Settings() for image resolution
 }
 
 type Container struct {
@@ -85,6 +86,10 @@ type BuildImageOpts struct {
 ### Client Methods
 
 - `Close()` — closes underlying engine
+- `SetConfig(cfg *config.Config)` — sets config gateway (test helper)
+- `ResolveImage(ctx)` — resolves image reference, returns string (empty if none)
+- `ResolveImageWithSource(ctx)` — resolves image with source info (`*ResolvedImage`), returns nil if none
+- `findProjectImage(ctx)` — (unexported) finds project image by label lookup
 - `BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts)` — routes: BuildKit (opts.BuildKitEnabled && opts.ContextDir) or legacy SDK
 - `ImageExists(ctx, imageRef)`, `TagImage(ctx, source, target)` — image helpers
 - `IsMonitoringActive(ctx)` — checks for running monitoring container
@@ -129,4 +134,4 @@ Re-exports ~35 Docker types from whail for consumer convenience: container optio
 
 ## Testing
 
-Test fake: `dockertest.NewFakeClient()` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
+Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. Use `dockertest.WithConfig(cfg)` to inject a `*config.Config` for image resolution tests. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
