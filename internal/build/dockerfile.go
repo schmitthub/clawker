@@ -38,8 +38,8 @@ var SettingsFile string
 //go:embed templates/host-open.sh
 var HostOpenScript string
 
-//go:embed templates/callback-forwarder.sh
-var CallbackForwarderScript string
+//go:embed templates/callback-forwarder.go
+var CallbackForwarderSource string
 
 //go:embed templates/git-credential-clawker.sh
 var GitCredentialScript string
@@ -165,7 +165,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
 	}
@@ -332,8 +332,8 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add callback-forwarder script for OAuth callback proxying
-	if err := addFileToTar(tw, "callback-forwarder.sh", []byte(CallbackForwarderScript)); err != nil {
+	// Add callback-forwarder Go source for compilation in multi-stage build
+	if err := addFileToTar(tw, "callback-forwarder.go", []byte(CallbackForwarderSource)); err != nil {
 		return nil, err
 	}
 
@@ -391,7 +391,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
 	}

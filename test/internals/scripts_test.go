@@ -333,7 +333,7 @@ func TestCallbackForwarder_PollsProxy(t *testing.T) {
 	}
 
 	client := harness.NewTestClient(t)
-	image := harness.BuildLightImage(t, client, "callback-forwarder.sh")
+	image := harness.BuildLightImage(t, client)
 	ctr := harness.RunContainer(t, client, image,
 		harness.WithExtraHost("host.docker.internal:host-gateway"),
 	)
@@ -364,9 +364,9 @@ func TestCallbackForwarder_PollsProxy(t *testing.T) {
 		CLAWKER_HOST_PROXY="` + proxyURL + `" \
 		CALLBACK_SESSION="` + sessionID + `" \
 		CALLBACK_PORT=8080 \
-		TIMEOUT=10 \
-		POLL_INTERVAL=1 \
-		/usr/local/bin/callback-forwarder.sh -v 2>&1 || echo "forwarder exit code: $?"
+		CB_FORWARDER_TIMEOUT=10 \
+		CB_FORWARDER_POLL_INTERVAL=1 \
+		/usr/local/bin/callback-forwarder -v 2>&1 || echo "forwarder exit code: $?"
 	`
 	execResult, err := ctr.Exec(ctx, client, "sh", "-c", forwarderScript)
 	require.NoError(t, err, "failed to run callback-forwarder")
@@ -399,7 +399,7 @@ func TestCallbackForwarder_Timeout(t *testing.T) {
 	}
 
 	client := harness.NewTestClient(t)
-	image := harness.BuildLightImage(t, client, "callback-forwarder.sh")
+	image := harness.BuildLightImage(t, client)
 	ctr := harness.RunContainer(t, client, image,
 		harness.WithExtraHost("host.docker.internal:host-gateway"),
 	)
@@ -412,9 +412,9 @@ func TestCallbackForwarder_Timeout(t *testing.T) {
 		CLAWKER_HOST_PROXY="` + proxyURL + `" \
 		CALLBACK_SESSION="` + sessionID + `" \
 		CALLBACK_PORT=8080 \
-		TIMEOUT=3 \
-		POLL_INTERVAL=1 \
-		/usr/local/bin/callback-forwarder.sh 2>&1
+		CB_FORWARDER_TIMEOUT=3 \
+		CB_FORWARDER_POLL_INTERVAL=1 \
+		/usr/local/bin/callback-forwarder 2>&1
 		echo "exit_code=$?"
 	`
 	execResult, err := ctr.Exec(ctx, client, "sh", "-c", forwarderScript)

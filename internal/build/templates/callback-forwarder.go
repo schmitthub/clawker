@@ -1,6 +1,6 @@
-// Package main provides the callback-forwarder binary for container-side OAuth callback forwarding.
-//
-// The callback-forwarder polls the host proxy for captured OAuth callback data and
+//go:build ignore
+
+// callback-forwarder polls the host proxy for captured OAuth callback data and
 // forwards it to the local HTTP server (Claude Code's callback listener).
 //
 // Usage:
@@ -12,6 +12,9 @@
 //	CLAWKER_HOST_PROXY: Host proxy URL (default: http://host.docker.internal:18374)
 //	CALLBACK_SESSION: Session ID to poll for
 //	CALLBACK_PORT: Local port to forward callback to
+//	CB_FORWARDER_TIMEOUT: Timeout in seconds (default: 300)
+//	CB_FORWARDER_POLL_INTERVAL: Poll interval in seconds (default: 2)
+//	CB_FORWARDER_CLEANUP: Delete session after forwarding (default: true)
 package main
 
 import (
@@ -21,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -52,6 +56,27 @@ func main() {
 	cleanup := flag.Bool("cleanup", true, "Delete session after forwarding (default: true)")
 	verbose := flag.Bool("v", false, "Verbose output")
 	flag.Parse()
+
+	// Environment variable fallbacks for flags (CB_FORWARDER_ prefix to avoid collisions)
+	if !flagWasSet("timeout") {
+		if v := os.Getenv("CB_FORWARDER_TIMEOUT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				*timeout = n
+			}
+		}
+	}
+	if !flagWasSet("poll") {
+		if v := os.Getenv("CB_FORWARDER_POLL_INTERVAL"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				*pollInterval = n
+			}
+		}
+	}
+	if !flagWasSet("cleanup") {
+		if v := os.Getenv("CB_FORWARDER_CLEANUP"); v != "" {
+			*cleanup = v == "true" || v == "1" || v == "yes"
+		}
+	}
 
 	// Handle port from environment if not set via flag
 	if *port == 0 {
@@ -98,16 +123,24 @@ func main() {
 	deleteURL := fmt.Sprintf("%s/callback/%s", *proxyURL, *sessionID)
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 
+	// Track consecutive errors for user feedback
+	consecutiveErrors := 0
+	const maxSilentErrors = 3
+
 	// Poll for callback data
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(dataURL)
 		if err != nil {
+			consecutiveErrors++
 			if *verbose {
 				fmt.Fprintf(os.Stderr, "Poll error: %v\n", err)
+			} else if consecutiveErrors == maxSilentErrors {
+				fmt.Fprintln(os.Stderr, "Warning: multiple poll errors, retrying...")
 			}
 			time.Sleep(time.Duration(*pollInterval) * time.Second)
 			continue
 		}
+		consecutiveErrors = 0
 
 		// Check status code first before decoding
 		if resp.StatusCode == http.StatusNotFound {
@@ -141,8 +174,6 @@ func main() {
 		err = forwardCallback(client, *port, dataResp.Callback)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error forwarding callback: %v\n", err)
-			// Don't exit with error - the callback was captured, local forwarding failed
-			// This might happen if Claude Code's server isn't listening anymore
 		} else if *verbose {
 			fmt.Fprintf(os.Stderr, "Callback forwarded successfully\n")
 		}
@@ -162,11 +193,25 @@ func main() {
 			}
 		}
 
+		if err != nil {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
 	fmt.Fprintln(os.Stderr, "Timeout waiting for OAuth callback")
 	os.Exit(1)
+}
+
+// flagWasSet returns true if the named flag was explicitly passed on the command line.
+func flagWasSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 // forwardCallback makes an HTTP request to the local port with the captured callback data.

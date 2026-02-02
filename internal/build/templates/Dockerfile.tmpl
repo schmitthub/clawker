@@ -12,6 +12,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o ssh-agent-proxy ssh-agent-proxy.go
 {{- end}}
 
+# Builder stage for callback-forwarder
+FROM golang:1.23-alpine AS callback-forwarder-builder
+WORKDIR /build
+COPY callback-forwarder.go .
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o callback-forwarder callback-forwarder.go
+{{- else}}
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o callback-forwarder callback-forwarder.go
+{{- end}}
+
 FROM {{.BaseImage}}
 
 ARG TZ=UTC
@@ -228,7 +239,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 
 # Host proxy client scripts for container-to-host communication
 COPY host-open.sh /usr/local/bin/host-open
-COPY callback-forwarder.sh /usr/local/bin/callback-forwarder
+COPY --from=callback-forwarder-builder /build/callback-forwarder /usr/local/bin/callback-forwarder
 COPY git-credential-clawker.sh /usr/local/bin/git-credential-clawker
 RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/local/bin/git-credential-clawker
 

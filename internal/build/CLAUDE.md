@@ -19,8 +19,7 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 |---------|---------|
 | `semver/` | Semantic version parsing, comparison, sorting, matching |
 | `registry/` | npm registry client, version info types, fetcher interface |
-| `templates/` | Dockerfile template, entrypoint, firewall, and helper scripts |
-| `callback-forwarder/` | Callback forwarder Go source |
+| `templates/` | Dockerfile template, entrypoint, firewall, helper scripts, and Go sources (ssh-agent-proxy, callback-forwarder) |
 
 ## Content Hashing (`hash.go`)
 
@@ -99,7 +98,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 const DefaultUID, DefaultGID = 1001, 1001
 ```
 
-Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderScript`, `GitCredentialScript`, `SSHAgentProxySource`.
+Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SSHAgentProxySource`.
 
 ## Version Management (`versions.go`)
 

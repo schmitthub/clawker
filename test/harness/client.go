@@ -273,28 +273,41 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 		t.Fatalf("BuildLightImage: failed to read templates dir: %v", err)
 	}
 
-	var allScripts []string
+	var allScripts []string // .sh files
+	var goSources []string  // .go files
 	scriptContents := make(map[string][]byte)
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
+		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
+		ext := filepath.Ext(name)
+		if ext != ".sh" && ext != ".go" {
+			continue
+		}
 		content, err := os.ReadFile(filepath.Join(scriptsDir, name))
 		if err != nil {
-			t.Fatalf("BuildLightImage: failed to read script %s: %v", name, err)
+			t.Fatalf("BuildLightImage: failed to read %s: %v", name, err)
 		}
-		allScripts = append(allScripts, name)
 		scriptContents[name] = content
+		if ext == ".sh" {
+			allScripts = append(allScripts, name)
+		} else {
+			goSources = append(goSources, name)
+		}
 	}
 
-	// Generate Dockerfile with all scripts
-	dockerfile := generateLightDockerfile(allScripts)
+	// Generate Dockerfile with all scripts and Go sources
+	dockerfile := generateLightDockerfile(allScripts, goSources)
 
 	// Compute content hash for cache key
 	hasher := sha256.New()
 	hasher.Write([]byte(dockerfile))
 	for _, name := range allScripts {
+		hasher.Write([]byte(name))
+		hasher.Write(scriptContents[name])
+	}
+	for _, name := range goSources {
 		hasher.Write([]byte(name))
 		hasher.Write(scriptContents[name])
 	}
@@ -313,7 +326,7 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 	}
 
 	// Build tar context
-	buildCtx, err := createLightBuildContext(dockerfile, allScripts, scriptContents)
+	buildCtx, err := createLightBuildContext(dockerfile, allScripts, goSources, scriptContents)
 	if err != nil {
 		t.Fatalf("BuildLightImage: failed to create build context: %v", err)
 	}
@@ -350,8 +363,19 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 }
 
 // generateLightDockerfile creates a minimal Dockerfile for test images.
-func generateLightDockerfile(scripts []string) string {
+func generateLightDockerfile(scripts []string, goSources []string) string {
 	var sb strings.Builder
+
+	// Add Go builder stages for each .go source
+	for _, goFile := range goSources {
+		binaryName := strings.TrimSuffix(goFile, ".go")
+		stageName := binaryName + "-builder"
+		fmt.Fprintf(&sb, "FROM golang:1.23-alpine AS %s\n", stageName)
+		sb.WriteString("WORKDIR /build\n")
+		fmt.Fprintf(&sb, "COPY %s .\n", goFile)
+		fmt.Fprintf(&sb, "RUN CGO_ENABLED=0 go build -ldflags=\"-s -w\" -o %s %s\n\n", binaryName, goFile)
+	}
+
 	sb.WriteString("FROM alpine:3.21\n")
 	fmt.Fprintf(&sb, "LABEL %s=%s %s=true\n", TestLabel, TestLabelValue, ClawkerManagedLabel)
 	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools\n")
@@ -363,6 +387,20 @@ func generateLightDockerfile(scripts []string) string {
 		sb.WriteString("RUN chmod +x /usr/local/bin/*.sh\n")
 	}
 
+	// Copy compiled Go binaries from builder stages
+	for _, goFile := range goSources {
+		binaryName := strings.TrimSuffix(goFile, ".go")
+		stageName := binaryName + "-builder"
+		fmt.Fprintf(&sb, "COPY --from=%s /build/%s /usr/local/bin/%s\n", stageName, binaryName, binaryName)
+	}
+	if len(goSources) > 0 {
+		sb.WriteString("RUN chmod +x")
+		for _, goFile := range goSources {
+			fmt.Fprintf(&sb, " /usr/local/bin/%s", strings.TrimSuffix(goFile, ".go"))
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("USER claude\n")
 	sb.WriteString("WORKDIR /workspace\n")
 	sb.WriteString("CMD [\"sleep\", \"infinity\"]\n")
@@ -370,8 +408,8 @@ func generateLightDockerfile(scripts []string) string {
 	return sb.String()
 }
 
-// createLightBuildContext creates a tar archive with Dockerfile and scripts.
-func createLightBuildContext(dockerfile string, scripts []string, scriptContents map[string][]byte) (io.Reader, error) {
+// createLightBuildContext creates a tar archive with Dockerfile, scripts, and Go sources.
+func createLightBuildContext(dockerfile string, scripts []string, goSources []string, contents map[string][]byte) (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
 
@@ -380,9 +418,16 @@ func createLightBuildContext(dockerfile string, scripts []string, scriptContents
 		return nil, err
 	}
 
-	// Add scripts
+	// Add shell scripts under scripts/ directory
 	for _, name := range scripts {
-		if err := addTarFile(tw, "scripts/"+name, scriptContents[name]); err != nil {
+		if err := addTarFile(tw, "scripts/"+name, contents[name]); err != nil {
+			return nil, err
+		}
+	}
+
+	// Add Go sources at root level (for builder stage COPY)
+	for _, name := range goSources {
+		if err := addTarFile(tw, name, contents[name]); err != nil {
 			return nil, err
 		}
 	}

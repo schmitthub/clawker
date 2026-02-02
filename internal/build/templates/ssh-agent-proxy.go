@@ -1,3 +1,5 @@
+//go:build ignore
+
 // ssh-agent-proxy forwards SSH agent requests to the clawker host proxy.
 // This allows containers to use the host's SSH agent even when direct socket
 // mounting has permission issues (e.g., macOS Docker Desktop).
