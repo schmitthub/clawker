@@ -43,9 +43,10 @@ Workspace modes:
 			// Initialize logger with file logging if possible
 			initializeLogger(debug)
 
+			wd, _ := f.WorkDir()
 			logger.Debug().
 				Str("version", f.Version).
-				Str("workdir", f.WorkDir()).
+				Str("workdir", wd).
 				Bool("debug", debug).
 				Msg("clawker starting")
 
@@ -60,9 +61,9 @@ Workspace modes:
 
 	// Override factory default with flag-aware closure
 	origWorkDir := f.WorkDir
-	f.WorkDir = func() string {
+	f.WorkDir = func() (string, error) {
 		if workDirFlag != "" {
-			return workDirFlag
+			return workDirFlag, nil
 		}
 		return origWorkDir()
 	}

@@ -72,8 +72,8 @@ The `Config` type is a lazy-loading gateway that consolidates access to project 
 ```go
 type Config struct { /* internal sync.Once fields */ }
 
-func NewConfig(workDir func() string) *Config
-func NewConfigForTest(project *Project, settings *Settings, resolution *Resolution) *Config
+func NewConfig(workDir func() (string, error)) *Config
+func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config
 
 // Lazy-loaded accessors (each uses sync.Once internally)
 func (*Config) Project() (*Project, error)       // loads clawker.yaml

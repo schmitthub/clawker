@@ -50,7 +50,10 @@ func (c *Client) findProjectImage(ctx context.Context) (string, error) {
 	}
 
 	cfg, err := c.cfg.Project()
-	if err != nil || cfg == nil || cfg.Project == "" {
+	if err != nil {
+		return "", fmt.Errorf("failed to load project config: %w", err)
+	}
+	if cfg == nil || cfg.Project == "" {
 		return "", nil
 	}
 
@@ -103,14 +106,25 @@ func (c *Client) ResolveImageWithSource(ctx context.Context) (*ResolvedImage, er
 	// 1. Try to find a project image with :latest tag
 	projectImage, err := c.findProjectImage(ctx)
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to auto-detect project image")
-	} else if projectImage != "" {
+		return nil, fmt.Errorf("auto-detect project image: %w", err)
+	}
+	if projectImage != "" {
 		return &ResolvedImage{Reference: projectImage, Source: ImageSourceProject}, nil
 	}
 
 	// 2. Try merged default_image from config/settings
-	cfg, _ := c.cfg.Project()
-	settings, _ := c.cfg.Settings()
+	cfg, cfgErr := c.cfg.Project()
+	if cfgErr != nil {
+		logger.Debug().Err(cfgErr).Msg("failed to load project config for default image")
+	}
+	settings, settingsErr := c.cfg.Settings()
+	if settingsErr != nil {
+		logger.Debug().Err(settingsErr).Msg("failed to load settings for default image")
+	}
+	// If both failed, propagate the config error
+	if cfgErr != nil && settingsErr != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", cfgErr)
+	}
 	if defaultImage := ResolveDefaultImage(cfg, settings); defaultImage != "" {
 		return &ResolvedImage{Reference: defaultImage, Source: ImageSourceDefault}, nil
 	}

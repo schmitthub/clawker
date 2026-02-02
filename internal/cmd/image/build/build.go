@@ -22,7 +22,7 @@ type BuildOptions struct {
 	Config func() *config.Config
 	Client          func(context.Context) (*docker.Client, error)
 	
-	WorkDir func() string
+	WorkDir func() (string, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -125,8 +125,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Get working directory
+	wd, wdErr := opts.WorkDir()
+	if wdErr != nil {
+		return fmt.Errorf("failed to get working directory: %w", wdErr)
+	}
+
 	// Validate configuration
-	validator := config.NewValidator(opts.WorkDir())
+	validator := config.NewValidator(wd)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut, err)
@@ -178,7 +184,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
 	labels := mergeLabels(userLabels, clawkerLabels)
 
-	builder := build.NewBuilder(client, cfg, opts.WorkDir())
+	builder := build.NewBuilder(client, cfg, wd)
 
 	logger.Info().
 		Str("project", cfg.Project).

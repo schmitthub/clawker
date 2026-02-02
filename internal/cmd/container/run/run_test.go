@@ -807,7 +807,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:  func() string { return tmpDir },
+		WorkDir:  func() (string, error) { return tmpDir, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -905,5 +905,49 @@ func TestRunRun(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		fake.AssertCalled(t, "ContainerCreate")
+	})
+
+	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
+		cfgProject := testConfig()
+		cfgProject.DefaultImage = "node:20-slim"
+
+		fake := dockertest.NewFakeClient(
+			dockertest.WithConfig(config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())),
+		)
+		fake.SetupImageList()                          // empty — no project image found
+		fake.SetupImageExists("node:20-slim", false)   // default image missing
+		fake.SetupContainerCreate()
+		fake.SetupContainerStart()
+
+		tio := iostreams.NewTestIOStreams() // non-interactive
+		f := &cmdutil.Factory{
+			IOStreams: tio.IOStreams,
+			WorkDir:  func() (string, error) { return t.TempDir(), nil },
+			Client: func(_ context.Context) (*docker.Client, error) {
+				return fake.Client, nil
+			},
+			Config: func() *config.Config {
+				return config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())
+			},
+			HostProxy: func() *hostproxy.Manager {
+				return hostproxy.NewManager()
+			},
+			Prompter: func() *prompter.Prompter { return nil },
+		}
+
+		cmd := NewCmdRun(f, nil)
+		cmd.SetArgs([]string{"--detach", "@"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not found")
+
+		errOutput := tio.ErrBuf.String()
+		require.Contains(t, errOutput, "node:20-slim")
+
+		fake.AssertNotCalled(t, "ContainerCreate")
 	})
 }

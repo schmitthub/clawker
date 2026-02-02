@@ -22,7 +22,7 @@ type ProjectInitOptions struct {
 	IOStreams *iostreams.IOStreams
 	Prompter func() *prompterpkg.Prompter
 	Config   func() *config.Config
-	WorkDir  func() string
+	WorkDir  func() (string, error)
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -86,10 +86,15 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
 
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	cfgGateway := opts.Config()
 
 	// Check if configuration already exists
-	loader := config.NewLoader(opts.WorkDir())
+	loader := config.NewLoader(wd)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
 			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
@@ -110,14 +115,14 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		}
 		if !overwrite {
 			// Don't overwrite config, but still register the project using directory name
-			absPath, absErr := filepath.Abs(opts.WorkDir())
+			absPath, absErr := filepath.Abs(wd)
 			if absErr != nil {
 				fmt.Fprintln(ios.ErrOut, "Aborted.")
 				return nil
 			}
 			dirName := filepath.Base(absPath)
 			registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
-			slug, err := project.RegisterProject(ios, registryLoader, opts.WorkDir(), dirName)
+			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
 			if err != nil {
 				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
@@ -136,7 +141,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 
 	// Get absolute path of working directory
-	absPath, err := filepath.Abs(opts.WorkDir())
+	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -247,7 +252,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		Str("build_image", buildImage).
 		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
-		Str("workdir", opts.WorkDir()).
+		Str("workdir", wd).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
@@ -272,7 +277,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Register project in user settings
 	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
-	if _, err := project.RegisterProject(ios, registryLoader, opts.WorkDir(), projectName); err != nil {
+	if _, err := project.RegisterProject(ios, registryLoader, wd, projectName); err != nil {
 		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/logger"
@@ -9,7 +10,7 @@ import (
 // Config is the top-level configuration gateway. It lazily loads and caches
 // project config, user settings, and project resolution.
 type Config struct {
-	workDir func() string
+	workDir func() (string, error)
 
 	// Project config (clawker.yaml)
 	projectOnce   sync.Once
@@ -32,7 +33,7 @@ type Config struct {
 }
 
 // NewConfig creates a new Config gateway.
-func NewConfig(workDir func() string) *Config {
+func NewConfig(workDir func() (string, error)) *Config {
 	return &Config{workDir: workDir}
 }
 
@@ -40,7 +41,7 @@ func NewConfig(workDir func() string) *Config {
 // and settings. Resolution returns an empty Resolution with the given workDir.
 // This is intended for unit tests that don't need real config file loading.
 func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config {
-	c := &Config{workDir: func() string { return workDir }}
+	c := &Config{workDir: func() (string, error) { return workDir, nil }}
 	c.projectOnce.Do(func() {
 		c.project = project
 	})
@@ -64,6 +65,12 @@ func NewConfigForTest(workDir string, project *Project, settings *Settings) *Con
 // Results are cached after first load.
 func (c *Config) Project() (*Project, error) {
 	c.projectOnce.Do(func() {
+		wd, err := c.workDir()
+		if err != nil {
+			c.projectErr = fmt.Errorf("failed to get working directory: %w", err)
+			return
+		}
+
 		var opts []LoaderOption
 
 		res := c.Resolution()
@@ -75,7 +82,7 @@ func (c *Config) Project() (*Project, error) {
 		}
 
 		opts = append(opts, WithUserDefaults(""))
-		c.projectLoader = NewLoader(c.workDir(), opts...)
+		c.projectLoader = NewLoader(wd, opts...)
 		c.project, c.projectErr = c.projectLoader.Load()
 	})
 	return c.project, c.projectErr
@@ -104,6 +111,9 @@ func (c *Config) Settings() (*Settings, error) {
 // SettingsLoader returns the underlying settings loader for write operations
 // (e.g., saving updated default image). Lazily initialized.
 func (c *Config) SettingsLoader() (*SettingsLoader, error) {
+	// Intentional side-effect: calling Settings() ensures the settings loader
+	// is lazily initialized via settingsOnce. The returned values are discarded
+	// because we access the cached settingsLoader and settingsErr directly.
 	_, _ = c.Settings()
 	return c.settingsLoader, c.settingsErr
 }
@@ -112,10 +122,15 @@ func (c *Config) SettingsLoader() (*SettingsLoader, error) {
 // Results are cached after first resolution.
 func (c *Config) Resolution() *Resolution {
 	c.resolutionOnce.Do(func() {
-		wd := c.workDir()
-		registry, err := c.registry()
+		wd, err := c.workDir()
 		if err != nil {
-			logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
+			logger.Warn().Err(err).Msg("failed to get working directory; operating without project context")
+			c.resolution = &Resolution{}
+			return
+		}
+		registry, regErr := c.registry()
+		if regErr != nil {
+			logger.Warn().Err(regErr).Msg("failed to load project registry; operating without project context")
 			c.resolution = &Resolution{WorkDir: wd}
 			return
 		}

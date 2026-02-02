@@ -56,16 +56,17 @@ func ioStreams() *iostreams.IOStreams {
 }
 
 // workDirFunc returns a lazy closure that resolves the working directory once.
-func workDirFunc() func() string {
+func workDirFunc() func() (string, error) {
 	var (
-		once sync.Once
-		wd   string
+		once  sync.Once
+		wd    string
+		wdErr error
 	)
-	return func() string {
+	return func() (string, error) {
 		once.Do(func() {
-			wd, _ = os.Getwd()
+			wd, wdErr = os.Getwd()
 		})
-		return wd
+		return wd, wdErr
 	}
 }
 

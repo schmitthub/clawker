@@ -19,7 +19,7 @@ type RegisterOptions struct {
 	IOStreams *iostreams.IOStreams
 	Prompter func() *prompterpkg.Prompter
 	Config   func() *config.Config
-	WorkDir  func() string
+	WorkDir  func() (string, error)
 
 	Name string // Positional arg: project name
 	Yes  bool
@@ -75,10 +75,15 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	cfgGateway := opts.Config()
 
 	// Require an existing clawker.yaml
-	loader := config.NewLoader(opts.WorkDir())
+	loader := config.NewLoader(wd)
 	if !loader.Exists() {
 		cmdutil.PrintError(ios, "No %s found in the current directory", config.ConfigFileName)
 		cmdutil.PrintNextSteps(ios,
@@ -88,7 +93,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	}
 
 	// Determine project name
-	absPath, err := filepath.Abs(opts.WorkDir())
+	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -112,7 +117,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	}
 
 	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
-	slug, err := project.RegisterProject(ios, registryLoader, opts.WorkDir(), projectName)
+	slug, err := project.RegisterProject(ios, registryLoader, wd, projectName)
 	if err != nil {
 		return err
 	}

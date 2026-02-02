@@ -34,7 +34,7 @@ type RunOptions struct {
 	Config    func() *config.Config
 	HostProxy func() *hostproxy.Manager
 	Prompter  func() *prompter.Prompter
-	WorkDir   func() string
+	WorkDir   func() (string, error)
 
 	// Run-specific options
 	Detach bool
@@ -171,7 +171,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		if resolvedImage.Source == docker.ImageSourceDefault {
 			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
 			if err != nil {
-				logger.Debug().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
+				logger.Warn().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
 			} else if !exists {
 				if err := handleMissingDefaultImage(ctx, opts, cfgGateway, resolvedImage.Reference); err != nil {
 					return err
@@ -190,12 +190,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	opts.AgentName = agentName
 	containerName := docker.ContainerName(cfg.Project, agentName)
 
+	// Get working directory
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
-		WorkDir:      opts.WorkDir(),
+		WorkDir:      wd,
 	})
 	if err != nil {
 		return err

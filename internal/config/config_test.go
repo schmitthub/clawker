@@ -42,7 +42,7 @@ security:
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	cfg := NewConfig(func() string { return projectDir })
+	cfg := NewConfig(func() (string, error) { return projectDir, nil })
 	project, err := cfg.Project()
 	if err != nil {
 		t.Fatalf("Config.Project() returned error: %v", err)
@@ -82,7 +82,7 @@ build:
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	cfg := NewConfig(func() string { return projectDir })
+	cfg := NewConfig(func() (string, error) { return projectDir, nil })
 
 	p1, err := cfg.Project()
 	if err != nil {
@@ -112,7 +112,7 @@ func TestConfig_Settings(t *testing.T) {
 	}
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
-	cfg := NewConfig(func() string { return tmpDir })
+	cfg := NewConfig(func() (string, error) { return tmpDir, nil })
 
 	settings, err := cfg.Settings()
 	if err != nil {
@@ -141,7 +141,7 @@ func TestConfig_Resolution_NoRegistry(t *testing.T) {
 		t.Fatalf("failed to create work dir: %v", err)
 	}
 
-	cfg := NewConfig(func() string { return workDir })
+	cfg := NewConfig(func() (string, error) { return workDir, nil })
 
 	res := cfg.Resolution()
 	if res == nil {
@@ -168,7 +168,7 @@ func TestConfig_SettingsLoader(t *testing.T) {
 	}
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
-	cfg := NewConfig(func() string { return tmpDir })
+	cfg := NewConfig(func() (string, error) { return tmpDir, nil })
 
 	loader, err := cfg.SettingsLoader()
 	if err != nil {
@@ -192,7 +192,7 @@ func TestConfig_Registry(t *testing.T) {
 	}
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
-	cfg := NewConfig(func() string { return tmpDir })
+	cfg := NewConfig(func() (string, error) { return tmpDir, nil })
 
 	loader, err := cfg.Registry()
 	if err != nil {
@@ -200,5 +200,47 @@ func TestConfig_Registry(t *testing.T) {
 	}
 	if loader == nil {
 		t.Fatal("Config.Registry() returned nil")
+	}
+}
+
+func TestConfig_Project_ErrorCaching(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-config-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	clawkerHome := filepath.Join(tmpDir, "home")
+	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
+		t.Fatalf("failed to create clawker home: %v", err)
+	}
+	t.Setenv(ClawkerHomeEnv, clawkerHome)
+
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Write invalid YAML to trigger a parse error
+	if err := os.WriteFile(filepath.Join(projectDir, ConfigFileName), []byte(":::invalid yaml"), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := NewConfig(func() (string, error) { return projectDir, nil })
+
+	// First call should return an error
+	_, err1 := cfg.Project()
+	if err1 == nil {
+		t.Fatal("first call: expected error for invalid YAML, got nil")
+	}
+
+	// Second call should return the same cached error
+	_, err2 := cfg.Project()
+	if err2 == nil {
+		t.Fatal("second call: expected cached error, got nil")
+	}
+
+	if err1.Error() != err2.Error() {
+		t.Errorf("expected same error on both calls:\n  first:  %v\n  second: %v", err1, err2)
 	}
 }

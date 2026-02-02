@@ -27,7 +27,10 @@ func TestNew(t *testing.T) {
 func TestFactory_WorkDir(t *testing.T) {
 	f := New("1.0.0", "abc123")
 
-	wd := f.WorkDir()
+	wd, err := f.WorkDir()
+	if err != nil {
+		t.Fatalf("WorkDir() returned error: %v", err)
+	}
 	if wd == "" {
 		t.Error("expected WorkDir() to return non-empty string")
 	}
@@ -48,7 +51,7 @@ func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = func() string { return tmpDir }
+	f.WorkDir = func() (string, error) { return tmpDir, nil }
 
 	cfg := f.Config()
 	res := cfg.Resolution()
@@ -87,7 +90,7 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	}
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = func() string { return projectRoot }
+	f.WorkDir = func() (string, error) { return projectRoot, nil }
 
 	cfg := f.Config()
 	res := cfg.Resolution()

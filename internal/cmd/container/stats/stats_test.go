@@ -81,7 +81,7 @@ func TestNewCmdStats(t *testing.T) {
 			f := &cmdutil.Factory{}
 			if tt.needRes {
 				f.Config = func() *config.Config {
-					return config.NewConfig(func() string { return "/tmp/test" })
+					return config.NewConfig(func() (string, error) { return "/tmp/test", nil })
 				}
 			}
 

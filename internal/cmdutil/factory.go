@@ -26,7 +26,7 @@ type Factory struct {
 	IOStreams *iostreams.IOStreams
 
 	// Lazy nouns
-	WorkDir   func() string
+	WorkDir   func() (string, error)
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
 	HostProxy func() *hostproxy.Manager

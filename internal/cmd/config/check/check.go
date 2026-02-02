@@ -14,7 +14,7 @@ import (
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
-	WorkDir func() string
+	WorkDir func() (string, error)
 }
 
 // NewCmdCheck creates the config check command.
@@ -49,10 +49,15 @@ Checks for:
 
 func checkRun(_ context.Context, opts *CheckOptions) error {
 	ios := opts.IOStreams
-	logger.Debug().Str("workdir", opts.WorkDir()).Msg("checking configuration")
+
+	wd, err := opts.WorkDir()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	logger.Debug().Str("workdir", wd).Msg("checking configuration")
 
 	// Load configuration
-	loader := internalconfig.NewLoader(opts.WorkDir())
+	loader := internalconfig.NewLoader(wd)
 
 	if !loader.Exists() {
 		cmdutil.PrintError(ios, "%s not found", internalconfig.ConfigFileName)
@@ -80,7 +85,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 		Msg("configuration loaded")
 
 	// Validate configuration
-	validator := internalconfig.NewValidator(opts.WorkDir())
+	validator := internalconfig.NewValidator(wd)
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut)
