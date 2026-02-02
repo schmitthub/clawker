@@ -134,6 +134,7 @@ type LoggingConfig struct { FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups
 Persistent project registry at `~/.local/clawker/projects.yaml`.
 
 - `ProjectEntry` — `Name string`, `Root string`
+  - `(e ProjectEntry) Valid() error` — validates fields (name non-empty, root path absolute)
 - `ProjectRegistry` — `Projects map[string]ProjectEntry`
 - `NewRegistryLoader(path)` — creates loader for the registry file
 - `Slugify(name)` — converts project name to URL-safe slug

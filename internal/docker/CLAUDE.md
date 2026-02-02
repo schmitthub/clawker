@@ -85,6 +85,11 @@ type BuildImageOpts struct {
 }
 ```
 
+### Image Resolution (`image_resolve.go`)
+
+- `ImageSource` type — const enum: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceDefault` — indicates where an image reference was resolved from
+- `ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string` — standalone function resolving default image from merged config/settings (project config takes precedence over user settings; returns empty if not configured)
+
 ### Client Methods
 
 - `Close()` — closes underlying engine

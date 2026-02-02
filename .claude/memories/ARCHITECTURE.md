@@ -125,7 +125,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 - `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. IOStreams (eager) → 2. Registry → 3. Resolution → 4. Config → 5. Settings → 6. Client → 7. HostProxy → 8. Prompter
+1. IOStreams (eager) → 2. WorkDir (lazy closure) → 3. Config gateway (lazy, internal sync.Once) → 4. Client (lazy, reads Config) → 5. HostProxy (lazy) → 6. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -329,24 +329,23 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 │  Import: standard library only, no internal siblings            │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, testutil (helpers)                   │
+│  Clawker examples: logger, tui, monitor                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  MIDDLE PACKAGES — "Core Domain Services"                       │
 │                                                                 │
-│  Import: leaves only                                            │
+│  Import: leaves only (+ own sub-packages)                       │
 │  Imported by: commands, composites, entry point                 │
 │                                                                 │
 │  Clawker examples:                                              │
-│    config/ → (leaf deps only)                                   │
-│    iostreams/ → (leaf deps only)                                │
-│    prompts/ → iostreams                                         │
-│    cmdutil/ → iostreams, config types                            │
-│    docker/ → pkg/whail                                          │
-│    workspace/ → config                                          │
-│    credentials/ → config                                        │
+│    config/ → logger                                             │
+│    credentials/ → logger                                        │
+│    hostproxy/ → logger                                          │
+│    iostreams/ → logger, tui                                     │
+│    prompter/ → iostreams                                        │
+│    build/ → config + own subpackages (no docker)                │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -357,24 +356,26 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 │  Imported by: commands only                                     │
 │                                                                 │
 │  Clawker examples:                                              │
-│    hostproxy/ → config, docker, iostreams, logger               │
-│    ralph/ → docker, config, iostreams, tui, workspace           │
-│    build/ → config, docker, build/registry, build/semver        │
-│    resolver/ → config, docker                                   │
+│    docker/ → build, config, logger, pkg/whail, pkg/whail/buildkit│
+│    cmdutil/ → config, docker, hostproxy, iostreams, prompter    │
+│    workspace/ → config, docker, logger                          │
+│    term/ → docker, logger                                       │
+│    ralph/ → docker, logger                                      │
+│    project/ → config, iostreams, logger                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Import Direction Rules
 
 ```
-  ✓  middle → leaf                 prompts imports iostreams
-  ✓  composite → middle            ralph imports config
-  ✓  composite → leaf              hostproxy imports logger
+  ✓  middle → leaf                 config imports logger
+  ✓  composite → middle            docker imports build, config
+  ✓  composite → leaf              ralph imports logger
   ✓  composite → own children      ralph imports ralph/tui
 
   ✗  leaf → middle                 logger must never import config
   ✗  leaf → leaf (sibling)         leaves have zero internal imports
-  ✗  middle ↔ middle (unrelated)   config must never import prompts
+  ✗  middle ↔ middle (unrelated)   config must never import prompter
   ✗  Any cycle                     A → B → A is always wrong
 ```
 
@@ -382,7 +383,7 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **middle package** that commands and the entry point import. It touches the command framework (cobra, Factory type), so it sits above pure leaves.
+`cmdutil` is a **composite package** that commands and the entry point import. It imports config, docker, hostproxy, iostreams, and prompter — touching both domain services and the command framework.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 
