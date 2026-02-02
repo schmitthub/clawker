@@ -1,0 +1,127 @@
+package config
+
+import (
+	"sync"
+
+	"github.com/schmitthub/clawker/internal/logger"
+)
+
+// Config is the top-level configuration gateway. It lazily loads and caches
+// project config, user settings, and project resolution.
+type Config struct {
+	workDir func() string
+
+	// Project config (clawker.yaml)
+	projectOnce   sync.Once
+	projectLoader *Loader
+	project       *Project
+	projectErr    error
+
+	// Settings (settings.yaml)
+	settingsOnce   sync.Once
+	settingsLoader *SettingsLoader
+	settings       *Settings
+	settingsErr    error
+
+	// Registry + Resolution
+	registryOnce   sync.Once
+	registryLoader *RegistryLoader
+	registryErr    error
+	resolutionOnce sync.Once
+	resolution     *Resolution
+}
+
+// NewConfig creates a new Config gateway.
+func NewConfig(workDir func() string) *Config {
+	return &Config{workDir: workDir}
+}
+
+// Project returns the project configuration from clawker.yaml.
+// Results are cached after first load.
+func (c *Config) Project() (*Project, error) {
+	c.projectOnce.Do(func() {
+		var opts []LoaderOption
+
+		res := c.Resolution()
+		if res.Found() {
+			opts = append(opts,
+				WithProjectRoot(res.ProjectRoot()),
+				WithProjectKey(res.ProjectKey),
+			)
+		}
+
+		opts = append(opts, WithUserDefaults(""))
+		c.projectLoader = NewLoader(c.workDir(), opts...)
+		c.project, c.projectErr = c.projectLoader.Load()
+	})
+	return c.project, c.projectErr
+}
+
+// Settings returns the user settings from settings.yaml.
+// Results are cached after first load.
+func (c *Config) Settings() (*Settings, error) {
+	c.settingsOnce.Do(func() {
+		var opts []SettingsLoaderOption
+
+		res := c.Resolution()
+		if res.Found() {
+			opts = append(opts, WithProjectSettingsRoot(res.ProjectRoot()))
+		}
+
+		c.settingsLoader, c.settingsErr = NewSettingsLoader(opts...)
+		if c.settingsErr != nil {
+			return
+		}
+		c.settings, c.settingsErr = c.settingsLoader.Load()
+	})
+	return c.settings, c.settingsErr
+}
+
+// SettingsLoader returns the underlying settings loader for write operations
+// (e.g., saving updated default image). Lazily initialized.
+func (c *Config) SettingsLoader() (*SettingsLoader, error) {
+	_, _ = c.Settings()
+	return c.settingsLoader, c.settingsErr
+}
+
+// Resolution returns the project resolution (project key, entry, workdir).
+// Results are cached after first resolution.
+func (c *Config) Resolution() *Resolution {
+	c.resolutionOnce.Do(func() {
+		wd := c.workDir()
+		registry, err := c.registry()
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
+			c.resolution = &Resolution{WorkDir: wd}
+			return
+		}
+		if registry == nil {
+			c.resolution = &Resolution{WorkDir: wd}
+			return
+		}
+		resolver := NewResolver(registry)
+		c.resolution = resolver.Resolve(wd)
+	})
+	return c.resolution
+}
+
+// Registry returns the registry loader for write operations
+// (e.g., project register, project init).
+func (c *Config) Registry() (*RegistryLoader, error) {
+	c.initRegistry()
+	return c.registryLoader, c.registryErr
+}
+
+func (c *Config) initRegistry() {
+	c.registryOnce.Do(func() {
+		c.registryLoader, c.registryErr = NewRegistryLoader()
+	})
+}
+
+func (c *Config) registry() (*ProjectRegistry, error) {
+	c.initRegistry()
+	if c.registryErr != nil {
+		return nil, c.registryErr
+	}
+	return c.registryLoader.Load()
+}
