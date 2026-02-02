@@ -12,6 +12,7 @@ HTTP service mesh mediating interactions between containers and the host machine
 | `Manager` | `manager.go` | Lifecycle management of the proxy server |
 | — | `git_credential.go` | Git credential forwarding handler (route on Server) |
 | — | `ssh_agent.go` | SSH agent forwarding handler (route on Server) |
+| `MockHostProxy` | `hostproxytest/hostproxy_mock.go` | Test mock implementing all proxy endpoints |
 
 ## Constants & Errors
 
@@ -124,6 +125,27 @@ Container → git-credential-clawker get → POST /git/credential → git creden
 - macOS: SSH agent proxy Go binary → POST /ssh/agent → `net.Dial(SSH_AUTH_SOCK)`
 
 **Host Git Config**: `~/.gitconfig` mounted read-only to `/tmp/host-gitconfig`, entrypoint copies filtering `credential.helper`.
+
+## Test Mock (`hostproxytest/`)
+
+`MockHostProxy` is a self-contained HTTP server implementing all proxy endpoints for integration tests.
+
+```go
+import "github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+
+mock := hostproxytest.NewMockHostProxy(t)
+// mock.URL() returns the base URL (e.g. "http://127.0.0.1:PORT")
+
+// Inspect captured requests
+mock.GetOpenedURLs() []string
+mock.GetGitCreds()   []GitCredRequest
+mock.SetCallbackReady(sessionID string)
+mock.SetHealthOK(ok bool)
+```
+
+**Types:**
+- `CallbackData` — Tracks registered sessions with `SessionID`, `OriginalPort`, `CallbackPath`, `Ready`
+- `GitCredRequest` — Captured git credential request with `Action`, `Host`, `Protocol`, `Username`
 
 ## Container Scripts
 
