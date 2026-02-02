@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -184,7 +183,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
 	labels := mergeLabels(userLabels, clawkerLabels)
 
-	builder := build.NewBuilder(client, cfg, wd)
+	builder := docker.NewBuilder(client, cfg, wd)
 
 	logger.Info().
 		Str("project", cfg.Project).
@@ -192,7 +191,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		Msg("building container image")
 
 	// Build with options
-	buildOpts := build.Options{
+	buildOpts := docker.BuilderOptions{
 		NoCache:         opts.NoCache,
 		Labels:          labels,
 		Target:          opts.Target,

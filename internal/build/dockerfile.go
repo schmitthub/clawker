@@ -13,7 +13,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/build/registry"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 )
 
 // Embedded templates for Dockerfile generation
@@ -497,7 +496,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		baseImage = "buildpack-deps:bookworm-scm"
 	}
 
-	isAlpine := docker.IsAlpineImage(baseImage)
+	isAlpine := strings.Contains(strings.ToLower(baseImage), "alpine")
 
 	ctx := &DockerfileContext{
 		BaseImage:       baseImage,

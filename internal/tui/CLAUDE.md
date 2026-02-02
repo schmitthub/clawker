@@ -103,23 +103,17 @@ Reusable BubbleTea/Lipgloss components for terminal UIs. Stateless render functi
 
 **Config types**: `HeaderConfig` (Title, Subtitle, Timestamp, Width), `StatusConfig` (Status, Label), `ProgressConfig` (Current, Total, Width, ShowBar), `TableConfig` (Headers, Rows, ColWidths, Width), `KeyValuePair` (Key, Value)
 
-`RenderHeader(HeaderConfig)`, `RenderStatus(StatusConfig)` -- title bar, status indicator
-
-`RenderBadge(text, style)`, `RenderCountBadge(count, label)` -- inline badges
-
-`RenderProgress(ProgressConfig)` -- text "3/10" or visual bar
-
-`RenderDivider(width)`, `RenderLabeledDivider(label, width)` -- horizontal rules
-
-`RenderEmptyState(message, w, h)`, `RenderError(err, width)` -- state displays
-
-`RenderLabelValue(label, value)`, `RenderKeyValueTable([]KeyValuePair, width)` -- key-value rendering
-
-`RenderTable(TableConfig)` -- headers + divider + rows
-
-`RenderPercentage(float64)` -- color-coded (>=80 error, >=60 warning) | `RenderBytes(int64)` -- "1.5 GB"
-
-`RenderTag(text, color)`, `RenderTags([]string, color)` -- bordered tag elements
+| Function | Purpose |
+|----------|---------|
+| `RenderHeader(HeaderConfig)` | Title bar with optional subtitle/timestamp |
+| `RenderStatus(StatusConfig)` | Status indicator with label |
+| `RenderBadge(text, style)`, `RenderCountBadge(count, label)` | Inline badges |
+| `RenderProgress(ProgressConfig)` | Text "3/10" or visual bar |
+| `RenderDivider(width)`, `RenderLabeledDivider(label, width)` | Horizontal rules |
+| `RenderEmptyState(message, w, h)`, `RenderError(err, width)` | State displays |
+| `RenderLabelValue`, `RenderKeyValueTable`, `RenderTable` | Key-value and tabular rendering |
+| `RenderPercentage(float64)`, `RenderBytes(int64)` | Color-coded percentage, human-readable bytes |
+| `RenderTag(text, color)`, `RenderTags([]string, color)` | Bordered tag elements |
 
 ## Interactive Components
 

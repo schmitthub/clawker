@@ -125,7 +125,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 - `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. IOStreams (eager) → 2. Registry → 3. Resolution → 4. Config → 5. Settings → 6. Client → 7. HostProxy → 8. Prompter
+1. IOStreams (eager) → 2. WorkDir (lazy closure) → 3. Config gateway (lazy, internal sync.Once) → 4. Client (lazy, reads Config) → 5. HostProxy (lazy) → 6. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -320,7 +320,7 @@ cmd.AddCommand(stop.NewCmdStop(f, nil))
 
 ## Package Import DAG
 
-Domain packages in `internal/` form a directed acyclic graph with three tiers:
+Domain packages in `internal/` form a directed acyclic graph with four tiers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -329,52 +329,71 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 │  Import: standard library only, no internal siblings            │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, testutil (helpers)                   │
+│  Clawker examples: logger, tui, monitor                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ imported by
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  FOUNDATION PACKAGES — "Infrastructure"                         │
+│                                                                 │
+│  Import: leaves only (+ own sub-packages)                       │
+│  Imported by: middles, composites, commands                     │
+│                                                                 │
+│  Universally imported as infrastructure by most of the codebase.│
+│  Their imports are leaf-only or type-level declarations.        │
+│                                                                 │
+│  Clawker examples:                                              │
+│    config/ → logger                                             │
+│    iostreams/ → logger, tui                                     │
+│    cmdutil/ → type-only imports for Factory struct fields +     │
+│              output helpers via iostreams                        │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  MIDDLE PACKAGES — "Core Domain Services"                       │
 │                                                                 │
-│  Import: leaves only                                            │
-│  Imported by: commands, composites, entry point                 │
+│  Import: leaves + foundation (+ own sub-packages)               │
+│  Imported by: composites, commands                              │
 │                                                                 │
 │  Clawker examples:                                              │
-│    config/ → (leaf deps only)                                   │
-│    iostreams/ → (leaf deps only)                                │
-│    prompts/ → iostreams                                         │
-│    cmdutil/ → iostreams, config types                            │
-│    docker/ → pkg/whail                                          │
-│    workspace/ → config                                          │
-│    credentials/ → config                                        │
+│    build/ → config + own subpackages (no docker)                │
+│    credentials/ → logger                                        │
+│    hostproxy/ → logger                                          │
+│    prompter/ → iostreams                                        │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  COMPOSITE PACKAGES — "Subsystems"                              │
 │                                                                 │
-│  Import: leaves + middles + own sub-packages                    │
+│  Import: leaves + foundation + middles + own sub-packages       │
 │  Imported by: commands only                                     │
 │                                                                 │
 │  Clawker examples:                                              │
-│    hostproxy/ → config, docker, iostreams, logger               │
-│    ralph/ → docker, config, iostreams, tui, workspace           │
-│    build/ → config, docker, build/registry, build/semver        │
-│    resolver/ → config, docker                                   │
+│    docker/ → build, config, logger, pkg/whail, pkg/whail/buildkit│
+│    workspace/ → config, docker, logger                          │
+│    term/ → docker, logger                                       │
+│    ralph/ → docker, logger                                      │
+│    project/ → config, iostreams, logger                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Import Direction Rules
 
 ```
-  ✓  middle → leaf                 prompts imports iostreams
-  ✓  composite → middle            ralph imports config
-  ✓  composite → leaf              hostproxy imports logger
+  ✓  foundation → leaf             config imports logger
+  ✓  middle → leaf                 credentials imports logger
+  ✓  middle → foundation           build imports config
+  ✓  composite → middle            docker imports build
+  ✓  composite → foundation        docker imports config
+  ✓  composite → leaf              ralph imports logger
   ✓  composite → own children      ralph imports ralph/tui
 
-  ✗  leaf → middle                 logger must never import config
+  ✗  leaf → foundation             logger must never import config
   ✗  leaf → leaf (sibling)         leaves have zero internal imports
-  ✗  middle ↔ middle (unrelated)   config must never import prompts
+  ✗  middle ↔ middle (unrelated)   build must never import prompter
+  ✗  foundation ↔ foundation       config must never import iostreams
   ✗  Any cycle                     A → B → A is always wrong
 ```
 
@@ -382,7 +401,7 @@ Domain packages in `internal/` form a directed acyclic graph with three tiers:
 
 ### Where `cmdutil` Fits
 
-`cmdutil` is a **middle package** that commands and the entry point import. It touches the command framework (cobra, Factory type), so it sits above pure leaves.
+`cmdutil` is a **foundation package** — its high fan-out is structural (DI container type declarations for Factory struct fields), not behavioral. Commands and the entry point import it. It imports config, docker, hostproxy, iostreams, and prompter as type-level declarations for the Factory struct.
 
 If a utility in `cmdutil` is also needed by domain packages outside commands, extract it into a leaf package:
 

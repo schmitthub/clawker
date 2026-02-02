@@ -1,4 +1,4 @@
-package build
+package docker
 
 import (
 	"context"
@@ -6,20 +6,20 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Builder handles Docker image building for clawker projects.
 type Builder struct {
-	client  *docker.Client
+	client  *Client
 	config  *config.Project
 	workDir string
 }
 
-// Options contains options for build operations.
-type Options struct {
+// BuilderOptions contains options for build operations.
+type BuilderOptions struct {
 	ForceBuild      bool               // Force rebuild even if image exists
 	NoCache         bool               // Build without Docker cache
 	Labels          map[string]string  // Labels to apply to the built image
@@ -33,8 +33,25 @@ type Options struct {
 	BuildKitEnabled bool               // Use BuildKit builder for cache mount support
 }
 
+// toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
+func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, contextDir string) BuildImageOpts {
+	return BuildImageOpts{
+		Tags:            tags,
+		Dockerfile:      dockerfile,
+		NoCache:         o.NoCache,
+		Labels:          o.Labels,
+		Target:          o.Target,
+		Pull:            o.Pull,
+		SuppressOutput:  o.SuppressOutput,
+		NetworkMode:     o.NetworkMode,
+		BuildArgs:       o.BuildArgs,
+		BuildKitEnabled: o.BuildKitEnabled,
+		ContextDir:      contextDir,
+	}
+}
+
 // NewBuilder creates a new Builder instance.
-func NewBuilder(cli *docker.Client, cfg *config.Project, workDir string) *Builder {
+func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder {
 	return &Builder{
 		client:  cli,
 		config:  cfg,
@@ -45,8 +62,8 @@ func NewBuilder(cli *docker.Client, cfg *config.Project, workDir string) *Builde
 // EnsureImage ensures an image is available, building if necessary.
 // Uses content-addressed tags to detect whether config actually changed.
 // If ForceBuild is true, rebuilds even if the image exists.
-func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options) error {
-	gen := NewProjectGenerator(b.config, b.workDir)
+func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts BuilderOptions) error {
+	gen := build.NewProjectGenerator(b.config, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Custom Dockerfiles bypass content hashing — delegate to Build() so that
@@ -63,12 +80,12 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 		return fmt.Errorf("failed to generate Dockerfile: %w", err)
 	}
 
-	hash, err := ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
+	hash, err := build.ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
 	if err != nil {
 		return fmt.Errorf("failed to compute content hash: %w", err)
 	}
 
-	hashTag := docker.ImageTagWithHash(b.config.Project, hash)
+	hashTag := ImageTagWithHash(b.config.Project, hash)
 
 	// Check if content-addressed image already exists
 	if !opts.ForceBuild {
@@ -98,8 +115,8 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Options
 }
 
 // Build unconditionally builds the Docker image.
-func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) error {
-	gen := NewProjectGenerator(b.config, b.workDir)
+func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
+	gen := build.NewProjectGenerator(b.config, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)
@@ -114,7 +131,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
-		buildCtx, err := CreateBuildContextFromDir(
+		buildCtx, err := build.CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)
@@ -122,9 +139,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(
-			tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext(),
-		))
+		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext()))
 	}
 
 	logger.Info().Str("image", imageTag).Msg("building container image")
@@ -148,7 +163,11 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts Options) erro
 		if err != nil {
 			return fmt.Errorf("failed to create build context temp dir: %w", err)
 		}
-		defer os.RemoveAll(tempDir)
+		defer func() {
+			if err := os.RemoveAll(tempDir); err != nil {
+				logger.Debug().Err(err).Str("dir", tempDir).Msg("failed to clean up build context temp dir")
+			}
+		}()
 
 		if err := gen.WriteBuildContextToDir(tempDir, dockerfile); err != nil {
 			return fmt.Errorf("failed to write build context: %w", err)
@@ -185,28 +204,11 @@ func (b *Builder) mergeImageLabels(existing map[string]string) map[string]string
 	}
 
 	// Add clawker internal labels last — these cannot be overridden
-	for k, v := range docker.ImageLabels(b.config.Project, b.config.Version) {
+	for k, v := range ImageLabels(b.config.Project, b.config.Version) {
 		merged[k] = v
 	}
 
 	return merged
-}
-
-// toBuildImageOpts centralizes the mapping from build Options to docker.BuildImageOpts.
-func (o Options) toBuildImageOpts(tags []string, dockerfile string, contextDir string) docker.BuildImageOpts {
-	return docker.BuildImageOpts{
-		Tags:            tags,
-		Dockerfile:      dockerfile,
-		NoCache:         o.NoCache,
-		Labels:          o.Labels,
-		Target:          o.Target,
-		Pull:            o.Pull,
-		SuppressOutput:  o.SuppressOutput,
-		NetworkMode:     o.NetworkMode,
-		BuildArgs:       o.BuildArgs,
-		BuildKitEnabled: o.BuildKitEnabled,
-		ContextDir:      contextDir,
-	}
 }
 
 // mergeTags combines the primary tag with additional tags, avoiding duplicates.

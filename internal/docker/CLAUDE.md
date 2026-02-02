@@ -1,6 +1,6 @@
 # Docker Client Package
 
-Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and naming conventions.
+Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, naming conventions, and image building orchestration.
 
 ## TODO
 - [ ] Review package boundaries — some output parsing bypasses whail and may belong in command consumers
@@ -12,6 +12,8 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and n
 |------|---------|
 | `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
+| `builder.go` | `Builder` — project image building (EnsureImage, Build, BuilderOptions) |
+| `defaults.go` | `DefaultImageTag` constant, `BuildDefaultImage` function |
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
 | `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
@@ -54,7 +56,7 @@ All return `whail.Filters`.
 - `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — resource name builders
 - `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
 - `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
-- `ParseContainerName(name)` → `(project, agent)`, `IsAlpineImage(imageRef)` — parsing utilities
+- `ParseContainerName(name)` → `(project, agent)` — parsing utilities
 - `GenerateRandomName()` — Docker-style adjective-noun pair
 
 Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
@@ -83,6 +85,11 @@ type BuildImageOpts struct {
 }
 ```
 
+### Image Resolution (`image_resolve.go`)
+
+- `ImageSource` type — const enum: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceDefault` — indicates where an image reference was resolved from
+- `ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string` — standalone function resolving default image from merged config/settings (project config takes precedence over user settings; returns empty if not configured)
+
 ### Client Methods
 
 - `Close()` — closes underlying engine
@@ -96,6 +103,35 @@ type BuildImageOpts struct {
 - `ListContainers(ctx, project, allStates)`, `ListContainersByProject(ctx, project, allStates)` — filtered container lists
 - `FindContainerByAgent(ctx, project, agent)` — single container lookup
 - `RemoveContainerWithVolumes(ctx, containerID, force)` — removes container + associated agent volumes
+
+## Builder (`builder.go`)
+
+```go
+func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder
+func (b *Builder) EnsureImage(ctx, imageTag, opts BuilderOptions) error  // Content-addressed: skips if hash matches
+func (b *Builder) Build(ctx, imageTag, opts BuilderOptions) error         // Always build unconditionally
+```
+
+`EnsureImage` renders Dockerfile, computes `build.ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
+
+```go
+type BuilderOptions struct {
+    ForceBuild, NoCache, Pull, SuppressOutput, BuildKitEnabled bool
+    Labels map[string]string; Target, NetworkMode string
+    BuildArgs map[string]*string; Tags []string; Dockerfile []byte
+}
+```
+
+Depends on `internal/build` for `ProjectGenerator`, `ContentHash`, `CreateBuildContextFromDir`.
+
+## Default Image Utilities (`defaults.go`)
+
+```go
+const DefaultImageTag = "clawker-default:latest"
+func BuildDefaultImage(ctx context.Context, flavor string) error
+```
+
+`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `build.DockerfileManager`, builds with clawker labels. Uses `build.NewVersionsManager`, `build.NewDockerfileManager`, `build.CreateBuildContextFromDir`.
 
 ## BuildKit (`buildkit.go`)
 
