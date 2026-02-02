@@ -86,7 +86,7 @@ func NewFromExisting(client APIClient, opts EngineOptions) *Engine           // 
 
 ### Image
 
-`ImageBuild`, `ImageRemove`, `ImageList`, `ImageInspect`, `ImagesPrune`
+`ImageBuild`, `ImageBuildKit`, `ImageRemove`, `ImageList`, `ImageInspect`, `ImagesPrune`
 
 ### Copy
 
@@ -116,9 +116,62 @@ Key re-exports: `Filters`, `ContainerAttachOptions`, `ContainerListOptions`, `Co
 
 Wait conditions: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
 
+## BuildKit Support
+
+### Detection (`buildkit.go`)
+
+```go
+type Pinger interface {
+    Ping(ctx context.Context, options client.PingOptions) (client.PingResult, error)
+}
+
+func BuildKitEnabled(ctx context.Context, p Pinger) (bool, error)  // env var > daemon ping > OS heuristic
+```
+
+### Closure-Based Extension (`engine.go` + `image.go`)
+
+```go
+// Engine field — nil means BuildKit not configured
+BuildKitImageBuilder func(ctx context.Context, opts ImageBuildKitOptions) error
+```
+
+`Engine.ImageBuildKit()` enforces managed labels (same pattern as `ImageBuild`), then delegates to the closure. Returns `ErrBuildKitNotConfigured` if closure is nil.
+
+### Options (`types.go`)
+
+```go
+type ImageBuildKitOptions struct {
+    Tags, ContextDir, Dockerfile string
+    BuildArgs map[string]*string
+    NoCache, Pull, SuppressOutput bool
+    Labels map[string]string
+    Target, NetworkMode string
+}
+```
+
+### buildkit/ Subpackage
+
+Isolated subpackage (`pkg/whail/buildkit/`) — only place that imports `moby/buildkit`. Consumers who don't need BuildKit pay zero dependency cost.
+
+```go
+import "github.com/anthropics/clawker/pkg/whail/buildkit"
+
+// Wire BuildKit support:
+engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)
+```
+
+| Symbol | File | Purpose |
+|--------|------|---------|
+| `NewImageBuilder(DockerDialer)` | `builder.go` | Returns closure for `Engine.BuildKitImageBuilder` |
+| `NewBuildKitClient(ctx, DockerDialer)` | `client.go` | Creates `*bkclient.Client` via `/grpc` + `/session` hijack |
+| `VerifyConnection(ctx, *bkclient.Client)` | `client.go` | Lists workers to verify connectivity |
+| `DockerDialer` | `client.go` | Interface: `DialHijack(ctx, url, proto, meta)` |
+| `toSolveOpt(opts)` | `solve.go` | Converts `ImageBuildKitOptions` → `bkclient.SolveOpt` |
+| `drainProgress(ch, suppress)` | `progress.go` | Reads `SolveStatus` channel, logs via zerolog |
+
 ## Error Factories
 
-47 error constructors for user-friendly messages with remediation steps:
+48 error constructors for user-friendly messages with remediation steps:
 
 `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageBuildFailed`, `ErrContainerNotFound`, `ErrContainerNotManaged`, `ErrContainerStartFailed`, `ErrContainerCreateFailed`, `ErrVolumeCreateFailed`, `ErrNetworkError`, `ErrAttachFailed`, etc.
 
@@ -169,6 +222,19 @@ whailtest.FakeContainerWaitOK()          // Exit code 0
 whailtest.FakeContainerWaitExit(code)    // Custom exit code
 ```
 
+#### BuildKit Faking
+
+```go
+capture := &whailtest.BuildKitCapture{}
+engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+// exercise code...
+assert(capture.CallCount == 1)
+assert(capture.Opts.Tags == expectedTags)
+// Set capture.Err to simulate failures
+```
+
+`BuildKitCapture` records `Opts`, `CallCount`, and returns `Err`.
+
 #### Test Patterns
 
 | Pattern | Description |
@@ -177,3 +243,4 @@ whailtest.FakeContainerWaitExit(code)    // Custom exit code
 | Label injection | Spy on create args → assert managed labels present |
 | Filter injection | Spy on list/prune args → assert managed filter injected |
 | Override prevention | Pass `managed=false` in labels → assert `managed=true` reaches moby |
+| BuildKit closure | Set `BuildKitImageBuilder` to func literal or `FakeBuildKitBuilder` |

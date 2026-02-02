@@ -101,6 +101,30 @@ Added `--mount=type=cache,target=...` for:
 
 These survive across builds and significantly speed up rebuilds. They work with `# syntax=docker/dockerfile:1` at the top of the template.
 
+**BuildKit enablement — CRITICAL LEARNINGS:**: `docker.BuildKitEnabled(ctx, Pinger)` detects BuildKit support via:
+1. `DOCKER_BUILDKIT` env var (highest precedence)
+2. Daemon Ping `BuilderVersion` field
+3. OS heuristic (disabled only for Windows)
+
+Wired through Factory → build command → `build.Options.BuildKitEnabled` → `docker.BuildImageOpts.BuildKitEnabled` → `ImageBuildOptions.Version = build.BuilderBuildKit`. Also wired in `BuildDefaultImage` for standalone default image builds.
+
+**SDK vs CLI BuildKit — HARD-WON LESSONS:**
+
+The Docker SDK's `ImageBuild` API (`POST /build`) does NOT support BuildKit properly:
+
+1. **Setting `ImageBuildOptions.Version = build.BuilderBuildKit`** causes "no active sessions" errors. The SDK endpoint doesn't establish the BuildKit session/gRPC channel needed for image pulls during builds. The Docker CLI uses a completely different code path (`docker/buildx` + `moby/buildkit` client libraries) with proper session management (file sync, auth providers, secret access).
+
+2. **NOT setting `Version`** causes the daemon to use the legacy builder (even on modern Docker Desktop for Mac), which fails with "--mount option requires BuildKit". The API endpoint defaults to legacy builder unless explicitly told otherwise — this is different from `docker build` CLI behavior which reads `DOCKER_BUILDKIT` env var and Docker CLI config.
+
+3. **`# syntax=docker/dockerfile:1`** directive also fails with "no active sessions" because it requires pulling the frontend image, which needs an active session.
+
+**Conclusion:** The moby SDK's `ImageBuild` is fundamentally incompatible with BuildKit features like `--mount=type=cache`. To use BuildKit, you must either:
+- Shell out to `docker build` / `docker buildx build` (recommended — handles sessions, auth, everything)
+- Use the BuildKit client libraries directly with proper session setup (complex, heavy dependencies)
+- Set up a manual session via `/session` endpoint before calling `/build` (undocumented, fragile)
+
+**RESOLVED (2026-02-01):** BuildKit support implemented via `moby/buildkit` client library in `pkg/whail/buildkit/` subpackage. The `Engine.BuildKitImageBuilder` closure field + `Engine.ImageBuildKit()` method handle BuildKit builds with full label enforcement. The Dockerfile template conditionally emits `--mount=type=cache` directives only when `BuildKitEnabled=true`. Legacy builds omit cache mounts entirely. See `.serena/memories/buildkit-support-initiative.md` for full implementation details.
+
 ### 6. Layer Ordering Matters
 User COPY instructions were moved from before firewall scripts to after Claude Code install. This means user file changes only invalidate the last few layers, not the expensive Claude Code install layer. The general principle: put the most frequently changing instructions last.
 

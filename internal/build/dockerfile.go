@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,10 +11,10 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/schmitthub/clawker/internal/build/registry"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/build/registry"
 )
 
 // Embedded templates for Dockerfile generation
@@ -61,46 +60,40 @@ const (
 
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
 type DockerfileManager struct {
-	outputDir string
-	config    *VariantConfig
+	outputDir       string
+	config          *VariantConfig
+	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
 // DockerfileContext contains the template data for generating a Dockerfile.
+// Only structural fields that affect the image filesystem are included here.
+// Config-dependent values (env vars, labels, EXPOSE, VOLUME, HEALTHCHECK, SHELL)
+// are injected at container creation time or via the Docker build API.
 type DockerfileContext struct {
-	BaseImage           string
-	Packages            []string
-	Username            string
-	UID                 int
-	GID                 int
-	Shell               string
-	WorkspacePath       string
-	ClaudeVersion       string
-	IsAlpine            bool
-	EnableFirewall      bool
-	FirewallDomains     []string // Resolved domain list to pass to container
-	FirewallDomainsJSON string   // JSON-encoded domain list for env var
-	FirewallOverride    bool     // True if using override mode (skips GitHub IP fetching)
-	ExtraEnv            map[string]string
-	Editor              string
-	Visual              string
-	Instructions        *DockerfileInstructions
-	Inject              *DockerfileInject
-	ImageLabels         map[string]string // Clawker internal labels (com.clawker.*)
+	BaseImage       string
+	Packages        []string
+	Username        string
+	UID             int
+	GID             int
+	Shell           string
+	WorkspacePath   string
+	ClaudeVersion   string
+	IsAlpine        bool
+	EnableFirewall  bool
+	BuildKitEnabled bool
+	Instructions    *DockerfileInstructions
+	Inject          *DockerfileInject
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
+// Only structural instructions that affect the image filesystem are included.
+// Non-structural instructions (ENV, Labels, EXPOSE, VOLUME, HEALTHCHECK, SHELL)
+// are injected at container creation time or via the Docker build API.
 type DockerfileInstructions struct {
-	Copy        []CopyInstruction
-	Env         map[string]string
-	Labels      map[string]string
-	Expose      []ExposeInstruction
-	Args        []ArgInstruction
-	Volumes     []string
-	Workdir     string
-	Healthcheck *HealthcheckInstruction
-	Shell       []string
-	UserRun     []RunInstruction
-	RootRun     []RunInstruction
+	Copy    []CopyInstruction
+	Args    []ArgInstruction
+	UserRun []RunInstruction
+	RootRun []RunInstruction
 }
 
 // DockerfileInject contains raw instruction injection points.
@@ -121,25 +114,10 @@ type CopyInstruction struct {
 	Chmod string
 }
 
-// ExposeInstruction represents an EXPOSE instruction.
-type ExposeInstruction struct {
-	Port     int
-	Protocol string
-}
-
 // ArgInstruction represents an ARG instruction.
 type ArgInstruction struct {
 	Name    string
 	Default string
-}
-
-// HealthcheckInstruction represents a HEALTHCHECK instruction.
-type HealthcheckInstruction struct {
-	Cmd         []string
-	Interval    string
-	Timeout     string
-	Retries     int
-	StartPeriod string
 }
 
 // RunInstruction represents a RUN instruction with OS variants.
@@ -231,51 +209,21 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 	isAlpine := m.config.IsAlpine(variant)
 	baseImage := m.variantToBaseImage(variant)
 
-	// Compute JSON for default domains
-	domainsJSON, err := domainsToJSON(config.DefaultFirewallDomains)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare firewall domains: %w", err)
-	}
-
 	return &DockerfileContext{
-		BaseImage:           baseImage,
-		Packages:            []string{}, // Base packages are in template
-		Username:            "claude",
-		UID:                 1001,
-		GID:                 1001,
-		Shell:               "/bin/zsh",
-		WorkspacePath:       "/workspace",
-		ClaudeVersion:       version,
-		IsAlpine:            isAlpine,
-		EnableFirewall:      true,
-		FirewallDomains:     config.DefaultFirewallDomains, // Use defaults for base image
-		FirewallDomainsJSON: domainsJSON,
-		FirewallOverride:    false, // Base image uses additive mode
-		ExtraEnv:            map[string]string{},
-		Editor:              "nano",
-		Visual:              "nano",
-		Instructions:        nil,
-		Inject:              nil,
+		BaseImage:       baseImage,
+		Packages:        []string{}, // Base packages are in template
+		Username:        "claude",
+		UID:             1001,
+		GID:             1001,
+		Shell:           "/bin/zsh",
+		WorkspacePath:   "/workspace",
+		ClaudeVersion:   version,
+		IsAlpine:        isAlpine,
+		EnableFirewall:  true,
+		BuildKitEnabled: m.BuildKitEnabled,
+		Instructions:    nil,
+		Inject:          nil,
 	}, nil
-}
-
-// domainsToJSON converts a slice of domains to a JSON array string.
-// Returns an error if marshaling fails (build should not continue with empty firewall).
-func domainsToJSON(domains []string) (string, error) {
-	if len(domains) == 0 {
-		return "[]", nil
-	}
-	b, err := json.Marshal(domains)
-	if err != nil {
-		// Log to file
-		logger.Error().Err(err).
-			Int("domain_count", len(domains)).
-			Msg("failed to marshal firewall domains to JSON")
-		// Print to user (stderr)
-		fmt.Fprintf(os.Stderr, "Error: failed to marshal firewall domains to JSON: %v\n", err)
-		return "", fmt.Errorf("failed to marshal firewall domains: %w", err)
-	}
-	return string(b), nil
 }
 
 // variantToBaseImage converts a variant name to a Docker base image.
@@ -305,8 +253,9 @@ func (m *DockerfileManager) DockerfilesDir() string {
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
-	config  *config.Config
-	workDir string
+	config          *config.Config
+	workDir         string
+	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
@@ -426,6 +375,64 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	return buf, nil
 }
 
+// WriteBuildContextToDir writes the Dockerfile and all supporting scripts to a
+// directory on disk. BuildKit requires files on the filesystem (not a tar stream)
+// because it creates fsutil.FS mounts from directory paths.
+func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte) error {
+	// Write Dockerfile
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), dockerfile, 0644); err != nil {
+		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	}
+
+	// Write all supporting scripts (mirrors GenerateBuildContextFromDockerfile)
+	scripts := []struct {
+		name    string
+		content string
+		mode    os.FileMode
+	}{
+		{"entrypoint.sh", EntrypointScript, 0755},
+		{"statusline.sh", StatuslineScript, 0755},
+		{"claude-settings.json", SettingsFile, 0644},
+		{"host-open.sh", HostOpenScript, 0755},
+		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"git-credential-clawker.sh", GitCredentialScript, 0755},
+		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
+	}
+
+	for _, s := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, s.name), []byte(s.content), s.mode); err != nil {
+			return fmt.Errorf("failed to write %s: %w", s.name, err)
+		}
+	}
+
+	// Write firewall script if enabled
+	if g.config.Security.FirewallEnabled() {
+		if err := os.WriteFile(filepath.Join(dir, "init-firewall.sh"), []byte(FirewallScript), 0755); err != nil {
+			return fmt.Errorf("failed to write init-firewall.sh: %w", err)
+		}
+	}
+
+	// Write include files from agent config
+	for _, include := range g.config.Agent.Includes {
+		includePath := include
+		if !filepath.IsAbs(includePath) {
+			includePath = filepath.Join(g.workDir, includePath)
+		}
+
+		content, err := os.ReadFile(includePath)
+		if err != nil {
+			logger.Warn().Str("file", include).Err(err).Msg("failed to read include file")
+			continue
+		}
+
+		if err := os.WriteFile(filepath.Join(dir, filepath.Base(include)), content, 0644); err != nil {
+			return fmt.Errorf("failed to write include %s: %w", include, err)
+		}
+	}
+
+	return nil
+}
+
 // UseCustomDockerfile checks if a custom Dockerfile should be used.
 func (g *ProjectGenerator) UseCustomDockerfile() bool {
 	return g.config.Build.Dockerfile != ""
@@ -495,68 +502,28 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 
 	isAlpine := docker.IsAlpineImage(baseImage)
 
-	// Set editor defaults
-	editor := g.config.Agent.Editor
-	if editor == "" {
-		editor = "nano"
-	}
-	visual := g.config.Agent.Visual
-	if visual == "" {
-		visual = "nano"
-	}
-
-	// Resolve firewall configuration
-	firewallEnabled := g.config.Security.FirewallEnabled()
-	var firewallDomains []string
-	var firewallOverride bool
-	if firewallEnabled && g.config.Security.Firewall != nil {
-		firewallDomains = g.config.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
-		firewallOverride = g.config.Security.Firewall.IsOverrideMode()
-	} else if firewallEnabled {
-		firewallDomains = config.DefaultFirewallDomains
-	}
-
-	// Marshal firewall domains to JSON
-	firewallDomainsJSON, err := domainsToJSON(firewallDomains)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare firewall domains: %w", err)
-	}
-
 	ctx := &DockerfileContext{
-		BaseImage:           baseImage,
-		Packages:            filterBasePackages(g.config.Build.Packages, isAlpine),
-		Username:            DefaultUsername,
-		UID:                 DefaultUID,
-		GID:                 DefaultGID,
-		Shell:               DefaultShell,
-		WorkspacePath:       g.config.Workspace.RemotePath,
-		ClaudeVersion:       DefaultClaudeCodeVersion,
-		IsAlpine:            isAlpine,
-		EnableFirewall:      firewallEnabled,
-		FirewallDomains:     firewallDomains,
-		FirewallDomainsJSON: firewallDomainsJSON,
-		FirewallOverride:    firewallOverride,
-		ExtraEnv:            g.config.Agent.Env,
-		Editor:              editor,
-		Visual:              visual,
-		ImageLabels:         docker.ImageLabels(g.config.Project, g.config.Version),
+		BaseImage:       baseImage,
+		Packages:        filterBasePackages(g.config.Build.Packages, isAlpine),
+		Username:        DefaultUsername,
+		UID:             DefaultUID,
+		GID:             DefaultGID,
+		Shell:           DefaultShell,
+		WorkspacePath:   g.config.Workspace.RemotePath,
+		ClaudeVersion:   DefaultClaudeCodeVersion,
+		IsAlpine:        isAlpine,
+		EnableFirewall:  g.config.Security.FirewallEnabled(),
+		BuildKitEnabled: g.BuildKitEnabled,
 	}
 
-	// Populate Instructions if present
+	// Populate Instructions if present (structural only — Copy, Args, RUN)
 	if g.config.Build.Instructions != nil {
 		inst := g.config.Build.Instructions
 		ctx.Instructions = &DockerfileInstructions{
-			Copy:        convertCopyInstructions(inst.Copy),
-			Env:         inst.Env,
-			Labels:      inst.Labels,
-			Expose:      convertExposeInstructions(inst.Expose),
-			Args:        convertArgInstructions(inst.Args),
-			Volumes:     inst.Volumes,
-			Workdir:     inst.Workdir,
-			Healthcheck: convertHealthcheck(inst.Healthcheck),
-			Shell:       inst.Shell,
-			UserRun:     convertRunInstructions(inst.UserRun),
-			RootRun:     convertRunInstructions(inst.RootRun),
+			Copy:    convertCopyInstructions(inst.Copy),
+			Args:    convertArgInstructions(inst.Args),
+			UserRun: convertRunInstructions(inst.UserRun),
+			RootRun: convertRunInstructions(inst.RootRun),
 		}
 	}
 
@@ -594,20 +561,6 @@ func convertCopyInstructions(src []config.CopyInstruction) []CopyInstruction {
 	return result
 }
 
-func convertExposeInstructions(src []config.ExposePort) []ExposeInstruction {
-	if src == nil {
-		return nil
-	}
-	result := make([]ExposeInstruction, len(src))
-	for i, e := range src {
-		result[i] = ExposeInstruction{
-			Port:     e.Port,
-			Protocol: e.Protocol,
-		}
-	}
-	return result
-}
-
 func convertArgInstructions(src []config.ArgDefinition) []ArgInstruction {
 	if src == nil {
 		return nil
@@ -620,19 +573,6 @@ func convertArgInstructions(src []config.ArgDefinition) []ArgInstruction {
 		}
 	}
 	return result
-}
-
-func convertHealthcheck(src *config.HealthcheckConfig) *HealthcheckInstruction {
-	if src == nil {
-		return nil
-	}
-	return &HealthcheckInstruction{
-		Cmd:         src.Cmd,
-		Interval:    src.Interval,
-		Timeout:     src.Timeout,
-		Retries:     src.Retries,
-		StartPeriod: src.StartPeriod,
-	}
 }
 
 func convertRunInstructions(src []config.RunInstruction) []RunInstruction {

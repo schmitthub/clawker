@@ -14,6 +14,7 @@ test/
 │   ├── client.go  # BuildLightImage, RunContainer, ExecResult, UniqueContainerName
 │   ├── ready.go   # WaitForReadyFile, WaitForContainerExit, WaitForHealthy
 │   └── golden.go  # GoldenAssert, CompareGolden
+├── whail/         # Whail BuildKit integration tests (requires Docker + BuildKit)
 ├── cli/           # Testscript-based CLI workflow tests (requires Docker)
 │   ├── testdata/  # .txtar scripts organized by command category
 │   └── README.md  # Testscript conventions and custom commands
@@ -29,6 +30,7 @@ test/
 
 ```bash
 make test                                        # Unit tests only (no Docker)
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
 go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
 go test ./test/commands/... -v -timeout 10m      # Command integration tests
 go test ./test/internals/... -v -timeout 10m     # Internal integration tests
@@ -47,6 +49,7 @@ No build tags needed — directory separation provides test categorization.
 - **Cleanup**: Always use `t.Cleanup()` — never rely on deferred functions
 - **TestMain**: All Docker test packages use `RunTestMain(m)` for pre/post cleanup + SIGINT handling
 - **Labels**: Test resources use `com.clawker.test=true`; `CleanupTestResources` filters on this label
+- **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup in its own `TestMain`
 
 ## Harness API
 

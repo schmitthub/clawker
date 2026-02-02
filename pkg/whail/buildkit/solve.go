@@ -76,7 +76,10 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 		return bkclient.SolveOpt{}, fmt.Errorf("buildkit: create dockerfile fs: %w", err)
 	}
 
-	// Export entry: build to local Docker image store
+	// Export entry: load built image into Docker's local image store.
+	// Docker's embedded BuildKit (connected via /grpc hijack) registers a "moby"
+	// exporter — the standard "image" exporter is only available in standalone
+	// buildkitd. See github.com/docker/docker/builder/builder-next/exporter.
 	exportAttrs := map[string]string{
 		"push": "false",
 	}
@@ -92,7 +95,7 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 			"dockerfile": dockerfileFS,
 		},
 		Exports: []bkclient.ExportEntry{{
-			Type:  "image",
+			Type:  "moby",
 			Attrs: exportAttrs,
 		}},
 	}, nil

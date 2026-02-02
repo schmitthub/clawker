@@ -9,7 +9,7 @@
 
 The error "build error: the --mount option requires BuildKit" comes from the **legacy Docker builder** (confirmed by tracing the "build error:" prefix to `internal/docker/client.go:199,248` — only in `processBuildOutput`/`processBuildOutputQuiet`, which are legacy-path-only).
 
-### Two bugs identified:
+### Three bugs identified:
 
 **Bug 1: Generated Dockerfile only exists in tar stream, not on disk for BuildKit**
 - `Builder.Build()` generates the Dockerfile via `gen.GenerateBuildContext()` which creates a **tar stream** containing the Dockerfile + scripts (entrypoint.sh, firewall, etc.)
@@ -35,34 +35,38 @@ The error "build error: the --mount option requires BuildKit" comes from the **l
 
 ## Implementation Plan (NOT STARTED)
 
-### Step 1: Write build context to temp dir for BuildKit ☐
-- Add `ProjectGenerator.WriteBuildContextToDir(dir string, dockerfile []byte) error` in `internal/build/dockerfile.go`
-  - Mirrors what `GenerateBuildContextFromDockerfile` does for tar, but writes files to disk
-  - Writes: Dockerfile, entrypoint.sh, statusline.sh, claude-settings.json, firewall script, host-open.sh, callback-forwarder.sh, git-credential-clawker.sh, ssh-agent-proxy.go
-- In `Builder.Build()` (`internal/build/build.go`), when `opts.BuildKitEnabled`:
-  - Create temp dir via `os.MkdirTemp`
-  - Call `gen.WriteBuildContextToDir(tempDir, dockerfile)`
-  - Use `tempDir` as `ContextDir` in `BuildImageOpts`
-  - `defer os.RemoveAll(tempDir)`
-  - For the legacy path, continue using the tar stream as before
+### Step 1: Write build context to temp dir for BuildKit ✅
+- Added `WriteBuildContextToDir(dir string, dockerfile []byte) error` on `ProjectGenerator`
+- Modified `Builder.Build()` to create temp dir, write context via `WriteBuildContextToDir`, pass temp dir as `ContextDir` for BuildKit
+- Legacy path unchanged: uses tar stream as before
 
-### Step 2: Wire BuildKitImageBuilder in BuildDefaultImage ☐
-- In `internal/build/defaults.go`, after `docker.NewClient(ctx)`:
-  ```go
-  import "github.com/schmitthub/clawker/pkg/whail/buildkit"
-  client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)
-  ```
+### Step 2: Wire BuildKitImageBuilder in BuildDefaultImage ✅
+- Added `client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)` in `defaults.go`
 
-### Step 3: Tests ☐
-- Add test in `internal/build/` verifying `WriteBuildContextToDir` writes all expected files
-- Add/update test in `internal/docker/client_test.go` verifying BuildKit routing with ContextDir
-- Run `make test` — all 2732 tests must pass
+### Step 3: Tests ✅
+- Added `TestWriteBuildContextToDir` — verifies all scripts written with correct permissions
+- Added `TestWriteBuildContextToDir_NoFirewall` — firewall script omitted when disabled
+- Added `TestWriteBuildContextToDir_WithIncludes` — include files copied from workDir
+- All 2735 tests pass
+
+### Step 3c: BuildKit Integration Tests ✅
+- Created `test/whail/` with self-contained BuildKit integration tests
+- 7 tests: MinimalImage, LabelsApplied, MultipleTags, BuildArgs, ContextFiles, CacheMounts, InvalidDockerfile
+- Zero imports from `internal/` — only `pkg/whail`, `pkg/whail/buildkit`, moby client
+- Auto-skips when Docker/BuildKit unavailable
+- Self-contained TestMain with `com.whail.test.managed` label cleanup
+- Added `make test-whail` target, included in `make test-all`
+
+### Step 3b: Fix BuildKit exporter type ✅
+- Changed exporter from `"image"` to `"moby"` in `pkg/whail/buildkit/solve.go`
+- `"image"` exporter is for standalone buildkitd; Docker's embedded BuildKit registers `"moby"`
+- Updated `solve_test.go` assertion accordingly
 
 ### Step 4: Manual verification ☐
 - `go build -o bin/clawker ./cmd/clawker`
 - `./bin/clawker image build` — should use BuildKit path, no `--mount` error
 
-### Step 5: Update documentation ☐
+### Step 5: Update documentation ✅
 - Update `internal/build/CLAUDE.md` with `WriteBuildContextToDir` method
 - Update Serena memory `buildkit-support-initiative` with bug fix details
 

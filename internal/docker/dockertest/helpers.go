@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
 // ContainerFixture builds a container.Summary with proper clawker labels.
@@ -210,6 +211,33 @@ func MinimalStartOpts(containerID string) docker.ContainerStartOptions {
 func ImageSummaryFixture(repoTag string) whail.ImageSummary {
 	return whail.ImageSummary{
 		RepoTags: []string{repoTag},
+	}
+}
+
+// BuildKitCapture records calls to the fake BuildKit builder wired via SetupBuildKit.
+type BuildKitCapture = whailtest.BuildKitCapture
+
+// SetupBuildKit wires a fake BuildKit builder onto the FakeClient's Engine.
+// Returns a capture struct for asserting the builder was called with the
+// expected options. The fake builder succeeds by default (returns nil error).
+//
+//	fake := dockertest.NewFakeClient()
+//	capture := fake.SetupBuildKit()
+//	// exercise code that calls BuildImage with BuildKitEnabled=true
+//	if capture.CallCount != 1 { ... }
+func (f *FakeClient) SetupBuildKit() *BuildKitCapture {
+	capture := &BuildKitCapture{}
+	f.Client.Engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+	return capture
+}
+
+// BuildKitBuildOpts returns a BuildImageOpts configured for the BuildKit path.
+func BuildKitBuildOpts(tag, contextDir string) docker.BuildImageOpts {
+	return docker.BuildImageOpts{
+		Tags:            []string{tag},
+		BuildKitEnabled: true,
+		ContextDir:      contextDir,
+		SuppressOutput:  true,
 	}
 }
 

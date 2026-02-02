@@ -12,19 +12,21 @@ CLI tool for managing Docker-based development containers, with Claude Code inte
 ```bash
 go build -o bin/clawker ./cmd/clawker
 make test                                        # Unit tests (no Docker)
-go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
 go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
+go test ./test/commands/... -v -timeout 10m      # Command integration (Docker)
+go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
 go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
 make test-all                                    # All test suites
 ```
 
 ## Testing Tiers
 1. **Unit** (`*_test.go` co-located): No Docker, uses `runF` test seams and dockertest fakes
-2. **Internals** (`test/internals/`): Container scripts/services, real Docker daemon
-3. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
-4. **Agents** (`test/agents/`): Full clawker images, real agent tests
+2. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
+3. **Commands** (`test/commands/`): Command integration tests (container create/exec/run/start)
+4. **Internals** (`test/internals/`): Container scripts/services (firewall, SSH, entrypoint)
+5. **Agents** (`test/agents/`): Full agent lifecycle, ralph tests
 
-No build tags — directory separation only.
+No build tags — directory separation only. All Docker tests use `harness.BuildLightImage` + `harness.RunContainer` (dogfooded on `docker.Client`).
 
 ## Last Documentation Audit
 Date: 2026-01-31. All 30 doc files fresh. Root CLAUDE.md trimmed to 193 lines (under 200-line budget). Symbol accuracy gaps addressed in ralph, config, tui, iostreams, whail, docker, hostproxy, workspace CLAUDE.md files. No dead rules or stale WIP memories found.

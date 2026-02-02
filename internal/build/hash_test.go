@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +87,239 @@ func TestContentHash_MissingInclude(t *testing.T) {
 	h, err := ContentHash(dockerfile, []string{"nonexistent.txt"}, "/tmp")
 	require.NoError(t, err)
 	assert.Len(t, h, 12)
+}
+
+// TestContentHash_MetadataStability verifies that config-only changes (env vars,
+// labels, firewall domains, EXPOSE, VOLUME, etc.) do NOT change the content hash.
+// These values are now injected at container creation time or via build API labels,
+// keeping the Dockerfile (and hash) purely structural.
+func TestContentHash_MetadataStability(t *testing.T) {
+	baseConfig := func() *config.Config {
+		return &config.Config{
+			Version: "1",
+			Project: "testproj",
+			Build: config.BuildConfig{
+				Image:    "buildpack-deps:bookworm-scm",
+				Packages: []string{"ripgrep"},
+			},
+			Workspace: config.WorkspaceConfig{RemotePath: "/workspace"},
+			Security: config.SecurityConfig{
+				Firewall: &config.FirewallConfig{Enable: true},
+			},
+		}
+	}
+
+	// Generate baseline Dockerfile and hash
+	gen1 := NewProjectGenerator(baseConfig(), "/tmp/test")
+	df1, err := gen1.Generate()
+	require.NoError(t, err)
+	hash1, err := ContentHash(df1, nil, "")
+	require.NoError(t, err)
+
+	// Change env vars — hash should NOT change
+	cfg2 := baseConfig()
+	cfg2.Agent.Env = map[string]string{"FOO": "bar", "BAZ": "qux"}
+	gen2 := NewProjectGenerator(cfg2, "/tmp/test")
+	df2, err := gen2.Generate()
+	require.NoError(t, err)
+	hash2, err := ContentHash(df2, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, hash1, hash2, "changing agent env should not change hash")
+
+	// Change editor — hash should NOT change
+	cfg3 := baseConfig()
+	cfg3.Agent.Editor = "vim"
+	cfg3.Agent.Visual = "code"
+	gen3 := NewProjectGenerator(cfg3, "/tmp/test")
+	df3, err := gen3.Generate()
+	require.NoError(t, err)
+	hash3, err := ContentHash(df3, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, hash1, hash3, "changing editor should not change hash")
+
+	// Change firewall domains — hash should NOT change
+	cfg4 := baseConfig()
+	cfg4.Security.Firewall.AddDomains = []string{"custom.com"}
+	gen4 := NewProjectGenerator(cfg4, "/tmp/test")
+	df4, err := gen4.Generate()
+	require.NoError(t, err)
+	hash4, err := ContentHash(df4, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, hash1, hash4, "changing firewall domains should not change hash")
+
+	// Change labels — hash should NOT change
+	cfg5 := baseConfig()
+	cfg5.Build.Instructions = &config.DockerInstructions{
+		Labels: map[string]string{"app": "myapp"},
+		Env:    map[string]string{"NODE_ENV": "production"},
+	}
+	gen5 := NewProjectGenerator(cfg5, "/tmp/test")
+	df5, err := gen5.Generate()
+	require.NoError(t, err)
+	hash5, err := ContentHash(df5, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, hash1, hash5, "changing labels and instruction env should not change hash")
+
+	// Change project name — hash should NOT change (labels are via API)
+	cfg6 := baseConfig()
+	cfg6.Project = "different-project"
+	gen6 := NewProjectGenerator(cfg6, "/tmp/test")
+	df6, err := gen6.Generate()
+	require.NoError(t, err)
+	hash6, err := ContentHash(df6, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, hash1, hash6, "changing project name should not change hash")
+
+	// Change packages — hash SHOULD change (structural)
+	cfg7 := baseConfig()
+	cfg7.Build.Packages = []string{"ripgrep", "jq-extra-tools"}
+	gen7 := NewProjectGenerator(cfg7, "/tmp/test")
+	df7, err := gen7.Generate()
+	require.NoError(t, err)
+	hash7, err := ContentHash(df7, nil, "")
+	require.NoError(t, err)
+	assert.NotEqual(t, hash1, hash7, "changing packages should change hash")
+}
+
+// TestContentHash_BuildKitVsLegacy verifies that BuildKit and legacy Dockerfiles
+// produce different content hashes because the Dockerfile structure differs
+// (--mount=type=cache directives vs plain RUN commands).
+func TestContentHash_BuildKitVsLegacy(t *testing.T) {
+	cfg := &config.Config{
+		Version: "1",
+		Project: "testproj",
+		Build: config.BuildConfig{
+			Image:    "buildpack-deps:bookworm-scm",
+			Packages: []string{"ripgrep"},
+		},
+		Workspace: config.WorkspaceConfig{RemotePath: "/workspace"},
+		Security: config.SecurityConfig{
+			Firewall: &config.FirewallConfig{Enable: true},
+		},
+	}
+
+	// BuildKit mode
+	genBK := NewProjectGenerator(cfg, "/tmp/test")
+	genBK.BuildKitEnabled = true
+	dfBK, err := genBK.Generate()
+	require.NoError(t, err)
+	hashBK, err := ContentHash(dfBK, nil, "")
+	require.NoError(t, err)
+
+	// Legacy mode
+	genLegacy := NewProjectGenerator(cfg, "/tmp/test")
+	genLegacy.BuildKitEnabled = false
+	dfLegacy, err := genLegacy.Generate()
+	require.NoError(t, err)
+	hashLegacy, err := ContentHash(dfLegacy, nil, "")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, hashBK, hashLegacy, "BuildKit and legacy Dockerfiles should produce different hashes")
+
+	// Verify BuildKit Dockerfile contains cache mounts
+	assert.Contains(t, string(dfBK), "--mount=type=cache", "BuildKit Dockerfile should contain cache mount directives")
+
+	// Verify legacy Dockerfile does NOT contain cache mounts
+	assert.NotContains(t, string(dfLegacy), "--mount=type=cache", "Legacy Dockerfile should not contain cache mount directives")
+}
+
+// TestContentHash_StableBuildKit verifies that BuildKit Dockerfiles produce
+// stable hashes across multiple generations with the same config.
+func TestContentHash_StableBuildKit(t *testing.T) {
+	cfg := &config.Config{
+		Version: "1",
+		Project: "testproj",
+		Build: config.BuildConfig{
+			Image:    "buildpack-deps:bookworm-scm",
+			Packages: []string{"ripgrep"},
+		},
+		Workspace: config.WorkspaceConfig{RemotePath: "/workspace"},
+		Security: config.SecurityConfig{
+			Firewall: &config.FirewallConfig{Enable: true},
+		},
+	}
+
+	gen1 := NewProjectGenerator(cfg, "/tmp/test")
+	gen1.BuildKitEnabled = true
+	df1, err := gen1.Generate()
+	require.NoError(t, err)
+	hash1, err := ContentHash(df1, nil, "")
+	require.NoError(t, err)
+
+	gen2 := NewProjectGenerator(cfg, "/tmp/test")
+	gen2.BuildKitEnabled = true
+	df2, err := gen2.Generate()
+	require.NoError(t, err)
+	hash2, err := ContentHash(df2, nil, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, hash1, hash2, "same config with BuildKit should produce stable hashes")
+}
+
+// TestContentHash_StableLegacy verifies that legacy Dockerfiles produce
+// stable hashes across multiple generations with the same config.
+func TestContentHash_StableLegacy(t *testing.T) {
+	cfg := &config.Config{
+		Version: "1",
+		Project: "testproj",
+		Build: config.BuildConfig{
+			Image:    "buildpack-deps:bookworm-scm",
+			Packages: []string{"ripgrep"},
+		},
+		Workspace: config.WorkspaceConfig{RemotePath: "/workspace"},
+		Security: config.SecurityConfig{
+			Firewall: &config.FirewallConfig{Enable: true},
+		},
+	}
+
+	gen1 := NewProjectGenerator(cfg, "/tmp/test")
+	gen1.BuildKitEnabled = false
+	df1, err := gen1.Generate()
+	require.NoError(t, err)
+	hash1, err := ContentHash(df1, nil, "")
+	require.NoError(t, err)
+
+	gen2 := NewProjectGenerator(cfg, "/tmp/test")
+	gen2.BuildKitEnabled = false
+	df2, err := gen2.Generate()
+	require.NoError(t, err)
+	hash2, err := ContentHash(df2, nil, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, hash1, hash2, "same config with legacy builder should produce stable hashes")
+}
+
+// TestContentHash_BuildKitAlpineVsLegacy verifies BuildKit vs legacy divergence
+// on Alpine base images (different cache mount paths than Debian).
+func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
+	cfg := &config.Config{
+		Version: "1",
+		Project: "testproj",
+		Build: config.BuildConfig{
+			Image: "alpine:3.22",
+		},
+		Workspace: config.WorkspaceConfig{RemotePath: "/workspace"},
+		Security: config.SecurityConfig{
+			Firewall: &config.FirewallConfig{Enable: true},
+		},
+	}
+
+	genBK := NewProjectGenerator(cfg, "/tmp/test")
+	genBK.BuildKitEnabled = true
+	dfBK, err := genBK.Generate()
+	require.NoError(t, err)
+
+	genLegacy := NewProjectGenerator(cfg, "/tmp/test")
+	genLegacy.BuildKitEnabled = false
+	dfLegacy, err := genLegacy.Generate()
+	require.NoError(t, err)
+
+	assert.Contains(t, string(dfBK), "--mount=type=cache", "Alpine BuildKit Dockerfile should contain cache mount directives")
+	assert.NotContains(t, string(dfLegacy), "--mount=type=cache", "Alpine legacy Dockerfile should not contain cache mount directives")
+
+	hashBK, err := ContentHash(dfBK, nil, "")
+	require.NoError(t, err)
+	hashLegacy, err := ContentHash(dfLegacy, nil, "")
+	require.NoError(t, err)
+	assert.NotEqual(t, hashBK, hashLegacy, "Alpine BuildKit and legacy should produce different hashes")
 }

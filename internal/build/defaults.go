@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/pkg/whail/buildkit"
 )
 
 // DefaultImageTag is the tag used for the user's default base image.
@@ -65,14 +66,33 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 		return fmt.Errorf("failed to resolve latest version: %w", err)
 	}
 
-	// 3. Generate dockerfiles
+	// 3. Create Docker client (needed for BuildKit detection before Dockerfile generation)
+	client, err := docker.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer client.Close()
+
+	// Wire BuildKit builder — without this, BuildKit routing returns ErrBuildKitNotConfigured
+	client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)
+
+	// 4. Check BuildKit availability (cache mounts require it)
+	buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
+	if bkErr != nil {
+		logger.Debug().Err(bkErr).Msg("BuildKit detection failed")
+	} else if !buildkitEnabled {
+		logger.Warn().Msg("BuildKit is not available — cache mount directives will be omitted and builds may be slower")
+	}
+
+	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
 	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
 	dfMgr := NewDockerfileManager(buildDir, nil)
+	dfMgr.BuildKitEnabled = buildkitEnabled
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
 	}
 
-	// 4. Find the dockerfile for selected flavor
+	// 6. Find the dockerfile for selected flavor
 	// Get the version key (should be only one since we requested "latest")
 	var latestVersion string
 	for v := range *versions {
@@ -93,20 +113,13 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 		Str("flavor", flavor).
 		Msg("building image")
 
-	// 5. Create Docker client
-	client, err := docker.NewClient(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create docker client: %w", err)
-	}
-	defer client.Close()
-
-	// 6. Create build context from dockerfiles directory
+	// 7. Create build context from dockerfiles directory
 	buildContext, err := CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create build context: %w", err)
 	}
 
-	// 7. Build the image
+	// 8. Build the image
 	err = client.BuildImage(ctx, buildContext, docker.BuildImageOpts{
 		Tags:       []string{DefaultImageTag},
 		Dockerfile: dockerfileName,
@@ -115,6 +128,8 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 			"com.clawker.base-image": "true",
 			"com.clawker.flavor":     flavor,
 		},
+		BuildKitEnabled: buildkitEnabled,
+		ContextDir:      dockerfilesDir,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build image: %w", err)

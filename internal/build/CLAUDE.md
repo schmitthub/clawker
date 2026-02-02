@@ -45,7 +45,8 @@ type Options struct {
     SuppressOutput bool
     NetworkMode    string
     BuildArgs      map[string]*string
-    Tags           []string           // Additional tags (merged with imageTag)
+    Tags            []string           // Additional tags (merged with imageTag)
+    BuildKitEnabled bool               // Use BuildKit builder for cache mount support
 }
 ```
 
@@ -56,6 +57,10 @@ func ContentHash(dockerfile []byte, includes []string, workDir string) (string, 
 ```
 
 SHA-256 of rendered Dockerfile + sorted include file contents. Returns 12-char hex prefix. Used by `EnsureImage` to detect when rebuilds are actually needed. Images are tagged `clawker-<project>:sha-<hash>` with `:latest` aliased to the current hash.
+
+**Stability guarantee:** The Dockerfile only contains structural instructions (FROM, RUN, COPY, USER, WORKDIR, ARG). Config-dependent values (env vars, labels, EXPOSE, VOLUME, HEALTHCHECK, SHELL) are injected at container creation time via `docker.RuntimeEnv()` or via the Docker build API (`opts.Labels`). This ensures the content hash is stable across metadata-only changes.
+
+**BuildKit vs Legacy:** When `BuildKitEnabled` is true, the Dockerfile template emits `--mount=type=cache` directives for package managers (apt, apk, npm, Go modules). When false, these are omitted for legacy builder compatibility. BuildKit and legacy Dockerfiles produce different content hashes — this is correct since they are structurally different images. The `BuildKitEnabled` field flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
 
 ## Default Image Utilities (`defaults.go`)
 
@@ -81,6 +86,7 @@ mgr.DockerfilesDir() string           // Output directory path
 gen := build.NewProjectGenerator(config, workDir)
 gen.Generate() error                  // Generate project Dockerfile
 gen.GenerateBuildContext() error       // Create build context tar
+gen.WriteBuildContextToDir(dir, dockerfile) error  // Write context to disk (BuildKit)
 gen.UseCustomDockerfile() bool         // Check for custom Dockerfile
 
 build.CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)

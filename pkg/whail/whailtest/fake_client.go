@@ -79,6 +79,9 @@ type FakeAPIClient struct {
 	ImageInspectFn func(ctx context.Context, image string, opts ...client.ImageInspectOption) (client.ImageInspectResult, error)
 	ImagePruneFn   func(ctx context.Context, opts client.ImagePruneOptions) (client.ImagePruneResult, error)
 	ImageTagFn     func(ctx context.Context, opts client.ImageTagOptions) (client.ImageTagResult, error)
+
+	// --- System methods ---
+	PingFn func(ctx context.Context, options client.PingOptions) (client.PingResult, error)
 }
 
 // record appends a method name to the call log (thread-safe).
@@ -430,4 +433,14 @@ func (f *FakeAPIClient) ImageTag(ctx context.Context, opts client.ImageTagOption
 	}
 	f.record("ImageTag")
 	return f.ImageTagFn(ctx, opts)
+}
+
+// --- System method implementations ---
+
+func (f *FakeAPIClient) Ping(ctx context.Context, options client.PingOptions) (client.PingResult, error) {
+	if f.PingFn == nil {
+		notImplemented("Ping")
+	}
+	f.record("Ping")
+	return f.PingFn(ctx, options)
 }

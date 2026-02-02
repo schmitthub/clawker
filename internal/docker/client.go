@@ -102,20 +102,42 @@ func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error)
 
 // BuildImageOpts contains options for building an image.
 type BuildImageOpts struct {
-	Tags           []string           // -t, --tag (multiple allowed)
-	Dockerfile     string             // -f, --file
-	BuildArgs      map[string]*string // --build-arg KEY=VALUE
-	NoCache        bool               // --no-cache
-	Labels         map[string]string  // --label KEY=VALUE (merged with clawker labels)
-	Target         string             // --target
-	Pull           bool               // --pull (maps to PullParent)
-	SuppressOutput bool               // -q, --quiet
-	NetworkMode    string             // --network
+	Tags            []string           // -t, --tag (multiple allowed)
+	Dockerfile      string             // -f, --file
+	BuildArgs       map[string]*string // --build-arg KEY=VALUE
+	NoCache         bool               // --no-cache
+	Labels          map[string]string  // --label KEY=VALUE (merged with clawker labels)
+	Target          string             // --target
+	Pull            bool               // --pull (maps to PullParent)
+	SuppressOutput  bool               // -q, --quiet
+	NetworkMode     string             // --network
+	BuildKitEnabled bool               // Use BuildKit builder via whail.ImageBuildKit
+	ContextDir      string             // Build context directory (required for BuildKit)
 }
 
 // BuildImage builds a Docker image from a build context.
-// It processes the build output and logs progress.
+// When BuildKitEnabled and ContextDir are set, uses whail's BuildKit path
+// (which supports --mount=type=cache). Otherwise falls back to the legacy
+// Docker SDK ImageBuild API.
 func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
+	// Route to BuildKit when enabled and a context directory is available.
+	// BuildKit uses the filesystem directly (not a tar stream) for local mounts.
+	if opts.BuildKitEnabled && opts.ContextDir != "" {
+		return c.ImageBuildKit(ctx, whail.ImageBuildKitOptions{
+			Tags:           opts.Tags,
+			ContextDir:     opts.ContextDir,
+			Dockerfile:     opts.Dockerfile,
+			BuildArgs:      opts.BuildArgs,
+			NoCache:        opts.NoCache,
+			Labels:         opts.Labels,
+			Target:         opts.Target,
+			Pull:           opts.Pull,
+			SuppressOutput: opts.SuppressOutput,
+			NetworkMode:    opts.NetworkMode,
+		})
+	}
+
+	// Legacy SDK path
 	options := whail.ImageBuildOptions{
 		Tags:           opts.Tags,
 		Dockerfile:     opts.Dockerfile,
@@ -128,7 +150,6 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 		SuppressOutput: opts.SuppressOutput,
 		NetworkMode:    opts.NetworkMode,
 	}
-
 	resp, err := c.ImageBuild(ctx, buildContext, options)
 	if err != nil {
 		return fmt.Errorf("building image: %w", err)

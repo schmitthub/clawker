@@ -164,8 +164,8 @@ func TestToSolveOpt_Tags(t *testing.T) {
 		t.Fatalf("expected 1 export entry, got %d", len(solveOpt.Exports))
 	}
 	export := solveOpt.Exports[0]
-	if export.Type != "image" {
-		t.Errorf("expected export type %q, got %q", "image", export.Type)
+	if export.Type != "moby" {
+		t.Errorf("expected export type %q, got %q", "moby", export.Type)
 	}
 	if export.Attrs["name"] != "myimage:latest,myimage:v1" {
 		t.Errorf("expected name %q, got %q", "myimage:latest,myimage:v1", export.Attrs["name"])

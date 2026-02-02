@@ -24,6 +24,8 @@ github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/w
 | `client_test.go` | Unit tests for `parseContainers`, `isNotFoundError` |
 | `labels.go` | Label constants (`com.clawker.*`), `ContainerLabels()`, `VolumeLabels()`, filter helpers |
 | `names.go` | `ContainerName()` → `clawker.project.agent`, `VolumeName()`, `ParseContainerName()`, `GenerateRandomName()` |
+| `buildkit.go` | `BuildKitEnabled(ctx, Pinger)` — thin delegation to `whail.BuildKitEnabled` |
+| `env.go` | `RuntimeEnv(cfg)` — config-derived env vars for container creation (editor, firewall, agent env) |
 | `volume.go` | `EnsureVolume()`, `CopyToVolume()`, `matchPattern()`, `shouldIgnore()`, `LoadIgnorePatterns()` |
 | `volume_test.go` | Unit tests for `matchPattern`, `shouldIgnore`, `LoadIgnorePatterns` |
 | `opts.go` | `MemBytes`, `MemSwapBytes`, `NanoCPUs`, `ParseCPUs` for Docker API use |
@@ -124,12 +126,18 @@ type BuildImageOpts struct {
     Tags []string; Dockerfile string; BuildArgs map[string]*string
     NoCache bool; Labels map[string]string; Target string
     Pull, SuppressOutput bool; NetworkMode string
+    BuildKitEnabled bool   // Routes to whail.ImageBuildKit when true + ContextDir set
+    ContextDir      string // Build context directory (required for BuildKit path)
 }
+
+// BuildKit detection (delegates to whail.BuildKitEnabled)
+type Pinger = whail.Pinger  // Type alias — callers don't need code changes
+func BuildKitEnabled(ctx, Pinger) (bool, error)  // env var > daemon ping > OS heuristic
 
 func (c *Client) ImageExists(ctx, imageRef) (bool, error)
 func (c *Client) TagImage(ctx, source, target string) error
 func (c *Client) IsMonitoringActive(ctx) bool
-func (c *Client) BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts) error
+func (c *Client) BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts) error  // Routes: BuildKit (opts.BuildKitEnabled && opts.ContextDir) or legacy SDK
 func (c *Client) ListContainers(ctx, project string, allStates bool) ([]Container, error)
 func (c *Client) ListContainersByProject(ctx, project string, allStates bool) ([]Container, error)
 func (c *Client) FindContainerByAgent(ctx, project, agent string) (*Container, error)
@@ -187,6 +195,11 @@ fake := dockertest.NewFakeClient()
 fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 // fake.Client -> inject into command Options; fake.FakeAPI -> set Fn fields
 fake.AssertCalled(t, "ContainerList")
+
+// BuildKit faking
+capture := fake.SetupBuildKit()
+err := fake.Client.BuildImage(ctx, nil, dockertest.BuildKitBuildOpts("tag", "/ctx"))
+// capture.CallCount, capture.Opts available
 
 // whailtest (whail jail testing)
 fake := whailtest.NewFakeAPIClient()

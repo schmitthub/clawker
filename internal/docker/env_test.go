@@ -57,8 +57,8 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 		if strings.HasPrefix(e, "CLAWKER_FIREWALL_DOMAINS=") {
 			found = true
 			assert.Contains(t, e, "custom.com")
-			// Should also contain default domains
-			assert.Contains(t, e, "github.com")
+			// Should also contain default domains (e.g. registry.npmjs.org from defaults)
+			assert.Contains(t, e, "registry.npmjs.org")
 		}
 	}
 	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")

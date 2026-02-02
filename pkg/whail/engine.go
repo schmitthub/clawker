@@ -35,6 +35,11 @@ type Engine struct {
 	// logger *log.Logger // TODO: Add logger
 	options EngineOptions
 
+	// BuildKitImageBuilder handles BuildKit image builds when set.
+	// Label enforcement is applied by ImageBuildKit before delegating.
+	// Wire via: engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)
+	BuildKitImageBuilder func(ctx context.Context, opts ImageBuildKitOptions) error
+
 	// Precomputed values for efficiency
 	managedLabelKey   string // e.g., "com.myapp.managed"
 	managedLabelValue string // always "true"

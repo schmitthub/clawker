@@ -229,3 +229,32 @@ func AssertCalledN(t *testing.T, fake *FakeAPIClient, method string, n int) {
 		t.Errorf("expected %s to be called %d times, but was called %d times; calls: %v", method, n, count, fake.Calls)
 	}
 }
+
+// --- BuildKit test helpers ---
+
+// BuildKitCapture records calls to a fake BuildKit builder closure.
+type BuildKitCapture struct {
+	// Opts is the most recently captured ImageBuildKitOptions.
+	Opts whail.ImageBuildKitOptions
+	// CallCount tracks how many times the builder was invoked.
+	CallCount int
+	// Err is the error to return from the fake builder. Defaults to nil.
+	Err error
+}
+
+// FakeBuildKitBuilder returns a BuildKit builder closure that captures
+// invocations into the returned BuildKitCapture. Use this to verify
+// that ImageBuildKit is called with the expected options.
+//
+//	capture := &whailtest.BuildKitCapture{}
+//	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+//	// ... exercise code ...
+//	// capture.Opts contains the last call's options
+//	// capture.CallCount is the number of invocations
+func FakeBuildKitBuilder(capture *BuildKitCapture) func(context.Context, whail.ImageBuildKitOptions) error {
+	return func(_ context.Context, opts whail.ImageBuildKitOptions) error {
+		capture.Opts = opts
+		capture.CallCount++
+		return capture.Err
+	}
+}

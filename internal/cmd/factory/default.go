@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/pkg/whail/buildkit"
 )
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
@@ -53,6 +54,9 @@ func New(version, commit string) *cmdutil.Factory {
 	f.Client = func(ctx context.Context) (*docker.Client, error) {
 		clientOnce.Do(func() {
 			client, clientErr = docker.NewClient(ctx)
+			if clientErr == nil {
+				client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)
+			}
 		})
 		return client, clientErr
 	}
@@ -212,6 +216,24 @@ func New(version, commit string) *cmdutil.Factory {
 	// Prompter
 	f.Prompter = func() *prompts.Prompter {
 		return prompts.NewPrompter(f.IOStreams)
+	}
+
+	// RuntimeEnv — config-derived env vars injected at container creation time
+	f.RuntimeEnv = func() []string {
+		cfg, err := f.Config()
+		if err != nil {
+			return nil
+		}
+		return docker.RuntimeEnv(cfg)
+	}
+
+	// BuildKitEnabled — detects BuildKit support from env var or daemon ping
+	f.BuildKitEnabled = func(ctx context.Context) (bool, error) {
+		client, err := f.Client(ctx)
+		if err != nil {
+			return false, err
+		}
+		return docker.BuildKitEnabled(ctx, client.APIClient)
 	}
 
 	return f

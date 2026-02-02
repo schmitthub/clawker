@@ -1,7 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
         cli cli-build cli-generate cli-test cli-test-internals cli-lint cli-staticcheck cli-install cli-clean \
-        test test-internals test-agents test-cli test-all test-coverage test-clean golden-update
+        test test-commands test-whail test-internals test-agents test-cli test-all test-coverage test-clean golden-update
 
 # Variables
 IMAGE_NAME ?= clawker
@@ -40,12 +40,14 @@ help:
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test                Unit tests only (fast, no Docker)"
+	@echo "  test-commands       Command integration tests (requires Docker)"
 	@echo "  test-internals      Internal integration tests (requires Docker)"
 	@echo "  test-cli            CLI workflow tests via testscript (requires Docker)"
+	@echo "  test-whail          Whail BuildKit integration tests (requires Docker + BuildKit)"
 	@echo "  test-agents         Agent E2E tests (requires Docker)"
 	@echo "  test-all            Run all test suites"
 	@echo "  test-coverage       Unit tests with coverage"
-	@echo "  test-clean          Remove test Docker resources"
+	@echo "  test-clean          Remove test Docker resources (containers, volumes, networks, images)"
 	@echo "  golden-update       Regenerate golden files"
 	@echo ""
 	@echo "CLI targets:"
@@ -288,7 +290,7 @@ test:
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD) $$(go list ./... | grep -v '/test/cli' | grep -v '/test/internals' | grep -v '/test/agents')
+	$(TEST_CMD) $$(go list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
 
 # Internal integration tests (requires Docker)
 test-internals:
@@ -306,6 +308,22 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD_VERBOSE) -timeout 15m ./test/cli/...
 
+# Command integration tests (requires Docker)
+test-commands:
+	@echo "Running command integration tests (requires Docker)..."
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -timeout 10m ./test/commands/...
+
+# Whail BuildKit integration tests (requires Docker + BuildKit)
+test-whail:
+	@echo "Running whail integration tests (requires Docker + BuildKit)..."
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -timeout 5m ./test/whail/...
+
 # Agent E2E tests (requires Docker)
 test-agents:
 	@echo "Running agent E2E tests (requires Docker)..."
@@ -315,7 +333,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 15m ./test/agents/...
 
 # All test suites
-test-all: test test-internals test-cli test-agents
+test-all: test test-commands test-whail test-internals test-cli test-agents
 
 # Unit tests with coverage
 test-coverage:
@@ -327,12 +345,13 @@ endif
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-# Remove test Docker resources
+# Remove test Docker resources (containers, volumes, networks, images)
 test-clean:
 	@echo "Cleaning test resources..."
 	@docker rm -f $$(docker ps -aq --filter "label=com.clawker.test=true") 2>/dev/null || true
 	@docker volume rm $$(docker volume ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
 	@docker network rm $$(docker network ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
+	@docker rmi -f $$(docker images -q --filter "label=com.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
 
 # Regenerate golden files

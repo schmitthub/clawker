@@ -54,6 +54,7 @@ type Factory struct {
 - `StopHostProxy(ctx)` — Stop host proxy
 - `HostProxyEnvVar()` — Proxy env var for containers
 - `Prompter()` — Interactive prompter
+- `BuildKitEnabled(ctx)` — Detect BuildKit support (env var > daemon ping > OS)
 
 **Testing:** Construct minimal Factory structs directly:
 ```go

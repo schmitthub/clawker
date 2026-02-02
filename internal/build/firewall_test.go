@@ -7,55 +7,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 )
 
-// TestDomainsToJSON tests the JSON marshaling of firewall domains.
-func TestDomainsToJSON(t *testing.T) {
-	tests := []struct {
-		name    string
-		domains []string
-		want    string
-		wantErr bool
-	}{
-		{
-			name:    "empty domains",
-			domains: []string{},
-			want:    "[]",
-		},
-		{
-			name:    "nil domains",
-			domains: nil,
-			want:    "[]",
-		},
-		{
-			name:    "single domain",
-			domains: []string{"github.com"},
-			want:    `["github.com"]`,
-		},
-		{
-			name:    "multiple domains",
-			domains: []string{"github.com", "api.github.com"},
-			want:    `["github.com","api.github.com"]`,
-		},
-		{
-			name:    "domains with special characters",
-			domains: []string{"example.com", "sub-domain.example.org"},
-			want:    `["example.com","sub-domain.example.org"]`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := domainsToJSON(tt.domains)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("domainsToJSON() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("domainsToJSON() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestFirewallDomainsDeterministicOrder verifies that GetFirewallDomains returns domains in sorted order.
 func TestFirewallDomainsDeterministicOrder(t *testing.T) {
 	tests := []struct {

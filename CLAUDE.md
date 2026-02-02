@@ -57,6 +57,7 @@
 │       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
 │   ├── harness/               # Test harness, config builders, helpers (golden files, docker)
+│   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 │   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
 │   ├── commands/              # Command integration tests (Docker)
 │   ├── internals/             # Container scripts/services tests (Docker)
@@ -73,10 +74,11 @@ make test                                 # Unit tests (no Docker, excludes test
 go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
 
 # Docker-required tests (directory separation, no build tags)
-go test ./test/cli/... -v -timeout 15m        # CLI workflow tests
-go test ./test/commands/... -v -timeout 10m   # Command integration tests
-go test ./test/internals/... -v -timeout 10m  # Internal integration tests
-go test ./test/agents/... -v -timeout 15m     # Agent E2E tests
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
+go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
+go test ./test/commands/... -v -timeout 10m      # Command integration tests
+go test ./test/internals/... -v -timeout 10m     # Internal integration tests
+go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 ```
 
 ## Key Concepts
