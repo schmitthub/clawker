@@ -10,14 +10,14 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/prompts"
+	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
 // RegisterOptions contains the options for the project register command.
 type RegisterOptions struct {
 	IOStreams      *iostreams.IOStreams
-	Prompter       func() *prompts.Prompter
+	Prompter       func() *prompterpkg.Prompter
 	RegistryLoader func() (*config.RegistryLoader, error)
 	WorkDir        string
 
@@ -99,7 +99,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		projectName = dirName
 	} else {
 		prompter := opts.Prompter()
-		projectName, err = prompter.String(prompts.PromptConfig{
+		projectName, err = prompter.String(prompterpkg.PromptConfig{
 			Message:  "Project name",
 			Default:  dirName,
 			Required: true,

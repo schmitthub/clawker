@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompts"
+	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 )
 
 // ResolveDefaultImage returns the default_image from merged config/settings.
@@ -108,7 +108,7 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 // ImageValidationDeps holds the dependencies needed by ResolveAndValidateImage.
 type ImageValidationDeps struct {
 	IOStreams      *iostreams.IOStreams
-	Prompter       func() *prompts.Prompter
+	Prompter       func() *prompterpkg.Prompter
 	SettingsLoader func() (*config.SettingsLoader, error)
 
 	// InvalidateSettingsCache clears the cached settings so the next
@@ -172,7 +172,7 @@ func ResolveAndValidateImage(
 
 	// Interactive mode - prompt to rebuild
 	prompter := deps.Prompter()
-	options := []prompts.SelectOption{
+	options := []prompterpkg.SelectOption{
 		{Label: "Yes", Description: "Rebuild the default base image now"},
 		{Label: "No", Description: "Cancel and fix manually"},
 	}
@@ -196,9 +196,9 @@ func ResolveAndValidateImage(
 
 	// User chose to rebuild - get flavor selection
 	flavors := intbuild.DefaultFlavorOptions()
-	flavorOptions := make([]prompts.SelectOption, len(flavors))
+	flavorOptions := make([]prompterpkg.SelectOption, len(flavors))
 	for i, opt := range flavors {
-		flavorOptions[i] = prompts.SelectOption{
+		flavorOptions[i] = prompterpkg.SelectOption{
 			Label:       opt.Name,
 			Description: opt.Description,
 		}

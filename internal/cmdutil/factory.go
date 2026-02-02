@@ -7,7 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
 
 // Factory provides shared dependencies for CLI commands.
@@ -52,7 +52,7 @@ type Factory struct {
 	StopHostProxy   func(context.Context) error
 	HostProxyEnvVar func() string
 
-	Prompter        func() *prompts.Prompter
+	Prompter        func() *prompter.Prompter
 	RuntimeEnv      func() ([]string, error)
 	BuildKitEnabled func(context.Context) (bool, error)
 }

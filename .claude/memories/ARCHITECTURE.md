@@ -146,7 +146,7 @@ Testable I/O abstraction following the GitHub CLI pattern.
 - Alternate screen buffer for full-screen TUIs
 - Terminal size detection with caching
 
-### internal/prompts - Interactive Prompts
+### internal/prompter - Interactive Prompts
 
 User interaction utilities with TTY and CI awareness.
 
@@ -173,7 +173,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/cmdutil` | Factory struct (closure fields), error handling, name resolution, output utilities |
 | `internal/cmd/factory` | Factory constructor — wires real dependencies (sync.Once closures) |
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
-| `internal/prompts` | Interactive prompts (String, Confirm, Select) |
+| `internal/prompter` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
 | `internal/build` | Image building, Dockerfile generation, semver, npm registry client |

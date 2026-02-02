@@ -17,7 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
@@ -819,7 +819,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		RuntimeEnv:              func() ([]string, error) { return nil, nil },
 		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
 		InvalidateSettingsCache: func() {},
-		Prompter:                func() *prompts.Prompter { return nil },
+		Prompter:                func() *prompter.Prompter { return nil },
 	}, tio
 }
 

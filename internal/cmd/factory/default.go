@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
@@ -213,8 +213,8 @@ func New(version, commit string) *cmdutil.Factory {
 	}
 
 	// Prompter
-	f.Prompter = func() *prompts.Prompter {
-		return prompts.NewPrompter(f.IOStreams)
+	f.Prompter = func() *prompter.Prompter {
+		return prompter.NewPrompter(f.IOStreams)
 	}
 
 	// RuntimeEnv — config-derived env vars injected at container creation time

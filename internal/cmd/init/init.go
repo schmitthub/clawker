@@ -9,14 +9,14 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompts"
+	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
 // InitOptions contains the options for the init command.
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Prompter  func() *prompts.Prompter
+	Prompter  func() *prompterpkg.Prompter
 
 	Yes bool // Non-interactive mode
 }
@@ -91,7 +91,7 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 	if opts.Yes || !ios.IsInteractive() {
 		buildBaseImage = false // Default to no in non-interactive mode
 	} else {
-		options := []prompts.SelectOption{
+		options := []prompterpkg.SelectOption{
 			{Label: "Yes", Description: "Build a clawker-optimized base image (Recommended)"},
 			{Label: "No", Description: "Skip - specify images per-project later"},
 		}
@@ -105,9 +105,9 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 	if buildBaseImage {
 		// Convert flavor options to SelectOption
 		flavors := intbuild.DefaultFlavorOptions()
-		selectOptions := make([]prompts.SelectOption, len(flavors))
+		selectOptions := make([]prompterpkg.SelectOption, len(flavors))
 		for i, opt := range flavors {
-			selectOptions[i] = prompts.SelectOption{
+			selectOptions[i] = prompterpkg.SelectOption{
 				Label:       opt.Name,
 				Description: opt.Description,
 			}

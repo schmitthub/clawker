@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/resolver"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -27,7 +27,7 @@ type CreateOptions struct {
 	Client                  func(context.Context) (*docker.Client, error)
 	Config                  func() (*config.Project, error)
 	Settings                func() (*config.Settings, error)
-	Prompter                func() *prompts.Prompter
+	Prompter                func() *prompter.Prompter
 	SettingsLoader          func() (*config.SettingsLoader, error)
 	InvalidateSettingsCache func()
 	EnsureHostProxy         func() error

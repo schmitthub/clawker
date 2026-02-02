@@ -8,7 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/prompts"
+	"github.com/schmitthub/clawker/internal/prompter"
 )
 
 // NewTestFactory returns a fully-wired Factory suitable for integration tests
@@ -35,7 +35,7 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 		HostProxyEnvVar:         func() string { return "" },
 		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
 		InvalidateSettingsCache: func() {},
-		Prompter:                func() *prompts.Prompter { return nil },
+		Prompter:                func() *prompter.Prompter { return nil },
 		Resolution: func() *config.Resolution {
 			return &config.Resolution{
 				ProjectKey: h.Project,

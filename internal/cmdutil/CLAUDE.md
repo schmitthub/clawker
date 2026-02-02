@@ -41,7 +41,7 @@ type Factory struct {
 - `SettingsLoader()`, `Settings()`, `InvalidateSettingsCache()` -- user settings
 - `RegistryLoader()`, `Registry()`, `Resolution()` -- project registry
 - `HostProxy()`, `EnsureHostProxy()`, `StopHostProxy(ctx)`, `HostProxyEnvVar()` -- host proxy
-- `Prompter()` -- interactive prompter (`*prompts.Prompter`)
+- `Prompter()` -- interactive prompter (`*prompter.Prompter`)
 - `RuntimeEnv()` -- runtime environment variables
 - `BuildKitEnabled(ctx)` -- detect BuildKit support (env var > daemon ping > OS)
 

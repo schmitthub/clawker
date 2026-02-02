@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Refactor Factory from a 25-field bag of closures into a 9-field lazy noun registry, rename types for clarity, dissolve `internal/resolver`, and rename `internal/prompts` to `internal/prompter`.
+**Goal:** Refactor Factory from a 25-field bag of closures into a 9-field lazy noun registry, rename types for clarity, dissolve `internal/resolver`, and rename `internal/prompter` to `internal/prompter`.
 
 **Architecture:** Factory becomes a pure lazy DI container where every field is a noun pointing to a package-level capability. Commands load the dep then call methods through it. Config is treated as leaf — always passed, never imported for behavior. A new `config.Config` top-level type exposes `Project()` and `Settings()` methods, replacing the two separate Factory fields.
 
@@ -78,7 +78,7 @@ func (c *Config) Registry() (*RegistryLoader, error) // for project init/registe
 
 | Change | From | To |
 |--------|------|----|
-| Rename package | `internal/prompts` | `internal/prompter` |
+| Rename package | `internal/prompter` | `internal/prompter` |
 | Rename type | `config.Config` (schema struct) | `config.Project` |
 | New type | — | `config.Config` (top-level lazy gateway) |
 | Dissolve package | `internal/resolver` | Image resolution moves to `internal/docker` |
@@ -135,13 +135,13 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ---
 
-## Phase 2: Rename `internal/prompts` to `internal/prompter`
+## Phase 2: Rename `internal/prompter` to `internal/prompter`
 
 ### Task 2: Rename prompts package to prompter
 
 **Files:**
-- Rename: `internal/prompts/` → `internal/prompter/`
-- Modify: All 14 files that import `internal/prompts` (see impact map)
+- Rename: `internal/prompter/` → `internal/prompter/`
+- Modify: All 14 files that import `internal/prompter` (see impact map)
 - Modify: `internal/cmdutil/factory.go` — import path + type reference
 - Modify: `internal/cmd/factory/default.go` — import path + constructor call
 - Modify: `test/harness/factory.go` — import path
@@ -149,7 +149,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 **Step 1: Rename the directory**
 
 ```bash
-git mv internal/prompts internal/prompter
+git mv internal/prompter internal/prompter
 ```
 
 **Step 2: Update package declaration in all files under internal/prompter/**
@@ -158,7 +158,7 @@ Change `package prompts` → `package prompter` in every `.go` file.
 
 **Step 3: Update all import paths codebase-wide**
 
-Use `search_for_pattern` to find every file importing `internal/prompts`, then update the import path to `internal/prompter` and all `prompts.` references to `prompter.`.
+Use `search_for_pattern` to find every file importing `internal/prompter`, then update the import path to `internal/prompter` and all `prompter.` references to `prompter.`.
 
 Files to update (14 production + test files):
 - `internal/cmdutil/factory.go`
@@ -190,7 +190,7 @@ Expected: All pass.
 
 ```bash
 git add -A
-git commit -m "refactor: rename internal/prompts to internal/prompter
+git commit -m "refactor: rename internal/prompter to internal/prompter
 
 Packages should be nouns. The prompter package provides a Prompter.
 
@@ -849,7 +849,7 @@ These commands have the most Factory field references. Key changes:
 - `HostProxyEnvVar func() string` → removed, build env var from `opts.HostProxy().ProxyURL()`
 - `RuntimeEnv func() ([]string, error)` → removed, call `docker.RuntimeEnv(cfg)` directly
 - `Resolution func() *config.Resolution` → removed, call `opts.Config().Resolution()`
-- `Prompter func() *prompts.Prompter` → `Prompter func() *prompter.Prompter`
+- `Prompter func() *prompter.Prompter` → `Prompter func() *prompter.Prompter`
 
 **Wiring in NewCmdRun:**
 ```go
@@ -1068,7 +1068,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 - Modify: `internal/cmd/factory/CLAUDE.md` — update constructor docs
 - Modify: `internal/config/CLAUDE.md` — add config.Config gateway docs, document config.Project rename
 - Delete or update: `internal/resolver/CLAUDE.md` (if exists)
-- Create: `internal/prompter/CLAUDE.md` (if `internal/prompts/CLAUDE.md` existed, rename)
+- Create: `internal/prompter/CLAUDE.md` (if `internal/prompter/CLAUDE.md` existed, rename)
 
 ### Task 18: Update Serena memory
 

@@ -44,7 +44,7 @@ Note: Explicit image handling happens at the call site (commands check for `@` s
 ```go
 type ImageValidationDeps struct {
     IOStreams                *iostreams.IOStreams
-    Prompter                func() *prompts.Prompter
+    Prompter                func() *prompter.Prompter
     SettingsLoader          func() (*config.SettingsLoader, error)
     InvalidateSettingsCache func()  // May be nil
 }
@@ -79,7 +79,7 @@ if containerOpts.Image == "@" {
 
 ## Dependencies
 
-Imports: `internal/build` (rebuild), `internal/config`, `internal/docker`, `internal/iostreams`, `internal/logger`, `internal/prompts`
+Imports: `internal/build` (rebuild), `internal/config`, `internal/docker`, `internal/iostreams`, `internal/logger`, `internal/prompter`
 
 ## Tests
 
