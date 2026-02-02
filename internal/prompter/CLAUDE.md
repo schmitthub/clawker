@@ -52,7 +52,7 @@ ios := iostreams.NewTestIOStreams()
 ios.SetInteractive(true)
 ios.InBuf.SetInput("y\n")
 
-prompter := prompts.NewPrompter(ios.IOStreams)
+prompter := prompter.NewPrompter(ios.IOStreams)
 result, err := prompter.Confirm("Continue?", false)
 // result == true, ios.ErrBuf.String() contains "Continue?"
 ```

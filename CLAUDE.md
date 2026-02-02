@@ -46,9 +46,8 @@
 │   ├── iostreams/             # Testable I/O: TTY, colors, progress, pager
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
-│   ├── prompts/               # Interactive prompts (String, Confirm, Select)
+│   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
-│   ├── resolver/              # Image resolution (project image, default, validation)
 │   ├── term/                  # PTY/terminal handling
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -85,7 +84,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | DI container struct (cmdutil) + constructor (cmd/factory) |
+| `Factory` | Slim DI struct (9 fields: 3 eager + 5 lazy nouns + 1 lazy client); constructor in cmd/factory |
+| `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
@@ -93,12 +93,11 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
-| `prompts.Prompter` | Interactive prompts with TTY/CI awareness |
+| `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
-| `Resolver` | Resolves working directory to registered project via longest-prefix match |
-| `Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir |
+| `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
@@ -129,7 +128,9 @@ projects:
     root: "/Users/dev/my-app"
 ```
 
-Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths. `Config.Project` is computed from the registry (never read from YAML — it is `yaml:"-"`).
+Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
+
+**Type distinction:** `config.Project` is the YAML schema struct (was `config.Config` pre-refactor). `config.Config` is now the gateway type that lazily provides `Project()`, `Settings()`, `Resolution()`, `Registry()`, and `SettingsLoader()`. Commands access config via `f.Config().Project()` rather than `f.Config()` directly.
 
 ### Project Config (clawker.yaml)
 
@@ -147,7 +148,8 @@ security: { firewall: { enable: true }, docker_socket: false, git_credentials: {
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
-**Key types** (internal/config/schema.go): `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
+**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
+**Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
 
 ## Design Decisions
 
@@ -158,6 +160,8 @@ ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permi
 5. Project registry replaces directory walking for resolution
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
+8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`). WorkDir is `func() string` (lazy closure)
+9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
 
 ## Important Gotchas
 
@@ -171,7 +175,8 @@ ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permi
 - CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
 - Go import cycles: `internal/cmd/container/opts/` exists because parent imports subcommands and subcommands need shared types
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
-- `Config.Project` is `yaml:"-"` — injected by loader from registry, never persisted
+- `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
+- `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.ralph`), not 3 (`clawker..ralph`)
 
 ## Context Management (Critical)

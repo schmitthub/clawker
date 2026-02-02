@@ -1,12 +1,13 @@
 # Config Package
 
-Configuration loading, validation, project registry, and resolver.
+Configuration loading, validation, project registry, resolver, and the `Config` gateway type.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `schema.go` | `Config` struct and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
+| `config.go` | `Config` gateway type — lazy accessor for Project, Settings, Resolution, Registry |
+| `schema.go` | `Project` struct (YAML schema) and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
 | `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
 | `settings.go` | `Settings` struct (user-level: `default_image`, `logging`) |
 | `settings_loader.go` | `SettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
@@ -30,7 +31,7 @@ Configuration loading, validation, project registry, and resolver.
 
 ## Defaults (`defaults.go`)
 
-- `DefaultConfig() *Config`, `DefaultSettings() *Settings`
+- `DefaultConfig() *Project`, `DefaultSettings() *Settings`
 - `DefaultFirewallDomains []string` — pre-approved domains
 - `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile` — template strings
 
@@ -44,19 +45,19 @@ func WithProjectRoot(path string) LoaderOption
 func WithProjectKey(key string) LoaderOption
 ```
 
-- `(*Loader).Load() (*Config, error)` — read project config, merge user defaults, inject project key
+- `(*Loader).Load() (*Project, error)` — read project config, merge user defaults, inject project key
 - `(*Loader).ConfigPath() string` — path to `clawker.yaml`
 - `(*Loader).IgnorePath() string` — path to `.clawkerignore`
 - `(*Loader).Exists() bool` — whether config file exists
 
 **Load order:** read project config -> merge user defaults -> inject project key.
-`Config.Project` is `yaml:"-"` — never read from YAML, always injected by the loader.
+`Project.Project` is `yaml:"-"` — never read from YAML, always injected by the loader.
 
 ## Validation (`validator.go`)
 
 ```go
 func NewValidator(workDir string) *Validator
-func (*Validator) Validate(cfg *Config) error          // returns MultiValidationError or nil
+func (*Validator) Validate(cfg *Project) error          // returns MultiValidationError or nil
 func (*Validator) Warnings() []string                   // non-fatal warnings
 ```
 
@@ -64,9 +65,29 @@ func (*Validator) Warnings() []string                   // non-fatal warnings
 - `ValidationError` — has `Field`, `Message`, `Value interface{}`
 - `ConfigNotFoundError` — has `Path string`; checked via `IsConfigNotFound(err) bool`
 
+## Config Gateway (`config.go`)
+
+The `Config` type is a lazy-loading gateway that consolidates access to project config, settings, registry, and resolution. Created via `NewConfig(workDir func() string)`.
+
+```go
+type Config struct { /* internal sync.Once fields */ }
+
+func NewConfig(workDir func() string) *Config
+func NewConfigForTest(project *Project, settings *Settings, resolution *Resolution) *Config
+
+// Lazy-loaded accessors (each uses sync.Once internally)
+func (*Config) Project() (*Project, error)       // loads clawker.yaml
+func (*Config) Settings() (*Settings, error)      // loads settings.yaml
+func (*Config) SettingsLoader() (*SettingsLoader, error)  // underlying settings loader
+func (*Config) Resolution() *Resolution           // resolves workdir to project
+func (*Config) Registry() (*ProjectRegistry, error)  // loads projects.yaml
+```
+
+Commands access via `f.Config().Project()` instead of the old `f.Config()` which returned the YAML struct directly.
+
 ## Schema Types (`schema.go`)
 
-**Top-level:** `Config` — `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
+**Top-level:** `Project` — `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
 
 **Build:**
 - `BuildConfig` — `Image`, `Dockerfile`, `Packages`, `Context`, `BuildArgs`, `Instructions`, `Inject`
@@ -132,6 +153,7 @@ Resolves working directory to a registered project.
 
 ## Schema Notes
 
-- `Config.Project` has tag `yaml:"-" mapstructure:"-"` — computed, not persisted
+- `Project.Project` (the project name field) has tag `yaml:"-" mapstructure:"-"` — computed, not persisted
+- `config.Config` is the gateway type (NOT the YAML schema); `config.Project` is the YAML schema
 - `RalphConfig` is a pointer (`*RalphConfig`) — nil when not configured
 - `FirewallConfig.Enable` defaults to `true` via `defaults.go`

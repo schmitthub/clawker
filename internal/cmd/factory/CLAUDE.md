@@ -23,18 +23,16 @@ tio := iostreams.NewTestIOStreams()
 f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
 ```
 
-## Dependency Wiring Order
+## Extracted Helper Pattern
 
-New() initializes closures in topological order:
-1. IOStreams (no deps — created eagerly)
-2. RegistryLoader, Registry (filesystem)
-3. Resolution (depends on Registry + WorkDir)
-4. ConfigLoader, Config (depends on Resolution + WorkDir)
-5. SettingsLoader, Settings (depends on Resolution)
-6. Client (lazy Docker connection)
-7. HostProxy, EnsureHostProxy, StopHostProxy, HostProxyEnvVar
-8. Prompter (depends on IOStreams)
-9. CloseClient, ResetConfig, InvalidateSettingsCache (cleanup closures)
+`New()` delegates to extracted helper functions for each Factory field:
+- `ioStreams()` -- creates IOStreams (eager)
+- `workDirFunc()` -- returns lazy `func() string` closure
+- `clientFunc()` -- returns lazy Docker client constructor
+- `configFunc(workDirFn)` -- returns lazy `*config.Config` gateway constructor (the gateway itself lazy-loads Project, Settings, Resolution, Registry internally via `sync.Once`)
+- `hostProxyFunc()` -- returns lazy host proxy manager constructor
+- `prompterFunc(ios)` -- returns lazy prompter constructor
 
-All closures use `sync.Once` for lazy single-initialization.
-Cross-references use `f.Resolution()`, `f.Registry()` etc. via the Factory pointer.
+Each helper is a standalone function in `default.go`, making the wiring easy to read and test.
+
+All closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves.
