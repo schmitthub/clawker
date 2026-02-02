@@ -19,7 +19,7 @@ import (
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
 	IOStreams       *iostreams.IOStreams
-	Config          func() (*config.Config, error)
+	Config          func() (*config.Project, error)
 	Client          func(context.Context) (*docker.Client, error)
 	BuildKitEnabled func(context.Context) (bool, error)
 	WorkDir         string

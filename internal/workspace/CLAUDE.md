@@ -45,7 +45,7 @@ func NewSnapshotStrategy(cfg Config) *SnapshotStrategy
 ```go
 type SetupMountsConfig struct {
     ModeOverride string        // CLI flag value (empty = use config default)
-    Config       *config.Config
+    Config       *config.Project
     AgentName    string
     WorkDir      string        // Host working directory (empty = os.Getwd() fallback)
 }

@@ -27,7 +27,7 @@ func NewValidator(workDir string) *Validator {
 }
 
 // Validate checks the configuration for errors and returns all found issues
-func (v *Validator) Validate(cfg *Config) error {
+func (v *Validator) Validate(cfg *Project) error {
 	v.errors = []error{}
 	v.warnings = []string{}
 
@@ -65,7 +65,7 @@ func (v *Validator) Warnings() []string {
 	return v.warnings
 }
 
-func (v *Validator) validateVersion(cfg *Config) {
+func (v *Validator) validateVersion(cfg *Project) {
 	if cfg.Version == "" {
 		v.addError("version", "is required", nil)
 		return
@@ -75,7 +75,7 @@ func (v *Validator) validateVersion(cfg *Config) {
 	}
 }
 
-func (v *Validator) validateBuild(cfg *Config) {
+func (v *Validator) validateBuild(cfg *Project) {
 	if cfg.Build.Image == "" && cfg.Build.Dockerfile == "" {
 		v.addError("build.image", "either 'image' or 'dockerfile' is required", nil)
 		return
@@ -113,7 +113,7 @@ func (v *Validator) validateBuild(cfg *Config) {
 	v.validateInject(cfg)
 }
 
-func (v *Validator) validateWorkspace(cfg *Config) {
+func (v *Validator) validateWorkspace(cfg *Project) {
 	if cfg.Workspace.RemotePath == "" {
 		v.addError("workspace.remote_path", "is required", nil)
 		return
@@ -131,7 +131,7 @@ func (v *Validator) validateWorkspace(cfg *Config) {
 	}
 }
 
-func (v *Validator) validateSecurity(cfg *Config) {
+func (v *Validator) validateSecurity(cfg *Project) {
 	// Validate that firewall capabilities are present if firewall is enabled
 	if cfg.Security.FirewallEnabled() {
 		hasNetAdmin := false
@@ -190,7 +190,7 @@ func (v *Validator) validateDomainFormat(fieldPath, domain string) {
 	}
 }
 
-func (v *Validator) validateAgent(cfg *Config) {
+func (v *Validator) validateAgent(cfg *Project) {
 	// Validate include paths exist
 	for i, include := range cfg.Agent.Includes {
 		includePath := include
@@ -210,7 +210,7 @@ func (v *Validator) validateAgent(cfg *Config) {
 	}
 }
 
-func (v *Validator) validateInstructions(cfg *Config) {
+func (v *Validator) validateInstructions(cfg *Project) {
 	if cfg.Build.Instructions == nil {
 		return
 	}
@@ -361,7 +361,7 @@ func (v *Validator) validateRunInstruction(idx int, run RunInstruction, fieldPre
 	}
 }
 
-func (v *Validator) validateInject(cfg *Config) {
+func (v *Validator) validateInject(cfg *Project) {
 	if cfg.Build.Inject == nil {
 		return
 	}

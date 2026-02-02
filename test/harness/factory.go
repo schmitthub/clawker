@@ -25,7 +25,7 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 		Client: func(ctx context.Context) (*docker.Client, error) {
 			return docker.NewClient(ctx)
 		},
-		Config: func() (*config.Config, error) {
+		Config: func() (*config.Project, error) {
 			return h.Config, nil
 		},
 		Settings: func() (*config.Settings, error) {

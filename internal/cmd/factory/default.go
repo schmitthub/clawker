@@ -116,7 +116,7 @@ func New(version, commit string) *cmdutil.Factory {
 	var (
 		configOnce   sync.Once
 		configLoader *config.Loader
-		configData   *config.Config
+		configData   *config.Project
 		configErr    error
 	)
 	f.ConfigLoader = func() *config.Loader {
@@ -136,7 +136,7 @@ func New(version, commit string) *cmdutil.Factory {
 		})
 		return configLoader
 	}
-	f.Config = func() (*config.Config, error) {
+	f.Config = func() (*config.Project, error) {
 		if configData != nil || configErr != nil {
 			return configData, configErr
 		}

@@ -580,7 +580,7 @@ func TestBuildConfigs_CapAdd(t *testing.T) {
 		Image:   "alpine",
 		Publish: copts.NewPortOpts(),
 	}
-	projectCfg := &config.Config{
+	projectCfg := &config.Project{
 		Project: "test",
 		Security: config.SecurityConfig{
 			CapAdd: []string{"NET_ADMIN", "SYS_PTRACE"},
@@ -675,7 +675,7 @@ func TestImageArg(t *testing.T) {
 				fake.SetupImageList(summaries...)
 
 				// Build config and settings
-				cfg := &config.Config{
+				cfg := &config.Project{
 					Project: tt.projectName,
 				}
 				var settings *config.Settings
@@ -808,7 +808,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() (*config.Config, error) {
+		Config: func() (*config.Project, error) {
 			return testConfig(), nil
 		},
 		Settings: func() (*config.Settings, error) {
@@ -823,11 +823,11 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	}, tio
 }
 
-// testConfig returns a minimal *config.Config for test use.
+// testConfig returns a minimal *config.Project for test use.
 // Host proxy disabled, bind mode, empty project, firewall disabled.
-func testConfig() *config.Config {
+func testConfig() *config.Project {
 	hostProxyDisabled := false
-	return &config.Config{
+	return &config.Project{
 		Version: "1",
 		Project: "",
 		Workspace: config.WorkspaceConfig{

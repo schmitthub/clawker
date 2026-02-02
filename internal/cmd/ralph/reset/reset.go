@@ -14,7 +14,7 @@ import (
 // ResetOptions holds options for the ralph reset command.
 type ResetOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Config, error)
+	Config    func() (*config.Project, error)
 
 	Agent    string
 	ClearAll bool

@@ -29,7 +29,7 @@ type RunOptions struct {
 
 	IOStreams               *iostreams.IOStreams
 	Client                  func(context.Context) (*docker.Client, error)
-	Config                  func() (*config.Config, error)
+	Config                  func() (*config.Project, error)
 	Settings                func() (*config.Settings, error)
 	Prompter                func() *prompts.Prompter
 	SettingsLoader          func() (*config.SettingsLoader, error)

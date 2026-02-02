@@ -35,7 +35,7 @@ func TestNewHarness_WithProject(t *testing.T) {
 }
 
 func TestNewHarness_WithConfig(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Version: "1",
 		Project: "custom-project",
 		Build: config.BuildConfig{
@@ -146,12 +146,12 @@ func TestHarness_ContainerName(t *testing.T) {
 func TestHarness_ImageName(t *testing.T) {
 	tests := []struct {
 		name         string
-		config       *config.Config
+		config       *config.Project
 		expectedName string
 	}{
 		{
 			name: "with default image",
-			config: &config.Config{
+			config: &config.Project{
 				Project:      "myapp",
 				DefaultImage: "custom:v1",
 			},
@@ -159,7 +159,7 @@ func TestHarness_ImageName(t *testing.T) {
 		},
 		{
 			name: "without default image",
-			config: &config.Config{
+			config: &config.Project{
 				Project: "myapp",
 			},
 			expectedName: "clawker-myapp:latest",
@@ -239,7 +239,7 @@ func TestHarness_UpdateConfig(t *testing.T) {
 	h := NewHarness(t, WithProject("original"))
 
 	// Update the config
-	h.UpdateConfig(func(cfg *config.Config) {
+	h.UpdateConfig(func(cfg *config.Project) {
 		cfg.Build.Image = "new:image"
 	})
 

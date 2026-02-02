@@ -72,7 +72,7 @@ func TestValidationError(t *testing.T) {
 
 func TestConfigStructure(t *testing.T) {
 	// Test that Config struct can be instantiated with all fields
-	cfg := Config{
+	cfg := Project{
 		Version: "1",
 		Project: "test-project",
 		Build: BuildConfig{

@@ -2,8 +2,8 @@ package config
 
 import "sort"
 
-// Config represents the root configuration structure for clawker.yaml
-type Config struct {
+// Project represents the root configuration structure for clawker.yaml
+type Project struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
 	Project      string          `yaml:"-" mapstructure:"-"`
 	DefaultImage string          `yaml:"default_image,omitempty" mapstructure:"default_image"`

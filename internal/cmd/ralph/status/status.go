@@ -15,7 +15,7 @@ import (
 // StatusOptions holds options for the ralph status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Config, error)
+	Config    func() (*config.Project, error)
 
 	Agent string
 	JSON  bool

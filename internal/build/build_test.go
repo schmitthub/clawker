@@ -72,7 +72,7 @@ func TestMergeTags(t *testing.T) {
 }
 
 func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Project: "myproject",
 		Version: "1.0.0",
 		Build: config.BuildConfig{
@@ -101,8 +101,8 @@ func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 
 // ensureImageTestConfig returns a minimal config for EnsureImage tests.
 // It uses a standard base image and project name to produce deterministic hashes.
-func ensureImageTestConfig() *config.Config {
-	return &config.Config{
+func ensureImageTestConfig() *config.Project {
+	return &config.Project{
 		Project: "testproj",
 		Version: "1.0.0",
 		Build: config.BuildConfig{
@@ -258,7 +258,7 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 	customDockerfile := filepath.Join(workDir, "Dockerfile.custom")
 	require.NoError(t, os.WriteFile(customDockerfile, []byte("FROM alpine:latest\n"), 0644))
 
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Project: "testproj",
 		Version: "1.0.0",
 		Build: config.BuildConfig{
@@ -310,7 +310,7 @@ func TestEnsureImage_ContentHashError(t *testing.T) {
 }
 
 func TestWriteBuildContextToDir(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},
@@ -361,7 +361,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 }
 
 func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},
@@ -391,7 +391,7 @@ func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
 	includeContent := []byte("# my include file\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), includeContent, 0644))
 
-	cfg := &config.Config{
+	cfg := &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},

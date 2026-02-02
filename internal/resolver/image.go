@@ -16,7 +16,7 @@ import (
 // ResolveDefaultImage returns the default_image from merged config/settings.
 // Local project config takes precedence over user settings.
 // Returns empty string if not configured.
-func ResolveDefaultImage(cfg *config.Config, settings *config.Settings) string {
+func ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string {
 	// Local project config takes precedence
 	if cfg != nil && cfg.DefaultImage != "" {
 		return cfg.DefaultImage
@@ -71,7 +71,7 @@ func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project 
 // 3. Merged default_image from config/settings
 //
 // Returns the resolved image reference and an error if no image could be resolved.
-func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings) (string, error) {
+func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Project, settings *config.Settings) (string, error) {
 	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings)
 	if err != nil {
 		return "", err
@@ -84,7 +84,7 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 
 // ResolveImageWithSource resolves the image with source tracking.
 // See ResolveImage for resolution order details.
-func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Config, settings *config.Settings) (*ResolvedImage, error) {
+func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Project, settings *config.Settings) (*ResolvedImage, error) {
 
 	// 2. Try to find a project image with :latest tag
 	if cfg != nil && cfg.Project != "" {
@@ -127,7 +127,7 @@ func ResolveAndValidateImage(
 	ctx context.Context,
 	deps ImageValidationDeps,
 	dockerClient *docker.Client,
-	cfg *config.Config,
+	cfg *config.Project,
 	settings *config.Settings,
 ) (*ResolvedImage, error) {
 	ios := deps.IOStreams

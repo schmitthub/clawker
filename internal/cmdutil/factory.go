@@ -36,7 +36,7 @@ type Factory struct {
 	CloseClient func()
 
 	ConfigLoader func() *config.Loader
-	Config       func() (*config.Config, error)
+	Config       func() (*config.Project, error)
 	ResetConfig  func()
 
 	SettingsLoader          func() (*config.SettingsLoader, error)

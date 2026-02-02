@@ -10,7 +10,7 @@ import (
 func TestResolveDefaultImage(t *testing.T) {
 	tests := []struct {
 		name     string
-		cfg      *config.Config
+		cfg      *config.Project
 		settings *config.Settings
 		want     string
 	}{
@@ -22,7 +22,7 @@ func TestResolveDefaultImage(t *testing.T) {
 		},
 		{
 			name: "config takes precedence over settings",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "config-image:latest",
 			},
 			settings: &config.Settings{
@@ -32,7 +32,7 @@ func TestResolveDefaultImage(t *testing.T) {
 		},
 		{
 			name: "settings fallback when config empty",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
@@ -50,7 +50,7 @@ func TestResolveDefaultImage(t *testing.T) {
 		},
 		{
 			name: "config only (nil settings)",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "config-only:latest",
 			},
 			settings: nil,
@@ -58,7 +58,7 @@ func TestResolveDefaultImage(t *testing.T) {
 		},
 		{
 			name: "both empty returns empty",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
@@ -68,7 +68,7 @@ func TestResolveDefaultImage(t *testing.T) {
 		},
 		{
 			name: "empty config with nil settings",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "",
 			},
 			settings: nil,
@@ -89,13 +89,13 @@ func TestResolveDefaultImage(t *testing.T) {
 func TestResolveImage_FallbackToDefault(t *testing.T) {
 	tests := []struct {
 		name     string
-		cfg      *config.Config
+		cfg      *config.Project
 		settings *config.Settings
 		want     string
 	}{
 		{
 			name: "falls back to config default",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "config-default:latest",
 			},
 			settings: nil,
@@ -103,7 +103,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 		},
 		{
 			name: "falls back to settings default",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "",
 			},
 			settings: &config.Settings{
@@ -113,7 +113,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 		},
 		{
 			name: "config default takes precedence over settings",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "config-default:latest",
 			},
 			settings: &config.Settings{
@@ -175,7 +175,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		cfg        *config.Config
+		cfg        *config.Project
 		settings   *config.Settings
 		wantRef    string
 		wantSource ImageSource
@@ -183,7 +183,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 	}{
 		{
 			name:       "falls back to default from config",
-			cfg:        &config.Config{DefaultImage: "config-default:latest"},
+			cfg:        &config.Project{DefaultImage: "config-default:latest"},
 			settings:   nil,
 			wantRef:    "config-default:latest",
 			wantSource: ImageSourceDefault,
@@ -191,7 +191,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		},
 		{
 			name:       "falls back to default from settings",
-			cfg:        &config.Config{DefaultImage: ""},
+			cfg:        &config.Project{DefaultImage: ""},
 			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
 			wantRef:    "settings-default:latest",
 			wantSource: ImageSourceDefault,
@@ -199,7 +199,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		},
 		{
 			name:       "config default takes precedence over settings",
-			cfg:        &config.Config{DefaultImage: "config-default:latest"},
+			cfg:        &config.Project{DefaultImage: "config-default:latest"},
 			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
 			wantRef:    "config-default:latest",
 			wantSource: ImageSourceDefault,
@@ -215,7 +215,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		},
 		{
 			name: "returns nil when all sources empty",
-			cfg: &config.Config{
+			cfg: &config.Project{
 				DefaultImage: "",
 				Project:      "",
 			},

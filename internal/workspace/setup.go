@@ -16,7 +16,7 @@ type SetupMountsConfig struct {
 	// ModeOverride is the CLI flag value (empty means use config default)
 	ModeOverride string
 	// Config is the loaded clawker configuration
-	Config *config.Config
+	Config *config.Project
 	// AgentName is the agent name for volume naming
 	AgentName string
 	// WorkDir is the host working directory for workspace mounts.

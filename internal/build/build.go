@@ -14,7 +14,7 @@ import (
 // Builder handles Docker image building for clawker projects.
 type Builder struct {
 	client  *docker.Client
-	config  *config.Config
+	config  *config.Project
 	workDir string
 }
 
@@ -34,7 +34,7 @@ type Options struct {
 }
 
 // NewBuilder creates a new Builder instance.
-func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder {
+func NewBuilder(cli *docker.Client, cfg *config.Project, workDir string) *Builder {
 	return &Builder{
 		client:  cli,
 		config:  cfg,

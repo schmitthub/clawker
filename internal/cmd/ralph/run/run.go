@@ -20,7 +20,7 @@ import (
 type RunOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (*config.Config, error)
+	Config    func() (*config.Project, error)
 
 	Agent               string
 	Prompt              string

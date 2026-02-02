@@ -20,7 +20,7 @@ import (
 type StartOptions struct {
 	IOStreams       *iostreams.IOStreams
 	Client          func(context.Context) (*docker.Client, error)
-	Config          func() (*config.Config, error)
+	Config          func() (*config.Project, error)
 	Resolution      func() *config.Resolution
 	EnsureHostProxy func() error
 

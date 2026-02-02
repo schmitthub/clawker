@@ -15,7 +15,7 @@ import (
 //
 // Precedence (last wins): base defaults (EDITOR/VISUAL) → agent env → build instruction env.
 // The result is sorted by key for deterministic ordering.
-func RuntimeEnv(cfg *config.Config) ([]string, error) {
+func RuntimeEnv(cfg *config.Project) ([]string, error) {
 	// Build a map so later sources override earlier ones.
 	// Precedence: base defaults → agent env → build instruction env (last wins).
 	m := make(map[string]string)

@@ -26,7 +26,7 @@ Image building orchestration, Dockerfile generation, version management, and bui
 ## Builder (`build.go`)
 
 ```go
-func NewBuilder(cli *docker.Client, cfg *config.Config, workDir string) *Builder
+func NewBuilder(cli *docker.Client, cfg *config.Project, workDir string) *Builder
 func (b *Builder) EnsureImage(ctx, imageTag, opts) error  // Content-addressed: skips if hash matches
 func (b *Builder) Build(ctx, imageTag, opts) error         // Always build unconditionally
 ```
@@ -84,7 +84,7 @@ func (m *DockerfileManager) DockerfilesDir() string  // outputDir/dockerfiles
 ### ProjectGenerator -- single project builds from clawker.yaml
 
 ```go
-func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator
+func NewProjectGenerator(cfg *config.Project, workDir string) *ProjectGenerator
 func (g *ProjectGenerator) Generate() ([]byte, error)                                  // Render Dockerfile
 func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error)                   // Tar archive (legacy)
 func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error)

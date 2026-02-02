@@ -16,7 +16,7 @@ import (
 // TUIOptions holds options for the ralph tui command.
 type TUIOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Config, error)
+	Config    func() (*config.Project, error)
 }
 
 // NewCmdTUI creates the `clawker ralph tui` command.

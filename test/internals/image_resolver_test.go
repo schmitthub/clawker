@@ -239,7 +239,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds project image with :latest tag", func(t *testing.T) {
-		cfg := &config.Config{
+		cfg := &config.Project{
 			Project:      state.projectName,
 			DefaultImage: "fallback:latest",
 		}
@@ -263,7 +263,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	})
 
 	t.Run("falls back to default when no project image", func(t *testing.T) {
-		cfg := &config.Config{
+		cfg := &config.Project{
 			Project:      "nonexistent-project-xyz",
 			DefaultImage: "fallback:latest",
 		}
