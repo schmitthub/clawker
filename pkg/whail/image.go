@@ -48,6 +48,15 @@ func (e *Engine) ImageBuildKit(ctx context.Context, opts ImageBuildKitOptions) e
 	return e.BuildKitImageBuilder(ctx, optsCopy)
 }
 
+// ImageTag adds a tag to an existing managed image.
+// The source image must have the managed label or the operation is rejected.
+func (e *Engine) ImageTag(ctx context.Context, opts ImageTagOptions) (ImageTagResult, error) {
+	if _, err := e.isManagedImage(ctx, opts.Source); err != nil {
+		return ImageTagResult{}, ErrImageNotFound(opts.Source, err)
+	}
+	return e.APIClient.ImageTag(ctx, opts)
+}
+
 // ImageRemove removes an image.
 func (e *Engine) ImageRemove(ctx context.Context, imageID string, options client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	isManaged, err := e.isManagedImage(ctx, imageID)

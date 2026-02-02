@@ -45,14 +45,9 @@ func (c *Client) Close() error {
 
 // IsMonitoringActive checks if the clawker monitoring stack is running.
 // It looks for the otel-collector container on the clawker-net network.
-// Note: This method bypasses whail's label filtering because monitoring
-// containers are not clawker-managed resources.
-// TODO monitoring containers need to be given clawker labels
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
-	// Use raw API client to bypass managed label filtering
-	// since monitoring containers aren't clawker-managed
 	f := whail.Filters{}.Add("name", "otel-collector").Add("status", "running")
-	result, err := c.APIClient.ContainerList(ctx, whail.ContainerListOptions{
+	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
 	if err != nil {
@@ -75,24 +70,22 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	return false
 }
 
-// TagImage adds an additional tag to an existing image.
+// TagImage adds an additional tag to an existing managed image.
 // source is the existing image reference, target is the new tag to apply.
 func (c *Client) TagImage(ctx context.Context, source, target string) error {
-	_, err := c.APIClient.ImageTag(ctx, whail.ImageTagOptions{
+	_, err := c.ImageTag(ctx, whail.ImageTagOptions{
 		Source: source,
 		Target: target,
 	})
 	return err
 }
 
-// ImageExists checks if an image exists locally.
-// Returns true if the image exists, false if not found.
-// Note: This bypasses whail's label filtering since images may or may not be managed.
-// TODO: need to better understand why we'd want or need unmanaged image support
+// ImageExists checks if a managed image exists locally.
+// Returns true if the image exists and is managed, false if not found or unmanaged.
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
-	_, err := c.APIClient.ImageInspect(ctx, imageRef)
+	_, err := c.ImageInspect(ctx, imageRef)
 	if err != nil {
-		if cerrdefs.IsNotFound(err) {
+		if isNotFoundError(err) {
 			return false, nil
 		}
 		return false, err

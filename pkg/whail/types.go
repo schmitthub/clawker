@@ -49,6 +49,7 @@ type (
 	ImageListResult = client.ImageListResult
 	ImageSummary    = image.Summary
 	ImageTagOptions = client.ImageTagOptions
+	ImageTagResult  = client.ImageTagResult
 
 	// Volume operation options.
 	VolumeCreateOptions = client.VolumeCreateOptions

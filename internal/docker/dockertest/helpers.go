@@ -3,11 +3,13 @@ package dockertest
 import (
 	"context"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
 	dockerimage "github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -87,8 +89,8 @@ func (f *FakeClient) SetupFindContainer(name string, c container.Summary) {
 	}
 }
 
-// SetupImageExists configures the fake to report whether an image exists.
-// When exists is true, ImageInspect returns a minimal result.
+// SetupImageExists configures the fake to report whether a managed image exists.
+// When exists is true, ImageInspect returns a managed result with clawker labels.
 // When exists is false, ImageInspect returns a not-found error.
 func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 	f.FakeAPI.ImageInspectFn = func(_ context.Context, image string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
@@ -96,20 +98,22 @@ func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 			return client.ImageInspectResult{}, notFoundError(image)
 		}
 		if exists {
-			return client.ImageInspectResult{
-				InspectResponse: dockerimage.InspectResponse{
-					ID: "sha256:fake-image-id",
-				},
-			}, nil
+			return managedImageInspect(ref), nil
 		}
 		return client.ImageInspectResult{}, notFoundError(image)
 	}
 }
 
 // SetupImageTag configures the fake to succeed on ImageTag.
+// It wires both ImageTag and ImageInspect (for managed label check).
 func (f *FakeClient) SetupImageTag() {
 	f.FakeAPI.ImageTagFn = func(_ context.Context, _ client.ImageTagOptions) (client.ImageTagResult, error) {
 		return client.ImageTagResult{}, nil
+	}
+	// ImageTag goes through whail's managed check which calls ImageInspect.
+	// Restore the default managed ImageInspect so the check passes.
+	f.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return managedImageInspect(ref), nil
 	}
 }
 
@@ -238,6 +242,22 @@ func BuildKitBuildOpts(tag, contextDir string) docker.BuildImageOpts {
 		BuildKitEnabled: true,
 		ContextDir:      contextDir,
 		SuppressOutput:  true,
+	}
+}
+
+// managedImageInspect returns an ImageInspectResult with clawker managed labels.
+func managedImageInspect(ref string) client.ImageInspectResult {
+	return client.ImageInspectResult{
+		InspectResponse: dockerimage.InspectResponse{
+			ID: "sha256:fake-image-id-" + ref,
+			Config: &dockerspec.DockerOCIImageConfig{
+				ImageConfig: ocispec.ImageConfig{
+					Labels: map[string]string{
+						docker.LabelManaged: docker.ManagedLabelValue,
+					},
+				},
+			},
+		},
 	}
 }
 
