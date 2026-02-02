@@ -1,4 +1,4 @@
-package internals
+package commands
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStartIntegration_BasicStart tests starting a stopped container.
-func TestStartIntegration_BasicStart(t *testing.T) {
+// TestContainerStart_BasicStart tests starting a stopped container.
+func TestContainerStart_BasicStart(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -78,8 +78,8 @@ func TestStartIntegration_BasicStart(t *testing.T) {
 	// would require os.Stdout redirection which is messy in tests
 }
 
-// TestStartIntegration_BothPatterns tests that both --agent flag and full container name work.
-func TestStartIntegration_BothPatterns(t *testing.T) {
+// TestContainerStart_BothPatterns tests that both --agent flag and full container name work.
+func TestContainerStart_BothPatterns(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -152,8 +152,8 @@ func TestStartIntegration_BothPatterns(t *testing.T) {
 	}
 }
 
-// TestStartIntegration_BothImages tests that both Alpine and Debian images start correctly.
-func TestStartIntegration_BothImages(t *testing.T) {
+// TestContainerStart_BothImages tests that both Alpine and Debian images start correctly.
+func TestContainerStart_BothImages(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -230,8 +230,8 @@ func TestStartIntegration_BothImages(t *testing.T) {
 	}
 }
 
-// TestStartIntegration_MultipleContainers tests starting multiple containers at once.
-func TestStartIntegration_MultipleContainers(t *testing.T) {
+// TestContainerStart_MultipleContainers tests starting multiple containers at once.
+func TestContainerStart_MultipleContainers(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -300,8 +300,8 @@ func TestStartIntegration_MultipleContainers(t *testing.T) {
 	// would require os.Stdout redirection which is messy in tests
 }
 
-// TestStartIntegration_AlreadyRunning tests that starting an already-running container is idempotent.
-func TestStartIntegration_AlreadyRunning(t *testing.T) {
+// TestContainerStart_AlreadyRunning tests that starting an already-running container is idempotent.
+func TestContainerStart_AlreadyRunning(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -363,8 +363,8 @@ func TestStartIntegration_AlreadyRunning(t *testing.T) {
 	require.True(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should still be running")
 }
 
-// TestStartIntegration_NonExistent tests that starting a non-existent container returns an error.
-func TestStartIntegration_NonExistent(t *testing.T) {
+// TestContainerStart_NonExistent tests that starting a non-existent container returns an error.
+func TestContainerStart_NonExistent(t *testing.T) {
 	harness.RequireDocker(t)
 
 	h := harness.NewHarness(t,
@@ -386,8 +386,8 @@ func TestStartIntegration_NonExistent(t *testing.T) {
 	require.Error(t, err, "start command should fail for non-existent container")
 }
 
-// TestStartIntegration_MultipleWithAttach tests that using --attach with multiple containers returns an error.
-func TestStartIntegration_MultipleWithAttach(t *testing.T) {
+// TestContainerStart_MultipleWithAttach tests that using --attach with multiple containers returns an error.
+func TestContainerStart_MultipleWithAttach(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 

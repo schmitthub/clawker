@@ -1,4 +1,4 @@
-package internals
+package commands
 
 import (
 	"context"
@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateIntegration_AgentNameApplied tests that the --agent flag value is
+// TestContainerCreate_AgentNameApplied tests that the --agent flag value is
 // properly applied to the container name and labels.
 //
 // This test catches a bug where opts.AgentName gets overwritten with the empty
 // opts.Agent field, causing containers to get random names instead of the
 // specified agent name.
-func TestCreateIntegration_AgentNameApplied(t *testing.T) {
+func TestContainerCreate_AgentNameApplied(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -48,6 +48,9 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 
 	// Create factory pointing to harness project directory
 	f, ios := harness.NewTestFactory(t, h)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return client, nil
+	}
 
 	// Create and execute the create command with --agent flag
 	cmd := create.NewCmdCreate(f, nil)
@@ -88,9 +91,9 @@ func TestCreateIntegration_AgentNameApplied(t *testing.T) {
 	require.Equal(t, agentName, labels["com.clawker.agent"], "agent label in inspect mismatch")
 }
 
-// TestCreateIntegration_NameFlagApplied tests that the --name flag (alias for --agent)
+// TestContainerCreate_NameFlagApplied tests that the --name flag (alias for --agent)
 // is also properly applied to the container name and labels.
-func TestCreateIntegration_NameFlagApplied(t *testing.T) {
+func TestContainerCreate_NameFlagApplied(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -116,6 +119,9 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 	expectedContainerName := "clawker.create-name-test." + agentName
 
 	f, ios := harness.NewTestFactory(t, h)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return client, nil
+	}
 
 	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
@@ -138,9 +144,9 @@ func TestCreateIntegration_NameFlagApplied(t *testing.T) {
 	require.Equal(t, agentName, container.Agent, "agent label should match the --name flag value")
 }
 
-// TestCreateIntegration_NoAgentGetsRandomName tests that when no --agent flag is
+// TestContainerCreate_NoAgentGetsRandomName tests that when no --agent flag is
 // provided, the container gets a randomly generated name.
-func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
+func TestContainerCreate_NoAgentGetsRandomName(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -162,6 +168,9 @@ func TestCreateIntegration_NoAgentGetsRandomName(t *testing.T) {
 	}()
 
 	f, ios := harness.NewTestFactory(t, h)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return client, nil
+	}
 
 	// Create without --agent flag
 	cmd := create.NewCmdCreate(f, nil)

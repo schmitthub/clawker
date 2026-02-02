@@ -87,6 +87,21 @@ func ErrImageBuildFailed(err error) *DockerError {
 	}
 }
 
+// ErrBuildKitNotConfigured returns an error when ImageBuildKit is called
+// but no BuildKitImageBuilder closure has been set on the Engine.
+func ErrBuildKitNotConfigured() *DockerError {
+	return &DockerError{
+		Op:      "build",
+		Err:     nil,
+		Message: "BuildKit is not configured",
+		NextSteps: []string{
+			"Wire a BuildKit builder: engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)",
+			"Ensure Docker Desktop or Docker Engine 23.0+ is available",
+			"Fall back to legacy image builds with Engine.ImageBuild()",
+		},
+	}
+}
+
 // ErrContainerNotFound returns an error for when a container cannot be found.
 func ErrContainerNotFound(name string) *DockerError {
 	return &DockerError{

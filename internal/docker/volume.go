@@ -73,12 +73,14 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	}
 
 	// Pull busybox if needed
+	// TODO: Explore moving temp container creation and cleanup to whail so that
+	// internal/docker doesn't need to use APIClient directly for volume copy operations.
 	exists, err := c.ImageExists(ctx, "busybox:latest")
 	if err != nil {
 		return fmt.Errorf("checking for busybox image: %w", err)
 	}
 	if !exists {
-		pullResp, err := c.APIClient.ImagePull(ctx, "busybox:latest", whail.ImagePullOptions{})
+		pullResp, err := c.ImagePull(ctx, "busybox:latest", whail.ImagePullOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to pull busybox: %w", err)
 		}

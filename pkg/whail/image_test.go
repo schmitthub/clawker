@@ -326,3 +326,63 @@ func TestImageInspect(t *testing.T) {
 		})
 	}
 }
+
+func TestImageTag(t *testing.T) {
+	ctx := context.Background()
+
+	// Build a managed image to tag
+	tagTestTag := "whail-test-tag-src:latest"
+	tagTestTarget := "whail-test-tag-dst:latest"
+
+	tarBuf := new(bytes.Buffer)
+	dockerfile := "FROM " + testImageBase + "\nCMD [\"echo\", \"tag-test\"]\n"
+	if err := createTarWithDockerfile(tarBuf, dockerfile); err != nil {
+		t.Fatalf("Failed to create build context: %v", err)
+	}
+
+	buildOpts := client.ImageBuildOptions{
+		Tags:       []string{tagTestTag},
+		Labels:     testEngine.imageLabels(),
+		Dockerfile: "Dockerfile",
+		Remove:     true,
+	}
+
+	resp, err := testEngine.ImageBuild(ctx, tarBuf, buildOpts)
+	if err != nil {
+		t.Fatalf("Failed to build test image: %v", err)
+	}
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	resp.Body.Close()
+
+	t.Cleanup(func() {
+		testEngine.APIClient.ImageRemove(ctx, tagTestTag, client.ImageRemoveOptions{Force: true})
+		testEngine.APIClient.ImageRemove(ctx, tagTestTarget, client.ImageRemoveOptions{Force: true})
+	})
+
+	t.Run("should tag managed image", func(t *testing.T) {
+		_, err := testEngine.ImageTag(ctx, ImageTagOptions{
+			Source: tagTestTag,
+			Target: tagTestTarget,
+		})
+		if err != nil {
+			t.Fatalf("ImageTag failed: %v", err)
+		}
+
+		// Verify the new tag exists
+		_, err = testEngine.APIClient.ImageInspect(ctx, tagTestTarget)
+		if err != nil {
+			t.Fatalf("Tagged image not found: %v", err)
+		}
+	})
+
+	t.Run("should reject unmanaged image", func(t *testing.T) {
+		_, err := testEngine.ImageTag(ctx, ImageTagOptions{
+			Source: unmanagedTag,
+			Target: "whail-test-unmanaged-tagged:latest",
+		})
+		if err == nil {
+			t.Fatal("Expected error for unmanaged image but got none")
+		}
+	})
+}

@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 // TestSshAgentProxy_SocketCreation verifies the SSH agent proxy creates the socket
@@ -21,19 +22,17 @@ func TestSshAgentProxy_SocketCreation(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
-	// The ssh-agent-proxy is a Go binary, not a shell script
-	// For this test, we'll simulate what it does: create a socket and forward to the proxy
 	// Create a mock ssh-agent-proxy script for testing
 	mockProxyScript := `#!/bin/sh
 # Mock ssh-agent-proxy for testing
@@ -55,12 +54,12 @@ echo "SOCKET_CREATED"
 # In a real scenario, this would listen on the socket
 # For testing, we just verify the path exists
 `
-	createMock := []string{"sh", "-c", "cat > /tmp/ssh-agent-proxy << 'EOF'\n" + mockProxyScript + "\nEOF"}
-	execResult, err := result.Exec(ctx, createMock)
+	createMock := "cat > /tmp/ssh-agent-proxy << 'EOF'\n" + mockProxyScript + "\nEOF"
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", createMock)
 	require.NoError(t, err, "failed to create mock ssh-agent-proxy")
 	require.Equal(t, 0, execResult.ExitCode, "failed to create mock")
 
-	_, err = result.Exec(ctx, []string{"chmod", "+x", "/tmp/ssh-agent-proxy"})
+	_, err = ctr.Exec(ctx, client, "chmod", "+x", "/tmp/ssh-agent-proxy")
 	require.NoError(t, err, "failed to chmod mock")
 
 	// Run the mock proxy
@@ -70,7 +69,7 @@ echo "SOCKET_CREATED"
 		export CLAWKER_HOST_PROXY
 		/tmp/ssh-agent-proxy
 	`
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", runScript})
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", runScript)
 	require.NoError(t, err, "failed to run ssh-agent-proxy")
 
 	t.Logf("ssh-agent-proxy output: %s", execResult.Stdout)
@@ -79,7 +78,7 @@ echo "SOCKET_CREATED"
 	assert.Contains(t, execResult.Stdout, "SOCKET_CREATED", "socket should be created")
 
 	// Verify the socket path exists
-	checkSocket, err := result.Exec(ctx, []string{"sh", "-c", "test -e /home/claude/.ssh/agent.sock && echo EXISTS"})
+	checkSocket, err := ctr.Exec(ctx, client, "sh", "-c", "test -e /home/claude/.ssh/agent.sock && echo EXISTS")
 	require.NoError(t, err, "failed to check socket")
 	assert.Contains(t, checkSocket.Stdout, "EXISTS", "socket path should exist")
 }
@@ -94,19 +93,18 @@ func TestSshAgentProxy_ForwardsToProxy(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
 	// Simulate what the ssh-agent-proxy does: POST to /ssh/agent
-	// This is what the Go binary would do when it receives an SSH agent request
 	simulateAgentRequest := `
 		# Simulate SSH agent request (binary data)
 		echo -n "SSH_AGENT_REQUEST_DATA" | \
@@ -117,7 +115,7 @@ func TestSshAgentProxy_ForwardsToProxy(t *testing.T) {
 		echo ""
 		echo "REQUEST_SENT"
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", simulateAgentRequest})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", simulateAgentRequest)
 	require.NoError(t, err, "failed to send agent request")
 
 	t.Logf("agent request output: %s", execResult.Stdout)
@@ -140,35 +138,18 @@ func TestSshAgentProxy_EntrypointIntegration(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "entrypoint.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
-	// Create a mock ssh-agent-proxy that records it was called
-	mockProxyScript := `#!/bin/sh
-mkdir -p /home/claude/.ssh
-touch /home/claude/.ssh/agent.sock
-echo "PROXY_STARTED" > /tmp/ssh-proxy-status
-# Exit immediately for testing (real one would stay running)
-exit 0
-`
-	createMock := []string{"sh", "-c", "cat > /tmp/ssh-agent-proxy << 'EOF'\n" + mockProxyScript + "\nEOF"}
-	execResult, err := result.Exec(ctx, createMock)
-	require.NoError(t, err, "failed to create mock")
-	require.Equal(t, 0, execResult.ExitCode, "failed to create mock")
-
-	_, err = result.Exec(ctx, []string{"chmod", "+x", "/tmp/ssh-agent-proxy"})
-	require.NoError(t, err, "failed to chmod mock")
-
 	// Test the ssh_setup_known_hosts function by inlining it
-	// (We can't source entrypoint.sh because it runs global code including exec "$@")
 	testScript := `
 		HOME=/home/claude
 		CLAWKER_HOST_PROXY="` + proxyURL + `"
@@ -195,7 +176,7 @@ KNOWN_HOSTS
 			echo "KNOWN_HOSTS_CREATED"
 		fi
 	`
-	execResult, err = result.Exec(ctx, []string{"bash", "-c", testScript})
+	execResult, err := ctr.Exec(ctx, client, "bash", "-c", testScript)
 	require.NoError(t, err, "failed to run test script")
 
 	t.Logf("test output: %s", execResult.Stdout)
@@ -211,9 +192,9 @@ func TestSshAgentProxy_SocketPermissions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine")
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image)
 
 	// Create a socket file with correct ownership
 	setupScript := `
@@ -228,7 +209,7 @@ func TestSshAgentProxy_SocketPermissions(t *testing.T) {
 		# Verify permissions
 		stat -c "%a %U" /home/claude/.ssh/agent.sock
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", setupScript})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", setupScript)
 	require.NoError(t, err, "failed to setup socket")
 
 	t.Logf("socket permissions: %s", execResult.Stdout)
@@ -247,13 +228,11 @@ func TestSshAgentProxy_DirectSocketFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine")
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image)
 
 	// Test the direct socket path (Linux case)
-	// When SSH_AUTH_SOCK points to a working socket, no proxy is needed
-	// This test validates that the entrypoint's socket detection logic works
 	testScript := `
 		HOME=/home/claude
 		# Create a fake socket file that simulates a mounted socket
@@ -264,13 +243,11 @@ func TestSshAgentProxy_DirectSocketFallback(t *testing.T) {
 		export HOME SSH_AUTH_SOCK
 
 		# The entrypoint checks if socket exists with [ -e "$SSH_AUTH_SOCK" ]
-		# Test the same logic here without sourcing entrypoint.sh
-		# (We can't source entrypoint.sh because it runs global code including exec "$@")
 		if [ -e "$SSH_AUTH_SOCK" ]; then
 			echo "SOCKET_EXISTS"
 		fi
 	`
-	execResult, err := result.Exec(ctx, []string{"bash", "-c", testScript})
+	execResult, err := ctr.Exec(ctx, client, "bash", "-c", testScript)
 	require.NoError(t, err, "failed to run test script")
 
 	t.Logf("test output: %s", execResult.Stdout)

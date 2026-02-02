@@ -5,7 +5,12 @@
 FROM golang:1.23-alpine AS ssh-proxy-builder
 WORKDIR /build
 COPY ssh-agent-proxy.go .
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o ssh-agent-proxy ssh-agent-proxy.go
+{{- else}}
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o ssh-agent-proxy ssh-agent-proxy.go
+{{- end}}
 
 FROM {{.BaseImage}}
 
@@ -30,7 +35,12 @@ ARG {{.Name}}{{if .Default}}="{{.Default}}"{{end}}
 
 # Install system packages
 {{if .IsAlpine -}}
-RUN apk add --no-cache \
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add \
+{{- else}}
+RUN apk add \
+{{- end}}
     bash \
     less \
     git \
@@ -56,9 +66,15 @@ RUN apk add --no-cache \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
-    && rm -rf /var/cache/apk/*
+    && true
 {{else -}}
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+{{- else}}
 RUN apt-get update && apt-get install -y --no-install-recommends \
+{{- end}}
     less \
     git \
     procps \
@@ -84,7 +100,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && true
 {{end}}
 
 {{/* Injection point: after_packages */}}
@@ -96,18 +112,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Docker CLI (not daemon - we use host's Docker via socket mount)
 {{if .IsAlpine -}}
-RUN apk add --no-cache \
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add \
+{{- else}}
+RUN apk add \
+{{- end}}
     docker-cli \
     docker-cli-buildx \
     docker-cli-compose
 {{else -}}
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    install -m 0755 -d /etc/apt/keyrings && \
+{{- else}}
 RUN install -m 0755 -d /etc/apt/keyrings && \
+{{- end}}
     curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin
 {{end}}
 
 # Setup locale
@@ -173,55 +199,27 @@ WORKDIR {{.WorkspacePath}}
 
 # Install git-delta
 {{if .IsAlpine -}}
-RUN apk add --no-cache delta
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add delta
+{{- else}}
+RUN apk add delta
+{{- end}}
 {{else -}}
 ARG GIT_DELTA_VERSION=0.18.2
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/tmp/downloads \
+    ARCH=$(dpkg --print-architecture) && \
+{{- else}}
 RUN ARCH=$(dpkg --print-architecture) && \
-    wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-    dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-    rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
+{{- end}}
+    DEB="git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
+    [ -f "/tmp/downloads/$DEB" ] || wget -O "/tmp/downloads/$DEB" "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/$DEB" && \
+    dpkg -i "/tmp/downloads/$DEB"
 {{end}}
-
-{{/* COPY instructions (as root, for proper permissions) */}}
-{{- if .Instructions}}
-{{- range .Instructions.Copy}}
-COPY {{if .Chown}}--chown={{.Chown}} {{end}}{{if .Chmod}}--chmod={{.Chmod}} {{end}}{{.Src}} {{.Dest}}
-{{- end}}
-{{- end}}
-
-{{/* Labels */}}
-{{- if .Instructions}}
-{{- range $key, $value := .Instructions.Labels}}
-LABEL {{$key}}="{{$value}}"
-{{- end}}
-{{- end}}
-
-{{/* Clawker Image Labels */}}
-{{- if .ImageLabels}}
-{{- range $key, $value := .ImageLabels}}
-LABEL {{$key}}="{{$value}}"
-{{- end}}
-{{- end}}
-
-{{/* EXPOSE ports */}}
-{{- if .Instructions}}
-{{- range .Instructions.Expose}}
-EXPOSE {{.Port}}{{if .Protocol}}/{{.Protocol}}{{end}}
-{{- end}}
-{{- end}}
-
-{{/* VOLUME declarations */}}
-{{- if .Instructions}}
-{{- range .Instructions.Volumes}}
-VOLUME {{.}}
-{{- end}}
-{{- end}}
 
 # Copy and set up firewall script
 {{if .EnableFirewall -}}
-# Firewall domain configuration (passed as JSON environment variable)
-ENV CLAWKER_FIREWALL_DOMAINS='{{.FirewallDomainsJSON}}'
-ENV CLAWKER_FIREWALL_OVERRIDE='{{.FirewallOverride}}'
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
     echo "${USERNAME} ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/${USERNAME}-firewall && \
@@ -241,10 +239,8 @@ RUN chmod +x /usr/local/bin/ssh-agent-proxy
 # Switch to non-root user
 USER ${USERNAME}
 
-# Set environment config
+# Set static environment (PATH, SHELL, BROWSER — not config-dependent)
 ENV SHELL={{.Shell}}
-ENV EDITOR={{.Editor}}
-ENV VISUAL={{.Visual}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
@@ -253,13 +249,6 @@ ENV BROWSER=/usr/local/bin/host-open
 {{- if .Inject}}
 {{- range .Inject.AfterUserSwitch}}
 {{.}}
-{{- end}}
-{{- end}}
-
-{{/* User-defined ENV variables from instructions */}}
-{{- if .Instructions}}
-{{- range $key, $value := .Instructions.Env}}
-ENV {{$key}}="{{$value}}"
 {{- end}}
 {{- end}}
 
@@ -303,35 +292,24 @@ RUN {{.Debian}}
 {{- end}}
 {{- end}}
 
-{{/* Shell configuration */}}
-{{- if and .Instructions (gt (len .Instructions.Shell) 0)}}
-SHELL [{{range $i, $e := .Instructions.Shell}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
-{{- end}}
-
-# Set the default editor and visual
-ENV EDITOR={{.Editor}}
-ENV VISUAL={{.Visual}}
-
-{{/* Extra ENV from agent config */}}
-{{- range $key, $value := .ExtraEnv}}
-ENV {{$key}}="{{$value}}"
-{{- end}}
-
-{{/* HEALTHCHECK - default checks for ready signal file */}}
-{{- if and .Instructions .Instructions.Healthcheck}}
-HEALTHCHECK {{if .Instructions.Healthcheck.Interval}}--interval={{.Instructions.Healthcheck.Interval}} {{end}}{{if .Instructions.Healthcheck.Timeout}}--timeout={{.Instructions.Healthcheck.Timeout}} {{end}}{{if .Instructions.Healthcheck.Retries}}--retries={{.Instructions.Healthcheck.Retries}} {{end}}{{if .Instructions.Healthcheck.StartPeriod}}--start-period={{.Instructions.Healthcheck.StartPeriod}} {{end}}CMD [{{range $i, $e := .Instructions.Healthcheck.Cmd}}{{if $i}}, {{end}}"{{$e}}"{{end}}]
-{{- else}}
-# Health check for container readiness (checks for ready signal file)
-HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
-    CMD test -f /var/run/clawker/ready || exit 1
-{{- end}}
-
 # Install Claude Code
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/home/${USERNAME}/.npm \
+    curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{- else}}
 RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{- end}}
 
 # Stage config files for volume initialization (not shadowed by volume mount)
 COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude-init/statusline.sh
 COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude-init/settings.json
+
+{{/* COPY instructions (as user, after expensive build steps for better caching) */}}
+{{- if .Instructions}}
+{{- range .Instructions.Copy}}
+COPY {{if .Chown}}--chown={{.Chown}} {{end}}{{if .Chmod}}--chmod={{.Chmod}} {{end}}{{.Src}} {{.Dest}}
+{{- end}}
+{{- end}}
 
 {{/* Injection point: after_claude_install */}}
 {{- if .Inject}}
@@ -339,6 +317,10 @@ COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.cla
 {{.}}
 {{- end}}
 {{- end}}
+
+# Health check for container readiness (checks for ready signal file)
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
+    CMD test -f /var/run/clawker/ready || exit 1
 
 {{/* Injection point: before_entrypoint */}}
 {{- if .Inject}}

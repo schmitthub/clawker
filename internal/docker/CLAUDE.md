@@ -3,117 +3,70 @@
 Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and naming conventions.
 
 ## TODO
-- [ ] This package overall seems like it needs a review and possible simplification or refactor. it seems confused at times about what its purpose is and bypasses whail at times which might not be appropriate. output parsing for example should probably be handled by command consumers using a separate parsing package etc
-- [ ] Remove type refs and allow callers to use moby types directly
-
-## Architecture
-
-```
-internal/docker/     → Clawker labels, naming, project-aware queries
-    ↓ wraps
-pkg/whail/           → Reusable Docker engine with label-based isolation
-    ↓ wraps
-github.com/moby/moby/client  → Docker SDK (NEVER import directly outside pkg/whail)
-```
+- [ ] Review package boundaries — some output parsing bypasses whail and may belong in command consumers
+- [ ] Consider removing type re-exports; let callers use moby types directly
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
-| `client_test.go` | Unit tests for `parseContainers`, `isNotFoundError` |
-| `labels.go` | Label constants (`com.clawker.*`), `ContainerLabels()`, `VolumeLabels()`, filter helpers |
-| `names.go` | `ContainerName()` → `clawker.project.agent`, `VolumeName()`, `ParseContainerName()`, `GenerateRandomName()` |
-| `volume.go` | `EnsureVolume()`, `CopyToVolume()`, `matchPattern()`, `shouldIgnore()`, `LoadIgnorePatterns()` |
-| `volume_test.go` | Unit tests for `matchPattern`, `shouldIgnore`, `LoadIgnorePatterns` |
-| `opts.go` | `MemBytes`, `MemSwapBytes`, `NanoCPUs`, `ParseCPUs` for Docker API use |
-| `dockertest/` | Test doubles: `FakeClient` composing `whailtest.FakeAPIClient` into real `*docker.Client` |
+| `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
+| `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
+| `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
+| `env.go` | `RuntimeEnv(cfg)` — config-derived env vars for container creation |
+| `volume.go` | `EnsureVolume`, `CopyToVolume`, `.clawkerignore` support |
+| `opts.go` | Resource limit types implementing `pflag.Value` for CLI flags |
+| `types.go` | Re-exports ~35 Docker types from whail for consumer convenience |
+| `dockertest/` | Test fakes: `NewFakeClient()` with function-field overrides |
 
 ## Naming Convention
 
 - **3-segment** (with project): `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
-- **2-segment** (orphan/empty project): `clawker.agent` (e.g., `clawker.ralph`)
+- **2-segment** (empty project): `clawker.agent` (e.g., `clawker.ralph`) — no empty segment
 - **Volumes**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
+- **Network**: constant `NetworkName = "clawker-net"`
 
-`ContainerName("", "ralph")` → `"clawker.ralph"` (2-segment, no empty segment)
+## Label Constants
 
-## Label Constants (`labels.go`)
+`LabelPrefix` (`com.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`
 
-Clawker label keys (exported, used by label/filter helpers):
+Engine config constants (for `whail.EngineOptions`): `EngineLabelPrefix` (`com.clawker` without trailing dot), `EngineManagedLabel`, `ManagedLabelValue`
 
-```go
-const (
-    LabelPrefix  = "com.clawker."        // Prefix for all clawker labels (with trailing dot)
-    LabelManaged = LabelPrefix + "managed"
-    LabelProject = LabelPrefix + "project"
-    LabelAgent   = LabelPrefix + "agent"
-    LabelVersion = LabelPrefix + "version"
-    LabelImage   = LabelPrefix + "image"
-    LabelCreated = LabelPrefix + "created"
-    LabelWorkdir = LabelPrefix + "workdir"
-    LabelPurpose = LabelPrefix + "purpose"
-)
-```
+## Label Constructors
 
-Engine configuration constants (passed to `whail.EngineOptions`):
+- `ContainerLabels(project, agent, version, image, workdir)` — managed + agent + version + image + created + workdir; project omitted when empty
+- `VolumeLabels(project, agent, purpose)` — managed + agent + purpose; project omitted when empty
+- `ImageLabels(project, version)` — managed + version + created; project omitted when empty
+- `NetworkLabels()` — managed only
 
-```go
-const EngineLabelPrefix  = "com.clawker"  // Without trailing dot — whail adds separator
-const EngineManagedLabel = "managed"       // Managed label key for EngineOptions
-const ManagedLabelValue  = "true"          // Value for managed label
-```
+## Filter Functions
 
-## Labels (`com.clawker.*`)
+- `ClawkerFilter()` — all managed resources (`com.clawker.managed=true`)
+- `ProjectFilter(project)` — managed + project match
+- `AgentFilter(project, agent)` — managed + project + agent match
 
-| Label | Example |
-|-------|---------|
-| `com.clawker.managed` | `true` |
-| `com.clawker.project` | `myapp` (omitted when project is empty) |
-| `com.clawker.agent` | `ralph` |
-| `com.clawker.version` | `1.0.0` |
-| `com.clawker.image` | `clawker-myapp:dev` |
-| `com.clawker.workdir` | `/Users/dev/myapp` |
-| `com.clawker.created` | RFC3339 timestamp |
-| `com.clawker.purpose` | `workspace` (volumes only) |
+All return `whail.Filters`.
 
-## Filter Functions (`labels.go`)
+## Naming Functions (`names.go`)
+
+- `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — resource name builders
+- `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
+- `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
+- `ParseContainerName(name)` → `(project, agent)`, `IsAlpineImage(imageRef)` — parsing utilities
+- `GenerateRandomName()` — Docker-style adjective-noun pair
+
+Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
+
+## Client (`client.go`)
 
 ```go
-func ClawkerFilter() whail.Filters                                    // All managed resources
-func ProjectFilter(project string) whail.Filters                      // By project
-func AgentFilter(project, agent string) whail.Filters                  // By project+agent
-func ImageLabels(project, version string) map[string]string            // Labels for built images
-func NetworkLabels(project string) map[string]string                   // Labels for networks
-```
+func NewClient(ctx context.Context) (*Client, error)
 
-## Additional Name Functions (`names.go`)
+type Client struct {
+    *whail.Engine  // embedded — all whail methods available
+}
 
-```go
-func ImageTag(project string) string                                   // "clawker-<project>:latest"
-func ContainerNamePrefix(project string) string                        // "clawker.<project>."
-func IsAlpineImage(imageRef string) bool                               // Detects Alpine base images
-func ContainerNamesFromAgents(project string, agents []string) []string // Batch name generation
-```
-
-## Opts Types (`opts.go`)
-
-Resource limit types implementing `pflag.Value` for CLI flag parsing:
-
-| Type | Constructor | Purpose |
-|------|-------------|---------|
-| `MemBytes` | — | Memory size (bytes) |
-| `MemSwapBytes` | — | Swap size (bytes) |
-| `NanoCPUs` | — | CPU allocation |
-| `UlimitOpt` | `NewUlimitOpt()` | Ulimit settings |
-| `WeightDeviceOpt` | `NewWeightDeviceOpt()` | Block I/O weight |
-| `ThrottleDeviceOpt` | `NewThrottleDeviceOpt()` | Block I/O throttle |
-| `GpuOpts` | `NewGpuOpts()` | GPU access |
-| `MountOpt` | `NewMountOpt()` | Mount specifications |
-| `DeviceOpt` | `NewDeviceOpt()` | Device access |
-
-## Client Types (`client.go`)
-
-```go
 type Container struct {
     ID, Name, Project, Agent, Image, Workdir, Status string
     Created time.Time
@@ -123,72 +76,56 @@ type BuildImageOpts struct {
     Tags []string; Dockerfile string; BuildArgs map[string]*string
     NoCache bool; Labels map[string]string; Target string
     Pull, SuppressOutput bool; NetworkMode string
+    BuildKitEnabled bool   // Routes to BuildKit when true + ContextDir set
+    ContextDir      string // Build context directory (required for BuildKit)
 }
-
-func (c *Client) ImageExists(ctx, imageRef) (bool, error)
-func (c *Client) IsMonitoringActive(ctx) bool
-func (c *Client) BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts) error
-func (c *Client) ListContainers(ctx, project string, allStates bool) ([]Container, error)
-func (c *Client) ListContainersByProject(ctx, project string, allStates bool) ([]Container, error)
-func (c *Client) FindContainerByAgent(ctx, project, agent string) (*Container, error)
-func (c *Client) RemoveContainerWithVolumes(ctx, containerID string, force bool) error
 ```
+
+### Client Methods
+
+- `Close()` — closes underlying engine
+- `BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts)` — routes: BuildKit (opts.BuildKitEnabled && opts.ContextDir) or legacy SDK
+- `ImageExists(ctx, imageRef)`, `TagImage(ctx, source, target)` — image helpers
+- `IsMonitoringActive(ctx)` — checks for running monitoring container
+- `ListContainers(ctx, project, allStates)`, `ListContainersByProject(ctx, project, allStates)` — filtered container lists
+- `FindContainerByAgent(ctx, project, agent)` — single container lookup
+- `RemoveContainerWithVolumes(ctx, containerID, force)` — removes container + associated agent volumes
+
+## BuildKit (`buildkit.go`)
+
+- `Pinger` — type alias for `whail.Pinger`
+- `BuildKitEnabled(ctx, Pinger)` — delegates to `whail.BuildKitEnabled` (env var > daemon ping > OS heuristic)
+- `WireBuildKit(c *Client)` — sets `BuildKitImageBuilder` closure on engine; encapsulates `buildkit` subpackage import
+
+Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail.BuildKitEnabled` directly.
+
+## Environment (`env.go`)
+
+- `RuntimeEnv(cfg)` — returns `[]string` of config-derived env vars for container creation (editor, firewall, agent env)
 
 ## Volume Utilities (`volume.go`)
 
-```go
-func LoadIgnorePatterns(path string) ([]string, error)  // Parse .clawkerignore
-```
+- `(*Client).EnsureVolume(...)`, `(*Client).CopyToVolume(...)` — volume lifecycle
+- `LoadIgnorePatterns(path)` — parses `.clawkerignore` file
+
+## Opts Types (`opts.go`)
+
+Resource limit types implementing `pflag.Value`: `MemBytes`, `MemSwapBytes`, `NanoCPUs`
+
+Container option types with `New*`, `Set`, `GetAll`, `Len`: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`
+
+Standalone: `ParseCPUs(value string) (int64, error)`
 
 ## Type Re-exports (`types.go`)
 
-Re-exports whail types for use by command packages: `Filters`, `Labels`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerCreateOptions`, `SDKContainerCreateOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ContainerWaitCondition`, `ContainerStartOptions`, `EnsureNetworkOptions`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageListOptions`, `ImageRemoveOptions`, `ImageBuildOptions`, `ImagePullOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `DockerError`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`, `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
+Re-exports ~35 Docker types from whail for consumer convenience: container options (`ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerCreateOptions`, `SDKContainerCreateOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ContainerStartOptions`), exec options (`ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`), image/volume/network options (`ImageListOptions`, `ImageRemoveOptions`, `ImageBuildOptions`, `ImagePullOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `EnsureNetworkOptions`), copy options (`CopyToContainerOptions`, `CopyFromContainerOptions`), resource management (`Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`), shared types (`Filters`, `Labels`, `HijackedResponse`, `DockerError`), wait conditions (`ContainerWaitCondition`, `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`).
 
-## Client Usage
+## Patterns
 
-```go
-// ALWAYS use f.Client(ctx) from Factory. Never call docker.NewClient() directly.
-client, err := f.Client(ctx)
-// Do NOT defer client.Close() - Factory manages lifecycle
-
-containers, _ := client.ListContainersByProject(ctx, project, true)
-container, _ := client.FindContainerByAgent(ctx, project, agent)
-client.RemoveContainerWithVolumes(ctx, containerID, true)
-
-// Whail methods available via embedded Engine
-client.ContainerStart(ctx, id)
-client.ContainerStop(ctx, id, nil)
-```
-
-## Whail Engine Method Pattern
-
-The `whail.Engine` checks `IsContainerManaged` before operating. See `pkg/whail/` for details. Key behavior: callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
-
-## Channel-Based Methods (ContainerWait)
-
-Return `nil` for response channel when unmanaged. Use buffered error channels. Wrap SDK errors in goroutines for consistent formatting.
-
-## Context Pattern
-
-All methods accept `ctx context.Context` as first parameter. Never store context in structs. Use `context.Background()` in deferred cleanup.
+- **Context**: All methods accept `ctx context.Context` as first param. Never store in structs. Use `context.Background()` in deferred cleanup.
+- **ContainerWait**: Returns `nil` response channel for unmanaged containers. Use buffered error channels.
+- **Import rule**: No package imports `pkg/whail` directly except `internal/docker`. No package imports moby client directly except `pkg/whail`.
 
 ## Testing
 
-| Pattern | Package | Use Case |
-|---------|---------|----------|
-| **dockertest** (recommended) | `internal/docker/dockertest` | CLI command tests — real docker-layer code through whail jail |
-| **whailtest** | `pkg/whail/whailtest` | Testing whail Engine jail behavior directly |
-
-```go
-// dockertest (recommended)
-fake := dockertest.NewFakeClient()
-fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
-// fake.Client -> inject into command Options; fake.FakeAPI -> set Fn fields
-fake.AssertCalled(t, "ContainerList")
-
-// whailtest (whail jail testing)
-fake := whailtest.NewFakeAPIClient()
-engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
-```
-
-See `.claude/rules/testing.md` and `.claude/memories/TESTING-REFERENCE.md` for full patterns.
+Test fake: `dockertest.NewFakeClient()` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.

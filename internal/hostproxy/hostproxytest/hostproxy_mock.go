@@ -1,4 +1,4 @@
-package internals
+package hostproxytest
 
 import (
 	"encoding/json"

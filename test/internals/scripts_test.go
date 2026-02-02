@@ -2,60 +2,15 @@ package internals
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 )
-
-// findProjectRoot walks up from current directory to find the project root
-func findProjectRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", os.ErrNotExist
-		}
-		dir = parent
-	}
-}
-
-// copyScriptToContainer copies a script from internal/build/templates/ into the container
-func copyScriptToContainer(ctx context.Context, t *testing.T, result *ContainerResult, scriptName string) {
-	t.Helper()
-
-	projectRoot, err := findProjectRoot()
-	require.NoError(t, err, "failed to find project root")
-
-	scriptPath := filepath.Join(projectRoot, "internal", "build", "templates", scriptName)
-	content, err := os.ReadFile(scriptPath)
-	require.NoError(t, err, "failed to read script %s", scriptName)
-
-	// Create script in container using exec with heredoc
-	// Use /tmp/ instead of /tmp/ since containers run as non-root user
-	destPath := "/tmp/" + scriptName
-	createScript := []string{"sh", "-c", "cat > " + destPath + " << 'SCRIPT_EOF'\n" + string(content) + "\nSCRIPT_EOF"}
-	execResult, err := result.Exec(ctx, createScript)
-	require.NoError(t, err, "failed to copy script to container")
-	require.Equal(t, 0, execResult.ExitCode, "failed to copy script: %s", execResult.Stdout)
-
-	// Make executable
-	chmodResult, err := result.Exec(ctx, []string{"chmod", "+x", destPath})
-	require.NoError(t, err, "failed to chmod script")
-	require.Equal(t, 0, chmodResult.ExitCode, "failed to chmod script")
-}
 
 // TestEntrypoint_ReadySignal verifies the entrypoint creates the ready file
 func TestEntrypoint_ReadySignal(t *testing.T) {
@@ -63,51 +18,41 @@ func TestEntrypoint_ReadySignal(t *testing.T) {
 		t.Skip("skipping internals test in short mode")
 	}
 
-	images := []struct {
-		name       string
-		dockerfile string
-	}{
-		{"alpine", "testdata/Dockerfile.alpine"},
-		{"debian", "testdata/Dockerfile.debian"},
-	}
+	client := harness.NewTestClient(t)
 
-	for _, img := range images {
-		t.Run(img.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
+	// Build image with entrypoint script baked in
+	image := harness.BuildLightImage(t, client, "entrypoint.sh")
 
-			// Start container from test Dockerfile
-			result, err := StartFromDockerfile(ctx, t, img.dockerfile)
-			require.NoError(t, err, "failed to start container")
+	// Test on Alpine (Debian variant removed — BuildLightImage uses Alpine)
+	t.Run("alpine", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
 
-			// Copy entrypoint script
-			copyScriptToContainer(ctx, t, result, "entrypoint.sh")
+		ctr := harness.RunContainer(t, client, image)
 
-			// Run only the emit_ready function from entrypoint (not the full script)
-			// Extract the function and run it, avoiding the exec "$@" at the end
-			execResult, err := result.Exec(ctx, []string{"bash", "-c", `
-				# Extract and run just the emit_ready function
-				emit_ready() {
-					mkdir -p /var/run/clawker
-					echo "ts=$(date +%s) pid=$$" > /var/run/clawker/ready
-					echo "[clawker] ready ts=$(date +%s) agent=${CLAWKER_AGENT:-default}"
-				}
-				emit_ready
-			`})
-			require.NoError(t, err, "failed to run entrypoint")
-			assert.Equal(t, 0, execResult.ExitCode, "entrypoint failed: %s", execResult.Stdout)
+		// Run only the emit_ready function from entrypoint (not the full script)
+		execResult, err := ctr.Exec(ctx, client, "bash", "-c", `
+			# Extract and run just the emit_ready function
+			emit_ready() {
+				mkdir -p /var/run/clawker
+				echo "ts=$(date +%s) pid=$$" > /var/run/clawker/ready
+				echo "[clawker] ready ts=$(date +%s) agent=${CLAWKER_AGENT:-default}"
+			}
+			emit_ready
+		`)
+		require.NoError(t, err, "failed to run entrypoint")
+		assert.Equal(t, 0, execResult.ExitCode, "entrypoint failed: %s", execResult.CleanOutput())
 
-			// Verify ready file was created
-			err = result.WaitForFile(ctx, "/var/run/clawker/ready", 5*time.Second)
-			require.NoError(t, err, "ready file not created")
+		// Verify ready file was created
+		err = ctr.WaitForFile(ctx, client, "/var/run/clawker/ready", 5*time.Second)
+		require.NoError(t, err, "ready file not created")
 
-			// Verify ready file content
-			catResult, err := result.Exec(ctx, []string{"cat", "/var/run/clawker/ready"})
-			require.NoError(t, err, "failed to read ready file")
-			assert.Contains(t, catResult.Stdout, "ts=", "ready file missing timestamp")
-			assert.Contains(t, catResult.Stdout, "pid=", "ready file missing pid")
-		})
-	}
+		// Verify ready file content
+		catResult, err := ctr.Exec(ctx, client, "cat", "/var/run/clawker/ready")
+		require.NoError(t, err, "failed to read ready file")
+		assert.Contains(t, catResult.Stdout, "ts=", "ready file missing timestamp")
+		assert.Contains(t, catResult.Stdout, "pid=", "ready file missing pid")
+	})
 }
 
 // TestEntrypoint_GitConfigFiltering verifies host gitconfig is filtered correctly
@@ -119,12 +64,9 @@ func TestEntrypoint_GitConfigFiltering(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start container from test Dockerfile
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine")
-	require.NoError(t, err, "failed to start container")
-
-	// Copy entrypoint script
-	copyScriptToContainer(ctx, t, result, "entrypoint.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "entrypoint.sh")
+	ctr := harness.RunContainer(t, client, image)
 
 	// Create a mock host gitconfig with credential.helper that should be filtered
 	hostGitconfig := `[user]
@@ -139,8 +81,8 @@ func TestEntrypoint_GitConfigFiltering(t *testing.T) {
 `
 
 	// Write the mock host gitconfig to /tmp/host-gitconfig
-	createConfig := []string{"sh", "-c", "cat > /tmp/host-gitconfig << 'EOF'\n" + hostGitconfig + "\nEOF"}
-	execResult, err := result.Exec(ctx, createConfig)
+	createConfig := "cat > /tmp/host-gitconfig << 'EOF'\n" + hostGitconfig + "\nEOF"
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", createConfig)
 	require.NoError(t, err, "failed to create host gitconfig")
 	require.Equal(t, 0, execResult.ExitCode, "failed to create host gitconfig")
 
@@ -157,9 +99,9 @@ func TestEntrypoint_GitConfigFiltering(t *testing.T) {
 		fi
 		cat "$HOME/.gitconfig"
 	`
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", filterScript})
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", filterScript)
 	require.NoError(t, err, "failed to run gitconfig filtering")
-	assert.Equal(t, 0, execResult.ExitCode, "gitconfig filtering failed: %s", execResult.Stdout)
+	assert.Equal(t, 0, execResult.ExitCode, "gitconfig filtering failed: %s", execResult.CleanOutput())
 
 	// Verify user section is preserved
 	assert.Contains(t, execResult.Stdout, "[user]", "user section should be preserved")
@@ -185,15 +127,11 @@ func TestEntrypoint_SshKnownHosts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start container from test Dockerfile
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine")
-	require.NoError(t, err, "failed to start container")
-
-	// Copy entrypoint script
-	copyScriptToContainer(ctx, t, result, "entrypoint.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "entrypoint.sh")
+	ctr := harness.RunContainer(t, client, image)
 
 	// Run only the ssh_setup_known_hosts function (not the full entrypoint)
-	// We inline the function to avoid exec "$@" at the end of entrypoint.sh
 	sshSetupScript := `
 		HOME=/home/claude
 		ssh_setup_known_hosts() {
@@ -215,9 +153,9 @@ KNOWN_HOSTS
 		ssh_setup_known_hosts
 		cat "$HOME/.ssh/known_hosts"
 	`
-	execResult, err := result.Exec(ctx, []string{"bash", "-c", sshSetupScript})
+	execResult, err := ctr.Exec(ctx, client, "bash", "-c", sshSetupScript)
 	require.NoError(t, err, "failed to run ssh setup")
-	assert.Equal(t, 0, execResult.ExitCode, "ssh setup failed: %s", execResult.Stdout)
+	assert.Equal(t, 0, execResult.ExitCode, "ssh setup failed: %s", execResult.CleanOutput())
 
 	// Verify known hosts contains GitHub, GitLab, and Bitbucket
 	output := execResult.Stdout
@@ -231,7 +169,7 @@ KNOWN_HOSTS
 	assert.Contains(t, output, "ssh-rsa", "known_hosts should contain rsa keys")
 
 	// Verify permissions
-	permResult, err := result.Exec(ctx, []string{"stat", "-c", "%a", "/home/claude/.ssh/known_hosts"})
+	permResult, err := ctr.Exec(ctx, client, "stat", "-c", "%a", "/home/claude/.ssh/known_hosts")
 	require.NoError(t, err, "failed to check known_hosts permissions")
 	assert.Contains(t, permResult.Stdout, "600", "known_hosts should have 600 permissions")
 }
@@ -246,25 +184,21 @@ func TestHostOpen_SendsUrlToProxy(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		// Add host network access for proxy communication
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
-
-	// Copy host-open script
-	copyScriptToContainer(ctx, t, result, "host-open.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "host-open.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get the proxy URL (convert localhost to host.docker.internal for container access)
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
 	// Run host-open with a test URL
 	testURL := "https://example.com/test"
-	execResult, err := result.Exec(ctx, []string{"sh", "-c",
-		"CLAWKER_HOST_PROXY=" + proxyURL + " /tmp/host-open.sh '" + testURL + "'"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"CLAWKER_HOST_PROXY="+proxyURL+" /usr/local/bin/host-open.sh '"+testURL+"'")
 	require.NoError(t, err, "failed to run host-open")
 	// Note: May fail if proxy response doesn't match expected format, but URL should still be recorded
 
@@ -274,7 +208,7 @@ func TestHostOpen_SendsUrlToProxy(t *testing.T) {
 	require.Len(t, openedURLs, 1, "expected 1 URL to be opened")
 	assert.Equal(t, testURL, openedURLs[0], "opened URL should match")
 
-	t.Logf("host-open exit code: %d, output: %s", execResult.ExitCode, execResult.Stdout)
+	t.Logf("host-open exit code: %d, output: %s", execResult.ExitCode, execResult.CleanOutput())
 }
 
 // TestGitCredential_ForwardsToProxy verifies git-credential-clawker forwards requests to proxy
@@ -287,16 +221,13 @@ func TestGitCredential_ForwardsToProxy(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
-
-	// Copy git-credential script
-	copyScriptToContainer(ctx, t, result, "git-credential-clawker.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "git-credential-clawker.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get the proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
@@ -304,11 +235,11 @@ func TestGitCredential_ForwardsToProxy(t *testing.T) {
 	// Test "get" operation
 	getScript := `
 		echo -e "protocol=https\nhost=github.com\n" | \
-		CLAWKER_HOST_PROXY="` + proxyURL + `" /tmp/git-credential-clawker.sh get
+		CLAWKER_HOST_PROXY="` + proxyURL + `" /usr/local/bin/git-credential-clawker.sh get
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", getScript})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", getScript)
 	require.NoError(t, err, "failed to run git-credential get")
-	assert.Equal(t, 0, execResult.ExitCode, "git-credential get failed: %s", execResult.Stdout)
+	assert.Equal(t, 0, execResult.ExitCode, "git-credential get failed: %s", execResult.CleanOutput())
 
 	// Verify mock credentials were returned
 	assert.Contains(t, execResult.Stdout, "username=mock-user", "should return mock username")
@@ -332,16 +263,13 @@ func TestGitCredential_StoreOperation(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
-
-	// Copy git-credential script
-	copyScriptToContainer(ctx, t, result, "git-credential-clawker.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "git-credential-clawker.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get the proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
@@ -349,11 +277,11 @@ func TestGitCredential_StoreOperation(t *testing.T) {
 	// Test "store" operation
 	storeScript := `
 		echo -e "protocol=https\nhost=github.com\nusername=myuser\npassword=mytoken\n" | \
-		CLAWKER_HOST_PROXY="` + proxyURL + `" /tmp/git-credential-clawker.sh store
+		CLAWKER_HOST_PROXY="` + proxyURL + `" /usr/local/bin/git-credential-clawker.sh store
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", storeScript})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", storeScript)
 	require.NoError(t, err, "failed to run git-credential store")
-	assert.Equal(t, 0, execResult.ExitCode, "git-credential store failed: %s", execResult.Stdout)
+	assert.Equal(t, 0, execResult.ExitCode, "git-credential store failed: %s", execResult.CleanOutput())
 
 	// Verify request was recorded
 	creds := proxy.GetGitCreds()
@@ -371,16 +299,13 @@ func TestGitCredential_MissingProxy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine")
-	require.NoError(t, err, "failed to start container")
-
-	// Copy git-credential script
-	copyScriptToContainer(ctx, t, result, "git-credential-clawker.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "git-credential-clawker.sh")
+	ctr := harness.RunContainer(t, client, image)
 
 	// Run without CLAWKER_HOST_PROXY set
-	execResult, err := result.Exec(ctx, []string{"sh", "-c",
-		"echo -e 'protocol=https\\nhost=github.com\\n' | /tmp/git-credential-clawker.sh get 2>&1 || true"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"echo -e 'protocol=https\\nhost=github.com\\n' | /usr/local/bin/git-credential-clawker.sh get 2>&1 || true")
 	require.NoError(t, err, "failed to run git-credential")
 
 	// Should fail with error about missing proxy
@@ -397,24 +322,21 @@ func TestCallbackForwarder_PollsProxy(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
 	// Pre-register a callback session
 	sessionID := "test-session-cb"
-	proxy.Callbacks[sessionID] = &CallbackData{
+	proxy.Callbacks[sessionID] = &hostproxytest.CallbackData{
 		SessionID:    sessionID,
 		OriginalPort: "8080",
 		CallbackPath: "/callback",
 	}
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
-
-	// Copy callback-forwarder script
-	copyScriptToContainer(ctx, t, result, "callback-forwarder.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "callback-forwarder.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get the proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
@@ -428,7 +350,7 @@ func TestCallbackForwarder_PollsProxy(t *testing.T) {
 			break
 		done
 	`
-	_, err = result.Exec(ctx, []string{"sh", "-c", startServerScript})
+	_, err := ctr.Exec(ctx, client, "sh", "-c", startServerScript)
 	require.NoError(t, err, "failed to start test server")
 
 	// Simulate OAuth callback being captured by proxy
@@ -444,15 +366,14 @@ func TestCallbackForwarder_PollsProxy(t *testing.T) {
 		CALLBACK_PORT=8080 \
 		TIMEOUT=10 \
 		POLL_INTERVAL=1 \
-		/tmp/callback-forwarder.sh -v 2>&1 || echo "forwarder exit code: $?"
+		/usr/local/bin/callback-forwarder.sh -v 2>&1 || echo "forwarder exit code: $?"
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", forwarderScript})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", forwarderScript)
 	require.NoError(t, err, "failed to run callback-forwarder")
 
 	t.Logf("callback-forwarder output: %s", execResult.CleanOutput())
 
 	// The forwarder should have attempted to forward the callback
-	// Note: May not succeed if nc server isn't ready, but we can verify it tried
 	assert.Contains(t, execResult.CleanOutput(), "Callback received", "should log callback received")
 }
 
@@ -466,25 +387,22 @@ func TestCallbackForwarder_Timeout(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
 	// Pre-register a callback session but don't set it ready
 	sessionID := "test-session-timeout"
-	proxy.Callbacks[sessionID] = &CallbackData{
+	proxy.Callbacks[sessionID] = &hostproxytest.CallbackData{
 		SessionID:    sessionID,
 		OriginalPort: "8080",
 		CallbackPath: "/callback",
 		Ready:        false, // Never becomes ready
 	}
 
-	// Start container
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
-
-	// Copy callback-forwarder script
-	copyScriptToContainer(ctx, t, result, "callback-forwarder.sh")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "callback-forwarder.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Get the proxy URL
 	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
@@ -496,10 +414,10 @@ func TestCallbackForwarder_Timeout(t *testing.T) {
 		CALLBACK_PORT=8080 \
 		TIMEOUT=3 \
 		POLL_INTERVAL=1 \
-		/tmp/callback-forwarder.sh 2>&1
+		/usr/local/bin/callback-forwarder.sh 2>&1
 		echo "exit_code=$?"
 	`
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", forwarderScript})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", forwarderScript)
 	require.NoError(t, err, "failed to run callback-forwarder")
 
 	// Should timeout

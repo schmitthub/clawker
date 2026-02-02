@@ -2,15 +2,17 @@
 
 Application entry point and version metadata.
 
-## Key Symbols
+## Exported Symbols
 
 ```go
-var Version string  // Set via ldflags at build time
-var Commit  string  // Set via ldflags at build time
+var Version string  // Set via -ldflags at build time
+var Commit  string  // Set via -ldflags at build time
 
-func Main()         // Entry point: builds root command and executes
+func Main()         // Entry point: builds root command via internal/cmd/root and executes
 ```
 
 ## Usage
 
-Called from `cmd/clawker/main.go`. Sets up the root Cobra command via `internal/cmd/root` and runs it.
+Called from `cmd/clawker/main.go`. The `Version` and `Commit` variables are injected by the build system using `-ldflags` and made available to the CLI's `--version` flag.
+
+All symbols are in `cmd.go`.

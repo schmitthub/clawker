@@ -48,6 +48,8 @@ type (
 	// Image result types.
 	ImageListResult = client.ImageListResult
 	ImageSummary    = image.Summary
+	ImageTagOptions = client.ImageTagOptions
+	ImageTagResult  = client.ImageTagResult
 
 	// Volume operation options.
 	VolumeCreateOptions = client.VolumeCreateOptions
@@ -63,9 +65,9 @@ type (
 	WaitCondition = container.WaitCondition
 
 	// Container configuration types.
-	Resources       = container.Resources
-	RestartPolicy   = container.RestartPolicy
-	UpdateConfig    = container.UpdateConfig
+	Resources             = container.Resources
+	RestartPolicy         = container.RestartPolicy
+	UpdateConfig          = container.UpdateConfig
 	ContainerUpdateResult = client.ContainerUpdateResult
 )
 
@@ -75,3 +77,39 @@ const (
 	WaitConditionNextExit   = container.WaitConditionNextExit
 	WaitConditionRemoved    = container.WaitConditionRemoved
 )
+
+// ImageBuildKitOptions configures a BuildKit-based image build.
+// Labels are injected automatically by Engine.ImageBuildKit — callers should
+// set application-specific labels only.
+type ImageBuildKitOptions struct {
+	// Tags are the image tags to apply (e.g., "myimage:latest").
+	Tags []string
+
+	// ContextDir is the build context directory (required).
+	ContextDir string
+
+	// Dockerfile is the path relative to ContextDir (default: "Dockerfile").
+	Dockerfile string
+
+	// BuildArgs are --build-arg key=value pairs.
+	BuildArgs map[string]*string
+
+	// NoCache disables build cache.
+	NoCache bool
+
+	// Labels are applied to the built image. Managed labels are injected
+	// automatically and cannot be overridden.
+	Labels map[string]string
+
+	// Target sets the target build stage.
+	Target string
+
+	// Pull forces pulling base images.
+	Pull bool
+
+	// SuppressOutput suppresses build output logging.
+	SuppressOutput bool
+
+	// NetworkMode sets the network mode for RUN instructions.
+	NetworkMode string
+}

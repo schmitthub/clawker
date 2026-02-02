@@ -18,10 +18,11 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Config, error)
-	Client    func(context.Context) (*docker.Client, error)
-	WorkDir   string
+	IOStreams       *iostreams.IOStreams
+	Config          func() (*config.Config, error)
+	Client          func(context.Context) (*docker.Client, error)
+	BuildKitEnabled func(context.Context) (bool, error)
+	WorkDir         string
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -38,10 +39,11 @@ type BuildOptions struct {
 // NewCmdBuild creates the image build command.
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
 	opts := &BuildOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
-		Client:    f.Client,
-		WorkDir:   f.WorkDir,
+		IOStreams:       f.IOStreams,
+		Config:          f.Config,
+		Client:          f.Client,
+		BuildKitEnabled: f.BuildKitEnabled,
+		WorkDir:         f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -155,6 +157,18 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return err
 	}
 
+	// Check BuildKit availability — cache mounts in Dockerfile require it
+	var buildkitEnabled bool
+	if opts.BuildKitEnabled != nil {
+		var bkErr error
+		buildkitEnabled, bkErr = opts.BuildKitEnabled(ctx)
+		if bkErr != nil {
+			logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+		} else if !buildkitEnabled {
+			cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
+		}
+	}
+
 	// Determine image tag(s)
 	imageTag := docker.ImageTag(cfg.Project)
 
@@ -175,14 +189,15 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// Build with options
 	buildOpts := build.Options{
-		NoCache:        opts.NoCache,
-		Labels:         labels,
-		Target:         opts.Target,
-		Pull:           opts.Pull,
-		SuppressOutput: opts.Quiet || opts.Progress == "none",
-		NetworkMode:    opts.Network,
-		BuildArgs:      buildArgs,
-		Tags:           opts.Tags,
+		NoCache:         opts.NoCache,
+		Labels:          labels,
+		Target:          opts.Target,
+		Pull:            opts.Pull,
+		SuppressOutput:  opts.Quiet || opts.Progress == "none",
+		NetworkMode:     opts.Network,
+		BuildArgs:       buildArgs,
+		Tags:            opts.Tags,
+		BuildKitEnabled: buildkitEnabled,
 	}
 
 	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {

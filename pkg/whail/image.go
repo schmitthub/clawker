@@ -26,6 +26,37 @@ func (e *Engine) ImageBuild(ctx context.Context, buildContext io.Reader, options
 	return resp, nil
 }
 
+// ImageBuildKit builds an image using BuildKit via the configured closure.
+// Labels are merged identically to ImageBuild — managed labels are injected
+// and cannot be overridden by caller-supplied labels.
+//
+// Returns ErrBuildKitNotConfigured if BuildKitImageBuilder is nil.
+func (e *Engine) ImageBuildKit(ctx context.Context, opts ImageBuildKitOptions) error {
+	if e.BuildKitImageBuilder == nil {
+		return ErrBuildKitNotConfigured()
+	}
+
+	// Copy options to avoid mutating caller's struct
+	optsCopy := opts
+	optsCopy.Labels = MergeLabels(
+		e.imageLabels(),
+		opts.Labels,
+	)
+	// Ensure managed label cannot be overridden by caller labels.
+	optsCopy.Labels[e.managedLabelKey] = e.managedLabelValue
+
+	return e.BuildKitImageBuilder(ctx, optsCopy)
+}
+
+// ImageTag adds a tag to an existing managed image.
+// The source image must have the managed label or the operation is rejected.
+func (e *Engine) ImageTag(ctx context.Context, opts ImageTagOptions) (ImageTagResult, error) {
+	if _, err := e.isManagedImage(ctx, opts.Source); err != nil {
+		return ImageTagResult{}, ErrImageNotFound(opts.Source, err)
+	}
+	return e.APIClient.ImageTag(ctx, opts)
+}
+
 // ImageRemove removes an image.
 func (e *Engine) ImageRemove(ctx context.Context, imageID string, options client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	isManaged, err := e.isManagedImage(ctx, imageID)

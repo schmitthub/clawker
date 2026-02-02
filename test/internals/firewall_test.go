@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 // TestFirewall_IptablesDropPolicy verifies the firewall sets OUTPUT chain to DROP
@@ -20,22 +21,21 @@ func TestFirewall_IptablesDropPolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Start container with NET_ADMIN and NET_RAW capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root" // Firewall script requires root
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install additional dependencies needed for firewall script
-	installDeps := []string{"sh", "-c", "apk add --no-cache ipset bind-tools"}
-	execResult, err := result.Exec(ctx, installDeps)
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools")
 	require.NoError(t, err, "failed to install dependencies")
-	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.CleanOutput())
 
 	// Install aggregate tool (simple IP aggregator)
-	installAggregate := []string{"sh", "-c", `
+	installAggregate := `
 		# Create a simple aggregate stub that just passes through IPs
 		cat > /tmp/aggregate << 'EOF'
 #!/bin/sh
@@ -43,13 +43,10 @@ func TestFirewall_IptablesDropPolicy(t *testing.T) {
 cat
 EOF
 		chmod +x /tmp/aggregate
-	`}
-	execResult, err = result.Exec(ctx, installAggregate)
+	`
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", installAggregate)
 	require.NoError(t, err, "failed to install aggregate")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install aggregate")
-
-	// Copy firewall script
-	copyScriptToContainer(ctx, t, result, "init-firewall.sh")
 
 	// Create a minimal test version of the firewall script that skips GitHub IP fetching
 	minimalFirewall := `#!/bin/bash
@@ -88,21 +85,21 @@ iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
 echo "Firewall configured"
 `
-	createFirewall := []string{"sh", "-c", "cat > /tmp/test-firewall.sh << 'EOF'\n" + minimalFirewall + "\nEOF"}
-	execResult, err = result.Exec(ctx, createFirewall)
+	createFirewall := "cat > /tmp/test-firewall.sh << 'EOF'\n" + minimalFirewall + "\nEOF"
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", createFirewall)
 	require.NoError(t, err, "failed to create test firewall script")
 	require.Equal(t, 0, execResult.ExitCode, "failed to create firewall script")
 
-	_, err = result.Exec(ctx, []string{"chmod", "+x", "/tmp/test-firewall.sh"})
+	_, err = ctr.Exec(ctx, client, "chmod", "+x", "/tmp/test-firewall.sh")
 	require.NoError(t, err, "failed to chmod firewall script")
 
 	// Run the minimal firewall script
-	execResult, err = result.Exec(ctx, []string{"bash", "/tmp/test-firewall.sh"})
+	execResult, err = ctr.Exec(ctx, client, "bash", "/tmp/test-firewall.sh")
 	require.NoError(t, err, "failed to run firewall script")
-	require.Equal(t, 0, execResult.ExitCode, "firewall script failed: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "firewall script failed: %s", execResult.CleanOutput())
 
 	// Verify OUTPUT chain policy is DROP
-	policyResult, err := result.Exec(ctx, []string{"iptables", "-L", "OUTPUT", "-n"})
+	policyResult, err := ctr.Exec(ctx, client, "iptables", "-L", "OUTPUT", "-n")
 	require.NoError(t, err, "failed to list iptables rules")
 
 	output := policyResult.Stdout
@@ -121,16 +118,16 @@ func TestFirewall_BlockedDomainsUnreachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Start container with NET_ADMIN and NET_RAW capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root"
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install dependencies
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", "apk add --no-cache ipset"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset")
 	require.NoError(t, err, "failed to install ipset")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install ipset")
 
@@ -160,12 +157,12 @@ func TestFirewall_BlockedDomainsUnreachable(t *testing.T) {
 		# Reject others
 		iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 	`
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", setupFirewall})
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", setupFirewall)
 	require.NoError(t, err, "failed to setup firewall")
-	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.CleanOutput())
 
 	// Try to curl a blocked domain (should fail)
-	curlResult, err := result.Exec(ctx, []string{"sh", "-c", "curl --connect-timeout 5 https://example.com 2>&1 || echo 'BLOCKED'"})
+	curlResult, err := ctr.Exec(ctx, client, "sh", "-c", "curl --connect-timeout 5 https://example.com 2>&1 || echo 'BLOCKED'")
 	require.NoError(t, err, "failed to run curl")
 
 	output := curlResult.Stdout
@@ -190,16 +187,16 @@ func TestFirewall_AllowedDomainsReachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Start container with NET_ADMIN and NET_RAW capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root"
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install dependencies
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", "apk add --no-cache ipset bind-tools"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools")
 	require.NoError(t, err, "failed to install dependencies")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install deps")
 
@@ -237,12 +234,12 @@ func TestFirewall_AllowedDomainsReachable(t *testing.T) {
 
 		echo "Firewall configured with example.com allowed"
 	`
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", setupFirewall})
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", setupFirewall)
 	require.NoError(t, err, "failed to setup firewall")
-	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.CleanOutput())
 
 	// Try to curl the allowed domain (should succeed)
-	curlResult, err := result.Exec(ctx, []string{"sh", "-c", "curl --connect-timeout 10 -s -o /dev/null -w '%{http_code}' https://example.com"})
+	curlResult, err := ctr.Exec(ctx, client, "sh", "-c", "curl --connect-timeout 10 -s -o /dev/null -w '%{http_code}' https://example.com")
 	require.NoError(t, err, "failed to run curl")
 
 	t.Logf("curl response code: %s", curlResult.CleanOutput())
@@ -261,18 +258,18 @@ func TestFirewall_HostDockerInternalAllowed(t *testing.T) {
 	defer cancel()
 
 	// Start mock host proxy
-	proxy := NewMockHostProxy(t)
+	proxy := hostproxytest.NewMockHostProxy(t)
 
-	// Start container with NET_ADMIN and NET_RAW capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root"
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install dependencies
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", "apk add --no-cache ipset"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset")
 	require.NoError(t, err, "failed to install ipset")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install ipset")
 
@@ -329,9 +326,9 @@ func TestFirewall_HostDockerInternalAllowed(t *testing.T) {
 
 		echo "Firewall configured"
 	`
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", setupFirewall})
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", setupFirewall)
 	require.NoError(t, err, "failed to setup firewall")
-	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.CleanOutput())
 
 	// Get the proxy port from the URL
 	proxyURL := proxy.URL()
@@ -339,8 +336,8 @@ func TestFirewall_HostDockerInternalAllowed(t *testing.T) {
 	port := proxyURL[strings.LastIndex(proxyURL, ":")+1:]
 
 	// Try to reach host.docker.internal (our mock proxy)
-	curlResult, err := result.Exec(ctx, []string{"sh", "-c",
-		"curl --connect-timeout 5 -s -v http://host.docker.internal:" + port + "/health 2>&1 || echo 'CURL_EXIT_CODE:'$?"})
+	curlResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"curl --connect-timeout 5 -s -v http://host.docker.internal:"+port+"/health 2>&1 || echo 'CURL_EXIT_CODE:'$?")
 	require.NoError(t, err, "failed to run curl")
 
 	t.Logf("curl to host.docker.internal: %s", curlResult.CleanOutput())
@@ -358,16 +355,16 @@ func TestFirewall_DockerNetworkAllowed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Start container with NET_ADMIN and NET_RAW capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root"
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err, "failed to start container")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install dependencies
-	execResult, err := result.Exec(ctx, []string{"sh", "-c", "apk add --no-cache ipset iproute2"})
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset iproute2")
 	require.NoError(t, err, "failed to install dependencies")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install deps")
 
@@ -417,12 +414,12 @@ func TestFirewall_DockerNetworkAllowed(t *testing.T) {
 
 		echo "Firewall configured"
 	`
-	execResult, err = result.Exec(ctx, []string{"bash", "-c", setupFirewall})
+	execResult, err = ctr.Exec(ctx, client, "bash", "-c", setupFirewall)
 	require.NoError(t, err, "failed to setup firewall")
-	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.Stdout)
+	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.CleanOutput())
 
 	// Verify we can still reach the Docker network (ping gateway)
-	pingResult, err := result.Exec(ctx, []string{"sh", "-c", "ip route | grep default | cut -d' ' -f3 | xargs -I{} ping -c 1 -W 2 {}"})
+	pingResult, err := ctr.Exec(ctx, client, "sh", "-c", "ip route | grep default | cut -d' ' -f3 | xargs -I{} ping -c 1 -W 2 {}")
 	require.NoError(t, err, "failed to run ping")
 
 	t.Logf("ping result: %s", pingResult.Stdout)

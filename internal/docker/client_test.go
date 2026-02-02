@@ -1,12 +1,17 @@
 package docker
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	moby "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
 func TestParseContainers(t *testing.T) {
@@ -225,4 +230,119 @@ func TestIsNotFoundError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// clawkerEngine returns a whail.Engine with clawker's production label config
+// backed by the given FakeAPIClient.
+func clawkerEngine(fake *whailtest.FakeAPIClient) *whail.Engine {
+	return whail.NewFromExisting(fake, whail.EngineOptions{
+		LabelPrefix:  EngineLabelPrefix,
+		ManagedLabel: EngineManagedLabel,
+	})
+}
+
+func TestBuildImage_RoutesToBuildKit(t *testing.T) {
+	fake := whailtest.NewFakeAPIClient()
+	engine := clawkerEngine(fake)
+	client := &Client{Engine: engine}
+
+	capture := &whailtest.BuildKitCapture{}
+	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+
+	ctx := context.Background()
+	err := client.BuildImage(ctx, bytes.NewReader(nil), BuildImageOpts{
+		Tags:            []string{"test:latest"},
+		BuildKitEnabled: true,
+		ContextDir:      "/tmp/build",
+		SuppressOutput:  true,
+		Labels:          map[string]string{"app": "myapp"},
+	})
+	if err != nil {
+		t.Fatalf("BuildImage() error: %v", err)
+	}
+
+	if capture.CallCount != 1 {
+		t.Fatalf("expected BuildKit builder to be called once, got %d", capture.CallCount)
+	}
+	if capture.Opts.ContextDir != "/tmp/build" {
+		t.Errorf("expected ContextDir %q, got %q", "/tmp/build", capture.Opts.ContextDir)
+	}
+	if capture.Opts.Tags[0] != "test:latest" {
+		t.Errorf("expected tag %q, got %q", "test:latest", capture.Opts.Tags[0])
+	}
+
+	// Verify managed label was injected by whail
+	managedKey := EngineLabelPrefix + "." + EngineManagedLabel
+	if capture.Opts.Labels[managedKey] != "true" {
+		t.Errorf("expected managed label %q=true, got %q", managedKey, capture.Opts.Labels[managedKey])
+	}
+
+	// Legacy ImageBuild should NOT have been called
+	whailtest.AssertNotCalled(t, fake, "ImageBuild")
+}
+
+func TestBuildImage_RoutesToLegacy(t *testing.T) {
+	fake := whailtest.NewFakeAPIClient()
+	engine := clawkerEngine(fake)
+	client := &Client{Engine: engine}
+
+	// Wire BuildKit to verify it's NOT called
+	capture := &whailtest.BuildKitCapture{}
+	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+
+	// Wire legacy ImageBuild to return an empty (valid) response
+	fake.ImageBuildFn = func(_ context.Context, _ io.Reader, _ moby.ImageBuildOptions) (moby.ImageBuildResult, error) {
+		return moby.ImageBuildResult{
+			Body: io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	ctx := context.Background()
+	err := client.BuildImage(ctx, bytes.NewReader(nil), BuildImageOpts{
+		Tags:            []string{"test:latest"},
+		BuildKitEnabled: false, // legacy path
+		SuppressOutput:  true,
+	})
+	if err != nil {
+		t.Fatalf("BuildImage() error: %v", err)
+	}
+
+	// BuildKit should NOT have been called
+	if capture.CallCount != 0 {
+		t.Errorf("expected BuildKit builder to NOT be called, got %d calls", capture.CallCount)
+	}
+
+	// Legacy ImageBuild should have been called
+	whailtest.AssertCalled(t, fake, "ImageBuild")
+}
+
+func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
+	fake := whailtest.NewFakeAPIClient()
+	engine := clawkerEngine(fake)
+	client := &Client{Engine: engine}
+
+	capture := &whailtest.BuildKitCapture{}
+	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+
+	fake.ImageBuildFn = func(_ context.Context, _ io.Reader, _ moby.ImageBuildOptions) (moby.ImageBuildResult, error) {
+		return moby.ImageBuildResult{
+			Body: io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	ctx := context.Background()
+	err := client.BuildImage(ctx, bytes.NewReader(nil), BuildImageOpts{
+		Tags:            []string{"test:latest"},
+		BuildKitEnabled: true,
+		ContextDir:      "", // empty — should fall to legacy
+		SuppressOutput:  true,
+	})
+	if err != nil {
+		t.Fatalf("BuildImage() error: %v", err)
+	}
+
+	if capture.CallCount != 0 {
+		t.Errorf("expected BuildKit builder to NOT be called when ContextDir is empty, got %d calls", capture.CallCount)
+	}
+	whailtest.AssertCalled(t, fake, "ImageBuild")
 }

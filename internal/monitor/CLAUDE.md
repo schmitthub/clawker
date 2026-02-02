@@ -2,7 +2,7 @@
 
 Templates for the monitoring stack (Docker Compose, OTEL, Grafana, Prometheus).
 
-## Template Constants
+## Filename Constants
 
 | Constant | File |
 |----------|------|
@@ -15,8 +15,15 @@ Templates for the monitoring stack (Docker Compose, OTEL, Grafana, Prometheus).
 
 ## Template Variables
 
-Each constant has a corresponding `*Template` variable (e.g., `ComposeTemplate`) containing Go `text/template` content for generating the monitoring configuration files.
+Each filename constant has a corresponding Go `text/template` variable:
+
+- `ComposeTemplate` — Docker Compose stack definition
+- `OtelConfigTemplate` — OpenTelemetry collector pipeline config
+- `GrafanaDatasourcesTemplate` — Grafana datasource provisioning
+- `PrometheusTemplate` — Prometheus scrape config
+- `GrafanaDashboardsTemplate` — Grafana dashboard provisioning config
+- `GrafanaDashboardTemplate` — Grafana dashboard JSON definition
 
 ## Usage
 
-Templates are rendered by the `clawker monitor` commands to set up the observability stack.
+Templates are rendered by the `clawker monitor` commands to set up the observability stack. All symbols are in `templates.go`.

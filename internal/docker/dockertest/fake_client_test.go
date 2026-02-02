@@ -338,6 +338,48 @@ func TestSetupImageList(t *testing.T) {
 	})
 }
 
+func TestSetupBuildKit(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("BuildKit path is invoked", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		capture := fake.SetupBuildKit()
+
+		err := fake.Client.BuildImage(ctx, nil, dockertest.BuildKitBuildOpts(
+			"test:latest", "/tmp/build",
+		))
+		if err != nil {
+			t.Fatalf("BuildImage() error: %v", err)
+		}
+		if capture.CallCount != 1 {
+			t.Fatalf("expected BuildKit builder to be called once, got %d", capture.CallCount)
+		}
+		if capture.Opts.Tags[0] != "test:latest" {
+			t.Errorf("expected tag %q, got %q", "test:latest", capture.Opts.Tags[0])
+		}
+		if capture.Opts.ContextDir != "/tmp/build" {
+			t.Errorf("expected ContextDir %q, got %q", "/tmp/build", capture.Opts.ContextDir)
+		}
+	})
+
+	t.Run("managed labels are injected", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		capture := fake.SetupBuildKit()
+
+		err := fake.Client.BuildImage(ctx, nil, dockertest.BuildKitBuildOpts(
+			"test:latest", "/tmp/build",
+		))
+		if err != nil {
+			t.Fatalf("BuildImage() error: %v", err)
+		}
+
+		managedKey := "com.clawker.managed"
+		if capture.Opts.Labels[managedKey] != "true" {
+			t.Errorf("expected managed label %q=true, got %q", managedKey, capture.Opts.Labels[managedKey])
+		}
+	})
+}
+
 func TestAssertions(t *testing.T) {
 	ctx := context.Background()
 

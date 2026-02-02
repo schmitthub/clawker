@@ -52,5 +52,7 @@ type Factory struct {
 	StopHostProxy   func(context.Context) error
 	HostProxyEnvVar func() string
 
-	Prompter func() *prompts.Prompter
+	Prompter        func() *prompts.Prompter
+	RuntimeEnv      func() ([]string, error)
+	BuildKitEnabled func(context.Context) (bool, error)
 }

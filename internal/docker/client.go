@@ -45,14 +45,9 @@ func (c *Client) Close() error {
 
 // IsMonitoringActive checks if the clawker monitoring stack is running.
 // It looks for the otel-collector container on the clawker-net network.
-// Note: This method bypasses whail's label filtering because monitoring
-// containers are not clawker-managed resources.
-// TODO monitoring containers need to be given clawker labels
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
-	// Use raw API client to bypass managed label filtering
-	// since monitoring containers aren't clawker-managed
 	f := whail.Filters{}.Add("name", "otel-collector").Add("status", "running")
-	result, err := c.APIClient.ContainerList(ctx, whail.ContainerListOptions{
+	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
 	if err != nil {
@@ -75,14 +70,22 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	return false
 }
 
-// ImageExists checks if an image exists locally.
-// Returns true if the image exists, false if not found.
-// Note: This bypasses whail's label filtering since images may or may not be managed.
-// TODO: need to better understand why we'd want or need unmanaged image support
+// TagImage adds an additional tag to an existing managed image.
+// source is the existing image reference, target is the new tag to apply.
+func (c *Client) TagImage(ctx context.Context, source, target string) error {
+	_, err := c.ImageTag(ctx, whail.ImageTagOptions{
+		Source: source,
+		Target: target,
+	})
+	return err
+}
+
+// ImageExists checks if a managed image exists locally.
+// Returns true if the image exists and is managed, false if not found or unmanaged.
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
-	_, err := c.APIClient.ImageInspect(ctx, imageRef)
+	_, err := c.ImageInspect(ctx, imageRef)
 	if err != nil {
-		if cerrdefs.IsNotFound(err) {
+		if isNotFoundError(err) {
 			return false, nil
 		}
 		return false, err
@@ -92,20 +95,42 @@ func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error)
 
 // BuildImageOpts contains options for building an image.
 type BuildImageOpts struct {
-	Tags           []string           // -t, --tag (multiple allowed)
-	Dockerfile     string             // -f, --file
-	BuildArgs      map[string]*string // --build-arg KEY=VALUE
-	NoCache        bool               // --no-cache
-	Labels         map[string]string  // --label KEY=VALUE (merged with clawker labels)
-	Target         string             // --target
-	Pull           bool               // --pull (maps to PullParent)
-	SuppressOutput bool               // -q, --quiet
-	NetworkMode    string             // --network
+	Tags            []string           // -t, --tag (multiple allowed)
+	Dockerfile      string             // -f, --file
+	BuildArgs       map[string]*string // --build-arg KEY=VALUE
+	NoCache         bool               // --no-cache
+	Labels          map[string]string  // --label KEY=VALUE (merged with clawker labels)
+	Target          string             // --target
+	Pull            bool               // --pull (maps to PullParent)
+	SuppressOutput  bool               // -q, --quiet
+	NetworkMode     string             // --network
+	BuildKitEnabled bool               // Use BuildKit builder via whail.ImageBuildKit
+	ContextDir      string             // Build context directory (required for BuildKit)
 }
 
 // BuildImage builds a Docker image from a build context.
-// It processes the build output and logs progress.
+// When BuildKitEnabled and ContextDir are set, uses whail's BuildKit path
+// (which supports --mount=type=cache). Otherwise falls back to the legacy
+// Docker SDK ImageBuild API.
 func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts BuildImageOpts) error {
+	// Route to BuildKit when enabled and a context directory is available.
+	// BuildKit uses the filesystem directly (not a tar stream) for local mounts.
+	if opts.BuildKitEnabled && opts.ContextDir != "" {
+		return c.ImageBuildKit(ctx, whail.ImageBuildKitOptions{
+			Tags:           opts.Tags,
+			ContextDir:     opts.ContextDir,
+			Dockerfile:     opts.Dockerfile,
+			BuildArgs:      opts.BuildArgs,
+			NoCache:        opts.NoCache,
+			Labels:         opts.Labels,
+			Target:         opts.Target,
+			Pull:           opts.Pull,
+			SuppressOutput: opts.SuppressOutput,
+			NetworkMode:    opts.NetworkMode,
+		})
+	}
+
+	// Legacy SDK path
 	options := whail.ImageBuildOptions{
 		Tags:           opts.Tags,
 		Dockerfile:     opts.Dockerfile,
@@ -118,7 +143,6 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 		SuppressOutput: opts.SuppressOutput,
 		NetworkMode:    opts.NetworkMode,
 	}
-
 	resp, err := c.ImageBuild(ctx, buildContext, options)
 	if err != nil {
 		return fmt.Errorf("building image: %w", err)

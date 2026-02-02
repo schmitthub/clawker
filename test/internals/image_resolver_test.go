@@ -67,44 +67,38 @@ func setupImageResolverTests(t *testing.T) *imageResolverState {
 	}
 
 	// Build test images
-	latestID, err := buildResolverTestImage(ctx, cli, state.latestImageTag, map[string]string{
+	if _, err = buildResolverTestImage(ctx, cli, state.latestImageTag, map[string]string{
 		docker.LabelManaged: docker.ManagedLabelValue,
 		docker.LabelProject: state.projectName,
-	})
-	if err != nil {
+		harness.TestLabel:   harness.TestLabelValue,
+	}); err != nil {
 		t.Fatalf("failed to build latest image: %v", err)
 	}
 
-	versionedID, err := buildResolverTestImage(ctx, cli, state.versionedTag, map[string]string{
+	if _, err = buildResolverTestImage(ctx, cli, state.versionedTag, map[string]string{
 		docker.LabelManaged: docker.ManagedLabelValue,
 		docker.LabelProject: state.projectName,
-	})
-	if err != nil {
+		harness.TestLabel:   harness.TestLabelValue,
+	}); err != nil {
 		t.Fatalf("failed to build versioned image: %v", err)
 	}
 
-	otherID, err := buildResolverTestImage(ctx, cli, state.otherProjectTag, map[string]string{
+	if _, err = buildResolverTestImage(ctx, cli, state.otherProjectTag, map[string]string{
 		docker.LabelManaged: docker.ManagedLabelValue,
 		docker.LabelProject: "other-project",
-	})
-	if err != nil {
+		harness.TestLabel:   harness.TestLabelValue,
+	}); err != nil {
 		t.Fatalf("failed to build other project image: %v", err)
 	}
 
-	// Register cleanup
+	// Register cleanup — remove by tag only (avoids "no such image" when PruneChildren
+	// already removed a shared intermediate). RunTestMain handles dangling images.
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
 		state.dockerClient.Close()
 
-		for _, id := range []string{latestID, versionedID, otherID} {
-			if id != "" {
-				if _, err := cli.ImageRemove(cleanupCtx, id, client.ImageRemoveOptions{Force: true, PruneChildren: true}); err != nil {
-					t.Logf("WARNING: failed to remove test image %s: %v", id[:12], err)
-				}
-			}
-		}
 		for _, tag := range []string{state.latestImageTag, state.versionedTag, state.otherProjectTag} {
-			if _, err := cli.ImageRemove(cleanupCtx, tag, client.ImageRemoveOptions{Force: true}); err != nil {
+			if _, err := cli.ImageRemove(cleanupCtx, tag, client.ImageRemoveOptions{Force: true, PruneChildren: true}); err != nil {
 				t.Logf("WARNING: failed to remove test image %s: %v", tag, err)
 			}
 		}

@@ -42,6 +42,7 @@
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware (wraps pkg/whail)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
+│   │   └── hostproxytest/    # MockHostProxy for integration tests
 │   ├── iostreams/             # Testable I/O: TTY, colors, progress, pager
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
@@ -53,9 +54,12 @@
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   └── whail/                 # Reusable Docker engine with label-based isolation
+│       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
 │   ├── harness/               # Test harness, config builders, helpers (golden files, docker)
+│   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 │   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
+│   ├── commands/              # Command integration tests (Docker)
 │   ├── internals/             # Container scripts/services tests (Docker)
 │   └── agents/                # Full agent E2E tests (Docker)
 └── templates/                 # clawker.yaml scaffolding
@@ -70,9 +74,11 @@ make test                                 # Unit tests (no Docker, excludes test
 go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
 
 # Docker-required tests (directory separation, no build tags)
-go test ./test/cli/... -v -timeout 15m        # CLI workflow tests
-go test ./test/internals/... -v -timeout 10m  # Internal integration tests
-go test ./test/agents/... -v -timeout 15m     # Agent E2E tests
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
+go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
+go test ./test/commands/... -v -timeout 10m      # Command integration tests
+go test ./test/internals/... -v -timeout 10m     # Internal integration tests
+go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 ```
 
 ## Key Concepts
@@ -88,6 +94,7 @@ go test ./test/agents/... -v -timeout 15m     # Agent E2E tests
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
 | `prompts.Prompter` | Interactive prompts with TTY/CI awareness |
+| `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `Resolver` | Resolves working directory to registered project via longest-prefix match |

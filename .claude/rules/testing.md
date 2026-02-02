@@ -13,8 +13,10 @@ paths:
 
 ```bash
 make test                                        # Unit tests (no Docker)
-go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration (Docker + BuildKit)
 go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
+go test ./test/commands/... -v -timeout 10m      # Command integration (Docker)
+go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
 go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
 make test-all                                    # All test suites
 ```
@@ -27,8 +29,10 @@ make test-all                                    # All test suites
 |----------|-----------|:---:|---------|
 | Unit | `*_test.go` (co-located) | No | Pure logic, fakes, mocks |
 | CLI | `test/cli/` | Yes | Testscript-based CLI workflow validation |
-| Internals | `test/internals/` | Yes | Container scripts/services (firewall, hostproxy, entrypoint, SSH) |
-| Agents | `test/agents/` | Yes | Full clawker images, real agent tests |
+| Commands | `test/commands/` | Yes | Command integration (container create/exec/run/start) |
+| Internals | `test/internals/` | Yes | Container scripts/services (firewall, SSH, entrypoint) |
+| Whail | `test/whail/` | Yes (+ BuildKit) | BuildKit integration, engine-level image builds |
+| Agents | `test/agents/` | Yes | Full clawker images, ralph, agent lifecycle tests |
 | Harness | `test/harness/` | No | Builders, fixtures, golden file utils, helpers |
 
 No build tags — directory separation only.
@@ -89,7 +93,7 @@ fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 fake.AssertCalled(t, "ContainerList")
 ```
 
-**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupContainerCreate`, `SetupContainerStart`, `SetupVolumeExists`, `SetupNetworkExists`
+**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupContainerCreate`, `SetupContainerStart`, `SetupVolumeExists`, `SetupNetworkExists`
 
 **Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`
 

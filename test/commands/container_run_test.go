@@ -1,4 +1,4 @@
-package internals
+package commands
 
 import (
 	"context"
@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRunIntegration_EntrypointBypass tests running a container with a simple command
+// TestContainerRun_EntrypointBypass tests running a container with a simple command
 // that bypasses the entrypoint (e.g., "echo hello"). This validates the basic container
 // lifecycle: create, start, run command, and cleanup.
-func TestRunIntegration_EntrypointBypass(t *testing.T) {
+func TestContainerRun_EntrypointBypass(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -89,9 +89,9 @@ func TestRunIntegration_EntrypointBypass(t *testing.T) {
 	require.Contains(t, string(logBytes), "hello", "expected 'hello' in container output")
 }
 
-// TestRunIntegration_AutoRemove tests that --rm flag properly removes the container
+// TestContainerRun_AutoRemove tests that --rm flag properly removes the container
 // after it exits.
-func TestRunIntegration_AutoRemove(t *testing.T) {
+func TestContainerRun_AutoRemove(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -143,9 +143,9 @@ func TestRunIntegration_AutoRemove(t *testing.T) {
 	require.Empty(t, containers, "expected container to be removed due to --rm flag")
 }
 
-// TestRunIntegration_Labels tests that custom labels are applied to the container
+// TestContainerRun_Labels tests that custom labels are applied to the container
 // alongside the required clawker labels.
-func TestRunIntegration_Labels(t *testing.T) {
+func TestContainerRun_Labels(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -210,10 +210,10 @@ func TestRunIntegration_Labels(t *testing.T) {
 	require.Equal(t, "anothervalue", labels["another.label"])
 }
 
-// TestRunIntegration_ReadySignalUtilities validates that the ready signal utilities
+// TestContainerRun_ReadySignalUtilities validates that the ready signal utilities
 // can detect when a container creates the ready file. This tests the utilities
 // without requiring the full clawker entrypoint.
-func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
+func TestContainerRun_ReadySignalUtilities(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -287,10 +287,10 @@ func TestRunIntegration_ReadySignalUtilities(t *testing.T) {
 	require.False(t, hasError, "unexpected error in logs: %s", errorMsg)
 }
 
-// TestRunIntegration_ArbitraryCommand tests running arbitrary commands in containers.
+// TestContainerRun_ArbitraryCommand tests running arbitrary commands in containers.
 // This verifies the Docker client internals: commands are passed through correctly
 // to the container.
-func TestRunIntegration_ArbitraryCommand(t *testing.T) {
+func TestContainerRun_ArbitraryCommand(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -398,9 +398,9 @@ func TestRunIntegration_ArbitraryCommand(t *testing.T) {
 	}
 }
 
-// TestRunIntegration_ArbitraryCommand_EnvVars tests that environment variables are
+// TestContainerRun_ArbitraryCommand_EnvVars tests that environment variables are
 // properly passed to containers via the -e flag.
-func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
+func TestContainerRun_ArbitraryCommand_EnvVars(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -467,14 +467,14 @@ func TestRunIntegration_ArbitraryCommand_EnvVars(t *testing.T) {
 	require.Contains(t, logs, "PATH=", "PATH environment variable should be set")
 }
 
-// TODO: TestRunIntegration_ClaudeFlagsPassthrough - requires clawker-built image with Claude Code
+// TODO: TestContainerRun_ClaudeFlagsPassthrough - requires clawker-built image with Claude Code
 // This test should be implemented as part of E2E test infrastructure that builds and tests
 // the full clawker entrypoint with Claude Code internals.
 // Tracked in: https://github.com/schmitthub/clawker/issues/XXX
 
-// TestRunIntegration_ContainerNameResolution tests that container names follow the
+// TestContainerRun_ContainerNameResolution tests that container names follow the
 // clawker.project.agent naming convention.
-func TestRunIntegration_ContainerNameResolution(t *testing.T) {
+func TestContainerRun_ContainerNameResolution(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -553,10 +553,10 @@ func TestRunIntegration_ContainerNameResolution(t *testing.T) {
 	require.Contains(t, logs, "container-name-test-output", "expected echo output in logs")
 }
 
-// TestRunIntegration_AttachThenStart tests that non-detached run mode properly
+// TestContainerRun_AttachThenStart tests that non-detached run mode properly
 // attaches to a short-lived container, receives its output, and exits cleanly.
 // This exercises the attachThenStart flow including the waitForContainerExit helper.
-func TestRunIntegration_AttachThenStart(t *testing.T) {
+func TestContainerRun_AttachThenStart(t *testing.T) {
 	harness.RequireDocker(t)
 
 	h := harness.NewHarness(t,
@@ -611,9 +611,9 @@ func TestRunIntegration_AttachThenStart(t *testing.T) {
 		"expected all container output to be captured")
 }
 
-// TestRunIntegration_AttachThenStart_NonZeroExit tests that non-detached run mode
+// TestContainerRun_AttachThenStart_NonZeroExit tests that non-detached run mode
 // properly reports non-zero exit codes from the container.
-func TestRunIntegration_AttachThenStart_NonZeroExit(t *testing.T) {
+func TestContainerRun_AttachThenStart_NonZeroExit(t *testing.T) {
 	harness.RequireDocker(t)
 
 	h := harness.NewHarness(t,

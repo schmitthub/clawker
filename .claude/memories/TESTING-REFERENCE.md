@@ -300,7 +300,7 @@ FakeCli would only add: (1) command routing tests (cobra's responsibility) and (
 `WaitForContainerRunning` fails fast when a container exits:
 
 ```go
-err := testutil.WaitForContainerRunning(ctx, rawClient, containerName)
+err := harness.WaitForContainerRunning(ctx, rawClient, containerName)
 if err != nil {
     // Error includes exit code: "container xyz exited (code 1) while waiting for running state"
     t.Fatalf("Container failed to start: %v", err)
@@ -310,7 +310,7 @@ if err != nil {
 For detailed diagnostics:
 
 ```go
-diag, err := testutil.GetContainerExitDiagnostics(ctx, rawClient, containerID, 50)
+diag, err := harness.GetContainerExitDiagnostics(ctx, rawClient, containerID, 50)
 if err == nil {
     t.Logf("Exit code: %d", diag.ExitCode)
     t.Logf("OOMKilled: %v", diag.OOMKilled)
@@ -327,9 +327,9 @@ if err == nil {
 ## Golden File Testing
 
 ```go
-testutil.CompareGolden(t, actualBytes, "testdata/expected.golden")
-testutil.CompareGoldenString(t, actualString, "testdata/expected.golden")
-testutil.GoldenAssert(t, actualBytes, "testdata/expected.golden")
+harness.CompareGolden(t, actualBytes, "testdata/expected.golden")
+harness.CompareGoldenString(t, actualString, "testdata/expected.golden")
+harness.GoldenAssert(t, actualBytes, "testdata/expected.golden")
 ```
 
 Update golden files: `UPDATE_GOLDEN=1 go test ./...`
@@ -338,15 +338,22 @@ Update golden files: `UPDATE_GOLDEN=1 go test ./...`
 
 ## Build Test Images
 
+**Lightweight test image** (used by `test/internals/` and `test/commands/`):
 ```go
-imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
-    "FROM alpine:latest\nRUN apk add bash",
-    testutil.BuildTestImageOptions{
-        SuppressOutput: true,
-        NoCache:        false,
-    },
-)
-// Image is automatically cleaned up via t.Cleanup()
+client := harness.NewTestClient(t)
+image := harness.BuildLightImage(t, client) // content-addressed, all scripts baked in
+// Image cached across tests, cleaned up by RunTestMain
+```
+
+`BuildLightImage` auto-discovers ALL `*.sh` scripts from `internal/build/templates/` and embeds them.
+The Dockerfile includes `LABEL com.clawker.test=true` so intermediates are also catchable by cleanup.
+Script arg is ignored (kept for API compat) — single cached image shared across all tests.
+
+**Full clawker image** (used by `test/agents/`):
+```go
+h := harness.NewHarness(t, harness.WithProject("test"))
+imageTag := harness.BuildTestImage(t, h, harness.BuildTestImageOptions{SuppressOutput: true})
+// Image cleaned up via t.Cleanup()
 ```
 
 ---
@@ -359,11 +366,11 @@ imageTag := testutil.BuildTestImage(t, testutil.NewRawDockerClient(t),
 package mycommand
 
 func TestMyCommand_Integration(t *testing.T) {
-    testutil.RequireDocker(t)
+    harness.RequireDocker(t)
 
-    h := testutil.NewHarness(t,
-        testutil.WithProject("test-project"),
-        testutil.WithConfigBuilder(testutil.NewConfigBuilder().
+    h := harness.NewHarness(t,
+        harness.WithProject("test-project"),
+        harness.WithConfigBuilder(builders.NewConfigBuilder().
             WithProject("test-project").
             WithDefaultImage("alpine:latest"),
         ),
@@ -371,8 +378,8 @@ func TestMyCommand_Integration(t *testing.T) {
 
     t.Cleanup(func() {
         ctx := context.Background()
-        client := testutil.NewTestClient(t)
-        testutil.CleanupProjectResources(ctx, client, "test-project")
+        rawClient := harness.NewRawDockerClient(t)
+        harness.CleanupProjectResources(ctx, rawClient, "test-project")
     })
 
     // Test implementation
@@ -383,7 +390,7 @@ func TestMyCommand_Integration(t *testing.T) {
 
 ```go
 func TestRunIntegration_ArbitraryCommand(t *testing.T) {
-    testutil.RequireDocker(t)
+    harness.RequireDocker(t)
 
     tests := []struct {
         name        string
@@ -447,7 +454,7 @@ func TestStopIntegration_BothPatterns(t *testing.T) {
 
 ```go
 func TestRunE2E_InteractiveMode(t *testing.T) {
-    testutil.RequireDocker(t)
+    harness.RequireDocker(t)
     binaryPath := buildClawkerBinary(t)
 
     projectDir := t.TempDir()
@@ -460,7 +467,7 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 
 func buildClawkerBinary(t *testing.T) string {
     t.Helper()
-    projectRoot := testutil.FindProjectRoot()
+    projectRoot := harness.FindProjectRoot()
     binaryPath := filepath.Join(t.TempDir(), "clawker")
     cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/clawker")
     cmd.Dir = projectRoot
@@ -553,55 +560,75 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 
 ---
 
-## Testcontainers Integration Tests (`test/internals/`)
+## Integration Tests (`test/internals/`, `test/commands/`, `test/agents/`)
 
-Uses [testcontainers-go](https://golang.testcontainers.org/) for testing scripts in lightweight containers.
+Dogfoods clawker's own `docker.Client` via `harness.BuildLightImage` and `harness.RunContainer`. No testcontainers-go dependency.
 
-### Package Structure
+### Directory Structure
 
-| File | Purpose |
-|------|---------|
-| `container.go` | `LightContainer` builder and `ContainerResult` wrapper |
-| `hostproxy.go` | `MockHostProxy` for testing host proxy interactions |
-| `scripts_test.go` | Entrypoint, git config, SSH known hosts, host-open, git-credential tests |
-| `firewall_test.go` | Firewall rule verification (iptables, ipset, blocked domains) |
-| `firewall_startup_test.go` | Firewall script startup flow tests |
-| `sshagent_test.go` | SSH agent proxy forwarding tests |
-| `testdata/` | Dockerfiles for Alpine and Debian test containers |
+| Directory | Purpose |
+|-----------|---------|
+| `test/internals/` | Container scripts/services (firewall, SSH, entrypoint, docker client) |
+| `test/commands/` | Command integration (container create/exec/run/start) |
+| `test/agents/` | Full agent lifecycle, ralph tests |
 
 ### Running
 
 ```bash
 go test ./test/internals/... -v -timeout 10m
-go test ./test/internals/... -run "Firewall" -v -timeout 10m
+go test ./test/commands/... -v -timeout 10m
+go test ./test/agents/... -v -timeout 15m
 ```
+
+### TestMain + Cleanup
+
+All Docker test packages use `RunTestMain` which provides:
+- **Pre-cleanup**: Removes stale resources from previous runs on startup
+- **Post-cleanup**: Removes all test resources after `m.Run()` completes
+- **SIGINT handler**: Goroutine catches Ctrl+C/SIGTERM, runs cleanup, then `os.Exit(1)`
+
+```go
+// test/internals/main_test.go (same pattern in commands/ and agents/)
+func TestMain(m *testing.M) {
+    os.Exit(harness.RunTestMain(m))
+}
+```
+
+`CleanupTestResources` filters on `com.clawker.test=true` label — removes containers, volumes, networks, and images (including dangling intermediates via `All: true` + `PruneChildren: true`). User's real clawker images (`com.clawker.managed` only) are never touched.
 
 ### Key Components
 
-**StartFromDockerfile:**
+**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/build/templates/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
+
 ```go
-result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-    req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-    req.User = "root"
-    req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-})
+client := harness.NewTestClient(t)
+image := harness.BuildLightImage(t, client) // script args ignored, all scripts included
+ctr := harness.RunContainer(t, client, image,
+    harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+    harness.WithUser("root"),
+    harness.WithExtraHost("host.docker.internal:host-gateway"),
+)
 ```
 
-**ContainerResult:** `Exec(ctx, cmd)`, `WaitForFile(ctx, path, timeout)`, `GetLogs(ctx)`, `CleanOutput()`
+**Exec:** `ctr.Exec(ctx, client, cmd...)` returns `*ExecResult` with `ExitCode`, `Stdout`, `Stderr`, `CleanOutput()`
 
-**MockHostProxy:**
+**Additional RunningContainer methods:** `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`
+
+**MockHostProxy** (`internal/hostproxy/hostproxytest/`):
 ```go
-proxy := NewMockHostProxy(t)
+proxy := hostproxytest.NewMockHostProxy(t)
 proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
+// Inspect: proxy.GetOpenedURLs(), proxy.GetGitCreds(), proxy.SetCallbackReady(id)
 ```
 
 ### Script Testing Pattern
 
-Tests copy scripts from `internal/build/templates/` into containers:
+ALL scripts from `internal/build/templates/` are baked into the image by `BuildLightImage`:
 
 ```go
-copyScriptToContainer(ctx, t, result, "init-firewall.sh")
-execResult, err := result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
+image := harness.BuildLightImage(t, client)
+ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN", "NET_RAW"), harness.WithUser("root"))
+execResult, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
 ```
 

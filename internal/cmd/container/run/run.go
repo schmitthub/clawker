@@ -27,7 +27,7 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams                *iostreams.IOStreams
+	IOStreams               *iostreams.IOStreams
 	Client                  func(context.Context) (*docker.Client, error)
 	Config                  func() (*config.Config, error)
 	Settings                func() (*config.Settings, error)
@@ -36,6 +36,7 @@ type RunOptions struct {
 	InvalidateSettingsCache func()
 	EnsureHostProxy         func() error
 	HostProxyEnvVar         func() string
+	RuntimeEnv              func() ([]string, error)
 	WorkDir                 string
 
 	// Run-specific options
@@ -62,6 +63,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		InvalidateSettingsCache: f.InvalidateSettingsCache,
 		EnsureHostProxy:         f.EnsureHostProxy,
 		HostProxyEnvVar:         f.HostProxyEnvVar,
+		RuntimeEnv:              f.RuntimeEnv,
 		WorkDir:                 f.WorkDir,
 	}
 
@@ -237,6 +239,15 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
+
+	// Inject config-derived runtime env vars (editor, firewall domains, agent env, instruction env)
+	if opts.RuntimeEnv != nil {
+		runtimeEnv, err := opts.RuntimeEnv()
+		if err != nil {
+			return err
+		}
+		containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	}
 
 	// Validate cross-field constraints before building configs
 	if err := containerOpts.ValidateFlags(); err != nil {

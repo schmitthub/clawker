@@ -804,7 +804,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:  tmpDir,
+		WorkDir:   tmpDir,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -816,6 +816,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		},
 		EnsureHostProxy:         func() error { return nil },
 		HostProxyEnvVar:         func() string { return "" },
+		RuntimeEnv:              func() ([]string, error) { return nil, nil },
 		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
 		InvalidateSettingsCache: func() {},
 		Prompter:                func() *prompts.Prompter { return nil },

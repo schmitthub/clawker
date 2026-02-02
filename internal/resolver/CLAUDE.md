@@ -6,7 +6,7 @@ Image resolution for container creation. Resolves which Docker image to use base
 
 | File | Purpose |
 |------|---------|
-| `types.go` | `ImageSource`, `ResolvedImage` — source tracking types |
+| `types.go` | `ImageSource`, `ResolvedImage` -- source tracking types |
 | `image.go` | Resolution chain + validation with interactive rebuild |
 
 ## Types (`types.go`)
@@ -30,15 +30,14 @@ type ResolvedImage struct {
 
 ### Resolution Chain
 
-```go
-// Simple resolution — returns just the image reference
-func ResolveImage(ctx, dockerClient, cfg, settings) (string, error)
+`ResolveImage()` -- returns just the image reference string
+`ResolveImageWithSource()` -- returns `*ResolvedImage` with source tracking
 
-// Resolution with source tracking
-func ResolveImageWithSource(ctx, dockerClient, cfg, settings) (*ResolvedImage, error)
-```
+Both take `(ctx, dockerClient, cfg, settings)`. Resolution order:
+1. Project image with `:latest` tag (by label lookup via `FindProjectImage`)
+2. Merged default_image from config/settings (via `ResolveDefaultImage`)
 
-**Resolution order**: Project image (label lookup) → Default image (config/settings)
+Note: Explicit image handling happens at the call site (commands check for `@` sentinel), not inside these functions.
 
 ### Validation + Interactive Rebuild
 
@@ -47,20 +46,21 @@ type ImageValidationDeps struct {
     IOStreams                *iostreams.IOStreams
     Prompter                func() *prompts.Prompter
     SettingsLoader          func() (*config.SettingsLoader, error)
-    InvalidateSettingsCache func()
+    InvalidateSettingsCache func()  // May be nil
 }
 
 func ResolveAndValidateImage(ctx, deps, dockerClient, cfg, settings) (*ResolvedImage, error)
 ```
 
-Validates default images exist, prompts to rebuild if missing (interactive mode). Uses `internal/build.BuildDefaultImage` for rebuild.
+Validates default images exist in Docker, prompts to rebuild if missing (interactive mode).
+For explicit and project images, no validation is performed.
+In non-interactive mode, prints next-steps and returns error if default image missing.
+Uses `internal/build.BuildDefaultImage` for rebuild, updates settings on success.
 
 ### Helpers
 
-```go
-func ResolveDefaultImage(cfg, settings) string           // Config precedence over settings
-func FindProjectImage(ctx, dockerClient, project) string  // Label-based lookup for :latest
-```
+`ResolveDefaultImage(cfg, settings) string` -- config takes precedence over user settings, returns "" if unconfigured
+`FindProjectImage(ctx, dockerClient, project) (string, error)` -- label-based lookup for `:latest` tag; returns "" if not found
 
 ## Usage Pattern (Container Commands)
 
@@ -79,4 +79,8 @@ if containerOpts.Image == "@" {
 
 ## Dependencies
 
-Imports: `internal/build` (for rebuild), `internal/config`, `internal/docker`, `internal/iostreams`, `internal/logger`, `internal/prompts`
+Imports: `internal/build` (rebuild), `internal/config`, `internal/docker`, `internal/iostreams`, `internal/logger`, `internal/prompts`
+
+## Tests
+
+`image_test.go` -- unit tests for resolution chain and helpers (no Docker required)

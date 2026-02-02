@@ -1,48 +1,17 @@
 # Ralph Package
 
-Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" technique. Runs Claude Code in non-interactive Docker exec with circuit breaker protection.
+Autonomous loop execution for Claude Code agents. Runs Claude Code via non-interactive `docker exec` with circuit breaker protection, session persistence, rate limiting, and history tracking.
 
-## Package Structure
+## Architecture
 
-| File | Purpose |
-|------|---------|
-| `config.go` | Default constants for all ralph settings |
-| `analyzer.go` | RALPH_STATUS parser, completion detection, rate limit detection |
-| `circuit.go` | Circuit breaker (CLOSED/TRIPPED) with multiple trip conditions |
-| `session.go` | Session persistence with JSON files and expiration |
-| `ratelimit.go` | Sliding window rate limiter |
-| `loop.go` | Main loop orchestration, non-TTY exec with output capture |
-| `monitor.go` | Progress output formatting |
-| `history.go` | Session and circuit event logs |
-| `tui/model.go` | BubbleTea TUI model for ralph monitor dashboard |
-| `tui/messages.go` | Internal message types for TUI updates |
-
-## Key Architecture
-
-- **Docker exec, not container CMD**: Ralph uses `docker exec` to run Claude, not the container's startup CMD
+- **Docker exec, not container CMD**: Ralph uses `docker exec` to run Claude, not the container startup CMD
 - **Non-TTY exec**: `Tty: false` for proper stdout/stderr multiplexing via `stdcopy.StdCopy`
 - **Circuit breaker**: Two states only (CLOSED/TRIPPED). Manual reset via `clawker ralph reset`
 - **Session persistence**: JSON files at `~/.local/clawker/ralph/sessions/<project>.<agent>.json`
 
 ## Loop Flow
 
-1. Load or create session (saved immediately, not after first loop)
-2. Load circuit breaker state
-3. For each loop iteration:
-   - Check circuit breaker
-   - Build command (first loop: `-p <prompt>`, subsequent: `--continue`)
-   - Execute via Docker exec with timeout
-   - Parse RALPH_STATUS block from output
-   - Check exit conditions (completion, stagnation)
-   - Update circuit breaker, persist state
-
-## Circuit Breaker Trip Conditions
-
-- Stagnation: N loops without progress
-- Same error: N identical errors in a row
-- Output decline: Output shrinks > threshold%
-- Test-only loops: N consecutive TESTING-only loops
-- Safety completion: Force exit after N loops with completion signals
+Load/create session and circuit breaker state. Each iteration: check circuit breaker and rate limiter, build command (`-p <prompt>` first loop, `--continue` subsequent), execute via docker exec with timeout, parse RALPH_STATUS block, check exit conditions (completion/stagnation/rate limit), update circuit breaker and persist state. Exit on completion, circuit trip, max loops, or error.
 
 ## Critical Patterns
 
@@ -54,147 +23,107 @@ Autonomous loop execution for Claude Code agents using the "Ralph Wiggum" techni
 
 ### Config (`config.go`)
 
-```go
-type Config struct {
-    MaxLoops, StagnationThreshold, TimeoutMinutes int
-    AutoConfirm bool; CallsPerHour, CompletionThreshold int
-    SessionExpirationHours, SameErrorThreshold int
-    OutputDeclineThreshold, MaxConsecutiveTestLoops int
-    LoopDelaySeconds, SafetyCompletionThreshold int
-}
-func DefaultConfig() Config
-func (c Config) Timeout() time.Duration
-// Get<Field>() int — getter for each field, returns default if zero
-```
-
-Default constants: `Default<Field>` for each Config field (e.g. `DefaultMaxLoops`, `DefaultStagnationThreshold`)
+- `Config` — struct with fields: MaxLoops, StagnationThreshold, TimeoutMinutes (int), AutoConfirm (bool), CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int). All yaml/mapstructure tagged.
+- `DefaultConfig()` — returns Config with all defaults populated
+- `Config.Timeout()` — returns per-loop timeout as `time.Duration`
+- `Config.Get<Field>() int` — getter for each field, returns `Default<Field>` constant if zero. Pattern: `GetMaxLoops`, `GetStagnationThreshold`, `GetCallsPerHour`, etc.
+- Default constants: `DefaultMaxLoops` (50), `DefaultStagnationThreshold` (3), `DefaultTimeoutMinutes` (15), `DefaultCallsPerHour` (100), `DefaultCompletionThreshold` (2), `DefaultSessionExpirationHours` (24), `DefaultSameErrorThreshold` (5), `DefaultOutputDeclineThreshold` (70), `DefaultMaxConsecutiveTestLoops` (3), `DefaultSafetyCompletionThreshold` (5), `DefaultLoopDelaySeconds` (3)
 
 ### Analyzer (`analyzer.go`)
 
-```go
-type Status struct { Status, TasksCompleted, FilesModified, TestsStatus, WorkType, ExitSignal, Recommendation string; CompletionIndicators int }
-func ParseStatus(output string) *Status  // returns nil if no valid block found
-// Status methods: IsComplete, IsCompleteStrict, IsBlocked, HasProgress, IsTestOnly() bool; String() string
-
-type AnalysisResult struct { Status *Status; RateLimitHit bool; ErrorSignature string; OutputSize, CompletionCount int }
-func AnalyzeOutput(output string) *AnalysisResult
-func CountCompletionIndicators(output string) int
-func DetectRateLimitError(output string) bool
-func ExtractErrorSignature(output string) string
-```
-
-Status constants: `StatusPending`, `StatusComplete`, `StatusBlocked`, `TestsPassing`, `TestsFailing`, `TestsNotRun`, `WorkTypeImplementation`, `WorkTypeTesting`, `WorkTypeDocumentation`, `WorkTypeRefactoring`
+- `Status` — parsed RALPH_STATUS block: Status (string), TasksCompleted, FilesModified, CompletionIndicators (int), TestsStatus, WorkType, Recommendation (string), ExitSignal (bool)
+- `ParseStatus(output string) *Status` — extracts RALPH_STATUS block, returns nil if not found
+- `Status.IsComplete()`, `Status.IsBlocked()`, `Status.HasProgress()`, `Status.IsTestOnly()` — boolean checks
+- `Status.IsCompleteStrict(threshold int) bool` — requires both ExitSignal=true AND CompletionIndicators >= threshold
+- `Status.String()` — human-readable summary
+- `AnalysisResult` — full output analysis: Status (*Status), RateLimitHit (bool), ErrorSignature (string), OutputSize, CompletionCount (int)
+- `AnalyzeOutput(output string) *AnalysisResult` — combines ParseStatus + rate limit + error + completion detection
+- `CountCompletionIndicators(output string) int`, `DetectRateLimitError(output string) bool`, `ExtractErrorSignature(output string) string` — individual analysis functions
+- Status constants: `StatusPending` ("IN_PROGRESS"), `StatusComplete` ("COMPLETE"), `StatusBlocked` ("BLOCKED")
+- Test status constants: `TestsPassing`, `TestsFailing`, `TestsNotRun`
+- Work type constants: `WorkTypeImplementation`, `WorkTypeTesting`, `WorkTypeDocumentation`, `WorkTypeRefactoring`
 
 ### Circuit Breaker (`circuit.go`)
 
-```go
-type CircuitBreakerConfig struct { StagnationThreshold, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, CompletionThreshold, SafetyCompletionThreshold int }
-type CircuitBreakerState struct { ... }
-type UpdateResult struct { Tripped bool; Reason string; IsComplete bool; CompletionMsg string }
-func DefaultCircuitBreakerConfig() CircuitBreakerConfig
-func NewCircuitBreaker(threshold int) *CircuitBreaker
-func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker
-
-func (cb *CircuitBreaker) Update(status *Status) (tripped bool, reason string)
-func (cb *CircuitBreaker) UpdateWithAnalysis(status *Status, analysis *AnalysisResult) UpdateResult
-func (cb *CircuitBreaker) Check() bool           // true if tripped
-func (cb *CircuitBreaker) IsTripped() bool
-func (cb *CircuitBreaker) TripReason() string
-func (cb *CircuitBreaker) Reset()
-// Getters: NoProgressCount, Threshold, SameErrorCount, ConsecutiveTestLoops → int
-func (cb *CircuitBreaker) State() CircuitBreakerState
-func (cb *CircuitBreaker) RestoreState(state CircuitBreakerState)
-```
+- `CircuitBreaker` — tracks stagnation, same-error sequences, output decline, test-only loops, and safety completion. Thread-safe (mutex). Trip conditions:
+  - Stagnation: N loops without progress (threshold)
+  - Same error: N identical error signatures in a row (sameErrorThreshold)
+  - Output decline: Output shrinks >= threshold% for 2 consecutive loops (outputDeclineThreshold)
+  - Test-only loops: N consecutive TESTING-only loops (maxConsecutiveTestLoops)
+  - Safety completion: N consecutive loops with completion indicators but no EXIT_SIGNAL (safetyCompletionThreshold)
+  - Blocked status: Trips immediately on BLOCKED
+- `CircuitBreakerConfig` — StagnationThreshold, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, CompletionThreshold, SafetyCompletionThreshold (int)
+- `DefaultCircuitBreakerConfig()` — returns config with package defaults
+- `NewCircuitBreaker(threshold int)`, `NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig)` — constructors
+- `Update(status *Status) (tripped bool, reason string)` — simple update (delegates to UpdateWithAnalysis)
+- `UpdateWithAnalysis(status *Status, analysis *AnalysisResult) UpdateResult` — full update with all trip condition checks
+- `UpdateResult` — Tripped (bool), Reason (string), IsComplete (bool), CompletionMsg (string)
+- `Check() bool` — true if NOT tripped (circuit open)
+- `IsTripped() bool`, `TripReason() string`, `Reset()` — state accessors and reset
+- `NoProgressCount()`, `Threshold()`, `SameErrorCount()`, `ConsecutiveTestLoops()` — counter accessors (int)
+- `State() CircuitBreakerState`, `RestoreState(CircuitBreakerState)` — persistence
+- `CircuitBreakerState` — JSON-serializable snapshot of all counters and flags
 
 ### Rate Limiter (`ratelimit.go`)
 
-```go
-type RateLimiter struct { ... }
-type RateLimitState struct { ... }
-func NewRateLimiter(limit int) *RateLimiter
-func (r *RateLimiter) Allow() bool
-func (r *RateLimiter) Record()
-func (r *RateLimiter) Remaining() int
-// Getters: ResetTime() time.Time, CallCount/Limit() int, IsEnabled() bool
-func (r *RateLimiter) State() RateLimitState
-func (r *RateLimiter) RestoreState(state RateLimitState) bool
-```
+- `RateLimiter` — sliding window (1-hour) rate limiter. Thread-safe. Limit <= 0 disables.
+- `NewRateLimiter(limit int)` — constructor
+- `Allow() bool` — check and record if allowed; `Record()` — record without checking
+- `Remaining() int` — calls left (-1 if disabled); `ResetTime() time.Time` — window reset time
+- `CallCount()`, `Limit()` (int), `IsEnabled()` (bool) — accessors
+- `RateLimitState` — JSON-serializable: Calls (int), WindowStart (time.Time)
+- `State() RateLimitState`, `RestoreState(RateLimitState) bool` — persistence (RestoreState returns false if expired/invalid)
+
+### Session & Store (`session.go`)
+
+- `Session` — persistent loop state: Project, Agent, Status, InitialPrompt, LastError (string), StartedAt, UpdatedAt (time.Time), LoopsCompleted, NoProgressCount, TotalTasksCompleted, TotalFilesModified (int), RateLimitState (*RateLimitState)
+- `NewSession(project, agent, prompt string) *Session` — constructor
+- `Session.IsExpired(hours int) bool`, `Session.Age() time.Duration` — expiration checks
+- `Session.Update(status *Status, loopErr error)` — updates counters after a loop
+- `CircuitState` — persistent circuit state: Project, Agent, TripReason (string), NoProgressCount (int), Tripped (bool), TrippedAt (*time.Time), UpdatedAt (time.Time)
+- `SessionStore` — manages session and circuit persistence to JSON files
+- `NewSessionStore(baseDir string)`, `DefaultSessionStore() (*SessionStore, error)` — constructors
+- `Load/Save/Delete Session(project, agent)` and `Load/Save/Delete CircuitState(project, agent)` — CRUD operations
+- `LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)` — loads session, auto-deletes if expired (returns nil + expired=true)
 
 ### History (`history.go`)
 
-```go
-type HistoryStore struct { ... }
-func NewHistoryStore(baseDir string) *HistoryStore
-func DefaultHistoryStore() (*HistoryStore, error)
+- `HistoryStore` — manages session and circuit event logs. `MaxHistoryEntries` = 50.
+- `NewHistoryStore(baseDir string)`, `DefaultHistoryStore() (*HistoryStore, error)` — constructors
+- `SessionHistoryEntry` — Timestamp, Event, LoopCount, Status, Error
+- `SessionHistory` — Project, Agent, Entries ([]SessionHistoryEntry)
+- `CircuitHistoryEntry` — Timestamp, FromState, ToState, Reason, NoProgressCount, SameErrorCount, TestLoopCount, CompletionCount
+- `CircuitHistory` — Project, Agent, Entries ([]CircuitHistoryEntry)
+- `Load/Save/Delete SessionHistory(project, agent)` and `Load/Save/Delete CircuitHistory(project, agent)` — CRUD
+- `AddSessionEntry(project, agent, event, status, errorMsg string, loopCount int) error` — append + trim
+- `AddCircuitEntry(project, agent, fromState, toState, reason string, noProgressCount, sameErrorCount, testLoopCount, completionCount int) error` — append + trim
 
-type SessionHistoryEntry struct { ... }
-type SessionHistory struct { ... }
-type CircuitHistoryEntry struct { ... }
-type CircuitHistory struct { ... }
+### Runner & Loop (`loop.go`)
 
-// Session history: Load/Save/Add/Delete SessionHistory(project, agent string)
-func (h *HistoryStore) AddSessionEntry(project, agent, event, status, errorMsg string, loopCount int) error
-// Circuit history: Load/Save/Add/Delete CircuitHistory(project, agent string)
-func (h *HistoryStore) AddCircuitEntry(project, agent, fromState, toState, reason string, noProgressCount, sameErrorCount, testLoopCount, completionCount int) error
-```
-
-### Loop (`loop.go`)
-
-```go
-type Runner struct { ... }
-type LoopOptions struct { ... }  // ContainerName, Project, Agent, Prompt, MaxLoops, Monitor, callbacks, etc.
-type LoopResult struct { ... }
-func NewRunner(client *docker.Client) (*Runner, error)
-func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner
-func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
-func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)
-func (r *Runner) ResetCircuit(project, agent string) error
-func (r *Runner) ResetSession(project, agent string) error
-func (r *Runner) GetSession(project, agent string) (*Session, error)
-func (r *Runner) GetCircuitState(project, agent string) (*CircuitState, error)
-```
+- `Runner` — executes Ralph loops. Holds docker.Client, SessionStore, HistoryStore.
+- `NewRunner(client *docker.Client) (*Runner, error)` — uses default stores
+- `NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner` — explicit DI (testing)
+- `Runner.Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)` — main loop orchestration
+- `Runner.ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)` — docker exec with output capture
+- `Runner.ResetCircuit(project, agent string) error`, `Runner.ResetSession(project, agent string) error` — reset state
+- `Runner.GetSession(project, agent string) (*Session, error)`, `Runner.GetCircuitState(project, agent string) (*CircuitState, error)` — read state
+- `LoopOptions` — ContainerName, Project, Agent, Prompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
+- `LoopResult` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
 
 ### Monitor (`monitor.go`)
 
-```go
-type MonitorOptions struct { Writer io.Writer; MaxLoops int; ShowRateLimit bool; RateLimiter *RateLimiter; Verbose bool }
-func NewMonitor(opts MonitorOptions) *Monitor
-// Format*/Print* pairs: LoopStart(loopNum), LoopProgress(loopNum, *Status, *CircuitBreaker),
-// LoopEnd(loopNum, *Status, err, outputSize, elapsed), Result(*LoopResult)
-// Format* return string; Print* write to opts.Writer
-func (m *Monitor) FormatRateLimitWait(resetTime time.Time) string
-func (m *Monitor) FormatAPILimitError(isInteractive bool) string
-```
-
-### Session (`session.go`)
-
-```go
-type Session struct { ... }
-type CircuitState struct { ... }
-func NewSession(project, agent, prompt string) *Session
-func (sess *Session) IsExpired(hours int) bool
-func (sess *Session) Age() time.Duration
-func (sess *Session) Update(status *Status, loopErr error)
-
-type SessionStore struct { ... }
-func NewSessionStore(baseDir string) *SessionStore
-func DefaultSessionStore() (*SessionStore, error)
-// Load/Save/Delete Session(project, agent) and CircuitState(project, agent)
-func (s *SessionStore) LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)
-```
+- `Monitor` — real-time progress output. Format*/Print* pairs for each event.
+- `MonitorOptions` — Writer (io.Writer), MaxLoops (int), ShowRateLimit (bool), RateLimiter (*RateLimiter), Verbose (bool)
+- `NewMonitor(opts MonitorOptions) *Monitor` — constructor
+- `Format/Print LoopStart(loopNum)`, `Format/Print LoopProgress(loopNum, *Status, *CircuitBreaker)`, `Format/Print LoopEnd(loopNum, *Status, err, outputSize, elapsed)`, `Format/Print Result(*LoopResult)` — Format returns string, Print writes to opts.Writer
+- `FormatRateLimitWait(resetTime time.Time) string`, `FormatAPILimitError(isInteractive bool) string` — format-only
 
 ### TUI (`tui/`)
 
-```go
-type Model struct { ... }  // BubbleTea model for ralph monitor dashboard
-func NewModel(opts ModelOptions) Model
-// Implements tea.Model: Init(), Update(tea.Msg), View() string
-```
+- `Model` — BubbleTea model for ralph monitor dashboard. Implements `tea.Model` (Init, Update, View).
+- `NewModel(project string) Model` — constructor
+- Internal: `errMsg` (unexported) wraps errors for TUI display
 
-## CLI Commands (`internal/cmd/ralph/`)
+## Testing
 
-| Command | Purpose |
-|---------|---------|
-| `ralph run` | Execute autonomous loop (`--agent`, `--prompt`, `--max-loops`, `--skip-permissions`) |
-| `ralph status` | Show session status for an agent |
-| `ralph reset` | Reset circuit breaker for an agent |
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, ratelimit, session, tui/model.
