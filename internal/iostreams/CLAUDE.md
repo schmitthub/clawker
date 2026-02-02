@@ -16,55 +16,130 @@ fmt.Fprintln(ios.Out, "data output")
 fmt.Fprintln(ios.ErrOut, "Processing...")
 ```
 
-## TTY Detection
+## Exported Types
+
+### IOStreams
+
+Main struct with public fields: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`.
+
+**Constructors:**
+
+- `NewIOStreams() *IOStreams` -- production (real stdin/stdout/stderr, auto-detect TTY/color)
+- `NewTestIOStreams() *TestIOStreams` -- testing (bytes.Buffer, non-TTY, colors disabled)
+
+### TestIOStreams
+
+Embeds `*IOStreams`. Additional fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`.
+
+**Test setup methods:**
+
+- `SetInteractive(bool)` -- simulate TTY on all three streams
+- `SetColorEnabled(bool)` -- enable/disable color output
+- `SetTerminalSize(width, height int)` -- set cached terminal dimensions
+- `SetProgressEnabled(bool)` -- enable/disable progress indicator
+- `SetSpinnerDisabled(bool)` -- use text-only mode
+
+**Buffer methods:** `InBuf.SetInput(string)`, `OutBuf.String()`, `ErrBuf.String()`, `OutBuf.Reset()`
+
+### ColorScheme
+
+Constructed via `NewColorScheme(enabled bool, theme string) *ColorScheme` or `ios.ColorScheme()`.
+
+**Query methods:** `Enabled() bool`, `Theme() string`
+
+**Color methods** (return unmodified string when disabled):
+
+- `Red(s)`, `Redf(fmt, ...)` -- error color
+- `Yellow(s)`, `Yellowf(fmt, ...)` -- warning color
+- `Green(s)`, `Greenf(fmt, ...)` -- success color
+- `Blue(s)`, `Bluef(fmt, ...)` -- primary/title color
+- `Cyan(s)`, `Cyanf(fmt, ...)` -- info color
+- `Magenta(s)`, `Magentaf(fmt, ...)` -- highlight color
+- `Bold(s)`, `Boldf(fmt, ...)` -- bold text
+- `Muted(s)`, `Mutedf(fmt, ...)` -- gray/dim color
+
+**Icon methods** (Unicode with color or ASCII fallback):
+
+- `SuccessIcon()` -- green checkmark or `[ok]`
+- `SuccessIconWithColor(text)` -- checkmark + text or `[ok] text`
+- `WarningIcon()` -- yellow `!` or `[warn]`
+- `WarningIconWithColor(text)` -- `!` + text or `[warn] text`
+- `FailureIcon()` -- red X or `[error]`
+- `FailureIconWithColor(text)` -- X + text or `[error] text`
+- `InfoIcon()` -- cyan info symbol or `[info]`
+- `InfoIconWithColor(text)` -- info symbol + text or `[info] text`
+
+## IOStreams Methods
+
+### TTY Detection
 
 ```go
-ios.IsInputTTY()    // stdin is a terminal
-ios.IsOutputTTY()   // stdout is a terminal
-ios.IsInteractive() // both stdin and stdout are TTYs
-ios.IsStderrTTY()   // stderr is a terminal
-ios.CanPrompt()     // interactive AND not CI mode
+ios.IsInputTTY() bool     // stdin is a terminal
+ios.IsOutputTTY() bool    // stdout is a terminal
+ios.IsStderrTTY() bool    // stderr is a terminal
+ios.IsInteractive() bool  // both stdin and stdout are TTYs
+ios.CanPrompt() bool      // interactive AND not NeverPrompt
 ```
 
-## Color Output
+### Color
 
 ```go
-cs := ios.ColorScheme()
-cs.Green("Success")              // Returns unmodified string if colors disabled
-cs.Red("Error"), cs.Yellow("Warning"), cs.Blue("Info"), cs.Cyan("Note"), cs.Muted("dim")
-cs.Redf("Error: %s", msg)       // Formatted variants
-cs.SuccessIcon()                 // "✓" or "[ok]" based on color support
-cs.FailureIcon()                 // "✗" or "[error]"
-cs.WarningIcon(), cs.InfoIcon()
-cs.SuccessIconWithColor("Done")  // "✓ Done" or "[ok] Done"
+ios.ColorEnabled() bool              // auto-detect or explicit setting
+ios.SetColorEnabled(bool)            // override auto-detection
+ios.ColorScheme() *ColorScheme       // configured for this IOStreams
+ios.DetectTerminalTheme()            // probe terminal background
+ios.TerminalTheme() string           // "light", "dark", or "none"
 ```
 
-## Progress Indicators
+### Terminal Size
 
 ```go
-ios.StartProgressIndicatorWithLabel("Building...")
-defer ios.StopProgressIndicator()
-
-// Or automatic lifecycle:
-err := ios.RunWithProgress("Building image", func() error { return doBuild() })
+ios.TerminalWidth() int                    // width only (default 80)
+ios.TerminalSize() (width, height int)     // both (default 80x24)
+ios.InvalidateTerminalSizeCache()          // force re-query after resize
 ```
 
-- Spinner writes to stderr, uses braille charset at 120ms with cyan color
+### Progress Indicators
+
+```go
+ios.StartProgressIndicator()                   // spinner on stderr (no label)
+ios.StartProgressIndicatorWithLabel(label)      // spinner with label
+ios.StopProgressIndicator()                     // stop spinner
+ios.RunWithProgress(label, func() error) error  // auto start/stop lifecycle
+ios.GetSpinnerDisabled() bool                   // check text-only mode
+ios.SetSpinnerDisabled(bool)                    // toggle text-only mode
+```
+
+- Spinner: braille charset, 120ms, cyan, writes to stderr
 - Only animates when both stdout and stderr are TTYs
-- Text fallback: set `CLAWKER_SPINNER_DISABLED=1` or `ios.SetSpinnerDisabled(true)`
+- Text fallback: `CLAWKER_SPINNER_DISABLED=1` or `SetSpinnerDisabled(true)`
 - Thread-safe (mutex-protected)
 
-## Terminal & Pager
+### Pager
 
 ```go
-width := ios.TerminalWidth()             // 80 default
-width, height := ios.TerminalSize()      // (80, 24) default
+ios.SetPager(cmd string)     // set pager command
+ios.GetPager() string        // effective pager (env vars as fallback)
+ios.StartPager() error       // pipe stdout through pager (no-op if not TTY)
+ios.StopPager()              // restore original stdout
+```
 
-ios.SetPager("less -R")                  // CLAWKER_PAGER > PAGER > platform default
-ios.StartPager(); defer ios.StopPager()  // Only if stdout is TTY
+Precedence: `CLAWKER_PAGER` > `PAGER` > platform default (`less -R` / `more`)
 
-ios.StartAlternateScreenBuffer()         // For full-screen TUIs
-defer ios.StopAlternateScreenBuffer()
+### Alternate Screen Buffer
+
+```go
+ios.SetAlternateScreenBufferEnabled(bool)   // enable/disable support
+ios.StartAlternateScreenBuffer()            // switch to alt screen + hide cursor
+ios.StopAlternateScreenBuffer()             // restore main screen + show cursor
+ios.RefreshScreen()                         // clear screen, cursor to home
+```
+
+### Prompt Control
+
+```go
+ios.SetNeverPrompt(bool)     // force-disable all prompts
+ios.GetNeverPrompt() bool    // check if prompts disabled
 ```
 
 ## Environment Variables
@@ -72,63 +147,23 @@ defer ios.StopAlternateScreenBuffer()
 | Variable | Effect |
 |----------|--------|
 | `NO_COLOR` | Disables color output |
-| `CI` | Disables interactive prompts |
 | `CLAWKER_PAGER` | Custom pager (highest priority) |
 | `PAGER` | Standard pager |
-| `COLORFGBG` | Terminal theme detection hint |
 | `CLAWKER_SPINNER_DISABLED` | Static text instead of animated spinner |
 
-## Constructors
+## Source Files
 
-```go
-func NewIOStreams() *IOStreams                          // Production constructor (real stdin/stdout/stderr)
-func NewColorScheme(enabled bool, theme string) *ColorScheme  // Color scheme with theme awareness
-```
-
-## Additional Methods
-
-```go
-// Theme
-ios.DetectTerminalTheme()             // Probes terminal background color
-ios.TerminalTheme() string            // Returns "light", "dark", or ""
-
-// Cache
-ios.InvalidateTerminalSizeCache()     // Force re-query terminal dimensions
-
-// Getters
-ios.GetSpinnerDisabled() bool         // Check if spinner is in text-only mode
-ios.GetPager() string                 // Get configured pager command
-
-// Screen management
-ios.SetAlternateScreenBufferEnabled(bool)  // Enable/disable alt screen support
-ios.RefreshScreen()                        // Clear and redraw screen
-
-// Prompt control
-ios.SetNeverPrompt(bool)              // Force-disable all prompts
-ios.GetNeverPrompt() bool             // Check if prompts are disabled
-```
-
-## Testing
-
-```go
-ios := iostreams.NewTestIOStreams()
-ios.SetInteractive(true)          // Simulate TTY (default: false)
-ios.SetColorEnabled(true)         // Enable colors (default: false)
-ios.SetTerminalSize(120, 40)
-ios.SetProgressEnabled(true)
-ios.SetSpinnerDisabled(true)      // Use text mode
-ios.InBuf.SetInput("user input")  // Simulate stdin
-
-// Verify output:
-ios.OutBuf.String()  // stdout
-ios.ErrBuf.String()  // stderr
-ios.OutBuf.Reset()   // Clear buffer
-```
+| File | Contents |
+|------|----------|
+| `iostreams.go` | `IOStreams`, `TestIOStreams`, `NewIOStreams`, `NewTestIOStreams`, all IOStreams methods |
+| `colorscheme.go` | `ColorScheme`, `NewColorScheme`, color/icon methods |
+| `pager.go` | `getPagerCommand` (unexported), `pagerWriter` (unexported) |
 
 ## Gotchas
 
 - Always use `f.IOStreams`, never create IOStreams directly in commands
 - Progress spinners go to stderr, not stdout
-- TestIOStreams has colors disabled and non-TTY by default
+- `TestIOStreams` has colors disabled and non-TTY by default
 - Call `StartPager()` before any output
-- `CanPrompt()` returns false when `CI` env var is set
+- `CanPrompt()` returns false when `neverPrompt` is set (used for CI)
+- Color methods on `ColorScheme` bridge to `internal/tui` lipgloss styles

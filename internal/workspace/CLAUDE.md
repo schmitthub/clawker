@@ -17,19 +17,28 @@ type Strategy interface {
     ShouldPreserve() bool
 }
 
-type BindStrategy struct { ... }     // Direct host mount (live sync)
-type SnapshotStrategy struct { ... } // Ephemeral volume copy (isolated)
+type Config struct {
+    HostPath       string   // Host path to mount/copy
+    RemotePath     string   // Container path
+    ProjectName    string   // For volume naming
+    AgentName      string   // For agent-specific volumes
+    IgnorePatterns []string // Patterns to exclude (snapshot mode)
+}
 ```
 
-### Factory
+### Strategies
+
+`BindStrategy` — Direct host mount (live sync). Prepare/Cleanup are no-ops. `ShouldPreserve()` returns true.
+
+`SnapshotStrategy` — Ephemeral volume copy (isolated). Creates volume and copies files on Prepare. `ShouldPreserve()` returns false. Extra methods: `VolumeName() string`, `WasCreated() bool`.
+
+### Constructors
 
 ```go
-func NewStrategy(ctx context.Context, cfg Config, cli *docker.Client) (Strategy, error)
+func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) // Factory
 func NewBindStrategy(cfg Config) *BindStrategy
 func NewSnapshotStrategy(cfg Config) *SnapshotStrategy
 ```
-
-`SnapshotStrategy` also exposes `VolumeName()` and `WasCreated()`.
 
 ## Mount Setup
 
@@ -46,31 +55,31 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error
 ```
 
-`SetupMounts` is the main entry point — combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 ## Git Credentials
 
 ```go
 type GitCredentialSetupResult struct {
-    Mounts []mount.Mount   // Credential helper mounts
-    Env    []string        // Environment variables (e.g., git credential helper config)
+    Mounts []mount.Mount
+    Env    []string
 }
 
 func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult
 func GitConfigExists() bool
-func GetGitConfigMount(cfg *config.SecurityConfig) (*mount.Mount, error)
+func GetGitConfigMount() []mount.Mount
 ```
 
 **HTTPS**: Forwarded via host proxy (`git-credential-clawker`).
-**Git config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`.
+**Git config**: `~/.gitconfig` mounted read-only to staging path, entrypoint copies filtering `credential.helper`.
 
 ## SSH Agent
 
 ```go
-func IsSSHAgentAvailable() bool
-func UseSSHAgentProxy() bool
-func GetSSHAgentMounts() []mount.Mount
-func GetSSHAgentEnvVar() string
+func IsSSHAgentAvailable() bool   // Checks SSH_AUTH_SOCK (Linux: socket exists, macOS: env set)
+func UseSSHAgentProxy() bool      // true on macOS (avoids Docker Desktop socket permission issues)
+func GetSSHAgentMounts() []mount.Mount  // Linux: bind mount socket; macOS: nil (uses proxy)
+func GetSSHAgentEnvVar() string   // Returns container SSH_AUTH_SOCK path (Linux only)
 ```
 
 - Linux: Bind mount `$SSH_AUTH_SOCK`
@@ -87,8 +96,8 @@ Only available when `security.docker_socket: true`.
 ## Constants
 
 ```go
-const ContainerSSHAgentPath    // /tmp/ssh-agent.sock
-const HostGitConfigStagingPath // Staging path for git config
+const ContainerSSHAgentPath    = "/tmp/ssh-agent.sock"
+const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 ```
 
 ## Dependencies

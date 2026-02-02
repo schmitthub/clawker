@@ -1,183 +1,200 @@
 # TUI Components Package
 
-Reusable BubbleTea components for building terminal user interfaces in clawker.
+Reusable BubbleTea/Lipgloss components for terminal UIs. Stateless render functions + value-type models (immutable setters return copies).
 
 ## File Overview
 
 | File | Purpose |
 |------|---------|
-| `tokens.go` | Design tokens: spacing constants (`SpaceNone`-`SpaceLG`), layout breakpoints (`WidthCompact`/`WidthNormal`/`WidthWide`), `GetLayoutMode()`, `GetContentWidth()` |
-| `text.go` | Text manipulation: `Truncate`, `TruncateMiddle`, `PadRight`/`PadLeft`/`PadCenter`, `WordWrap`, `CountVisibleWidth`, `StripANSI` |
-| `time.go` | Time formatting: `FormatRelative`, `FormatDuration`, `FormatUptime`, `FormatTimestamp`, `FormatDate`, `FormatDateTime`, `ParseDurationOrDefault` |
-| `styles.go` | Lipgloss styles and colors |
-| `keys.go` | Key bindings: `DefaultKeyMap()`, `IsQuit`/`IsUp`/`IsDown`/`IsLeft`/`IsRight`/`IsEnter`/`IsEscape`/`IsTab` |
-| `layout.go` | Layout composition: `SplitHorizontal`/`SplitVertical`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid`, `Box`, `ResponsiveLayout` |
-| `components.go` | Stateless renders: `RenderHeader`, `RenderStatus`, `RenderBadge`, `RenderProgress`, `RenderDivider`, `RenderTable`, `RenderKeyValueTable` |
-| `spinner.go` | Animated spinner with multiple styles (`SpinnerDots`, `SpinnerLine`, etc.) |
-| `panel.go` | Bordered panels with focus states, `PanelGroup` for multi-panel layouts |
-| `list.go` | Selectable list with scrolling: `ListItem` interface, `SimpleListItem`, navigation methods |
-| `statusbar.go` | Status bar with left/center/right sections, pre-built indicators (`ModeIndicator`, `ConnectionIndicator`, `TimerIndicator`) |
-| `help.go` | Help bar: `RenderHelpBar`, `RenderHelpGrid`, `QuickHelp`, `NavigationBindings`, `QuitBindings`, `AllBindings`, `HelpBinding` |
+| `tokens.go` | Design tokens: spacing, breakpoints, `LayoutMode`, utility math |
+| `text.go` | Text manipulation: truncate, pad, wrap, ANSI-aware width |
+| `time.go` | Time formatting: relative, duration, uptime, timestamps |
+| `styles.go` | Lipgloss color palette, text/border/component/badge/status styles |
+| `keys.go` | `KeyMap` struct, `DefaultKeyMap()`, `Is*` key matchers |
+| `layout.go` | Layout composition: split, stack, row, grid, box, responsive |
+| `components.go` | Stateless renders: header, status, badge, progress, table, divider |
+| `spinner.go` | Animated spinner wrapping bubbles/spinner |
+| `panel.go` | Bordered panels with focus, `PanelGroup` for multi-panel layouts |
+| `list.go` | Selectable list with scrolling, `ListItem` interface |
+| `statusbar.go` | Status bar with left/center/right sections, indicator helpers |
+| `help.go` | Help bar/grid, binding presets, `QuickHelp` |
 
-## Colors & Styles
+## Design Tokens (`tokens.go`)
 
-```go
-// Colors
-tui.ColorPrimary, tui.ColorSecondary, tui.ColorSuccess, tui.ColorWarning
-tui.ColorError, tui.ColorInfo, tui.ColorMuted, tui.ColorHighlight
-tui.ColorDisabled, tui.ColorSelected, tui.ColorBorder, tui.ColorAccent
-tui.ColorBg, tui.ColorBgAlt
+**Spacing**: `SpaceNone` (0), `SpaceXS` (1), `SpaceSM` (2), `SpaceMD` (4), `SpaceLG` (8)
 
-// Component styles
-tui.HeaderStyle, tui.PanelStyle, tui.PanelActiveStyle
-tui.ListItemStyle, tui.ListItemSelectedStyle, tui.ListItemDimStyle
-tui.HelpKeyStyle, tui.HelpDescStyle
-tui.BadgeStyle, tui.StatusRunningStyle, tui.StatusStoppedStyle, tui.StatusErrorStyle
-```
+**Breakpoints**: `WidthCompact` (60), `WidthNormal` (80), `WidthWide` (120)
 
-## Layout Helpers
+**Layout mode**: `LayoutMode` type -- `LayoutCompact`, `LayoutNormal`, `LayoutWide`
 
-```go
-leftW, rightW := tui.SplitHorizontal(width, tui.SplitConfig{Ratio: 0.4, MinFirst: 30, MinSecond: 40, Gap: 1})
-content := tui.Stack(0, header, body, footer)   // Vertical stack
-row := tui.Row(1, col1, col2, col3)             // Horizontal row
-columns := tui.Columns(width, 2, items...)      // Equal-width columns
-tui.ResponsiveLayout(width, compact, normal, wide)
-```
+`GetLayoutMode(width)`, `GetContentWidth(totalWidth, padding)`, `GetContentHeight(totalHeight, headerH, footerH)`
 
-## Interactive Components
+**Math**: `MinInt`, `MaxInt`, `ClampInt`
 
-### List
-
-```go
-list := tui.NewList(tui.ListConfig{Width: 40, Height: 10, ShowDescriptions: true})
-list = list.SetItems([]tui.ListItem{
-    tui.SimpleListItem{ItemTitle: "Agent 1", ItemDescription: "Running"},
-})
-list = list.SelectNext()
-selected := list.SelectedItem()
-```
-
-### Panel & PanelGroup
-
-```go
-panel := tui.NewPanel(tui.PanelConfig{Title: "Details", Width: 40, Height: 20, Focused: true})
-panel = panel.SetContent("content here")
-
-group := tui.NewPanelGroup(leftPanel, rightPanel)
-group = group.FocusNext()  // Tab between panels
-```
-
-### Spinner
-
-```go
-spinner := tui.NewSpinner(tui.SpinnerDots, "Loading...")
-spinner = spinner.SetLabel("Processing...")
-// Must call Init() and handle tick messages in Update loop
-```
-
-### Status Bar
-
-```go
-bar := tui.NewStatusBar(width)
-bar = bar.SetLeft(tui.ModeIndicator("running", true)).
-    SetCenter(tui.CounterIndicator("Loop", 5, 10)).
-    SetRight(tui.TimerIndicator("Uptime", tui.FormatUptime(d)))
-```
-
-## Input Handling Pattern
-
-```go
-case tea.KeyMsg:
-    if tui.IsQuit(msg)   { return m, tea.Quit }
-    if tui.IsUp(msg)     { m.list = m.list.SelectPrev() }
-    if tui.IsDown(msg)   { m.list = m.list.SelectNext() }
-    if tui.IsEnter(msg)  { /* handle selection */ }
-    if tui.IsTab(msg)    { m.panelGroup = m.panelGroup.FocusNext() }
-```
-
-## Basic TUI Layout Example
-
-```go
-func (m Model) View() string {
-    header := tui.RenderHeader(tui.HeaderConfig{
-        Title: "DASHBOARD", Subtitle: m.project, Width: m.width,
-    })
-    leftW, rightW := tui.SplitHorizontal(m.width, tui.SplitConfig{Ratio: 0.4})
-    content := tui.Row(1, m.renderList(leftW), m.renderDetails(rightW))
-    footer := tui.RenderHelpBar(m.getBindings(), m.width)
-    return tui.Stack(0, header, content, footer)
-}
-```
-
-## API Quick Reference
-
-### Text Utilities (`text.go`)
-
-`Truncate`, `TruncateMiddle`, `PadRight`, `PadLeft`, `PadCenter`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`
-
-### Components (`components.go`)
-
-`RenderHeader`, `RenderStatus`, `RenderBadge`, `RenderCountBadge`, `RenderProgress`, `RenderDivider`, `RenderLabeledDivider`, `RenderEmptyState`, `RenderError`, `RenderLabelValue`, `RenderKeyValueTable`, `RenderTable`, `RenderPercentage`, `RenderBytes`, `RenderTag`, `RenderTags`
-
-### Styles (`styles.go`)
+## Styles (`styles.go`)
 
 **Colors**: `ColorPrimary`, `ColorSecondary`, `ColorSuccess`, `ColorWarning`, `ColorError`, `ColorInfo`, `ColorMuted`, `ColorHighlight`, `ColorDisabled`, `ColorSelected`, `ColorBorder`, `ColorAccent`, `ColorBg`, `ColorBgAlt`
 
 **Text**: `TitleStyle`, `SubtitleStyle`, `ErrorStyle`, `SuccessStyle`, `WarningStyle`, `MutedStyle`, `HighlightStyle`
 
-**Borders**: `BorderStyle`, `BorderActiveStyle`, `BorderMutedStyle`, `PanelStyle`, `PanelActiveStyle`, `PanelTitleStyle`
+**Borders**: `BorderStyle`, `BorderActiveStyle`, `BorderMutedStyle`
 
-**Components**: `HeaderStyle`, `HeaderTitleStyle`, `HeaderSubtitleStyle`, `ListItemStyle`, `ListItemSelectedStyle`, `ListItemDimStyle`
+**Panel**: `PanelStyle`, `PanelActiveStyle`, `PanelTitleStyle` | **Header**: `HeaderStyle`, `HeaderTitleStyle`, `HeaderSubtitleStyle`
 
-**Badges**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`, `BadgeMutedStyle`
+**List**: `ListItemStyle`, `ListItemSelectedStyle`, `ListItemDimStyle` | **Help**: `HelpKeyStyle`, `HelpDescStyle`, `HelpSeparatorStyle`
+
+**Label/value**: `LabelStyle`, `ValueStyle`, `CountStyle` | **Other**: `DividerStyle`, `EmptyStateStyle`
 
 **Status**: `StatusRunningStyle`, `StatusStoppedStyle`, `StatusErrorStyle`, `StatusWarningStyle`, `StatusInfoStyle`
 
-**Other**: `LabelStyle`, `ValueStyle`, `CountStyle`, `DividerStyle`, `EmptyStateStyle`, `HelpKeyStyle`, `HelpDescStyle`, `HelpSeparatorStyle`
+**Badges**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`, `BadgeMutedStyle`
 
-**Functions**: `StatusStyle(status)`, `StatusText(status)`, `StatusIndicator(status)`
+**Functions**: `StatusStyle(running bool)`, `StatusText(running bool)`, `StatusIndicator(status string) (Style, string)`
 
-### Keys (`keys.go`)
+## Keys (`keys.go`)
 
-`DefaultKeyMap()`, `IsQuit`, `IsUp`, `IsDown`, `IsLeft`, `IsRight`, `IsEnter`, `IsEscape`, `IsHelp`, `IsTab`
+`KeyMap` struct: `Quit`, `Up`, `Down`, `Left`, `Right`, `Enter`, `Escape`, `Help`, `Tab` (all `key.Binding`)
 
-### Panel (`panel.go`)
+`DefaultKeyMap()` -- standard vim-style + arrow key bindings
 
-`PanelModel`, `NewPanel(PanelConfig)`, `PanelGroup`, `NewPanelGroup(...PanelModel)`
+**Matchers** (take `tea.KeyMsg`, return bool): `IsQuit`, `IsUp`, `IsDown`, `IsLeft`, `IsRight`, `IsEnter`, `IsEscape`, `IsHelp`, `IsTab`
 
-### StatusBar (`statusbar.go`)
+## Text Utilities (`text.go`)
 
-`StatusBarModel`, `NewStatusBar(width)`, `RenderStatusBar`, `RenderStatusBarWithSections`, `ModeIndicator`, `ConnectionIndicator`, `TimerIndicator`, `CounterIndicator`
+`Truncate(s, maxLen)`, `TruncateMiddle(s, maxLen)` -- ANSI-aware truncation with ellipsis
 
-### Help (`help.go`)
+`PadRight`, `PadLeft`, `PadCenter` -- ANSI-aware padding to width
 
-`HelpModel`, `NewHelp(bindings, width)`, `RenderHelpBar`, `RenderHelpGrid`, `QuickHelp`
+`WordWrap(s, width)`, `WrapLines(s, width) []string` -- word-boundary wrapping
 
-### Spinner (`spinner.go`)
+`CountVisibleWidth(s)`, `StripANSI(s)` -- ANSI escape handling
 
-`SpinnerModel`, `NewSpinner(spinnerType, label)`, `NewDefaultSpinner(label)`
+`Indent(s, prefix)`, `JoinNonEmpty(sep, parts...)`, `Repeat(s, n)`, `FirstLine(s)`, `LineCount(s)`
 
-Spinner types: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDots`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`
+## Time Utilities (`time.go`)
 
-### Layout (`layout.go`)
+`FormatRelative(t)` -- "2 hours ago", "in 5 minutes" | `FormatDuration(d)` -- "2h 30m" compact
 
-`SplitHorizontal`, `SplitVertical`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid`, `Box`, `CenterInRect`, `AlignLeft`, `AlignCenter`, `AlignRight`, `ResponsiveLayout`
+`FormatUptime(d)` -- "01:15:42" clock format, "Xd HH:MM:SS" for >99h
 
-### List (`list.go`)
+`FormatTimestamp(t, short)`, `FormatDate(t)`, `FormatDateTime(t)` -- display formatting
 
-`ListModel`, `NewList(ListConfig)`, `ListItem` (interface), `SimpleListItem`
+`ParseDurationOrDefault(s, defaultVal)` -- safe duration parsing
 
-### Tokens (`tokens.go`)
+## Layout (`layout.go`)
 
-Spacing: `SpaceNone`, `SpaceXS`, `SpaceSM`, `SpaceMD`, `SpaceLG`
+**Config types**: `SplitConfig` (Ratio, MinFirst, MinSecond, Gap), `GridConfig` (Columns, Gap, Width), `BoxConfig` (Width, Height, Padding)
 
-Width breakpoints: `WidthCompact`, `WidthNormal`, `WidthWide`
+`DefaultSplitConfig()` -- 50/50 split, min 10 each, gap 1
 
-`GetLayoutMode(width)`, `GetContentWidth(width)`, `GetContentHeight(height)`, `MinInt`, `MaxInt`, `ClampInt`
+`SplitHorizontal(width, SplitConfig) (leftW, rightW)`, `SplitVertical(height, SplitConfig) (topH, bottomH)`
 
-## Known Limitations
+`Stack(spacing, ...string)` -- vertical | `Row(spacing, ...string)` -- horizontal | `Columns(width, gap, ...string)` -- equal-width
+
+`FlexRow(width, left, center, right)` -- distributed spacing across width
+
+`Grid(GridConfig, ...string)` -- multi-row grid | `Box(BoxConfig, content)` -- fixed-size box
+
+`CenterInRect(content, w, h)`, `AlignLeft`, `AlignCenter`, `AlignRight` -- alignment within width
+
+`ResponsiveLayout` struct with `Compact`, `Normal`, `Wide` func fields + `Render(width)` method
+
+## Stateless Render Functions (`components.go`)
+
+**Config types**: `HeaderConfig` (Title, Subtitle, Timestamp, Width), `StatusConfig` (Status, Label), `ProgressConfig` (Current, Total, Width, ShowBar), `TableConfig` (Headers, Rows, ColWidths, Width), `KeyValuePair` (Key, Value)
+
+`RenderHeader(HeaderConfig)`, `RenderStatus(StatusConfig)` -- title bar, status indicator
+
+`RenderBadge(text, style)`, `RenderCountBadge(count, label)` -- inline badges
+
+`RenderProgress(ProgressConfig)` -- text "3/10" or visual bar
+
+`RenderDivider(width)`, `RenderLabeledDivider(label, width)` -- horizontal rules
+
+`RenderEmptyState(message, w, h)`, `RenderError(err, width)` -- state displays
+
+`RenderLabelValue(label, value)`, `RenderKeyValueTable([]KeyValuePair, width)` -- key-value rendering
+
+`RenderTable(TableConfig)` -- headers + divider + rows
+
+`RenderPercentage(float64)` -- color-coded (>=80 error, >=60 warning) | `RenderBytes(int64)` -- "1.5 GB"
+
+`RenderTag(text, color)`, `RenderTags([]string, color)` -- bordered tag elements
+
+## Interactive Components
+
+All models use value semantics -- setters return new copies. Each has `View() string`.
+
+### SpinnerModel (`spinner.go`)
+
+`SpinnerType` constants: `SpinnerDots`, `SpinnerLine`, `SpinnerMiniDots`, `SpinnerJump`, `SpinnerPulse`, `SpinnerPoints`, `SpinnerGlobe`, `SpinnerMoon`, `SpinnerMonkey`
+
+`NewSpinner(SpinnerType, label)`, `NewDefaultSpinner(label)` -- constructors
+
+BubbleTea: `Init() tea.Cmd`, `Update(tea.Msg) (SpinnerModel, tea.Cmd)`, `View()`, `Tick() tea.Msg`
+
+Setters: `SetLabel`, `SetStyle`, `SetSpinnerStyle`, `SetSpinnerType` | Type alias: `SpinnerTickMsg`
+
+### PanelModel (`panel.go`)
+
+`PanelConfig` (Title, Width, Height, Focused, Padding). `DefaultPanelConfig()`.
+
+`NewPanel(PanelConfig)` -- bordered container with focus highlight
+
+Setters: `SetContent`, `SetTitle`, `SetFocused`, `SetWidth`, `SetHeight`, `SetPadding`
+
+Getters: `Width()`, `Height()`, `Title()`, `Content()`, `IsFocused()`
+
+Convenience: `RenderInfoPanel(title, content, width)`, `RenderDetailPanel(title, []KeyValuePair, width)`, `RenderScrollablePanel(title, lines, offset, visibleLines, width)`
+
+**PanelGroup**: `NewPanelGroup(...PanelModel)` -- manages focus across panels. Methods: `Add`, `FocusNext`, `FocusPrev`, `Focus(index)`, `FocusedPanel`, `FocusedIndex`, `Panels`, `RenderHorizontal(gap)`, `RenderVertical(gap)`
+
+### ListModel (`list.go`)
+
+`ListItem` interface: `Title()`, `Description()`, `FilterValue()`. `SimpleListItem` implements it.
+
+`ListConfig` (Width, Height, ShowDescriptions, Wrap). `DefaultListConfig()`.
+
+`NewList(ListConfig)` -- selectable list with scrolling
+
+BubbleTea: `Update(tea.Msg)` handles up/down/home/end/pgup/pgdown
+
+Navigation: `SelectNext`, `SelectPrev`, `SelectFirst`, `SelectLast`, `Select(index)`, `PageUp`, `PageDown`
+
+Setters: `SetItems`, `SetWidth`, `SetHeight`, `SetShowDescriptions`, `SetWrap`
+
+Getters: `SelectedItem`, `SelectedIndex`, `Items`, `Len`, `IsEmpty`
+
+### StatusBarModel (`statusbar.go`)
+
+`NewStatusBar(width)` -- left/center/right section bar
+
+Setters: `SetLeft`, `SetCenter`, `SetRight`, `SetWidth`, `SetStyle` | Getters: `Left`, `Center`, `Right`, `Width`
+
+`StatusBarSection` (Content, Style) for `RenderStatusBarWithSections([]StatusBarSection, width)`
+
+Convenience: `RenderStatusBar(left, center, right, width)`
+
+**Indicators**: `ModeIndicator(mode, active)`, `ConnectionIndicator(connected)`, `TimerIndicator(label, value)`, `CounterIndicator(label, current, total)`
+
+### HelpModel (`help.go`)
+
+`HelpConfig` (Width, ShowAll, Separator). `DefaultHelpConfig()`.
+
+`NewHelp(HelpConfig)` -- help bar from key bindings
+
+Setters: `SetBindings`, `SetWidth`, `SetShowAll`, `SetSeparator` | Methods: `View()`, `ShortHelp()`, `FullHelp()`, `Bindings()`
+
+**Standalone**: `RenderHelpBar(bindings, width)`, `RenderHelpGrid(bindings, columns, width)`
+
+**Binding presets**: `NavigationBindings()`, `QuitBindings()`, `AllBindings()` -- return `[]key.Binding`
+
+**Quick helpers**: `HelpBinding(keys, desc)`, `QuickHelp(pairs ...string)` -- inline help strings
+
+## Tests & Limitations
+
+Every file has a corresponding `*_test.go` with `testify/assert`.
 
 - `CountVisibleWidth` counts runes, not true visual width (CJK chars counted as 1)
 - `StripANSI` may not handle all nested ANSI sequences
-- Spinner requires `Init()` and tick message handling in Update loop
+- Spinner requires `Init()` and tick message handling in BubbleTea Update loop

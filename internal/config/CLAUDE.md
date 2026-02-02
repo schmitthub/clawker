@@ -15,161 +15,120 @@ Configuration loading, validation, project registry, and resolver.
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 
-## Filename Constants
+## Constants
 
-```go
-const ConfigFileName          = "clawker.yaml"             // loader.go — default project config file
-const IgnoreFileName          = ".clawkerignore"           // loader.go — default ignore file
-const SettingsFileName        = "settings.yaml"            // settings_loader.go — user settings file
-const ProjectSettingsFileName = ".clawker.settings.yaml"   // settings_loader.go — project-level settings override
-```
+- **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`)
+- **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`clawker`), `ClawkerNetwork` (`clawker`)
+- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`
+- **Modes:** `ModeBind Mode = "bind"`, `ModeSnapshot Mode = "snapshot"` — `ParseMode(s) (Mode, error)`
 
-## Home Paths (`home.go`)
+## Path Helpers (`home.go`)
 
-```go
-const ClawkerHomeEnv   = "CLAWKER_HOME"           // Override home directory
-const DefaultClawkerDir = "clawker"                // Default dir name under ~/.local/
-const MonitorSubdir, BuildSubdir, DockerfilesSubdir, LogsSubdir = "monitor", "build", "dockerfiles", "logs"
-const ClawkerNetwork = "clawker"                   // Default Docker network name
-
-func ClawkerHome() (string, error)      // ~/.local/clawker (or $CLAWKER_HOME)
-func MonitorDir() (string, error)       // ~/.local/clawker/monitor
-func BuildDir() (string, error)         // ~/.local/clawker/build
-func DockerfilesDir() (string, error)   // ~/.local/clawker/dockerfiles
-func LogsDir() (string, error)          // ~/.local/clawker/logs
-func EnsureDir(path string) error       // mkdir -p equivalent
-```
+- `ClawkerHome() (string, error)` — `~/.local/clawker` or `$CLAWKER_HOME`
+- `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()` — subdirectory paths (all return `(string, error)`)
+- `EnsureDir(path string) error` — mkdir -p equivalent
 
 ## Defaults (`defaults.go`)
 
-```go
-func DefaultConfig() *Config
-func DefaultSettings() *Settings
+- `DefaultConfig() *Config`, `DefaultSettings() *Settings`
+- `DefaultFirewallDomains []string` — pre-approved domains
+- `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile` — template strings
 
-var DefaultFirewallDomains []string          // Pre-approved domains
-const DefaultConfigYAML    string            // Template clawker.yaml
-const DefaultSettingsYAML  string            // Template settings.yaml
-const DefaultRegistryYAML  string            // Template projects.yaml
-const DefaultIgnoreFile    string            // Template .clawkerignore
+## Loader (`loader.go`)
+
+```go
+func NewLoader(workDir string, opts ...LoaderOption) *Loader
+type LoaderOption func(*Loader)
+func WithUserDefaults(dir string) LoaderOption
+func WithProjectRoot(path string) LoaderOption
+func WithProjectKey(key string) LoaderOption
 ```
 
-## Validation (`validator.go`, `loader.go`)
+- `(*Loader).Load() (*Config, error)` — read project config, merge user defaults, inject project key
+- `(*Loader).ConfigPath() string` — path to `clawker.yaml`
+- `(*Loader).IgnorePath() string` — path to `.clawkerignore`
+- `(*Loader).Exists() bool` — whether config file exists
+
+**Load order:** read project config -> merge user defaults -> inject project key.
+`Config.Project` is `yaml:"-"` — never read from YAML, always injected by the loader.
+
+## Validation (`validator.go`)
 
 ```go
 func NewValidator(workDir string) *Validator
-
-type MultiValidationError struct { Errors []error }
-
-type ConfigNotFoundError struct { Path string }
-func IsConfigNotFound(err error) bool
+func (*Validator) Validate(cfg *Config) error          // returns MultiValidationError or nil
+func (*Validator) Warnings() []string                   // non-fatal warnings
 ```
 
-## Additional Schema Types (`schema.go`)
+- `MultiValidationError` — wraps `[]error`; method `ValidationErrors() []ValidationError`
+- `ValidationError` — has `Field`, `Message`, `Value interface{}`
+- `ConfigNotFoundError` — has `Path string`; checked via `IsConfigNotFound(err) bool`
 
-```go
-type AgentConfig struct {
-    Includes []string; Env map[string]string
-    Memory, Editor, Visual, Shell string
-}
+## Schema Types (`schema.go`)
 
-type ExposePort struct { Port int; Protocol string }
-type ArgDefinition struct { Name, Default string }
+**Top-level:** `Config` — `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
 
-type HealthcheckConfig struct {
-    Cmd []string; Interval, Timeout, StartPeriod string; Retries int
-}
+**Build:**
+- `BuildConfig` — `Image`, `Dockerfile`, `Packages`, `Context`, `BuildArgs`, `Instructions`, `Inject`
+- `DockerInstructions` — `Copy`, `Env`, `Labels`, `Expose`, `Args`, `Volumes`, `Workdir`, `Healthcheck`, `Shell`, `UserRun`, `RootRun`
+- `InjectConfig` — `AfterFrom`, `AfterPackages`, `AfterUserSetup`, `AfterUserSwitch`, `AfterClaudeInstall`, `BeforeEntrypoint`
+- `CopyInstruction` — `Src`, `Dest`, `Chown`, `Chmod`
+- `RunInstruction` — `Cmd`, `Alpine`, `Debian`
+- `ExposePort` — `Port`, `Protocol`; `ArgDefinition` — `Name`, `Default`
+- `HealthcheckConfig` — `Cmd`, `Interval`, `Timeout`, `StartPeriod`, `Retries`
 
-type Mode string
-func ParseMode(s string) (Mode, error)
+**Agent/Workspace:**
+- `AgentConfig` — `Includes []string`, `Env map[string]string`, `Memory`, `Editor`, `Visual`, `Shell`
+- `WorkspaceConfig` — `RemotePath string`, `DefaultMode Mode`
 
-type ValidationError struct { Field, Message string; Value interface{} }
-```
+**Security:**
+- `SecurityConfig` — `Firewall`, `DockerSocket`, `CapAdd`, `EnableHostProxy`, `GitCredentials`
+- `FirewallConfig` — `Enable`, `AddDomains`, `RemoveDomains`, `OverrideDomains`
+  - Methods: `FirewallEnabled() bool`, `GetFirewallDomains() []string`, `IsOverrideMode() bool`
+- `GitCredentialsConfig` — `ForwardHTTPS`, `ForwardSSH`, `CopyGitConfig`
+  - Methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()` — all return `bool`
+- `SecurityConfig` methods: `HostProxyEnabled() bool`, `FirewallEnabled() bool`
 
-## Settings Types (`settings.go`)
+**Ralph:**
+- `RalphConfig` (pointer, nil when not configured) — `MaxLoops`, `StagnationThreshold`, `TimeoutMinutes`, `CallsPerHour`, `CompletionThreshold`, `SessionExpirationHours`, `SameErrorThreshold`, `OutputDeclineThreshold`, `MaxConsecutiveTestLoops`, `LoopDelaySeconds`, `SafetyCompletionThreshold`, `SkipPermissions`
+- Methods: `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()` — return defaults if nil/zero
+
+## Settings (`settings.go`, `settings_loader.go`)
 
 ```go
 type Settings struct {
-    DefaultImage string `yaml:"default_image"`
+    DefaultImage string       `yaml:"default_image"`
     Logging      LoggingConfig `yaml:"logging"`
 }
-
-type LoggingConfig struct {
-    FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int
-}
-// LoggingConfig methods: IsFileEnabled, GetMaxSizeMB, GetMaxAgeDays, GetMaxBackups — return defaults if zero
-
-func DefaultSettings() *Settings
-
-type SettingsLoaderOption func(*SettingsLoader)
+type LoggingConfig struct { FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int }
+// Methods: IsFileEnabled, GetMaxSizeMB, GetMaxAgeDays, GetMaxBackups — return defaults if zero
 ```
 
-## SettingsLoader (`settings_loader.go`)
-
-```go
-func NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error)
-func WithProjectSettingsRoot(path string) SettingsLoaderOption
-
-// Methods: Path, ProjectSettingsPath, Exists, Load, Save, EnsureExists
-```
+- `NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error)`
+- `WithProjectSettingsRoot(path string) SettingsLoaderOption`
+- Methods: `Path`, `ProjectSettingsPath`, `Exists`, `Load`, `Save`, `EnsureExists`
 
 ## Registry (`registry.go`)
 
 Persistent project registry at `~/.local/clawker/projects.yaml`.
 
-```go
-type ProjectEntry struct {
-    Name string `yaml:"name"`
-    Root string `yaml:"root"`
-}
-
-type ProjectRegistry struct {
-    Projects map[string]ProjectEntry `yaml:"projects"`
-}
-```
-
-**Key functions:**
+- `ProjectEntry` — `Name string`, `Root string`
+- `ProjectRegistry` — `Projects map[string]ProjectEntry`
 - `NewRegistryLoader(path)` — creates loader for the registry file
 - `Slugify(name)` — converts project name to URL-safe slug
 - `UniqueSlug(name, registry)` — generates unique slug with numeric suffix if needed
 - `(*RegistryLoader).Register(key, entry)` / `Unregister(key)` — add/remove projects
 - `(*ProjectRegistry).Lookup(path)` — find project by longest-prefix path match
-- `(*ProjectRegistry).LookupByKey(key)` — find project by slug key
-- `(*ProjectRegistry).HasKey(key)` — check if slug exists in registry
+- `(*ProjectRegistry).LookupByKey(key)` / `HasKey(key)` — find/check by slug
 
 ## Resolver (`resolver.go`)
 
 Resolves working directory to a registered project.
 
-```go
-type Resolution struct {
-    ProjectKey   string        // Registry slug (e.g., "my-app")
-    ProjectEntry *ProjectEntry // Name and root path
-    WorkDir      string        // Resolved working directory
-}
-```
-
+- `Resolution` — `ProjectKey string`, `ProjectEntry *ProjectEntry`, `WorkDir string`
 - `NewResolver(registry)` — creates resolver from registry
-- `(*Resolver).Resolve(workDir)` — returns `*Resolution` (nil if no match)
-- `(*Resolution).Found()` — true if resolution matched a project
-- `(*Resolution).ProjectRoot()` — returns the project root path
-
-## Loader (`loader.go`)
-
-Loads `clawker.yaml` with functional options:
-
-- `WithUserDefaults(dir)` — merge user defaults from settings directory
-- `WithProjectRoot(path)` — explicit project root (skips discovery)
-- `WithProjectKey(key)` — inject `Config.Project` from registry
-
-**Load order:** read project config → merge user defaults → inject project key.
-
-`Config.Project` is `yaml:"-"` — never read from YAML, always injected by the loader from the registry.
-
-## Settings (`settings_loader.go`)
-
-- `NewSettingsLoader(opts...)` — creates loader for `settings.yaml`
-- `WithProjectSettingsRoot(path)` — enables project-level settings merging
-- Settings no longer contain a `Projects` list — that moved to the registry
+- `(*Resolver).Resolve(workDir) *Resolution` — nil if no match
+- `(*Resolution).Found() bool`, `(*Resolution).ProjectRoot() string`
 
 ## Schema Notes
 

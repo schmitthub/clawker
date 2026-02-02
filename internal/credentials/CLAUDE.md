@@ -2,7 +2,7 @@
 
 Environment variable management, `.env` file parsing, and OTEL credential forwarding for containers.
 
-## Key Files
+## Files
 
 | File | Purpose |
 |------|---------|
@@ -10,38 +10,67 @@ Environment variable management, `.env` file parsing, and OTEL credential forwar
 | `dotenv.go` | `.env` file parsing, sensitive key detection |
 | `otel.go` | OTEL environment variable forwarding |
 
-## EnvBuilder (`env.go`)
+## EnvBuilder
 
 Builder pattern for constructing container environment variables with security filtering.
 
 ```go
-b := credentials.NewEnvBuilder()
-b.Set("KEY", "value")              // Set explicit var
-b.SetAll(map[string]string{...})   // Set multiple vars
-b.SetFromHost("PATH")              // Copy single var from host
-b.SetFromHostAll([]string{...})    // Copy multiple from host
-b.LoadDotEnv(path)                 // Load from .env file
-b.AllowFromHost("CUSTOM_*")       // Allow pattern from host
-b.Deny("SECRET_KEY")              // Block specific var
-b.PassthroughFromHost()            // Pass allowed host vars
-env := b.Build()                   // Returns []string{"KEY=value", ...}
-envMap := b.BuildMap()             // Returns map[string]string
+type EnvBuilder struct {
+    vars      map[string]string
+    allowList []string  // glob patterns for host passthrough
+    denyList  []string  // glob patterns to block
+}
+
+func NewEnvBuilder() *EnvBuilder
 ```
 
-Default deny list blocks sensitive keys (AWS, GitHub tokens, etc.).
+### Builder Methods
 
-## Dotenv Parsing (`dotenv.go`)
+```go
+(*EnvBuilder).Set(key, value string)              // Set explicit var
+(*EnvBuilder).SetAll(vars map[string]string)      // Set multiple vars
+(*EnvBuilder).SetFromHost(key string)             // Copy single var from host env
+(*EnvBuilder).SetFromHostAll(keys []string)       // Copy multiple vars from host env
+(*EnvBuilder).LoadDotEnv(path string) error       // Load from .env file
+(*EnvBuilder).AllowFromHost(pattern string)       // Allow glob pattern from host
+(*EnvBuilder).Deny(pattern string)                // Block specific var pattern
+(*EnvBuilder).PassthroughFromHost()               // Pass all allowed host vars (filtered by deny list)
+```
+
+### Output Methods
+
+```go
+(*EnvBuilder).Build() []string                    // Returns []string{"KEY=value", ...}
+(*EnvBuilder).BuildMap() map[string]string        // Returns map[string]string
+(*EnvBuilder).Count() int                         // Number of vars set
+```
+
+### Security Filtering
+
+Default deny list (`defaultDenyList()`) blocks sensitive keys: AWS credentials, GitHub tokens, SSH keys, Docker auth, cloud provider secrets, etc. `isAllowed()`/`isDenied()` use glob matching against the allow/deny lists.
+
+### DefaultPassthrough
+
+```go
+func DefaultPassthrough() []string  // Returns env var names that should be passed to containers
+```
+
+Returns a curated list of safe-to-forward environment variables (e.g., `TERM`, `LANG`, `TZ`, etc.).
+
+## Dotenv Parsing
 
 ```go
 func LoadDotEnv(path string) (map[string]string, error)  // Parse .env file
 func FindDotEnvFiles(dir string) ([]string, error)        // Find .env files in directory
 ```
 
-Supports quoted values, comments, and `export` prefix. `isSensitiveKey()` detects credential-like keys.
+Supports quoted values, comments, `export` prefix. Internal `isSensitiveKey()` detects credential-like keys. `parseEnvLine()` and `unquote()` handle line-level parsing.
 
-## OTEL Forwarding (`otel.go`)
+## OTEL Forwarding
 
 ```go
 func OtelEnvVars(containerName string) map[string]string           // OTEL env vars from host
 func OtelEnvVarsWithPrompts(containerName string) map[string]string // OTEL vars including prompt config
 ```
+
+Forwards OpenTelemetry configuration to containers. `WithPrompts` variant includes additional prompt-related OTEL vars.

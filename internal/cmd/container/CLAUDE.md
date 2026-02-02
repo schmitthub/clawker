@@ -9,13 +9,40 @@ internal/cmd/container/
 ├── container.go        # Parent command, registers subcommands
 ├── opts/               # Shared container options (import cycle workaround)
 │   ├── opts.go         # ContainerOptions, AddFlags, BuildConfigs
-│   └── opts_test.go
-├── run/                # clawker container run
-├── create/             # clawker container create
-├── start/, stop/, ...  # Other subcommands
+│   └── network.go      # NetworkOpt, NetworkAttachmentOpts
+├── run/                # clawker container run (RunOptions, NewCmdRun)
+├── create/             # clawker container create (CreateOptions, NewCmdCreate)
+├── start/              # clawker container start (StartOptions, NewCmdStart)
+├── stop/               # clawker container stop (StopOptions, NewCmdStop)
+├── exec/               # clawker container exec (ExecOptions, NewCmdExec)
+├── attach/             # clawker container attach (AttachOptions, NewCmdAttach)
+├── logs/               # clawker container logs (LogsOptions, NewCmdLogs)
+├── list/               # clawker container ls (ListOptions, NewCmdList)
+├── inspect/            # clawker container inspect (InspectOptions, NewCmdInspect)
+├── cp/                 # clawker container cp (CpOptions, NewCmdCp)
+├── kill/               # clawker container kill (KillOptions, NewCmdKill)
+├── pause/, unpause/    # PauseOptions/UnpauseOptions, NewCmdPause/NewCmdUnpause
+├── remove/             # clawker container rm (RemoveOptions, NewCmdRemove)
+├── rename/             # clawker container rename (RenameOptions, NewCmdRename)
+├── restart/            # clawker container restart (RestartOptions, NewCmdRestart)
+├── stats/              # clawker container stats (StatsOptions, NewCmdStats)
+├── top/                # clawker container top (TopOptions, NewCmdTop)
+├── update/             # clawker container update (UpdateOptions, NewCmdUpdate)
+└── wait/               # clawker container wait (WaitOptions, NewCmdWait)
 ```
 
-**Import cycle rule**: `container/` imports subcommands, subcommands need shared types. The `opts/` package exists to break the `container → run → container` cycle. Never put shared utilities in the parent package.
+**Import cycle rule**: `container/` imports subcommands, subcommands need shared types. The `opts/` package exists to break the `container -> run -> container` cycle. Never put shared utilities in the parent package.
+
+## Parent Command (`container.go`)
+
+```go
+// NewCmdContainer creates the parent "container" command and registers all subcommands.
+func NewCmdContainer(f *cmdutil.Factory) *cobra.Command
+```
+
+Registers: `NewCmdAttach`, `NewCmdCp`, `NewCmdCreate`, `NewCmdExec`, `NewCmdInspect`, `NewCmdKill`, `NewCmdList`, `NewCmdLogs`, `NewCmdPause`, `NewCmdRemove`, `NewCmdRename`, `NewCmdRestart`, `NewCmdRun`, `NewCmdStart`, `NewCmdStats`, `NewCmdStop`, `NewCmdTop`, `NewCmdUnpause`, `NewCmdUpdate`, `NewCmdWait`.
+
+All subcommand constructors follow: `NewCmd*(f *cmdutil.Factory, runF func(context.Context, *XxxOptions) error) *cobra.Command`
 
 ## Shared Container Options (`opts/`)
 
@@ -27,14 +54,28 @@ copts.AddFlags(cmd.Flags(), containerOpts)       // Register all shared flags
 copts.MarkMutuallyExclusive(cmd)                  // --agent and --name are mutually exclusive
 
 agentName := containerOpts.GetAgentName()          // From --agent or --name
-containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(workspaceMounts, cfg)
+containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(flags, mounts, cfg)
+containerOpts.ValidateFlags()                      // Cross-field validation
 ```
 
-**Key flag categories**: Basic (`Agent`, `Name`, `Image`, `TTY`, `Stdin`, `AutoRemove`, `Mode`), Environment (`Env`, `Labels`), Volumes (`Volumes`, `Tmpfs`, `ReadOnly`, `VolumesFrom`), Networking (`Publish`, `Hostname`, `DNS`, `ExtraHosts`), Resources (`Memory`, `MemorySwap`, `CPUs`, `CPUShares`), Security (`CapAdd`, `CapDrop`, `Privileged`, `SecurityOpt`), Health Checks, Process & Runtime (`Restart`, `StopSignal`, `Init`).
+**Exported types in opts/**:
+- `ContainerOptions` — all container flags (naming, env, volumes, resources, networking, security, health, runtime)
+- `ListOpts` — repeatable string flags (`NewListOpts`, `NewListOptsRef`)
+- `MapOpts` — key=value flags (`NewMapOpts`)
+- `PortOpts` — port mapping flags (`NewPortOpts`)
+- `NetworkOpt` — advanced `--network` syntax with `NetworkAttachmentOpts`
 
-**Custom flag types in opts/**: `PortOpts` (port mappings), `ListOpts` (repeatable strings), `MapOpts` (key=value), `MemBytes`/`MemSwapBytes` (memory sizes), `NanoCPUs` (CPU limits), `NetworkOpt` (advanced `--network` syntax with `NetworkAttachmentOpts`).
+**Exported functions in opts/**:
+- `AddFlags(flags, opts)` — register all shared container flags
+- `MarkMutuallyExclusive(cmd)` — mark `--agent`/`--name` mutually exclusive
+- `ResolveAgentName(agent, generateRandom)` — resolve agent name with fallback
+- `FormatContainerName(project, agent)` — format `clawker.<project>.<agent>`
+- `ParseLabelsToMap(labels)` — convert `[]string{"k=v"}` to `map[string]string`
+- `MergeLabels(base, user)` — merge label maps (base takes precedence)
 
-**BuildConfigs validation**: `--memory-swap` requires `--memory`; `--no-healthcheck` conflicts with `--health-*`; `--restart` (except "no") conflicts with `--rm`.
+**BuildConfigs validation**: `--memory-swap` requires `--memory`; `--no-healthcheck` conflicts with `--health-*`; `--restart` (except "no") conflicts with `--rm`; namespace mode validation (PID, IPC, UTS, userns, cgroupns).
+
+**Key flag categories**: Basic (`Agent`, `Name`, `Image`, `TTY`, `Stdin`, `AutoRemove`, `Mode`), Environment (`Env`, `EnvFile`, `Labels`, `LabelsFile`), Volumes (`Volumes`, `Tmpfs`, `ReadOnly`, `VolumesFrom`, `Mounts`), Networking (`Publish`, `Hostname`, `DNS`, `ExtraHosts`, `NetMode`), Resources (`Memory`, `MemorySwap`, `CPUs`, `CPUShares`, `BlkioWeight`, `PidsLimit`), Security (`CapAdd`, `CapDrop`, `Privileged`, `SecurityOpt`), Health Checks, Process & Runtime (`Restart`, `StopSignal`, `Init`), Devices (`Devices`, `GPUs`, `DeviceCgroupRules`).
 
 ## Image Resolution (@ Symbol)
 
@@ -47,13 +88,9 @@ if opts.Image == "@" {
 }
 ```
 
-**Resolution order**: 1) Project image (`clawker-<project>:latest` with labels) → 2) Settings `default_image` → 3) Config `default_image`.
-
-**Key functions** in `internal/resolver/image.go`: `ResolveImageWithSource()`, `ResolveAndValidateImage()`, `FindProjectImage()`.
+**Resolution order**: 1) Project image (`clawker-<project>:latest` with labels) -> 2) Settings `default_image` -> 3) Config `default_image`.
 
 ## Workspace Setup Pattern
-
-Container commands set up workspace mounts automatically:
 
 ```go
 mode, _ := config.ParseMode(opts.Mode)  // CLI flag overrides config default
@@ -66,18 +103,16 @@ if cfg.Security.DockerSocket { workspaceMounts = append(workspaceMounts, workspa
 
 ## Command Dependency Injection Pattern
 
-Commands use function references on Options structs rather than `*Factory` directly. `NewCmd` takes `*Factory` and wires the references:
+Commands use function references on Options structs rather than `*Factory` directly. `NewCmd*` takes `*Factory` and wires the references:
 
 ```go
 type StopOptions struct {
     IOStreams   *iostreams.IOStreams
     Client     func(context.Context) (*docker.Client, error)
     Resolution func() *config.Resolution
-
     Agent   bool
     Timeout int
     Signal  string
-
     containers []string
 }
 ```
@@ -88,27 +123,21 @@ Run functions accept `*Options` only:
 func runStop(opts *StopOptions) error {
     ctx := context.Background()
     client, err := opts.Client(ctx)  // Call function ref, not Factory
-    // ...
     resolution := opts.Resolution()
     project := resolution.ProjectKey
-    // ...
 }
 ```
 
 ## Testing
 
-Container command tests use the **Cobra+Factory pattern** — the canonical approach for testing commands end-to-end without a Docker daemon.
+Container command tests use the **Cobra+Factory pattern** -- the canonical approach for testing commands end-to-end without a Docker daemon.
 
 ### Pattern
 
 1. Create `dockertest.NewFakeClient()` and configure needed setup helpers
 2. Build a `*cmdutil.Factory` with faked closures (`testFactory` helper)
-3. Call `NewCmdRun(f, nil)` — `nil` runF means the real run function executes
+3. Call `NewCmdRun(f, nil)` -- `nil` runF means the real run function executes
 4. Set args, execute, assert on output and `fake.AssertCalled`
-
-### Reference Implementation
-
-See `run/run_test.go` — `TestRunRun` and its `testFactory`/`testConfig` helpers.
 
 ### Per-Package Helpers
 
@@ -129,25 +158,16 @@ See `.claude/memories/TESTING-REFERENCE.md` for full templates and decision matr
 Use `cmdutil.ExitError` (defined in `internal/cmdutil/output.go`) to propagate non-zero container exit codes. This allows deferred cleanup (terminal restore, container removal) to run before the process exits.
 
 ```go
-import "github.com/schmitthub/clawker/internal/cmdutil"
-
-// Return ExitError instead of calling os.Exit directly
 if status != 0 {
     return &cmdutil.ExitError{Code: status}
 }
-
-// The root command checks for ExitError and calls os.Exit(code)
 ```
 
 ## Wait Helper Pattern (`waitForContainerExit`)
 
-Follows Docker CLI's `waitExitOrRemoved` pattern. Wraps the dual-channel `ContainerWait` into a single `<-chan int` status channel.
+Unexported helper in `run/run.go`. Follows Docker CLI's `waitExitOrRemoved` pattern. Wraps the dual-channel `ContainerWait` into a single `<-chan int` status channel.
 
-```go
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int
-```
-
-**Critical**: Use `WaitConditionNextExit` (not `WaitConditionNotRunning`) when waiting is set up before `ContainerStart` — a "created" container is already not-running, so `WaitConditionNotRunning` returns `StatusCode=0` immediately. Use `WaitConditionRemoved` when `--rm` (auto-remove) is set.
+**Critical**: Use `WaitConditionNextExit` (not `WaitConditionNotRunning`) when waiting is set up before `ContainerStart` -- a "created" container is already not-running, so `WaitConditionNotRunning` returns immediately. Use `WaitConditionRemoved` when `--rm` (auto-remove) is set.
 
 ## Attach-Then-Start Pattern (`run.go` and `start.go`)
 
@@ -156,7 +176,7 @@ Interactive container sessions (`-it`) use attach-before-start to avoid missing 
 1. **Attach** to container before starting (prevents race with `--rm` containers)
 2. **Start I/O goroutines** before `ContainerStart` (ready to receive immediately)
 3. **Start container** via `ContainerStart`
-4. **Resize TTY** after start — the +1/-1 trick forces SIGWINCH for TUI redraw; `ResizeHandler` monitors ongoing SIGWINCH events
-5. **Wait for exit or detach** — on stream completion, wait up to 2s for exit status; timeout means Ctrl+P Ctrl+Q detach (container still running)
+4. **Resize TTY** after start -- the +1/-1 trick forces SIGWINCH for TUI redraw
+5. **Wait for exit or detach** -- on stream completion, wait up to 2s for exit status; timeout means Ctrl+P Ctrl+Q detach (container still running)
 
-**Key separation**: I/O streaming (`pty.Stream`) starts pre-start; resize (`ResizeHandler`) starts post-start. This matches Docker CLI's split between `attachContainer()` and `MonitorTtySize()`.
+**Key separation**: I/O streaming (`pty.Stream`) starts pre-start; resize starts post-start. This matches Docker CLI's split between `attachContainer()` and `MonitorTtySize()`.
