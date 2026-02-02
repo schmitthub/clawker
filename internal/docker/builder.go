@@ -33,6 +33,23 @@ type BuilderOptions struct {
 	BuildKitEnabled bool               // Use BuildKit builder for cache mount support
 }
 
+// toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
+func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, contextDir string) BuildImageOpts {
+	return BuildImageOpts{
+		Tags:            tags,
+		Dockerfile:      dockerfile,
+		NoCache:         o.NoCache,
+		Labels:          o.Labels,
+		Target:          o.Target,
+		Pull:            o.Pull,
+		SuppressOutput:  o.SuppressOutput,
+		NetworkMode:     o.NetworkMode,
+		BuildArgs:       o.BuildArgs,
+		BuildKitEnabled: o.BuildKitEnabled,
+		ContextDir:      contextDir,
+	}
+}
+
 // NewBuilder creates a new Builder instance.
 func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder {
 	return &Builder{
@@ -122,19 +139,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 			return fmt.Errorf("failed to create build context: %w", err)
 		}
 
-		return b.client.BuildImage(ctx, buildCtx, BuildImageOpts{
-			Tags:            tags,
-			Dockerfile:      filepath.Base(gen.GetCustomDockerfilePath()),
-			NoCache:         opts.NoCache,
-			Labels:          opts.Labels,
-			Target:          opts.Target,
-			Pull:            opts.Pull,
-			SuppressOutput:  opts.SuppressOutput,
-			NetworkMode:     opts.NetworkMode,
-			BuildArgs:       opts.BuildArgs,
-			BuildKitEnabled: opts.BuildKitEnabled,
-			ContextDir:      gen.GetBuildContext(),
-		})
+		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext()))
 	}
 
 	logger.Info().Str("image", imageTag).Msg("building container image")
@@ -158,25 +163,17 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		if err != nil {
 			return fmt.Errorf("failed to create build context temp dir: %w", err)
 		}
-		defer os.RemoveAll(tempDir)
+		defer func() {
+			if err := os.RemoveAll(tempDir); err != nil {
+				logger.Debug().Err(err).Str("dir", tempDir).Msg("failed to clean up build context temp dir")
+			}
+		}()
 
 		if err := gen.WriteBuildContextToDir(tempDir, dockerfile); err != nil {
 			return fmt.Errorf("failed to write build context: %w", err)
 		}
 
-		return b.client.BuildImage(ctx, nil, BuildImageOpts{
-			Tags:            tags,
-			Dockerfile:      "Dockerfile",
-			NoCache:         opts.NoCache,
-			Labels:          opts.Labels,
-			Target:          opts.Target,
-			Pull:            opts.Pull,
-			SuppressOutput:  opts.SuppressOutput,
-			NetworkMode:     opts.NetworkMode,
-			BuildArgs:       opts.BuildArgs,
-			BuildKitEnabled: opts.BuildKitEnabled,
-			ContextDir:      tempDir,
-		})
+		return b.client.BuildImage(ctx, nil, opts.toBuildImageOpts(tags, "Dockerfile", tempDir))
 	}
 
 	// Legacy path: tar stream build context
@@ -185,19 +182,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
-	return b.client.BuildImage(ctx, buildCtx, BuildImageOpts{
-		Tags:            tags,
-		Dockerfile:      "Dockerfile",
-		NoCache:         opts.NoCache,
-		Labels:          opts.Labels,
-		Target:          opts.Target,
-		Pull:            opts.Pull,
-		SuppressOutput:  opts.SuppressOutput,
-		NetworkMode:     opts.NetworkMode,
-		BuildArgs:       opts.BuildArgs,
-		BuildKitEnabled: opts.BuildKitEnabled,
-		ContextDir:      gen.GetBuildContext(),
-	})
+	return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, "Dockerfile", gen.GetBuildContext()))
 }
 
 // mergeImageLabels combines clawker internal labels and user-defined labels into opts.Labels.

@@ -1,6 +1,6 @@
 # Docker Client Package
 
-Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and naming conventions.
+Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, naming conventions, and image building orchestration.
 
 ## TODO
 - [ ] Review package boundaries — some output parsing bypasses whail and may belong in command consumers
@@ -56,7 +56,7 @@ All return `whail.Filters`.
 - `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — resource name builders
 - `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
 - `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
-- `ParseContainerName(name)` → `(project, agent)`, `IsAlpineImage(imageRef)` — parsing utilities
+- `ParseContainerName(name)` → `(project, agent)` — parsing utilities
 - `GenerateRandomName()` — Docker-style adjective-noun pair
 
 Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`

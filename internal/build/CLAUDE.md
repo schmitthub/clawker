@@ -163,7 +163,7 @@ type RegistryError = registry.RegistryError // { Package, StatusCode, Message } 
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/logger`, `internal/build/registry`, `internal/build/semver`. **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/build/registry`, `internal/build/semver`. **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 

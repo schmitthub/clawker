@@ -65,7 +65,7 @@ func TestNewCmdInit_YesFlag(t *testing.T) {
 }
 
 func TestDefaultImageTag(t *testing.T) {
-	// Verify the default image tag constant from cmdutil
+	// Verify the default image tag constant from docker
 	expected := "clawker-default:latest"
 	if docker.DefaultImageTag != expected {
 		t.Errorf("expected DefaultImageTag %q, got %q", expected, docker.DefaultImageTag)
