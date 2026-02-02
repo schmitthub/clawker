@@ -24,9 +24,9 @@ func New(version, commit string) *cmdutil.Factory {
 
 	f.IOStreams = ioStreams()
 	f.WorkDir = workDirFunc()
-	f.Client = clientFunc()
+	f.Config = configFunc(f)     // depends on WorkDir
+	f.Client = clientFunc(f)     // depends on Config
 	f.HostProxy = hostProxyFunc()
-	f.Config = configFunc(f)
 	f.Prompter = prompterFunc(f)
 
 	return f
@@ -70,7 +70,7 @@ func workDirFunc() func() string {
 }
 
 // clientFunc returns a lazy closure that creates a Docker client once.
-func clientFunc() func(context.Context) (*docker.Client, error) {
+func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error) {
 	var (
 		once      sync.Once
 		client    *docker.Client
@@ -78,7 +78,7 @@ func clientFunc() func(context.Context) (*docker.Client, error) {
 	)
 	return func(ctx context.Context) (*docker.Client, error) {
 		once.Do(func() {
-			client, clientErr = docker.NewClient(ctx)
+			client, clientErr = docker.NewClient(ctx, f.Config())
 			if clientErr == nil {
 				docker.WireBuildKit(client)
 			}

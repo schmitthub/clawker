@@ -104,7 +104,7 @@ func NewTestClient(t *testing.T) *docker.Client {
 	RequireDocker(t)
 
 	ctx := context.Background()
-	c, err := docker.NewClient(ctx)
+	c, err := docker.NewClient(ctx, nil)
 	if err != nil {
 		t.Fatalf("failed to create Docker client: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -20,11 +21,12 @@ import (
 // Additional methods provide clawker-specific high-level operations.
 type Client struct {
 	*whail.Engine
+	cfg *config.Config // lazily provides Project() and Settings() for image resolution
 }
 
 // NewClient creates a new clawker Docker client.
 // It configures the whail.Engine with clawker's label prefix and conventions.
-func NewClient(ctx context.Context) (*Client, error) {
+func NewClient(ctx context.Context, cfg *config.Config) (*Client, error) {
 	opts := whail.EngineOptions{
 		LabelPrefix:  EngineLabelPrefix,
 		ManagedLabel: EngineManagedLabel,
@@ -35,7 +37,12 @@ func NewClient(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{Engine: engine}, nil
+	return &Client{Engine: engine, cfg: cfg}, nil
+}
+
+// SetConfig sets the config gateway on the client. Intended for tests.
+func (c *Client) SetConfig(cfg *config.Config) {
+	c.cfg = cfg
 }
 
 // Close closes the underlying Docker connection.
