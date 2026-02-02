@@ -10,7 +10,7 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/resolver"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 )
 
@@ -178,7 +178,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("image matches with :latest tag", func(t *testing.T) {
-		result, err := resolver.FindProjectImage(ctx, state.dockerClient, state.projectName)
+		result, err := docker.FindProjectImage(ctx, state.dockerClient, state.projectName)
 		if err != nil {
 			t.Errorf("FindProjectImage() unexpected error = %v", err)
 			return
@@ -194,7 +194,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("no matching images for nonexistent project", func(t *testing.T) {
-		result, err := resolver.FindProjectImage(ctx, state.dockerClient, "nonexistent-project-xyz")
+		result, err := docker.FindProjectImage(ctx, state.dockerClient, "nonexistent-project-xyz")
 		if err != nil {
 			t.Errorf("FindProjectImage() unexpected error = %v", err)
 			return
@@ -205,7 +205,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		result, err := resolver.FindProjectImage(ctx, state.dockerClient, "other-project")
+		result, err := docker.FindProjectImage(ctx, state.dockerClient, "other-project")
 		if err != nil {
 			t.Errorf("FindProjectImage() unexpected error = %v", err)
 			return
@@ -224,7 +224,7 @@ func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	state := setupImageResolverTests(t)
 	ctx := context.Background()
 
-	result, err := resolver.FindProjectImage(ctx, state.dockerClient, "project-with-absolutely-no-images")
+	result, err := docker.FindProjectImage(ctx, state.dockerClient, "project-with-absolutely-no-images")
 	if err != nil {
 		t.Errorf("FindProjectImage() unexpected error: %v", err)
 		return
@@ -244,7 +244,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			DefaultImage: "fallback:latest",
 		}
 
-		result, err := resolver.ResolveImageWithSource(ctx, state.dockerClient, cfg, nil)
+		result, err := docker.ResolveImageWithSource(ctx, state.dockerClient, cfg, nil)
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
@@ -253,8 +253,8 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			t.Fatal("ResolveImageWithSource() returned nil, expected project image")
 		}
 
-		if result.Source != resolver.ImageSourceProject {
-			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, resolver.ImageSourceProject)
+		if result.Source != docker.ImageSourceProject {
+			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, docker.ImageSourceProject)
 		}
 
 		if result.Reference != state.latestImageTag {
@@ -268,7 +268,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			DefaultImage: "fallback:latest",
 		}
 
-		result, err := resolver.ResolveImageWithSource(ctx, state.dockerClient, cfg, nil)
+		result, err := docker.ResolveImageWithSource(ctx, state.dockerClient, cfg, nil)
 		if err != nil {
 			t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 		}
@@ -277,8 +277,8 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			t.Fatal("ResolveImageWithSource() returned nil, expected default image")
 		}
 
-		if result.Source != resolver.ImageSourceDefault {
-			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, resolver.ImageSourceDefault)
+		if result.Source != docker.ImageSourceDefault {
+			t.Errorf("ResolveImageWithSource().Source = %q, want %q", result.Source, docker.ImageSourceDefault)
 		}
 
 		if result.Reference != "fallback:latest" {

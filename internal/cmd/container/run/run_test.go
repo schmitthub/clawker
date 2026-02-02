@@ -18,7 +18,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
-	"github.com/schmitthub/clawker/internal/resolver"
+
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/stretchr/testify/require"
 )
@@ -614,7 +614,7 @@ func TestImageArg(t *testing.T) {
 			defaultImage  string
 			fakeImages    []string // Images to return from fake ImageList
 			wantReference string
-			wantSource    resolver.ImageSource
+			wantSource    docker.ImageSource
 			wantNil       bool // Expect nil result (no resolution)
 		}{
 			{
@@ -623,7 +623,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    resolver.ImageSourceProject,
+				wantSource:    docker.ImageSourceProject,
 			},
 			{
 				name:          "@ resolves to default image when no project image",
@@ -631,7 +631,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "node:20-slim",
 				fakeImages:    []string{}, // No project images
 				wantReference: "node:20-slim",
-				wantSource:    resolver.ImageSourceDefault,
+				wantSource:    docker.ImageSourceDefault,
 			},
 			{
 				name:         "@ returns nil when no default available",
@@ -646,7 +646,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
 				wantReference: "clawker-myproject:latest",
-				wantSource:    resolver.ImageSourceProject,
+				wantSource:    docker.ImageSourceProject,
 			},
 			{
 				name:          "@ ignores non-latest project images",
@@ -654,7 +654,7 @@ func TestImageArg(t *testing.T) {
 				defaultImage:  "alpine:latest",
 				fakeImages:    []string{"clawker-myproject:v1.0"}, // No :latest tag
 				wantReference: "alpine:latest",
-				wantSource:    resolver.ImageSourceDefault,
+				wantSource:    docker.ImageSourceDefault,
 			},
 		}
 
@@ -686,7 +686,7 @@ func TestImageArg(t *testing.T) {
 				}
 
 				// Call the resolution function
-				result, err := resolver.ResolveImageWithSource(ctx, fake.Client, cfg, settings)
+				result, err := docker.ResolveImageWithSource(ctx, fake.Client, cfg, settings)
 				require.NoError(t, err)
 
 				if tt.wantNil {

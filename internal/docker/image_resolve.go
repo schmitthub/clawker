@@ -1,17 +1,36 @@
-package resolver
+package docker
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
-	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 )
+
+// ImageSource indicates where an image reference was resolved from.
+type ImageSource string
+
+const (
+	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
+	ImageSourceProject  ImageSource = "project"  // Found via project label search
+	ImageSourceDefault  ImageSource = "default"  // From config/settings default_image
+)
+
+// ResolvedImage contains the result of image resolution with source tracking.
+type ResolvedImage struct {
+	Reference string      // The image reference (name:tag)
+	Source    ImageSource // Where the image was resolved from
+}
+
+// FlavorOption represents a Linux flavor choice for image building.
+type FlavorOption struct {
+	Name        string
+	Description string
+}
 
 // ResolveDefaultImage returns the default_image from merged config/settings.
 // Local project config takes precedence over user settings.
@@ -33,18 +52,18 @@ func ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string 
 // FindProjectImage searches for a clawker-managed image matching the project label
 // with the :latest tag. Returns the image reference (name:tag) if found,
 // or empty string if not found.
-func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project string) (string, error) {
+func FindProjectImage(ctx context.Context, dockerClient *Client, project string) (string, error) {
 	if dockerClient == nil || project == "" {
 		return "", nil
 	}
 
 	// Build filter for project label
 	// Images built by clawker have com.clawker.project=<project>
-	f := docker.Filters{}.
-		Add("label", docker.LabelManaged+"="+docker.ManagedLabelValue).
-		Add("label", docker.LabelProject+"="+project)
+	f := Filters{}.
+		Add("label", LabelManaged+"="+ManagedLabelValue).
+		Add("label", LabelProject+"="+project)
 
-	result, err := dockerClient.ImageList(ctx, docker.ImageListOptions{
+	result, err := dockerClient.ImageList(ctx, ImageListOptions{
 		Filters: f,
 	})
 	if err != nil {
@@ -71,7 +90,7 @@ func FindProjectImage(ctx context.Context, dockerClient *docker.Client, project 
 // 3. Merged default_image from config/settings
 //
 // Returns the resolved image reference and an error if no image could be resolved.
-func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.Project, settings *config.Settings) (string, error) {
+func ResolveImage(ctx context.Context, dockerClient *Client, cfg *config.Project, settings *config.Settings) (string, error) {
 	result, err := ResolveImageWithSource(ctx, dockerClient, cfg, settings)
 	if err != nil {
 		return "", err
@@ -84,7 +103,7 @@ func ResolveImage(ctx context.Context, dockerClient *docker.Client, cfg *config.
 
 // ResolveImageWithSource resolves the image with source tracking.
 // See ResolveImage for resolution order details.
-func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cfg *config.Project, settings *config.Settings) (*ResolvedImage, error) {
+func ResolveImageWithSource(ctx context.Context, dockerClient *Client, cfg *config.Project, settings *config.Settings) (*ResolvedImage, error) {
 
 	// 2. Try to find a project image with :latest tag
 	if cfg != nil && cfg.Project != "" {
@@ -107,13 +126,26 @@ func ResolveImageWithSource(ctx context.Context, dockerClient *docker.Client, cf
 
 // ImageValidationDeps holds the dependencies needed by ResolveAndValidateImage.
 type ImageValidationDeps struct {
-	IOStreams      *iostreams.IOStreams
+	IOStreams       *iostreams.IOStreams
 	Prompter       func() *prompterpkg.Prompter
 	SettingsLoader func() (*config.SettingsLoader, error)
 
 	// InvalidateSettingsCache clears the cached settings so the next
 	// Settings() call reloads from disk. May be nil.
 	InvalidateSettingsCache func()
+
+	// DefaultImageTag is the tag used for the user's default base image
+	// (e.g. "clawker-default:latest"). Injected to avoid import cycle with
+	// internal/build.
+	DefaultImageTag string
+
+	// DefaultFlavorOptions returns the available Linux flavors for base images.
+	// Injected to avoid import cycle with internal/build.
+	DefaultFlavorOptions func() []FlavorOption
+
+	// BuildDefaultImage builds the default clawker base image with the given
+	// flavor. Injected to avoid import cycle with internal/build.
+	BuildDefaultImage func(ctx context.Context, flavor string) error
 }
 
 // ResolveAndValidateImage resolves an image and validates it exists (for default images).
@@ -126,7 +158,7 @@ type ImageValidationDeps struct {
 func ResolveAndValidateImage(
 	ctx context.Context,
 	deps ImageValidationDeps,
-	dockerClient *docker.Client,
+	dockerClient *Client,
 	cfg *config.Project,
 	settings *config.Settings,
 ) (*ResolvedImage, error) {
@@ -195,7 +227,7 @@ func ResolveAndValidateImage(
 	}
 
 	// User chose to rebuild - get flavor selection
-	flavors := intbuild.DefaultFlavorOptions()
+	flavors := deps.DefaultFlavorOptions()
 	flavorOptions := make([]prompterpkg.SelectOption, len(flavors))
 	for i, opt := range flavors {
 		flavorOptions[i] = prompterpkg.SelectOption{
@@ -211,14 +243,15 @@ func ResolveAndValidateImage(
 
 	selectedFlavor := flavors[flavorIdx].Name
 
-	fmt.Fprintf(ios.ErrOut, "Building %s...\n", intbuild.DefaultImageTag)
+	defaultImageTag := deps.DefaultImageTag
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", defaultImageTag)
 
-	if err := intbuild.BuildDefaultImage(ctx, selectedFlavor); err != nil {
+	if err := deps.BuildDefaultImage(ctx, selectedFlavor); err != nil {
 		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
 		return nil, fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
-	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", intbuild.DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", defaultImageTag)
 
 	// Update settings with the built image
 	settingsLoader, err := deps.SettingsLoader()
@@ -229,7 +262,7 @@ func ResolveAndValidateImage(
 		if loadErr != nil {
 			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update to avoid data loss")
 		} else {
-			currentSettings.DefaultImage = intbuild.DefaultImageTag
+			currentSettings.DefaultImage = defaultImageTag
 			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
 				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 			}
@@ -240,5 +273,5 @@ func ResolveAndValidateImage(
 	}
 
 	// Return the rebuilt image
-	return &ResolvedImage{Reference: intbuild.DefaultImageTag, Source: ImageSourceDefault}, nil
+	return &ResolvedImage{Reference: defaultImageTag, Source: ImageSourceDefault}, nil
 }

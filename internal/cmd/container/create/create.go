@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	intbuild "github.com/schmitthub/clawker/internal/build"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -12,7 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
-	"github.com/schmitthub/clawker/internal/resolver"
+
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -150,11 +151,21 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := resolver.ResolveAndValidateImage(ctx, resolver.ImageValidationDeps{
+		resolvedImage, err := docker.ResolveAndValidateImage(ctx, docker.ImageValidationDeps{
 			IOStreams:               opts.IOStreams,
 			Prompter:                opts.Prompter,
 			SettingsLoader:          opts.SettingsLoader,
 			InvalidateSettingsCache: opts.InvalidateSettingsCache,
+			DefaultImageTag:         intbuild.DefaultImageTag,
+			DefaultFlavorOptions: func() []docker.FlavorOption {
+				flavors := intbuild.DefaultFlavorOptions()
+				out := make([]docker.FlavorOption, len(flavors))
+				for i, f := range flavors {
+					out[i] = docker.FlavorOption{Name: f.Name, Description: f.Description}
+				}
+				return out
+			},
+			BuildDefaultImage: intbuild.BuildDefaultImage,
 		}, client, cfg, settings)
 		if err != nil {
 			// ResolveAndValidateImage already prints appropriate errors
