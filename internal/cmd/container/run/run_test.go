@@ -675,7 +675,7 @@ func TestImageArg(t *testing.T) {
 				}
 				fake.SetupImageList(summaries...)
 
-				// Build config and settings
+				// Build config and settings, inject into fake client
 				cfg := &config.Project{
 					Project: tt.projectName,
 				}
@@ -685,9 +685,11 @@ func TestImageArg(t *testing.T) {
 						DefaultImage: tt.defaultImage,
 					}
 				}
+				testCfg := config.NewConfigForTest("", cfg, settings)
+				fake.Client.SetConfig(testCfg)
 
-				// Call the resolution function
-				result, err := docker.ResolveImageWithSource(ctx, fake.Client, cfg, settings)
+				// Call the resolution method on the client
+				result, err := fake.Client.ResolveImageWithSource(ctx)
 				require.NoError(t, err)
 
 				if tt.wantNil {

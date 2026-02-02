@@ -143,13 +143,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		return err
 	}
 
-	// Load user settings for defaults
-	settings, err := cfgGateway.Settings()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
-		settings = config.DefaultSettings()
-	}
-
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
@@ -159,25 +152,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	// Resolve image name
 	if containerOpts.Image == "@" {
-		resolvedImage, err := docker.ResolveAndValidateImage(ctx, docker.ImageValidationDeps{
-			IOStreams: opts.IOStreams,
-			Prompter: opts.Prompter,
-			SettingsLoader: func() (*config.SettingsLoader, error) {
-				return cfgGateway.SettingsLoader()
-			},
-			DefaultImageTag: intbuild.DefaultImageTag,
-			DefaultFlavorOptions: func() []docker.FlavorOption {
-				flavors := intbuild.DefaultFlavorOptions()
-				out := make([]docker.FlavorOption, len(flavors))
-				for i, f := range flavors {
-					out[i] = docker.FlavorOption{Name: f.Name, Description: f.Description}
-				}
-				return out
-			},
-			BuildDefaultImage: intbuild.BuildDefaultImage,
-		}, client, cfg, settings)
+		resolvedImage, err := client.ResolveImageWithSource(ctx)
 		if err != nil {
-			// ResolveAndValidateImage already prints appropriate errors
 			return err
 		}
 		if resolvedImage == nil {
@@ -190,6 +166,19 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			)
 			return fmt.Errorf("no image specified")
 		}
+
+		// For default images, verify the image exists and offer to rebuild if missing
+		if resolvedImage.Source == docker.ImageSourceDefault {
+			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
+			if err != nil {
+				logger.Debug().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
+			} else if !exists {
+				if err := handleMissingDefaultImage(ctx, opts, cfgGateway, resolvedImage.Reference); err != nil {
+					return err
+				}
+			}
+		}
+
 		containerOpts.Image = resolvedImage.Reference
 	}
 
@@ -487,4 +476,88 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 		}
 	}()
 	return statusCh
+}
+
+// handleMissingDefaultImage prompts the user to rebuild a missing default image.
+// In non-interactive mode, it prints instructions and returns an error.
+func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway *config.Config, imageRef string) error {
+	ios := opts.IOStreams
+
+	if !ios.IsInteractive() {
+		cmdutil.PrintError(ios, "Default image %q not found", imageRef)
+		cmdutil.PrintNextSteps(ios,
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return fmt.Errorf("default image %q not found", imageRef)
+	}
+
+	// Interactive mode — prompt to rebuild
+	p := opts.Prompter()
+	options := []prompter.SelectOption{
+		{Label: "Yes", Description: "Rebuild the default base image now"},
+		{Label: "No", Description: "Cancel and fix manually"},
+	}
+
+	idx, err := p.Select(
+		fmt.Sprintf("Default image %q not found. Rebuild now?", imageRef),
+		options,
+		0,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to prompt for rebuild: %w", err)
+	}
+
+	if idx != 0 {
+		cmdutil.PrintNextSteps(ios,
+			"Run 'clawker init' to rebuild the base image",
+			"Or specify an image explicitly: clawker run IMAGE",
+			"Or build a project image: clawker build",
+		)
+		return fmt.Errorf("default image %q not found", imageRef)
+	}
+
+	// Get flavor selection
+	flavors := intbuild.DefaultFlavorOptions()
+	flavorOptions := make([]prompter.SelectOption, len(flavors))
+	for i, f := range flavors {
+		flavorOptions[i] = prompter.SelectOption{
+			Label:       f.Name,
+			Description: f.Description,
+		}
+	}
+
+	flavorIdx, err := p.Select("Select Linux flavor", flavorOptions, 0)
+	if err != nil {
+		return fmt.Errorf("failed to select flavor: %w", err)
+	}
+
+	selectedFlavor := flavors[flavorIdx].Name
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", intbuild.DefaultImageTag)
+
+	if err := intbuild.BuildDefaultImage(ctx, selectedFlavor); err != nil {
+		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
+		return fmt.Errorf("failed to rebuild default image: %w", err)
+	}
+
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", intbuild.DefaultImageTag)
+
+	// Persist the default image in settings
+	settingsLoader, err := cfgGateway.SettingsLoader()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load settings loader; default image will not be persisted")
+	} else if settingsLoader != nil {
+		currentSettings, loadErr := settingsLoader.Load()
+		if loadErr != nil {
+			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
+		} else {
+			currentSettings.DefaultImage = intbuild.DefaultImageTag
+			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
+				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+			}
+		}
+	}
+
+	return nil
 }
