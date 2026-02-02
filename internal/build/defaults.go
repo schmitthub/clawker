@@ -8,7 +8,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/pkg/whail/buildkit"
 )
 
 // DefaultImageTag is the tag used for the user's default base image.
@@ -74,12 +73,12 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 	defer client.Close()
 
 	// Wire BuildKit builder — without this, BuildKit routing returns ErrBuildKitNotConfigured
-	client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)
+	docker.WireBuildKit(client)
 
 	// 4. Check BuildKit availability (cache mounts require it)
 	buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
 	if bkErr != nil {
-		logger.Debug().Err(bkErr).Msg("BuildKit detection failed")
+		logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
 	} else if !buildkitEnabled {
 		logger.Warn().Msg("BuildKit is not available — cache mount directives will be omitted and builds may be slower")
 	}

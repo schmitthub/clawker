@@ -83,10 +83,21 @@ func TestContentHash_IncludeContentChange(t *testing.T) {
 func TestContentHash_MissingInclude(t *testing.T) {
 	dockerfile := []byte("FROM alpine:latest\n")
 
-	// Should not error on missing include — just hashes the path
-	h, err := ContentHash(dockerfile, []string{"nonexistent.txt"}, "/tmp")
-	require.NoError(t, err)
-	assert.Len(t, h, 12)
+	// Missing include files must return an error
+	_, err := ContentHash(dockerfile, []string{"nonexistent.txt"}, "/tmp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonexistent.txt")
+}
+
+func TestContentHash_PermissionError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret.txt")
+	require.NoError(t, os.WriteFile(path, []byte("secret"), 0000))
+
+	dockerfile := []byte("FROM alpine:latest\n")
+	_, err := ContentHash(dockerfile, []string{"secret.txt"}, dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "secret.txt")
 }
 
 // TestContentHash_MetadataStability verifies that config-only changes (env vars,

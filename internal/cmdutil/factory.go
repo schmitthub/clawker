@@ -53,6 +53,6 @@ type Factory struct {
 	HostProxyEnvVar func() string
 
 	Prompter        func() *prompts.Prompter
-	RuntimeEnv      func() []string
+	RuntimeEnv      func() ([]string, error)
 	BuildKitEnabled func(context.Context) (bool, error)
 }

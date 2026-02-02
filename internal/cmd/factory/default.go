@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompts"
-	"github.com/schmitthub/clawker/pkg/whail/buildkit"
 )
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
@@ -55,7 +54,7 @@ func New(version, commit string) *cmdutil.Factory {
 		clientOnce.Do(func() {
 			client, clientErr = docker.NewClient(ctx)
 			if clientErr == nil {
-				client.BuildKitImageBuilder = buildkit.NewImageBuilder(client.APIClient)
+				docker.WireBuildKit(client)
 			}
 		})
 		return client, clientErr
@@ -219,10 +218,10 @@ func New(version, commit string) *cmdutil.Factory {
 	}
 
 	// RuntimeEnv — config-derived env vars injected at container creation time
-	f.RuntimeEnv = func() []string {
+	f.RuntimeEnv = func() ([]string, error) {
 		cfg, err := f.Config()
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		return docker.RuntimeEnv(cfg)
 	}

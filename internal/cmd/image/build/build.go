@@ -163,7 +163,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		var bkErr error
 		buildkitEnabled, bkErr = opts.BuildKitEnabled(ctx)
 		if bkErr != nil {
-			logger.Debug().Err(bkErr).Msg("BuildKit detection failed")
+			logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
 		} else if !buildkitEnabled {
 			cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
 		}

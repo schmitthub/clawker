@@ -14,6 +14,10 @@ import (
 // toSolveOpt converts ImageBuildKitOptions to a BuildKit SolveOpt.
 // Labels are passed as FrontendAttrs with the "label:" prefix.
 func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
+	if opts.ContextDir == "" {
+		return bkclient.SolveOpt{}, fmt.Errorf("buildkit: context directory is required")
+	}
+
 	attrs := make(map[string]string)
 
 	// Dockerfile filename (relative to context)

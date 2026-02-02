@@ -816,7 +816,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		},
 		EnsureHostProxy:         func() error { return nil },
 		HostProxyEnvVar:         func() string { return "" },
-		RuntimeEnv:              func() []string { return nil },
+		RuntimeEnv:              func() ([]string, error) { return nil, nil },
 		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
 		InvalidateSettingsCache: func() {},
 		Prompter:                func() *prompts.Prompter { return nil },

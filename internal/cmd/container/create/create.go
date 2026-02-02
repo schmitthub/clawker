@@ -32,7 +32,7 @@ type CreateOptions struct {
 	InvalidateSettingsCache func()
 	EnsureHostProxy         func() error
 	HostProxyEnvVar         func() string
-	RuntimeEnv              func() []string
+	RuntimeEnv              func() ([]string, error)
 	WorkDir                 string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
@@ -218,7 +218,11 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// Inject config-derived runtime env vars (editor, firewall domains, agent env, instruction env)
 	if opts.RuntimeEnv != nil {
-		containerOpts.Env = append(containerOpts.Env, opts.RuntimeEnv()...)
+		runtimeEnv, err := opts.RuntimeEnv()
+		if err != nil {
+			return err
+		}
+		containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
 	}
 
 	// Validate cross-field constraints before building configs

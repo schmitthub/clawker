@@ -14,7 +14,6 @@ import (
 	"github.com/schmitthub/clawker/internal/build/registry"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Embedded templates for Dockerfile generation
@@ -358,8 +357,7 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 
 		content, err := os.ReadFile(includePath)
 		if err != nil {
-			logger.Warn().Str("file", include).Err(err).Msg("failed to read include file")
-			continue
+			return nil, fmt.Errorf("failed to read include file %q: %w", include, err)
 		}
 
 		// Add to archive with relative path
@@ -421,8 +419,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 
 		content, err := os.ReadFile(includePath)
 		if err != nil {
-			logger.Warn().Str("file", include).Err(err).Msg("failed to read include file")
-			continue
+			return fmt.Errorf("failed to read include file %q: %w", include, err)
 		}
 
 		if err := os.WriteFile(filepath.Join(dir, filepath.Base(include)), content, 0644); err != nil {

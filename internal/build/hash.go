@@ -3,6 +3,7 @@ package build
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,9 @@ import (
 // ContentHash computes a SHA-256 hash of the rendered Dockerfile bytes and
 // include file contents, returning a 12-character hex prefix. This provides
 // a content-addressed identifier for detecting when a rebuild is needed.
+//
+// All include files must be readable. An error is returned if any file
+// cannot be read (missing, permission denied, etc.).
 func ContentHash(dockerfile []byte, includes []string, workDir string) (string, error) {
 	h := sha256.New()
 
@@ -31,10 +35,7 @@ func ContentHash(dockerfile []byte, includes []string, workDir string) (string, 
 
 			content, err := os.ReadFile(path)
 			if err != nil {
-				// Include file missing — use the same framing as present files
-				// plus a sentinel so missing files never collide with existing ones.
-				h.Write([]byte("\x00" + include + "\x00MISSING\x00"))
-				continue
+				return "", fmt.Errorf("failed to read include file %q: %w", include, err)
 			}
 
 			// Write a separator + filename to avoid collisions between

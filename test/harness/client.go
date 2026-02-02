@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -163,7 +164,7 @@ func (c *RunningContainer) GetLogs(ctx context.Context, rawCli *client.Client) (
 }
 
 // UniqueContainerName generates a unique test container name.
-// Returns: "clawker-test-<short-test-name>-<random-suffix>"
+// Returns: "clawker-test-<short-test-name>-<timestamp>-<random>"
 func UniqueContainerName(t *testing.T) string {
 	t.Helper()
 	name := t.Name()
@@ -179,7 +180,10 @@ func UniqueContainerName(t *testing.T) string {
 	}
 	name = strings.ToLower(name)
 	suffix := time.Now().Format("150405.000000")
-	return fmt.Sprintf("clawker-test-%s-%s", name, suffix)
+	randBytes := make([]byte, 2)
+	_, _ = rand.Read(randBytes)
+	randHex := hex.EncodeToString(randBytes)
+	return fmt.Sprintf("clawker-test-%s-%s-%s", name, suffix, randHex)
 }
 
 // RunContainer creates and starts a container from the given image, returning a
@@ -299,7 +303,11 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 
 	// Check if image already exists (cache hit)
 	ctx := context.Background()
-	if exists, _ := dc.ImageExists(ctx, imageTag); exists {
+	exists, existsErr := dc.ImageExists(ctx, imageTag)
+	if existsErr != nil {
+		t.Logf("BuildLightImage: ImageExists check failed: %v", existsErr)
+	}
+	if exists {
 		t.Logf("BuildLightImage: using cached image %s", imageTag)
 		return imageTag
 	}
