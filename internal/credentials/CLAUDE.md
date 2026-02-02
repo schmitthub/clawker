@@ -42,6 +42,6 @@ Supports quoted values, comments, and `export` prefix. `isSensitiveKey()` detect
 ## OTEL Forwarding (`otel.go`)
 
 ```go
-func OtelEnvVars() map[string]string              // OTEL env vars from host
-func OtelEnvVarsWithPrompts() map[string]string    // OTEL vars including prompt config
+func OtelEnvVars(containerName string) map[string]string           // OTEL env vars from host
+func OtelEnvVarsWithPrompts(containerName string) map[string]string // OTEL vars including prompt config
 ```

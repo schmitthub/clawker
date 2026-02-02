@@ -171,76 +171,25 @@ engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)
 
 ## Error Factories
 
-48 error constructors for user-friendly messages with remediation steps:
-
-`ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageBuildFailed`, `ErrContainerNotFound`, `ErrContainerNotManaged`, `ErrContainerStartFailed`, `ErrContainerCreateFailed`, `ErrVolumeCreateFailed`, `ErrNetworkError`, `ErrAttachFailed`, etc.
+48 error constructors for user-friendly messages with remediation steps: `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageBuildFailed`, `ErrContainerNotFound`, `ErrContainerNotManaged`, `ErrContainerStartFailed`, `ErrContainerCreateFailed`, `ErrVolumeCreateFailed`, `ErrNetworkError`, `ErrAttachFailed`, etc.
 
 ## Testing
 
 ### Type Re-exports (always use whail types, never moby)
 
-```go
-import "github.com/anthropics/clawker/pkg/whail"
-whail.ImageListResult{Items: []whail.ImageSummary{...}}
-```
-
 ### whailtest Package (`pkg/whail/whailtest/`)
 
 Test infrastructure for whail's label-based isolation without Docker. **Only `pkg/whail` and `internal/docker` should import this package.**
 
-#### FakeAPIClient
-
-Function-field test double implementing `moby/moby/client.APIClient`. Embeds nil `*client.Client` (fail-loud on unexpected calls).
-
 ```go
-fake := whailtest.NewFakeAPIClient()
-// Override specific methods:
-fake.ContainerStopFn = func(ctx context.Context, id string, opts container.StopOptions) error {
-    return nil
-}
+fake := whailtest.NewFakeAPIClient()                    // Function-field test double (nil embed = fail-loud)
+fake.ContainerStopFn = func(ctx context.Context, id string, opts container.StopOptions) error { return nil }
 engine := whail.NewFromExisting(fake, whailtest.TestEngineOptions())
-
-// Assert calls:
-whailtest.AssertCalled(t, fake, "ContainerStop")
-whailtest.AssertNotCalled(t, fake, "ContainerRemove")
-whailtest.AssertCalledN(t, fake, "ContainerInspect", 1)
+whailtest.AssertCalled(t, fake, "ContainerStop")        // Also: AssertNotCalled, AssertCalledN
 ```
 
-#### Managed/Unmanaged Resource Helpers
+**Resource helpers**: `Managed/UnmanagedContainerInspect(id)`, `Managed/UnmanagedVolumeInspect`, `Managed/UnmanagedNetworkInspect`, `Managed/UnmanagedImageInspect`
+**Wait helpers**: `FakeContainerWaitOK()`, `FakeContainerWaitExit(code)`
+**BuildKit**: `FakeBuildKitBuilder(capture)` with `BuildKitCapture{Opts, CallCount, Err}`
 
-```go
-whailtest.ManagedContainerInspect(id)    // Returns inspect with managed labels
-whailtest.UnmanagedContainerInspect(id)  // Returns inspect WITHOUT managed labels
-// Also: ManagedVolumeInspect, ManagedNetworkInspect, ManagedImageInspect
-// And:  UnmanagedVolumeInspect, UnmanagedNetworkInspect, UnmanagedImageInspect
-```
-
-#### Wait Helpers
-
-```go
-whailtest.FakeContainerWaitOK()          // Exit code 0
-whailtest.FakeContainerWaitExit(code)    // Custom exit code
-```
-
-#### BuildKit Faking
-
-```go
-capture := &whailtest.BuildKitCapture{}
-engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
-// exercise code...
-assert(capture.CallCount == 1)
-assert(capture.Opts.Tags == expectedTags)
-// Set capture.Err to simulate failures
-```
-
-`BuildKitCapture` records `Opts`, `CallCount`, and returns `Err`.
-
-#### Test Patterns
-
-| Pattern | Description |
-|---------|-------------|
-| Rejection | Set unmanaged inspect → verify DockerError, `AssertNotCalled` on moby |
-| Label injection | Spy on create args → assert managed labels present |
-| Filter injection | Spy on list/prune args → assert managed filter injected |
-| Override prevention | Pass `managed=false` in labels → assert `managed=true` reaches moby |
-| BuildKit closure | Set `BuildKitImageBuilder` to func literal or `FakeBuildKitBuilder` |
+**Test patterns**: rejection (unmanaged → DockerError), label injection, filter injection, override prevention, BuildKit closure

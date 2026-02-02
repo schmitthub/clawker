@@ -7,7 +7,7 @@ PTY/terminal handling for interactive container sessions. Manages raw mode, sign
 Full terminal session lifecycle: raw mode → stream I/O → restore.
 
 ```go
-func NewPTYHandler(stdin, stdout, stderr *os.File) *PTYHandler
+func NewPTYHandler() *PTYHandler
 
 (*PTYHandler).Setup() error       // Enable raw mode
 (*PTYHandler).Restore() error     // Reset visual state + restore termios

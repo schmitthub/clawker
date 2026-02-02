@@ -85,7 +85,7 @@ func ClawkerFilter() whail.Filters                                    // All man
 func ProjectFilter(project string) whail.Filters                      // By project
 func AgentFilter(project, agent string) whail.Filters                  // By project+agent
 func ImageLabels(project, version string) map[string]string            // Labels for built images
-func NetworkLabels(project string) map[string]string                   // Labels for networks
+func NetworkLabels() map[string]string                                 // Labels for networks
 ```
 
 ## Additional Name Functions (`names.go`)
@@ -100,23 +100,19 @@ func ContainerNamesFromAgents(project string, agents []string) []string // Batch
 
 ## Opts Types (`opts.go`)
 
-Resource limit types implementing `pflag.Value` for CLI flag parsing:
+Resource limit types implementing `pflag.Value` for CLI flag parsing: `MemBytes`, `MemSwapBytes`, `NanoCPUs`, `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`.
 
-| Type | Constructor | Purpose |
-|------|-------------|---------|
-| `MemBytes` | — | Memory size (bytes) |
-| `MemSwapBytes` | — | Swap size (bytes) |
-| `NanoCPUs` | — | CPU allocation |
-| `UlimitOpt` | `NewUlimitOpt()` | Ulimit settings |
-| `WeightDeviceOpt` | `NewWeightDeviceOpt()` | Block I/O weight |
-| `ThrottleDeviceOpt` | `NewThrottleDeviceOpt()` | Block I/O throttle |
-| `GpuOpts` | `NewGpuOpts()` | GPU access |
-| `MountOpt` | `NewMountOpt()` | Mount specifications |
-| `DeviceOpt` | `NewDeviceOpt()` | Device access |
+## Constants (`names.go`)
+
+```go
+const NamePrefix = "clawker"  // Prefix for all clawker resource names
+```
 
 ## Client Types (`client.go`)
 
 ```go
+func NewClient(ctx context.Context) (*Client, error)  // Creates client with clawker label conventions
+
 type Container struct {
     ID, Name, Project, Agent, Image, Workdir, Status string
     Created time.Time
@@ -152,8 +148,7 @@ func LoadIgnorePatterns(path string) ([]string, error)  // Parse .clawkerignore
 
 ## Type Re-exports (`types.go`)
 
-Re-exports whail types for use by command packages: `Filters`, `Labels`, `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerCreateOptions`, `SDKContainerCreateOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ContainerWaitCondition`, `ContainerStartOptions`, `EnsureNetworkOptions`, `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`, `CopyToContainerOptions`, `CopyFromContainerOptions`, `ImageListOptions`, `ImageRemoveOptions`, `ImageBuildOptions`, `ImagePullOptions`, `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `HijackedResponse`, `DockerError`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`, `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`
-
+Re-exports whail types (Container/Exec/Image/Volume/Network options, `Filters`, `Labels`, `HijackedResponse`, `DockerError`, wait conditions) for use by command packages.
 ## Client Usage
 
 ```go
@@ -172,15 +167,12 @@ client.ContainerStop(ctx, id, nil)
 
 ## Whail Engine Method Pattern
 
-The `whail.Engine` checks `IsContainerManaged` before operating. See `pkg/whail/` for details. Key behavior: callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
+The `whail.Engine` checks `IsContainerManaged` before operating. Callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
 
-## Channel-Based Methods (ContainerWait)
+## Patterns
 
-Return `nil` for response channel when unmanaged. Use buffered error channels. Wrap SDK errors in goroutines for consistent formatting.
-
-## Context Pattern
-
-All methods accept `ctx context.Context` as first parameter. Never store context in structs. Use `context.Background()` in deferred cleanup.
+- **ContainerWait**: Returns `nil` response channel for unmanaged containers. Use buffered error channels.
+- **Context**: All methods accept `ctx context.Context` as first param. Never store in structs. Use `context.Background()` in deferred cleanup.
 
 ## Testing
 

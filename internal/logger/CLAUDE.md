@@ -38,6 +38,7 @@ logger.WithField("key", "val")         // Returns sub-logger with field
 logger.SetInteractiveMode(true)        // Suppress console logs (file logs continue)
 logger.SetContext("myproject", "ralph") // Add project/agent fields to all log entries
 logger.ClearContext()                   // Remove project/agent context
+logger.GetLogFilePath()                // Returns log file path (empty if file logging disabled)
 ```
 
 ## Key Rules
