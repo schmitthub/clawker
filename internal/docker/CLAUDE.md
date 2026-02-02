@@ -10,6 +10,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and n
 
 | File | Purpose |
 |------|---------|
+| `image_resolve.go` | Image resolution chain, validation, interactive rebuild prompts |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |

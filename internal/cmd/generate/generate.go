@@ -19,9 +19,7 @@ import (
 
 // GenerateOptions contains the options for the generate command.
 type GenerateOptions struct {
-	IOStreams      *iostreams.IOStreams
-	Debug          bool
-	BuildOutputDir string
+	IOStreams *iostreams.IOStreams
 
 	Versions  []string // Positional args: version patterns
 	SkipFetch bool
@@ -32,9 +30,7 @@ type GenerateOptions struct {
 // NewCmdGenerate creates a new generate command.
 func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOptions) error) *cobra.Command {
 	opts := &GenerateOptions{
-		IOStreams:      f.IOStreams,
-		Debug:          f.Debug,
-		BuildOutputDir: f.BuildOutputDir,
+		IOStreams: f.IOStreams,
 	}
 
 	cmd := &cobra.Command{
@@ -85,10 +81,14 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	versions := opts.Versions
 	ios := opts.IOStreams
 
-	// Determine output directory: explicit flag > factory default
-	outputDir := opts.BuildOutputDir
-	if opts.OutputDir != "" {
-		outputDir = opts.OutputDir
+	// Determine output directory: explicit flag > default build dir
+	outputDir := opts.OutputDir
+	if outputDir == "" {
+		var err error
+		outputDir, err = config.BuildDir()
+		if err != nil {
+			return fmt.Errorf("failed to determine build directory: %w", err)
+		}
 	}
 
 	// Ensure output directory exists
@@ -126,9 +126,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	// Resolve versions from npm
 	mgr := build.NewVersionsManager()
-	vf, err := mgr.ResolveVersions(ctx, versions, build.ResolveOptions{
-		Debug: opts.Debug,
-	})
+	vf, err := mgr.ResolveVersions(ctx, versions, build.ResolveOptions{})
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

@@ -21,7 +21,7 @@ import (
 type CpOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent      bool
 	Archive    bool
@@ -37,7 +37,7 @@ func NewCmdCp(f *cmdutil.Factory, runF func(context.Context, *CpOptions) error) 
 	opts := &CpOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -119,11 +119,11 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			srcContainer = docker.ContainerName(opts.Resolution().ProjectKey, srcContainer)
+			srcContainer = docker.ContainerName(opts.Config().Resolution().ProjectKey, srcContainer)
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			dstContainer = docker.ContainerName(opts.Resolution().ProjectKey, dstContainer)
+			dstContainer = docker.ContainerName(opts.Config().Resolution().ProjectKey, dstContainer)
 		}
 	}
 

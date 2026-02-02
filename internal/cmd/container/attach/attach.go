@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
@@ -17,10 +18,10 @@ import (
 
 // AttachOptions holds options for the attach command.
 type AttachOptions struct {
-	IOStreams       *iostreams.IOStreams
-	Client          func(context.Context) (*docker.Client, error)
-	Resolution      func() *config.Resolution
-	EnsureHostProxy func() error
+	IOStreams  *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool
@@ -32,10 +33,10 @@ type AttachOptions struct {
 // NewCmdAttach creates a new attach command.
 func NewCmdAttach(f *cmdutil.Factory, runF func(context.Context, *AttachOptions) error) *cobra.Command {
 	opts := &AttachOptions{
-		IOStreams:       f.IOStreams,
-		Client:          f.Client,
-		Resolution:      f.Resolution,
-		EnsureHostProxy: f.EnsureHostProxy,
+		IOStreams:  f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
+		HostProxy: f.HostProxy,
 	}
 
 	cmd := &cobra.Command{
@@ -86,7 +87,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 
 	container := opts.container
 	if opts.Agent {
-		container = docker.ContainerName(opts.Resolution().ProjectKey, container)
+		container = docker.ContainerName(opts.Config().Resolution().ProjectKey, container)
 	}
 	// Connect to Docker
 	client, err := opts.Client(ctx)
@@ -110,8 +111,9 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	}
 
 	// Start host proxy so browser opening and other host actions work
-	if opts.EnsureHostProxy != nil {
-		if err := opts.EnsureHostProxy(); err != nil {
+	if opts.HostProxy != nil {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
 			return fmt.Errorf("failed to start host proxy: %w", err)
 		}
 	}

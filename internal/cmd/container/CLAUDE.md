@@ -79,11 +79,11 @@ containerOpts.ValidateFlags()                      // Cross-field validation
 
 ## Image Resolution (@ Symbol)
 
-When `opts.Image == "@"`, call `resolver.ResolveAndValidateImage()`:
+When `opts.Image == "@"`, call `docker.ResolveAndValidateImage()`:
 
 ```go
 if opts.Image == "@" {
-    resolved, err := resolver.ResolveAndValidateImage(ctx, resolver.ImageValidationDeps{...}, client, cfg, settings)
+    resolved, err := docker.ResolveAndValidateImage(ctx, docker.ImageValidationDeps{...}, client, cfg, settings)
     opts.Image = resolved.Reference
 }
 ```

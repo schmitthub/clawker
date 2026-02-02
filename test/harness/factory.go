@@ -7,6 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 )
@@ -20,28 +21,19 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 
 	tio := iostreams.NewTestIOStreams()
 	f := &cmdutil.Factory{
-		WorkDir:   h.ProjectDir,
+		WorkDir:  func() string { return h.ProjectDir },
 		IOStreams: tio.IOStreams,
 		Client: func(ctx context.Context) (*docker.Client, error) {
 			return docker.NewClient(ctx)
 		},
-		Config: func() (*config.Project, error) {
-			return h.Config, nil
+		Config: func() *config.Config {
+			cfg := config.NewConfig(func() string { return h.ProjectDir })
+			return cfg
 		},
-		Settings: func() (*config.Settings, error) {
-			return config.DefaultSettings(), nil
+		HostProxy: func() *hostproxy.Manager {
+			return hostproxy.NewManager()
 		},
-		EnsureHostProxy:         func() error { return nil },
-		HostProxyEnvVar:         func() string { return "" },
-		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
-		InvalidateSettingsCache: func() {},
-		Prompter:                func() *prompter.Prompter { return nil },
-		Resolution: func() *config.Resolution {
-			return &config.Resolution{
-				ProjectKey: h.Project,
-				WorkDir:    h.ProjectDir,
-			}
-		},
+		Prompter: func() *prompter.Prompter { return nil },
 	}
 	return f, tio
 }

@@ -41,7 +41,6 @@ FIELD     (command imports package directly)
 | Package | Contains |
 |---------|----------|
 | `internal/cmdutil/` | Factory struct, output utilities, arg validators (lightweight, no docker import) |
-| `internal/resolver/` | Image resolution (needs runtime Docker client + config) |
 | `internal/build/` | Image building, flavor selection, default image construction |
 | `internal/project/` | Project registration in user registry |
-| `internal/docker/` | Container naming (`ContainerName`, `ContainerNamesFromAgents`) |
+| `internal/docker/` | Container naming, image resolution, Docker middleware |

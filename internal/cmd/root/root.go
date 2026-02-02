@@ -2,7 +2,6 @@ package root
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/cmd/config"
 	"github.com/schmitthub/clawker/internal/cmd/container"
@@ -22,6 +21,9 @@ import (
 
 // NewCmdRoot creates the root command for the clawker CLI.
 func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
+	var debug bool
+	var workDirFlag string
+
 	cmd := &cobra.Command{
 		Use:   "clawker",
 		Short: "Manage Claude Code in secure Docker containers with clawker",
@@ -39,31 +41,12 @@ Workspace modes:
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize logger with file logging if possible
-			initializeLogger(f.Debug)
-
-			// Set working directory
-			if f.WorkDir == "" {
-				var err error
-				f.WorkDir, err = os.Getwd()
-				if err != nil {
-					return fmt.Errorf("failed to get working directory: %w", err)
-				}
-			}
-
-			// Set build output directory to CLAWKER_HOME/build
-			if f.BuildOutputDir == "" {
-				var err error
-				f.BuildOutputDir, err = internalconfig.BuildDir()
-				if err != nil {
-					return fmt.Errorf("failed to determine build directory: %w", err)
-				}
-			}
+			initializeLogger(debug)
 
 			logger.Debug().
 				Str("version", f.Version).
-				Str("workdir", f.WorkDir).
-				Str("build-output-dir", f.BuildOutputDir).
-				Bool("debug", f.Debug).
+				Str("workdir", f.WorkDir()).
+				Bool("debug", debug).
 				Msg("clawker starting")
 
 			return nil
@@ -71,9 +54,18 @@ Workspace modes:
 		Version: f.Version,
 	}
 
-	// Global flags bound to Factory
-	cmd.PersistentFlags().BoolVarP(&f.Debug, "debug", "D", false, "Enable debug logging")
-	cmd.PersistentFlags().StringVarP(&f.WorkDir, "workdir", "w", "", "Working directory (default: current directory)")
+	// Global flags
+	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
+	cmd.PersistentFlags().StringVarP(&workDirFlag, "workdir", "w", "", "Working directory (default: current directory)")
+
+	// Override factory default with flag-aware closure
+	origWorkDir := f.WorkDir
+	f.WorkDir = func() string {
+		if workDirFlag != "" {
+			return workDirFlag
+		}
+		return origWorkDir()
+	}
 
 	// Version template
 	cmd.SetVersionTemplate(fmt.Sprintf("clawker %s (commit: %s)\n", f.Version, f.Commit))

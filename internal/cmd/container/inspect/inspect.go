@@ -18,7 +18,7 @@ import (
 type InspectOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent  bool
 	Format string
@@ -32,7 +32,7 @@ func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOption
 	opts := &InspectOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -85,7 +85,7 @@ func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

@@ -17,7 +17,7 @@ import (
 type UpdateOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent              bool
 	blkioWeight        uint16
@@ -45,7 +45,7 @@ func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions)
 	opts := &UpdateOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -121,7 +121,7 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, opts.Containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, opts.Containers)
 	}
 
 	// Connect to Docker

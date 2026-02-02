@@ -16,7 +16,7 @@ import (
 // TUIOptions holds options for the ralph tui command.
 type TUIOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Project, error)
+	Config    func() *config.Config
 }
 
 // NewCmdTUI creates the `clawker ralph tui` command.
@@ -55,7 +55,7 @@ Features:
 func tuiRun(_ context.Context, opts *TUIOptions) error {
 	ios := opts.IOStreams
 
-	cfg, err := opts.Config()
+	cfg, err := opts.Config().Project()
 	if err != nil {
 		if config.IsConfigNotFound(err) {
 			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")

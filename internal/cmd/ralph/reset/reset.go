@@ -14,7 +14,7 @@ import (
 // ResetOptions holds options for the ralph reset command.
 type ResetOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (*config.Project, error)
+	Config    func() *config.Config
 
 	Agent    string
 	ClearAll bool
@@ -63,7 +63,7 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	ios := opts.IOStreams
 
 	// Load config
-	cfg, err := opts.Config()
+	cfg, err := opts.Config().Project()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		return err

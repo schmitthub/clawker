@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -24,17 +25,12 @@ import (
 type CreateOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams               *iostreams.IOStreams
-	Client                  func(context.Context) (*docker.Client, error)
-	Config                  func() (*config.Project, error)
-	Settings                func() (*config.Settings, error)
-	Prompter                func() *prompter.Prompter
-	SettingsLoader          func() (*config.SettingsLoader, error)
-	InvalidateSettingsCache func()
-	EnsureHostProxy         func() error
-	HostProxyEnvVar         func() string
-	RuntimeEnv              func() ([]string, error)
-	WorkDir                 string
+	IOStreams  *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
+	Prompter  func() *prompter.Prompter
+	WorkDir   func() string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
 	flags *pflag.FlagSet
@@ -44,18 +40,13 @@ type CreateOptions struct {
 func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
 	containerOpts := copts.NewContainerOptions()
 	opts := &CreateOptions{
-		ContainerOptions:        containerOpts,
-		IOStreams:               f.IOStreams,
-		Client:                  f.Client,
-		Config:                  f.Config,
-		Settings:                f.Settings,
-		Prompter:                f.Prompter,
-		SettingsLoader:          f.SettingsLoader,
-		InvalidateSettingsCache: f.InvalidateSettingsCache,
-		EnsureHostProxy:         f.EnsureHostProxy,
-		HostProxyEnvVar:         f.HostProxyEnvVar,
-		RuntimeEnv:              f.RuntimeEnv,
-		WorkDir:                 f.WorkDir,
+		ContainerOptions: containerOpts,
+		IOStreams:         f.IOStreams,
+		Client:           f.Client,
+		Config:           f.Config,
+		HostProxy:        f.HostProxy,
+		Prompter:         f.Prompter,
+		WorkDir:          f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -121,9 +112,10 @@ If IMAGE is "@", clawker will use (in order of precedence):
 func createRun(ctx context.Context, opts *CreateOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
+	cfgGateway := opts.Config()
 
 	// Load config for project name
-	cfg, err := opts.Config()
+	cfg, err := cfgGateway.Project()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to load config: %v", err)
 		cmdutil.PrintNextSteps(ios,
@@ -134,7 +126,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	}
 
 	// Load settings for image resolution
-	settings, err := opts.Settings()
+	settings, err := cfgGateway.Settings()
 	if err != nil {
 		logger.Debug().Err(err).Msg("failed to load user settings, using defaults")
 	}
@@ -152,11 +144,15 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	// Resolve image name
 	if containerOpts.Image == "@" {
 		resolvedImage, err := docker.ResolveAndValidateImage(ctx, docker.ImageValidationDeps{
-			IOStreams:               opts.IOStreams,
-			Prompter:                opts.Prompter,
-			SettingsLoader:          opts.SettingsLoader,
-			InvalidateSettingsCache: opts.InvalidateSettingsCache,
-			DefaultImageTag:         intbuild.DefaultImageTag,
+			IOStreams: opts.IOStreams,
+			Prompter: opts.Prompter,
+			SettingsLoader: func() (*config.SettingsLoader, error) {
+				return cfgGateway.SettingsLoader()
+			},
+			InvalidateSettingsCache: func() {
+				// Config gateway caches settings; no-op since gateway handles caching
+			},
+			DefaultImageTag: intbuild.DefaultImageTag,
 			DefaultFlavorOptions: func() []docker.FlavorOption {
 				flavors := intbuild.DefaultFlavorOptions()
 				out := make([]docker.FlavorOption, len(flavors))
@@ -200,7 +196,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		ModeOverride: containerOpts.Mode,
 		Config:       cfg,
 		AgentName:    agentName,
-		WorkDir:      opts.WorkDir,
+		WorkDir:      opts.WorkDir(),
 	})
 	if err != nil {
 		return err
@@ -209,14 +205,16 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	// Start host proxy server for container-to-host communication (if enabled)
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() {
-		if err := opts.EnsureHostProxy(); err != nil {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
 			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
-			if envVar := opts.HostProxyEnvVar(); envVar != "" {
+			if hp.IsRunning() {
+				envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
 				containerOpts.Env = append(containerOpts.Env, envVar)
 			}
 		}
@@ -228,13 +226,11 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
 	// Inject config-derived runtime env vars (editor, firewall domains, agent env, instruction env)
-	if opts.RuntimeEnv != nil {
-		runtimeEnv, err := opts.RuntimeEnv()
-		if err != nil {
-			return err
-		}
-		containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	runtimeEnv, err := docker.RuntimeEnv(cfg)
+	if err != nil {
+		return err
 	}
+	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
 
 	// Validate cross-field constraints before building configs
 	if err := containerOpts.ValidateFlags(); err != nil {

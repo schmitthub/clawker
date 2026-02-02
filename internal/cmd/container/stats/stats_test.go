@@ -80,8 +80,8 @@ func TestNewCmdStats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 			if tt.needRes {
-				f.Resolution = func() *config.Resolution {
-					return &config.Resolution{ProjectKey: "testproject"}
+				f.Config = func() *config.Config {
+					return config.NewConfig(func() string { return "/tmp/test" })
 				}
 			}
 

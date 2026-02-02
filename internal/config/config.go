@@ -36,6 +36,30 @@ func NewConfig(workDir func() string) *Config {
 	return &Config{workDir: workDir}
 }
 
+// NewConfigForTest creates a Config gateway pre-populated with the given project
+// and settings. Resolution returns an empty Resolution with the given workDir.
+// This is intended for unit tests that don't need real config file loading.
+func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config {
+	c := &Config{workDir: func() string { return workDir }}
+	c.projectOnce.Do(func() {
+		c.project = project
+	})
+	c.settingsOnce.Do(func() {
+		c.settings = settings
+	})
+	c.resolutionOnce.Do(func() {
+		projectKey := ""
+		if project != nil {
+			projectKey = project.Project
+		}
+		c.resolution = &Resolution{
+			ProjectKey: projectKey,
+			WorkDir:    workDir,
+		}
+	})
+	return c
+}
+
 // Project returns the project configuration from clawker.yaml.
 // Results are cached after first load.
 func (c *Config) Project() (*Project, error) {

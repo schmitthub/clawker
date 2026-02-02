@@ -9,6 +9,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/generate"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -30,9 +31,9 @@ func main() {
 	}
 
 	f := &cmdutil.Factory{
-		WorkDir:        wd,
-		BuildOutputDir: wd, // Standalone binary defaults to CWD
-		Version:        Version,
+		WorkDir:  func() string { return wd },
+		Version:  Version,
+		IOStreams: iostreams.NewIOStreams(),
 	}
 
 	// Create and execute the generate command

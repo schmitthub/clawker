@@ -15,44 +15,20 @@ import (
 // dependencies exist (the contract), while internal/cmd/factory
 // wires the real implementations.
 //
-// Closure fields are set by the factory constructor and use lazy
-// initialization internally. Commands extract only the fields they
-// need into per-command Options structs.
+// Fields are either eager (set at construction) or lazy nouns
+// (closures that return cached instances on first call).
+// Commands extract only the fields they need into per-command
+// Options structs.
 type Factory struct {
-	// Configuration from flags (set before command execution)
-	WorkDir        string
-	BuildOutputDir string // Directory for build artifacts (versions.json, dockerfiles)
-	Debug          bool
-
-	// Version info (set at build time via ldflags)
-	Version string
-	Commit  string
-
-	// IO streams for input/output (for testability)
+	// Eager (set at construction)
+	Version  string
+	Commit   string
 	IOStreams *iostreams.IOStreams
 
-	// Dependency providers (closures wired by factory constructor)
-	Client      func(context.Context) (*docker.Client, error)
-	CloseClient func()
-
-	ConfigLoader func() *config.Loader
-	Config       func() (*config.Project, error)
-	ResetConfig  func()
-
-	SettingsLoader          func() (*config.SettingsLoader, error)
-	Settings                func() (*config.Settings, error)
-	InvalidateSettingsCache func()
-
-	RegistryLoader func() (*config.RegistryLoader, error)
-	Registry       func() (*config.ProjectRegistry, error)
-	Resolution     func() *config.Resolution
-
-	HostProxy       func() *hostproxy.Manager
-	EnsureHostProxy func() error
-	StopHostProxy   func(context.Context) error
-	HostProxyEnvVar func() string
-
-	Prompter        func() *prompter.Prompter
-	RuntimeEnv      func() ([]string, error)
-	BuildKitEnabled func(context.Context) (bool, error)
+	// Lazy nouns
+	WorkDir   func() string
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
+	Prompter  func() *prompter.Prompter
 }

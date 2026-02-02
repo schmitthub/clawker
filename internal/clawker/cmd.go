@@ -30,12 +30,8 @@ func Main() int {
 	if err != nil {
 		// Print contextual help hint (Cobra already printed "Error: ...")
 		cmdutil.PrintHelpHint(f.IOStreams, cmd.CommandPath())
-		f.CloseClient()
 		return 1
 	}
-
-	// Cleanup
-	f.CloseClient()
 
 	return 0
 }

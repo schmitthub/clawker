@@ -16,7 +16,7 @@ import (
 type RestartOptions struct {
 	IOStreams  *iostreams.IOStreams
 	Client     func(context.Context) (*docker.Client, error)
-	Resolution func() *config.Resolution
+	Config func() *config.Config
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int
@@ -29,7 +29,7 @@ func NewCmdRestart(f *cmdutil.Factory, runF func(context.Context, *RestartOption
 	opts := &RestartOptions{
 		IOStreams:  f.IOStreams,
 		Client:     f.Client,
-		Resolution: f.Resolution,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -80,7 +80,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
 	}
 
 	// Connect to Docker

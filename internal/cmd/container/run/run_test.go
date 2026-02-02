@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 
@@ -804,22 +805,17 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:   tmpDir,
+		WorkDir:  func() string { return tmpDir },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() (*config.Project, error) {
-			return testConfig(), nil
+		Config: func() *config.Config {
+			return config.NewConfigForTest(tmpDir, testConfig(), config.DefaultSettings())
 		},
-		Settings: func() (*config.Settings, error) {
-			return config.DefaultSettings(), nil
+		HostProxy: func() *hostproxy.Manager {
+			return hostproxy.NewManager()
 		},
-		EnsureHostProxy:         func() error { return nil },
-		HostProxyEnvVar:         func() string { return "" },
-		RuntimeEnv:              func() ([]string, error) { return nil, nil },
-		SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
-		InvalidateSettingsCache: func() {},
-		Prompter:                func() *prompter.Prompter { return nil },
+		Prompter: func() *prompter.Prompter { return nil },
 	}, tio
 }
 

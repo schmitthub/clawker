@@ -119,8 +119,8 @@ func TestNewCmdStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Resolution: func() *config.Resolution {
-					return &config.Resolution{ProjectKey: "testproject"}
+				Config: func() *config.Config {
+					return config.NewConfig(func() string { return "/tmp/test" })
 				},
 			}
 

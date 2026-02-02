@@ -14,14 +14,14 @@ import (
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
-	WorkDir   string
+	WorkDir func() string
 }
 
 // NewCmdCheck creates the config check command.
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
-		WorkDir:   f.WorkDir,
+		WorkDir: f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -49,10 +49,10 @@ Checks for:
 
 func checkRun(_ context.Context, opts *CheckOptions) error {
 	ios := opts.IOStreams
-	logger.Debug().Str("workdir", opts.WorkDir).Msg("checking configuration")
+	logger.Debug().Str("workdir", opts.WorkDir()).Msg("checking configuration")
 
 	// Load configuration
-	loader := internalconfig.NewLoader(opts.WorkDir)
+	loader := internalconfig.NewLoader(opts.WorkDir())
 
 	if !loader.Exists() {
 		cmdutil.PrintError(ios, "%s not found", internalconfig.ConfigFileName)
@@ -80,7 +80,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 		Msg("configuration loaded")
 
 	// Validate configuration
-	validator := internalconfig.NewValidator(opts.WorkDir)
+	validator := internalconfig.NewValidator(opts.WorkDir())
 	if err := validator.Validate(cfg); err != nil {
 		cmdutil.PrintError(ios, "Configuration validation failed")
 		fmt.Fprintln(ios.ErrOut)

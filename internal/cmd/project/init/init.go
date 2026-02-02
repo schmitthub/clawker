@@ -19,11 +19,10 @@ import (
 
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
-	IOStreams      *iostreams.IOStreams
-	Prompter       func() *prompterpkg.Prompter
-	Settings       func() (*config.Settings, error)
-	RegistryLoader func() (*config.RegistryLoader, error)
-	WorkDir        string
+	IOStreams *iostreams.IOStreams
+	Prompter func() *prompterpkg.Prompter
+	Config   func() *config.Config
+	WorkDir  func() string
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -33,11 +32,10 @@ type ProjectInitOptions struct {
 // NewCmdProjectInit creates the project init command.
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
-		IOStreams:      f.IOStreams,
-		Prompter:       f.Prompter,
-		Settings:       f.Settings,
-		RegistryLoader: f.RegistryLoader,
-		WorkDir:        f.WorkDir,
+		IOStreams: f.IOStreams,
+		Prompter: f.Prompter,
+		Config:   f.Config,
+		WorkDir:  f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -88,8 +86,10 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
 
+	cfgGateway := opts.Config()
+
 	// Check if configuration already exists
-	loader := config.NewLoader(opts.WorkDir)
+	loader := config.NewLoader(opts.WorkDir())
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
 			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
@@ -110,13 +110,14 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		}
 		if !overwrite {
 			// Don't overwrite config, but still register the project using directory name
-			absPath, absErr := filepath.Abs(opts.WorkDir)
+			absPath, absErr := filepath.Abs(opts.WorkDir())
 			if absErr != nil {
 				fmt.Fprintln(ios.ErrOut, "Aborted.")
 				return nil
 			}
 			dirName := filepath.Base(absPath)
-			slug, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, dirName)
+			registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+			slug, err := project.RegisterProject(ios, registryLoader, opts.WorkDir(), dirName)
 			if err != nil {
 				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
@@ -135,7 +136,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 
 	// Get absolute path of working directory
-	absPath, err := filepath.Abs(opts.WorkDir)
+	absPath, err := filepath.Abs(opts.WorkDir())
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -162,7 +163,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings, err := opts.Settings()
+	settings, err := cfgGateway.Settings()
 	if err == nil && settings != nil && settings.DefaultImage != "" {
 		userDefaultImage = settings.DefaultImage
 	}
@@ -246,7 +247,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		Str("build_image", buildImage).
 		Str("default_image", defaultImage).
 		Str("mode", workspaceMode).
-		Str("workdir", opts.WorkDir).
+		Str("workdir", opts.WorkDir()).
 		Bool("force", opts.Force).
 		Msg("initializing project")
 
@@ -270,7 +271,8 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	}
 
 	// Register project in user settings
-	if _, err := project.RegisterProject(ios, opts.RegistryLoader, opts.WorkDir, projectName); err != nil {
+	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+	if _, err := project.RegisterProject(ios, registryLoader, opts.WorkDir(), projectName); err != nil {
 		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 
