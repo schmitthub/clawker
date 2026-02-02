@@ -1,10 +1,28 @@
 package buildkit
 
 import (
+	"context"
 	"testing"
 
 	"github.com/schmitthub/clawker/pkg/whail"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestNewImageBuilder_NilAPIClient(t *testing.T) {
+	builder := NewImageBuilder(nil)
+	err := builder(context.Background(), whail.ImageBuildKitOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil API client")
+}
+
+func TestToSolveOpt_EmptyContextDir(t *testing.T) {
+	opts := whail.ImageBuildKitOptions{}
+
+	_, err := toSolveOpt(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context directory is required")
+}
 
 func TestToSolveOpt_DefaultDockerfile(t *testing.T) {
 	dir := t.TempDir()
@@ -13,16 +31,10 @@ func TestToSolveOpt_DefaultDockerfile(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["filename"] != "Dockerfile" {
-		t.Errorf("expected default filename %q, got %q", "Dockerfile", solveOpt.FrontendAttrs["filename"])
-	}
-	if solveOpt.Frontend != "dockerfile.v0" {
-		t.Errorf("expected frontend %q, got %q", "dockerfile.v0", solveOpt.Frontend)
-	}
+	assert.Equal(t, "Dockerfile", solveOpt.FrontendAttrs["filename"])
+	assert.Equal(t, "dockerfile.v0", solveOpt.Frontend)
 }
 
 func TestToSolveOpt_CustomDockerfile(t *testing.T) {
@@ -33,13 +45,9 @@ func TestToSolveOpt_CustomDockerfile(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["filename"] != "build/Dockerfile.dev" {
-		t.Errorf("expected filename %q, got %q", "build/Dockerfile.dev", solveOpt.FrontendAttrs["filename"])
-	}
+	assert.Equal(t, "build/Dockerfile.dev", solveOpt.FrontendAttrs["filename"])
 }
 
 func TestToSolveOpt_BuildArgs(t *testing.T) {
@@ -51,13 +59,9 @@ func TestToSolveOpt_BuildArgs(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["build-arg:FOO"] != "bar" {
-		t.Errorf("expected build-arg:FOO=bar, got %q", solveOpt.FrontendAttrs["build-arg:FOO"])
-	}
+	assert.Equal(t, "bar", solveOpt.FrontendAttrs["build-arg:FOO"])
 }
 
 func TestToSolveOpt_Labels(t *testing.T) {
@@ -68,16 +72,10 @@ func TestToSolveOpt_Labels(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["label:com.test.managed"] != "true" {
-		t.Errorf("expected label:com.test.managed=true, got %q", solveOpt.FrontendAttrs["label:com.test.managed"])
-	}
-	if solveOpt.FrontendAttrs["label:app"] != "myapp" {
-		t.Errorf("expected label:app=myapp, got %q", solveOpt.FrontendAttrs["label:app"])
-	}
+	assert.Equal(t, "true", solveOpt.FrontendAttrs["label:com.test.managed"])
+	assert.Equal(t, "myapp", solveOpt.FrontendAttrs["label:app"])
 }
 
 func TestToSolveOpt_NoCache(t *testing.T) {
@@ -88,13 +86,10 @@ func TestToSolveOpt_NoCache(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if _, ok := solveOpt.FrontendAttrs["no-cache"]; !ok {
-		t.Error("expected no-cache attribute to be set")
-	}
+	_, ok := solveOpt.FrontendAttrs["no-cache"]
+	assert.True(t, ok, "expected no-cache attribute to be set")
 }
 
 func TestToSolveOpt_Target(t *testing.T) {
@@ -105,13 +100,9 @@ func TestToSolveOpt_Target(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["target"] != "builder" {
-		t.Errorf("expected target=builder, got %q", solveOpt.FrontendAttrs["target"])
-	}
+	assert.Equal(t, "builder", solveOpt.FrontendAttrs["target"])
 }
 
 func TestToSolveOpt_Pull(t *testing.T) {
@@ -122,13 +113,9 @@ func TestToSolveOpt_Pull(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["image-resolve-mode"] != "pull" {
-		t.Errorf("expected image-resolve-mode=pull, got %q", solveOpt.FrontendAttrs["image-resolve-mode"])
-	}
+	assert.Equal(t, "pull", solveOpt.FrontendAttrs["image-resolve-mode"])
 }
 
 func TestToSolveOpt_NetworkMode(t *testing.T) {
@@ -139,13 +126,9 @@ func TestToSolveOpt_NetworkMode(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["force-network-mode"] != "host" {
-		t.Errorf("expected force-network-mode=host, got %q", solveOpt.FrontendAttrs["force-network-mode"])
-	}
+	assert.Equal(t, "host", solveOpt.FrontendAttrs["force-network-mode"])
 }
 
 func TestToSolveOpt_Tags(t *testing.T) {
@@ -156,23 +139,13 @@ func TestToSolveOpt_Tags(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if len(solveOpt.Exports) != 1 {
-		t.Fatalf("expected 1 export entry, got %d", len(solveOpt.Exports))
-	}
+	require.Len(t, solveOpt.Exports, 1)
 	export := solveOpt.Exports[0]
-	if export.Type != "moby" {
-		t.Errorf("expected export type %q, got %q", "moby", export.Type)
-	}
-	if export.Attrs["name"] != "myimage:latest,myimage:v1" {
-		t.Errorf("expected name %q, got %q", "myimage:latest,myimage:v1", export.Attrs["name"])
-	}
-	if export.Attrs["push"] != "false" {
-		t.Errorf("expected push=false, got %q", export.Attrs["push"])
-	}
+	assert.Equal(t, "moby", export.Type)
+	assert.Equal(t, "myimage:latest,myimage:v1", export.Attrs["name"])
+	assert.Equal(t, "false", export.Attrs["push"])
 }
 
 func TestToSolveOpt_LocalMounts(t *testing.T) {
@@ -182,16 +155,10 @@ func TestToSolveOpt_LocalMounts(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.LocalMounts["context"] == nil {
-		t.Error("expected context local mount to be set")
-	}
-	if solveOpt.LocalMounts["dockerfile"] == nil {
-		t.Error("expected dockerfile local mount to be set")
-	}
+	assert.NotNil(t, solveOpt.LocalMounts["context"], "expected context local mount to be set")
+	assert.NotNil(t, solveOpt.LocalMounts["dockerfile"], "expected dockerfile local mount to be set")
 }
 
 func TestToSolveOpt_NilBuildArgs(t *testing.T) {
@@ -203,14 +170,9 @@ func TestToSolveOpt_NilBuildArgs(t *testing.T) {
 	}
 
 	solveOpt, err := toSolveOpt(opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if solveOpt.FrontendAttrs["build-arg:SET"] != "val" {
-		t.Errorf("expected build-arg:SET=val, got %q", solveOpt.FrontendAttrs["build-arg:SET"])
-	}
-	if _, ok := solveOpt.FrontendAttrs["build-arg:NIL"]; ok {
-		t.Error("expected nil build arg to be omitted")
-	}
+	assert.Equal(t, "val", solveOpt.FrontendAttrs["build-arg:SET"])
+	_, ok := solveOpt.FrontendAttrs["build-arg:NIL"]
+	assert.False(t, ok, "expected nil build arg to be omitted")
 }
