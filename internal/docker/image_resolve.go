@@ -130,10 +130,6 @@ type ImageValidationDeps struct {
 	Prompter       func() *prompterpkg.Prompter
 	SettingsLoader func() (*config.SettingsLoader, error)
 
-	// InvalidateSettingsCache clears the cached settings so the next
-	// Settings() call reloads from disk. May be nil.
-	InvalidateSettingsCache func()
-
 	// DefaultImageTag is the tag used for the user's default base image
 	// (e.g. "clawker-default:latest"). Injected to avoid import cycle with
 	// internal/build.
@@ -266,9 +262,6 @@ func ResolveAndValidateImage(
 			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
 				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 			}
-		}
-		if deps.InvalidateSettingsCache != nil {
-			deps.InvalidateSettingsCache()
 		}
 	}
 

@@ -149,9 +149,6 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			SettingsLoader: func() (*config.SettingsLoader, error) {
 				return cfgGateway.SettingsLoader()
 			},
-			InvalidateSettingsCache: func() {
-				// Config gateway caches settings; no-op since gateway handles caching
-			},
 			DefaultImageTag: intbuild.DefaultImageTag,
 			DefaultFlavorOptions: func() []docker.FlavorOption {
 				flavors := intbuild.DefaultFlavorOptions()

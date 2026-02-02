@@ -10,7 +10,6 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 )
 

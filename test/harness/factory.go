@@ -20,6 +20,7 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 	t.Helper()
 
 	tio := iostreams.NewTestIOStreams()
+	cfg := config.NewConfig(func() string { return h.ProjectDir })
 	f := &cmdutil.Factory{
 		WorkDir:  func() string { return h.ProjectDir },
 		IOStreams: tio.IOStreams,
@@ -27,7 +28,6 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 			return docker.NewClient(ctx)
 		},
 		Config: func() *config.Config {
-			cfg := config.NewConfig(func() string { return h.ProjectDir })
 			return cfg
 		},
 		HostProxy: func() *hostproxy.Manager {
