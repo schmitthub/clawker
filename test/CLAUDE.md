@@ -45,6 +45,8 @@ No build tags needed — directory separation provides test categorization.
 - **Unit tests**: Remain co-located as `*_test.go` in their source packages
 - **Docker availability**: All test/cli, test/internals, and test/agents tests require Docker
 - **Cleanup**: Always use `t.Cleanup()` — never rely on deferred functions
+- **TestMain**: All Docker test packages use `RunTestMain(m)` for pre/post cleanup + SIGINT handling
+- **Labels**: Test resources use `com.clawker.test=true`; `CleanupTestResources` filters on this label
 
 ## Harness API
 
@@ -59,13 +61,26 @@ func WithConfigBuilder(builder *ConfigBuilder) HarnessOption
 
 Key methods: `SetEnv`, `UnsetEnv`, `Chdir`, `ContainerName`, `ImageName`, `VolumeName`, `NetworkName`, `ConfigPath`, `WriteFile`, `ReadFile`, `FileExists`, `UpdateConfig`
 
-### Docker Helpers
+### Docker Helpers (docker.go)
 
 ```go
+func RunTestMain(m *testing.M) int               // Wraps testing.M with pre/post cleanup + SIGINT handler
 func RequireDocker(t *testing.T)
 func SkipIfNoDocker(t *testing.T)
-func NewTestClient(ctx) (*docker.Client, error)
+func NewTestClient(t) *docker.Client
 func NewRawDockerClient(t) *client.Client
+func AddTestLabels(labels map[string]string)      // Adds com.clawker.test=true
+func AddClawkerLabels(labels map[string]string)   // Adds com.clawker.managed=true
+func CleanupTestResources(ctx, cli) error         // Label-filtered removal of containers, volumes, networks, images
+func CleanupProjectResources(ctx, cli, project) error
+func ContainerExists(ctx, cli, name) bool
+func ContainerIsRunning(ctx, cli, name) bool
+func VolumeExists(ctx, cli, name) bool
+func NetworkExists(ctx, cli, name) bool
+func GetContainerExitDiagnostics(ctx, cli, id) (*ContainerExitDiagnostics, error)
+func StripDockerStreamHeaders(raw []byte) string
+func BuildTestImage(t, h, opts) string            // Full clawker image for e2e/agent tests
+func BuildSimpleTestImage(t, dockerfile, opts) string
 ```
 
 ### Readiness
@@ -80,11 +95,13 @@ func WaitForHealthy(ctx, cli, containerID, checks...) error
 ### Container Testing (client.go)
 
 ```go
-// Build a lightweight Alpine test image with scripts baked in from internal/build/templates/
-func BuildLightImage(t *testing.T, dc *docker.Client, scripts ...string) string
+// Content-addressed Alpine image with ALL scripts from internal/build/templates/ baked in.
+// LABEL com.clawker.test=true embedded in Dockerfile so intermediates are also labeled.
+func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string
 
-// Create and start a container with automatic cleanup
+// Create and start a container with automatic cleanup via t.Cleanup()
 func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...ContainerOpt) *RunningContainer
+func UniqueContainerName(t *testing.T) string
 
 // Container options
 func WithCapAdd(caps ...string) ContainerOpt
@@ -93,15 +110,19 @@ func WithCmd(cmd ...string) ContainerOpt
 func WithEnv(env ...string) ContainerOpt
 func WithExtraHost(hosts ...string) ContainerOpt
 
-// Execute a command in a running container
+// RunningContainer methods
 func (c *RunningContainer) Exec(ctx, dc, cmd...) (*ExecResult, error)
+func (c *RunningContainer) WaitForFile(ctx, dc, path, timeout) (string, error)
+func (c *RunningContainer) GetLogs(ctx, dc) (string, error)
+
+// ExecResult
 func (r *ExecResult) CleanOutput() string  // Strip Docker stream headers
 ```
 
 **Pattern:**
 ```go
 client := harness.NewTestClient(t)
-image := harness.BuildLightImage(t, client, "init-firewall.sh")
+image := harness.BuildLightImage(t, client)
 ctr := harness.RunContainer(t, client, image,
     harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
     harness.WithUser("root"),
@@ -114,6 +135,14 @@ result, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 ```go
 func GoldenAssert(t, testName, actual string)  // Update via UPDATE_GOLDEN=1
 func CompareGolden(t, testName, actual string) error
+```
+
+### Constants (docker.go)
+
+```go
+TestLabel           = "com.clawker.test"     // Label key for test resources
+TestLabelValue      = "true"
+ClawkerManagedLabel = "com.clawker.managed"  // Label key for clawker-managed resources
 ```
 
 ## Dependencies
