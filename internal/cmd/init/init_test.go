@@ -6,6 +6,7 @@ import (
 
 	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
@@ -66,8 +67,8 @@ func TestNewCmdInit_YesFlag(t *testing.T) {
 func TestDefaultImageTag(t *testing.T) {
 	// Verify the default image tag constant from cmdutil
 	expected := "clawker-default:latest"
-	if intbuild.DefaultImageTag != expected {
-		t.Errorf("expected DefaultImageTag %q, got %q", expected, intbuild.DefaultImageTag)
+	if docker.DefaultImageTag != expected {
+		t.Errorf("expected DefaultImageTag %q, got %q", expected, docker.DefaultImageTag)
 	}
 }
 

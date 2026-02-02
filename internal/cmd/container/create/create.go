@@ -324,14 +324,14 @@ func handleMissingDefaultImage(ctx context.Context, opts *CreateOptions, cfgGate
 	}
 
 	selectedFlavor := flavors[flavorIdx].Name
-	fmt.Fprintf(ios.ErrOut, "Building %s...\n", intbuild.DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Building %s...\n", docker.DefaultImageTag)
 
-	if err := intbuild.BuildDefaultImage(ctx, selectedFlavor); err != nil {
+	if err := docker.BuildDefaultImage(ctx, selectedFlavor); err != nil {
 		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
 		return fmt.Errorf("failed to rebuild default image: %w", err)
 	}
 
-	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", intbuild.DefaultImageTag)
+	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", docker.DefaultImageTag)
 
 	// Persist the default image in settings
 	settingsLoader, err := cfgGateway.SettingsLoader()
@@ -342,7 +342,7 @@ func handleMissingDefaultImage(ctx context.Context, opts *CreateOptions, cfgGate
 		if loadErr != nil {
 			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
 		} else {
-			currentSettings.DefaultImage = intbuild.DefaultImageTag
+			currentSettings.DefaultImage = docker.DefaultImageTag
 			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
 				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 			}

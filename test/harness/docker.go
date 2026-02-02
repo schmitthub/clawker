@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/docker"
 )
 
@@ -489,7 +488,7 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 	dockerClient := NewTestClient(t)
 
 	// Create builder with harness config
-	builder := build.NewBuilder(dockerClient, h.Config, h.ProjectDir)
+	builder := docker.NewBuilder(dockerClient, h.Config, h.ProjectDir)
 
 	// Build labels that mark this as a test image
 	labels := map[string]string{
@@ -500,7 +499,7 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 	}
 
 	// Build the image
-	buildOpts := build.Options{
+	buildOpts := docker.BuilderOptions{
 		NoCache:        opts.NoCache,
 		Labels:         labels,
 		SuppressOutput: opts.SuppressOutput,

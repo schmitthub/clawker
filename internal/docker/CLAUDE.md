@@ -12,6 +12,8 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels and n
 |------|---------|
 | `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
+| `builder.go` | `Builder` — project image building (EnsureImage, Build, BuilderOptions) |
+| `defaults.go` | `DefaultImageTag` constant, `BuildDefaultImage` function |
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
 | `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
@@ -96,6 +98,35 @@ type BuildImageOpts struct {
 - `ListContainers(ctx, project, allStates)`, `ListContainersByProject(ctx, project, allStates)` — filtered container lists
 - `FindContainerByAgent(ctx, project, agent)` — single container lookup
 - `RemoveContainerWithVolumes(ctx, containerID, force)` — removes container + associated agent volumes
+
+## Builder (`builder.go`)
+
+```go
+func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder
+func (b *Builder) EnsureImage(ctx, imageTag, opts BuilderOptions) error  // Content-addressed: skips if hash matches
+func (b *Builder) Build(ctx, imageTag, opts BuilderOptions) error         // Always build unconditionally
+```
+
+`EnsureImage` renders Dockerfile, computes `build.ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
+
+```go
+type BuilderOptions struct {
+    ForceBuild, NoCache, Pull, SuppressOutput, BuildKitEnabled bool
+    Labels map[string]string; Target, NetworkMode string
+    BuildArgs map[string]*string; Tags []string; Dockerfile []byte
+}
+```
+
+Depends on `internal/build` for `ProjectGenerator`, `ContentHash`, `CreateBuildContextFromDir`.
+
+## Default Image Utilities (`defaults.go`)
+
+```go
+const DefaultImageTag = "clawker-default:latest"
+func BuildDefaultImage(ctx context.Context, flavor string) error
+```
+
+`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `build.DockerfileManager`, builds with clawker labels. Uses `build.NewVersionsManager`, `build.NewDockerfileManager`, `build.CreateBuildContextFromDir`.
 
 ## BuildKit (`buildkit.go`)
 

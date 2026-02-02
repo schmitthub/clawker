@@ -33,14 +33,14 @@
 ```
 ├── cmd/clawker/              # Main CLI binary
 ├── internal/
-│   ├── build/                 # Image building, Dockerfile generation, semver, npm registry
+│   ├── build/                 # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── credentials/           # Env vars, .env parsing, OTEL
-│   ├── docker/                # Clawker Docker middleware (wraps pkg/whail)
+│   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + build)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   │   └── hostproxytest/    # MockHostProxy for integration tests
 │   ├── iostreams/             # Testable I/O: TTY, colors, progress, pager

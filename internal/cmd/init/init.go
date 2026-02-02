@@ -6,6 +6,7 @@ import (
 
 	intbuild "github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -139,7 +140,7 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Starting base image build...\n", cs.InfoIcon())
 
 		go func() {
-			buildResultCh <- buildResult{err: intbuild.BuildDefaultImage(ctx, selectedFlavor)}
+			buildResultCh <- buildResult{err: docker.BuildDefaultImage(ctx, selectedFlavor)}
 		}()
 	}
 
@@ -157,7 +158,7 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 	// Wait for build if started
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)
-		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", intbuild.DefaultImageTag))
+		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", docker.DefaultImageTag))
 
 		result := <-buildResultCh
 
@@ -172,10 +173,10 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 			)
 		} else {
 			fmt.Fprintln(ios.ErrOut)
-			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), intbuild.DefaultImageTag)
+			fmt.Fprintf(ios.ErrOut, "%s Build complete! Image: %s\n", cs.SuccessIcon(), docker.DefaultImageTag)
 
 			// Update settings with the built image
-			settings.DefaultImage = intbuild.DefaultImageTag
+			settings.DefaultImage = docker.DefaultImageTag
 			if err := settingsLoader.Save(settings); err != nil {
 				logger.Warn().Err(err).Msg("failed to update settings with default image")
 			}

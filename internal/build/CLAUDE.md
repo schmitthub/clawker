@@ -1,14 +1,13 @@
 # Build Package
 
-Image building orchestration, Dockerfile generation, version management, and build configuration for clawker container images.
+Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`, `BuildDefaultImage`) lives in `internal/docker`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `build.go` | `Builder` — project image building (EnsureImage, Build) |
 | `hash.go` | Content-addressed hashing for Dockerfile + includes |
-| `defaults.go` | Default image building, flavor selection |
+| `defaults.go` | Flavor selection (`FlavorOption`, `DefaultFlavorOptions`, `FlavorToImage`) |
 | `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
 | `config.go` | Variant configuration (Debian/Alpine) |
 | `versions.go` | Claude Code version resolution via npm registry |
@@ -23,28 +22,6 @@ Image building orchestration, Dockerfile generation, version management, and bui
 | `templates/` | Dockerfile template, entrypoint, firewall, and helper scripts |
 | `callback-forwarder/` | Callback forwarder Go source |
 
-## Builder (`build.go`)
-
-```go
-func NewBuilder(cli *docker.Client, cfg *config.Project, workDir string) *Builder
-func (b *Builder) EnsureImage(ctx, imageTag, opts) error  // Content-addressed: skips if hash matches
-func (b *Builder) Build(ctx, imageTag, opts) error         // Always build unconditionally
-```
-
-`EnsureImage` renders Dockerfile, computes `ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
-
-## Build Options (`build.go`)
-
-```go
-type Options struct {
-    ForceBuild, NoCache, Pull, SuppressOutput, BuildKitEnabled bool
-    Labels map[string]string; Target, NetworkMode string
-    BuildArgs map[string]*string; Tags []string; Dockerfile []byte
-}
-```
-
-`toBuildImageOpts(tags, dockerfile, contextDir)` maps `Options` to `docker.BuildImageOpts`.
-
 ## Content Hashing (`hash.go`)
 
 ```go
@@ -57,17 +34,15 @@ SHA-256 of rendered Dockerfile + sorted include file contents. Returns 12-char h
 
 **BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives. Different builders produce different hashes (correct behavior). The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
 
-## Default Image Utilities (`defaults.go`)
+## Flavor Utilities (`defaults.go`)
 
 ```go
-const DefaultImageTag = "clawker-default:latest"
 type FlavorOption struct { Name, Description string }
 func DefaultFlavorOptions() []FlavorOption  // bookworm, trixie, alpine3.22, alpine3.23
 func FlavorToImage(flavor string) string    // Maps flavor to base image; unknown pass through
-func BuildDefaultImage(ctx, flavor) error   // Full pipeline: resolve version, detect BuildKit, generate, build
 ```
 
-`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `DockerfileManager`, builds with clawker labels.
+Note: `DefaultImageTag` constant and `BuildDefaultImage` function have moved to `internal/docker/defaults.go`.
 
 ## Dockerfile Generation (`dockerfile.go`)
 
@@ -188,7 +163,7 @@ type RegistryError = registry.RegistryError // { Package, StatusCode, Message } 
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/docker`, `internal/logger`, `internal/build/registry`, `internal/build/semver`
+Imports: `internal/config`, `internal/logger`, `internal/build/registry`, `internal/build/semver`. **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
