@@ -125,7 +125,9 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ResolveImage(context.TODO(), nil, tt.cfg, tt.settings)
+			client := &Client{} // nil Engine and nil cfg
+			client.cfg = config.NewConfigForTest("", tt.cfg, tt.settings)
+			got, err := client.ResolveImage(context.TODO())
 			if err != nil {
 				t.Fatalf("ResolveImage() returned unexpected error: %v", err)
 			}
@@ -136,37 +138,41 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 	}
 }
 
-func TestResolveImage_NilParameters(t *testing.T) {
-	got, err := ResolveImage(context.TODO(), nil, nil, nil)
+func TestResolveImage_NilConfig(t *testing.T) {
+	client := &Client{} // nil Engine and nil cfg
+	got, err := client.ResolveImage(context.TODO())
 	if err != nil {
 		t.Fatalf("ResolveImage() returned unexpected error: %v", err)
 	}
 	if got != "" {
-		t.Errorf("ResolveImage() with all nil = %q, want empty string", got)
+		t.Errorf("ResolveImage() with nil config = %q, want empty string", got)
 	}
 }
 
-func TestFindProjectImage_NilClient(t *testing.T) {
+func TestFindProjectImage_NilConfig(t *testing.T) {
 	ctx := context.Background()
+	client := &Client{} // nil cfg
 
-	result, err := FindProjectImage(ctx, nil, "myproject")
+	result, err := client.findProjectImage(ctx)
 	if err != nil {
-		t.Errorf("FindProjectImage() unexpected error = %v", err)
+		t.Errorf("findProjectImage() unexpected error = %v", err)
 	}
 	if result != "" {
-		t.Errorf("FindProjectImage() = %q, want empty string", result)
+		t.Errorf("findProjectImage() = %q, want empty string", result)
 	}
 }
 
 func TestFindProjectImage_EmptyProject(t *testing.T) {
 	ctx := context.Background()
+	client := &Client{}
+	client.cfg = config.NewConfigForTest("", &config.Project{Project: ""}, nil)
 
-	result, err := FindProjectImage(ctx, nil, "")
+	result, err := client.findProjectImage(ctx)
 	if err != nil {
-		t.Errorf("FindProjectImage() unexpected error = %v", err)
+		t.Errorf("findProjectImage() unexpected error = %v", err)
 	}
 	if result != "" {
-		t.Errorf("FindProjectImage() = %q, want empty string", result)
+		t.Errorf("findProjectImage() = %q, want empty string", result)
 	}
 }
 
@@ -206,7 +212,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 			wantNil:    false,
 		},
 		{
-			name:       "returns nil when no image found",
+			name:       "returns nil when no config set",
 			cfg:        nil,
 			settings:   nil,
 			wantRef:    "",
@@ -230,7 +236,12 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ResolveImageWithSource(ctx, nil, tt.cfg, tt.settings)
+			client := &Client{}
+			if tt.cfg != nil || tt.settings != nil {
+				client.cfg = config.NewConfigForTest("", tt.cfg, tt.settings)
+			}
+
+			result, err := client.ResolveImageWithSource(ctx)
 
 			if err != nil {
 				t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
