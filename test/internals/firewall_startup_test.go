@@ -2,15 +2,13 @@ package internals
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 // TestFirewallStartup_FullScript verifies the complete init-firewall.sh script runs successfully.
@@ -24,16 +22,16 @@ func TestFirewallStartup_FullScript(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Start container with required capabilities
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		req.CapAdd = []string{"NET_ADMIN", "NET_RAW"}
-		req.User = "root"
-		req.ExtraHosts = []string{"host.docker.internal:host-gateway"}
-	})
-	require.NoError(t, err)
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh")
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
 
 	// Install all dependencies needed by the real firewall script
-	deps := []string{"sh", "-c", `
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", `
 		apk add --no-cache ipset bind-tools jq curl bash iproute2 &&
 		# Create aggregate stub (real script expects this)
 		cat > /usr/local/bin/aggregate << 'EOF'
@@ -41,17 +39,13 @@ func TestFirewallStartup_FullScript(t *testing.T) {
 cat
 EOF
 		chmod +x /usr/local/bin/aggregate
-	`}
-	execResult, err := result.Exec(ctx, deps)
+	`)
 	require.NoError(t, err)
 	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.CleanOutput())
 
-	// Copy the actual firewall script
-	copyFirewallScriptToContainer(ctx, t, result, "init-firewall.sh")
-
-	// Run the actual firewall script (this is the key difference from other tests)
+	// Run the actual firewall script (baked into image at /usr/local/bin/)
 	t.Log("Running full init-firewall.sh script...")
-	execResult, err = result.Exec(ctx, []string{"bash", "/tmp/init-firewall.sh"})
+	execResult, err = ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 	require.NoError(t, err, "failed to execute firewall script")
 
 	output := execResult.CleanOutput()
@@ -76,12 +70,12 @@ EOF
 	t.Logf("Script output:\n%s", output)
 
 	// Verify iptables rules were actually set
-	rulesResult, err := result.Exec(ctx, []string{"iptables", "-L", "-n", "-v"})
+	rulesResult, err := ctr.Exec(ctx, client, "iptables", "-L", "-n", "-v")
 	require.NoError(t, err, "failed to list iptables rules")
 	t.Logf("iptables rules:\n%s", rulesResult.CleanOutput())
 
 	// Verify ipset was created
-	ipsetResult, err := result.Exec(ctx, []string{"ipset", "list"})
+	ipsetResult, err := ctr.Exec(ctx, client, "ipset", "list")
 	require.NoError(t, err, "failed to list ipset")
 	t.Logf("ipset:\n%s", ipsetResult.CleanOutput())
 }
@@ -97,20 +91,15 @@ func TestFirewallStartup_MissingCapability(t *testing.T) {
 	defer cancel()
 
 	// Start WITHOUT NET_ADMIN capability
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
-		// Intentionally no CapAdd
-		req.User = "root"
-	})
-	require.NoError(t, err)
-
-	// Install iptables
-	installDeps := []string{"sh", "-c", "apk add --no-cache iptables"}
-	execResult, err := result.Exec(ctx, installDeps)
-	require.NoError(t, err)
-	require.Equal(t, 0, execResult.ExitCode, "failed to install iptables")
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		// Intentionally no WithCapAdd
+		harness.WithUser("root"),
+	)
 
 	// Try to run iptables (should fail due to missing capability)
-	execResult, err = result.Exec(ctx, []string{"iptables", "-L"})
+	execResult, err := ctr.Exec(ctx, client, "iptables", "-L")
 	require.NoError(t, err)
 
 	// Expect failure due to missing capability
@@ -119,7 +108,7 @@ func TestFirewallStartup_MissingCapability(t *testing.T) {
 		t.Log("iptables succeeded - system may be permissive or running as privileged")
 	} else {
 		t.Logf("Correctly detected missing capability: exit code %d", execResult.ExitCode)
-		output := execResult.CleanOutput()
+		output := execResult.CleanOutput() + " " + execResult.Stderr
 		assert.True(t,
 			strings.Contains(output, "Permission denied") ||
 				strings.Contains(output, "Operation not permitted") ||
@@ -139,20 +128,15 @@ func TestFirewallStartup_ExitCodeOnFailure(t *testing.T) {
 	defer cancel()
 
 	// Start container WITHOUT required capabilities (firewall will fail)
-	result, err := StartFromDockerfile(ctx, t, "testdata/Dockerfile.alpine", func(req *testcontainers.ContainerRequest) {
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
 		// No NET_ADMIN capability - firewall script should fail
-		req.User = "root"
-	})
-	require.NoError(t, err)
-
-	// Install minimal dependencies
-	deps := []string{"sh", "-c", "apk add --no-cache bash"}
-	execResult, err := result.Exec(ctx, deps)
-	require.NoError(t, err)
-	require.Equal(t, 0, execResult.ExitCode, "failed to install deps")
+		harness.WithUser("root"),
+	)
 
 	// Create a minimal firewall script that will fail due to missing iptables capability
-	createScript := []string{"sh", "-c", `cat > /tmp/test-firewall.sh << 'EOF'
+	createScript := `cat > /tmp/test-firewall.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -163,19 +147,14 @@ iptables -L
 
 echo "Firewall configured successfully"
 EOF
-chmod +x /tmp/test-firewall.sh`}
+chmod +x /tmp/test-firewall.sh`
 
-	execResult, err = result.Exec(ctx, createScript)
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", createScript)
 	require.NoError(t, err)
 	require.Equal(t, 0, execResult.ExitCode)
 
-	// Install iptables (needed for the script to run the command)
-	execResult, err = result.Exec(ctx, []string{"sh", "-c", "apk add --no-cache iptables"})
-	require.NoError(t, err)
-	require.Equal(t, 0, execResult.ExitCode, "failed to install iptables")
-
 	// Run the script - it should fail
-	execResult, err = result.Exec(ctx, []string{"bash", "/tmp/test-firewall.sh"})
+	execResult, err = ctr.Exec(ctx, client, "bash", "/tmp/test-firewall.sh")
 	require.NoError(t, err) // exec itself should succeed
 
 	// The script should have failed with non-zero exit code
@@ -187,29 +166,3 @@ chmod +x /tmp/test-firewall.sh`}
 	assert.NotEqual(t, 0, execResult.ExitCode,
 		"firewall script should exit with non-zero when iptables fails without NET_ADMIN")
 }
-
-// copyFirewallScriptToContainer copies the firewall script from internal/build/templates to the container.
-func copyFirewallScriptToContainer(ctx context.Context, t *testing.T, result *ContainerResult, scriptName string) {
-	t.Helper()
-
-	projectRoot, err := findProjectRoot()
-	require.NoError(t, err, "failed to find project root")
-
-	scriptPath := filepath.Join(projectRoot, "internal", "build", "templates", scriptName)
-	content, err := os.ReadFile(scriptPath)
-	require.NoError(t, err, "failed to read script %s", scriptName)
-
-	// Create script in container
-	destPath := "/tmp/" + scriptName
-	createScript := []string{"sh", "-c", "cat > " + destPath + " << 'SCRIPT_EOF'\n" + string(content) + "\nSCRIPT_EOF"}
-	execResult, err := result.Exec(ctx, createScript)
-	require.NoError(t, err, "failed to copy script to container")
-	require.Equal(t, 0, execResult.ExitCode, "failed to copy script: %s", execResult.CleanOutput())
-
-	// Make executable
-	chmodResult, err := result.Exec(ctx, []string{"chmod", "+x", destPath})
-	require.NoError(t, err, "failed to chmod script")
-	require.Equal(t, 0, chmodResult.ExitCode, "failed to chmod script")
-}
-
-// findProjectRoot is defined in scripts_test.go

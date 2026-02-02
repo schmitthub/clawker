@@ -1,4 +1,4 @@
-package internals
+package agents
 
 import (
 	"context"

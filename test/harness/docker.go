@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,6 +28,47 @@ const (
 	// ClawkerManagedLabel is the standard clawker managed label
 	ClawkerManagedLabel = "com.clawker.managed"
 )
+
+// RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources.
+// It removes stale resources from previous (possibly killed) runs before tests
+// start, and cleans up again after tests complete — including on SIGINT/SIGTERM
+// (e.g. Ctrl+C). Use from TestMain:
+//
+//	func TestMain(m *testing.M) { os.Exit(harness.RunTestMain(m)) }
+func RunTestMain(m *testing.M) int {
+	cleanup := func() {
+		if !isDockerAvailable() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cli, err := client.New(client.FromEnv)
+		if err != nil {
+			return
+		}
+		defer cli.Close()
+		_ = CleanupTestResources(ctx, cli)
+	}
+
+	// Catch SIGINT/SIGTERM so Ctrl+C still cleans up.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sig
+		cleanup()
+		os.Exit(1)
+	}()
+
+	// Clean stale resources from previous runs
+	cleanup()
+
+	code := m.Run()
+
+	signal.Stop(sig)
+	cleanup()
+
+	return code
+}
 
 // RequireDocker skips the test if Docker is not available.
 // Use this at the start of internals tests.
@@ -234,6 +278,18 @@ func CleanupTestResources(ctx context.Context, cli *client.Client) error {
 	for _, net := range networks.Items {
 		if _, err := cli.NetworkRemove(ctx, net.ID, client.NetworkRemoveOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("remove network %s: %w", net.ID[:12], err))
+		}
+	}
+
+	// Remove images with test label (including dangling intermediates)
+	images, err := cli.ImageList(ctx, client.ImageListOptions{All: true, Filters: f})
+	if err != nil {
+		return err
+	}
+
+	for _, img := range images.Items {
+		if _, err := cli.ImageRemove(ctx, img.ID, client.ImageRemoveOptions{Force: true, PruneChildren: true}); err != nil {
+			errs = append(errs, fmt.Errorf("remove image %s: %w", img.ID[:12], err))
 		}
 	}
 

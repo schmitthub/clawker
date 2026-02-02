@@ -1,4 +1,4 @@
-package internals
+package commands
 
 import (
 	"context"
@@ -9,14 +9,15 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/exec"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
-// TestExecIntegration_BasicCommands tests executing commands in an already-running container.
+// TestContainerExec_BasicCommands tests executing commands in an already-running container.
 // This validates that exec works correctly and that commands are executed properly.
-func TestExecIntegration_BasicCommands(t *testing.T) {
+func TestContainerExec_BasicCommands(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -108,6 +109,9 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f, ios := harness.NewTestFactory(t, h)
+			f.Client = func(ctx context.Context) (*docker.Client, error) {
+				return dockerClient, nil
+			}
 
 			// Build exec command args: container name, then command
 			cmdArgs := append([]string{containerName}, tt.cmd...)
@@ -124,8 +128,8 @@ func TestExecIntegration_BasicCommands(t *testing.T) {
 	}
 }
 
-// TestExecIntegration_WithAgent tests the --agent flag for exec commands.
-func TestExecIntegration_WithAgent(t *testing.T) {
+// TestContainerExec_WithAgent tests the --agent flag for exec commands.
+func TestContainerExec_WithAgent(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -176,6 +180,9 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 
 	// Test exec with --agent flag
 	f, ios := harness.NewTestFactory(t, h)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return dockerClient, nil
+	}
 
 	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
@@ -188,8 +195,8 @@ func TestExecIntegration_WithAgent(t *testing.T) {
 	require.Contains(t, ios.OutBuf.String(), "agent-exec-works", "expected echo output")
 }
 
-// TestExecIntegration_EnvFlag tests passing environment variables via exec.
-func TestExecIntegration_EnvFlag(t *testing.T) {
+// TestContainerExec_EnvFlag tests passing environment variables via exec.
+func TestContainerExec_EnvFlag(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -242,6 +249,9 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	f, ios := harness.NewTestFactory(t, h)
 
 	cmd := exec.NewCmdExec(f, nil)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return dockerClient, nil
+	}
 	cmd.SetArgs([]string{
 		"-e", "TEST_VAR=custom_value",
 		containerName,
@@ -253,8 +263,8 @@ func TestExecIntegration_EnvFlag(t *testing.T) {
 	require.Contains(t, ios.OutBuf.String(), "custom_value", "expected custom env var in output")
 }
 
-// TestExecIntegration_WorkdirFlag tests executing commands in a specific directory.
-func TestExecIntegration_WorkdirFlag(t *testing.T) {
+// TestContainerExec_WorkdirFlag tests executing commands in a specific directory.
+func TestContainerExec_WorkdirFlag(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -305,6 +315,9 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 
 	// Test exec with -w flag to set working directory
 	f, ios := harness.NewTestFactory(t, h)
+	f.Client = func(ctx context.Context) (*docker.Client, error) {
+		return dockerClient, nil
+	}
 
 	cmd := exec.NewCmdExec(f, nil)
 	cmd.SetArgs([]string{
@@ -318,9 +331,9 @@ func TestExecIntegration_WorkdirFlag(t *testing.T) {
 	require.Contains(t, ios.OutBuf.String(), "/tmp", "expected /tmp as working directory")
 }
 
-// TestExecIntegration_ErrorCases tests error scenarios for the exec command.
+// TestContainerExec_ErrorCases tests error scenarios for the exec command.
 // These tests verify that clear, useful error messages are provided when things fail.
-func TestExecIntegration_ErrorCases(t *testing.T) {
+func TestContainerExec_ErrorCases(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -369,6 +382,9 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 
 		// Try to exec a command that doesn't exist
 		f, _ := harness.NewTestFactory(t, h)
+		f.Client = func(ctx context.Context) (*docker.Client, error) {
+			return dockerClient, nil
+		}
 
 		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
@@ -401,6 +417,9 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 
 		// Try to exec into the stopped container
 		f, ios := harness.NewTestFactory(t, h)
+		f.Client = func(ctx context.Context) (*docker.Client, error) {
+			return dockerClient, nil
+		}
 
 		cmd := exec.NewCmdExec(f, nil)
 		cmd.SetArgs([]string{
@@ -421,9 +440,9 @@ func TestExecIntegration_ErrorCases(t *testing.T) {
 	})
 }
 
-// TestExecIntegration_ScriptExecution tests running scripts via exec command.
+// TestContainerExec_ScriptExecution tests running scripts via exec command.
 // This verifies that scripts created in the container can be executed via exec.
-func TestExecIntegration_ScriptExecution(t *testing.T) {
+func TestContainerExec_ScriptExecution(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
@@ -519,6 +538,9 @@ chmod +x /tmp/test-script.sh`}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f, ios := harness.NewTestFactory(t, h)
+			f.Client = func(ctx context.Context) (*docker.Client, error) {
+				return dockerClient, nil
+			}
 
 			var cmdArgs []string
 			if tt.useAgentFlag {
