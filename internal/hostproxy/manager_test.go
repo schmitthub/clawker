@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -169,6 +170,92 @@ func TestManagerStopClearsServerReference(t *testing.T) {
 
 	// Cleanup
 	_ = m.Stop(ctx)
+}
+
+// TestManagerProxyUnavailableAfterStop demonstrates the core lifecycle problem:
+// when the CLI process that started the manager exits (calls Stop), the proxy
+// becomes unreachable, even though containers may still be running and trying
+// to use it. This test simulates a container calling /open/url and /health
+// after the manager has been stopped — both fail with connection refused.
+func TestManagerProxyUnavailableAfterStop(t *testing.T) {
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+
+	// Start the proxy (simulates what happens during "clawker run @")
+	err := m.EnsureRunning()
+	if err != nil {
+		t.Fatalf("EnsureRunning failed: %v", err)
+	}
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	// Verify proxy is reachable (simulates container calling host-open successfully)
+	resp, err := client.Get(baseURL + "/health")
+	if err != nil {
+		t.Fatalf("health check should succeed while running: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// CLI command exits — manager is stopped (simulates detach or command completion)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = m.Stop(ctx)
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	// Container still running — tries to open a URL via host proxy
+	// This is the bug: the proxy is gone but the container doesn't know
+	_, err = client.Get(baseURL + "/health")
+	if err == nil {
+		t.Fatal("expected connection error after Stop, but request succeeded — proxy should be unreachable")
+	}
+	t.Logf("confirmed: proxy unreachable after Stop: %v", err)
+}
+
+// TestManagerSecondInstanceRecoversProxy shows that a second manager
+// (e.g., from "clawker attach") can restart the proxy on the same port.
+func TestManagerSecondInstanceRecoversProxy(t *testing.T) {
+	port := getFreeMgrPort(t)
+
+	// First CLI command starts the proxy
+	m1 := NewManagerWithPort(port)
+	err := m1.EnsureRunning()
+	if err != nil {
+		t.Fatalf("first EnsureRunning failed: %v", err)
+	}
+
+	// First CLI command exits
+	ctx := context.Background()
+	_ = m1.Stop(ctx)
+
+	// Second CLI command starts a new manager on the same port
+	m2 := NewManagerWithPort(port)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = m2.Stop(ctx)
+	})
+
+	err = m2.EnsureRunning()
+	if err != nil {
+		t.Fatalf("second EnsureRunning failed: %v", err)
+	}
+
+	// Proxy is reachable again
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	if err != nil {
+		t.Fatalf("health check should succeed after restart: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
 }
 
 func TestManagerDefaultPort(t *testing.T) {

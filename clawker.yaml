@@ -99,6 +99,7 @@ security:
       - cloud.google.com
       - sigs.k8s.io
       - google.golang.org
+      - storage.googleapis.com
       - go.opentelemetry.io
       - go.uber.org
       - lukechampine.com
