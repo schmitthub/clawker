@@ -109,13 +109,13 @@ type WorkspaceConfig struct {
 // or custom with explicit URL and jq filter.
 type IPRangeSource struct {
 	// Name is the identifier (e.g., "github", "google-cloud", "cloudflare")
-	Name string `yaml:"name" mapstructure:"name"`
+	Name string `yaml:"name" mapstructure:"name" json:"name"`
 	// URL is an optional custom URL (uses built-in URL if empty for known sources)
-	URL string `yaml:"url,omitempty" mapstructure:"url"`
+	URL string `yaml:"url,omitempty" mapstructure:"url" json:"url,omitempty"`
 	// JQFilter extracts CIDR arrays from JSON response (optional, uses built-in if empty)
-	JQFilter string `yaml:"jq_filter,omitempty" mapstructure:"jq_filter"`
+	JQFilter string `yaml:"jq_filter,omitempty" mapstructure:"jq_filter" json:"jq_filter,omitempty"`
 	// Required determines if failure to fetch is fatal (default: false)
-	Required *bool `yaml:"required,omitempty" mapstructure:"required"`
+	Required *bool `yaml:"required,omitempty" mapstructure:"required" json:"required,omitempty"`
 }
 
 // IsRequired returns whether this source is required (failure to fetch is fatal).

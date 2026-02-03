@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,16 +154,13 @@ func TestFirewallConfig_GetIPRangeSources(t *testing.T) {
 func TestDefaultIPRangeSources(t *testing.T) {
 	defaults := DefaultIPRangeSources()
 
-	// Should include github and google by default
-	require.Len(t, defaults, 2)
+	// Should only include github by default (google has prompt injection risk via user-generated content)
+	require.Len(t, defaults, 1)
 	assert.Equal(t, "github", defaults[0].Name)
-	assert.Equal(t, "google", defaults[1].Name)
 
-	// Both should use built-in URLs (empty URL/filter)
+	// Should use built-in URL (empty URL/filter)
 	assert.Empty(t, defaults[0].URL)
 	assert.Empty(t, defaults[0].JQFilter)
-	assert.Empty(t, defaults[1].URL)
-	assert.Empty(t, defaults[1].JQFilter)
 }
 
 func TestBuiltinIPRangeSources_URLs(t *testing.T) {
@@ -172,4 +170,34 @@ func TestBuiltinIPRangeSources_URLs(t *testing.T) {
 	assert.Equal(t, "https://www.gstatic.com/ipranges/goog.json", BuiltinIPRangeSources["google"].URL)
 	assert.Equal(t, "https://api.cloudflare.com/client/v4/ips", BuiltinIPRangeSources["cloudflare"].URL)
 	assert.Equal(t, "https://ip-ranges.amazonaws.com/ip-ranges.json", BuiltinIPRangeSources["aws"].URL)
+}
+
+
+func TestIPRangeSource_JSONSerialization(t *testing.T) {
+	// Regression test: JSON tags must produce lowercase field names
+	// matching what init-firewall.sh jq queries expect (.name, .url, etc.)
+	source := IPRangeSource{
+		Name:     "github",
+		URL:      "https://example.com/ranges.json",
+		JQFilter: ".cidrs[]",
+		Required: boolPtr(true),
+	}
+
+	data, err := json.Marshal(source)
+	require.NoError(t, err)
+
+	jsonStr := string(data)
+	t.Logf("Serialized JSON: %s", jsonStr)
+
+	// Must have lowercase keys (matches init-firewall.sh jq queries)
+	assert.Contains(t, jsonStr, `"name":"github"`)
+	assert.Contains(t, jsonStr, `"url":"https://example.com/ranges.json"`)
+	assert.Contains(t, jsonStr, `"jq_filter":".cidrs[]"`)
+	assert.Contains(t, jsonStr, `"required":true`)
+
+	// Must NOT have PascalCase keys (would break init-firewall.sh)
+	assert.NotContains(t, jsonStr, `"Name"`)
+	assert.NotContains(t, jsonStr, `"URL"`)
+	assert.NotContains(t, jsonStr, `"JQFilter"`)
+	assert.NotContains(t, jsonStr, `"Required"`)
 }

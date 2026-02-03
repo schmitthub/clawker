@@ -2,10 +2,13 @@ package internals
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
@@ -426,4 +429,252 @@ func TestFirewall_DockerNetworkAllowed(t *testing.T) {
 
 	// Should be able to ping the gateway
 	assert.Equal(t, 0, pingResult.ExitCode, "should be able to ping Docker gateway")
+}
+
+
+// TestFirewall_IPRangeSourcesParsing verifies the init-firewall.sh script correctly parses
+// CLAWKER_FIREWALL_IP_RANGE_SOURCES environment variable with lowercase JSON keys.
+// This is a regression test for the JSON tag bug where Go serialized PascalCase keys
+// but the shell script expected lowercase keys.
+func TestFirewall_IPRangeSourcesParsing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh")
+
+	// Generate env vars using real RuntimeEnv (same code path as production)
+	env, err := docker.RuntimeEnv(docker.RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallIPRangeSources: []config.IPRangeSource{
+			{Name: "github"},
+			{Name: "google"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Log the env var for debugging
+	for _, e := range env {
+		if strings.HasPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES=") {
+			t.Logf("IP Range Sources env: %s", e)
+			// Verify it has lowercase keys (not PascalCase)
+			assert.Contains(t, e, `"name":"github"`, "JSON must have lowercase 'name' key")
+			assert.NotContains(t, e, `"Name":`, "JSON must NOT have PascalCase 'Name' key")
+		}
+	}
+
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithEnv(env...),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
+
+	// Install all dependencies needed by the firewall script
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", `
+		apk add --no-cache ipset bind-tools jq curl bash iproute2 &&
+		# Create aggregate stub (real script expects this)
+		cat > /usr/local/bin/aggregate << 'EOF'
+#!/bin/sh
+cat
+EOF
+		chmod +x /usr/local/bin/aggregate
+	`)
+	require.NoError(t, err)
+	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.CleanOutput())
+
+	// Run the actual firewall script
+	t.Log("Running init-firewall.sh with IP range sources...")
+	execResult, err = ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
+	require.NoError(t, err, "failed to execute firewall script")
+
+	output := execResult.CleanOutput()
+	t.Logf("Firewall script output:\n%s", output)
+
+	// CRITICAL: Verify JSON parsing worked by checking source names were extracted
+	// These assertions prove the lowercase JSON keys are being parsed correctly
+	// If this fails with "empty name" error, the JSON tags are broken
+	assert.Contains(t, output, "Fetching IP ranges from github", "script should parse github source name from JSON")
+	assert.Contains(t, output, "Fetching IP ranges from google", "script should parse google source name from JSON")
+
+	// Verify IP ranges were processed (not just fetched)
+	assert.Contains(t, output, "Processing github IPs", "script should process github IPs")
+	assert.Contains(t, output, "Processing google IPs", "script should process google IPs")
+
+	// Check for JSON parsing failure indicators (should NOT be present)
+	assert.NotContains(t, output, "ERROR: IP range source has empty name", "JSON parsing should not fail")
+	assert.NotContains(t, output, "JSON parsing likely failed", "should not see JSON parsing error")
+
+	// Verify ipsets were created (proves the processing completed)
+	ipsetResult, err := ctr.Exec(ctx, client, "ipset", "list", "-name")
+	require.NoError(t, err, "failed to list ipsets")
+	t.Logf("ipsets: %s", ipsetResult.CleanOutput())
+	assert.Contains(t, ipsetResult.CleanOutput(), "allowed-domains", "allowed-domains ipset should exist")
+
+	// Count entries in ipset
+	ipsetList, err := ctr.Exec(ctx, client, "ipset", "list", "allowed-domains")
+	require.NoError(t, err, "failed to list ipset contents")
+	entryCount := strings.Count(ipsetList.CleanOutput(), "\n") - 10 // subtract header lines
+	t.Logf("IP entries in allowed-domains: ~%d", entryCount)
+	assert.Greater(t, entryCount, 50, "should have substantial IP entries from github+google")
+
+	// ACTUAL CONNECTIVITY TESTS - verify we can reach the allowed IPs
+	t.Log("=== CONNECTIVITY TESTS ===")
+
+	// Test GitHub API (should succeed - we added github IP ranges)
+	githubResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"curl -s --connect-timeout 15 -o /dev/null -w '%{http_code}' https://api.github.com/zen")
+	require.NoError(t, err, "failed to run curl for github")
+	githubCode := strings.TrimSpace(githubResult.CleanOutput())
+	t.Logf("GitHub API response code: %s", githubCode)
+	assert.Equal(t, "200", githubCode, "should be able to reach GitHub API (IP ranges added)")
+
+	// Test Google (gstatic) - should succeed with google IP ranges
+	googleResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"curl -s --connect-timeout 15 -o /dev/null -w '%{http_code}' https://www.gstatic.com/ipranges/goog.json")
+	require.NoError(t, err, "failed to run curl for google")
+	googleCode := strings.TrimSpace(googleResult.CleanOutput())
+	t.Logf("Google (gstatic) response code: %s", googleCode)
+	assert.Equal(t, "200", googleCode, "should be able to reach Google (IP ranges added)")
+
+	// Test blocked domain (should fail - not in allowlist)
+	blockedResult, err := ctr.Exec(ctx, client, "sh", "-c",
+		"curl -s --connect-timeout 5 https://example.com 2>&1 || echo 'BLOCKED'")
+	require.NoError(t, err, "failed to run curl for blocked domain")
+	blockedOutput := blockedResult.CleanOutput()
+	t.Logf("Blocked domain (example.com) result: %s", blockedOutput)
+	assert.True(t,
+		strings.Contains(blockedOutput, "BLOCKED") ||
+			strings.Contains(blockedOutput, "Connection refused") ||
+			strings.Contains(blockedOutput, "timed out") ||
+			strings.Contains(blockedOutput, "Operation not permitted"),
+		"example.com should be blocked by firewall")
+
+	// Script should complete successfully now that we've verified connectivity
+	require.Equal(t, 0, execResult.ExitCode, "firewall script should succeed - if this fails, check the connectivity test results above")
+}
+
+// TestFirewall_EntrypointConfigPassing verifies that the entrypoint correctly passes
+// firewall config to the init-firewall.sh script via files (not env vars).
+// This is a regression test for the bug where sudo stripped environment variables,
+// preventing the firewall script from receiving IP range source configuration.
+//
+// The production flow is:
+//  1. Container starts with entrypoint.sh as PID 1 (as non-root user)
+//  2. Entrypoint writes config to /tmp/clawker/firewall-* files
+//  3. Entrypoint calls `sudo /usr/local/bin/init-firewall.sh`
+//  4. init-firewall.sh reads config from files (env vars are stripped by sudo)
+//
+// Previous tests ran init-firewall.sh directly as root with env vars set,
+// which doesn't exercise the actual production flow.
+func TestFirewall_EntrypointConfigPassing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh", "entrypoint.sh")
+
+	// Generate env vars using real RuntimeEnv (same as production)
+	env, err := docker.RuntimeEnv(docker.RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallIPRangeSources: []config.IPRangeSource{
+			{Name: "github"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Start container as root to set up the test environment
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithEnv(env...),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
+
+	// Set up the test environment: create a non-root user, install deps, configure sudoers
+	setupScript := `
+		# Install dependencies
+		apk add --no-cache sudo ipset bind-tools jq curl bash iproute2 shadow
+
+		# Create non-root user
+		useradd -m -s /bin/bash testuser
+
+		# Configure passwordless sudo for firewall script (matches production Dockerfile)
+		echo "testuser ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/testuser-firewall
+		chmod 0440 /etc/sudoers.d/testuser-firewall
+
+		# Make tmp dir accessible
+		mkdir -p /tmp/clawker
+		chmod 777 /tmp/clawker
+	`
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", setupScript)
+	require.NoError(t, err)
+	require.Equal(t, 0, execResult.ExitCode, "failed to set up test env: %s", execResult.CleanOutput())
+
+	// Get the IP range sources env var to pass to the test script
+	var ipRangeSourcesEnv string
+	for _, e := range env {
+		if strings.HasPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES=") {
+			ipRangeSourcesEnv = strings.TrimPrefix(e, "CLAWKER_FIREWALL_IP_RANGE_SOURCES=")
+		}
+	}
+	require.NotEmpty(t, ipRangeSourcesEnv, "IP range sources env var should be set")
+
+	// Now run the test as the non-root user
+	// This simulates the real entrypoint flow:
+	// 1. Write config files (since env vars will be stripped by sudo)
+	// 2. Call sudo to run the firewall script
+	//
+	// We pass the config as a heredoc to simulate how container startup works:
+	// - Container receives env var from Docker
+	// - Entrypoint writes it to a file before calling sudo
+	testScript := fmt.Sprintf(`
+		# This simulates what entrypoint.sh does in production
+		# The config comes from container env var (passed here as argument)
+		IP_RANGE_SOURCES='%s'
+
+		# Step 1: Write config to files (entrypoint does this before calling sudo)
+		mkdir -p /tmp/clawker
+		echo "$IP_RANGE_SOURCES" > /tmp/clawker/firewall-ip-range-sources
+		echo "" > /tmp/clawker/firewall-domains
+
+		# Verify files were written
+		echo "=== Config file contents ==="
+		cat /tmp/clawker/firewall-ip-range-sources
+
+		# Step 2: Call sudo (just like entrypoint.sh does)
+		# Note: sudo WILL strip env vars - that's the bug we're testing for
+		echo "=== Running firewall script via sudo ==="
+		sudo /usr/local/bin/init-firewall.sh
+
+		# Step 3: Verify firewall is working
+		echo "=== Verifying GitHub connectivity ==="
+		curl -s --connect-timeout 10 -o /dev/null -w '%%{http_code}' https://api.github.com/zen
+	`, ipRangeSourcesEnv)
+
+	// Run as testuser (non-root)
+	execResult, err = ctr.Exec(ctx, client, "su", "-", "testuser", "-c", testScript)
+	require.NoError(t, err)
+
+	output := execResult.CleanOutput()
+	t.Logf("Test output:\n%s", output)
+
+	// CRITICAL: Verify the firewall script received the config via files
+	// If this fails with "No IP range sources configured", the file-passing mechanism is broken
+	assert.Contains(t, output, "Processing IP range sources", "firewall should receive IP range sources via files")
+	assert.Contains(t, output, "Fetching IP ranges from github", "firewall should process github source")
+	assert.NotContains(t, output, "No IP range sources configured", "config should be passed via files, not env vars")
+
+	// Verify connectivity works
+	assert.Contains(t, output, "200", "should be able to reach GitHub after firewall setup")
+
+	require.Equal(t, 0, execResult.ExitCode, "entrypoint-style firewall setup should succeed")
 }

@@ -38,7 +38,6 @@ var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{
 func DefaultIPRangeSources() []IPRangeSource {
 	return []IPRangeSource{
 		{Name: "github"},
-		{Name: "google"},
 	}
 }
 

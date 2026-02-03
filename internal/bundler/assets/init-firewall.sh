@@ -137,33 +137,32 @@ process_ip_range_source() {
         fi
     fi
 
-    # Use aggregate tool if available (for CIDR compression), otherwise process directly
-    local process_cmd="cat"
-    if command -v aggregate >/dev/null 2>&1; then
-        process_cmd="aggregate -q"
-    fi
-
-    while read -r cidr; do
+    # Process each CIDR - add IPv4 ranges to ipset, skip IPv6
+    # Note: We use echo|while which runs in a subshell, but ipset commands
+    # still modify kernel state. Process substitution < <() had issues
+    # with the aggregate tool and complex pipelines.
+    echo "$cidrs" | while IFS= read -r cidr; do
         # Skip empty lines
         [ -z "$cidr" ] && continue
-        # Skip IPv6 ranges (ipset is IPv4 only)
-        if [[ "$cidr" =~ : ]]; then
-            echo "Skipping IPv6 range (ipset hash:net is IPv4 only): $cidr"
-            continue
-        fi
-        # Validate IPv4 CIDR or single IP
+        # Skip IPv6 ranges (ipset hash:net is IPv4 only)
+        [[ "$cidr" =~ : ]] && continue
+        # Validate and add IPv4 CIDR
         if [[ "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
-            echo "Adding $name range: $cidr"
             ipset add allowed-domains "$cidr" -exist 2>/dev/null || true
-        else
-            echo "WARNING: Invalid CIDR from $name: $cidr, skipping"
         fi
-    done < <(echo "$cidrs" | $process_cmd)
+    done
+
+    echo "Processed $name IP ranges"
 }
 
-# Process IP range sources from environment variable (JSON array)
+# Process IP range sources from config file (written by entrypoint before sudo)
 # Format: [{"name":"github","url":"...","jq_filter":"...","required":true}, ...]
-IP_RANGE_SOURCES="${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}"
+# Falls back to env var for backward compatibility (e.g., manual testing)
+if [ -f /tmp/clawker/firewall-ip-range-sources ]; then
+    IP_RANGE_SOURCES=$(cat /tmp/clawker/firewall-ip-range-sources)
+else
+    IP_RANGE_SOURCES="${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}"
+fi
 
 if [ -n "$IP_RANGE_SOURCES" ] && [ "$IP_RANGE_SOURCES" != "[]" ]; then
     echo "Processing IP range sources..."
@@ -178,9 +177,13 @@ if [ -n "$IP_RANGE_SOURCES" ] && [ "$IP_RANGE_SOURCES" != "[]" ]; then
         jq_filter=$(echo "$source" | jq -r '.jq_filter // empty')
         required=$(echo "$source" | jq -r '.required // false')
 
+        # Fail fast if name is empty (indicates JSON parsing failure, e.g., PascalCase keys)
         if [ -z "$name" ]; then
-            echo "WARNING: IP range source missing name, skipping"
-            continue
+            echo "ERROR: IP range source has empty name - JSON parsing likely failed"
+            echo "DEBUG: Raw source JSON: $source"
+            echo "DEBUG: Expected lowercase keys (name, url, jq_filter, required)"
+            echo "DEBUG: If you see PascalCase keys (Name, URL), the Go struct is missing json tags"
+            exit 1
         fi
 
         # Use built-in URL/filter if not specified
@@ -216,9 +219,15 @@ else
     echo "No IP range sources configured"
 fi
 
-# Read configured domains from environment variable (JSON array)
-# CLAWKER_FIREWALL_DOMAINS is set during Docker build from clawker.yaml config
-if [ -n "${CLAWKER_FIREWALL_DOMAINS:-}" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]; then
+# Read configured domains from config file (written by entrypoint before sudo)
+# Falls back to env var for backward compatibility
+if [ -f /tmp/clawker/firewall-domains ]; then
+    CLAWKER_FIREWALL_DOMAINS=$(cat /tmp/clawker/firewall-domains)
+else
+    CLAWKER_FIREWALL_DOMAINS="${CLAWKER_FIREWALL_DOMAINS:-}"
+fi
+
+if [ -n "$CLAWKER_FIREWALL_DOMAINS" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]; then
     echo "Processing configured firewall domains..."
     while read -r domain; do
         if [ -z "$domain" ]; then

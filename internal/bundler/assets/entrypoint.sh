@@ -18,6 +18,10 @@ emit_error() {
 
 # Initialize firewall if script exists and we have capabilities
 if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
+    # Write firewall config to file since sudo strips environment variables
+    mkdir -p /tmp/clawker
+    echo "${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}" > /tmp/clawker/firewall-ip-range-sources
+    echo "${CLAWKER_FIREWALL_DOMAINS:-}" > /tmp/clawker/firewall-domains
     if ! firewall_output=$(sudo /usr/local/bin/init-firewall.sh 2>&1); then
         # Sanitize output for JSON safety (remove newlines, escape quotes)
         sanitized_output=$(echo "$firewall_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 200)
