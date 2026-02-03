@@ -172,11 +172,11 @@ var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{...}
 
 // Known sources: github, google-cloud, google, cloudflare, aws
 func IsKnownIPRangeSource(name string) bool
-func DefaultIPRangeSources() []IPRangeSource  // Returns [{Name: "github"}, {Name: "google"}]
+func DefaultIPRangeSources() []IPRangeSource  // Returns [{Name: "github"}]
 func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
 ```
 
-**Default sources:** `[{Name: "github"}, {Name: "google"}]` — includes google for Go proxy and Google services support.
+**Default sources:** `[{Name: "github"}]` — github only by default.
 
 **Override mode:** If `override_domains` is set, `GetIPRangeSources()` returns empty slice (user controls everything).
 
