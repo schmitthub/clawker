@@ -12,8 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
-	"github.com/schmitthub/clawker/internal/build"
-	"github.com/schmitthub/clawker/internal/build/registry"
+	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -112,7 +112,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	// If skip-fetch, load and display existing file
 	if opts.SkipFetch {
-		vf, err := build.LoadVersionsFile(versionsFile)
+		vf, err := bundler.LoadVersionsFile(versionsFile)
 		if err != nil {
 			cmdutil.PrintError(ios, "Failed to load versions.json from %s", outputDir)
 			cmdutil.PrintNextSteps(ios,
@@ -125,7 +125,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	}
 
 	// Resolve versions from npm
-	mgr := build.NewVersionsManager()
+	mgr := bundler.NewVersionsManager()
 	vf, err := mgr.ResolveVersions(ctx, versions, build.ResolveOptions{})
 	if err != nil {
 		cmdutil.HandleError(ios, err)
@@ -133,7 +133,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	}
 
 	// Merge with existing versions if file exists
-	existing, err := build.LoadVersionsFile(versionsFile)
+	existing, err := bundler.LoadVersionsFile(versionsFile)
 	if err == nil && existing != nil {
 		// Merge: new versions override existing
 		for k, v := range *vf {
@@ -143,7 +143,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	}
 
 	// Save updated versions.json
-	if err := build.SaveVersionsFile(versionsFile, vf); err != nil {
+	if err := bundler.SaveVersionsFile(versionsFile, vf); err != nil {
 		cmdutil.PrintError(ios, "Failed to save versions.json")
 		return err
 	}
@@ -151,7 +151,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	fmt.Fprintf(ios.ErrOut, "Saved %d version(s) to %s\n", len(*vf), versionsFile)
 
 	// Generate Dockerfiles
-	dfMgr := build.NewDockerfileManager(outputDir, nil)
+	dfMgr := bundler.NewDockerfileManager(outputDir, nil)
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
 		cmdutil.PrintError(ios, "Failed to generate Dockerfiles")
 		return err
@@ -162,7 +162,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 }
 
 func showVersions(ios *iostreams.IOStreams, path string) error {
-	vf, err := build.LoadVersionsFile(path)
+	vf, err := bundler.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			cmdutil.PrintError(ios, "No versions.json found")

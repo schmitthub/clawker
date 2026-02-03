@@ -14,7 +14,7 @@ import (
 	moby "github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -152,11 +152,11 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	client, fakeAPI := newTestClient()
 
 	// Pre-compute the expected hash tag by generating the Dockerfile and hashing it
-	gen := build.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := build.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "")
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)
@@ -196,11 +196,11 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	client, fakeAPI := newTestClient()
 
 	// Pre-compute the expected hash tag
-	gen := build.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := build.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "")
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)
@@ -258,11 +258,11 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	client, fakeAPI := newTestClient()
 
 	// Pre-compute the expected hash tag
-	gen := build.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := build.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "")
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -63,7 +63,7 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder {
 // Uses content-addressed tags to detect whether config actually changed.
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts BuilderOptions) error {
-	gen := build.NewProjectGenerator(b.config, b.workDir)
+	gen := bundler.NewProjectGenerator(b.config, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Custom Dockerfiles bypass content hashing — delegate to Build() so that
@@ -80,7 +80,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 		return fmt.Errorf("failed to generate Dockerfile: %w", err)
 	}
 
-	hash, err := build.ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
+	hash, err := bundler.ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
 	if err != nil {
 		return fmt.Errorf("failed to compute content hash: %w", err)
 	}
@@ -116,7 +116,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
-	gen := build.NewProjectGenerator(b.config, b.workDir)
+	gen := bundler.NewProjectGenerator(b.config, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)
@@ -131,7 +131,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 
-		buildCtx, err := build.CreateBuildContextFromDir(
+		buildCtx, err := bundler.CreateBuildContextFromDir(
 			gen.GetBuildContext(),
 			gen.GetCustomDockerfilePath(),
 		)
