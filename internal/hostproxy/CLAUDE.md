@@ -2,6 +2,34 @@
 
 HTTP service mesh mediating interactions between containers and the host machine.
 
+## Architecture: Daemon Subprocess
+
+The host proxy runs as a **daemon subprocess** that persists beyond CLI command lifetime. This solves the problem of the proxy dying when the CLI exits (e.g., detach, `start` without `--attach`).
+
+### Lifecycle
+
+1. `Manager.EnsureRunning()` is called by container commands (run, start, attach, create)
+2. Manager checks if daemon is running via PID file + health check
+3. If not running, spawns `clawker host-proxy serve` as a detached subprocess
+4. Daemon polls Docker every 30s for clawker containers
+5. Daemon auto-exits when no containers are running (after 60s grace period)
+6. Daemon also exits after 10 consecutive Docker API errors (prevents zombie processes)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `daemon.go` | PID file management, container watcher, `Daemon` struct |
+| `manager.go` | Spawns daemon subprocess, health check, PID file detection |
+
+### Hidden CLI Commands
+
+```bash
+clawker host-proxy serve    # Run daemon (hidden, spawned by Manager)
+clawker host-proxy status   # Check if daemon running (hidden)
+clawker host-proxy stop     # Stop daemon explicitly (hidden)
+```
+
 ## Components
 
 | Component | File | Purpose |
@@ -9,7 +37,8 @@ HTTP service mesh mediating interactions between containers and the host machine
 | `Server` | `server.go` | HTTP server handling proxy requests |
 | `SessionStore` | `session.go` | Generic session management with TTL and cleanup |
 | `CallbackChannel` | `callback.go` | OAuth callback registration, capture, and retrieval |
-| `Manager` | `manager.go` | Lifecycle management of the proxy server |
+| `Manager` | `manager.go` | Spawns/manages daemon subprocess |
+| `Daemon` | `daemon.go` | Background process with container watcher |
 | -- | `git_credential.go` | Git credential forwarding handler (route on Server) |
 | -- | `ssh_agent.go` | SSH agent forwarding handler (route on Server) |
 | `MockHostProxy` | `hostproxytest/hostproxy_mock.go` | Test mock implementing all proxy endpoints |
@@ -42,6 +71,22 @@ type Session struct {
     CreatedAt, ExpiresAt time.Time
     Metadata  map[string]any
 }
+
+type DaemonOptions struct {
+    Port               int
+    PIDFile            string
+    PollInterval       time.Duration    // Default: 30s
+    GracePeriod        time.Duration    // Default: 60s
+    MaxConsecutiveErrs int              // Default: 10 (exit after this many Docker errors)
+    DockerClient       ContainerLister  // Optional: inject mock for testing
+}
+
+// ContainerLister is the minimal interface for the daemon's Docker client.
+// Allows testing without real Docker.
+type ContainerLister interface {
+    ContainerList(ctx, options) (ContainerListResult, error)
+    io.Closer
+}
 ```
 
 ### Session Methods
@@ -56,8 +101,11 @@ type Session struct {
 ## Constructors
 
 ```go
-func NewManager() *Manager                           // Uses DefaultPort
+func NewManager() *Manager                           // Uses DefaultPort, default PID file
 func NewManagerWithPort(port int) *Manager           // Custom port (for testing)
+func NewManagerWithOptions(port int, pidFile string) *Manager  // Full control
+func NewDaemon(opts DaemonOptions) (*Daemon, error)  // Create daemon process
+func DefaultDaemonOptions() DaemonOptions            // Default config
 func NewServer(port int) *Server
 func NewSessionStore() *SessionStore                 // Starts cleanup goroutine; must call Stop()
 func NewCallbackChannel(store *SessionStore) *CallbackChannel
@@ -67,10 +115,25 @@ func NewCallbackChannel(store *SessionStore) *CallbackChannel
 
 ```go
 (*Manager).ProxyURL() string             // http://host.docker.internal:<port>
-(*Manager).IsRunning() bool
+(*Manager).IsRunning() bool              // Checks daemon via PID file + health
 (*Manager).Port() int
-(*Manager).EnsureRunning() error         // Lazy start with health check
-(*Manager).Stop(ctx context.Context) error
+(*Manager).EnsureRunning() error         // Spawns daemon subprocess if needed
+(*Manager).Stop()                        // No-op (daemon self-terminates)
+(*Manager).StopDaemon() error            // Explicitly stop daemon process
+```
+
+## Daemon Methods
+
+```go
+(*Daemon).Run(ctx context.Context) error  // Blocks until signal or auto-exit
+```
+
+## Daemon Utilities
+
+```go
+func IsDaemonRunning(pidFile string) bool   // Check PID file + process liveness
+func GetDaemonPID(pidFile string) int       // Returns PID or 0 if not running
+func StopDaemon(pidFile string) error       // Send SIGTERM to daemon
 ```
 
 ## SessionStore Methods
