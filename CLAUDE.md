@@ -149,8 +149,34 @@ security: { firewall: { enable: true }, docker_socket: false, git_credentials: {
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
+**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `RalphConfig`
 **Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
+
+### Firewall IP Range Sources
+
+IP range sources fetch CIDR blocks from cloud provider APIs (not DNS) to allow traffic to services like GitHub:
+
+```yaml
+security:
+  firewall:
+    enable: true
+    # Default: [{name: github}]
+    ip_range_sources:
+      - name: github          # Required by default
+      - name: google          # For Go proxy (proxy.golang.org uses GCS)
+      - name: custom
+        url: "https://example.com/ranges.json"
+        jq_filter: ".cidrs[]"
+        required: false
+```
+
+**Built-in sources**: `github`, `google-cloud`, `google`, `cloudflare`, `aws` — each has pre-configured URL and jq filter.
+
+**Default behavior**: `ip_range_sources` defaults to `[{name: github}]` only.
+
+**Security warning**: The `google` source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk — an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`).
+
+**Override mode**: When `override_domains` is set, IP range sources are skipped entirely (user controls all network access).
 
 ## Design Decisions
 

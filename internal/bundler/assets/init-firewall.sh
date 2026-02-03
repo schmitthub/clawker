@@ -21,6 +21,12 @@ iptables -t mangle -F
 iptables -t mangle -X
 ipset destroy allowed-domains 2>/dev/null || true
 
+# Set permissive policies during bootstrap phase
+# This allows outbound HTTPS to fetch IP ranges before we lock down
+iptables -P INPUT ACCEPT
+iptables -P OUTPUT ACCEPT
+iptables -P FORWARD ACCEPT
+
 # 2. Selectively restore ONLY internal Docker DNS resolution
 if [ -n "$DOCKER_DNS_RULES" ]; then
     echo "Restoring Docker DNS rules..."
@@ -47,46 +53,206 @@ iptables -A OUTPUT -o lo -j ACCEPT
 # Create ipset with CIDR support
 ipset create allowed-domains hash:net
 
-# Check if in override mode (skips GitHub IP fetching)
-OVERRIDE_MODE="${CLAWKER_FIREWALL_OVERRIDE:-false}"
+# Built-in IP range source configurations
+# These map source names to their API URLs and jq filters
+get_builtin_url() {
+    local name="$1"
+    case "$name" in
+        github)       echo "https://api.github.com/meta" ;;
+        google-cloud) echo "https://www.gstatic.com/ipranges/cloud.json" ;;
+        google)       echo "https://www.gstatic.com/ipranges/goog.json" ;;
+        cloudflare)   echo "https://api.cloudflare.com/client/v4/ips" ;;
+        aws)          echo "https://ip-ranges.amazonaws.com/ip-ranges.json" ;;
+        *)            echo "" ;;
+    esac
+}
 
-# Fetch GitHub meta information and aggregate + add their IP ranges
-# Only do this if NOT in override mode (override mode is for complete control)
-if [ "$OVERRIDE_MODE" != "true" ]; then
-    echo "Fetching GitHub IP ranges..."
-    gh_ranges=$(curl -s https://api.github.com/meta)
-    if [ -z "$gh_ranges" ]; then
-        echo "ERROR: Failed to fetch GitHub IP ranges"
-        exit 1
+get_builtin_filter() {
+    local name="$1"
+    case "$name" in
+        github)       echo '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' ;;
+        google-cloud) echo '.prefixes[].ipv4Prefix // empty' ;;
+        google)       echo '.prefixes[].ipv4Prefix // empty' ;;
+        cloudflare)   echo '.result.ipv4_cidrs[]' ;;
+        aws)          echo '.prefixes[].ip_prefix' ;;
+        *)            echo "" ;;
+    esac
+}
+
+# Special validation for GitHub response (has specific field structure)
+validate_github_response() {
+    local response="$1"
+    if ! echo "$response" | jq -e '.web and .api and .git and .copilot and .packages and .pages and .importer and .actions and .domains' >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+# Process a single IP range source
+# Args: name, url, jq_filter, required (true/false)
+process_ip_range_source() {
+    local name="$1"
+    local url="$2"
+    local jq_filter="$3"
+    local required="$4"
+
+    echo "Fetching IP ranges from $name ($url)..."
+    local response http_code
+    # Use -sL to follow redirects, capture HTTP status code separately
+    # -f is not used because it prevents capturing HTTP code on errors
+    response=$(curl -sL --connect-timeout 10 -w "\n%{http_code}" "$url" 2>&1) || true
+    if [[ "$response" == *$'\n'* ]]; then
+        http_code="${response##*$'\n'}"
+        response="${response%$'\n'*}"
+    else
+        http_code="000"
     fi
 
-    if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .copilot and .packages and .pages and .importer and .actions and .domains' >/dev/null; then
-        echo "ERROR: GitHub API response missing required fields"
-        exit 1
-    fi
-
-    echo "Processing GitHub IPs..."
-    while read -r cidr; do
-        # Skip IPv6 ranges (ipset is IPv4 only)
-        if [[ "$cidr" =~ : ]]; then
-            echo "Skipping IPv6 range (ipset hash:net is IPv4 only): $cidr"
-            continue
-        fi
-        # Validate IPv4 CIDR
-        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-            echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
+    # Accept any 2xx status code as success
+    if [ -z "$response" ] || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        if [ "$required" = "true" ]; then
+            echo "ERROR: Failed to fetch required IP ranges from $name (HTTP $http_code)"
             exit 1
+        else
+            echo "WARNING: Failed to fetch IP ranges from $name (HTTP $http_code), skipping"
+            return 0
         fi
-        echo "Adding GitHub range $cidr"
-        ipset add allowed-domains "$cidr" -exist 2>/dev/null || true
-    done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot + .packages + .pages + .importer + .actions)[]' | aggregate -q)
+    fi
+
+    # Special validation for GitHub
+    if [ "$name" = "github" ]; then
+        if ! validate_github_response "$response"; then
+            if [ "$required" = "true" ]; then
+                echo "ERROR: GitHub API response missing required fields"
+                exit 1
+            else
+                echo "WARNING: GitHub API response invalid, skipping"
+                return 0
+            fi
+        fi
+    fi
+
+    echo "Processing $name IPs..."
+    local cidrs jq_error
+    # Capture jq errors instead of silently swallowing them
+    if ! cidrs=$(echo "$response" | jq -r "$jq_filter" 2>&1); then
+        jq_error="$cidrs"
+        cidrs=""
+        if [ "$required" = "true" ]; then
+            echo "ERROR: jq filter failed for $name: $jq_error"
+            exit 1
+        else
+            echo "WARNING: jq filter failed for $name: $jq_error, skipping"
+            return 0
+        fi
+    fi
+
+    if [ -z "$cidrs" ]; then
+        if [ "$required" = "true" ]; then
+            echo "ERROR: No CIDRs extracted from $name response"
+            exit 1
+        else
+            echo "WARNING: No CIDRs extracted from $name, skipping"
+            return 0
+        fi
+    fi
+
+    # Process each CIDR - add IPv4 ranges to ipset, skip IPv6
+    # Use here-string to avoid subshell (echo|while runs in subshell)
+    while IFS= read -r cidr; do
+        # Skip empty lines
+        [ -z "$cidr" ] && continue
+        # Skip IPv6 ranges (ipset hash:net is IPv4 only)
+        [[ "$cidr" =~ : ]] && continue
+        # Validate and add IPv4 CIDR
+        if [[ "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
+            # Capture ipset errors but only warn on unexpected ones
+            local ipset_err
+            if ! ipset_err=$(ipset add allowed-domains "$cidr" -exist 2>&1); then
+                # Only warn on unexpected errors (not "already added")
+                if [[ ! "$ipset_err" =~ "already added" && -n "$ipset_err" ]]; then
+                    echo "WARNING: Failed to add CIDR $cidr: $ipset_err"
+                fi
+            fi
+        fi
+    done <<< "$cidrs"
+
+    echo "Processed $name IP ranges"
+}
+
+# Process IP range sources from config file (written by entrypoint before sudo)
+# Format: [{"name":"github","url":"...","jq_filter":"...","required":true}, ...]
+# Falls back to env var for backward compatibility (e.g., manual testing)
+if [ -f /tmp/clawker/firewall-ip-range-sources ]; then
+    IP_RANGE_SOURCES=$(cat /tmp/clawker/firewall-ip-range-sources)
 else
-    echo "Override mode: skipping GitHub IP fetching"
+    IP_RANGE_SOURCES="${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}"
 fi
 
-# Read configured domains from environment variable (JSON array)
-# CLAWKER_FIREWALL_DOMAINS is set during Docker build from clawker.yaml config
-if [ -n "${CLAWKER_FIREWALL_DOMAINS:-}" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]; then
+if [ -n "$IP_RANGE_SOURCES" ] && [ "$IP_RANGE_SOURCES" != "[]" ]; then
+    echo "Processing IP range sources..."
+
+    # Count sources for progress
+    source_count=$(echo "$IP_RANGE_SOURCES" | jq -r 'length')
+    echo "Found $source_count IP range source(s) to process"
+
+    echo "$IP_RANGE_SOURCES" | jq -c '.[]' | while read -r source; do
+        name=$(echo "$source" | jq -r '.name // empty')
+        url=$(echo "$source" | jq -r '.url // empty')
+        jq_filter=$(echo "$source" | jq -r '.jq_filter // empty')
+        required=$(echo "$source" | jq -r '.required // false')
+
+        # Fail fast if name is empty (indicates JSON parsing failure, e.g., PascalCase keys)
+        if [ -z "$name" ]; then
+            echo "ERROR: IP range source has empty name - JSON parsing likely failed"
+            echo "DEBUG: Raw source JSON: $source"
+            echo "DEBUG: Expected lowercase keys (name, url, jq_filter, required)"
+            echo "DEBUG: If you see PascalCase keys (Name, URL), the Go struct is missing json tags"
+            exit 1
+        fi
+
+        # Use built-in URL/filter if not specified
+        if [ -z "$url" ]; then
+            url=$(get_builtin_url "$name")
+        fi
+        if [ -z "$jq_filter" ]; then
+            jq_filter=$(get_builtin_filter "$name")
+        fi
+
+        # Default 'required' for github source
+        if [ "$required" = "null" ] || [ -z "$required" ]; then
+            if [ "$name" = "github" ]; then
+                required="true"
+            else
+                required="false"
+            fi
+        fi
+
+        if [ -z "$url" ]; then
+            echo "WARNING: Unknown IP range source '$name' with no URL specified"
+            continue
+        fi
+
+        if [ -z "$jq_filter" ]; then
+            echo "WARNING: No jq filter for IP range source '$name'"
+            continue
+        fi
+
+        process_ip_range_source "$name" "$url" "$jq_filter" "$required"
+    done
+else
+    echo "No IP range sources configured"
+fi
+
+# Read configured domains from config file (written by entrypoint before sudo)
+# Falls back to env var for backward compatibility
+if [ -f /tmp/clawker/firewall-domains ]; then
+    CLAWKER_FIREWALL_DOMAINS=$(cat /tmp/clawker/firewall-domains)
+else
+    CLAWKER_FIREWALL_DOMAINS="${CLAWKER_FIREWALL_DOMAINS:-}"
+fi
+
+if [ -n "$CLAWKER_FIREWALL_DOMAINS" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]; then
     echo "Processing configured firewall domains..."
     while read -r domain; do
         if [ -z "$domain" ]; then
@@ -224,8 +390,9 @@ else
     echo "Firewall verification passed - unable to reach https://example.com as expected"
 fi
 
-# Verify GitHub API access (only if not in override mode, since override might not include GitHub)
-if [ "$OVERRIDE_MODE" != "true" ]; then
+# Verify GitHub API access (only if github source was configured)
+# Check if github is in the IP range sources
+if [ -n "$IP_RANGE_SOURCES" ] && echo "$IP_RANGE_SOURCES" | jq -e '.[] | select(.name == "github")' >/dev/null 2>&1; then
     if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
         echo "ERROR: Firewall verification failed - unable to reach https://api.github.com"
         exit 1

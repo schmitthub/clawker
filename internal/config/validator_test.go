@@ -725,6 +725,133 @@ func TestValidatorValidInject(t *testing.T) {
 	}
 }
 
+func TestValidatorIPRangeSources(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator := NewValidator(tmpDir)
+
+	tests := []struct {
+		name         string
+		ipSources    []IPRangeSource
+		wantErr      bool
+		wantWarnings bool
+	}{
+		{
+			name:      "valid builtin source github",
+			ipSources: []IPRangeSource{{Name: "github"}},
+			wantErr:   false,
+		},
+		{
+			name:      "valid builtin source google-cloud",
+			ipSources: []IPRangeSource{{Name: "google-cloud"}},
+			wantErr:   false,
+		},
+		{
+			name:      "valid builtin sources multiple",
+			ipSources: []IPRangeSource{{Name: "github"}, {Name: "google-cloud"}, {Name: "aws"}},
+			wantErr:   false,
+		},
+		{
+			name: "custom source missing jq_filter",
+			ipSources: []IPRangeSource{
+				{Name: "custom", URL: "https://example.com/ranges.json"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid custom source with URL and jq filter",
+			ipSources: []IPRangeSource{
+				{Name: "custom", URL: "https://example.com/ranges.json", JQFilter: ".cidrs[]"},
+			},
+			wantErr: false,
+		},
+		{
+			name:      "invalid - missing name",
+			ipSources: []IPRangeSource{{URL: "https://example.com/ranges.json"}},
+			wantErr:   true,
+		},
+		{
+			name:      "invalid - unknown source without URL",
+			ipSources: []IPRangeSource{{Name: "unknown-source"}},
+			wantErr:   true,
+		},
+		{
+			name: "invalid - custom source with invalid URL",
+			ipSources: []IPRangeSource{
+				{Name: "custom", URL: "not-a-url"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid - builtin source can have custom URL override",
+			ipSources: []IPRangeSource{
+				{Name: "github", URL: "https://custom.github.mirror/meta"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid - builtin source with invalid custom URL",
+			ipSources: []IPRangeSource{
+				{Name: "github", URL: "not-a-valid-url"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Version = "1"
+			cfg.Project = "test-project"
+			if cfg.Security.Firewall == nil {
+				cfg.Security.Firewall = &FirewallConfig{Enable: true}
+			}
+			cfg.Security.Firewall.IPRangeSources = tt.ipSources
+
+			err := validator.Validate(cfg)
+			hasErr := err != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidatorIPRangeSourcesWithOverrideWarning(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator := NewValidator(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Version = "1"
+	cfg.Project = "test-project"
+	cfg.Security.Firewall = &FirewallConfig{
+		Enable:          true,
+		OverrideDomains: []string{"custom.com"},
+		IPRangeSources:  []IPRangeSource{{Name: "github"}},
+	}
+
+	// Validation should pass, but we expect a warning
+	err = validator.Validate(cfg)
+	if err != nil {
+		t.Errorf("Validate() returned error: %v", err)
+	}
+
+	// Check that a warning was generated
+	warnings := validator.Warnings()
+	if len(warnings) == 0 {
+		t.Error("expected a warning about ip_range_sources being ignored in override mode")
+	}
+}
+
 func TestValidatorHelperFunctions(t *testing.T) {
 	t.Run("isValidChown", func(t *testing.T) {
 		tests := []struct {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 // RuntimeEnvOpts describes the environment variables RuntimeEnv can produce.
@@ -14,9 +16,10 @@ type RuntimeEnvOpts struct {
 	Visual string
 
 	// Firewall
-	FirewallEnabled  bool
-	FirewallDomains  []string
-	FirewallOverride bool
+	FirewallEnabled        bool
+	FirewallDomains        []string
+	FirewallOverride       bool
+	FirewallIPRangeSources []config.IPRangeSource
 
 	// Terminal capabilities (from host)
 	Is256Color bool
@@ -68,6 +71,17 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		if opts.FirewallOverride {
 			m["CLAWKER_FIREWALL_OVERRIDE"] = "true"
 		}
+
+		// IP range sources (consumed by entrypoint/init-firewall.sh)
+		ipSources := opts.FirewallIPRangeSources
+		if ipSources == nil {
+			ipSources = []config.IPRangeSource{}
+		}
+		ipSourcesBytes, err := json.Marshal(ipSources)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal firewall IP range sources: %w", err)
+		}
+		m["CLAWKER_FIREWALL_IP_RANGE_SOURCES"] = string(ipSourcesBytes)
 	}
 
 	// Agent env vars (override base defaults and terminal)

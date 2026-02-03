@@ -253,6 +253,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		envOpts.FirewallEnabled = true
 		envOpts.FirewallDomains = cfg.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
 		envOpts.FirewallOverride = cfg.Security.Firewall.IsOverrideMode()
+		envOpts.FirewallIPRangeSources = cfg.Security.Firewall.GetIPRangeSources()
 	}
 	if cfg.Build.Instructions != nil {
 		envOpts.InstructionEnv = cfg.Build.Instructions.Env

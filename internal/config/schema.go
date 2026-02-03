@@ -104,12 +104,37 @@ type WorkspaceConfig struct {
 
 // SecurityConfig defines optional security hardening settings
 
+// IPRangeSource defines a source of IP CIDR ranges for the firewall.
+// Sources can be built-in (github, google-cloud, google, cloudflare, aws)
+// or custom with explicit URL and jq filter.
+type IPRangeSource struct {
+	// Name is the identifier (e.g., "github", "google-cloud", "cloudflare")
+	Name string `yaml:"name" mapstructure:"name" json:"name"`
+	// URL is an optional custom URL (uses built-in URL if empty for known sources)
+	URL string `yaml:"url,omitempty" mapstructure:"url" json:"url,omitempty"`
+	// JQFilter extracts CIDR arrays from JSON response (optional, uses built-in if empty)
+	JQFilter string `yaml:"jq_filter,omitempty" mapstructure:"jq_filter" json:"jq_filter,omitempty"`
+	// Required determines if failure to fetch is fatal (default: false)
+	Required *bool `yaml:"required,omitempty" mapstructure:"required" json:"required,omitempty"`
+}
+
+// IsRequired returns whether this source is required (failure to fetch is fatal).
+// For "github" source, defaults to true if not explicitly set.
+func (s *IPRangeSource) IsRequired() bool {
+	if s.Required != nil {
+		return *s.Required
+	}
+	// GitHub is required by default; other sources are optional
+	return s.Name == "github"
+}
+
 // FirewallConfig defines network firewall settings
 type FirewallConfig struct {
-	Enable          bool     `yaml:"enable" mapstructure:"enable"`
-	AddDomains      []string `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
-	RemoveDomains   []string `yaml:"remove_domains,omitempty" mapstructure:"remove_domains"`
-	OverrideDomains []string `yaml:"override_domains,omitempty" mapstructure:"override_domains"`
+	Enable          bool            `yaml:"enable" mapstructure:"enable"`
+	AddDomains      []string        `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
+	RemoveDomains   []string        `yaml:"remove_domains,omitempty" mapstructure:"remove_domains"`
+	OverrideDomains []string        `yaml:"override_domains,omitempty" mapstructure:"override_domains"`
+	IPRangeSources  []IPRangeSource `yaml:"ip_range_sources,omitempty" mapstructure:"ip_range_sources"`
 }
 
 // FirewallEnabled returns whether the firewall should be enabled.
