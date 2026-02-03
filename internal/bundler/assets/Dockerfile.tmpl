@@ -255,6 +255,10 @@ ENV SHELL={{.Shell}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
+# Terminal color defaults (overridden at container creation by RuntimeEnv if host differs)
+ENV TERM=xterm-256color
+ENV COLORTERM=truecolor
+ENV LANG=en_US.UTF-8
 
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}
@@ -274,6 +278,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
     -a "source /usr/share/fzf/key-bindings.zsh" \
     -a "source /usr/share/fzf/completion.zsh" \
     -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
+    -a "export TERM=xterm-256color" \
     -x
 {{else -}}
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
@@ -283,6 +288,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
     -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
     -a "source /usr/share/doc/fzf/examples/completion.zsh" \
     -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
+    -a "export TERM=xterm-256color" \
     -x
 {{end}}
 
