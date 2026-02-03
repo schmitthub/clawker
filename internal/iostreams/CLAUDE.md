@@ -2,6 +2,24 @@
 
 Testable I/O abstraction following the GitHub CLI pattern. Handles terminal detection, color output, progress indicators, paging, and alternate screen buffers.
 
+## Domain: Terminal Behavior Layer
+
+**Responsibility**: Standard terminal UX behavior built on top of capability detection.
+
+This package handles **how the terminal behaves** — theme detection, progress indicators, paging, color schemes. It delegates capability detection to `term.FromEnv()` and does NOT handle clawker-specific configuration.
+
+| Layer | Package | Responsibility | Env Vars |
+|-------|---------|----------------|----------|
+| Capabilities | `term` | What the terminal supports | `TERM`, `COLORTERM`, `NO_COLOR` |
+| **Behavior** | `iostreams` | Terminal UX (theme, progress, paging) | `CLAWKER_PAGER`, `PAGER` |
+| App Config | `factory` | Clawker-specific preferences | `CLAWKER_SPINNER_DISABLED` |
+
+The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
+
+`System()` calls `term.FromEnv()` for capabilities, then adds behavior:
+- Enables progress indicator when both stdout and stderr are TTYs
+- Calls `DetectTerminalTheme()` when output is TTY
+
 ## Core Pattern
 
 All CLI commands access I/O through `f.IOStreams` from the Factory. Never create IOStreams directly.
@@ -24,8 +42,7 @@ Main struct with public fields: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writ
 
 **Constructors:**
 
-- `System() *IOStreams` -- **preferred** production constructor (real stdin/stdout/stderr, delegates to `term.FromEnv()` for capability detection)
-- `NewIOStreams() *IOStreams` -- legacy production constructor (auto-detect TTY/color without term interface)
+- `System() *IOStreams` -- production constructor (real stdin/stdout/stderr, delegates to `term.FromEnv()` for capability detection)
 - `NewTestIOStreams() *TestIOStreams` -- testing (bytes.Buffer, non-TTY, colors disabled)
 
 ### TestIOStreams
@@ -149,10 +166,10 @@ ios.GetNeverPrompt() bool    // check if prompts disabled
 
 | Variable | Effect |
 |----------|--------|
-| `NO_COLOR` | Disables color output |
 | `CLAWKER_PAGER` | Custom pager (highest priority) |
 | `PAGER` | Standard pager |
-| `CLAWKER_SPINNER_DISABLED` | Static text instead of animated spinner |
+
+Note: `NO_COLOR` is handled by `term.FromEnv()`, and `CLAWKER_SPINNER_DISABLED` is handled by the factory.
 
 ## Source Files
 

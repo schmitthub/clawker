@@ -74,32 +74,6 @@ type IOStreams struct {
 	termSizeCached  bool
 }
 
-// NewIOStreams creates an IOStreams connected to standard streams.
-func NewIOStreams() *IOStreams {
-	ios := &IOStreams{
-		In:            os.Stdin,
-		Out:           os.Stdout,
-		ErrOut:        os.Stderr,
-		isInputTTY:    -1,
-		isOutputTTY:   -1,
-		isStderrTTY:   -1,
-		colorEnabled:  -1, // Auto-detect
-		terminalTheme: "", // Detect on first use
-	}
-
-	// Progress enabled when both stdout and stderr are TTYs
-	if ios.IsOutputTTY() && ios.IsStderrTTY() {
-		ios.progressIndicatorEnabled = true
-	}
-
-	// Check for spinner disabled env var
-	if os.Getenv("CLAWKER_SPINNER_DISABLED") != "" {
-		ios.spinnerDisabled = true
-	}
-
-	return ios
-}
-
 // System creates an IOStreams wired to the real system terminal.
 // Reads terminal capabilities from the host environment via term.FromEnv().
 // The factory calls this, then may layer clawker config overrides.
@@ -115,12 +89,14 @@ func System() *IOStreams {
 		colorEnabled: -1,
 	}
 
+	// Progress indicator requires both stdout and stderr TTY
 	if ios.IsOutputTTY() && ios.IsStderrTTY() {
 		ios.progressIndicatorEnabled = true
 	}
 
-	if os.Getenv("CLAWKER_SPINNER_DISABLED") != "" {
-		ios.spinnerDisabled = true
+	// Detect terminal theme for color scheme selection
+	if ios.IsOutputTTY() {
+		ios.DetectTerminalTheme()
 	}
 
 	return ios

@@ -49,6 +49,12 @@ func FromEnv() *Term {
 	// Detect basic color: TTY with non-empty, non-dumb TERM, or 256 implies color
 	t.colorEnabled = (t.isTTY && termEnv != "" && termEnv != "dumb") || t.is256Enabled
 
+	// NO_COLOR is a standard convention (https://no-color.org/)
+	// Overrides capability detection when user explicitly disables colors
+	if os.Getenv("NO_COLOR") != "" {
+		t.colorEnabled = false
+	}
+
 	// Detect terminal width, fallback to 80
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 {

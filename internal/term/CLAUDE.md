@@ -2,11 +2,25 @@
 
 PTY/terminal handling for interactive container sessions. Manages raw mode, signal handling, resize propagation, and bidirectional I/O streaming.
 
+## Domain: Terminal Capability Detection
+
+**Responsibility**: Detect terminal capabilities from standard environment variables.
+
+This package handles **what the terminal can do** — capability detection from `TERM`, `COLORTERM`, and `NO_COLOR`. It does NOT handle application-level behavior like theme detection or spinner preferences.
+
+| Layer | Package | Responsibility | Env Vars |
+|-------|---------|----------------|----------|
+| **Capabilities** | `term` | What the terminal supports | `TERM`, `COLORTERM`, `NO_COLOR` |
+| Behavior | `iostreams` | Terminal UX (theme, progress, paging) | `CLAWKER_PAGER`, `PAGER` |
+| App Config | `factory` | Clawker-specific preferences | `CLAWKER_SPINNER_DISABLED` |
+
+The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `capabilities.go` | `Term` — terminal capability detection (TTY, color, width) |
+| `term.go` | `Term` — terminal capability detection (TTY, color, width) |
 | `pty.go` | `PTYHandler` — full terminal session lifecycle |
 | `raw.go` | `RawMode` — low-level termios control, TTY detection |
 | `signal.go` | `SignalHandler`, `ResizeHandler` — SIGTERM/SIGINT/SIGWINCH |
@@ -44,6 +58,7 @@ func FromEnv() *Term  // Read capabilities from real system environment
 - **256 color**: `TERM` contains `256color`, OR truecolor implies 256
 - **Basic color**: TTY with non-empty, non-dumb `TERM`, OR 256 implies color
 - **Cascade**: truecolor → 256 → basic (each implies the lower capability)
+- **NO_COLOR**: Standard convention (https://no-color.org/) — if set, overrides all color capability detection
 
 ## PTYHandler
 
@@ -151,7 +166,7 @@ func GetStdinSize() (width, height int, err error)
 
 ## Test Coverage
 
-- `capabilities_test.go` — unit tests for Term struct and FromEnv()
+- `term_test.go` — unit tests for Term struct and FromEnv()
 - `pty_test.go` — unit tests for PTYHandler, RawMode, and TTY detection functions
 
 ## Gotchas
