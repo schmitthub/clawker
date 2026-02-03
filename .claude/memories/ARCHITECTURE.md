@@ -167,7 +167,6 @@ User interaction utilities with TTY and CI awareness.
 | `internal/workspace` | Bind vs Snapshot strategies for host-container file sharing |
 | `internal/term` | PTY handling for interactive sessions |
 | `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`) |
-| `internal/credentials` | Environment variable construction with allow/deny lists |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error handling, name resolution, output utilities |
@@ -361,7 +360,6 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │                                                                 │
 │  Clawker examples:                                              │
 │    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
-│    credentials/ → logger                                        │
 │    hostproxy/ → logger                                          │
 │    prompter/ → iostreams                                        │
 │    project/ → config, iostreams, logger                         │
@@ -386,7 +384,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 
 ```
   ✓  foundation → leaf             config imports logger
-  ✓  middle → leaf                 credentials imports logger
+  ✓  middle → leaf                 bundler imports logger
   ✓  middle → foundation           bundler imports config
   ✓  composite → middle            docker imports bundler
   ✓  composite → foundation        docker imports config
