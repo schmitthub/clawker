@@ -21,7 +21,6 @@ Packages that **don't need** a CLAUDE.md (thin wiring or test-only):
 - `internal/cmd/*/` — Covered by `.claude/rules/container-commands.md` and similar rules
 - `test/harness/` — Covered by `.claude/rules/testing.md`
 - `internal/logger/` — Simple setup, covered in code-style rule
-- `internal/credentials/` — Small, self-documenting
 - `internal/prompter/` — Small, self-documenting
 
 ## Go Symbol Extraction Patterns
