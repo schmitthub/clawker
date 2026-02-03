@@ -172,7 +172,7 @@ security:
 
 **Built-in sources**: `github`, `google-cloud`, `google`, `cloudflare`, `aws` — each has pre-configured URL and jq filter.
 
-**Default behavior**: `ip_range_sources` defaults to `[{name: github}, {name: google-cloud}]` to support Go proxy.
+**Default behavior**: `ip_range_sources` defaults to `[{name: github}, {name: google}]` to support Go proxy and Google services.
 
 **Override mode**: When `override_domains` is set, IP range sources are skipped entirely (user controls all network access).
 

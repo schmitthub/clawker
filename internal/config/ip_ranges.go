@@ -32,11 +32,13 @@ var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{
 }
 
 // DefaultIPRangeSources returns the default IP range sources when none are configured.
-// Returns [github, google-cloud] to support Go proxy (proxy.golang.org backed by GCS).
+// Returns [github, google] to support Go proxy and Google services.
+// Note: "google" (goog.json) includes broader ranges than "google-cloud" (cloud.json),
+// covering CDN/edge infrastructure used by storage.googleapis.com, www.gstatic.com, etc.
 func DefaultIPRangeSources() []IPRangeSource {
 	return []IPRangeSource{
 		{Name: "github"},
-		{Name: "google-cloud"},
+		{Name: "google"},
 	}
 }
 
@@ -67,6 +69,6 @@ func (f *FirewallConfig) GetIPRangeSources() []IPRangeSource {
 		return f.IPRangeSources
 	}
 
-	// Default: github + google-cloud for Go proxy support
+	// Default: github + google for Go proxy and Google services support
 	return DefaultIPRangeSources()
 }

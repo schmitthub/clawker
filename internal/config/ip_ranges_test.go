@@ -153,10 +153,10 @@ func TestFirewallConfig_GetIPRangeSources(t *testing.T) {
 func TestDefaultIPRangeSources(t *testing.T) {
 	defaults := DefaultIPRangeSources()
 
-	// Should include github and google-cloud by default
+	// Should include github and google by default
 	require.Len(t, defaults, 2)
 	assert.Equal(t, "github", defaults[0].Name)
-	assert.Equal(t, "google-cloud", defaults[1].Name)
+	assert.Equal(t, "google", defaults[1].Name)
 
 	// Both should use built-in URLs (empty URL/filter)
 	assert.Empty(t, defaults[0].URL)
