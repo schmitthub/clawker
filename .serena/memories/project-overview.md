@@ -29,7 +29,7 @@ make test-all                                    # All test suites
 No build tags — directory separation only. All Docker tests use `harness.BuildLightImage` + `harness.RunContainer` (dogfooded on `docker.Client`).
 
 ## Last Documentation Audit
-Date: 2026-01-31. All 30 doc files fresh. Root CLAUDE.md trimmed to 193 lines (under 200-line budget). Symbol accuracy gaps addressed in ralph, config, tui, iostreams, whail, docker, hostproxy, workspace CLAUDE.md files. No dead rules or stale WIP memories found.
+Date: 2026-02-03. All 39 doc files fresh. Root CLAUDE.md at 231 lines. IP range sources feature fully documented in config and docker CLAUDE.md files. WIP memories cleaned up after feature completion. One budget violation: hostproxy CLAUDE.md at 227 lines (trimmed).
 
 ## Architecture
 - Factory pattern: `cmdutil.Factory` struct with closure fields, constructor in `internal/cmd/factory/`
