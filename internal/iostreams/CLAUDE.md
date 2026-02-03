@@ -24,7 +24,8 @@ Main struct with public fields: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writ
 
 **Constructors:**
 
-- `NewIOStreams() *IOStreams` -- production (real stdin/stdout/stderr, auto-detect TTY/color)
+- `System() *IOStreams` -- **preferred** production constructor (real stdin/stdout/stderr, delegates to `term.FromEnv()` for capability detection)
+- `NewIOStreams() *IOStreams` -- legacy production constructor (auto-detect TTY/color without term interface)
 - `NewTestIOStreams() *TestIOStreams` -- testing (bytes.Buffer, non-TTY, colors disabled)
 
 ### TestIOStreams
@@ -86,6 +87,8 @@ ios.CanPrompt() bool      // interactive AND not NeverPrompt
 ```go
 ios.ColorEnabled() bool              // auto-detect or explicit setting
 ios.SetColorEnabled(bool)            // override auto-detection
+ios.Is256ColorSupported() bool       // host terminal supports 256 colors (delegates to term)
+ios.IsTrueColorSupported() bool      // host terminal supports 24-bit truecolor (delegates to term)
 ios.ColorScheme() *ColorScheme       // configured for this IOStreams
 ios.DetectTerminalTheme()            // probe terminal background
 ios.TerminalTheme() string           // "light", "dark", or "none"

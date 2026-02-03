@@ -6,9 +6,44 @@ PTY/terminal handling for interactive container sessions. Manages raw mode, sign
 
 | File | Purpose |
 |------|---------|
+| `capabilities.go` | `Term` — terminal capability detection (TTY, color, width) |
 | `pty.go` | `PTYHandler` — full terminal session lifecycle |
 | `raw.go` | `RawMode` — low-level termios control, TTY detection |
 | `signal.go` | `SignalHandler`, `ResizeHandler` — SIGTERM/SIGINT/SIGWINCH |
+
+## Term (Terminal Capabilities)
+
+Detects terminal capabilities from environment. Used by `iostreams.System()` to pass host terminal state to containers.
+
+```go
+type Term struct {
+    in, out, errOut *os.File
+    isTTY           bool
+    colorEnabled    bool
+    is256Enabled    bool
+    hasTrueColor    bool
+    width           int
+}
+
+func FromEnv() *Term  // Read capabilities from real system environment
+```
+
+### Methods
+
+```go
+(*Term).IsTTY() bool                // stdout is a terminal
+(*Term).IsColorEnabled() bool       // basic color support (TTY + non-dumb TERM)
+(*Term).Is256ColorSupported() bool  // TERM contains "256color" or truecolor
+(*Term).IsTrueColorSupported() bool // COLORTERM is "truecolor" or "24bit"
+(*Term).Width() int                 // terminal width (default 80)
+```
+
+### Detection Logic
+
+- **TrueColor**: `COLORTERM` is `truecolor` or `24bit`
+- **256 color**: `TERM` contains `256color`, OR truecolor implies 256
+- **Basic color**: TTY with non-empty, non-dumb `TERM`, OR 256 implies color
+- **Cascade**: truecolor → 256 → basic (each implies the lower capability)
 
 ## PTYHandler
 
@@ -116,7 +151,8 @@ func GetStdinSize() (width, height int, err error)
 
 ## Test Coverage
 
-`pty_test.go` — unit tests for PTYHandler, RawMode, and TTY detection functions.
+- `capabilities_test.go` — unit tests for Term struct and FromEnv()
+- `pty_test.go` — unit tests for PTYHandler, RawMode, and TTY detection functions
 
 ## Gotchas
 

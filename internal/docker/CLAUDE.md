@@ -143,7 +143,22 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 
 ## Environment (`env.go`)
 
-- `RuntimeEnv(cfg)` — returns `([]string, error)` of config-derived env vars for container creation (editor, firewall, agent env)
+```go
+type RuntimeEnvOpts struct {
+    Editor, Visual   string            // defaults to "nano"
+    FirewallEnabled  bool
+    FirewallDomains  []string
+    FirewallOverride bool
+    Is256Color       bool              // host supports 256 colors → TERM=xterm-256color
+    TrueColor        bool              // host supports truecolor → COLORTERM=truecolor
+    AgentEnv         map[string]string // agent.env from config
+    InstructionEnv   map[string]string // build.instructions.env from config
+}
+
+func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
+```
+
+Produces container env vars with precedence (last wins): base defaults → terminal capabilities → agent env → instruction env. Output is sorted by key for deterministic ordering.
 
 ## Volume Utilities (`volume.go`)
 

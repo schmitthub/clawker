@@ -51,9 +51,13 @@ Cons: Adds ~100MB+ to container image for marginal benefit on a Go project.
 
 Apply Option A now. Document in clawker.yaml comments that bash/yaml Serena languages require Node.js if someone wants to re-enable them.
 
-## Recommendation
+## Resolution
 
-**Option A** is the right call. This is a Go project — gopls and marksman cover the important files. Bash and YAML files in this repo are simple configs/scripts that don't benefit meaningfully from LSP symbol analysis.
+**Option B implemented** on branch `a/container-fixes`: nodejs and npm added to `clawker.yaml` build.packages. `registry.npmjs.org` was already in `init-firewall.sh` hardcoded defaults — no firewall config change needed.
+
+## Original Recommendation (superseded)
+
+**Option A** was originally recommended but This is a Go project — gopls and marksman cover the important files. Bash and YAML files in this repo are simple configs/scripts that don't benefit meaningfully from LSP symbol analysis.
 
 ## Key Learnings
 
