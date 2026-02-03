@@ -1,4 +1,4 @@
-package build
+package bundler
 
 import (
 	"os"
@@ -43,7 +43,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 		"statusline.sh",
 		"claude-settings.json",
 		"host-open.sh",
-		"callback-forwarder.sh",
+		"callback-forwarder.go",
 		"git-credential-clawker.sh",
 		"ssh-agent-proxy.go",
 		"init-firewall.sh", // firewall enabled

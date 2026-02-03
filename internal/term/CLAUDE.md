@@ -82,8 +82,8 @@ func NewSignalHandler(cancelFunc context.CancelFunc, cleanup func()) *SignalHand
 ### Standalone Signal Helpers
 
 ```go
-func SetupSignalContext(parent context.Context) (context.Context, func())  // Context cancelled on SIGTERM/SIGINT
-func WaitForSignal(ctx context.Context) os.Signal                          // Block until signal or ctx done
+func SetupSignalContext(parent context.Context) (context.Context, context.CancelFunc)  // Context cancelled on SIGTERM/SIGINT
+func WaitForSignal(ctx context.Context, signals ...os.Signal) os.Signal                // Block until signal or ctx done
 ```
 
 ## ResizeHandler
@@ -98,7 +98,7 @@ type ResizeHandler struct {
     done       chan struct{}
 }
 
-func NewResizeHandler(getSize func() (int, int, error), resizeFunc func(uint, uint) error) *ResizeHandler
+func NewResizeHandler(resizeFunc func(uint, uint) error, getSize func() (int, int, error)) *ResizeHandler
 
 (*ResizeHandler).Start()         // Start SIGWINCH listener goroutine
 (*ResizeHandler).Stop()          // Stop listening

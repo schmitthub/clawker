@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -25,8 +25,8 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 
 	// 2. Resolve "latest" version from npm
 	logger.Debug().Msg("resolving latest Claude Code version from npm")
-	mgr := build.NewVersionsManager()
-	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, build.ResolveOptions{})
+	mgr := bundler.NewVersionsManager()
+	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, bundler.ResolveOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to resolve latest version: %w", err)
 	}
@@ -51,7 +51,7 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 
 	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
 	logger.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
-	dfMgr := build.NewDockerfileManager(buildDir, nil)
+	dfMgr := bundler.NewDockerfileManager(buildDir, nil)
 	dfMgr.BuildKitEnabled = buildkitEnabled
 	if err := dfMgr.GenerateDockerfiles(versions); err != nil {
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
@@ -79,7 +79,7 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 		Msg("building image")
 
 	// 7. Create build context from dockerfiles directory
-	buildContext, err := build.CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
+	buildContext, err := bundler.CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create build context: %w", err)
 	}

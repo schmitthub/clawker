@@ -100,7 +100,7 @@ Commands access via `f.Config().Project()` instead of the old `f.Config()` which
 
 **Agent/Workspace:**
 - `AgentConfig` — `Includes []string`, `Env map[string]string`, `Memory`, `Editor`, `Visual`, `Shell`
-- `WorkspaceConfig` — `RemotePath string`, `DefaultMode Mode`
+- `WorkspaceConfig` — `RemotePath string`, `DefaultMode string`
 
 **Security:**
 - `SecurityConfig` — `Firewall`, `DockerSocket`, `CapAdd`, `EnableHostProxy`, `GitCredentials`
@@ -136,7 +136,7 @@ Persistent project registry at `~/.local/clawker/projects.yaml`.
 - `ProjectEntry` — `Name string`, `Root string`
   - `(e ProjectEntry) Valid() error` — validates fields (name non-empty, root path absolute)
 - `ProjectRegistry` — `Projects map[string]ProjectEntry`
-- `NewRegistryLoader(path)` — creates loader for the registry file
+- `NewRegistryLoader()` — creates loader for the registry file (resolves path from CLAWKER_HOME)
 - `Slugify(name)` — converts project name to URL-safe slug
 - `UniqueSlug(name, registry)` — generates unique slug with numeric suffix if needed
 - `(*RegistryLoader).Register(key, entry)` / `Unregister(key)` — add/remove projects

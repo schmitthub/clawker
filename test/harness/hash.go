@@ -16,7 +16,8 @@ import (
 // test images only when templates change.
 //
 // The hash includes:
-//   - All files in internal/build/templates/ (Dockerfile.tmpl, entrypoint.sh, etc.)
+//   - All files in internal/bundler/assets/ (Dockerfile.tmpl, entrypoint.sh, etc.)
+//   - All files in internal/hostproxy/internals/ (host-open.sh, git-credential-clawker.sh, Go sources)
 //   - The dockerfile.go file containing DockerfileContext struct definition
 //
 // Returns a stable SHA256 hex digest (64 characters).
@@ -36,15 +37,21 @@ func ComputeTemplateHash() (string, error) {
 
 	hasher := sha256.New()
 
-	// Hash template files
-	templatesDir := filepath.Join(rootDir, "internal", "build", "templates")
+	// Hash bundler assets (lifecycle scripts, Dockerfile template)
+	templatesDir := filepath.Join(rootDir, "internal", "bundler", "assets")
 	if err := hashDirectory(hasher, templatesDir); err != nil {
 		return "", fmt.Errorf("failed to hash templates directory: %w", err)
 	}
 
+	// Hash hostproxy internals (client scripts and Go sources)
+	internalsDir := filepath.Join(rootDir, "internal", "hostproxy", "internals")
+	if err := hashDirectory(hasher, internalsDir); err != nil {
+		return "", fmt.Errorf("failed to hash internals directory: %w", err)
+	}
+
 	// Hash the dockerfile.go file containing struct definitions
 	// Changes to DockerfileContext, DockerfileInstructions, etc. should invalidate cache
-	dockerfileGo := filepath.Join(rootDir, "internal", "build", "dockerfile.go")
+	dockerfileGo := filepath.Join(rootDir, "internal", "bundler", "dockerfile.go")
 	if err := hashFile(hasher, dockerfileGo); err != nil {
 		return "", fmt.Errorf("failed to hash dockerfile.go: %w", err)
 	}
@@ -57,14 +64,20 @@ func ComputeTemplateHash() (string, error) {
 func ComputeTemplateHashFromDir(rootDir string) (string, error) {
 	hasher := sha256.New()
 
-	// Hash template files
-	templatesDir := filepath.Join(rootDir, "internal", "build", "templates")
+	// Hash bundler assets (lifecycle scripts, Dockerfile template)
+	templatesDir := filepath.Join(rootDir, "internal", "bundler", "assets")
 	if err := hashDirectory(hasher, templatesDir); err != nil {
 		return "", fmt.Errorf("failed to hash templates directory: %w", err)
 	}
 
+	// Hash hostproxy internals (client scripts and Go sources)
+	internalsDir := filepath.Join(rootDir, "internal", "hostproxy", "internals")
+	if err := hashDirectory(hasher, internalsDir); err != nil {
+		return "", fmt.Errorf("failed to hash internals directory: %w", err)
+	}
+
 	// Hash the dockerfile.go file containing struct definitions
-	dockerfileGo := filepath.Join(rootDir, "internal", "build", "dockerfile.go")
+	dockerfileGo := filepath.Join(rootDir, "internal", "bundler", "dockerfile.go")
 	if err := hashFile(hasher, dockerfileGo); err != nil {
 		return "", fmt.Errorf("failed to hash dockerfile.go: %w", err)
 	}
@@ -72,7 +85,7 @@ func ComputeTemplateHashFromDir(rootDir string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// hashDirectory hashes all files in a directory, sorted by name for stability.
+// hashDirectory hashes all files in a directory recursively, sorted by name for stability.
 func hashDirectory(hasher io.Writer, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -85,11 +98,14 @@ func hashDirectory(hasher io.Writer, dir string) error {
 	})
 
 	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
 		if entry.IsDir() {
-			continue // Skip subdirectories
+			if err := hashDirectory(hasher, path); err != nil {
+				return err
+			}
+			continue
 		}
 
-		path := filepath.Join(dir, entry.Name())
 		if err := hashFile(hasher, path); err != nil {
 			return err
 		}

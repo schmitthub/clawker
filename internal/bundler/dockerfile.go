@@ -1,4 +1,4 @@
-package build
+package bundler
 
 import (
 	"archive/tar"
@@ -6,46 +6,46 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/schmitthub/clawker/internal/build/registry"
+	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
-// Embedded templates for Dockerfile generation
+// Embedded assets for Dockerfile generation
 
-//go:embed templates/Dockerfile.tmpl
+//go:embed assets/Dockerfile.tmpl
 var dockerfileFS embed.FS
 
-//go:embed templates/Dockerfile.tmpl
+//go:embed assets/Dockerfile.tmpl
 var DockerfileTemplate string
 
-//go:embed templates/entrypoint.sh
+//go:embed assets/entrypoint.sh
 var EntrypointScript string
 
-//go:embed templates/init-firewall.sh
+//go:embed assets/init-firewall.sh
 var FirewallScript string
 
-//go:embed templates/statusline.sh
+//go:embed assets/statusline.sh
 var StatuslineScript string
 
-//go:embed templates/claude-settings.json
+//go:embed assets/claude-settings.json
 var SettingsFile string
 
-//go:embed templates/host-open.sh
-var HostOpenScript string
-
-//go:embed templates/callback-forwarder.sh
-var CallbackForwarderScript string
-
-//go:embed templates/git-credential-clawker.sh
-var GitCredentialScript string
-
-//go:embed templates/ssh-agent-proxy.go
-var SSHAgentProxySource string
+// Re-export hostproxy container scripts from internal/hostproxy/internals.
+// These were previously embedded directly in this package but now live
+// alongside the hostproxy code they interact with.
+var (
+	HostOpenScript          = internals.HostOpenScript
+	CallbackForwarderSource = internals.CallbackForwarderSource
+	GitCredentialScript     = internals.GitCredentialScript
+	SSHAgentProxySource     = internals.SSHAgentProxySource
+)
 
 // Default values for container configuration
 const (
@@ -144,7 +144,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	}
 
 	// Parse the template
-	tmplContent, err := dockerfileFS.ReadFile("templates/Dockerfile.tmpl")
+	tmplContent, err := dockerfileFS.ReadFile("assets/Dockerfile.tmpl")
 	if err != nil {
 		return fmt.Errorf("failed to read Dockerfile template: %w", err)
 	}
@@ -165,7 +165,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
 	}
@@ -332,8 +332,8 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add callback-forwarder script for OAuth callback proxying
-	if err := addFileToTar(tw, "callback-forwarder.sh", []byte(CallbackForwarderScript)); err != nil {
+	// Add callback-forwarder Go source for compilation in multi-stage build
+	if err := addFileToTar(tw, "callback-forwarder.go", []byte(CallbackForwarderSource)); err != nil {
 		return nil, err
 	}
 
@@ -391,7 +391,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
-		{"callback-forwarder.sh", CallbackForwarderScript, 0755},
+		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
 	}
@@ -615,8 +615,8 @@ func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, er
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
 
-	// Walk the directory
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	// Walk the directory using WalkDir (does not follow symlinks)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -634,10 +634,20 @@ func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, er
 
 		// Skip .git directory
 		if relPath == ".git" || strings.HasPrefix(relPath, ".git/") {
-			if info.IsDir() {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// Skip symlinks — they produce broken entries in tar archives
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
 		}
 
 		// Create tar header

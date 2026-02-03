@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	intbuild "github.com/schmitthub/clawker/internal/build"
+	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"

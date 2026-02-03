@@ -9,7 +9,7 @@ Packages that **should** have a CLAUDE.md (contain significant public API):
 - `internal/cmdutil/`
 - `internal/iostreams/`
 - `internal/workspace/`
-- `internal/build/`
+- `internal/bundler/`
 - `internal/ralph/`
 - `internal/tui/`
 - `internal/term/`

@@ -1,4 +1,4 @@
-package build
+package bundler
 
 import (
 	"crypto/sha256"

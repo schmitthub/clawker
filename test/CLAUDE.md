@@ -98,7 +98,7 @@ func WaitForHealthy(ctx, cli, containerID, checks...) error
 ### Container Testing (client.go)
 
 ```go
-// Content-addressed Alpine image with ALL scripts from internal/build/templates/ baked in.
+// Content-addressed Alpine image with ALL scripts from internal/bundler/assets/ and internal/hostproxy/internals/ baked in.
 // LABEL com.clawker.test=true embedded in Dockerfile so intermediates are also labeled.
 func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string
 
