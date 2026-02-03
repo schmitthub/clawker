@@ -1,6 +1,6 @@
-# Build Package
+# Bundler Package
 
-Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`, `BuildDefaultImage`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`, `BuildDefaultImage`) lives in `internal/docker`.
 
 ## Key Files
 
@@ -19,7 +19,7 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 |---------|---------|
 | `semver/` | Semantic version parsing, comparison, sorting, matching |
 | `registry/` | npm registry client, version info types, fetcher interface |
-| `templates/` | Dockerfile template, entrypoint, firewall, helper scripts, and Go sources (ssh-agent-proxy, callback-forwarder) |
+| `assets/` | Dockerfile template, entrypoint, firewall, statusline scripts |
 
 ## Content Hashing (`hash.go`)
 
@@ -162,8 +162,8 @@ type RegistryError = registry.RegistryError // { Package, StatusCode, Message } 
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/build/registry`, `internal/build/semver`. **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semver`, `internal/hostproxy/internals` (embed-only). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `build_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `bundler_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.

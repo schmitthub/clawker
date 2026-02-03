@@ -345,7 +345,7 @@ image := harness.BuildLightImage(t, client) // content-addressed, all scripts ba
 // Image cached across tests, cleaned up by RunTestMain
 ```
 
-`BuildLightImage` auto-discovers ALL `*.sh` scripts from `internal/build/templates/` and embeds them.
+`BuildLightImage` auto-discovers ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` and embeds them.
 The Dockerfile includes `LABEL com.clawker.test=true` so intermediates are also catchable by cleanup.
 Script arg is ignored (kept for API compat) — single cached image shared across all tests.
 
@@ -598,7 +598,7 @@ func TestMain(m *testing.M) {
 
 ### Key Components
 
-**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/build/templates/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
+**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
 
 ```go
 client := harness.NewTestClient(t)
@@ -623,7 +623,7 @@ proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
 
 ### Script Testing Pattern
 
-ALL scripts from `internal/build/templates/` are baked into the image by `BuildLightImage`:
+ALL scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` are baked into the image by `BuildLightImage`:
 
 ```go
 image := harness.BuildLightImage(t, client)
@@ -632,4 +632,4 @@ execResult, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.s
 require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
 ```
 
-**IMPORTANT:** Tests use actual scripts from `internal/build/templates/`. Script changes are automatically tested.
+**IMPORTANT:** Tests use actual scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/`. Script changes are automatically tested.

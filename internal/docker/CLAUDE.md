@@ -112,7 +112,7 @@ func (b *Builder) EnsureImage(ctx, imageTag, opts BuilderOptions) error  // Cont
 func (b *Builder) Build(ctx, imageTag, opts BuilderOptions) error         // Always build unconditionally
 ```
 
-`EnsureImage` renders Dockerfile, computes `build.ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
+`EnsureImage` renders Dockerfile, computes `bundler.ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
 
 ```go
 type BuilderOptions struct {
@@ -122,7 +122,7 @@ type BuilderOptions struct {
 }
 ```
 
-Depends on `internal/build` for `ProjectGenerator`, `ContentHash`, `CreateBuildContextFromDir`.
+Depends on `internal/bundler` for `ProjectGenerator`, `ContentHash`, `CreateBuildContextFromDir`.
 
 ## Default Image Utilities (`defaults.go`)
 
@@ -131,7 +131,7 @@ const DefaultImageTag = "clawker-default:latest"
 func BuildDefaultImage(ctx context.Context, flavor string) error
 ```
 
-`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `build.DockerfileManager`, builds with clawker labels. Uses `build.NewVersionsManager`, `build.NewDockerfileManager`, `build.CreateBuildContextFromDir`.
+`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `bundler.DockerfileManager`, builds with clawker labels. Uses `bundler.NewVersionsManager`, `bundler.NewDockerfileManager`, `bundler.CreateBuildContextFromDir`.
 
 ## BuildKit (`buildkit.go`)
 

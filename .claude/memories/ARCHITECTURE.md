@@ -176,7 +176,9 @@ User interaction utilities with TTY and CI awareness.
 | `internal/prompter` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
-| `internal/build` | Image building, Dockerfile generation, semver, npm registry client |
+| `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
+
+**Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 
 ### internal/hostproxy - Host Proxy Service
 
@@ -357,7 +359,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Imported by: composites, commands                              │
 │                                                                 │
 │  Clawker examples:                                              │
-│    build/ → config + own subpackages (no docker)                │
+│    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
 │    credentials/ → logger                                        │
 │    hostproxy/ → logger                                          │
 │    prompter/ → iostreams                                        │
@@ -371,7 +373,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Imported by: commands only                                     │
 │                                                                 │
 │  Clawker examples:                                              │
-│    docker/ → build, config, logger, pkg/whail, pkg/whail/buildkit│
+│    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
 │    term/ → docker, logger                                       │
 │    ralph/ → docker, logger                                      │
@@ -384,15 +386,15 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 ```
   ✓  foundation → leaf             config imports logger
   ✓  middle → leaf                 credentials imports logger
-  ✓  middle → foundation           build imports config
-  ✓  composite → middle            docker imports build
+  ✓  middle → foundation           bundler imports config
+  ✓  composite → middle            docker imports bundler
   ✓  composite → foundation        docker imports config
   ✓  composite → leaf              ralph imports logger
   ✓  composite → own children      ralph imports ralph/tui
 
   ✗  leaf → foundation             logger must never import config
   ✗  leaf → leaf (sibling)         leaves have zero internal imports
-  ✗  middle ↔ middle (unrelated)   build must never import prompter
+  ✗  middle ↔ middle (unrelated)   bundler must never import prompter
   ✗  foundation ↔ foundation       config must never import iostreams
   ✗  Any cycle                     A → B → A is always wrong
 ```

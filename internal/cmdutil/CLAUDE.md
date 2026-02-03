@@ -4,7 +4,7 @@ Lightweight shared CLI utilities: Factory struct (DI container), output helpers,
 
 Heavy command helpers have been extracted to dedicated packages:
 - Image resolution: `internal/docker/` (image_resolve.go)
-- Build utilities: `internal/build/`
+- Build utilities: `internal/bundler/`
 - Project registration: `internal/project/`
 - Container naming/middleware: `internal/docker/`
 
