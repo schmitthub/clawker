@@ -56,7 +56,7 @@ All return `whail.Filters`.
 - `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — resource name builders
 - `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
 - `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
-- `ParseContainerName(name)` → `(project, agent)` — parsing utilities
+- `ParseContainerName(name)` → `(project, agent string, ok bool)` — parsing utilities
 - `GenerateRandomName()` — Docker-style adjective-noun pair
 
 Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
@@ -73,7 +73,7 @@ type Client struct {
 
 type Container struct {
     ID, Name, Project, Agent, Image, Workdir, Status string
-    Created time.Time
+    Created int64
 }
 
 type BuildImageOpts struct {
@@ -143,7 +143,7 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 
 ## Environment (`env.go`)
 
-- `RuntimeEnv(cfg)` — returns `[]string` of config-derived env vars for container creation (editor, firewall, agent env)
+- `RuntimeEnv(cfg)` — returns `([]string, error)` of config-derived env vars for container creation (editor, firewall, agent env)
 
 ## Volume Utilities (`volume.go`)
 

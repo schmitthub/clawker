@@ -61,7 +61,7 @@ Returns a curated list of safe-to-forward environment variables (e.g., `TERM`, `
 
 ```go
 func LoadDotEnv(path string) (map[string]string, error)  // Parse .env file
-func FindDotEnvFiles(dir string) ([]string, error)        // Find .env files in directory
+func FindDotEnvFiles(dir string) []string                  // Find .env files in directory
 ```
 
 Supports quoted values, comments, `export` prefix. Internal `isSensitiveKey()` detects credential-like keys. `parseEnvLine()` and `unquote()` handle line-level parsing.

@@ -29,7 +29,7 @@ type Factory struct {
     IOStreams *iostreams.IOStreams
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
-    WorkDir   func() string
+    WorkDir   func() (string, error)
     Client    func(context.Context) (*docker.Client, error)
     Config    func() *config.Config
     HostProxy func() *hostproxy.Manager
@@ -39,7 +39,7 @@ type Factory struct {
 
 **Field semantics:**
 - `Version`, `Commit`, `IOStreams` -- set eagerly at construction
-- `WorkDir()` -- lazy closure returning current working directory
+- `WorkDir()` -- lazy closure returning `(string, error)` for current working directory
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
 - `HostProxy()` -- returns `*hostproxy.Manager`; commands call `.EnsureRunning()` / `.Stop(ctx)` on it

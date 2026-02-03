@@ -14,10 +14,10 @@ Internal state: `fileWriter` (lumberjack rotator), `fileOnlyLog` (file-only logg
 
 ```go
 type LoggingConfig struct {
-    FileEnabled bool  // Enable file logging (default: true)
-    MaxSizeMB   int   // Max log file size (default: 50)
-    MaxAgeDays  int   // Max log age (default: 7)
-    MaxBackups  int   // Max backup count (default: 3)
+    FileEnabled *bool  // Enable file logging (default: true; pointer for nil detection)
+    MaxSizeMB   int    // Max log file size (default: 50)
+    MaxAgeDays  int    // Max log age (default: 7)
+    MaxBackups  int    // Max backup count (default: 3)
 }
 ```
 
@@ -33,9 +33,9 @@ type LoggingConfig struct {
 ## Initialization
 
 ```go
-func Init()                                     // Default config, file at ~/.local/clawker/logs/clawker.log
-func InitWithFile(config LoggingConfig, path string)  // Custom config and path
-func CloseFileWriter()                          // Close file writer (call in defer)
+func Init(debug bool)                                              // Console-only logging
+func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error  // Console + file logging
+func CloseFileWriter() error                                       // Close file writer (call in defer)
 func GetLogFilePath() string                    // Returns log file path (empty if file logging disabled)
 ```
 
@@ -47,7 +47,7 @@ func Info() *zerolog.Event   // Suppressed on console in interactive mode
 func Warn() *zerolog.Event   // Suppressed on console in interactive mode
 func Error() *zerolog.Event  // Suppressed on console in interactive mode
 func Fatal() *zerolog.Event  // NEVER use in Cobra hooks — return errors instead
-func WithField(key, val string) zerolog.Logger  // Returns sub-logger with extra field
+func WithField(key string, value interface{}) zerolog.Logger  // Returns sub-logger with extra field
 ```
 
 All functions call `addContext()` to inject project/agent fields. `shouldSuppress()` checks interactive mode for Info/Warn/Error — when suppressed, events go to file-only logger instead.

@@ -8,7 +8,7 @@ Application entry point and version metadata.
 var Version string  // Set via -ldflags at build time
 var Commit  string  // Set via -ldflags at build time
 
-func Main()         // Entry point: builds root command via internal/cmd/root and executes
+func Main() int     // Entry point: builds root command via internal/cmd/root, executes, returns exit code
 ```
 
 ## Usage
