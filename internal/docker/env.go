@@ -55,7 +55,11 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 
 	// Firewall domains (consumed by entrypoint/init-firewall.sh)
 	if opts.FirewallEnabled {
-		jsonBytes, err := json.Marshal(opts.FirewallDomains)
+		domains := opts.FirewallDomains
+		if domains == nil {
+			domains = []string{}
+		}
+		jsonBytes, err := json.Marshal(domains)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal firewall domains: %w", err)
 		}

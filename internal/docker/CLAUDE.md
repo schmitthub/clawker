@@ -17,7 +17,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
 | `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
-| `env.go` | `RuntimeEnv(cfg)` — config-derived env vars for container creation |
+| `env.go` | `RuntimeEnv(opts RuntimeEnvOpts)` — env vars for container creation |
 | `volume.go` | `EnsureVolume`, `CopyToVolume`, `.clawkerignore` support |
 | `opts.go` | Resource limit types implementing `pflag.Value` for CLI flags |
 | `types.go` | Re-exports ~35 Docker types from whail for consumer convenience |

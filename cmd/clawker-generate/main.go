@@ -33,7 +33,7 @@ func main() {
 	f := &cmdutil.Factory{
 		WorkDir:  func() (string, error) { return wd, nil },
 		Version:  Version,
-		IOStreams: iostreams.NewIOStreams(),
+		IOStreams: iostreams.System(),
 	}
 
 	// Create and execute the generate command

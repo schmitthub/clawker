@@ -173,3 +173,58 @@ func TestRuntimeEnv_AgentEnvOverridesTerm(t *testing.T) {
 	assert.Contains(t, env, "TERM=xterm", "agent env should override terminal detection")
 	assert.Contains(t, env, "COLORTERM=", "agent env should override terminal detection")
 }
+
+func TestRuntimeEnv_TrueColorWithout256Color(t *testing.T) {
+	// Edge case: TrueColor=true with Is256Color=false
+	// This is a caller bug (truecolor implies 256), but the function should handle it gracefully
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Is256Color: false,
+		TrueColor:  true,
+	})
+	require.NoError(t, err)
+
+	// Should set COLORTERM but not TERM (following the literal flags)
+	assert.Contains(t, env, "COLORTERM=truecolor")
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "TERM="),
+			"should not set TERM when Is256Color=false")
+	}
+}
+
+func TestRuntimeEnv_FirewallEnabledWithNilDomains(t *testing.T) {
+	// Edge case: FirewallEnabled=true with FirewallDomains=nil
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallDomains: nil,
+	})
+	require.NoError(t, err)
+
+	// Should produce valid JSON (empty array)
+	var found bool
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
+			found = true
+			assert.Equal(t, "[]", val, "nil domains should serialize as empty JSON array")
+		}
+	}
+	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
+}
+
+func TestRuntimeEnv_FirewallEnabledWithEmptyDomains(t *testing.T) {
+	// Edge case: FirewallEnabled=true with FirewallDomains=[]string{}
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallDomains: []string{},
+	})
+	require.NoError(t, err)
+
+	// Should produce valid JSON (empty array)
+	var found bool
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
+			found = true
+			assert.Equal(t, "[]", val, "empty domains should serialize as empty JSON array")
+		}
+	}
+	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
+}

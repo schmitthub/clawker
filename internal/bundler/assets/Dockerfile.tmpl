@@ -255,7 +255,8 @@ ENV SHELL={{.Shell}}
 ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
-# Terminal color defaults (overridden at container creation by RuntimeEnv if host differs)
+# Terminal color defaults; RuntimeEnv may override these based on host capabilities,
+# using safe fallback values (xterm-256color, truecolor) rather than passing through host TERM.
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV LANG=en_US.UTF-8
