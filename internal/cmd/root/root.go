@@ -6,6 +6,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/config"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/generate"
+	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
@@ -87,6 +88,9 @@ Workspace modes:
 	cmd.AddCommand(image.NewCmdImage(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
+
+	// Add hidden internal commands
+	cmd.AddCommand(hostproxycmd.NewCmdHostProxy())
 
 	return cmd
 }

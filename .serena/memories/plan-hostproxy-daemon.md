@@ -1,6 +1,6 @@
 # Plan: Daemonize Host Proxy Server
 
-**Status:** Planned (not started)
+**Status:** Implemented (pending network-dependent full build verification)
 **Branch:** TBD (create from `main`)
 **Issue:** Host browser forwarder stops working because the proxy runs in-process with the CLI and dies when the CLI exits.
 

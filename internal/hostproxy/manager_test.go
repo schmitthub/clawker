@@ -1,10 +1,11 @@
 package hostproxy
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -43,225 +44,6 @@ func TestManagerIsRunningInitially(t *testing.T) {
 	}
 }
 
-func TestManagerEnsureRunning(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = m.Stop(ctx)
-	})
-
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
-	}
-
-	if !m.IsRunning() {
-		t.Error("expected manager to be running after EnsureRunning")
-	}
-}
-
-func TestManagerEnsureRunningIdempotent(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = m.Stop(ctx)
-	})
-
-	// First call
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected first EnsureRunning to succeed on port %d, got error: %v", port, err)
-	}
-
-	// Second call should also succeed (idempotent)
-	err = m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected second EnsureRunning to succeed, got error: %v", err)
-	}
-
-	if !m.IsRunning() {
-		t.Error("expected manager to still be running after second EnsureRunning")
-	}
-}
-
-func TestManagerStop(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-
-	// Start the server
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
-	}
-
-	// Stop the server
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = m.Stop(ctx)
-	if err != nil {
-		t.Fatalf("expected Stop to succeed, got error: %v", err)
-	}
-
-	if m.IsRunning() {
-		t.Error("expected manager to not be running after Stop")
-	}
-}
-
-func TestManagerStopIsIdempotent(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-
-	// Start the server
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// First stop
-	err = m.Stop(ctx)
-	if err != nil {
-		t.Fatalf("expected first Stop to succeed, got error: %v", err)
-	}
-
-	// Second stop should also succeed (idempotent)
-	err = m.Stop(ctx)
-	if err != nil {
-		t.Fatalf("expected second Stop to succeed, got error: %v", err)
-	}
-}
-
-func TestManagerStopClearsServerReference(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-
-	// Start the server
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed on port %d, got error: %v", port, err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Stop the server
-	err = m.Stop(ctx)
-	if err != nil {
-		t.Fatalf("expected Stop to succeed, got error: %v", err)
-	}
-
-	// Verify server reference is cleared by checking IsRunning
-	if m.IsRunning() {
-		t.Error("expected IsRunning to return false after Stop")
-	}
-
-	// Verify we can start again (server reference was cleared)
-	err = m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("expected EnsureRunning to succeed after Stop, got error: %v", err)
-	}
-
-	// Cleanup
-	_ = m.Stop(ctx)
-}
-
-// TestManagerProxyUnavailableAfterStop demonstrates the core lifecycle problem:
-// when the CLI process that started the manager exits (calls Stop), the proxy
-// becomes unreachable, even though containers may still be running and trying
-// to use it. This test simulates a container calling /open/url and /health
-// after the manager has been stopped — both fail with connection refused.
-func TestManagerProxyUnavailableAfterStop(t *testing.T) {
-	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
-
-	// Start the proxy (simulates what happens during "clawker run @")
-	err := m.EnsureRunning()
-	if err != nil {
-		t.Fatalf("EnsureRunning failed: %v", err)
-	}
-
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	// Verify proxy is reachable (simulates container calling host-open successfully)
-	resp, err := client.Get(baseURL + "/health")
-	if err != nil {
-		t.Fatalf("health check should succeed while running: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	// CLI command exits — manager is stopped (simulates detach or command completion)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = m.Stop(ctx)
-	if err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-
-	// Container still running — tries to open a URL via host proxy
-	// This is the bug: the proxy is gone but the container doesn't know
-	_, err = client.Get(baseURL + "/health")
-	if err == nil {
-		t.Fatal("expected connection error after Stop, but request succeeded — proxy should be unreachable")
-	}
-	t.Logf("confirmed: proxy unreachable after Stop: %v", err)
-}
-
-// TestManagerSecondInstanceRecoversProxy shows that a second manager
-// (e.g., from "clawker attach") can restart the proxy on the same port.
-func TestManagerSecondInstanceRecoversProxy(t *testing.T) {
-	port := getFreeMgrPort(t)
-
-	// First CLI command starts the proxy
-	m1 := NewManagerWithPort(port)
-	err := m1.EnsureRunning()
-	if err != nil {
-		t.Fatalf("first EnsureRunning failed: %v", err)
-	}
-
-	// First CLI command exits
-	ctx := context.Background()
-	if err := m1.Stop(ctx); err != nil {
-		t.Logf("warning: m1.Stop failed: %v", err)
-	}
-
-	// Second CLI command starts a new manager on the same port
-	m2 := NewManagerWithPort(port)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := m2.Stop(ctx); err != nil {
-			t.Logf("warning: m2.Stop failed: %v", err)
-		}
-	})
-
-	err = m2.EnsureRunning()
-	if err != nil {
-		t.Fatalf("second EnsureRunning failed: %v", err)
-	}
-
-	// Proxy is reachable again
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
-	if err != nil {
-		t.Fatalf("health check should succeed after restart: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-}
-
 func TestManagerDefaultPort(t *testing.T) {
 	m := NewManager()
 	if m.Port() != DefaultPort {
@@ -270,5 +52,222 @@ func TestManagerDefaultPort(t *testing.T) {
 	expected := fmt.Sprintf("http://host.docker.internal:%d", DefaultPort)
 	if m.ProxyURL() != expected {
 		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
+	}
+}
+
+func TestManagerStopIsNoOp(t *testing.T) {
+	m := NewManagerWithPort(getFreeMgrPort(t))
+	// Stop should not panic when called on a non-running manager
+	m.Stop()
+}
+
+func TestManagerWithOptions(t *testing.T) {
+	port := 12345
+	pidFile := "/tmp/test-hostproxy.pid"
+	m := NewManagerWithOptions(port, pidFile)
+
+	if m.Port() != port {
+		t.Errorf("expected port %d, got %d", port, m.Port())
+	}
+	if m.pidFile != pidFile {
+		t.Errorf("expected pidFile %q, got %q", pidFile, m.pidFile)
+	}
+}
+
+// TestIsDaemonRunningWithStalePIDFile tests that stale PID files are handled correctly.
+func TestIsDaemonRunningWithStalePIDFile(t *testing.T) {
+	// Create a temp PID file with a non-existent PID
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "hostproxy.pid")
+
+	// Write a PID that doesn't exist (use a very high PID)
+	if err := os.WriteFile(pidFile, []byte("999999999"), 0644); err != nil {
+		t.Fatalf("failed to write PID file: %v", err)
+	}
+
+	if IsDaemonRunning(pidFile) {
+		t.Error("expected IsDaemonRunning to return false for stale PID file")
+	}
+}
+
+// TestIsDaemonRunningWithMissingPIDFile tests handling of missing PID file.
+func TestIsDaemonRunningWithMissingPIDFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "nonexistent.pid")
+
+	if IsDaemonRunning(pidFile) {
+		t.Error("expected IsDaemonRunning to return false for missing PID file")
+	}
+}
+
+// TestGetDaemonPIDWithMissingFile tests GetDaemonPID with no PID file.
+func TestGetDaemonPIDWithMissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "nonexistent.pid")
+
+	pid := GetDaemonPID(pidFile)
+	if pid != 0 {
+		t.Errorf("expected PID 0 for missing file, got %d", pid)
+	}
+}
+
+// TestStopDaemonWithMissingFile tests StopDaemon with no running daemon.
+func TestStopDaemonWithMissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "nonexistent.pid")
+
+	err := StopDaemon(pidFile)
+	if err != nil {
+		t.Errorf("expected no error for missing PID file, got: %v", err)
+	}
+}
+
+// TestStopDaemonWithStalePIDFile tests StopDaemon cleanup of stale PID file.
+func TestStopDaemonWithStalePIDFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "hostproxy.pid")
+
+	// Write a PID that doesn't exist
+	if err := os.WriteFile(pidFile, []byte("999999999"), 0644); err != nil {
+		t.Fatalf("failed to write PID file: %v", err)
+	}
+
+	err := StopDaemon(pidFile)
+	if err != nil {
+		t.Errorf("expected no error for stale PID, got: %v", err)
+	}
+
+	// Verify PID file was cleaned up
+	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+		t.Error("expected stale PID file to be removed")
+	}
+}
+
+// TestWriteAndReadPIDFile tests PID file operations.
+func TestWriteAndReadPIDFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "test.pid")
+
+	// Write PID file
+	if err := writePIDFile(pidFile); err != nil {
+		t.Fatalf("failed to write PID file: %v", err)
+	}
+
+	// Read it back
+	pid, err := readPIDFile(pidFile)
+	if err != nil {
+		t.Fatalf("failed to read PID file: %v", err)
+	}
+
+	// Should be current process PID
+	if pid != os.Getpid() {
+		t.Errorf("expected PID %d, got %d", os.Getpid(), pid)
+	}
+
+	// Clean up
+	removePIDFile(pidFile)
+	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+		t.Error("expected PID file to be removed")
+	}
+}
+
+// TestIsProcessAlive tests process liveness detection.
+func TestIsProcessAlive(t *testing.T) {
+	// Current process should be alive
+	if !isProcessAlive(os.Getpid()) {
+		t.Error("expected current process to be alive")
+	}
+
+	// Non-existent PID should not be alive
+	if isProcessAlive(999999999) {
+		t.Error("expected non-existent PID to not be alive")
+	}
+}
+
+// TestManagerHealthCheck tests the health check functionality.
+func TestManagerHealthCheck(t *testing.T) {
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+
+	// Health check should fail when nothing is running
+	if err := m.healthCheck(); err == nil {
+		t.Error("expected health check to fail when server not running")
+	}
+
+	// Start a mock server
+	server := &http.Server{
+		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok","service":"clawker-host-proxy"}`))
+		}),
+	}
+	go server.ListenAndServe()
+	defer server.Close()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Health check should pass now
+	if err := m.healthCheck(); err != nil {
+		t.Errorf("expected health check to pass, got error: %v", err)
+	}
+}
+
+// TestManagerIsPortInUse tests port detection.
+func TestManagerIsPortInUse(t *testing.T) {
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+
+	// Port should not be in use initially
+	if m.isPortInUse() {
+		t.Error("expected port to not be in use initially")
+	}
+
+	// Start a mock clawker host proxy
+	server := &http.Server{
+		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok","service":"clawker-host-proxy"}`))
+		}),
+	}
+	go server.ListenAndServe()
+	defer server.Close()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Port should be in use now
+	if !m.isPortInUse() {
+		t.Error("expected port to be in use")
+	}
+}
+
+// TestManagerIsPortInUseWithWrongService tests that we detect non-clawker services.
+func TestManagerIsPortInUseWithWrongService(t *testing.T) {
+	port := getFreeMgrPort(t)
+	m := NewManagerWithPort(port)
+
+	// Start a server that returns a different service identifier
+	server := &http.Server{
+		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok","service":"some-other-service"}`))
+		}),
+	}
+	go server.ListenAndServe()
+	defer server.Close()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Port should NOT be considered in use by clawker
+	if m.isPortInUse() {
+		t.Error("expected isPortInUse to return false for non-clawker service")
 	}
 }
