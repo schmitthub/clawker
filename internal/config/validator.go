@@ -197,6 +197,11 @@ func (v *Validator) validateIPRangeSource(fieldPath string, source IPRangeSource
 		return
 	}
 
+	// Validate URL format if provided (applies to both built-in and custom sources)
+	if source.URL != "" && !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") {
+		v.addError(fieldPath+".url", "must be a valid HTTP or HTTPS URL", source.URL)
+	}
+
 	// Check if it's a known built-in source
 	if IsKnownIPRangeSource(source.Name) {
 		// Built-in source: URL and jq_filter are optional (will use defaults)
@@ -211,11 +216,6 @@ func (v *Validator) validateIPRangeSource(fieldPath string, source IPRangeSource
 	// Custom source: jq_filter is required
 	if source.JQFilter == "" {
 		v.addError(fieldPath+".jq_filter", "is required for custom source '"+source.Name+"'", nil)
-	}
-
-	// Validate URL format if provided
-	if source.URL != "" && !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") {
-		v.addError(fieldPath+".url", "must be a valid HTTP or HTTPS URL", source.URL)
 	}
 }
 

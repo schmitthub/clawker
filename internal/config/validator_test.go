@@ -793,6 +793,13 @@ func TestValidatorIPRangeSources(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "invalid - builtin source with invalid custom URL",
+			ipSources: []IPRangeSource{
+				{Name: "github", URL: "not-a-valid-url"},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
