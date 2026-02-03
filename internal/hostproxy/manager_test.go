@@ -231,14 +231,18 @@ func TestManagerSecondInstanceRecoversProxy(t *testing.T) {
 
 	// First CLI command exits
 	ctx := context.Background()
-	_ = m1.Stop(ctx)
+	if err := m1.Stop(ctx); err != nil {
+		t.Logf("warning: m1.Stop failed: %v", err)
+	}
 
 	// Second CLI command starts a new manager on the same port
 	m2 := NewManagerWithPort(port)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = m2.Stop(ctx)
+		if err := m2.Stop(ctx); err != nil {
+			t.Logf("warning: m2.Stop failed: %v", err)
+		}
 	})
 
 	err = m2.EnsureRunning()

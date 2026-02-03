@@ -26,7 +26,7 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 	// 2. Resolve "latest" version from npm
 	logger.Debug().Msg("resolving latest Claude Code version from npm")
 	mgr := bundler.NewVersionsManager()
-	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, build.ResolveOptions{})
+	versions, err := mgr.ResolveVersions(ctx, []string{"latest"}, bundler.ResolveOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to resolve latest version: %w", err)
 	}

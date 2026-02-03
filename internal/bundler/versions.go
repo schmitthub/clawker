@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
@@ -45,6 +46,16 @@ func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, config *VariantConf
 type ResolveOptions struct {
 	// Debug enables verbose output during resolution.
 	Debug bool
+	// Output is the writer for informational messages. Defaults to io.Discard if nil.
+	Output io.Writer
+}
+
+// output returns the configured output writer, defaulting to io.Discard.
+func (o ResolveOptions) output() io.Writer {
+	if o.Output != nil {
+		return o.Output
+	}
+	return io.Discard
 }
 
 // ResolveVersions resolves version patterns to full versions.
@@ -64,9 +75,10 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		return nil, fmt.Errorf("failed to fetch dist-tags: %w", err)
 	}
 
+	out := opts.output()
 	if opts.Debug {
-		fmt.Printf("[DEBUG] Found %d versions\n", len(allVersions))
-		fmt.Printf("[DEBUG] Dist-tags: %v\n", distTags)
+		fmt.Fprintf(out, "[DEBUG] Found %d versions\n", len(allVersions))
+		fmt.Fprintf(out, "[DEBUG] Dist-tags: %v\n", distTags)
 	}
 
 	result := make(registry.VersionsFile)
@@ -79,7 +91,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		}
 
 		if opts.Debug {
-			fmt.Printf("[DEBUG] Resolved %q -> %q\n", pattern, fullVersion)
+			fmt.Fprintf(out, "[DEBUG] Resolved %q -> %q\n", pattern, fullVersion)
 		}
 
 		// Parse and create version info
@@ -92,7 +104,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		info := registry.NewVersionInfo(v, m.config.DebianDefault, m.config.AlpineDefault, m.config.Variants)
 		result[fullVersion] = info
 
-		fmt.Printf("Full version for %s: %s\n", pattern, fullVersion)
+		fmt.Fprintf(out, "Full version for %s: %s\n", pattern, fullVersion)
 	}
 
 	if len(result) == 0 {

@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -614,8 +615,8 @@ func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, er
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
 
-	// Walk the directory
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	// Walk the directory using WalkDir (does not follow symlinks)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -633,10 +634,20 @@ func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, er
 
 		// Skip .git directory
 		if relPath == ".git" || strings.HasPrefix(relPath, ".git/") {
-			if info.IsDir() {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// Skip symlinks — they produce broken entries in tar archives
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
 		}
 
 		// Create tar header

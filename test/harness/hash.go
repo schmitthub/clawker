@@ -85,7 +85,7 @@ func ComputeTemplateHashFromDir(rootDir string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// hashDirectory hashes all files in a directory, sorted by name for stability.
+// hashDirectory hashes all files in a directory recursively, sorted by name for stability.
 func hashDirectory(hasher io.Writer, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -98,11 +98,14 @@ func hashDirectory(hasher io.Writer, dir string) error {
 	})
 
 	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
 		if entry.IsDir() {
-			continue // Skip subdirectories
+			if err := hashDirectory(hasher, path); err != nil {
+				return err
+			}
+			continue
 		}
 
-		path := filepath.Join(dir, entry.Name())
 		if err := hashFile(hasher, path); err != nil {
 			return err
 		}

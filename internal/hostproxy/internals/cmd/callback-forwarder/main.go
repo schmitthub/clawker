@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -60,6 +61,8 @@ func main() {
 		if v := os.Getenv("CB_FORWARDER_TIMEOUT"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				*timeout = n
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: invalid CB_FORWARDER_TIMEOUT value %q, using default %d\n", v, *timeout)
 			}
 		}
 	}
@@ -67,6 +70,8 @@ func main() {
 		if v := os.Getenv("CB_FORWARDER_POLL_INTERVAL"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
 				*pollInterval = n
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: invalid CB_FORWARDER_POLL_INTERVAL value %q, using default %d\n", v, *pollInterval)
 			}
 		}
 	}
@@ -117,13 +122,18 @@ func main() {
 		Timeout: 10 * time.Second,
 	}
 
-	dataURL := fmt.Sprintf("%s/callback/%s/data", *proxyURL, *sessionID)
-	deleteURL := fmt.Sprintf("%s/callback/%s", *proxyURL, *sessionID)
+	escapedSession := url.PathEscape(*sessionID)
+	dataURL := fmt.Sprintf("%s/callback/%s/data", *proxyURL, escapedSession)
+	deleteURL := fmt.Sprintf("%s/callback/%s", *proxyURL, escapedSession)
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 
 	// Track consecutive errors for user feedback
 	consecutiveErrors := 0
 	const maxSilentErrors = 3
+
+	// Track time for periodic progress
+	lastProgressAt := time.Now()
+	const progressInterval = 30 * time.Second
 
 	// Poll for callback data
 	for time.Now().Before(deadline) {
@@ -134,6 +144,10 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Poll error: %v\n", err)
 			} else if consecutiveErrors == maxSilentErrors {
 				fmt.Fprintln(os.Stderr, "Warning: multiple poll errors, retrying...")
+			} else if consecutiveErrors > maxSilentErrors && time.Since(lastProgressAt) >= progressInterval {
+				remaining := time.Until(deadline).Truncate(time.Second)
+				fmt.Fprintf(os.Stderr, "Still waiting for callback (%s remaining, %d errors)...\n", remaining, consecutiveErrors)
+				lastProgressAt = time.Now()
 			}
 			time.Sleep(time.Duration(*pollInterval) * time.Second)
 			continue
@@ -147,16 +161,37 @@ func main() {
 			os.Exit(1)
 		}
 
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "Unexpected status %d: %s\n", resp.StatusCode, string(body))
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: proxy returned status %d, retrying...\n", resp.StatusCode)
+			}
+			time.Sleep(time.Duration(*pollInterval) * time.Second)
+			continue
+		}
+
 		var dataResp CallbackDataResponse
 		if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
 			resp.Body.Close()
+			consecutiveErrors++
 			if *verbose {
 				fmt.Fprintf(os.Stderr, "Decode error: %v\n", err)
+			} else if consecutiveErrors == maxSilentErrors {
+				fmt.Fprintln(os.Stderr, "Warning: multiple decode errors, retrying...")
 			}
 			time.Sleep(time.Duration(*pollInterval) * time.Second)
 			continue
 		}
 		resp.Body.Close()
+
+		// Check for server-side error in response
+		if dataResp.Error != "" {
+			fmt.Fprintf(os.Stderr, "Error from proxy: %s\n", dataResp.Error)
+			os.Exit(1)
+		}
 
 		if !dataResp.Received {
 			// No callback yet, keep polling
@@ -169,9 +204,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Callback received, forwarding to localhost:%d\n", *port)
 		}
 
-		err = forwardCallback(client, *port, dataResp.Callback)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error forwarding callback: %v\n", err)
+		forwardErr := forwardCallback(client, *port, dataResp.Callback)
+		if forwardErr != nil {
+			fmt.Fprintf(os.Stderr, "Error forwarding callback: %v\n", forwardErr)
 		} else if *verbose {
 			fmt.Fprintf(os.Stderr, "Callback forwarded successfully\n")
 		}
@@ -191,7 +226,7 @@ func main() {
 			}
 		}
 
-		if err != nil {
+		if forwardErr != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -229,6 +264,10 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 		body = strings.NewReader(data.Body)
 	}
 
+	if data.Method == "" {
+		return fmt.Errorf("callback data has empty HTTP method")
+	}
+
 	req, err := http.NewRequest(data.Method, localURL, body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -246,6 +285,10 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if len(body) > 0 {
+			return fmt.Errorf("local server returned status %d: %s", resp.StatusCode, string(body))
+		}
 		return fmt.Errorf("local server returned status %d", resp.StatusCode)
 	}
 
