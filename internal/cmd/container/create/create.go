@@ -215,8 +215,23 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	// Inject config-derived runtime env vars (editor, firewall domains, agent env, instruction env)
-	runtimeEnv, err := docker.RuntimeEnv(cfg)
+	// Inject config-derived runtime env vars (editor, firewall, terminal, agent env, instruction env)
+	envOpts := docker.RuntimeEnvOpts{
+		Editor:     cfg.Agent.Editor,
+		Visual:     cfg.Agent.Visual,
+		Is256Color: ios.Is256ColorSupported(),
+		TrueColor:  ios.IsTrueColorSupported(),
+		AgentEnv:   cfg.Agent.Env,
+	}
+	if cfg.Security.FirewallEnabled() {
+		envOpts.FirewallEnabled = true
+		envOpts.FirewallDomains = cfg.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
+		envOpts.FirewallOverride = cfg.Security.Firewall.IsOverrideMode()
+	}
+	if cfg.Build.Instructions != nil {
+		envOpts.InstructionEnv = cfg.Build.Instructions.Env
+	}
+	runtimeEnv, err := docker.RuntimeEnv(envOpts)
 	if err != nil {
 		return err
 	}
