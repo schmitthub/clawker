@@ -177,6 +177,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
+| `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 
@@ -331,7 +332,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Import: standard library only, no internal siblings            │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, tui, monitor                         │
+│  Clawker examples: logger, tui, monitor, docs                    │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -363,6 +364,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │    credentials/ → logger                                        │
 │    hostproxy/ → logger                                          │
 │    prompter/ → iostreams                                        │
+│    project/ → config, iostreams, logger                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -376,8 +378,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
 │    term/ → docker, logger                                       │
-│    ralph/ → docker, logger                                      │
-│    project/ → config, iostreams, logger                         │
+│    ralph/ → docker, logger; ralph/tui → tui (leaf)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
