@@ -1,4 +1,4 @@
-package build
+package bundler
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/internal/build/registry"
-	"github.com/schmitthub/clawker/internal/build/semver"
+	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/bundler/semver"
 )
 
 const (

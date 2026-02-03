@@ -1,8 +1,8 @@
-// Package build provides Docker image generation tooling for Claude Code.
-package build
+// Package bundler provides Docker image generation tooling for Claude Code.
+package bundler
 
 import (
-	"github.com/schmitthub/clawker/internal/build/registry"
+	"github.com/schmitthub/clawker/internal/bundler/registry"
 )
 
 // Re-export error types from registry for convenience.

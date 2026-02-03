@@ -1,4 +1,4 @@
-package build
+package bundler
 
 // VariantConfig defines supported variants and architectures for Docker images.
 type VariantConfig struct {

@@ -1,4 +1,4 @@
-package build
+package bundler
 
 // FlavorOption represents a Linux flavor choice for image building.
 type FlavorOption struct {
