@@ -89,6 +89,12 @@ security:
   firewall:
     # Enable network firewall (blocks outbound traffic by default)
     enable: true
+    # IP range sources for cloud provider APIs (default: [github])
+    # WARNING: google ranges include GCS/Firebase which can serve user-generated
+    # content - potential prompt injection vector. Only add if needed.
+    ip_range_sources:
+      - name: github
+      - name: google  # Required for Go modules (proxy.golang.org uses GCS)
     add_domains:
       - charm.land
       - code.gitea.io

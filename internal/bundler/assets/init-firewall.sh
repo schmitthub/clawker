@@ -97,15 +97,24 @@ process_ip_range_source() {
     local required="$4"
 
     echo "Fetching IP ranges from $name ($url)..."
-    local response
-    response=$(curl -s --connect-timeout 10 "$url" || true)
+    local response http_code
+    # Use -sL to follow redirects, capture HTTP status code separately
+    # -f is not used because it prevents capturing HTTP code on errors
+    response=$(curl -sL --connect-timeout 10 -w "\n%{http_code}" "$url" 2>&1) || true
+    if [[ "$response" == *$'\n'* ]]; then
+        http_code="${response##*$'\n'}"
+        response="${response%$'\n'*}"
+    else
+        http_code="000"
+    fi
 
-    if [ -z "$response" ]; then
+    # Accept any 2xx status code as success
+    if [ -z "$response" ] || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
         if [ "$required" = "true" ]; then
-            echo "ERROR: Failed to fetch required IP ranges from $name"
+            echo "ERROR: Failed to fetch required IP ranges from $name (HTTP $http_code)"
             exit 1
         else
-            echo "WARNING: Failed to fetch IP ranges from $name, skipping"
+            echo "WARNING: Failed to fetch IP ranges from $name (HTTP $http_code), skipping"
             return 0
         fi
     fi
@@ -124,8 +133,19 @@ process_ip_range_source() {
     fi
 
     echo "Processing $name IPs..."
-    local cidrs
-    cidrs=$(echo "$response" | jq -r "$jq_filter" 2>/dev/null || true)
+    local cidrs jq_error
+    # Capture jq errors instead of silently swallowing them
+    if ! cidrs=$(echo "$response" | jq -r "$jq_filter" 2>&1); then
+        jq_error="$cidrs"
+        cidrs=""
+        if [ "$required" = "true" ]; then
+            echo "ERROR: jq filter failed for $name: $jq_error"
+            exit 1
+        else
+            echo "WARNING: jq filter failed for $name: $jq_error, skipping"
+            return 0
+        fi
+    fi
 
     if [ -z "$cidrs" ]; then
         if [ "$required" = "true" ]; then
@@ -138,19 +158,24 @@ process_ip_range_source() {
     fi
 
     # Process each CIDR - add IPv4 ranges to ipset, skip IPv6
-    # Note: We use echo|while which runs in a subshell, but ipset commands
-    # still modify kernel state. Process substitution < <() had issues
-    # with the aggregate tool and complex pipelines.
-    echo "$cidrs" | while IFS= read -r cidr; do
+    # Use here-string to avoid subshell (echo|while runs in subshell)
+    while IFS= read -r cidr; do
         # Skip empty lines
         [ -z "$cidr" ] && continue
         # Skip IPv6 ranges (ipset hash:net is IPv4 only)
         [[ "$cidr" =~ : ]] && continue
         # Validate and add IPv4 CIDR
         if [[ "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
-            ipset add allowed-domains "$cidr" -exist 2>/dev/null || true
+            # Capture ipset errors but only warn on unexpected ones
+            local ipset_err
+            if ! ipset_err=$(ipset add allowed-domains "$cidr" -exist 2>&1); then
+                # Only warn on unexpected errors (not "already added")
+                if [[ ! "$ipset_err" =~ "already added" && -n "$ipset_err" ]]; then
+                    echo "WARNING: Failed to add CIDR $cidr: $ipset_err"
+                fi
+            fi
         fi
-    done
+    done <<< "$cidrs"
 
     echo "Processed $name IP ranges"
 }

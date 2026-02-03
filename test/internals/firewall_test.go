@@ -678,3 +678,118 @@ func TestFirewall_EntrypointConfigPassing(t *testing.T) {
 
 	require.Equal(t, 0, execResult.ExitCode, "entrypoint-style firewall setup should succeed")
 }
+
+// TestFirewall_RequiredSourceFailure verifies that a required IP range source with an
+// invalid/unreachable URL causes the firewall script to exit with an error.
+// This tests the error handling path for required sources.
+func TestFirewall_RequiredSourceFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh")
+
+	// Create a source with required=true and an invalid URL
+	requiredPtr := true
+	env, err := docker.RuntimeEnv(docker.RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallIPRangeSources: []config.IPRangeSource{
+			{
+				Name:     "failing-source",
+				URL:      "https://invalid.example.test/nonexistent-ranges.json",
+				JQFilter: ".cidrs[]",
+				Required: &requiredPtr,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithEnv(env...),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
+
+	// Install dependencies
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools jq curl bash iproute2")
+	require.NoError(t, err)
+	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.CleanOutput())
+
+	// Run the firewall script - it should fail because the required source is unreachable
+	t.Log("Running init-firewall.sh with failing required source...")
+	execResult, err = ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
+	require.NoError(t, err, "exec itself should not error")
+
+	output := execResult.CleanOutput()
+	t.Logf("Firewall script output:\n%s", output)
+
+	// CRITICAL: Script should fail with non-zero exit code
+	assert.NotEqual(t, 0, execResult.ExitCode, "firewall script should fail when required source is unreachable")
+
+	// Verify error message mentions the failure
+	assert.Contains(t, output, "ERROR", "output should contain ERROR message")
+	assert.Contains(t, output, "Failed to fetch required IP ranges", "output should indicate fetch failure")
+}
+
+// TestFirewall_MalformedJSONError verifies that malformed JSON (e.g., wrong key format)
+// is handled correctly and produces a clear error message.
+// This tests the jq filter error handling path.
+func TestFirewall_MalformedJSONError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client, "init-firewall.sh")
+
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+		harness.WithUser("root"),
+		harness.WithExtraHost("host.docker.internal:host-gateway"),
+	)
+
+	// Install dependencies
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools jq curl bash iproute2")
+	require.NoError(t, err)
+	require.Equal(t, 0, execResult.ExitCode, "failed to install deps: %s", execResult.CleanOutput())
+
+	// Write a config file with PascalCase keys (simulating the bug where Go struct tags were missing)
+	// The script expects lowercase keys: name, url, jq_filter, required
+	// But we'll provide PascalCase: Name, URL, JQFilter, Required
+	malformedJSON := `[{"Name":"github","URL":"https://api.github.com/meta","JQFilter":".web[]","Required":true}]`
+
+	writeConfig := fmt.Sprintf(`
+		mkdir -p /tmp/clawker
+		echo '%s' > /tmp/clawker/firewall-ip-range-sources
+		echo '[]' > /tmp/clawker/firewall-domains
+	`, malformedJSON)
+
+	execResult, err = ctr.Exec(ctx, client, "sh", "-c", writeConfig)
+	require.NoError(t, err)
+	require.Equal(t, 0, execResult.ExitCode, "failed to write config")
+
+	// Run the firewall script
+	t.Log("Running init-firewall.sh with PascalCase JSON keys (malformed)...")
+	execResult, err = ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
+	require.NoError(t, err, "exec itself should not error")
+
+	output := execResult.CleanOutput()
+	t.Logf("Firewall script output:\n%s", output)
+
+	// CRITICAL: Script should fail because jq can't find lowercase 'name' key
+	// The script checks for empty name and exits with a clear error message
+	assert.NotEqual(t, 0, execResult.ExitCode, "firewall script should fail when JSON has wrong key format")
+
+	// Verify the error message indicates JSON parsing failure
+	assert.Contains(t, output, "ERROR", "output should contain ERROR")
+	assert.Contains(t, output, "empty name", "output should indicate name parsing failure")
+	assert.Contains(t, output, "JSON parsing likely failed", "output should suggest JSON parsing issue")
+}

@@ -756,11 +756,11 @@ func TestValidatorIPRangeSources(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "valid custom source with URL",
+			name: "custom source missing jq_filter",
 			ipSources: []IPRangeSource{
 				{Name: "custom", URL: "https://example.com/ranges.json"},
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name: "valid custom source with URL and jq filter",

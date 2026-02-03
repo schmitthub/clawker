@@ -208,6 +208,11 @@ func (v *Validator) validateIPRangeSource(fieldPath string, source IPRangeSource
 		v.addError(fieldPath+".url", "is required for custom source '"+source.Name+"'", nil)
 	}
 
+	// Custom source: jq_filter is required
+	if source.JQFilter == "" {
+		v.addError(fieldPath+".jq_filter", "is required for custom source '"+source.Name+"'", nil)
+	}
+
 	// Validate URL format if provided
 	if source.URL != "" && !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") {
 		v.addError(fieldPath+".url", "must be a valid HTTP or HTTPS URL", source.URL)

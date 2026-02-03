@@ -178,6 +178,8 @@ func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
 
 **Default sources:** `[{Name: "github"}]` — github only by default.
 
+**Security note:** The `google` source allows traffic to all Google IPs including GCS and Firebase which can serve user-generated content. This creates a prompt injection risk. Only add if required (e.g., Go proxy).
+
 **Override mode:** If `override_domains` is set, `GetIPRangeSources()` returns empty slice (user controls everything).
 
 ## Schema Notes
