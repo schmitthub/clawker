@@ -76,7 +76,6 @@ func LogsDir() (string, error) {
 	return filepath.Join(home, LogsSubdir), nil
 }
 
-
 // HostProxyPIDFile returns the path to the host proxy PID file (~/.local/clawker/hostproxy.pid)
 func HostProxyPIDFile() (string, error) {
 	home, err := ClawkerHome()
@@ -84,4 +83,13 @@ func HostProxyPIDFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, "hostproxy.pid"), nil
+}
+
+// HostProxyLogFile returns the path to the host proxy log file (~/.local/clawker/logs/hostproxy.log)
+func HostProxyLogFile() (string, error) {
+	logsDir, err := LogsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(logsDir, "hostproxy.log"), nil
 }

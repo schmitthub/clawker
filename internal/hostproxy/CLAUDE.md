@@ -13,6 +13,7 @@ The host proxy runs as a **daemon subprocess** that persists beyond CLI command 
 3. If not running, spawns `clawker host-proxy serve` as a detached subprocess
 4. Daemon polls Docker every 30s for clawker containers
 5. Daemon auto-exits when no containers are running (after 60s grace period)
+6. Daemon also exits after 10 consecutive Docker API errors (prevents zombie processes)
 
 ### Key Files
 
@@ -72,10 +73,19 @@ type Session struct {
 }
 
 type DaemonOptions struct {
-    Port         int
-    PIDFile      string
-    PollInterval time.Duration  // Default: 30s
-    GracePeriod  time.Duration  // Default: 60s
+    Port               int
+    PIDFile            string
+    PollInterval       time.Duration    // Default: 30s
+    GracePeriod        time.Duration    // Default: 60s
+    MaxConsecutiveErrs int              // Default: 10 (exit after this many Docker errors)
+    DockerClient       ContainerLister  // Optional: inject mock for testing
+}
+
+// ContainerLister is the minimal interface for the daemon's Docker client.
+// Allows testing without real Docker.
+type ContainerLister interface {
+    ContainerList(ctx, options) (ContainerListResult, error)
+    io.Closer
 }
 ```
 

@@ -3,6 +3,7 @@ package hostproxy
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -20,9 +21,13 @@ func NewCmdServe() *cobra.Command {
 		Short:  "Run the host proxy server as a daemon",
 		Long:   "Internal command to run the host proxy server as a background daemon process.",
 		Hidden: true,
+		Example: `  # Start the host proxy daemon (internal use only)
+  clawker host-proxy serve
+  clawker host-proxy serve --port 18374
+  clawker host-proxy serve --grace-period 2m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize daemon logger
-			logger.Init(false) // Debug mode can be controlled via environment
+			// Initialize daemon logger (debug mode disabled for background daemon)
+			logger.Init(false)
 
 			logger.Info().
 				Int("port", opts.Port).
@@ -78,6 +83,8 @@ func NewCmdStatus() *cobra.Command {
 		Use:    "status",
 		Short:  "Check host proxy daemon status",
 		Hidden: true,
+		Example: `  # Check if the host proxy daemon is running
+  clawker host-proxy status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := hostproxy.DefaultDaemonOptions()
 			pid := hostproxy.GetDaemonPID(opts.PIDFile)
@@ -99,6 +106,11 @@ func NewCmdStop() *cobra.Command {
 		Use:    "stop",
 		Short:  "Stop the host proxy daemon",
 		Hidden: true,
+		Example: `  # Send stop signal to the daemon
+  clawker host-proxy stop
+
+  # Stop and wait up to 5 seconds for shutdown
+  clawker host-proxy stop --wait 5s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := hostproxy.DefaultDaemonOptions()
 			if err := hostproxy.StopDaemon(opts.PIDFile); err != nil {
@@ -116,7 +128,7 @@ func NewCmdStop() *cobra.Command {
 					}
 					time.Sleep(100 * time.Millisecond)
 				}
-				cmd.Println("Timeout waiting for daemon to stop")
+				return fmt.Errorf("timeout waiting for daemon to stop after %v", wait)
 			}
 			return nil
 		},

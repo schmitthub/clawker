@@ -3,60 +3,92 @@ package hostproxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// ContainerLister is the minimal interface needed for container watcher functionality.
+// This allows the daemon to work without directly coupling to the full Docker client,
+// and enables testing with mock implementations.
+//
+// Note: This package imports github.com/moby/moby/client directly rather than going
+// through pkg/whail. This is intentional because the daemon runs as a standalone
+// subprocess that only needs to list containers - it doesn't need whail's jail
+// semantics or label enforcement. The interface pattern still allows for testing.
+type ContainerLister interface {
+	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
+	io.Closer
+}
+
 // Daemon manages the host proxy server as a background process.
 // It polls Docker for clawker containers and auto-exits when none are running.
 type Daemon struct {
-	server       *Server
-	docker       client.APIClient
-	pidFile      string
-	pollInterval time.Duration
-	gracePeriod  time.Duration
+	server             *Server
+	docker             ContainerLister
+	pidFile            string
+	pollInterval       time.Duration
+	gracePeriod        time.Duration
+	maxConsecutiveErrs int
 }
 
 // DaemonOptions configures the daemon behavior.
 type DaemonOptions struct {
-	Port         int
-	PIDFile      string
-	PollInterval time.Duration
-	GracePeriod  time.Duration
+	Port               int
+	PIDFile            string
+	PollInterval       time.Duration
+	GracePeriod        time.Duration
+	MaxConsecutiveErrs int
+	// DockerClient allows injecting a custom container lister for testing.
+	// If nil, a default Docker client will be created.
+	DockerClient ContainerLister
 }
 
 // DefaultDaemonOptions returns the default daemon configuration.
 func DefaultDaemonOptions() DaemonOptions {
-	pidFile, _ := config.HostProxyPIDFile()
+	pidFile, err := config.HostProxyPIDFile()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
+	}
 	return DaemonOptions{
-		Port:         DefaultPort,
-		PIDFile:      pidFile,
-		PollInterval: 30 * time.Second,
-		GracePeriod:  60 * time.Second,
+		Port:               DefaultPort,
+		PIDFile:            pidFile,
+		PollInterval:       30 * time.Second,
+		GracePeriod:        60 * time.Second,
+		MaxConsecutiveErrs: 10,
 	}
 }
 
 // NewDaemon creates a new daemon with the given options.
 func NewDaemon(opts DaemonOptions) (*Daemon, error) {
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
+	dockerClient := opts.DockerClient
+	if dockerClient == nil {
+		var err error
+		dockerClient, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create docker client: %w", err)
+		}
+	}
+
+	maxErrs := opts.MaxConsecutiveErrs
+	if maxErrs <= 0 {
+		maxErrs = 10 // Default to 10 consecutive errors before exit
 	}
 
 	return &Daemon{
-		server:       NewServer(opts.Port),
-		docker:       dockerClient,
-		pidFile:      opts.PIDFile,
-		pollInterval: opts.PollInterval,
-		gracePeriod:  opts.GracePeriod,
+		server:             NewServer(opts.Port),
+		docker:             dockerClient,
+		pidFile:            opts.PIDFile,
+		pollInterval:       opts.PollInterval,
+		gracePeriod:        opts.GracePeriod,
+		maxConsecutiveErrs: maxErrs,
 	}, nil
 }
 
@@ -113,6 +145,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // watchContainers polls Docker for clawker containers and exits when none are found.
+// It also exits if Docker API errors exceed the configured threshold.
 func (d *Daemon) watchContainers(ctx context.Context) {
 	// Initial grace period before first check
 	select {
@@ -124,6 +157,8 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 	ticker := time.NewTicker(d.pollInterval)
 	defer ticker.Stop()
 
+	consecutiveErrs := 0
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,9 +166,16 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 		case <-ticker.C:
 			count, err := d.countClawkerContainers(ctx)
 			if err != nil {
-				logger.Warn().Err(err).Msg("failed to count containers")
+				consecutiveErrs++
+				logger.Warn().Err(err).Int("consecutive_errors", consecutiveErrs).Msg("failed to count containers")
+				if consecutiveErrs >= d.maxConsecutiveErrs {
+					logger.Error().Int("threshold", d.maxConsecutiveErrs).Msg("too many consecutive Docker API errors, initiating shutdown")
+					return
+				}
 				continue
 			}
+			// Reset error counter on successful API call
+			consecutiveErrs = 0
 			logger.Debug().Int("count", count).Msg("checked clawker containers")
 			if count == 0 {
 				logger.Info().Msg("no clawker containers running, initiating shutdown")
@@ -245,9 +287,3 @@ func StopDaemon(pidFile string) error {
 	return nil
 }
 
-// containerListResult is used to adapt the Docker client response.
-// The moby client returns a struct with Items field containing []container.Summary.
-type containerListResult = client.ContainerListResult
-
-// Ensure we can use container.Summary for type checking
-var _ = container.Summary{}

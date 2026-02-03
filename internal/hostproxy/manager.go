@@ -26,14 +26,20 @@ type Manager struct {
 
 // NewManager creates a new host proxy manager using the default port.
 func NewManager() *Manager {
-	pidFile, _ := config.HostProxyPIDFile()
+	pidFile, err := config.HostProxyPIDFile()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
+	}
 	return &Manager{port: DefaultPort, pidFile: pidFile}
 }
 
 // NewManagerWithPort creates a new host proxy manager using a custom port.
 // This is primarily useful for testing.
 func NewManagerWithPort(port int) *Manager {
-	pidFile, _ := config.HostProxyPIDFile()
+	pidFile, err := config.HostProxyPIDFile()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to get host proxy PID file path, daemon tracking disabled")
+	}
 	return &Manager{port: port, pidFile: pidFile}
 }
 
@@ -138,12 +144,24 @@ func (m *Manager) startDaemon() error {
 		Setsid: true, // Detach from parent session
 	}
 
-	// Redirect output to /dev/null to fully detach
+	// Redirect output to log file for debugging visibility
 	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	logFile, err := m.openDaemonLogFile()
+	if err != nil {
+		logger.Debug().Err(err).Msg("failed to open daemon log file, output will be discarded")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	} else {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		// Note: logFile is intentionally not closed here - the daemon subprocess
+		// inherits the file descriptor and will write to it
+	}
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
@@ -227,4 +245,30 @@ func (m *Manager) healthCheck() error {
 	}
 
 	return nil
+}
+
+// openDaemonLogFile opens the daemon log file for writing, creating directories as needed.
+// Returns nil and an error if the file cannot be opened.
+func (m *Manager) openDaemonLogFile() (*os.File, error) {
+	logPath, err := config.HostProxyLogFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get log file path: %w", err)
+	}
+
+	// Ensure logs directory exists
+	logsDir, err := config.LogsDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get logs directory: %w", err)
+	}
+	if err := config.EnsureDir(logsDir); err != nil {
+		return nil, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	// Open log file with append mode
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %w", err)
+	}
+
+	return file, nil
 }
