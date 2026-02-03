@@ -34,7 +34,7 @@ func New(version, commit string) *cmdutil.Factory {
 
 // ioStreams creates an IOStreams with TTY/color/CI detection.
 func ioStreams() *iostreams.IOStreams {
-	ios := iostreams.NewIOStreams()
+	ios := iostreams.System()
 
 	// Auto-detect color support
 	if ios.IsOutputTTY() {
