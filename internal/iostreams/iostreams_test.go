@@ -2,6 +2,8 @@ package iostreams
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewIOStreams(t *testing.T) {
@@ -434,4 +436,25 @@ func TestTestIOStreams_SetColorEnabled(t *testing.T) {
 	if ios.ColorEnabled() {
 		t.Error("ColorEnabled() should be false after SetColorEnabled(false)")
 	}
+}
+
+func TestSystem_ReturnsIOStreams(t *testing.T) {
+	ios := System()
+	assert.NotNil(t, ios)
+	assert.NotNil(t, ios.In)
+	assert.NotNil(t, ios.Out)
+	assert.NotNil(t, ios.ErrOut)
+}
+
+func TestSystem_TermCapabilities(t *testing.T) {
+	ios := System()
+	// Should not panic
+	_ = ios.Is256ColorSupported()
+	_ = ios.IsTrueColorSupported()
+}
+
+func TestNewTestIOStreams_TermNil(t *testing.T) {
+	tio := NewTestIOStreams()
+	assert.False(t, tio.Is256ColorSupported())
+	assert.False(t, tio.IsTrueColorSupported())
 }
