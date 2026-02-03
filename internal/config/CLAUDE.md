@@ -15,6 +15,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 | `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
+| `ip_ranges.go` | IP range source registry, `GetIPRangeSources()` method |
 
 ## Constants
 
@@ -104,8 +105,10 @@ Commands access via `f.Config().Project()` instead of the old `f.Config()` which
 
 **Security:**
 - `SecurityConfig` — `Firewall`, `DockerSocket`, `CapAdd`, `EnableHostProxy`, `GitCredentials`
-- `FirewallConfig` — `Enable`, `AddDomains`, `RemoveDomains`, `OverrideDomains`
-  - Methods: `FirewallEnabled() bool`, `GetFirewallDomains() []string`, `IsOverrideMode() bool`
+- `FirewallConfig` — `Enable`, `AddDomains`, `RemoveDomains`, `OverrideDomains`, `IPRangeSources`
+  - Methods: `FirewallEnabled() bool`, `GetFirewallDomains() []string`, `IsOverrideMode() bool`, `GetIPRangeSources() []IPRangeSource`
+- `IPRangeSource` — `Name`, `URL`, `JQFilter`, `Required *bool`
+  - Methods: `IsRequired() bool` — github defaults to required, others to optional
 - `GitCredentialsConfig` — `ForwardHTTPS`, `ForwardSSH`, `CopyGitConfig`
   - Methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()` — all return `bool`
 - `SecurityConfig` methods: `HostProxyEnabled() bool`, `FirewallEnabled() bool`
@@ -151,6 +154,31 @@ Resolves working directory to a registered project.
 - `NewResolver(registry)` — creates resolver from registry
 - `(*Resolver).Resolve(workDir) *Resolution` — nil if no match
 - `(*Resolution).Found() bool`, `(*Resolution).ProjectRoot() string`
+
+## IP Range Sources (`ip_ranges.go`)
+
+Firewall IP range sources allow fetching CIDR ranges from cloud provider APIs (not DNS).
+
+```go
+type IPRangeSource struct {
+    Name     string `yaml:"name"`           // Source identifier (e.g., "github", "google-cloud")
+    URL      string `yaml:"url,omitempty"`   // Custom URL (uses built-in if empty)
+    JQFilter string `yaml:"jq_filter,omitempty"` // jq filter for extracting CIDRs
+    Required *bool  `yaml:"required,omitempty"`  // Failure is fatal if true
+}
+
+// Built-in sources with URLs and jq filters
+var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{...}
+
+// Known sources: github, google-cloud, google, cloudflare, aws
+func IsKnownIPRangeSource(name string) bool
+func DefaultIPRangeSources() []IPRangeSource  // Returns [{Name: "github"}, {Name: "google-cloud"}]
+func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
+```
+
+**Default sources:** `[{Name: "github"}, {Name: "google-cloud"}]` — includes google-cloud for Go proxy support.
+
+**Override mode:** If `override_domains` is set, `GetIPRangeSources()` returns empty slice (user controls everything).
 
 ## Schema Notes
 

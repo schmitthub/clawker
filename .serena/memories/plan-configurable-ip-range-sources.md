@@ -251,86 +251,33 @@ if [ -n "$IP_RANGE_SOURCES" ] && [ "$IP_RANGE_SOURCES" != "[]" ]; then
 fi
 ```
 
-## Implementation Plan
+## Implementation Status: COMPLETED
 
-### Phase 1: Config Schema (internal/config/)
-1. Add `IPRangeSource` struct to `schema.go`
-2. Add `IPRangeSources` field to `FirewallConfig`
-3. Add `GetIPRangeSources()` method with backward-compatible default
-4. Add `BuiltinIPRangeSources` registry to new file `ip_ranges.go`
-5. Update `defaults.go` with example YAML
-6. Add validation in `validation.go`
+All phases have been implemented:
 
-### Phase 2: Environment Wiring (internal/docker/)
-1. Add `FirewallIPRangeSources` to `RuntimeEnvOpts`
-2. Update `RuntimeEnv()` to serialize sources as JSON env var
-3. Update tests in `env_test.go`
+### Phase 1: Config Schema ✅
+- Added `IPRangeSource` struct to `internal/config/schema.go`
+- Added `IPRangeSources` field to `FirewallConfig`
+- Created `internal/config/ip_ranges.go` with `BuiltinIPRangeSources` map and `GetIPRangeSources()` method
 
-### Phase 3: Container Script (internal/bundler/assets/)
-1. Refactor `init-firewall.sh` to use source loop
-2. Add built-in source registry (URLs + jq filters)
-3. Handle required vs optional sources
-4. Update `firewall_test.go`
+### Phase 2: Environment Wiring ✅
+- Added `FirewallIPRangeSources` to `RuntimeEnvOpts` in `internal/docker/env.go`
+- Updated `RuntimeEnv()` to serialize as `CLAWKER_FIREWALL_IP_RANGE_SOURCES` JSON
 
-### Phase 4: Command Wiring (internal/cmd/container/)
-1. Update `create.go` to pass IP range sources to RuntimeEnvOpts
-2. Update `run.go` similarly
-3. Test end-to-end
+### Phase 3: Container Script ✅
+- Refactored `internal/bundler/assets/init-firewall.sh`:
+  - Added built-in source registry (bash functions `get_builtin_url`, `get_builtin_filter`)
+  - Replaced hardcoded GitHub block with generic `process_ip_range_source()` function
+  - Parses `CLAWKER_FIREWALL_IP_RANGE_SOURCES` JSON and processes each source
 
-### Phase 5: Documentation
-1. Update `CLAUDE.md` with new config options
-2. Update `internal/config/CLAUDE.md`
-3. Add example to templates/
+### Phase 4: Command Wiring ✅
+- Updated `internal/cmd/container/create/create.go` to pass IP range sources
+- Updated `internal/cmd/container/run/run.go` to pass IP range sources
 
-## Files to Modify
+### Phase 5: Tests & Docs ✅
+- Added `internal/config/ip_ranges_test.go` with comprehensive tests
+- Added IP range source tests to `internal/config/validator_test.go`
+- Added env serialization tests to `internal/docker/env_test.go`
+- Updated `CLAUDE.md`, `internal/config/CLAUDE.md`, `internal/docker/CLAUDE.md`
 
-| File | Changes |
-|------|---------|
-| `internal/config/schema.go` | Add `IPRangeSource`, update `FirewallConfig` |
-| `internal/config/ip_ranges.go` | NEW: Built-in source registry |
-| `internal/config/defaults.go` | Update example YAML |
-| `internal/config/validation.go` | Add source validation |
-| `internal/docker/env.go` | Add to `RuntimeEnvOpts`, serialize |
-| `internal/docker/env_test.go` | Add tests |
-| `internal/bundler/assets/init-firewall.sh` | Refactor to use source loop |
-| `internal/bundler/firewall_test.go` | Update tests |
-| `internal/cmd/container/create/create.go` | Wire sources to opts |
-| `internal/cmd/container/run/run.go` | Wire sources to opts |
-| `CLAUDE.md` | Document new feature |
-
-## Testing Strategy
-
-1. **Unit tests**: Config parsing, serialization, defaults
-2. **Script tests**: Bash syntax validation, jq filter correctness
-3. **Integration tests** (`test/cli/`): Full flow with mock HTTP server
-4. **Manual testing**: Build container with `google-cloud` source, verify Go proxy works
-
-## Verification
-
-After implementation:
-```bash
-# Build with google-cloud source
-clawker build
-
-# Run and test Go proxy access
-clawker run -- go mod download github.com/klauspost/compress@latest
-
-# Should succeed (storage.googleapis.com now allowed via CIDR ranges)
-```
-
-## Open Questions
-
-1. **Caching**: Should we cache IP ranges to avoid fetching on every container start?
-   - Pro: Faster startup, works offline after first fetch
-   - Con: Stale ranges if provider updates IPs
-   - Recommendation: No caching initially, consider later as optimization
-
-2. **Aggregation**: Should we use `aggregate` tool on fetched CIDRs?
-   - Currently used for GitHub ranges
-   - Reduces ipset size but adds dependency
-   - Recommendation: Yes, for consistency with current approach
-
-3. **IPv6**: Currently skipped entirely
-   - Google/AWS provide IPv6 ranges
-   - ip6tables support exists but is secondary
-   - Recommendation: Keep IPv4-only for v1, add IPv6 later
+## Previous Implementation Plan

@@ -176,6 +176,41 @@ func (v *Validator) validateSecurity(cfg *Project) {
 		for i, domain := range fw.OverrideDomains {
 			v.validateDomainFormat(fmt.Sprintf("security.firewall.override_domains[%d]", i), domain)
 		}
+
+		// Validate IP range sources
+		for i, source := range fw.IPRangeSources {
+			v.validateIPRangeSource(fmt.Sprintf("security.firewall.ip_range_sources[%d]", i), source)
+		}
+
+		// Warn if override_domains is set alongside ip_range_sources
+		if len(fw.OverrideDomains) > 0 && len(fw.IPRangeSources) > 0 {
+			v.addWarning("security.firewall", "override_domains is set; ip_range_sources will be ignored")
+		}
+	}
+}
+
+// validateIPRangeSource validates an IP range source configuration
+func (v *Validator) validateIPRangeSource(fieldPath string, source IPRangeSource) {
+	// Name is required
+	if source.Name == "" {
+		v.addError(fieldPath+".name", "is required", nil)
+		return
+	}
+
+	// Check if it's a known built-in source
+	if IsKnownIPRangeSource(source.Name) {
+		// Built-in source: URL and jq_filter are optional (will use defaults)
+		return
+	}
+
+	// Custom source: URL is required
+	if source.URL == "" {
+		v.addError(fieldPath+".url", "is required for custom source '"+source.Name+"'", nil)
+	}
+
+	// Validate URL format if provided
+	if source.URL != "" && !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") {
+		v.addError(fieldPath+".url", "must be a valid HTTP or HTTPS URL", source.URL)
 	}
 }
 

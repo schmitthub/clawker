@@ -149,8 +149,32 @@ security: { firewall: { enable: true }, docker_socket: false, git_credentials: {
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `RalphConfig`
+**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `RalphConfig`
 **Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
+
+### Firewall IP Range Sources
+
+IP range sources fetch CIDR blocks from cloud provider APIs (not DNS) to allow traffic to services like GitHub and Google Cloud Storage:
+
+```yaml
+security:
+  firewall:
+    enable: true
+    # Default: [{name: github}, {name: google-cloud}]
+    ip_range_sources:
+      - name: github          # Required by default
+      - name: google-cloud    # For Go proxy (proxy.golang.org)
+      - name: custom
+        url: "https://example.com/ranges.json"
+        jq_filter: ".cidrs[]"
+        required: false
+```
+
+**Built-in sources**: `github`, `google-cloud`, `google`, `cloudflare`, `aws` — each has pre-configured URL and jq filter.
+
+**Default behavior**: `ip_range_sources` defaults to `[{name: github}, {name: google-cloud}]` to support Go proxy.
+
+**Override mode**: When `override_domains` is set, IP range sources are skipped entirely (user controls all network access).
 
 ## Design Decisions
 

@@ -149,6 +149,7 @@ type RuntimeEnvOpts struct {
     FirewallEnabled  bool
     FirewallDomains  []string
     FirewallOverride bool
+    FirewallIPRangeSources []config.IPRangeSource  // IP range sources for firewall
     Is256Color       bool              // host supports 256 colors → TERM=xterm-256color
     TrueColor        bool              // host supports truecolor → COLORTERM=truecolor
     AgentEnv         map[string]string // agent.env from config
@@ -159,6 +160,11 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
 ```
 
 Produces container env vars with precedence (last wins): base defaults → terminal capabilities → agent env → instruction env. Output is sorted by key for deterministic ordering.
+
+**Firewall env vars:**
+- `CLAWKER_FIREWALL_DOMAINS` — JSON array of allowed domains
+- `CLAWKER_FIREWALL_OVERRIDE` — "true" if in override mode
+- `CLAWKER_FIREWALL_IP_RANGE_SOURCES` — JSON array of `IPRangeSource` objects for `init-firewall.sh`
 
 ## Volume Utilities (`volume.go`)
 
