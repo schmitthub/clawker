@@ -4,19 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRuntimeEnv_Defaults(t *testing.T) {
-	cfg := &config.Project{
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "EDITOR=nano")
@@ -24,17 +17,10 @@ func TestRuntimeEnv_Defaults(t *testing.T) {
 }
 
 func TestRuntimeEnv_EditorOverride(t *testing.T) {
-	cfg := &config.Project{
-		Agent: config.AgentConfig{
-			Editor: "vim",
-			Visual: "code",
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Editor: "vim",
+		Visual: "code",
+	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "EDITOR=vim")
@@ -42,16 +28,10 @@ func TestRuntimeEnv_EditorOverride(t *testing.T) {
 }
 
 func TestRuntimeEnv_FirewallDomains(t *testing.T) {
-	cfg := &config.Project{
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{
-				Enable:     true,
-				AddDomains: []string{"custom.com"},
-			},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		FirewallEnabled: true,
+		FirewallDomains: []string{"custom.com", "registry.npmjs.org"},
+	})
 	require.NoError(t, err)
 
 	var found bool
@@ -59,7 +39,6 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
 			found = true
 			assert.Contains(t, val, "custom.com")
-			// Should also contain default domains (e.g. registry.npmjs.org from defaults)
 			assert.Contains(t, val, "registry.npmjs.org")
 		}
 	}
@@ -73,29 +52,20 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 }
 
 func TestRuntimeEnv_FirewallOverride(t *testing.T) {
-	cfg := &config.Project{
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{
-				Enable:          true,
-				OverrideDomains: []string{"only-this.com"},
-			},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		FirewallEnabled:  true,
+		FirewallDomains:  []string{"only-this.com"},
+		FirewallOverride: true,
+	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "CLAWKER_FIREWALL_OVERRIDE=true")
 }
 
 func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
-	cfg := &config.Project{
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		FirewallEnabled: false,
+	})
 	require.NoError(t, err)
 
 	for _, e := range env {
@@ -105,19 +75,9 @@ func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
 }
 
 func TestRuntimeEnv_AgentEnv(t *testing.T) {
-	cfg := &config.Project{
-		Agent: config.AgentConfig{
-			Env: map[string]string{
-				"FOO": "bar",
-				"BAZ": "qux",
-			},
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		AgentEnv: map[string]string{"FOO": "bar", "BAZ": "qux"},
+	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "FOO=bar")
@@ -125,85 +85,91 @@ func TestRuntimeEnv_AgentEnv(t *testing.T) {
 }
 
 func TestRuntimeEnv_InstructionEnv(t *testing.T) {
-	cfg := &config.Project{
-		Build: config.BuildConfig{
-			Instructions: &config.DockerInstructions{
-				Env: map[string]string{
-					"NODE_ENV": "production",
-				},
-			},
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		InstructionEnv: map[string]string{"NODE_ENV": "production"},
+	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "NODE_ENV=production")
 }
 
-func TestRuntimeEnv_NilInstructions(t *testing.T) {
-	cfg := &config.Project{
-		Build: config.BuildConfig{
-			Instructions: nil,
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+func TestRuntimeEnv_NilMaps(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
 	require.NoError(t, err)
 
-	// Should not panic, should still have editor defaults
 	assert.Contains(t, env, "EDITOR=nano")
 }
 
 func TestRuntimeEnv_Deterministic(t *testing.T) {
-	cfg := &config.Project{
-		Agent: config.AgentConfig{
-			Editor: "vim",
-			Env:    map[string]string{"A": "1", "B": "2"},
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: true},
-		},
+	opts := RuntimeEnvOpts{
+		Editor:          "vim",
+		FirewallEnabled: true,
+		FirewallDomains: []string{"example.com"},
+		AgentEnv:        map[string]string{"A": "1", "B": "2"},
 	}
 
-	// Run multiple times — output should be identical (sorted keys)
-	env1, err := RuntimeEnv(cfg)
+	env1, err := RuntimeEnv(opts)
 	require.NoError(t, err)
-	env2, err := RuntimeEnv(cfg)
+	env2, err := RuntimeEnv(opts)
 	require.NoError(t, err)
 
 	assert.Equal(t, env1, env2, "RuntimeEnv should produce consistent output")
 }
 
 func TestRuntimeEnv_Precedence(t *testing.T) {
-	cfg := &config.Project{
-		Agent: config.AgentConfig{
-			Env: map[string]string{
-				"EDITOR": "vim",        // Overrides base default of "nano"
-				"SHARED": "from-agent",
-			},
-		},
-		Build: config.BuildConfig{
-			Instructions: &config.DockerInstructions{
-				Env: map[string]string{
-					"SHARED": "from-instructions", // Overrides agent env
-				},
-			},
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{Enable: false},
-		},
-	}
-
-	env, err := RuntimeEnv(cfg)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		AgentEnv:       map[string]string{"EDITOR": "vim", "SHARED": "from-agent"},
+		InstructionEnv: map[string]string{"SHARED": "from-instructions"},
+	})
 	require.NoError(t, err)
 
 	assert.Contains(t, env, "EDITOR=vim", "agent env should override base default")
 	assert.Contains(t, env, "SHARED=from-instructions", "instruction env should override agent env")
+}
+
+func TestRuntimeEnv_256Color(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Is256Color: true,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "TERM=xterm-256color")
+}
+
+func TestRuntimeEnv_TrueColor(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Is256Color: true,
+		TrueColor:  true,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "TERM=xterm-256color")
+	assert.Contains(t, env, "COLORTERM=truecolor")
+}
+
+func TestRuntimeEnv_NoColorCapabilities(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Is256Color: false,
+		TrueColor:  false,
+	})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "TERM="),
+			"should not set TERM when no color capabilities")
+		assert.False(t, strings.HasPrefix(e, "COLORTERM="),
+			"should not set COLORTERM when no color capabilities")
+	}
+}
+
+func TestRuntimeEnv_AgentEnvOverridesTerm(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Is256Color: true,
+		TrueColor:  true,
+		AgentEnv:   map[string]string{"TERM": "xterm", "COLORTERM": ""},
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "TERM=xterm", "agent env should override terminal detection")
+	assert.Contains(t, env, "COLORTERM=", "agent env should override terminal detection")
 }
