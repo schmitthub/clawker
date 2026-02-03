@@ -1,6 +1,14 @@
 # Fix: Container Terminal Colors Limited to 8 Colors
 
-## Status: Investigation Complete — Ready for PR
+## Status: COMPLETED on branch a/container-fixes
+
+All fixes implemented:
+1. Term struct + FromEnv() in internal/term/capabilities.go
+2. IOStreams System() constructor with term interface delegation
+3. RuntimeEnvOpts struct replaces *config.Project in RuntimeEnv()
+4. Dockerfile template: ENV TERM/COLORTERM/LANG + zsh-in-docker -a flag
+5. Container create/run wire RuntimeEnvOpts from config + iostreams
+6. clawker.yaml: nodejs/npm added for Serena LSP
 
 ## Problem
 

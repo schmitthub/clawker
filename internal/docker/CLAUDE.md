@@ -17,7 +17,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
 | `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
-| `env.go` | `RuntimeEnv(cfg)` — config-derived env vars for container creation |
+| `env.go` | `RuntimeEnv(opts RuntimeEnvOpts)` — env vars for container creation |
 | `volume.go` | `EnsureVolume`, `CopyToVolume`, `.clawkerignore` support |
 | `opts.go` | Resource limit types implementing `pflag.Value` for CLI flags |
 | `types.go` | Re-exports ~35 Docker types from whail for consumer convenience |
@@ -143,7 +143,22 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 
 ## Environment (`env.go`)
 
-- `RuntimeEnv(cfg)` — returns `([]string, error)` of config-derived env vars for container creation (editor, firewall, agent env)
+```go
+type RuntimeEnvOpts struct {
+    Editor, Visual   string            // defaults to "nano"
+    FirewallEnabled  bool
+    FirewallDomains  []string
+    FirewallOverride bool
+    Is256Color       bool              // host supports 256 colors → TERM=xterm-256color
+    TrueColor        bool              // host supports truecolor → COLORTERM=truecolor
+    AgentEnv         map[string]string // agent.env from config
+    InstructionEnv   map[string]string // build.instructions.env from config
+}
+
+func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
+```
+
+Produces container env vars with precedence (last wins): base defaults → terminal capabilities → agent env → instruction env. Output is sorted by key for deterministic ordering.
 
 ## Volume Utilities (`volume.go`)
 

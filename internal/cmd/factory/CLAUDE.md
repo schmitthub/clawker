@@ -3,6 +3,20 @@
 The factory wiring layer. Constructs a fully-wired `*cmdutil.Factory` with
 real dependency implementations. Called exactly once at the CLI entry point.
 
+## Domain: Clawker-Specific Configuration
+
+**Responsibility**: Apply clawker-specific environment configuration on top of standard terminal behavior.
+
+The factory `ioStreams()` helper calls `iostreams.System()` then applies clawker-specific config. It does NOT handle standard terminal env vars — those belong in lower layers.
+
+| Layer | Package | Responsibility | Env Vars |
+|-------|---------|----------------|----------|
+| Capabilities | `term` | What the terminal supports | `TERM`, `COLORTERM`, `NO_COLOR` |
+| Behavior | `iostreams` | Terminal UX (theme, progress, paging) | `CLAWKER_PAGER`, `PAGER` |
+| **App Config** | `factory` | Clawker-specific preferences | `CLAWKER_SPINNER_DISABLED` |
+
+The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
+
 ## Key File
 
 | File | Purpose |
@@ -38,3 +52,11 @@ Each helper is a standalone function in `default.go`, making the wiring easy to 
 All closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves.
 
 **Dependency ordering in `New()`**: `Config` must be assigned before `Client` because `clientFunc(f)` reads `f.Config()` at call time.
+
+## Environment Variables
+
+| Variable | Effect |
+|----------|--------|
+| `CLAWKER_SPINNER_DISABLED` | Static text instead of animated spinner |
+
+Note: Standard terminal env vars (`TERM`, `COLORTERM`, `NO_COLOR`) are handled by `term.FromEnv()`. Factory handles only clawker-specific config.

@@ -2,31 +2,33 @@ package iostreams
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestNewIOStreams(t *testing.T) {
-	ios := NewIOStreams()
+func TestSystem_BasicSetup(t *testing.T) {
+	ios := System()
 
 	if ios == nil {
-		t.Fatal("NewIOStreams() returned nil")
+		t.Fatal("System() returned nil")
 	}
 	if ios.In == nil {
-		t.Error("NewIOStreams().In is nil")
+		t.Error("System().In is nil")
 	}
 	if ios.Out == nil {
-		t.Error("NewIOStreams().Out is nil")
+		t.Error("System().Out is nil")
 	}
 	if ios.ErrOut == nil {
-		t.Error("NewIOStreams().ErrOut is nil")
+		t.Error("System().ErrOut is nil")
 	}
 	// isInputTTY should still be lazy-loaded (not queried during construction)
 	if ios.isInputTTY != -1 {
-		t.Errorf("NewIOStreams().isInputTTY = %d, want -1", ios.isInputTTY)
+		t.Errorf("System().isInputTTY = %d, want -1", ios.isInputTTY)
 	}
 	// isOutputTTY is now queried during construction to check for progress indicator enablement.
 	// It will be 0 (not a TTY) when running in tests.
 	if ios.isOutputTTY == -1 {
-		t.Error("NewIOStreams().isOutputTTY should be detected during construction")
+		t.Error("System().isOutputTTY should be detected during construction")
 	}
 	// Note: isStderrTTY may still be -1 due to short-circuit evaluation in the progress check.
 	// If stdout is not a TTY, stderr check is skipped. This is fine - it will be lazy-loaded on demand.
@@ -434,4 +436,17 @@ func TestTestIOStreams_SetColorEnabled(t *testing.T) {
 	if ios.ColorEnabled() {
 		t.Error("ColorEnabled() should be false after SetColorEnabled(false)")
 	}
+}
+
+func TestSystem_TermCapabilities(t *testing.T) {
+	ios := System()
+	// Should not panic
+	_ = ios.Is256ColorSupported()
+	_ = ios.IsTrueColorSupported()
+}
+
+func TestNewTestIOStreams_TermNil(t *testing.T) {
+	tio := NewTestIOStreams()
+	assert.False(t, tio.Is256ColorSupported())
+	assert.False(t, tio.IsTrueColorSupported())
 }

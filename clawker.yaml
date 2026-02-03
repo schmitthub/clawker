@@ -35,6 +35,8 @@ build:
     - locales
     - locales-all
     - iputils-ping
+    - nodejs
+    - npm
   instructions:
     root_run:
       - cmd: |

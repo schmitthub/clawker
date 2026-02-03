@@ -145,3 +145,23 @@ func TestFactory_Prompter(t *testing.T) {
 		t.Fatal("Prompter() returned nil")
 	}
 }
+
+
+func TestIOStreams_SpinnerDisabledEnvVar(t *testing.T) {
+	t.Setenv("CLAWKER_SPINNER_DISABLED", "1")
+
+	ios := ioStreams()
+	if !ios.GetSpinnerDisabled() {
+		t.Error("spinnerDisabled should be true when CLAWKER_SPINNER_DISABLED env var is set")
+	}
+}
+
+func TestIOStreams_SpinnerEnabledByDefault(t *testing.T) {
+	// Ensure env var is not set
+	t.Setenv("CLAWKER_SPINNER_DISABLED", "")
+
+	ios := ioStreams()
+	if ios.GetSpinnerDisabled() {
+		t.Error("spinnerDisabled should be false by default")
+	}
+}

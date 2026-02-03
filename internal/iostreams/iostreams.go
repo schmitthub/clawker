@@ -11,8 +11,19 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/schmitthub/clawker/internal/logger"
-	"golang.org/x/term"
+	termcap "github.com/schmitthub/clawker/internal/term"
+	goterm "golang.org/x/term"
 )
+
+// term describes terminal capabilities. Unexported — commands access
+// terminal info through IOStreams methods, never directly.
+type term interface {
+	IsTTY() bool
+	IsColorEnabled() bool
+	Is256ColorSupported() bool
+	IsTrueColorSupported() bool
+	Width() int
+}
 
 // IOStreams provides access to standard input/output/error streams.
 // It follows the GitHub CLI pattern for testable I/O.
@@ -20,6 +31,7 @@ type IOStreams struct {
 	In     io.Reader
 	Out    io.Writer
 	ErrOut io.Writer
+	term   term
 
 	// isInputTTY caches whether stdin is a terminal.
 	// -1 = unchecked, 0 = false, 1 = true
@@ -62,27 +74,29 @@ type IOStreams struct {
 	termSizeCached  bool
 }
 
-// NewIOStreams creates an IOStreams connected to standard streams.
-func NewIOStreams() *IOStreams {
+// System creates an IOStreams wired to the real system terminal.
+// Reads terminal capabilities from the host environment via term.FromEnv().
+// The factory calls this, then may layer clawker config overrides.
+func System() *IOStreams {
 	ios := &IOStreams{
-		In:            os.Stdin,
-		Out:           os.Stdout,
-		ErrOut:        os.Stderr,
-		isInputTTY:    -1,
-		isOutputTTY:   -1,
-		isStderrTTY:   -1,
-		colorEnabled:  -1, // Auto-detect
-		terminalTheme: "", // Detect on first use
+		In:           os.Stdin,
+		Out:          os.Stdout,
+		ErrOut:       os.Stderr,
+		term:         termcap.FromEnv(),
+		isInputTTY:   -1,
+		isOutputTTY:  -1,
+		isStderrTTY:  -1,
+		colorEnabled: -1,
 	}
 
-	// Progress enabled when both stdout and stderr are TTYs
+	// Progress indicator requires both stdout and stderr TTY
 	if ios.IsOutputTTY() && ios.IsStderrTTY() {
 		ios.progressIndicatorEnabled = true
 	}
 
-	// Check for spinner disabled env var
-	if os.Getenv("CLAWKER_SPINNER_DISABLED") != "" {
-		ios.spinnerDisabled = true
+	// Detect terminal theme for color scheme selection
+	if ios.IsOutputTTY() {
+		ios.DetectTerminalTheme()
 	}
 
 	return ios
@@ -92,7 +106,7 @@ func NewIOStreams() *IOStreams {
 func (s *IOStreams) IsInputTTY() bool {
 	if s.isInputTTY == -1 {
 		if f, ok := s.In.(*os.File); ok {
-			s.isInputTTY = boolToInt(term.IsTerminal(int(f.Fd())))
+			s.isInputTTY = boolToInt(goterm.IsTerminal(int(f.Fd())))
 		} else {
 			s.isInputTTY = 0
 		}
@@ -104,7 +118,7 @@ func (s *IOStreams) IsInputTTY() bool {
 func (s *IOStreams) IsOutputTTY() bool {
 	if s.isOutputTTY == -1 {
 		if f, ok := s.Out.(*os.File); ok {
-			s.isOutputTTY = boolToInt(term.IsTerminal(int(f.Fd())))
+			s.isOutputTTY = boolToInt(goterm.IsTerminal(int(f.Fd())))
 		} else {
 			s.isOutputTTY = 0
 		}
@@ -122,7 +136,7 @@ func (s *IOStreams) IsInteractive() bool {
 func (s *IOStreams) IsStderrTTY() bool {
 	if s.isStderrTTY == -1 {
 		if f, ok := s.ErrOut.(*os.File); ok {
-			s.isStderrTTY = boolToInt(term.IsTerminal(int(f.Fd())))
+			s.isStderrTTY = boolToInt(goterm.IsTerminal(int(f.Fd())))
 		} else {
 			s.isStderrTTY = 0
 		}
@@ -145,6 +159,16 @@ func (s *IOStreams) ColorEnabled() bool {
 // SetColorEnabled explicitly enables or disables color output.
 func (s *IOStreams) SetColorEnabled(enabled bool) {
 	s.colorEnabled = boolToInt(enabled)
+}
+
+// Is256ColorSupported returns whether the host terminal supports 256 colors.
+func (s *IOStreams) Is256ColorSupported() bool {
+	return s.term != nil && s.term.Is256ColorSupported()
+}
+
+// IsTrueColorSupported returns whether the host terminal supports 24-bit truecolor.
+func (s *IOStreams) IsTrueColorSupported() bool {
+	return s.term != nil && s.term.IsTrueColorSupported()
 }
 
 // DetectTerminalTheme attempts to detect the terminal's color theme.
@@ -220,7 +244,7 @@ func (s *IOStreams) TerminalSize() (width, height int) {
 
 	// Try to get size from stdout
 	if f, ok := s.Out.(*os.File); ok {
-		w, h, err := term.GetSize(int(f.Fd()))
+		w, h, err := goterm.GetSize(int(f.Fd()))
 		if err == nil && w > 0 && h > 0 {
 			width, height = w, h
 		}
@@ -229,7 +253,7 @@ func (s *IOStreams) TerminalSize() (width, height int) {
 	// Try stdin as fallback
 	if width == 80 && height == 24 {
 		if f, ok := s.In.(*os.File); ok {
-			w, h, err := term.GetSize(int(f.Fd()))
+			w, h, err := goterm.GetSize(int(f.Fd()))
 			if err == nil && w > 0 && h > 0 {
 				width, height = w, h
 			}

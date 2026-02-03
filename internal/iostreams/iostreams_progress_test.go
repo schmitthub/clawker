@@ -103,15 +103,6 @@ func TestProgressIndicator_StopTwice(t *testing.T) {
 	ios.StopProgressIndicator() // Should not panic
 }
 
-func TestProgressIndicator_EnvVar(t *testing.T) {
-	t.Setenv("CLAWKER_SPINNER_DISABLED", "1")
-
-	ios := NewIOStreams()
-	if !ios.spinnerDisabled {
-		t.Error("spinnerDisabled should be true when env var set")
-	}
-}
-
 func TestProgressIndicator_GetSetSpinnerDisabled(t *testing.T) {
 	ios := NewTestIOStreams()
 
