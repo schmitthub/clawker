@@ -1,5 +1,3 @@
-//go:build ignore
-
 // callback-forwarder polls the host proxy for captured OAuth callback data and
 // forwards it to the local HTTP server (Claude Code's callback listener).
 //
