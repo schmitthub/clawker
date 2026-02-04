@@ -24,10 +24,13 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 ## Content Hashing (`hash.go`)
 
 ```go
-func ContentHash(dockerfile []byte, includes []string, workDir string) (string, error)
+func ContentHash(dockerfile []byte, includes []string, embeddedScripts []string, workDir string) (string, error)
+func EmbeddedScripts() []string  // Returns all embedded script contents for hashing
 ```
 
-SHA-256 of rendered Dockerfile + sorted include file contents. Returns 12-char hex prefix. Images tagged `clawker-<project>:sha-<hash>` with `:latest` aliased.
+SHA-256 of rendered Dockerfile + sorted include file contents + embedded scripts. Returns 12-char hex prefix. Images tagged `clawker-<project>:sha-<hash>` with `:latest` aliased.
+
+`EmbeddedScripts()` returns all embedded assets (entrypoint, firewall, statusline, etc.) to ensure image rebuilds when scripts change.
 
 **Stability guarantee:** Dockerfile only contains structural instructions (FROM, RUN, COPY, USER, WORKDIR, ARG). Config-dependent values injected at container creation time or via Docker build API.
 
