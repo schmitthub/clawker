@@ -39,7 +39,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Config Facade (`config.go`)
 
-The `Config` type is a facade that eagerly loads all configuration from `os.Getwd()`. All fields are public and never nil (defaults are used when config file not found).
+The `Config` type eagerly loads all configuration from `os.Getwd()`. All fields are public and never nil (defaults used when config file not found).
 
 ```go
 type Config struct {
@@ -49,37 +49,14 @@ type Config struct {
     Registry   *RegistryLoader // may be nil if initialization failed
 }
 
-// Production constructor - uses os.Getwd() internally
-func NewConfig() *Config
-
-// Test constructor - pre-populated values, no file I/O
-// Limitations: RootDir()="", worktree methods fail (no registry)
-func NewConfigForTest(project *Project, settings *Settings) *Config
-
-// Accessors for internal loaders (may return nil)
-func (c *Config) SettingsLoader() *SettingsLoader
-func (c *Config) ProjectLoader() *Loader
-func (c *Config) RegistryInitErr() error  // error from registry init (if Registry is nil)
+func NewConfig() *Config                                           // uses os.Getwd() internally
+func NewConfigForTest(project *Project, settings *Settings) *Config // no file I/O, RootDir()=""
+func (c *Config) SettingsLoader() *SettingsLoader                  // may return nil
+func (c *Config) ProjectLoader() *Loader                           // may return nil
+func (c *Config) RegistryInitErr() error                           // error if Registry is nil
 ```
 
-**Key characteristics:**
-- `NewConfig()` takes no arguments — uses `os.Getwd()` internally
-- All fields are eagerly loaded during construction
-- Fatal error if `os.Getwd()` fails or if `clawker.yaml` exists but is invalid
-- Config file not found → uses defaults (non-fatal)
-- No workDir override — tests use `os.Chdir()` or `NewConfigForTest()`
-
-**Usage:**
-```go
-// Production
-cfg := config.NewConfig()
-image := cfg.Project.Build.Image
-projectKey := cfg.Resolution.ProjectKey
-
-// Tests
-cfg := config.NewConfigForTest(nil, nil)  // uses defaults
-cfg := config.NewConfigForTest(&config.Project{...}, nil)  // custom project
-```
+**Behavior:** Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → uses defaults. Tests use `os.Chdir()` or `NewConfigForTest()`.
 
 ## Loader (`loader.go`)
 
@@ -141,48 +118,23 @@ var ErrNotInProject = errors.New("not in a registered project directory")
 
 ## Schema Types (`schema.go`)
 
-**Top-level:** `Project` — `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
+**Top-level `Project`:** `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
 
-**Build:**
-- `BuildConfig` — `Image`, `Dockerfile`, `Packages`, `Context`, `BuildArgs`, `Instructions`, `Inject`
-- `DockerInstructions` — `Copy`, `Env`, `Labels`, `Expose`, `Args`, `Volumes`, `Workdir`, `Healthcheck`, `Shell`, `UserRun`, `RootRun`
-- `InjectConfig` — `AfterFrom`, `AfterPackages`, `AfterUserSetup`, `AfterUserSwitch`, `AfterClaudeInstall`, `BeforeEntrypoint`
-- `CopyInstruction` — `Src`, `Dest`, `Chown`, `Chmod`
-- `RunInstruction` — `Cmd`, `Alpine`, `Debian`
-- `ExposePort` — `Port`, `Protocol`; `ArgDefinition` — `Name`, `Default`
-- `HealthcheckConfig` — `Cmd`, `Interval`, `Timeout`, `StartPeriod`, `Retries`
+**Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
 
-**Agent/Workspace:**
-- `AgentConfig` — `Includes []string`, `Env map[string]string`, `Memory`, `Editor`, `Visual`, `Shell`
-- `WorkspaceConfig` — `RemotePath string`, `DefaultMode string`
+**Agent/Workspace:** `AgentConfig` (Includes, Env, Memory, Editor, Visual, Shell), `WorkspaceConfig` (RemotePath, DefaultMode)
 
-**Security:**
-- `SecurityConfig` — `Firewall`, `DockerSocket`, `CapAdd`, `EnableHostProxy`, `GitCredentials`
-- `FirewallConfig` — `Enable`, `AddDomains`, `RemoveDomains`, `OverrideDomains`, `IPRangeSources`
-  - Methods: `FirewallEnabled() bool`, `GetFirewallDomains() []string`, `IsOverrideMode() bool`, `GetIPRangeSources() []IPRangeSource`
-- `IPRangeSource` — `Name`, `URL`, `JQFilter`, `Required *bool`
-  - Methods: `IsRequired() bool` — github defaults to required, others to optional
-- `GitCredentialsConfig` — `ForwardHTTPS`, `ForwardSSH`, `CopyGitConfig`
-  - Methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()` — all return `bool`
-- `SecurityConfig` methods: `HostProxyEnabled() bool`, `FirewallEnabled() bool`
+**Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
+- `FirewallConfig` methods: `FirewallEnabled()`, `GetFirewallDomains()`, `IsOverrideMode()`, `GetIPRangeSources()`
+- `GitCredentialsConfig` methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()`
 
-**Ralph:**
-- `RalphConfig` (pointer, nil when not configured) — `MaxLoops`, `StagnationThreshold`, `TimeoutMinutes`, `CallsPerHour`, `CompletionThreshold`, `SessionExpirationHours`, `SameErrorThreshold`, `OutputDeclineThreshold`, `MaxConsecutiveTestLoops`, `LoopDelaySeconds`, `SafetyCompletionThreshold`, `SkipPermissions`
-- Methods: `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()` — return defaults if nil/zero
+**Ralph:** `*RalphConfig` (nil when not configured) with `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()` — return defaults if nil/zero
 
 ## Settings (`settings.go`, `settings_loader.go`)
 
-```go
-type Settings struct {
-    DefaultImage string       `yaml:"default_image"`
-    Logging      LoggingConfig `yaml:"logging"`
-}
-type LoggingConfig struct { FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int }
-// Methods: IsFileEnabled, GetMaxSizeMB, GetMaxAgeDays, GetMaxBackups — return defaults if zero
-```
-
-- `NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error)`
-- `WithProjectSettingsRoot(path string) SettingsLoaderOption`
+- `Settings` — `DefaultImage string`, `Logging LoggingConfig`
+- `LoggingConfig` — `FileEnabled *bool`, `MaxSizeMB`, `MaxAgeDays`, `MaxBackups` (methods return defaults if zero)
+- `NewSettingsLoader(opts ...SettingsLoaderOption)` with `WithProjectSettingsRoot(path)`
 - Methods: `Path`, `ProjectSettingsPath`, `Exists`, `Load`, `Save`, `EnsureExists`
 
 ## Registry (`registry.go`)
@@ -212,34 +164,17 @@ Resolves working directory to a registered project.
 
 ## IP Range Sources (`ip_ranges.go`)
 
-Firewall IP range sources allow fetching CIDR ranges from cloud provider APIs (not DNS).
+Fetches CIDR ranges from cloud provider APIs (not DNS) for firewall allowlisting.
 
-```go
-type IPRangeSource struct {
-    Name     string `yaml:"name"`           // Source identifier (e.g., "github", "google-cloud")
-    URL      string `yaml:"url,omitempty"`   // Custom URL (uses built-in if empty)
-    JQFilter string `yaml:"jq_filter,omitempty"` // jq filter for extracting CIDRs
-    Required *bool  `yaml:"required,omitempty"`  // Failure is fatal if true
-}
+- `IPRangeSource` — `Name`, `URL`, `JQFilter`, `Required *bool`
+- `BuiltinIPRangeSources` — map of known sources: `github`, `google-cloud`, `google`, `cloudflare`, `aws`
+- `IsKnownIPRangeSource(name)`, `DefaultIPRangeSources()` → `[{Name: "github"}]`
+- `(*FirewallConfig).GetIPRangeSources()` — returns empty slice in override mode
 
-// Built-in sources with URLs and jq filters
-var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{...}
+**Security note:** `google` source allows traffic to all Google IPs (GCS, Firebase) — prompt injection risk. Only add if required.
 
-// Known sources: github, google-cloud, google, cloudflare, aws
-func IsKnownIPRangeSource(name string) bool
-func DefaultIPRangeSources() []IPRangeSource  // Returns [{Name: "github"}]
-func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
-```
+## Notes
 
-**Default sources:** `[{Name: "github"}]` — github only by default.
-
-**Security note:** The `google` source allows traffic to all Google IPs including GCS and Firebase which can serve user-generated content. This creates a prompt injection risk. Only add if required (e.g., Go proxy).
-
-**Override mode:** If `override_domains` is set, `GetIPRangeSources()` returns empty slice (user controls everything).
-
-## Schema Notes
-
-- `Project.Project` (the project name field) has tag `yaml:"-" mapstructure:"-"` — computed, not persisted
-- `config.Config` is the facade type; `config.Project` is the YAML schema
-- `RalphConfig` is a pointer (`*RalphConfig`) — nil when not configured
-- `FirewallConfig.Enable` defaults to `true` via `defaults.go`
+- `Project.Project` has `yaml:"-"` — computed by loader, not persisted
+- `config.Config` is facade; `config.Project` is YAML schema
+- `FirewallConfig.Enable` defaults to `true`

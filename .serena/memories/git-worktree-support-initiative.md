@@ -15,7 +15,8 @@
 | Task 3: Add GitManager to Factory + --worktree flag | `complete` | Agent 3 |
 | Task 4: Implement `clawker worktree` management commands | `complete` | Agent 4 |
 | Task 5: Add statusline env vars and mode indicators | `complete` | Agent 5 |
-| Task 6: Integration tests and documentation | `pending` | — |
+| Task 6: Integration tests and documentation | `complete` | Agent 6 |
+| Documentation cleanup for PR | `complete` | - |
 
 ## Key Learnings
 
@@ -74,6 +75,22 @@
 3. **Statusline indicator design**: The `[snap]` indicator only shows for snapshot mode, not `[bind]` for bind mode. This follows the principle that the default state doesn't need indication - only non-default states should be visually flagged.
 
 4. **Pre-existing silent failures**: Code review found a pre-existing issue in statusline.sh where `cd` failures are silently ignored. This could cause incorrect git branch display. Filed for follow-up but not blocking Task 5 since it's not introduced by these changes.
+
+### Task 6 Learnings
+
+1. **Test factory for worktree commands**: Created `NewConfigForTestWithEntry` that accepts a `ProjectEntry` with the Root path set, enabling worktree methods to work. The harness needs to properly populate the registry entry for tests to access worktree directory management.
+
+2. **Registry lookup key**: Always use `config.Slugify(h.Project)` when looking up projects in the registry, not the raw project name. The harness registers projects with slugified keys.
+
+3. **Worktree tests don't need Docker**: The worktree list/remove commands only interact with git and the filesystem, not Docker. Removed `harness.RequireDocker(t)` calls that were incorrectly added by copy-paste.
+
+4. **Empty list test assertions**: The worktree list command outputs "No worktrees found" to stderr, not stdout. Tests should check `ios.ErrBuf` for this message and verify stdout is empty.
+
+5. **Silent error patterns in test code**: Code review caught multiple silent error discarding patterns where `yaml.Unmarshal` and `os.ReadFile` errors were silently ignored. Test code should use `t.Fatalf` for unexpected errors rather than silently proceeding with defaults.
+
+6. **Function signature clarity**: If a function returns `(*Type, error)` but never returns an error, simplify to just `*Type`. The `newRegistryLoaderWithPath` function was simplified to not return an error since it doesn't perform any validation that could fail.
+
+7. **CLI workflow tests (txtar)**: Creating worktree txtar tests requires git init + commit before registering the project. The test script must set up the git repo, create files, commit them, then register with `clawker project register`.
 
 (Agents append here as they complete tasks)
 
