@@ -134,6 +134,15 @@ func NewRegistryLoader() (*RegistryLoader, error) {
 	}, nil
 }
 
+// newRegistryLoaderWithPath creates a RegistryLoader for a specific directory.
+// This is used by tests that need to control the registry location.
+// Note: No validation is performed; errors will occur at Load/Save time if the path is invalid.
+func newRegistryLoaderWithPath(dir string) *RegistryLoader {
+	return &RegistryLoader{
+		path: filepath.Join(dir, RegistryFileName),
+	}
+}
+
 // Path returns the full path to the registry file.
 func (l *RegistryLoader) Path() string {
 	return l.path

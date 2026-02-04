@@ -749,3 +749,7 @@ func TestProject(t *testing.T) {
 func TestRoot(t *testing.T) {
 	runTestCategory(t, "root")
 }
+
+func TestWorktree(t *testing.T) {
+	runTestCategory(t, "worktree")
+}

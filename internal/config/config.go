@@ -75,6 +75,46 @@ func NewConfigForTest(project *Project, settings *Settings) *Config {
 	}
 }
 
+// NewConfigForTestWithEntry creates a Config facade with a full project entry.
+// This is intended for integration tests that need worktree methods to work.
+// The configDir is used for registry operations (worktree directory management).
+func NewConfigForTestWithEntry(project *Project, settings *Settings, entry *ProjectEntry, configDir string) *Config {
+	if project == nil {
+		project = DefaultConfig()
+	}
+	if settings == nil {
+		settings = DefaultSettings()
+	}
+	if entry == nil {
+		entry = &ProjectEntry{}
+	}
+
+	resolution := &Resolution{}
+	if project.Project != "" {
+		resolution.ProjectKey = project.Project
+		resolution.ProjectEntry = *entry
+		resolution.WorkDir = entry.Root
+	}
+
+	// Create a registry loader pointing to the test config dir
+	var registry *RegistryLoader
+	if configDir != "" {
+		registry = newRegistryLoaderWithPath(configDir)
+	}
+
+	// Inject full runtime context for tests
+	if resolution.Found() {
+		project.setRuntimeContext(&resolution.ProjectEntry, registry)
+	}
+
+	return &Config{
+		Project:    project,
+		Settings:   settings,
+		Resolution: resolution,
+		Registry:   registry,
+	}
+}
+
 // load initializes all configuration from the current working directory.
 func (c *Config) load() {
 	wd, err := os.Getwd()
