@@ -62,12 +62,8 @@ the session history.`,
 func resetRun(_ context.Context, opts *ResetOptions) error {
 	ios := opts.IOStreams
 
-	// Load config
-	cfg, err := opts.Config().Project()
-	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load config: %v", err)
-		return err
-	}
+	// Get config
+	cfg := opts.Config().Project
 
 	// Get session store
 	store, err := ralph.DefaultSessionStore()

@@ -14,9 +14,9 @@ import (
 
 // LogsOptions holds options for the logs command.
 type LogsOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent      bool
 	Follow     bool
@@ -32,9 +32,9 @@ type LogsOptions struct {
 // NewCmdLogs creates the container logs command.
 func NewCmdLogs(f *cmdutil.Factory, runF func(context.Context, *LogsOptions) error) *cobra.Command {
 	opts := &LogsOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -92,7 +92,7 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 	// Resolve container name
 	containerName := opts.Containers[0]
 	if opts.Agent {
-		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, opts.Containers)
+		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
 		containerName = containers[0]
 	}
 

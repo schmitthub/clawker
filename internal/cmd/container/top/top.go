@@ -16,9 +16,9 @@ import (
 
 // TopOptions holds options for the top command.
 type TopOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent bool
 
@@ -28,9 +28,9 @@ type TopOptions struct {
 // NewCmdTop creates a new top command.
 func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
 	opts := &TopOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -81,7 +81,7 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, []string{containerName})
+		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, []string{containerName})
 		containerName = containers[0]
 	}
 

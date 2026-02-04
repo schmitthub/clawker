@@ -65,7 +65,7 @@ func TestNewCmdKill(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
 				Config: func() *config.Config {
-					return config.NewConfig(func() (string, error) { return "/tmp/test", nil })
+					return config.NewConfigForTest(nil, nil)
 				},
 			}
 

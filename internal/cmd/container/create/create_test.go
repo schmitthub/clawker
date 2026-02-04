@@ -20,7 +20,6 @@ type wantOpts struct {
 	Mode       string
 	Env        []string
 	Volumes    []string
-	Workdir    string
 	User       string
 	Entrypoint string
 	TTY        bool
@@ -82,12 +81,6 @@ func TestNewCmdCreate(t *testing.T) {
 			input: "-v /host:/container",
 			args:  []string{"alpine"},
 			want:  wantOpts{Volumes: []string{"/host:/container"}, Image: "alpine"},
-		},
-		{
-			name:  "with workdir",
-			input: "-w /app",
-			args:  []string{"alpine"},
-			want:  wantOpts{Workdir: "/app", Image: "alpine"},
 		},
 		{
 			name:  "with user",
@@ -235,7 +228,6 @@ func TestNewCmdCreate(t *testing.T) {
 			require.Equal(t, tt.want.Command, gotOpts.Command)
 			requireSliceEqual(t, tt.want.Env, gotOpts.Env)
 			requireSliceEqual(t, tt.want.Volumes, gotOpts.Volumes)
-			require.Equal(t, tt.want.Workdir, gotOpts.Workdir)
 			require.Equal(t, tt.want.User, gotOpts.User)
 			require.Equal(t, tt.want.Entrypoint, gotOpts.Entrypoint)
 			require.Equal(t, tt.want.TTY, gotOpts.TTY)
@@ -265,7 +257,6 @@ func TestCmdCreate_Properties(t *testing.T) {
 	require.NotNil(t, cmd.Flags().Lookup("env"))
 	require.NotNil(t, cmd.Flags().Lookup("volume"))
 	require.NotNil(t, cmd.Flags().Lookup("publish"))
-	require.NotNil(t, cmd.Flags().Lookup("workdir"))
 	require.NotNil(t, cmd.Flags().Lookup("user"))
 	require.NotNil(t, cmd.Flags().Lookup("entrypoint"))
 	require.NotNil(t, cmd.Flags().Lookup("tty"))
@@ -278,7 +269,6 @@ func TestCmdCreate_Properties(t *testing.T) {
 	require.NotNil(t, cmd.Flags().ShorthandLookup("e"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("v"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("p"))
-	require.NotNil(t, cmd.Flags().ShorthandLookup("w"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("u"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("t"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("i"))

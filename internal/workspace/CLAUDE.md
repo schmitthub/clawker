@@ -57,6 +57,8 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 
 `SetupMounts` is the main entry point -- combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
+**Note on worktrees**: When using `--worktree`, `WorkDir` receives the worktree path (e.g., `~/.local/clawker/projects/myapp/worktrees/feature-branch/`). The workspace package doesn't need any special handling — it treats worktree paths the same as project root paths. Both bind and snapshot strategies work unchanged.
+
 ## Git Credentials
 
 ```go

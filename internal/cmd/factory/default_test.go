@@ -24,18 +24,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestFactory_WorkDir(t *testing.T) {
-	f := New("1.0.0", "abc123")
-
-	wd, err := f.WorkDir()
-	if err != nil {
-		t.Fatalf("WorkDir() returned error: %v", err)
-	}
-	if wd == "" {
-		t.Error("expected WorkDir() to return non-empty string")
-	}
-}
-
 func TestFactory_Config_Gateway(t *testing.T) {
 	f := New("1.0.0", "abc123")
 
@@ -51,18 +39,16 @@ func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = func() (string, error) { return tmpDir, nil }
 
 	cfg := f.Config()
-	res := cfg.Resolution()
+	res := cfg.Resolution
 	if res == nil {
 		t.Fatal("Resolution() returned nil")
 	}
+	// Current working directory is unlikely to be a registered project
+	// so Found() should be false
 	if res.Found() {
 		t.Error("Resolution().Found() should be false when no projects registered")
-	}
-	if res.WorkDir != tmpDir {
-		t.Errorf("Resolution().WorkDir = %q, want %q", res.WorkDir, tmpDir)
 	}
 }
 
@@ -70,15 +56,16 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
-	// Create a registry file with a project entry
-	projectRoot := filepath.Join(tmpDir, "myproject")
-	if err := os.MkdirAll(projectRoot, 0755); err != nil {
-		t.Fatalf("failed to create project dir: %v", err)
+	// Get the current working directory to use as project root
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current working directory: %v", err)
 	}
 
+	// Create a registry file with the current directory as a project
 	registry := config.ProjectRegistry{
 		Projects: map[string]config.ProjectEntry{
-			"my-project": {Name: "My Project", Root: projectRoot},
+			"cwd-project": {Name: "CWD Project", Root: cwd},
 		},
 	}
 	data, err := yaml.Marshal(registry)
@@ -90,18 +77,17 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	}
 
 	f := New("1.0.0", "abc")
-	f.WorkDir = func() (string, error) { return projectRoot, nil }
 
 	cfg := f.Config()
-	res := cfg.Resolution()
+	res := cfg.Resolution
 	if res == nil {
 		t.Fatal("Resolution() returned nil")
 	}
 	if !res.Found() {
 		t.Error("Resolution().Found() should be true for registered project")
 	}
-	if res.ProjectKey != "my-project" {
-		t.Errorf("Resolution().ProjectKey = %q, want %q", res.ProjectKey, "my-project")
+	if res.ProjectKey != "cwd-project" {
+		t.Errorf("Resolution().ProjectKey = %q, want %q", res.ProjectKey, "cwd-project")
 	}
 }
 
@@ -145,7 +131,6 @@ func TestFactory_Prompter(t *testing.T) {
 		t.Fatal("Prompter() returned nil")
 	}
 }
-
 
 func TestIOStreams_SpinnerDisabledEnvVar(t *testing.T) {
 	t.Setenv("CLAWKER_SPINNER_DISABLED", "1")

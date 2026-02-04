@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -14,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -30,11 +32,11 @@ type RunOptions struct {
 	*copts.ContainerOptions
 
 	IOStreams  *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
-	Prompter  func() *prompter.Prompter
-	WorkDir   func() (string, error)
+	Client     func(context.Context) (*docker.Client, error)
+	Config     func() *config.Config
+	GitManager func() (*git.GitManager, error)
+	HostProxy  func() *hostproxy.Manager
+	Prompter   func() *prompter.Prompter
 
 	// Run-specific options
 	Detach bool
@@ -51,12 +53,12 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 	containerOpts := copts.NewContainerOptions()
 	opts := &RunOptions{
 		ContainerOptions: containerOpts,
-		IOStreams:         f.IOStreams,
+		IOStreams:        f.IOStreams,
 		Client:           f.Client,
 		Config:           f.Config,
+		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
 		Prompter:         f.Prompter,
-		WorkDir:          f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -132,16 +134,8 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	containerOpts := opts.ContainerOptions
 	cfgGateway := opts.Config()
 
-	// Load config for project name
-	cfg, err := cfgGateway.Project()
-	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load config: %v", err)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to create a configuration",
-			"Or ensure you're in a directory with clawker.yaml",
-		)
-		return err
-	}
+	// Get project config
+	cfg := cfgGateway.Project
 
 	// Connect to Docker
 	client, err := opts.Client(ctx)
@@ -190,10 +184,36 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	opts.AgentName = agentName
 	containerName := docker.ContainerName(cfg.Project, agentName)
 
-	// Get working directory
-	wd, err := opts.WorkDir()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+	// Determine working directory based on --worktree flag
+	var wd string
+	if containerOpts.Worktree != "" {
+		// Use git worktree as workspace source
+		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName)
+		if err != nil {
+			return fmt.Errorf("invalid --worktree flag: %w", err)
+		}
+
+		gitMgr, err := opts.GitManager()
+		if err != nil {
+			return fmt.Errorf("cannot use --worktree: %w", err)
+		}
+
+		wd, err = gitMgr.SetupWorktree(cfg, wtSpec.Branch, wtSpec.Base)
+		if err != nil {
+			return fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, opts.AgentName, err)
+		}
+		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
+	} else {
+		// Get working directory from project root, or fall back to current directory
+		wd = cfg.RootDir()
+		if wd == "" {
+			// Not in a registered project - use current working directory
+			var wdErr error
+			wd, wdErr = os.Getwd()
+			if wdErr != nil {
+				return fmt.Errorf("failed to get working directory: %w", wdErr)
+			}
+		}
 	}
 
 	// Setup workspace mounts
@@ -241,13 +261,23 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
+	// Resolve workspace mode (CLI flag overrides config default)
+	workspaceMode := containerOpts.Mode
+	if workspaceMode == "" {
+		workspaceMode = cfg.Workspace.DefaultMode
+	}
+
 	// Inject config-derived runtime env vars (editor, firewall, terminal, agent env, instruction env)
 	envOpts := docker.RuntimeEnvOpts{
-		Editor:     cfg.Agent.Editor,
-		Visual:     cfg.Agent.Visual,
-		Is256Color: ios.Is256ColorSupported(),
-		TrueColor:  ios.IsTrueColorSupported(),
-		AgentEnv:   cfg.Agent.Env,
+		Project:         cfg.Project,
+		Agent:           agentName,
+		WorkspaceMode:   workspaceMode,
+		WorkspaceSource: wd,
+		Editor:          cfg.Agent.Editor,
+		Visual:          cfg.Agent.Visual,
+		Is256Color:      ios.Is256ColorSupported(),
+		TrueColor:       ios.IsTrueColorSupported(),
+		AgentEnv:        cfg.Agent.Env,
 	}
 	if cfg.Security.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
@@ -566,10 +596,8 @@ func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway
 	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", docker.DefaultImageTag)
 
 	// Persist the default image in settings
-	settingsLoader, err := cfgGateway.SettingsLoader()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load settings loader; default image will not be persisted")
-	} else if settingsLoader != nil {
+	settingsLoader := cfgGateway.SettingsLoader()
+	if settingsLoader != nil {
 		currentSettings, loadErr := settingsLoader.Load()
 		if loadErr != nil {
 			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")

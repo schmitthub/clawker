@@ -1,18 +1,19 @@
 # Config Package
 
-Configuration loading, validation, project registry, resolver, and the `Config` gateway type.
+Configuration loading, validation, project registry, resolver, and the `Config` facade type.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `config.go` | `Config` gateway type — lazy accessor for Project, Settings, Resolution, Registry |
-| `schema.go` | `Project` struct (YAML schema) and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
+| `config.go` | `Config` facade type — eagerly loaded container for Project, Settings, Resolution, Registry |
+| `schema.go` | `Project` struct (YAML schema + runtime context) and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
 | `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
 | `settings.go` | `Settings` struct (user-level: `default_image`, `logging`) |
 | `settings_loader.go` | `SettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
 | `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
+| `project_runtime.go` | `Project` runtime methods — project context accessors and worktree directory management |
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 | `ip_ranges.go` | IP range source registry, `GetIPRangeSources()` method |
@@ -35,6 +36,27 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 - `DefaultConfig() *Project`, `DefaultSettings() *Settings`
 - `DefaultFirewallDomains []string` — pre-approved domains
 - `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile` — template strings
+
+## Config Facade (`config.go`)
+
+The `Config` type eagerly loads all configuration from `os.Getwd()`. All fields are public and never nil (defaults used when config file not found).
+
+```go
+type Config struct {
+    Project    *Project        // from clawker.yaml, defaults if not found
+    Settings   *Settings       // from settings.yaml, defaults if not found
+    Resolution *Resolution     // project resolution from registry
+    Registry   *RegistryLoader // may be nil if initialization failed
+}
+
+func NewConfig() *Config                                           // uses os.Getwd() internally
+func NewConfigForTest(project *Project, settings *Settings) *Config // no file I/O, RootDir()=""
+func (c *Config) SettingsLoader() *SettingsLoader                  // may return nil
+func (c *Config) ProjectLoader() *Loader                           // may return nil
+func (c *Config) RegistryInitErr() error                           // error if Registry is nil
+```
+
+**Behavior:** Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → uses defaults. Tests use `os.Chdir()` or `NewConfigForTest()`.
 
 ## Loader (`loader.go`)
 
@@ -66,83 +88,68 @@ func (*Validator) Warnings() []string                   // non-fatal warnings
 - `ValidationError` — has `Field`, `Message`, `Value interface{}`
 - `ConfigNotFoundError` — has `Path string`; checked via `IsConfigNotFound(err) bool`
 
-## Config Gateway (`config.go`)
+## Project Runtime Context (`project_runtime.go`)
 
-The `Config` type is a lazy-loading gateway that consolidates access to project config, settings, registry, and resolution. Created via `NewConfig(workDir func() string)`.
+The `Project` struct has runtime methods for project context and worktree directory management.
+These methods are available after the config facade injects runtime context via `setRuntimeContext()`.
+The `Project` type implements `git.WorktreeDirProvider`.
 
 ```go
-type Config struct { /* internal sync.Once fields */ }
+// Accessors (on *Project)
+func (p *Project) Key() string         // project slug (same as p.Project field)
+func (p *Project) DisplayName() string // project name from registry, falls back to Key()
+func (p *Project) Found() bool         // true if in a registered project
+func (p *Project) RootDir() string     // project root, empty if not found
 
-func NewConfig(workDir func() (string, error)) *Config
-func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config
+// Worktree directory management (implements git.WorktreeDirProvider)
+func (p *Project) GetOrCreateWorktreeDir(name string) (string, error)
+func (p *Project) GetWorktreeDir(name string) (string, error)
+func (p *Project) DeleteWorktreeDir(name string) error
+func (p *Project) ListWorktreeDirs() ([]WorktreeDirInfo, error)
 
-// Lazy-loaded accessors (each uses sync.Once internally)
-func (*Config) Project() (*Project, error)       // loads clawker.yaml
-func (*Config) Settings() (*Settings, error)      // loads settings.yaml
-func (*Config) SettingsLoader() (*SettingsLoader, error)  // underlying settings loader
-func (*Config) Resolution() *Resolution           // resolves workdir to project
-func (*Config) Registry() (*ProjectRegistry, error)  // loads projects.yaml
+// WorktreeDirInfo contains name (branch), slug, and path
+type WorktreeDirInfo struct { Name, Slug, Path string }
+
+// Sentinel error for operations requiring a registered project
+var ErrNotInProject = errors.New("not in a registered project directory")
 ```
 
-Commands access via `f.Config().Project()` instead of the old `f.Config()` which returned the YAML struct directly.
+**Thread safety:** Worktree operations are protected by a `sync.RWMutex` on the `Project` struct.
 
 ## Schema Types (`schema.go`)
 
-**Top-level:** `Project` — `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
+**Top-level `Project`:** `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
 
-**Build:**
-- `BuildConfig` — `Image`, `Dockerfile`, `Packages`, `Context`, `BuildArgs`, `Instructions`, `Inject`
-- `DockerInstructions` — `Copy`, `Env`, `Labels`, `Expose`, `Args`, `Volumes`, `Workdir`, `Healthcheck`, `Shell`, `UserRun`, `RootRun`
-- `InjectConfig` — `AfterFrom`, `AfterPackages`, `AfterUserSetup`, `AfterUserSwitch`, `AfterClaudeInstall`, `BeforeEntrypoint`
-- `CopyInstruction` — `Src`, `Dest`, `Chown`, `Chmod`
-- `RunInstruction` — `Cmd`, `Alpine`, `Debian`
-- `ExposePort` — `Port`, `Protocol`; `ArgDefinition` — `Name`, `Default`
-- `HealthcheckConfig` — `Cmd`, `Interval`, `Timeout`, `StartPeriod`, `Retries`
+**Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
 
-**Agent/Workspace:**
-- `AgentConfig` — `Includes []string`, `Env map[string]string`, `Memory`, `Editor`, `Visual`, `Shell`
-- `WorkspaceConfig` — `RemotePath string`, `DefaultMode string`
+**Agent/Workspace:** `AgentConfig` (Includes, Env, Memory, Editor, Visual, Shell), `WorkspaceConfig` (RemotePath, DefaultMode)
 
-**Security:**
-- `SecurityConfig` — `Firewall`, `DockerSocket`, `CapAdd`, `EnableHostProxy`, `GitCredentials`
-- `FirewallConfig` — `Enable`, `AddDomains`, `RemoveDomains`, `OverrideDomains`, `IPRangeSources`
-  - Methods: `FirewallEnabled() bool`, `GetFirewallDomains() []string`, `IsOverrideMode() bool`, `GetIPRangeSources() []IPRangeSource`
-- `IPRangeSource` — `Name`, `URL`, `JQFilter`, `Required *bool`
-  - Methods: `IsRequired() bool` — github defaults to required, others to optional
-- `GitCredentialsConfig` — `ForwardHTTPS`, `ForwardSSH`, `CopyGitConfig`
-  - Methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()` — all return `bool`
-- `SecurityConfig` methods: `HostProxyEnabled() bool`, `FirewallEnabled() bool`
+**Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
+- `FirewallConfig` methods: `FirewallEnabled()`, `GetFirewallDomains()`, `IsOverrideMode()`, `GetIPRangeSources()`
+- `GitCredentialsConfig` methods: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `CopyGitConfigEnabled()`
 
-**Ralph:**
-- `RalphConfig` (pointer, nil when not configured) — `MaxLoops`, `StagnationThreshold`, `TimeoutMinutes`, `CallsPerHour`, `CompletionThreshold`, `SessionExpirationHours`, `SameErrorThreshold`, `OutputDeclineThreshold`, `MaxConsecutiveTestLoops`, `LoopDelaySeconds`, `SafetyCompletionThreshold`, `SkipPermissions`
-- Methods: `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()` — return defaults if nil/zero
+**Ralph:** `*RalphConfig` (nil when not configured) with `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()` — return defaults if nil/zero
 
 ## Settings (`settings.go`, `settings_loader.go`)
 
-```go
-type Settings struct {
-    DefaultImage string       `yaml:"default_image"`
-    Logging      LoggingConfig `yaml:"logging"`
-}
-type LoggingConfig struct { FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups int }
-// Methods: IsFileEnabled, GetMaxSizeMB, GetMaxAgeDays, GetMaxBackups — return defaults if zero
-```
-
-- `NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error)`
-- `WithProjectSettingsRoot(path string) SettingsLoaderOption`
+- `Settings` — `DefaultImage string`, `Logging LoggingConfig`
+- `LoggingConfig` — `FileEnabled *bool`, `MaxSizeMB`, `MaxAgeDays`, `MaxBackups` (methods return defaults if zero)
+- `NewSettingsLoader(opts ...SettingsLoaderOption)` with `WithProjectSettingsRoot(path)`
 - Methods: `Path`, `ProjectSettingsPath`, `Exists`, `Load`, `Save`, `EnsureExists`
 
 ## Registry (`registry.go`)
 
 Persistent project registry at `~/.local/clawker/projects.yaml`.
 
-- `ProjectEntry` — `Name string`, `Root string`
+- `ProjectEntry` — `Name string`, `Root string`, `Worktrees map[string]string`
   - `(e ProjectEntry) Valid() error` — validates fields (name non-empty, root path absolute)
 - `ProjectRegistry` — `Projects map[string]ProjectEntry`
 - `NewRegistryLoader()` — creates loader for the registry file (resolves path from CLAWKER_HOME)
 - `Slugify(name)` — converts project name to URL-safe slug
 - `UniqueSlug(name, registry)` — generates unique slug with numeric suffix if needed
-- `(*RegistryLoader).Register(key, entry)` / `Unregister(key)` — add/remove projects
+- `(*RegistryLoader).Register(displayName, rootDir)` — add/update project, returns slug key
+- `(*RegistryLoader).Unregister(key)` — remove project by key
+- `(*RegistryLoader).UpdateProject(key, func(*ProjectEntry) error)` — atomically modify a project entry
 - `(*ProjectRegistry).Lookup(path)` — find project by longest-prefix path match
 - `(*ProjectRegistry).LookupByKey(key)` / `HasKey(key)` — find/check by slug
 
@@ -150,41 +157,24 @@ Persistent project registry at `~/.local/clawker/projects.yaml`.
 
 Resolves working directory to a registered project.
 
-- `Resolution` — `ProjectKey string`, `ProjectEntry *ProjectEntry`, `WorkDir string`
+- `Resolution` — `ProjectKey string`, `ProjectEntry ProjectEntry`, `WorkDir string`
 - `NewResolver(registry)` — creates resolver from registry
-- `(*Resolver).Resolve(workDir) *Resolution` — nil if no match
+- `(*Resolver).Resolve(workDir) *Resolution`
 - `(*Resolution).Found() bool`, `(*Resolution).ProjectRoot() string`
 
 ## IP Range Sources (`ip_ranges.go`)
 
-Firewall IP range sources allow fetching CIDR ranges from cloud provider APIs (not DNS).
+Fetches CIDR ranges from cloud provider APIs (not DNS) for firewall allowlisting.
 
-```go
-type IPRangeSource struct {
-    Name     string `yaml:"name"`           // Source identifier (e.g., "github", "google-cloud")
-    URL      string `yaml:"url,omitempty"`   // Custom URL (uses built-in if empty)
-    JQFilter string `yaml:"jq_filter,omitempty"` // jq filter for extracting CIDRs
-    Required *bool  `yaml:"required,omitempty"`  // Failure is fatal if true
-}
+- `IPRangeSource` — `Name`, `URL`, `JQFilter`, `Required *bool`
+- `BuiltinIPRangeSources` — map of known sources: `github`, `google-cloud`, `google`, `cloudflare`, `aws`
+- `IsKnownIPRangeSource(name)`, `DefaultIPRangeSources()` → `[{Name: "github"}]`
+- `(*FirewallConfig).GetIPRangeSources()` — returns empty slice in override mode
 
-// Built-in sources with URLs and jq filters
-var BuiltinIPRangeSources = map[string]BuiltinIPRangeConfig{...}
+**Security note:** `google` source allows traffic to all Google IPs (GCS, Firebase) — prompt injection risk. Only add if required.
 
-// Known sources: github, google-cloud, google, cloudflare, aws
-func IsKnownIPRangeSource(name string) bool
-func DefaultIPRangeSources() []IPRangeSource  // Returns [{Name: "github"}]
-func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
-```
+## Notes
 
-**Default sources:** `[{Name: "github"}]` — github only by default.
-
-**Security note:** The `google` source allows traffic to all Google IPs including GCS and Firebase which can serve user-generated content. This creates a prompt injection risk. Only add if required (e.g., Go proxy).
-
-**Override mode:** If `override_domains` is set, `GetIPRangeSources()` returns empty slice (user controls everything).
-
-## Schema Notes
-
-- `Project.Project` (the project name field) has tag `yaml:"-" mapstructure:"-"` — computed, not persisted
-- `config.Config` is the gateway type (NOT the YAML schema); `config.Project` is the YAML schema
-- `RalphConfig` is a pointer (`*RalphConfig`) — nil when not configured
-- `FirewallConfig.Enable` defaults to `true` via `defaults.go`
+- `Project.Project` has `yaml:"-"` — computed by loader, not persisted
+- `config.Config` is facade; `config.Project` is YAML schema
+- `FirewallConfig.Enable` defaults to `true`

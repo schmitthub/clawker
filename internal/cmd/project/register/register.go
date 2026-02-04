@@ -4,6 +4,7 @@ package register
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -17,9 +18,8 @@ import (
 // RegisterOptions contains the options for the project register command.
 type RegisterOptions struct {
 	IOStreams *iostreams.IOStreams
-	Prompter func() *prompterpkg.Prompter
-	Config   func() *config.Config
-	WorkDir  func() (string, error)
+	Prompter  func() *prompterpkg.Prompter
+	Config    func() *config.Config
 
 	Name string // Positional arg: project name
 	Yes  bool
@@ -29,9 +29,8 @@ type RegisterOptions struct {
 func NewCmdProjectRegister(f *cmdutil.Factory, runF func(context.Context, *RegisterOptions) error) *cobra.Command {
 	opts := &RegisterOptions{
 		IOStreams: f.IOStreams,
-		Prompter: f.Prompter,
-		Config:   f.Config,
-		WorkDir:  f.WorkDir,
+		Prompter:  f.Prompter,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -75,7 +74,8 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	wd, err := opts.WorkDir()
+	// Get current working directory (where the project to register is located)
+	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
@@ -116,8 +116,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		}
 	}
 
-	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
-	slug, err := project.RegisterProject(ios, registryLoader, wd, projectName)
+	slug, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName)
 	if err != nil {
 		return err
 	}

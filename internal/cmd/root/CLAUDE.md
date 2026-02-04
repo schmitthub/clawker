@@ -18,7 +18,6 @@ func NewCmdRoot(f *cmdutil.Factory) *cobra.Command
 ## Global Flags
 
 - `--debug` / `-D` — enable debug logging
-- `--workdir` / `-w` — override working directory
 
 ## PersistentPreRunE
 

@@ -35,12 +35,13 @@
 ├── internal/
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
-│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, root/)
+│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
+│   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   │   ├── hostproxytest/    # MockHostProxy for integration tests
 │   │   └── internals/        # Container-side hostproxy client scripts
@@ -85,8 +86,9 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (9 fields: 3 eager + 5 lazy nouns + 1 lazy client); constructor in cmd/factory |
+| `Factory` | Slim DI struct (8 fields: 3 eager + 5 lazy nouns); constructor in cmd/factory |
 | `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
+| `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
@@ -108,7 +110,7 @@ See `.claude/memories/CLI-VERBS.md` for complete command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`
 
-**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`)
+**Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`), `worktree *`
 
 Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
 
@@ -187,7 +189,7 @@ security:
 5. Project registry replaces directory walking for resolution
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
-8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`). WorkDir is `func() string` (lazy closure)
+8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
 
 ## Important Gotchas

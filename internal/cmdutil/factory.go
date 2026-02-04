@@ -5,6 +5,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -21,14 +22,14 @@ import (
 // Options structs.
 type Factory struct {
 	// Eager (set at construction)
-	Version  string
-	Commit   string
+	Version   string
+	Commit    string
 	IOStreams *iostreams.IOStreams
 
 	// Lazy nouns
-	WorkDir   func() (string, error)
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
-	Prompter  func() *prompter.Prompter
+	Client     func(context.Context) (*docker.Client, error)
+	Config     func() *config.Config
+	GitManager func() (*git.GitManager, error)
+	HostProxy  func() *hostproxy.Manager
+	Prompter   func() *prompter.Prompter
 }

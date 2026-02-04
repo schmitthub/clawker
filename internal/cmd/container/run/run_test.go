@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -41,7 +42,6 @@ func TestNewCmdRun(t *testing.T) {
 		wantEnv        []string
 		wantVolumes    []string
 		wantPublish    []string
-		wantWorkdir    string
 		wantUser       string
 		wantEntrypoint string
 		wantTTY        bool
@@ -119,13 +119,6 @@ func TestNewCmdRun(t *testing.T) {
 			input:       "-p 8080:80",
 			args:        []string{"alpine"},
 			wantPublish: []string{"8080:80"},
-			wantImage:   "alpine",
-		},
-		{
-			name:        "with workdir",
-			input:       "-w /app",
-			args:        []string{"alpine"},
-			wantWorkdir: "/app",
 			wantImage:   "alpine",
 		},
 		{
@@ -382,7 +375,6 @@ func TestNewCmdRun(t *testing.T) {
 			requireSliceEqual(t, tt.wantEnv, gotOpts.ContainerOptions.Env)
 			requireSliceEqual(t, tt.wantVolumes, gotOpts.ContainerOptions.Volumes)
 			requireSliceEqual(t, tt.wantPublish, gotOpts.ContainerOptions.Publish.GetAsStrings())
-			require.Equal(t, tt.wantWorkdir, gotOpts.ContainerOptions.Workdir)
 			require.Equal(t, tt.wantUser, gotOpts.ContainerOptions.User)
 			require.Equal(t, tt.wantEntrypoint, gotOpts.ContainerOptions.Entrypoint)
 			require.Equal(t, tt.wantTTY, gotOpts.ContainerOptions.TTY)
@@ -495,14 +487,6 @@ func TestBuildConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "with workdir",
-			opts: &copts.ContainerOptions{
-				Image:   "alpine",
-				Workdir: "/app",
-				Publish: copts.NewPortOpts(),
-			},
-		},
-		{
 			name: "with user",
 			opts: &copts.ContainerOptions{
 				Image:   "alpine",
@@ -551,11 +535,6 @@ func TestBuildConfigs(t *testing.T) {
 			// Verify volumes/binds
 			if len(tt.opts.Volumes) > 0 {
 				require.Equal(t, tt.opts.Volumes, hostCfg.Binds)
-			}
-
-			// Verify workdir
-			if tt.opts.Workdir != "" {
-				require.Equal(t, tt.opts.Workdir, cfg.WorkingDir)
 			}
 
 			// Verify user
@@ -685,7 +664,7 @@ func TestImageArg(t *testing.T) {
 						DefaultImage: tt.defaultImage,
 					}
 				}
-				testCfg := config.NewConfigForTest("", cfg, settings)
+				testCfg := config.NewConfigForTest(cfg, settings)
 				fake.Client.SetConfig(testCfg)
 
 				// Call the resolution method on the client
@@ -804,15 +783,16 @@ func TestImageArg(t *testing.T) {
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
 	t.Helper()
 	tio := iostreams.NewTestIOStreams()
-	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:  func() (string, error) { return tmpDir, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() *config.Config {
-			return config.NewConfigForTest(tmpDir, testConfig(), config.DefaultSettings())
+			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, fmt.Errorf("GitManager not available in test")
 		},
 		HostProxy: func() *hostproxy.Manager {
 			return hostproxy.NewManager()
@@ -912,22 +892,21 @@ func TestRunRun(t *testing.T) {
 		cfgProject.DefaultImage = "node:20-slim"
 
 		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())),
+			dockertest.WithConfig(config.NewConfigForTest(cfgProject, config.DefaultSettings())),
 		)
-		fake.SetupImageList()                          // empty — no project image found
-		fake.SetupImageExists("node:20-slim", false)   // default image missing
+		fake.SetupImageList()                        // empty — no project image found
+		fake.SetupImageExists("node:20-slim", false) // default image missing
 		fake.SetupContainerCreate()
 		fake.SetupContainerStart()
 
 		tio := iostreams.NewTestIOStreams() // non-interactive
 		f := &cmdutil.Factory{
 			IOStreams: tio.IOStreams,
-			WorkDir:  func() (string, error) { return t.TempDir(), nil },
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
 			Config: func() *config.Config {
-				return config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())
+				return config.NewConfigForTest(cfgProject, config.DefaultSettings())
 			},
 			HostProxy: func() *hostproxy.Manager {
 				return hostproxy.NewManager()

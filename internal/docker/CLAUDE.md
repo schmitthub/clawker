@@ -145,26 +145,19 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 
 ```go
 type RuntimeEnvOpts struct {
-    Editor, Visual   string            // defaults to "nano"
-    FirewallEnabled  bool
-    FirewallDomains  []string
-    FirewallOverride bool
-    FirewallIPRangeSources []config.IPRangeSource  // IP range sources for firewall
-    Is256Color       bool              // host supports 256 colors → TERM=xterm-256color
-    TrueColor        bool              // host supports truecolor → COLORTERM=truecolor
-    AgentEnv         map[string]string // agent.env from config
-    InstructionEnv   map[string]string // build.instructions.env from config
+    Project, Agent, WorkspaceMode, WorkspaceSource string  // → CLAWKER_* identity vars
+    Editor, Visual string                                   // defaults to "nano"
+    FirewallEnabled bool; FirewallDomains []string; FirewallOverride bool
+    FirewallIPRangeSources []config.IPRangeSource
+    Is256Color, TrueColor bool                              // terminal capabilities
+    AgentEnv, InstructionEnv map[string]string              // from config
 }
-
 func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
 ```
 
-Produces container env vars with precedence (last wins): base defaults → terminal capabilities → agent env → instruction env. Output is sorted by key for deterministic ordering.
+Precedence (last wins): base defaults → terminal → agent env → instruction env. Output sorted by key.
 
-**Firewall env vars:**
-- `CLAWKER_FIREWALL_DOMAINS` — JSON array of allowed domains
-- `CLAWKER_FIREWALL_OVERRIDE` — "true" if in override mode
-- `CLAWKER_FIREWALL_IP_RANGE_SOURCES` — JSON array of `IPRangeSource` objects for `init-firewall.sh`
+**Container env vars:** `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_WORKSPACE_SOURCE` (identity); `CLAWKER_FIREWALL_DOMAINS`, `CLAWKER_FIREWALL_OVERRIDE`, `CLAWKER_FIREWALL_IP_RANGE_SOURCES` (firewall)
 
 ## Volume Utilities (`volume.go`)
 

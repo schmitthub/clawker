@@ -448,6 +448,20 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 | `remove`, `rm` | Remove a network |
 | `prune` | Remove unused networks |
 
+### Worktree Management (`clawker worktree`)
+
+| Command | Description |
+|---------|-------------|
+| `list` | List git worktrees for the current project |
+| `remove <branch>` | Remove a git worktree |
+
+**Flags for `remove`:**
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Remove worktree even if it has uncommitted changes |
+| `--delete-branch` | Also delete the git branch after removing worktree |
+
 ---
 
 ## Flag Conventions
@@ -653,7 +667,7 @@ The `container run` and `container create` commands support a comprehensive set 
 | `--env` | `-e` | stringArray | Set environment variables |
 | `--volume` | `-v` | stringArray | Bind mount a volume |
 | `--publish` | `-p` | stringArray | Publish container port(s) to host |
-| `--workdir` | `-w` | string | Working directory inside the container |
+| `--worktree` | | string | Use git worktree: 'branch' to use/create, 'branch:base' to create from base |
 | `--user` | `-u` | string | Username or UID |
 | `--entrypoint` | | string | Overwrite the default ENTRYPOINT |
 | `--tty` | `-t` | bool | Allocate a pseudo-TTY |

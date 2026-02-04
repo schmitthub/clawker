@@ -126,7 +126,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &Client{} // nil Engine and nil cfg
-			client.cfg = config.NewConfigForTest("", tt.cfg, tt.settings)
+			client.cfg = config.NewConfigForTest(tt.cfg, tt.settings)
 			got, err := client.ResolveImage(context.TODO())
 			if err != nil {
 				t.Fatalf("ResolveImage() returned unexpected error: %v", err)
@@ -165,7 +165,7 @@ func TestFindProjectImage_NilConfig(t *testing.T) {
 func TestFindProjectImage_EmptyProject(t *testing.T) {
 	ctx := context.Background()
 	client := &Client{}
-	client.cfg = config.NewConfigForTest("", &config.Project{Project: ""}, nil)
+	client.cfg = config.NewConfigForTest(&config.Project{Project: ""}, nil)
 
 	result, err := client.findProjectImage(ctx)
 	if err != nil {
@@ -238,7 +238,7 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &Client{}
 			if tt.cfg != nil || tt.settings != nil {
-				client.cfg = config.NewConfigForTest("", tt.cfg, tt.settings)
+				client.cfg = config.NewConfigForTest(tt.cfg, tt.settings)
 			}
 
 			result, err := client.ResolveImageWithSource(ctx)

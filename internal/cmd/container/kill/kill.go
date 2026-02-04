@@ -13,9 +13,9 @@ import (
 
 // KillOptions holds options for the kill command.
 type KillOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent  bool
 	Signal string
@@ -26,9 +26,9 @@ type KillOptions struct {
 // NewCmdKill creates the container kill command.
 func NewCmdKill(f *cmdutil.Factory, runF func(context.Context, *KillOptions) error) *cobra.Command {
 	opts := &KillOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -79,7 +79,7 @@ func killRun(ctx context.Context, opts *KillOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
 	}
 
 	// Connect to Docker

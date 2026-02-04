@@ -177,7 +177,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("image matches with :latest tag", func(t *testing.T) {
-		testCfg := config.NewConfigForTest("", &config.Project{Project: state.projectName}, nil)
+		testCfg := config.NewConfigForTest(&config.Project{Project: state.projectName}, nil)
 		state.dockerClient.SetConfig(testCfg)
 		defer state.dockerClient.SetConfig(nil)
 
@@ -201,7 +201,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("no matching images for nonexistent project", func(t *testing.T) {
-		testCfg := config.NewConfigForTest("", &config.Project{Project: "nonexistent-project-xyz"}, nil)
+		testCfg := config.NewConfigForTest(&config.Project{Project: "nonexistent-project-xyz"}, nil)
 		state.dockerClient.SetConfig(testCfg)
 		defer state.dockerClient.SetConfig(nil)
 
@@ -217,7 +217,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		testCfg := config.NewConfigForTest("", &config.Project{Project: "other-project"}, nil)
+		testCfg := config.NewConfigForTest(&config.Project{Project: "other-project"}, nil)
 		state.dockerClient.SetConfig(testCfg)
 		defer state.dockerClient.SetConfig(nil)
 
@@ -240,7 +240,7 @@ func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	state := setupImageResolverTests(t)
 	ctx := context.Background()
 
-	testCfg := config.NewConfigForTest("", &config.Project{Project: "project-with-absolutely-no-images"}, nil)
+	testCfg := config.NewConfigForTest(&config.Project{Project: "project-with-absolutely-no-images"}, nil)
 	state.dockerClient.SetConfig(testCfg)
 	defer state.dockerClient.SetConfig(nil)
 
@@ -264,7 +264,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			Project:      state.projectName,
 			DefaultImage: "fallback:latest",
 		}
-		testCfg := config.NewConfigForTest("", cfg, nil)
+		testCfg := config.NewConfigForTest(cfg, nil)
 		state.dockerClient.SetConfig(testCfg)
 		defer state.dockerClient.SetConfig(nil)
 
@@ -291,7 +291,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 			Project:      "nonexistent-project-xyz",
 			DefaultImage: "fallback:latest",
 		}
-		testCfg := config.NewConfigForTest("", cfg, nil)
+		testCfg := config.NewConfigForTest(cfg, nil)
 		state.dockerClient.SetConfig(testCfg)
 		defer state.dockerClient.SetConfig(nil)
 
