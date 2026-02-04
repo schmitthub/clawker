@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -369,4 +370,93 @@ func TestProject_WorktreeMethods_NoRegistry(t *testing.T) {
 // hasPrefix checks if path starts with prefix (handling path separators)
 func hasPrefix(path, prefix string) bool {
 	return len(path) >= len(prefix) && path[:len(prefix)] == prefix
+}
+
+
+func TestProject_GetOrCreateWorktreeDir_Concurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	clawkerHome := filepath.Join(tmpDir, "clawker-home")
+	if err := os.MkdirAll(clawkerHome, 0755); err != nil {
+		t.Fatalf("failed to create clawker home: %v", err)
+	}
+	t.Setenv(ClawkerHomeEnv, clawkerHome)
+
+	// Create a registry with a project
+	registry, err := NewRegistryLoader()
+	if err != nil {
+		t.Fatalf("NewRegistryLoader() error = %v", err)
+	}
+
+	projectRoot := filepath.Join(tmpDir, "myproject")
+	if err := os.MkdirAll(projectRoot, 0755); err != nil {
+		t.Fatalf("failed to create project root: %v", err)
+	}
+
+	slug, err := registry.Register("My Project", projectRoot)
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	// Set up the Project with runtime context
+	entry := &ProjectEntry{
+		Name:      "My Project",
+		Root:      projectRoot,
+		Worktrees: make(map[string]string),
+	}
+	p := &Project{Project: slug}
+	p.setRuntimeContext(entry, registry)
+
+	// Test concurrent access with multiple goroutines
+	const numGoroutines = 10
+	const numIterations = 5
+	errChan := make(chan error, numGoroutines*numIterations)
+	pathChan := make(chan string, numGoroutines*numIterations)
+
+	branchName := "feature/concurrent-test"
+
+	// Start multiple goroutines calling GetOrCreateWorktreeDir simultaneously
+	var wg sync.WaitGroup
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numIterations; j++ {
+				path, err := p.GetOrCreateWorktreeDir(branchName)
+				if err != nil {
+					errChan <- err
+				} else {
+					pathChan <- path
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	close(pathChan)
+
+	// Check for errors
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		t.Errorf("concurrent GetOrCreateWorktreeDir() had %d errors: first error = %v", len(errs), errs[0])
+	}
+
+	// All paths should be the same
+	var paths []string
+	for path := range pathChan {
+		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no successful calls to GetOrCreateWorktreeDir()")
+	}
+
+	expectedPath := paths[0]
+	for i, path := range paths {
+		if path != expectedPath {
+			t.Errorf("concurrent call %d returned different path: got %q, want %q", i, path, expectedPath)
+		}
+	}
 }

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	gogit "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -36,8 +37,8 @@ type GitManager struct {
 	repoRoot string
 
 	worktrees    *WorktreeManager
-	worktreeErr  error // cached error from worktree manager initialization
-	worktreeInit bool  // whether worktree manager was initialized
+	worktreeErr  error     // cached error from worktree manager initialization
+	worktreeOnce sync.Once // ensures single initialization of worktree manager
 }
 
 // NewGitManager opens the git repository containing the given path.
@@ -84,10 +85,9 @@ func (g *GitManager) RepoRoot() string {
 // The manager is lazily initialized on first access.
 // Returns an error if the repository's storage doesn't support worktrees.
 func (g *GitManager) Worktrees() (*WorktreeManager, error) {
-	if !g.worktreeInit {
+	g.worktreeOnce.Do(func() {
 		g.worktrees, g.worktreeErr = newWorktreeManager(g.repo, g.repo.Storer)
-		g.worktreeInit = true
-	}
+	})
 	return g.worktrees, g.worktreeErr
 }
 
@@ -245,12 +245,15 @@ func (g *GitManager) ListWorktrees(dirs WorktreeDirProvider) ([]WorktreeInfo, er
 }
 
 // isNotFoundError checks if an error indicates a resource doesn't exist.
+// It uses errors.Is for proper error chain checking of os.ErrNotExist,
+// with string-based fallback for go-git errors that may not wrap standard errors.
 func isNotFoundError(err error) bool {
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}
-	// Check for common "not found" error patterns using Contains for robustness.
-	// This catches variations in error message formatting across go-git versions.
+	// Fallback: check for common "not found" error patterns.
+	// This catches variations in error message formatting across go-git versions
+	// where errors may not properly wrap os.ErrNotExist.
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "not found") ||
 		strings.Contains(errStr, "does not exist") ||

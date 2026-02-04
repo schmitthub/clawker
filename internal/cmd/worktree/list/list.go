@@ -117,8 +117,16 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		// Get last modified time from path
 		modified := ""
 		if wt.Path != "" {
-			if info, err := os.Stat(wt.Path); err == nil {
+			if info, statErr := os.Stat(wt.Path); statErr == nil {
 				modified = formatTimeAgo(info.ModTime())
+			} else if !os.IsNotExist(statErr) {
+				// Surface non-existence errors (e.g., permission issues) to the user
+				// by aggregating them into the error field
+				if wt.Error != nil {
+					wt.Error = fmt.Errorf("%v; stat error: %w", wt.Error, statErr)
+				} else {
+					wt.Error = fmt.Errorf("stat error: %w", statErr)
+				}
 			}
 		}
 

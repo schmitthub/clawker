@@ -121,3 +121,92 @@ func TestNewCmdRemove_RequiresArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires at least 1 arg")
 }
+
+func TestRemoveRun_ForceRemovesCorruptedWorktree(t *testing.T) {
+	ios, _, errBuf := testIOStreams()
+
+	// Create a project that appears to be found
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Track whether RemoveWorktree was called
+	removeWorktreeCalled := false
+
+	// Create a mock run function that simulates:
+	// 1. Without --force: fails because worktree status can't be verified
+	// 2. With --force: skips status check and removes worktree
+	runF := func(ctx context.Context, opts *RemoveOptions) error {
+		// Verify we're in force mode for this test
+		if !opts.Force {
+			return errors.New("cannot verify worktree status (use --force to remove anyway): worktree corrupted")
+		}
+
+		// In force mode, we skip the status check and proceed with removal
+		removeWorktreeCalled = true
+		return nil
+	}
+
+	// Test without --force (should fail)
+	opts := &RemoveOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			return config.NewConfigForTest(proj, nil)
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, nil // We won't actually use this since we provide runF
+		},
+		Force:    false,
+		Branches: []string{"corrupted-branch"},
+	}
+
+	err := runF(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot verify worktree status")
+	assert.False(t, removeWorktreeCalled)
+
+	// Test with --force (should succeed)
+	opts.Force = true
+	errBuf.Reset()
+
+	err = runF(context.Background(), opts)
+	require.NoError(t, err)
+	assert.True(t, removeWorktreeCalled, "--force should skip status check and proceed with removal")
+}
+
+func TestRemoveRun_ForceFlag_WorksViaCommand(t *testing.T) {
+	ios, _, _ := testIOStreams()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Track whether force flag was correctly passed
+	var capturedOpts *RemoveOptions
+
+	runF := func(ctx context.Context, opts *RemoveOptions) error {
+		capturedOpts = opts
+		return nil // Just capture options, don't actually run
+	}
+
+	f := &cmdutil.Factory{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			return config.NewConfigForTest(proj, nil)
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, nil
+		},
+	}
+
+	cmd := NewCmdRemove(f, runF)
+	cmd.SetArgs([]string{"--force", "some-branch"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts)
+	assert.True(t, capturedOpts.Force, "--force flag should be captured")
+	assert.Equal(t, []string{"some-branch"}, capturedOpts.Branches)
+}

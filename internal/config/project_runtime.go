@@ -11,6 +11,9 @@ import (
 // but the current working directory is not within a registered project.
 var ErrNotInProject = errors.New("not in a registered project directory")
 
+// ErrWorktreeNotFound is returned when a worktree is not found in the registry.
+var ErrWorktreeNotFound = errors.New("worktree not found")
+
 // WorktreeDirInfo contains information about a worktree directory.
 type WorktreeDirInfo struct {
 	Name string // original branch name
@@ -112,6 +115,7 @@ func (p *Project) GetOrCreateWorktreeDir(name string) (string, error) {
 
 // GetWorktreeDir returns the path to an existing worktree directory.
 // Returns an error if the worktree directory doesn't exist.
+// Returns ErrWorktreeNotFound (wrapped) if the worktree is not in the registry.
 //
 // This method implements git.WorktreeDirProvider.
 func (p *Project) GetWorktreeDir(name string) (string, error) {
@@ -121,7 +125,7 @@ func (p *Project) GetWorktreeDir(name string) (string, error) {
 
 	slug, exists := p.getWorktreeSlug(name)
 	if !exists {
-		return "", fmt.Errorf("worktree %q not found in registry", name)
+		return "", fmt.Errorf("worktree %q: %w", name, ErrWorktreeNotFound)
 	}
 
 	wtDir, err := p.worktreesDir()
@@ -134,7 +138,7 @@ func (p *Project) GetWorktreeDir(name string) (string, error) {
 	// Verify directory exists
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("worktree directory does not exist: %s", path)
+			return "", fmt.Errorf("worktree directory does not exist: %s: %w", path, ErrWorktreeNotFound)
 		}
 		return "", fmt.Errorf("checking worktree directory: %w", err)
 	}
@@ -144,6 +148,7 @@ func (p *Project) GetWorktreeDir(name string) (string, error) {
 
 // DeleteWorktreeDir removes a worktree directory and its registry entry.
 // Returns an error if the directory doesn't exist.
+// Returns ErrWorktreeNotFound (wrapped) if the worktree is not in the registry.
 //
 // This method implements git.WorktreeDirProvider.
 func (p *Project) DeleteWorktreeDir(name string) error {
@@ -153,7 +158,7 @@ func (p *Project) DeleteWorktreeDir(name string) error {
 
 	slug, exists := p.getWorktreeSlug(name)
 	if !exists {
-		return fmt.Errorf("worktree %q not found in registry", name)
+		return fmt.Errorf("worktree %q: %w", name, ErrWorktreeNotFound)
 	}
 
 	wtDir, err := p.worktreesDir()
