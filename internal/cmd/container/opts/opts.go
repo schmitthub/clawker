@@ -208,7 +208,6 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringArrayVar(&opts.EnvFile, "env-file", nil, "Read in a file of environment variables")
 	flags.StringArrayVarP(&opts.Volumes, "volume", "v", nil, "Bind mount a volume")
 	flags.VarP(opts.Publish, "publish", "p", "Publish container port(s) to host")
-	flags.StringVarP(&opts.Workdir, "workdir", "w", "", "Working directory inside the container")
 	flags.StringVarP(&opts.User, "user", "u", "", "Username or UID")
 	flags.StringVar(&opts.Entrypoint, "entrypoint", "", "Overwrite the default ENTRYPOINT")
 	flags.BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")

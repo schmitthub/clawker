@@ -42,7 +42,6 @@ func TestNewCmdRun(t *testing.T) {
 		wantEnv        []string
 		wantVolumes    []string
 		wantPublish    []string
-		wantWorkdir    string
 		wantUser       string
 		wantEntrypoint string
 		wantTTY        bool
@@ -120,13 +119,6 @@ func TestNewCmdRun(t *testing.T) {
 			input:       "-p 8080:80",
 			args:        []string{"alpine"},
 			wantPublish: []string{"8080:80"},
-			wantImage:   "alpine",
-		},
-		{
-			name:        "with workdir",
-			input:       "-w /app",
-			args:        []string{"alpine"},
-			wantWorkdir: "/app",
 			wantImage:   "alpine",
 		},
 		{
@@ -383,7 +375,6 @@ func TestNewCmdRun(t *testing.T) {
 			requireSliceEqual(t, tt.wantEnv, gotOpts.ContainerOptions.Env)
 			requireSliceEqual(t, tt.wantVolumes, gotOpts.ContainerOptions.Volumes)
 			requireSliceEqual(t, tt.wantPublish, gotOpts.ContainerOptions.Publish.GetAsStrings())
-			require.Equal(t, tt.wantWorkdir, gotOpts.ContainerOptions.Workdir)
 			require.Equal(t, tt.wantUser, gotOpts.ContainerOptions.User)
 			require.Equal(t, tt.wantEntrypoint, gotOpts.ContainerOptions.Entrypoint)
 			require.Equal(t, tt.wantTTY, gotOpts.ContainerOptions.TTY)
@@ -496,14 +487,6 @@ func TestBuildConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "with workdir",
-			opts: &copts.ContainerOptions{
-				Image:   "alpine",
-				Workdir: "/app",
-				Publish: copts.NewPortOpts(),
-			},
-		},
-		{
 			name: "with user",
 			opts: &copts.ContainerOptions{
 				Image:   "alpine",
@@ -552,11 +535,6 @@ func TestBuildConfigs(t *testing.T) {
 			// Verify volumes/binds
 			if len(tt.opts.Volumes) > 0 {
 				require.Equal(t, tt.opts.Volumes, hostCfg.Binds)
-			}
-
-			// Verify workdir
-			if tt.opts.Workdir != "" {
-				require.Equal(t, tt.opts.Workdir, cfg.WorkingDir)
 			}
 
 			// Verify user
