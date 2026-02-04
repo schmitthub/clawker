@@ -15,7 +15,7 @@ import (
 //
 // All include files must be readable. An error is returned if any file
 // cannot be read (missing, permission denied, etc.).
-func ContentHash(dockerfile []byte, includes []string, workDir string) (string, error) {
+func ContentHash(dockerfile []byte, includes []string, workDir string, embeddedScripts []string) (string, error) {
 	h := sha256.New()
 
 	// Hash the rendered Dockerfile (captures all template-driven changes)
@@ -43,6 +43,14 @@ func ContentHash(dockerfile []byte, includes []string, workDir string) (string, 
 			h.Write([]byte("\x00" + include + "\x00"))
 			h.Write(content)
 		}
+	}
+
+	// Hash embedded scripts in deterministic order.
+	// The caller provides scripts in sorted order (via EmbeddedScripts()).
+	// This ensures hash changes when any embedded script changes.
+	for _, script := range embeddedScripts {
+		h.Write([]byte("\x00embedded\x00"))
+		h.Write([]byte(script))
 	}
 
 	sum := h.Sum(nil)

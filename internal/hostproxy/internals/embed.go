@@ -2,6 +2,11 @@
 // that run inside clawker containers to communicate with the host proxy.
 // These are leaf assets (stdlib + embed only) consumed by the bundler package
 // when assembling Docker build contexts.
+//
+// IMPORTANT: All embedded scripts in this package are automatically included
+// in image content hashing via AllScripts(). When adding new scripts, export
+// them as package-level vars and add them to AllScripts() to ensure image
+// rebuilds when scripts change.
 package internals
 
 import _ "embed"
@@ -32,3 +37,18 @@ var SSHAgentProxySource string
 //
 //go:embed cmd/callback-forwarder/main.go
 var CallbackForwarderSource string
+
+// AllScripts returns all embedded script contents for content hashing.
+// This is used by the bundler package to ensure image rebuilds when any
+// container-side script changes.
+//
+// IMPORTANT: When adding new embedded scripts to this package, add them
+// to this list to ensure they are included in image content hashing.
+func AllScripts() []string {
+	return []string{
+		CallbackForwarderSource,
+		GitCredentialScript,
+		HostOpenScript,
+		SSHAgentProxySource,
+	}
+}

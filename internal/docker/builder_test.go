@@ -156,7 +156,7 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := bundler.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)
@@ -200,7 +200,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := bundler.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)
@@ -262,7 +262,7 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
-	hash, err := bundler.ContentHash(dockerfile, nil, "")
+	hash, err := bundler.ContentHash(dockerfile, nil, "", bundler.EmbeddedScripts())
 	require.NoError(t, err)
 
 	hashTag := ImageTagWithHash(cfg.Project, hash)

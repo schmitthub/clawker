@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -18,6 +19,13 @@ import (
 )
 
 // Embedded assets for Dockerfile generation
+//
+// IMPORTANT: All scripts in assets/ are automatically included in image
+// content hashing via EmbeddedScripts(). New scripts added to this directory
+// will be discovered automatically without manual list maintenance.
+
+//go:embed assets/*
+var assetsFS embed.FS
 
 //go:embed assets/Dockerfile.tmpl
 var dockerfileFS embed.FS
@@ -46,6 +54,37 @@ var (
 	GitCredentialScript     = internals.GitCredentialScript
 	SSHAgentProxySource     = internals.SSHAgentProxySource
 )
+
+// EmbeddedScripts returns all embedded script contents for content hashing.
+// Scripts are read dynamically from embed.FS to ensure new scripts are
+// automatically included without manual list maintenance.
+//
+// IMPORTANT: This function includes ALL scripts that affect the built image:
+//   - Bundler assets (assets/*) are auto-discovered via embed.FS
+//   - Hostproxy container scripts are included via internals.AllScripts()
+//
+// New scripts added to either location will be automatically included.
+// Scripts are sorted for deterministic hashing.
+func EmbeddedScripts() []string {
+	var scripts []string
+
+	// Read bundler assets dynamically from embed.FS
+	entries, _ := fs.ReadDir(assetsFS, "assets")
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, _ := fs.ReadFile(assetsFS, "assets/"+entry.Name())
+		scripts = append(scripts, string(content))
+	}
+
+	// Add hostproxy container scripts via AllScripts()
+	scripts = append(scripts, internals.AllScripts()...)
+
+	// Sort for deterministic hashing
+	sort.Strings(scripts)
+	return scripts
+}
 
 // Default values for container configuration
 const (
