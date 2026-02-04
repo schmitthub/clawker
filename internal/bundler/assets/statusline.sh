@@ -162,10 +162,16 @@ output+=$(printf " ${GRAY}%s${NC} " ">")
 
 PROJECT="${CLAWKER_PROJECT:-clawker}"
 AGENT="${CLAWKER_AGENT:-}"
+MODE="${CLAWKER_WORKSPACE_MODE:-}"
 if [ -n "$AGENT" ]; then
     output+=$(printf " ${ORANGE}%s:%s${NC}" "$PROJECT" "$AGENT")
 else
     output+=$(printf " ${ORANGE}%s${NC}" "$PROJECT")
+fi
+
+# Workspace mode indicator - only show for snapshot mode
+if [ "$MODE" = "snapshot" ]; then
+    output+=$(printf " ${GRAY}[snap]${NC}")
 fi
 
 # Directory - white, bold

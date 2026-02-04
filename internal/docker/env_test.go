@@ -305,3 +305,76 @@ func TestRuntimeEnv_FirewallDisabledNoIPRangeSources(t *testing.T) {
 			"should not set IP range sources when firewall disabled")
 	}
 }
+
+func TestRuntimeEnv_ClawkerIdentity(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project:         "myproject",
+		Agent:           "ralph",
+		WorkspaceMode:   "bind",
+		WorkspaceSource: "/home/user/myproject",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "CLAWKER_PROJECT=myproject")
+	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/home/user/myproject")
+}
+
+func TestRuntimeEnv_ClawkerIdentitySnapshotMode(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project:         "myapp",
+		Agent:           "dev",
+		WorkspaceMode:   "snapshot",
+		WorkspaceSource: "/var/clawker/worktrees/feature-branch",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "CLAWKER_PROJECT=myapp")
+	assert.Contains(t, env, "CLAWKER_AGENT=dev")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=snapshot")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/var/clawker/worktrees/feature-branch")
+}
+
+func TestRuntimeEnv_ClawkerIdentityEmpty(t *testing.T) {
+	// When identity fields are empty, they should not be set
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project:         "",
+		Agent:           "",
+		WorkspaceMode:   "",
+		WorkspaceSource: "",
+	})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_PROJECT="),
+			"should not set CLAWKER_PROJECT when empty")
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_AGENT="),
+			"should not set CLAWKER_AGENT when empty")
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_WORKSPACE_MODE="),
+			"should not set CLAWKER_WORKSPACE_MODE when empty")
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_WORKSPACE_SOURCE="),
+			"should not set CLAWKER_WORKSPACE_SOURCE when empty")
+	}
+}
+
+func TestRuntimeEnv_ClawkerIdentityPartial(t *testing.T) {
+	// Partial identity (e.g., orphaned project with no project name)
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Agent:           "ralph",
+		WorkspaceMode:   "bind",
+		WorkspaceSource: "/tmp/orphaned-dir",
+	})
+	require.NoError(t, err)
+
+	// Should NOT have project
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_PROJECT="),
+			"should not set CLAWKER_PROJECT when empty")
+	}
+
+	// Should have agent, mode, and source
+	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
+	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/tmp/orphaned-dir")
+}

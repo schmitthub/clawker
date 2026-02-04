@@ -261,13 +261,23 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
+	// Resolve workspace mode (CLI flag overrides config default)
+	workspaceMode := containerOpts.Mode
+	if workspaceMode == "" {
+		workspaceMode = cfg.Workspace.DefaultMode
+	}
+
 	// Inject config-derived runtime env vars (editor, firewall, terminal, agent env, instruction env)
 	envOpts := docker.RuntimeEnvOpts{
-		Editor:     cfg.Agent.Editor,
-		Visual:     cfg.Agent.Visual,
-		Is256Color: ios.Is256ColorSupported(),
-		TrueColor:  ios.IsTrueColorSupported(),
-		AgentEnv:   cfg.Agent.Env,
+		Project:         cfg.Project,
+		Agent:           agentName,
+		WorkspaceMode:   workspaceMode,
+		WorkspaceSource: wd,
+		Editor:          cfg.Agent.Editor,
+		Visual:          cfg.Agent.Visual,
+		Is256Color:      ios.Is256ColorSupported(),
+		TrueColor:       ios.IsTrueColorSupported(),
+		AgentEnv:        cfg.Agent.Env,
 	}
 	if cfg.Security.FirewallEnabled() {
 		envOpts.FirewallEnabled = true

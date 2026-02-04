@@ -14,7 +14,7 @@
 | Task 2: Add Config.Project() with worktree directory management | `complete` | Agent 2 |
 | Task 3: Add GitManager to Factory + --worktree flag | `complete` | Agent 3 |
 | Task 4: Implement `clawker worktree` management commands | `complete` | Agent 4 |
-| Task 5: Add statusline env vars and mode indicators | `pending` | — |
+| Task 5: Add statusline env vars and mode indicators | `complete` | Agent 5 |
 | Task 6: Integration tests and documentation | `pending` | — |
 
 ## Key Learnings
@@ -64,6 +64,16 @@
 4. **Batch operation error handling**: When processing multiple worktrees, collect errors and report all at the end rather than failing fast. Users can see which specific operations failed.
 
 5. **Time formatting helper**: Implemented `formatTimeAgo()` for human-readable relative times in list output. Handles edge cases: just now, minutes, hours, days, and falls back to date format for older entries.
+
+### Task 5 Learnings
+
+1. **Empty string check pattern**: When adding optional env vars, always check for empty strings before setting (`if opts.Field != "" { m["VAR"] = opts.Field }`). This prevents spurious empty env vars from appearing in the container environment.
+
+2. **Mode resolution duplication**: The workspace mode resolution logic (`containerOpts.Mode` with fallback to `cfg.Workspace.DefaultMode`) was duplicated in both run.go and create.go. This is intentional - the mode is resolved locally to populate RuntimeEnvOpts before calling workspace.SetupMounts, which does its own resolution internally. Considered refactoring SetupMounts to return the resolved mode, but the duplication is minimal (3 lines) and avoids API changes.
+
+3. **Statusline indicator design**: The `[snap]` indicator only shows for snapshot mode, not `[bind]` for bind mode. This follows the principle that the default state doesn't need indication - only non-default states should be visually flagged.
+
+4. **Pre-existing silent failures**: Code review found a pre-existing issue in statusline.sh where `cd` failures are silently ignored. This could cause incorrect git branch display. Filed for follow-up but not blocking Task 5 since it's not introduced by these changes.
 
 (Agents append here as they complete tasks)
 

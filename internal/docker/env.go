@@ -11,6 +11,12 @@ import (
 // RuntimeEnvOpts describes the environment variables RuntimeEnv can produce.
 // Each field maps to a specific env var or category of env vars.
 type RuntimeEnvOpts struct {
+	// Clawker identity (consumed by statusline)
+	Project         string
+	Agent           string
+	WorkspaceMode   string // "bind" or "snapshot"
+	WorkspaceSource string // host path being mounted
+
 	// Editor preferences
 	Editor string
 	Visual string
@@ -35,6 +41,20 @@ type RuntimeEnvOpts struct {
 // The result is sorted by key for deterministic ordering.
 func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	m := make(map[string]string)
+
+	// Clawker identity (consumed by statusline)
+	if opts.Project != "" {
+		m["CLAWKER_PROJECT"] = opts.Project
+	}
+	if opts.Agent != "" {
+		m["CLAWKER_AGENT"] = opts.Agent
+	}
+	if opts.WorkspaceMode != "" {
+		m["CLAWKER_WORKSPACE_MODE"] = opts.WorkspaceMode
+	}
+	if opts.WorkspaceSource != "" {
+		m["CLAWKER_WORKSPACE_SOURCE"] = opts.WorkspaceSource
+	}
 
 	// Base defaults: editor/visual
 	editor := opts.Editor
