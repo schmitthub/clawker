@@ -38,8 +38,11 @@ Only removes images that were created by clawker. Use --force to
 remove images even if they have stopped containers using them.
 
 Note: Only clawker-managed images can be removed with this command.`,
-		Example: `  # Remove an image
+		Example: `  # Remove an image by name
   clawker image remove clawker-myapp:latest
+
+  # Remove an image by ID (from 'clawker image list')
+  clawker image remove fd166b867fe9
 
   # Remove multiple images
   clawker image rm clawker-myapp:latest clawker-backend:latest

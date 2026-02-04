@@ -98,11 +98,12 @@ func TestParseContainers(t *testing.T) {
 			},
 		},
 		{
-			name: "missing labels returns empty strings",
+			name: "missing labels falls back to Docker image",
 			in: []container.Summary{
 				{
 					ID:      "ccc",
 					Names:   []string{"/some-container"},
+					Image:   "alpine:latest",
 					Labels:  map[string]string{},
 					State:   "created",
 					Created: 300,
@@ -114,10 +115,38 @@ func TestParseContainers(t *testing.T) {
 					Name:    "some-container",
 					Project: "",
 					Agent:   "",
-					Image:   "",
+					Image:   "alpine:latest",
 					Workdir: "",
 					Status:  "created",
 					Created: 300,
+				},
+			},
+		},
+		{
+			name: "label image takes precedence over Docker image",
+			in: []container.Summary{
+				{
+					ID:    "fff",
+					Names: []string{"/clawker.test.agent"},
+					Image: "sha256:abc123def456",
+					Labels: map[string]string{
+						LabelProject: "test",
+						LabelAgent:   "agent",
+						LabelImage:   "clawker-test:latest",
+					},
+					State:   "running",
+					Created: 400,
+				},
+			},
+			want: []Container{
+				{
+					ID:      "fff",
+					Name:    "clawker.test.agent",
+					Project: "test",
+					Agent:   "agent",
+					Image:   "clawker-test:latest",
+					Status:  "running",
+					Created: 400,
 				},
 			},
 		},
