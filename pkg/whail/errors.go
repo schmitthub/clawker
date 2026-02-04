@@ -620,6 +620,20 @@ func ErrImageListFailed(err error) *DockerError {
 	}
 }
 
+// ErrImageRemoveFailed returns an error for when image removal fails.
+func ErrImageRemoveFailed(image string, err error) *DockerError {
+	return &DockerError{
+		Op:      "image_remove",
+		Err:     err,
+		Message: fmt.Sprintf("Failed to remove image '%s'", image),
+		NextSteps: []string{
+			"Check if containers are using this image: docker ps -a --filter ancestor=" + image,
+			"Stop and remove containers using this image first",
+			"Use --force to force removal (may break running containers)",
+		},
+	}
+}
+
 // ErrVolumeListFailed returns an error for when listing volumes fails.
 func ErrVolumeListFailed(err error) *DockerError {
 	return &DockerError{

@@ -65,7 +65,7 @@ func (e *Engine) ImageRemove(ctx context.Context, imageID string, options client
 	}
 	result, err := e.APIClient.ImageRemove(ctx, imageID, options)
 	if err != nil {
-		return client.ImageRemoveResult{}, ErrImageNotFound(imageID, err)
+		return client.ImageRemoveResult{}, ErrImageRemoveFailed(imageID, err)
 	}
 	return result, nil
 }

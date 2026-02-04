@@ -451,12 +451,18 @@ func parseContainers(containers []container.Summary) []Container {
 			}
 		}
 
+		// Use label image if set, otherwise fall back to Docker-provided image
+		image := c.Labels[LabelImage]
+		if image == "" {
+			image = c.Image
+		}
+
 		result = append(result, Container{
 			ID:      c.ID,
 			Name:    name,
 			Project: c.Labels[LabelProject],
 			Agent:   c.Labels[LabelAgent],
-			Image:   c.Labels[LabelImage],
+			Image:   image,
 			Workdir: c.Labels[LabelWorkdir],
 			Status:  string(c.State),
 			Created: c.Created,
