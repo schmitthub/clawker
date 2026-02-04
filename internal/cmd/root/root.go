@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/ralph"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
+	"github.com/schmitthub/clawker/internal/cmd/worktree"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -75,6 +76,7 @@ Workspace modes:
 	cmd.AddCommand(image.NewCmdImage(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
+	cmd.AddCommand(worktree.NewCmdWorktree(f))
 
 	// Add hidden internal commands
 	cmd.AddCommand(hostproxycmd.NewCmdHostProxy())

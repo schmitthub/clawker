@@ -13,7 +13,7 @@
 | Task 1: Create `internal/git` package foundation | `complete` | Agent 1 |
 | Task 2: Add Config.Project() with worktree directory management | `complete` | Agent 2 |
 | Task 3: Add GitManager to Factory + --worktree flag | `complete` | Agent 3 |
-| Task 4: Implement `clawker worktree` management commands | `pending` | — |
+| Task 4: Implement `clawker worktree` management commands | `complete` | Agent 4 |
 | Task 5: Add statusline env vars and mode indicators | `pending` | — |
 | Task 6: Integration tests and documentation | `pending` | — |
 
@@ -50,6 +50,20 @@
 7. **Added GitManager to test factory**: The run_test.go testFactory helper now includes a GitManager that returns an error, preventing silent nil pointer panics in tests that might exercise the worktree code path.
 
 8. **Error messages include context**: Worktree setup errors now include branch name and agent name for better debugging: `"setting up worktree %q for agent %q: %w"`.
+
+### Task 4 Learnings
+
+1. **Container status was over-scoped**: The initial implementation tried to show container status for each worktree in `list`, but accessing container state required Docker client dependency and type complexity. Removed this feature to keep the list command simple and focused.
+
+2. **Silent failure patterns in removal**: The `removeSingleWorktree` function had multiple silent failure patterns that were caught by the silent-failure-hunter agent:
+   - **CRITICAL (fixed)**: When checking worktree status for uncommitted changes, errors from `wt.Open()`, `wtRepo.Worktree()`, and `status()` were silently ignored, proceeding with removal anyway. Fixed by requiring `--force` flag when status cannot be verified.
+   - **HIGH (fixed)**: When `--delete-branch` was explicitly requested but branch deletion failed, the command returned success (exit 0) with just a warning. Fixed by returning an error that clarifies "worktree removed but failed to delete branch".
+
+3. **Error message actionability**: Error messages should include the flag needed to override. "use `--force` to remove anyway" gives users a clear next step rather than just describing the failure.
+
+4. **Batch operation error handling**: When processing multiple worktrees, collect errors and report all at the end rather than failing fast. Users can see which specific operations failed.
+
+5. **Time formatting helper**: Implemented `formatTimeAgo()` for human-readable relative times in list output. Handles edge cases: just now, minutes, hours, days, and falls back to date format for older entries.
 
 (Agents append here as they complete tasks)
 
