@@ -383,3 +383,23 @@ func TestContentHash_EmbeddedScriptsHelper(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, h1, h2, "EmbeddedScripts() should produce stable hashes")
 }
+
+// TestEmbeddedScripts_ContainsExpectedContent verifies that EmbeddedScripts()
+// dynamically discovers scripts and includes expected content from both bundler
+// assets and hostproxy internals.
+func TestEmbeddedScripts_ContainsExpectedContent(t *testing.T) {
+	scripts := EmbeddedScripts()
+	combined := ""
+	for _, s := range scripts {
+		combined += s
+	}
+
+	// Bundler assets should be present
+	assert.Contains(t, combined, "#!/bin/bash", "Should contain shell scripts from bundler assets")
+	assert.Contains(t, combined, "ENTRYPOINT", "Should contain entrypoint markers")
+
+	// Hostproxy scripts should be present (from internals.AllScripts())
+	assert.Contains(t, combined, "host-open", "Should contain host-open script")
+	assert.Contains(t, combined, "callback", "Should contain callback forwarder")
+	assert.Contains(t, combined, "SSH_AUTH_SOCK", "Should contain SSH agent proxy")
+}

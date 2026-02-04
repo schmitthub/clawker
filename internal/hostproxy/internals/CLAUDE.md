@@ -6,11 +6,21 @@ Container-side scripts and binaries that communicate with the clawker host proxy
 
 | File | Purpose |
 |------|---------|
-| `embed.go` | `go:embed` directives + exported byte vars |
+| `embed.go` | `go:embed` directives + exported vars + `AllScripts()` |
 | `host-open.sh` | BROWSER handler — opens URLs via host proxy, intercepts OAuth callbacks |
 | `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
 | `cmd/ssh-agent-proxy/main.go` | SSH agent forwarding — Unix socket → HTTP to host proxy `/ssh/agent` |
 | `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port |
+
+## API
+
+```go
+// AllScripts returns all embedded script contents for content hashing.
+// Used by bundler.EmbeddedScripts() to ensure image rebuilds when scripts change.
+func AllScripts() []string
+```
+
+**IMPORTANT:** When adding new embedded scripts, add them to `AllScripts()` to ensure they are included in image content hashing. Otherwise, changes to the script won't trigger image rebuilds.
 
 ## Architecture
 
