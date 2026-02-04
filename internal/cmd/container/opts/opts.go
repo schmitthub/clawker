@@ -166,8 +166,9 @@ type ContainerOptions struct {
 	Annotations *MapOpts // OCI annotations
 	Sysctls     *MapOpts // Kernel parameters
 
-	// Workspace mode
-	Mode string // "bind" or "snapshot" (empty = use config default)
+	// Workspace configuration
+	Mode     string // "bind" or "snapshot" (empty = use config default)
+	Worktree string // Git worktree: "" (none), "branch", or "branch:base"
 
 	// Internal (set after parsing positional args)
 	Image   string
@@ -222,6 +223,7 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringVar(&opts.ContainerIDFile, "cidfile", "", "Write the container ID to the file")
 	flags.StringArrayVar(&opts.GroupAdd, "group-add", nil, "Add additional groups to join")
 	flags.StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
+	flags.StringVar(&opts.Worktree, "worktree", "", "Use git worktree: 'branch' to use/create, 'branch:base' to create from base")
 
 	// Resource limit flags
 	flags.VarP(&opts.Memory, "memory", "m", "Memory limit (e.g., 512m, 2g)")

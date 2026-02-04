@@ -133,12 +133,8 @@ The container must already be running. Use 'clawker start' first.`,
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 
-	// Load config
-	cfg, err := opts.Config().Project()
-	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load config: %v", err)
-		return err
-	}
+	// Get config
+	cfg := opts.Config().Project
 
 	// Resolve prompt from file if specified
 	prompt := opts.Prompt

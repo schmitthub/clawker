@@ -4,6 +4,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -17,11 +18,9 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	IOStreams       *iostreams.IOStreams
-	Config func() *config.Config
-	Client          func(context.Context) (*docker.Client, error)
-	
-	WorkDir func() (string, error)
+	IOStreams *iostreams.IOStreams
+	Config    func() *config.Config
+	Client    func(context.Context) (*docker.Client, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -38,11 +37,9 @@ type BuildOptions struct {
 // NewCmdBuild creates the image build command.
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
 	opts := &BuildOptions{
-		IOStreams:       f.IOStreams,
-		Config: f.Config,
-		Client:          f.Client,
-		
-		WorkDir: f.WorkDir,
+		IOStreams: f.IOStreams,
+		Config:    f.Config,
+		Client:    f.Client,
 	}
 
 	cmd := &cobra.Command{
@@ -109,25 +106,18 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	// Load configuration
+	// Get configuration
 	cfgGateway := opts.Config()
-	cfg, err := cfgGateway.Project()
-	if err != nil {
-		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
-			cmdutil.PrintNextSteps(ios,
-				"Run 'clawker init' to create a configuration",
-				"Or change to a directory with clawker.yaml",
-			)
-			return err
-		}
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
+	cfg := cfgGateway.Project
 
-	// Get working directory
-	wd, wdErr := opts.WorkDir()
-	if wdErr != nil {
-		return fmt.Errorf("failed to get working directory: %w", wdErr)
+	// Get working directory from project root, or fall back to current directory
+	wd := cfg.RootDir()
+	if wd == "" {
+		var wdErr error
+		wd, wdErr = os.Getwd()
+		if wdErr != nil {
+			return fmt.Errorf("failed to get working directory: %w", wdErr)
+		}
 	}
 
 	// Validate configuration

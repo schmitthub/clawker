@@ -16,10 +16,11 @@ Heavy command helpers have been extracted to dedicated packages:
 | `output.go` | `HandleError`, `PrintError`, `PrintNextSteps`, `PrintWarning`, `PrintStatus`, `OutputJSON`, `PrintHelpHint`, `ExitError` |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
+| `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 9 fields total: 3 eager values + 5 lazy nouns + 1 lazy client. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 7 fields total: 3 eager values + 4 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -29,19 +30,19 @@ type Factory struct {
     IOStreams *iostreams.IOStreams
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
-    WorkDir   func() (string, error)
-    Client    func(context.Context) (*docker.Client, error)
-    Config    func() *config.Config
-    HostProxy func() *hostproxy.Manager
-    Prompter  func() *prompter.Prompter
+    Client     func(context.Context) (*docker.Client, error)
+    Config     func() *config.Config
+    GitManager func() (*git.GitManager, error)
+    HostProxy  func() *hostproxy.Manager
+    Prompter   func() *prompter.Prompter
 }
 ```
 
 **Field semantics:**
 - `Version`, `Commit`, `IOStreams` -- set eagerly at construction
-- `WorkDir()` -- lazy closure returning `(string, error)` for current working directory
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
+- `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
 - `HostProxy()` -- returns `*hostproxy.Manager`; commands call `.EnsureRunning()` / `.Stop(ctx)` on it
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 
@@ -99,6 +100,30 @@ All validators include binary name, command path, and usage line in error messag
 
 `ErrAborted` -- returned when user cancels an interactive operation
 
+## Worktree Flag Parsing (`worktree.go`)
+
+Utilities for parsing the `--worktree` flag used by container run/create commands.
+
+```go
+type WorktreeSpec struct {
+    Branch string // Branch name to use/create
+    Base   string // Base branch (empty if not specified)
+}
+
+func ParseWorktreeFlag(value, agentName string) (*WorktreeSpec, error)
+```
+
+**Flag syntax:**
+- Empty string: auto-generate branch name (`clawker-<agent>-<timestamp>`)
+- `"branch"`: use existing or create from HEAD
+- `"branch:base"`: create branch from specified base
+
+**Validation:**
+- Branch names must match `^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`
+- Rejects shell metacharacters (`;`, `` ` ``, `$`, etc.) for security
+- Rejects git-special patterns (`.lock` suffix, `..`, `@{`)
+
 ## Tests
 
-`required_test.go` -- unit tests for argument validators
+- `required_test.go` -- unit tests for argument validators
+- `worktree_test.go` -- unit tests for worktree flag parsing

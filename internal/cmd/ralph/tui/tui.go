@@ -53,19 +53,7 @@ Features:
 }
 
 func tuiRun(_ context.Context, opts *TUIOptions) error {
-	ios := opts.IOStreams
-
-	cfg, err := opts.Config().Project()
-	if err != nil {
-		if config.IsConfigNotFound(err) {
-			cmdutil.PrintError(ios, "No clawker.yaml found in current directory")
-			cmdutil.PrintNextSteps(ios,
-				"Run 'clawker project init' to create a configuration",
-				"Or change to a directory with clawker.yaml",
-			)
-		}
-		return err
-	}
+	cfg := opts.Config().Project
 
 	if cfg.Project == "" {
 		return fmt.Errorf("project name not set in clawker.yaml")
@@ -74,6 +62,6 @@ func tuiRun(_ context.Context, opts *TUIOptions) error {
 	model := ralphtui.NewModel(cfg.Project)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
-	_, err = p.Run()
+	_, err := p.Run()
 	return err
 }

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // ImageSource indicates where an image reference was resolved from.
@@ -49,11 +48,8 @@ func (c *Client) findProjectImage(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
-	cfg, err := c.cfg.Project()
-	if err != nil {
-		return "", fmt.Errorf("failed to load project config: %w", err)
-	}
-	if cfg == nil || cfg.Project == "" {
+	cfg := c.cfg.Project
+	if cfg.Project == "" {
 		return "", nil
 	}
 
@@ -113,18 +109,8 @@ func (c *Client) ResolveImageWithSource(ctx context.Context) (*ResolvedImage, er
 	}
 
 	// 2. Try merged default_image from config/settings
-	cfg, cfgErr := c.cfg.Project()
-	if cfgErr != nil {
-		logger.Debug().Err(cfgErr).Msg("failed to load project config for default image")
-	}
-	settings, settingsErr := c.cfg.Settings()
-	if settingsErr != nil {
-		logger.Debug().Err(settingsErr).Msg("failed to load settings for default image")
-	}
-	// If both failed, propagate the config error
-	if cfgErr != nil && settingsErr != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", cfgErr)
-	}
+	cfg := c.cfg.Project
+	settings := c.cfg.Settings
 	if defaultImage := ResolveDefaultImage(cfg, settings); defaultImage != "" {
 		return &ResolvedImage{Reference: defaultImage, Source: ImageSourceDefault}, nil
 	}

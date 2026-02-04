@@ -1,8 +1,16 @@
 package config
 
-import "sort"
+import (
+	"sort"
+	"sync"
+)
 
-// Project represents the root configuration structure for clawker.yaml
+// Project represents the root configuration structure for clawker.yaml.
+//
+// In addition to YAML schema fields, it contains runtime context fields
+// (projectEntry, registry, worktreeMu) that are injected after loading via
+// setRuntimeContext(). These runtime fields enable worktree operations and
+// project identity lookup.
 type Project struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
 	Project      string          `yaml:"-" mapstructure:"-"`
@@ -12,6 +20,11 @@ type Project struct {
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
 	Ralph        *RalphConfig    `yaml:"ralph,omitempty" mapstructure:"ralph"`
+
+	// Runtime context (not persisted, injected after loading)
+	projectEntry *ProjectEntry   `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
+	registry     *RegistryLoader `yaml:"-" mapstructure:"-"` // for write operations
+	worktreeMu   sync.RWMutex    `yaml:"-" mapstructure:"-"` // protects projectEntry.Worktrees
 }
 
 // BuildConfig defines the container build configuration
@@ -248,18 +261,18 @@ func (g *GitCredentialsConfig) CopyGitConfigEnabled() bool {
 
 // RalphConfig defines configuration for autonomous ralph loops.
 type RalphConfig struct {
-	MaxLoops                   int  `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
-	StagnationThreshold        int  `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
-	TimeoutMinutes             int  `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
-	CallsPerHour               int  `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
-	CompletionThreshold        int  `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
-	SessionExpirationHours     int  `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
-	SameErrorThreshold         int  `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
-	OutputDeclineThreshold     int  `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
-	MaxConsecutiveTestLoops    int  `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
-	LoopDelaySeconds           int  `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
-	SafetyCompletionThreshold  int  `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
-	SkipPermissions            bool `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
+	MaxLoops                  int  `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
+	StagnationThreshold       int  `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
+	TimeoutMinutes            int  `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
+	CallsPerHour              int  `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
+	CompletionThreshold       int  `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
+	SessionExpirationHours    int  `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
+	SameErrorThreshold        int  `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
+	OutputDeclineThreshold    int  `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
+	MaxConsecutiveTestLoops   int  `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
+	LoopDelaySeconds          int  `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
+	SafetyCompletionThreshold int  `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
+	SkipPermissions           bool `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
 }
 
 // GetMaxLoops returns the max loops with default fallback.

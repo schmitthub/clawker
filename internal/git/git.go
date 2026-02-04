@@ -1,0 +1,327 @@
+// Package git provides Git repository operations, including worktree management.
+//
+// This is a Tier 1 (Leaf) package in the clawker architecture:
+//   - It imports ONLY stdlib and go-git packages
+//   - It does NOT import any internal packages
+//   - Configuration is passed as parameters, not via config package imports
+//
+// The package follows the Facade pattern with domain-specific sub-managers:
+//   - GitManager is the top-level facade owning the repository
+//   - WorktreeManager handles linked worktree operations
+//
+// Dependency Inversion: GitManager defines WorktreeDirProvider interface which
+// Config.Project() implements. This allows high-level orchestration without
+// importing the config package.
+package git
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+)
+
+// ErrNotRepository is returned when the path is not inside a git repository.
+// Callers can use errors.Is to check for this condition.
+var ErrNotRepository = errors.New("not a git repository")
+
+// GitManager is the top-level facade for git operations.
+// It owns the repository handle and provides access to domain-specific sub-managers.
+type GitManager struct {
+	repo     *gogit.Repository
+	repoRoot string
+
+	worktrees    *WorktreeManager
+	worktreeErr  error // cached error from worktree manager initialization
+	worktreeInit bool  // whether worktree manager was initialized
+}
+
+// NewGitManager opens the git repository containing the given path.
+// It walks up the directory tree to find the repository root.
+//
+// Returns ErrNotRepository (wrapped) if path is not inside a git repository.
+func NewGitManager(path string) (*GitManager, error) {
+	// PlainOpenWithOptions with DetectDotGit walks up to find the repo
+	repo, err := gogit.PlainOpenWithOptions(path, &gogit.PlainOpenOptions{
+		DetectDotGit: true,
+	})
+	if err != nil {
+		if errors.Is(err, gogit.ErrRepositoryNotExists) {
+			return nil, fmt.Errorf("%w: %s", ErrNotRepository, path)
+		}
+		return nil, fmt.Errorf("opening repository at %s: %w", path, err)
+	}
+
+	// Get the repository root from the worktree filesystem
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("getting worktree: %w", err)
+	}
+	repoRoot := wt.Filesystem.Root()
+
+	return &GitManager{
+		repo:     repo,
+		repoRoot: repoRoot,
+	}, nil
+}
+
+// Repository returns the underlying go-git Repository.
+// Use this for operations not covered by the sub-managers.
+func (g *GitManager) Repository() *gogit.Repository {
+	return g.repo
+}
+
+// RepoRoot returns the root directory of the git repository.
+func (g *GitManager) RepoRoot() string {
+	return g.repoRoot
+}
+
+// Worktrees returns the WorktreeManager for linked worktree operations.
+// The manager is lazily initialized on first access.
+// Returns an error if the repository's storage doesn't support worktrees.
+func (g *GitManager) Worktrees() (*WorktreeManager, error) {
+	if !g.worktreeInit {
+		g.worktrees, g.worktreeErr = newWorktreeManager(g.repo, g.repo.Storer)
+		g.worktreeInit = true
+	}
+	return g.worktrees, g.worktreeErr
+}
+
+// === High-level orchestration methods ===
+// These methods coordinate with WorktreeDirProvider to manage both
+// git worktree metadata and filesystem directories.
+
+// SetupWorktree creates or gets a worktree for the given branch.
+// It orchestrates: directory creation (via provider) + git worktree add.
+//
+// Parameters:
+//   - dirs: Provider for worktree directory management (typically Config.Project())
+//   - branch: Branch name to check out (created if doesn't exist)
+//   - base: Base ref to create branch from (empty string uses HEAD)
+//
+// Returns the worktree path ready for mounting.
+func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string) (string, error) {
+	// 1. Get or create worktree directory in CLAWKER_HOME
+	wtPath, err := dirs.GetOrCreateWorktreeDir(branch)
+	if err != nil {
+		return "", fmt.Errorf("creating worktree directory: %w", err)
+	}
+
+	// 2. Check if worktree already exists (directory has files)
+	entries, err := os.ReadDir(wtPath)
+	if err != nil {
+		return "", fmt.Errorf("reading worktree directory: %w", err)
+	}
+
+	if len(entries) > 0 {
+		// Worktree exists, verify it's valid and return
+		wt, err := g.Worktrees()
+		if err != nil {
+			return "", fmt.Errorf("initializing worktree manager: %w", err)
+		}
+		if _, err := wt.Open(wtPath); err != nil {
+			return "", fmt.Errorf("worktree directory exists but is invalid: %w", err)
+		}
+		return wtPath, nil
+	}
+
+	// 3. Resolve base commit
+	var baseCommit plumbing.Hash
+	if base != "" {
+		hash, err := g.repo.ResolveRevision(plumbing.Revision(base))
+		if err != nil {
+			return "", fmt.Errorf("resolving base %q: %w", base, err)
+		}
+		baseCommit = *hash
+	}
+
+	// 4. Create git worktree with branch
+	wt, err := g.Worktrees()
+	if err != nil {
+		return "", fmt.Errorf("initializing worktree manager: %w", err)
+	}
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	if err := wt.AddWithNewBranch(wtPath, branch, branchRef, baseCommit); err != nil {
+		// Clean up the directory on failure - include cleanup error if it occurs
+		if cleanupErr := os.RemoveAll(wtPath); cleanupErr != nil {
+			return "", fmt.Errorf("creating git worktree: %w (cleanup also failed: %v)", err, cleanupErr)
+		}
+		return "", fmt.Errorf("creating git worktree: %w", err)
+	}
+
+	return wtPath, nil
+}
+
+// RemoveWorktree removes a worktree (both git metadata and directory).
+//
+// Parameters:
+//   - dirs: Provider for worktree directory management
+//   - branch: Branch/worktree name to remove
+func (g *GitManager) RemoveWorktree(dirs WorktreeDirProvider, branch string) error {
+	// 1. Verify worktree directory exists (early error if not)
+	if _, err := dirs.GetWorktreeDir(branch); err != nil {
+		return fmt.Errorf("looking up worktree: %w", err)
+	}
+
+	// 2. Remove git worktree metadata
+	wt, err := g.Worktrees()
+	if err != nil {
+		return fmt.Errorf("initializing worktree manager: %w", err)
+	}
+	if err := wt.Remove(branch); err != nil {
+		return fmt.Errorf("removing git worktree: %w", err)
+	}
+
+	// 3. Delete worktree directory
+	if err := dirs.DeleteWorktreeDir(branch); err != nil {
+		return fmt.Errorf("deleting worktree directory: %w", err)
+	}
+
+	return nil
+}
+
+// ListWorktrees returns information about all linked worktrees.
+// Worktrees that have errors reading their info will have the Error field set.
+//
+// Parameters:
+//   - dirs: Provider for worktree directory management
+func (g *GitManager) ListWorktrees(dirs WorktreeDirProvider) ([]WorktreeInfo, error) {
+	wt, err := g.Worktrees()
+	if err != nil {
+		return nil, fmt.Errorf("initializing worktree manager: %w", err)
+	}
+
+	names, err := wt.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing worktrees: %w", err)
+	}
+
+	var infos []WorktreeInfo
+	for _, name := range names {
+		wtPath, err := dirs.GetWorktreeDir(name)
+		if err != nil {
+			// Check if this is a "not found" type error (orphaned metadata)
+			// vs a real error (permissions, I/O, etc.)
+			if isNotFoundError(err) {
+				// Orphaned metadata - skip silently
+				continue
+			}
+			// Include worktree with error info for debugging
+			infos = append(infos, WorktreeInfo{
+				Name:  name,
+				Error: fmt.Errorf("getting worktree directory: %w", err),
+			})
+			continue
+		}
+
+		info := WorktreeInfo{
+			Name: name,
+			Path: wtPath,
+		}
+
+		// Try to get HEAD info - capture errors
+		wtRepo, err := wt.Open(wtPath)
+		if err != nil {
+			info.Error = fmt.Errorf("opening worktree: %w", err)
+		} else {
+			head, err := wtRepo.Head()
+			if err != nil {
+				info.Error = fmt.Errorf("getting HEAD: %w", err)
+			} else {
+				info.Head = head.Hash()
+				info.Branch = head.Name().Short()
+				info.IsDetached = head.Name() == plumbing.HEAD
+			}
+		}
+
+		infos = append(infos, info)
+	}
+
+	return infos, nil
+}
+
+// isNotFoundError checks if an error indicates a resource doesn't exist.
+func isNotFoundError(err error) bool {
+	if os.IsNotExist(err) {
+		return true
+	}
+	// Check for common "not found" error patterns using Contains for robustness.
+	// This catches variations in error message formatting across go-git versions.
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "not found") ||
+		strings.Contains(errStr, "does not exist") ||
+		strings.Contains(errStr, "no such file or directory")
+}
+
+// GetCurrentBranch returns the current branch name of the repository.
+// Returns empty string and no error for detached HEAD state.
+func (g *GitManager) GetCurrentBranch() (string, error) {
+	head, err := g.repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("getting HEAD: %w", err)
+	}
+
+	if head.Name() == plumbing.HEAD {
+		// Detached HEAD
+		return "", nil
+	}
+
+	return head.Name().Short(), nil
+}
+
+// ResolveRef resolves a reference (branch, tag, commit) to a commit hash.
+func (g *GitManager) ResolveRef(ref string) (plumbing.Hash, error) {
+	hash, err := g.repo.ResolveRevision(plumbing.Revision(ref))
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("resolving %q: %w", ref, err)
+	}
+	return *hash, nil
+}
+
+// BranchExists checks if a branch exists in the repository.
+func (g *GitManager) BranchExists(branch string) (bool, error) {
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	_, err := g.repo.Reference(branchRef, true)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking branch %q: %w", branch, err)
+	}
+	return true, nil
+}
+
+// IsInsideWorktree checks if the given path is inside a git worktree
+// (not the main repository worktree).
+func IsInsideWorktree(path string) (bool, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, fmt.Errorf("getting absolute path: %w", err)
+	}
+
+	// Walk up looking for .git file (not directory)
+	current := absPath
+	for {
+		gitPath := filepath.Join(current, ".git")
+		info, err := os.Stat(gitPath)
+		if err == nil {
+			// .git exists - if it's a file, we're in a worktree
+			// (worktrees have a .git file pointing to main repo)
+			return !info.IsDir(), nil
+		}
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("checking %s: %w", gitPath, err)
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached filesystem root without finding .git
+			return false, nil
+		}
+		current = parent
+	}
+}

@@ -10,7 +10,7 @@ import (
 
 func TestNewCmdCheck(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams, WorkDir: func() (string, error) { return "/tmp/test", nil }}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *CheckOptions
 	cmd := NewCmdCheck(f, func(_ context.Context, opts *CheckOptions) error {
@@ -30,14 +30,6 @@ func TestNewCmdCheck(t *testing.T) {
 
 	if gotOpts.IOStreams != tio.IOStreams {
 		t.Error("expected IOStreams to be set from factory")
-	}
-
-	wd, wdErr := gotOpts.WorkDir()
-	if wdErr != nil {
-		t.Fatalf("WorkDir() returned error: %v", wdErr)
-	}
-	if wd != "/tmp/test" {
-		t.Errorf("expected WorkDir '/tmp/test', got '%s'", wd)
 	}
 }
 

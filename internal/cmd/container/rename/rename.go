@@ -14,9 +14,9 @@ import (
 
 // RenameOptions defines the options for the rename command.
 type RenameOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	container string
@@ -26,9 +26,9 @@ type RenameOptions struct {
 // NewCmdRename creates a new rename command.
 func NewCmdRename(f *cmdutil.Factory, runF func(context.Context, *RenameOptions) error) *cobra.Command {
 	opts := &RenameOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -69,7 +69,7 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 	newName := opts.newName
 
 	if opts.Agent {
-		oldName = docker.ContainerName(opts.Config().Resolution().ProjectKey, oldName)
+		oldName = docker.ContainerName(opts.Config().Resolution.ProjectKey, oldName)
 	}
 
 	// Connect to Docker

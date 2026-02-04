@@ -41,9 +41,8 @@ f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
 
 `New()` delegates to extracted helper functions for each Factory field:
 - `ioStreams()` -- creates IOStreams (eager)
-- `workDirFunc()` -- returns lazy `func() (string, error)` closure
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
-- `configFunc(workDirFn)` -- returns lazy `*config.Config` gateway constructor (the gateway itself lazy-loads Project, Settings, Resolution, Registry internally via `sync.Once`)
+- `configFunc()` -- returns lazy `*config.Config` gateway constructor (the gateway itself uses `os.Getwd()` internally and lazy-loads Project, Settings, Resolution, Registry via `sync.Once`)
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
 - `prompterFunc(ios)` -- returns lazy prompter constructor
 

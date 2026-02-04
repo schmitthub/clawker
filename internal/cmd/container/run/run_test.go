@@ -16,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -685,7 +686,7 @@ func TestImageArg(t *testing.T) {
 						DefaultImage: tt.defaultImage,
 					}
 				}
-				testCfg := config.NewConfigForTest("", cfg, settings)
+				testCfg := config.NewConfigForTest(cfg, settings)
 				fake.Client.SetConfig(testCfg)
 
 				// Call the resolution method on the client
@@ -804,15 +805,16 @@ func TestImageArg(t *testing.T) {
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
 	t.Helper()
 	tio := iostreams.NewTestIOStreams()
-	tmpDir := t.TempDir()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		WorkDir:  func() (string, error) { return tmpDir, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
 		Config: func() *config.Config {
-			return config.NewConfigForTest(tmpDir, testConfig(), config.DefaultSettings())
+			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, fmt.Errorf("GitManager not available in test")
 		},
 		HostProxy: func() *hostproxy.Manager {
 			return hostproxy.NewManager()
@@ -912,22 +914,21 @@ func TestRunRun(t *testing.T) {
 		cfgProject.DefaultImage = "node:20-slim"
 
 		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())),
+			dockertest.WithConfig(config.NewConfigForTest(cfgProject, config.DefaultSettings())),
 		)
-		fake.SetupImageList()                          // empty — no project image found
-		fake.SetupImageExists("node:20-slim", false)   // default image missing
+		fake.SetupImageList()                        // empty — no project image found
+		fake.SetupImageExists("node:20-slim", false) // default image missing
 		fake.SetupContainerCreate()
 		fake.SetupContainerStart()
 
 		tio := iostreams.NewTestIOStreams() // non-interactive
 		f := &cmdutil.Factory{
 			IOStreams: tio.IOStreams,
-			WorkDir:  func() (string, error) { return t.TempDir(), nil },
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
 			Config: func() *config.Config {
-				return config.NewConfigForTest(t.TempDir(), cfgProject, config.DefaultSettings())
+				return config.NewConfigForTest(cfgProject, config.DefaultSettings())
 			},
 			HostProxy: func() *hostproxy.Manager {
 				return hostproxy.NewManager()

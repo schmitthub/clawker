@@ -64,10 +64,4 @@ func TestNewCmdRoot_GlobalFlags(t *testing.T) {
 	if debugFlag == nil {
 		t.Error("expected --debug flag to exist")
 	}
-
-	// Check workdir flag exists
-	workdirFlag := cmd.PersistentFlags().Lookup("workdir")
-	if workdirFlag == nil {
-		t.Error("expected --workdir flag to exist")
-	}
 }

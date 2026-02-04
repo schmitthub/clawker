@@ -1,18 +1,19 @@
 # Config Package
 
-Configuration loading, validation, project registry, resolver, and the `Config` gateway type.
+Configuration loading, validation, project registry, resolver, and the `Config` facade type.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `config.go` | `Config` gateway type — lazy accessor for Project, Settings, Resolution, Registry |
-| `schema.go` | `Project` struct (YAML schema) and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
+| `config.go` | `Config` facade type — eagerly loaded container for Project, Settings, Resolution, Registry |
+| `schema.go` | `Project` struct (YAML schema + runtime context) and nested types (`BuildConfig`, `SecurityConfig`, etc.) |
 | `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
 | `settings.go` | `Settings` struct (user-level: `default_image`, `logging`) |
 | `settings_loader.go` | `SettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
 | `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
+| `project_runtime.go` | `Project` runtime methods — project context accessors and worktree directory management |
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 | `ip_ranges.go` | IP range source registry, `GetIPRangeSources()` method |
@@ -35,6 +36,50 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 - `DefaultConfig() *Project`, `DefaultSettings() *Settings`
 - `DefaultFirewallDomains []string` — pre-approved domains
 - `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile` — template strings
+
+## Config Facade (`config.go`)
+
+The `Config` type is a facade that eagerly loads all configuration from `os.Getwd()`. All fields are public and never nil (defaults are used when config file not found).
+
+```go
+type Config struct {
+    Project    *Project        // from clawker.yaml, defaults if not found
+    Settings   *Settings       // from settings.yaml, defaults if not found
+    Resolution *Resolution     // project resolution from registry
+    Registry   *RegistryLoader // may be nil if initialization failed
+}
+
+// Production constructor - uses os.Getwd() internally
+func NewConfig() *Config
+
+// Test constructor - pre-populated values, no file I/O
+// Limitations: RootDir()="", worktree methods fail (no registry)
+func NewConfigForTest(project *Project, settings *Settings) *Config
+
+// Accessors for internal loaders (may return nil)
+func (c *Config) SettingsLoader() *SettingsLoader
+func (c *Config) ProjectLoader() *Loader
+func (c *Config) RegistryInitErr() error  // error from registry init (if Registry is nil)
+```
+
+**Key characteristics:**
+- `NewConfig()` takes no arguments — uses `os.Getwd()` internally
+- All fields are eagerly loaded during construction
+- Fatal error if `os.Getwd()` fails or if `clawker.yaml` exists but is invalid
+- Config file not found → uses defaults (non-fatal)
+- No workDir override — tests use `os.Chdir()` or `NewConfigForTest()`
+
+**Usage:**
+```go
+// Production
+cfg := config.NewConfig()
+image := cfg.Project.Build.Image
+projectKey := cfg.Resolution.ProjectKey
+
+// Tests
+cfg := config.NewConfigForTest(nil, nil)  // uses defaults
+cfg := config.NewConfigForTest(&config.Project{...}, nil)  // custom project
+```
 
 ## Loader (`loader.go`)
 
@@ -66,25 +111,33 @@ func (*Validator) Warnings() []string                   // non-fatal warnings
 - `ValidationError` — has `Field`, `Message`, `Value interface{}`
 - `ConfigNotFoundError` — has `Path string`; checked via `IsConfigNotFound(err) bool`
 
-## Config Gateway (`config.go`)
+## Project Runtime Context (`project_runtime.go`)
 
-The `Config` type is a lazy-loading gateway that consolidates access to project config, settings, registry, and resolution. Created via `NewConfig(workDir func() string)`.
+The `Project` struct has runtime methods for project context and worktree directory management.
+These methods are available after the config facade injects runtime context via `setRuntimeContext()`.
+The `Project` type implements `git.WorktreeDirProvider`.
 
 ```go
-type Config struct { /* internal sync.Once fields */ }
+// Accessors (on *Project)
+func (p *Project) Key() string         // project slug (same as p.Project field)
+func (p *Project) DisplayName() string // project name from registry, falls back to Key()
+func (p *Project) Found() bool         // true if in a registered project
+func (p *Project) RootDir() string     // project root, empty if not found
 
-func NewConfig(workDir func() (string, error)) *Config
-func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config
+// Worktree directory management (implements git.WorktreeDirProvider)
+func (p *Project) GetOrCreateWorktreeDir(name string) (string, error)
+func (p *Project) GetWorktreeDir(name string) (string, error)
+func (p *Project) DeleteWorktreeDir(name string) error
+func (p *Project) ListWorktreeDirs() ([]WorktreeDirInfo, error)
 
-// Lazy-loaded accessors (each uses sync.Once internally)
-func (*Config) Project() (*Project, error)       // loads clawker.yaml
-func (*Config) Settings() (*Settings, error)      // loads settings.yaml
-func (*Config) SettingsLoader() (*SettingsLoader, error)  // underlying settings loader
-func (*Config) Resolution() *Resolution           // resolves workdir to project
-func (*Config) Registry() (*ProjectRegistry, error)  // loads projects.yaml
+// WorktreeDirInfo contains name (branch), slug, and path
+type WorktreeDirInfo struct { Name, Slug, Path string }
+
+// Sentinel error for operations requiring a registered project
+var ErrNotInProject = errors.New("not in a registered project directory")
 ```
 
-Commands access via `f.Config().Project()` instead of the old `f.Config()` which returned the YAML struct directly.
+**Thread safety:** Worktree operations are protected by a `sync.RWMutex` on the `Project` struct.
 
 ## Schema Types (`schema.go`)
 
@@ -136,13 +189,15 @@ type LoggingConfig struct { FileEnabled *bool; MaxSizeMB, MaxAgeDays, MaxBackups
 
 Persistent project registry at `~/.local/clawker/projects.yaml`.
 
-- `ProjectEntry` — `Name string`, `Root string`
+- `ProjectEntry` — `Name string`, `Root string`, `Worktrees map[string]string`
   - `(e ProjectEntry) Valid() error` — validates fields (name non-empty, root path absolute)
 - `ProjectRegistry` — `Projects map[string]ProjectEntry`
 - `NewRegistryLoader()` — creates loader for the registry file (resolves path from CLAWKER_HOME)
 - `Slugify(name)` — converts project name to URL-safe slug
 - `UniqueSlug(name, registry)` — generates unique slug with numeric suffix if needed
-- `(*RegistryLoader).Register(key, entry)` / `Unregister(key)` — add/remove projects
+- `(*RegistryLoader).Register(displayName, rootDir)` — add/update project, returns slug key
+- `(*RegistryLoader).Unregister(key)` — remove project by key
+- `(*RegistryLoader).UpdateProject(key, func(*ProjectEntry) error)` — atomically modify a project entry
 - `(*ProjectRegistry).Lookup(path)` — find project by longest-prefix path match
 - `(*ProjectRegistry).LookupByKey(key)` / `HasKey(key)` — find/check by slug
 
@@ -150,9 +205,9 @@ Persistent project registry at `~/.local/clawker/projects.yaml`.
 
 Resolves working directory to a registered project.
 
-- `Resolution` — `ProjectKey string`, `ProjectEntry *ProjectEntry`, `WorkDir string`
+- `Resolution` — `ProjectKey string`, `ProjectEntry ProjectEntry`, `WorkDir string`
 - `NewResolver(registry)` — creates resolver from registry
-- `(*Resolver).Resolve(workDir) *Resolution` — nil if no match
+- `(*Resolver).Resolve(workDir) *Resolution`
 - `(*Resolution).Found() bool`, `(*Resolution).ProjectRoot() string`
 
 ## IP Range Sources (`ip_ranges.go`)
@@ -185,6 +240,6 @@ func (*FirewallConfig) GetIPRangeSources() []IPRangeSource
 ## Schema Notes
 
 - `Project.Project` (the project name field) has tag `yaml:"-" mapstructure:"-"` — computed, not persisted
-- `config.Config` is the gateway type (NOT the YAML schema); `config.Project` is the YAML schema
+- `config.Config` is the facade type; `config.Project` is the YAML schema
 - `RalphConfig` is a pointer (`*RalphConfig`) — nil when not configured
 - `FirewallConfig.Enable` defaults to `true` via `defaults.go`

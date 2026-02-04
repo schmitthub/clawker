@@ -19,7 +19,7 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams  *iostreams.IOStreams
+	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
 	HostProxy func() *hostproxy.Manager
@@ -33,7 +33,7 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:  f.IOStreams,
+		IOStreams: f.IOStreams,
 		Client:    f.Client,
 		Config:    f.Config,
 		HostProxy: f.HostProxy,
@@ -84,11 +84,8 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	ios := opts.IOStreams
 	cfgGateway := opts.Config()
 
-	// Load config to check host proxy setting
-	cfg, err := cfgGateway.Project()
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to load config, using defaults for host proxy")
-	}
+	// Get project config
+	cfg := cfgGateway.Project
 
 	// Connect to Docker
 	client, err := opts.Client(ctx)
@@ -105,7 +102,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	}
 
 	// Ensure host proxy is running for container-to-host communication (if enabled)
-	if cfg == nil || cfg.Security.HostProxyEnabled() {
+	if cfg.Security.HostProxyEnabled() {
 		hp := opts.HostProxy()
 		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
@@ -122,7 +119,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(cfgGateway.Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(cfgGateway.Resolution.ProjectKey, containers)
 	}
 
 	// If attach or interactive mode, can only work with one container

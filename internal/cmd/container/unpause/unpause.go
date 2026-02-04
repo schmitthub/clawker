@@ -13,9 +13,9 @@ import (
 
 // UnpauseOptions holds options for the unpause command.
 type UnpauseOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent bool
 
@@ -25,9 +25,9 @@ type UnpauseOptions struct {
 // NewCmdUnpause creates the container unpause command.
 func NewCmdUnpause(f *cmdutil.Factory, runF func(context.Context, *UnpauseOptions) error) *cobra.Command {
 	opts := &UnpauseOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -70,7 +70,7 @@ func unpauseRun(ctx context.Context, opts *UnpauseOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
 	}
 
 	// Connect to Docker

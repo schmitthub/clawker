@@ -19,9 +19,9 @@ import (
 
 // CpOptions holds options for the cp command.
 type CpOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent      bool
 	Archive    bool
@@ -35,9 +35,9 @@ type CpOptions struct {
 // NewCmdCp creates a new cp command.
 func NewCmdCp(f *cmdutil.Factory, runF func(context.Context, *CpOptions) error) *cobra.Command {
 	opts := &CpOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -119,11 +119,11 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			srcContainer = docker.ContainerName(opts.Config().Resolution().ProjectKey, srcContainer)
+			srcContainer = docker.ContainerName(opts.Config().Resolution.ProjectKey, srcContainer)
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			dstContainer = docker.ContainerName(opts.Config().Resolution().ProjectKey, dstContainer)
+			dstContainer = docker.ContainerName(opts.Config().Resolution.ProjectKey, dstContainer)
 		}
 	}
 

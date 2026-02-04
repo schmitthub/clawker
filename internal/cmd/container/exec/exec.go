@@ -18,9 +18,9 @@ import (
 
 // ExecOptions holds options for the exec command.
 type ExecOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -38,9 +38,9 @@ type ExecOptions struct {
 // NewCmdExec creates a new exec command.
 func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
 	opts := &ExecOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -81,7 +81,7 @@ Container name can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]
 			if opts.Agent {
-				opts.containerName = docker.ContainerName(opts.Config().Resolution().ProjectKey, args[0])
+				opts.containerName = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
 			}
 
 			if len(args) > 1 {

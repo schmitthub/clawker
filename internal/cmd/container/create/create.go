@@ -4,12 +4,14 @@ package create
 import (
 	"context"
 	"fmt"
+	"os"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -26,11 +28,11 @@ type CreateOptions struct {
 	*copts.ContainerOptions
 
 	IOStreams  *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
-	Prompter  func() *prompter.Prompter
-	WorkDir   func() (string, error)
+	Client     func(context.Context) (*docker.Client, error)
+	Config     func() *config.Config
+	GitManager func() (*git.GitManager, error)
+	HostProxy  func() *hostproxy.Manager
+	Prompter   func() *prompter.Prompter
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
 	flags *pflag.FlagSet
@@ -41,12 +43,12 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 	containerOpts := copts.NewContainerOptions()
 	opts := &CreateOptions{
 		ContainerOptions: containerOpts,
-		IOStreams:         f.IOStreams,
+		IOStreams:        f.IOStreams,
 		Client:           f.Client,
 		Config:           f.Config,
+		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
 		Prompter:         f.Prompter,
-		WorkDir:          f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -114,16 +116,8 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	containerOpts := opts.ContainerOptions
 	cfgGateway := opts.Config()
 
-	// Load config for project name
-	cfg, err := cfgGateway.Project()
-	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load config: %v", err)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to create a configuration",
-			"Or ensure you're in a directory with clawker.yaml",
-		)
-		return err
-	}
+	// Get project config
+	cfg := cfgGateway.Project
 
 	// Connect to Docker
 	client, err := opts.Client(ctx)
@@ -175,10 +169,35 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		agentName = docker.GenerateRandomName()
 	}
 
-	// Get working directory
-	wd, err := opts.WorkDir()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+	// Determine working directory based on --worktree flag
+	var wd string
+	if containerOpts.Worktree != "" {
+		// Use git worktree as workspace source
+		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
+		if err != nil {
+			return fmt.Errorf("invalid --worktree flag: %w", err)
+		}
+
+		gitMgr, err := opts.GitManager()
+		if err != nil {
+			return fmt.Errorf("cannot use --worktree: %w", err)
+		}
+
+		wd, err = gitMgr.SetupWorktree(cfg, wtSpec.Branch, wtSpec.Base)
+		if err != nil {
+			return fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
+		}
+		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
+	} else {
+		// Get working directory from project root, or fall back to current directory
+		wd = cfg.RootDir()
+		if wd == "" {
+			var wdErr error
+			wd, wdErr = os.Getwd()
+			if wdErr != nil {
+				return fmt.Errorf("failed to get working directory: %w", wdErr)
+			}
+		}
 	}
 
 	// Setup workspace mounts
@@ -350,10 +369,8 @@ func handleMissingDefaultImage(ctx context.Context, opts *CreateOptions, cfgGate
 	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", docker.DefaultImageTag)
 
 	// Persist the default image in settings
-	settingsLoader, err := cfgGateway.SettingsLoader()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load settings loader; default image will not be persisted")
-	} else if settingsLoader != nil {
+	settingsLoader := cfgGateway.SettingsLoader()
+	if settingsLoader != nil {
 		currentSettings, loadErr := settingsLoader.Load()
 		if loadErr != nil {
 			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")

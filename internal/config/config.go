@@ -2,165 +2,198 @@ package config
 
 import (
 	"fmt"
-	"sync"
+	"os"
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Config is the top-level configuration gateway. It lazily loads and caches
-// project config, user settings, and project resolution.
+// Config is a facade providing access to all configuration.
+// All fields are eagerly loaded from the current working directory.
 type Config struct {
-	workDir func() (string, error)
+	// Project is the project configuration from clawker.yaml.
+	// Never nil - uses defaults if no config file exists.
+	// Contains runtime context (Key, RootDir, worktree methods) after loading.
+	Project *Project
 
-	// Project config (clawker.yaml)
-	projectOnce   sync.Once
-	projectLoader *Loader
-	project       *Project
-	projectErr    error
+	// Settings is the user settings from settings.yaml.
+	// Never nil - uses defaults if no settings file exists.
+	Settings *Settings
 
-	// Settings (settings.yaml)
-	settingsOnce   sync.Once
-	settingsLoader *SettingsLoader
-	settings       *Settings
-	settingsErr    error
+	// Resolution is the project resolution (project key, entry, workdir).
+	// Never nil - empty resolution if not in a registered project.
+	Resolution *Resolution
 
-	// Registry + Resolution
-	registryOnce   sync.Once
-	registryLoader *RegistryLoader
-	registryErr    error
-	resolutionOnce sync.Once
-	resolution     *Resolution
+	// Registry is the registry loader for write operations.
+	// May be nil if registry initialization failed. Check RegistryInitErr() for details.
+	Registry *RegistryLoader
+
+	// Internal loaders for operations that need them
+	projectLoader   *Loader
+	settingsLoader  *SettingsLoader
+	registryInitErr error // stored for later diagnostics
 }
 
-// NewConfig creates a new Config gateway.
-func NewConfig(workDir func() (string, error)) *Config {
-	return &Config{workDir: workDir}
-}
-
-// NewConfigForTest creates a Config gateway pre-populated with the given project
-// and settings. Resolution returns an empty Resolution with the given workDir.
-// This is intended for unit tests that don't need real config file loading.
-func NewConfigForTest(workDir string, project *Project, settings *Settings) *Config {
-	c := &Config{workDir: func() (string, error) { return workDir, nil }}
-	c.projectOnce.Do(func() {
-		c.project = project
-	})
-	c.settingsOnce.Do(func() {
-		c.settings = settings
-	})
-	c.resolutionOnce.Do(func() {
-		projectKey := ""
-		if project != nil {
-			projectKey = project.Project
-		}
-		c.resolution = &Resolution{
-			ProjectKey: projectKey,
-			WorkDir:    workDir,
-		}
-	})
+// NewConfig creates a Config facade by loading all configuration from the
+// current working directory. This function always succeeds - missing files
+// result in default values, and errors are logged but don't prevent creation.
+func NewConfig() *Config {
+	c := &Config{}
+	c.load()
 	return c
 }
 
-// Project returns the project configuration from clawker.yaml.
-// Results are cached after first load.
-func (c *Config) Project() (*Project, error) {
-	c.projectOnce.Do(func() {
-		wd, err := c.workDir()
-		if err != nil {
-			c.projectErr = fmt.Errorf("failed to get working directory: %w", err)
-			return
-		}
+// NewConfigForTest creates a Config facade with pre-populated values.
+// This is intended for unit tests that don't need real config file loading.
+//
+// Limitations:
+//   - Project.RootDir() returns "" (no registry entry)
+//   - Worktree methods (GetOrCreateWorktreeDir, etc.) will fail without a registry
+//   - Tests needing full runtime context should use NewConfig() with os.Chdir()
+//     to a temp directory containing clawker.yaml and a registered project
+func NewConfigForTest(project *Project, settings *Settings) *Config {
+	if project == nil {
+		project = DefaultConfig()
+	}
+	if settings == nil {
+		settings = DefaultSettings()
+	}
 
-		var opts []LoaderOption
+	resolution := &Resolution{}
+	if project.Project != "" {
+		resolution.ProjectKey = project.Project
+	}
 
-		res := c.Resolution()
-		if res.Found() {
-			opts = append(opts,
-				WithProjectRoot(res.ProjectRoot()),
-				WithProjectKey(res.ProjectKey),
-			)
-		}
+	// Inject minimal runtime context for tests
+	if resolution.Found() {
+		project.setRuntimeContext(&resolution.ProjectEntry, nil)
+	}
 
-		opts = append(opts, WithUserDefaults(""))
-		c.projectLoader = NewLoader(wd, opts...)
-		c.project, c.projectErr = c.projectLoader.Load()
-	})
-	return c.project, c.projectErr
+	return &Config{
+		Project:    project,
+		Settings:   settings,
+		Resolution: resolution,
+	}
 }
 
-// Settings returns the user settings from settings.yaml.
-// Results are cached after first load.
-func (c *Config) Settings() (*Settings, error) {
-	c.settingsOnce.Do(func() {
-		var opts []SettingsLoaderOption
+// load initializes all configuration from the current working directory.
+func (c *Config) load() {
+	wd, err := os.Getwd()
+	if err != nil {
+		// This is catastrophic - we can't do anything useful without knowing our location
+		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
+		os.Exit(1)
+	}
 
-		res := c.Resolution()
-		if res.Found() {
-			opts = append(opts, WithProjectSettingsRoot(res.ProjectRoot()))
-		}
+	// Load registry first (needed for resolution)
+	c.Registry, err = NewRegistryLoader()
+	if err != nil {
+		c.registryInitErr = err
+		logger.Warn().Err(err).Msg("failed to initialize registry loader")
+	}
 
-		c.settingsLoader, c.settingsErr = NewSettingsLoader(opts...)
-		if c.settingsErr != nil {
+	// Resolve project from registry
+	c.Resolution = c.resolveProject(wd)
+
+	// Load project config
+	c.loadProject(wd)
+
+	// Inject runtime context into Project
+	if c.Resolution.Found() {
+		c.Project.setRuntimeContext(&c.Resolution.ProjectEntry, c.Registry)
+	}
+
+	// Load settings
+	c.loadSettings()
+}
+
+// resolveProject resolves the working directory to a registered project.
+func (c *Config) resolveProject(wd string) *Resolution {
+	if c.Registry == nil {
+		return &Resolution{WorkDir: wd}
+	}
+
+	registry, err := c.Registry.Load()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
+		return &Resolution{WorkDir: wd}
+	}
+	if registry == nil {
+		return &Resolution{WorkDir: wd}
+	}
+
+	resolver := NewResolver(registry)
+	return resolver.Resolve(wd)
+}
+
+// loadProject loads the project configuration from clawker.yaml.
+func (c *Config) loadProject(wd string) {
+	var opts []LoaderOption
+
+	if c.Resolution.Found() {
+		opts = append(opts,
+			WithProjectRoot(c.Resolution.ProjectRoot()),
+			WithProjectKey(c.Resolution.ProjectKey),
+		)
+	}
+
+	opts = append(opts, WithUserDefaults(""))
+	c.projectLoader = NewLoader(wd, opts...)
+
+	project, err := c.projectLoader.Load()
+	if err != nil {
+		if IsConfigNotFound(err) {
+			// No config file is fine - use defaults
+			logger.Debug().Msg("no clawker.yaml found; using defaults")
+			c.Project = DefaultConfig()
 			return
 		}
-		c.settings, c.settingsErr = c.settingsLoader.Load()
-	})
-	return c.settings, c.settingsErr
+		// Config exists but is invalid - this is a fatal error
+		// The user expects their config to be used, not silently replaced with defaults
+		fmt.Fprintf(os.Stderr, "\nError: clawker.yaml is invalid\n\n%v\n\nFix the configuration file and try again.\n", err)
+		os.Exit(1)
+	}
+	c.Project = project
+}
+
+// loadSettings loads the user settings from settings.yaml.
+func (c *Config) loadSettings() {
+	var opts []SettingsLoaderOption
+
+	if c.Resolution.Found() {
+		opts = append(opts, WithProjectSettingsRoot(c.Resolution.ProjectRoot()))
+	}
+
+	loader, err := NewSettingsLoader(opts...)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to initialize settings loader; using defaults")
+		c.Settings = DefaultSettings()
+		return
+	}
+	c.settingsLoader = loader
+
+	settings, err := loader.Load()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load settings; using defaults")
+		c.Settings = DefaultSettings()
+		return
+	}
+	c.Settings = settings
 }
 
 // SettingsLoader returns the underlying settings loader for write operations
-// (e.g., saving updated default image). Lazily initialized.
-func (c *Config) SettingsLoader() (*SettingsLoader, error) {
-	// Intentional side-effect: calling Settings() ensures the settings loader
-	// is lazily initialized via settingsOnce. The returned values are discarded
-	// because we access the cached settingsLoader and settingsErr directly.
-	_, _ = c.Settings()
-	return c.settingsLoader, c.settingsErr
+// (e.g., saving updated default image). May return nil if settings failed to load.
+func (c *Config) SettingsLoader() *SettingsLoader {
+	return c.settingsLoader
 }
 
-// Resolution returns the project resolution (project key, entry, workdir).
-// Results are cached after first resolution.
-func (c *Config) Resolution() *Resolution {
-	c.resolutionOnce.Do(func() {
-		wd, err := c.workDir()
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to get working directory; operating without project context")
-			c.resolution = &Resolution{}
-			return
-		}
-		registry, regErr := c.registry()
-		if regErr != nil {
-			logger.Warn().Err(regErr).Msg("failed to load project registry; operating without project context")
-			c.resolution = &Resolution{WorkDir: wd}
-			return
-		}
-		if registry == nil {
-			c.resolution = &Resolution{WorkDir: wd}
-			return
-		}
-		resolver := NewResolver(registry)
-		c.resolution = resolver.Resolve(wd)
-	})
-	return c.resolution
+// ProjectLoader returns the underlying project loader.
+// May return nil if project loading was skipped.
+func (c *Config) ProjectLoader() *Loader {
+	return c.projectLoader
 }
 
-// Registry returns the registry loader for write operations
-// (e.g., project register, project init).
-func (c *Config) Registry() (*RegistryLoader, error) {
-	c.initRegistry()
-	return c.registryLoader, c.registryErr
-}
-
-func (c *Config) initRegistry() {
-	c.registryOnce.Do(func() {
-		c.registryLoader, c.registryErr = NewRegistryLoader()
-	})
-}
-
-func (c *Config) registry() (*ProjectRegistry, error) {
-	c.initRegistry()
-	if c.registryErr != nil {
-		return nil, c.registryErr
-	}
-	return c.registryLoader.Load()
+// RegistryInitErr returns the error that occurred during registry initialization,
+// if any. This can be used to provide better error messages when Registry is nil.
+func (c *Config) RegistryInitErr() error {
+	return c.registryInitErr
 }

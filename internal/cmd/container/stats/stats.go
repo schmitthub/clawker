@@ -19,9 +19,9 @@ import (
 
 // StatsOptions defines the options for the stats command.
 type StatsOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent      bool // if set to true, treat arguments as agent name
 	NoStream   bool
@@ -32,9 +32,9 @@ type StatsOptions struct {
 // NewCmdStats creates a new stats command.
 func NewCmdStats(f *cmdutil.Factory, runF func(context.Context, *StatsOptions) error) *cobra.Command {
 	opts := &StatsOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -87,7 +87,7 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
 	}
 
 	// Connect to Docker

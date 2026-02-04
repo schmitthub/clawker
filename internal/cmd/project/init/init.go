@@ -20,9 +20,8 @@ import (
 // ProjectInitOptions contains the options for the project init command.
 type ProjectInitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Prompter func() *prompterpkg.Prompter
-	Config   func() *config.Config
-	WorkDir  func() (string, error)
+	Prompter  func() *prompterpkg.Prompter
+	Config    func() *config.Config
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -33,9 +32,8 @@ type ProjectInitOptions struct {
 func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectInitOptions) error) *cobra.Command {
 	opts := &ProjectInitOptions{
 		IOStreams: f.IOStreams,
-		Prompter: f.Prompter,
-		Config:   f.Config,
-		WorkDir:  f.WorkDir,
+		Prompter:  f.Prompter,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -86,7 +84,8 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
 
-	wd, err := opts.WorkDir()
+	// Get current working directory (where to initialize the project)
+	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
@@ -121,7 +120,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 				return nil
 			}
 			dirName := filepath.Base(absPath)
-			registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
+			registryLoader := cfgGateway.Registry
 			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
 			if err != nil {
 				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
@@ -168,8 +167,8 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings, err := cfgGateway.Settings()
-	if err == nil && settings != nil && settings.DefaultImage != "" {
+	settings := cfgGateway.Settings
+	if settings != nil && settings.DefaultImage != "" {
 		userDefaultImage = settings.DefaultImage
 	}
 
@@ -276,8 +275,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	}
 
 	// Register project in user settings
-	registryLoader := func() (*config.RegistryLoader, error) { return cfgGateway.Registry() }
-	if _, err := project.RegisterProject(ios, registryLoader, wd, projectName); err != nil {
+	if _, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName); err != nil {
 		logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 

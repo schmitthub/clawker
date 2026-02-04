@@ -19,8 +19,9 @@ const (
 
 // ProjectEntry represents a registered project in the registry.
 type ProjectEntry struct {
-	Name string `yaml:"name"`
-	Root string `yaml:"root"`
+	Name      string            `yaml:"name"`
+	Root      string            `yaml:"root"`
+	Worktrees map[string]string `yaml:"worktrees,omitempty"`
 }
 
 // Valid returns an error if the entry is missing required fields or has invalid values.
@@ -260,6 +261,32 @@ func (l *RegistryLoader) Register(displayName, rootDir string) (string, error) {
 	}
 
 	return slug, nil
+}
+
+// UpdateProject atomically updates a project entry in the registry.
+// The updateFn receives a pointer to the entry which can be modified in place.
+// If updateFn returns an error, the registry is not saved.
+// Returns an error if the project is not found or if loading/saving fails.
+func (l *RegistryLoader) UpdateProject(key string, updateFn func(*ProjectEntry) error) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	registry, err := l.Load()
+	if err != nil {
+		return err
+	}
+
+	entry, ok := registry.Projects[key]
+	if !ok {
+		return fmt.Errorf("project %q not found in registry", key)
+	}
+
+	if err := updateFn(&entry); err != nil {
+		return err
+	}
+
+	registry.Projects[key] = entry
+	return l.Save(registry)
 }
 
 // Unregister removes a project from the registry by key.

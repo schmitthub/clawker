@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/schmitthub/clawker/internal/cmd/generate"
@@ -23,16 +22,8 @@ func main() {
 	// Initialize logger
 	logger.Init(false) // Debug mode controlled by --debug flag
 
-	// Create factory with working directory
-	wd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to get working directory: %v\n", err)
-		os.Exit(1)
-	}
-
 	f := &cmdutil.Factory{
-		WorkDir:  func() (string, error) { return wd, nil },
-		Version:  Version,
+		Version:   Version,
 		IOStreams: iostreams.System(),
 	}
 

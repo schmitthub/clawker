@@ -3,6 +3,7 @@ package check
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
@@ -14,14 +15,12 @@ import (
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
-	WorkDir func() (string, error)
 }
 
 // NewCmdCheck creates the config check command.
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
-		WorkDir: f.WorkDir,
 	}
 
 	cmd := &cobra.Command{
@@ -50,7 +49,8 @@ Checks for:
 func checkRun(_ context.Context, opts *CheckOptions) error {
 	ios := opts.IOStreams
 
-	wd, err := opts.WorkDir()
+	// Get current working directory (where to look for clawker.yaml)
+	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}

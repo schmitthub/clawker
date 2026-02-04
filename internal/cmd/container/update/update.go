@@ -15,9 +15,9 @@ import (
 // TODO might be able to replace with container opts
 // UpdateOptions defines the options for the update command.
 type UpdateOptions struct {
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	IOStreams *iostreams.IOStreams
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Agent              bool
 	blkioWeight        uint16
@@ -43,9 +43,9 @@ type UpdateOptions struct {
 // NewCmdUpdate creates a new update command.
 func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions) error) *cobra.Command {
 	opts := &UpdateOptions{
-		IOStreams:  f.IOStreams,
-		Client:     f.Client,
-		Config: f.Config,
+		IOStreams: f.IOStreams,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -121,7 +121,7 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution().ProjectKey, opts.Containers)
+		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
 	}
 
 	// Connect to Docker

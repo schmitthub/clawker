@@ -23,7 +23,6 @@ import (
 // NewCmdRoot creates the root command for the clawker CLI.
 func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
 	var debug bool
-	var workDirFlag string
 
 	cmd := &cobra.Command{
 		Use:   "clawker",
@@ -44,10 +43,8 @@ Workspace modes:
 			// Initialize logger with file logging if possible
 			initializeLogger(debug)
 
-			wd, _ := f.WorkDir()
 			logger.Debug().
 				Str("version", f.Version).
-				Str("workdir", wd).
 				Bool("debug", debug).
 				Msg("clawker starting")
 
@@ -58,16 +55,6 @@ Workspace modes:
 
 	// Global flags
 	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
-	cmd.PersistentFlags().StringVarP(&workDirFlag, "workdir", "w", "", "Working directory (default: current directory)")
-
-	// Override factory default with flag-aware closure
-	origWorkDir := f.WorkDir
-	f.WorkDir = func() (string, error) {
-		if workDirFlag != "" {
-			return workDirFlag, nil
-		}
-		return origWorkDir()
-	}
 
 	// Version template
 	cmd.SetVersionTemplate(fmt.Sprintf("clawker %s (commit: %s)\n", f.Version, f.Commit))
