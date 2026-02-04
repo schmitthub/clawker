@@ -88,7 +88,7 @@ func (e *DockerError) Unwrap() error
 func (e *DockerError) FormatUserError() string  // formatted with numbered next steps
 ```
 
-48 `Err*` constructor functions. Pattern: `Err<Resource><Action>Failed(name, err)` returns `*DockerError` with contextual message and remediation steps. Examples: `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrContainerCreateFailed`, `ErrVolumeRemoveFailed`, `ErrNetworkConnectFailed`, `ErrBuildKitNotConfigured`.
+49 `Err*` constructor functions. Pattern: `Err<Resource><Action>Failed(name, err)` returns `*DockerError` with contextual message and remediation steps. Examples: `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageRemoveFailed`, `ErrContainerCreateFailed`, `ErrVolumeRemoveFailed`, `ErrNetworkConnectFailed`, `ErrBuildKitNotConfigured`.
 
 ## BuildKit Detection
 
