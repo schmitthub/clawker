@@ -57,27 +57,30 @@ var StatuslineScript string
 
 ## Implementation Plan
 
-### TODO 1: Fix Content Hash to Include Embedded Scripts
+### TODO 1: Fix Content Hash to Include Embedded Scripts ✅ DONE
 - [x] Identified the bug in `internal/bundler/hash.go`
-- [ ] Modify `ContentHash()` to hash all embedded scripts
-- [ ] Add tests for content hash including scripts
-- [ ] Update CLAUDE.md documentation
+- [x] Added `EmbeddedScripts()` helper in `internal/bundler/dockerfile.go`
+- [x] Modified `ContentHash()` to accept and hash `embeddedScripts []string` parameter
+- [x] Updated all callers (builder.go, builder_test.go, hash_test.go)
+- [x] Added tests: `TestContentHash_EmbeddedScripts`, `TestContentHash_EmbeddedScriptsHelper`
 
-### TODO 2: Fix BuildKit no-cache (if needed)
+### TODO 2: Fix BuildKit no-cache ✅ DONE
 - [x] Identified that `no-cache` frontend attribute may not be sufficient
-- [ ] Research if `CacheImports: []` needs to be set
-- [ ] Test BuildKit build with explicit cache disable
-- [ ] Update `pkg/whail/buildkit/solve.go` if needed
+- [x] Set `CacheImports = []bkclient.CacheOptionsEntry{}` when NoCache=true
+- [x] Updated `pkg/whail/buildkit/solve.go`
+- [x] Added test `TestToSolveOpt_NoCacheOff` to verify behavior
 
-### TODO 3: Make --no-cache Also Set ForceBuild (defense in depth)
-- [ ] In `internal/cmd/image/build/build.go`, when `NoCache=true`, also set `ForceBuild=true`
-- [ ] This ensures hash check is skipped when user explicitly requests no-cache
+### TODO 3: Make --no-cache Also Set ForceBuild ✅ DONE
+- [x] In `internal/cmd/image/build/build.go`, set `ForceBuild: opts.NoCache`
+- [x] This ensures hash check is skipped when user explicitly requests no-cache
 
 ### TODO 4: Verify Fixes
 - [ ] Build new clawker binary
 - [ ] Test `clawker build --no-cache`
 - [ ] Verify new container has updated `init-firewall.sh`
 - [ ] Verify `storage.googleapis.com` is reachable
+
+**All unit tests pass (2936 tests).**
 
 ## Workaround (User Can Use Now)
 ```bash

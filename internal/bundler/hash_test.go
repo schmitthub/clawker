@@ -13,10 +13,10 @@ import (
 func TestContentHash_Stability(t *testing.T) {
 	dockerfile := []byte("FROM alpine:latest\nRUN echo hello\n")
 
-	h1, err := ContentHash(dockerfile, nil, "")
+	h1, err := ContentHash(dockerfile, nil, "", nil)
 	require.NoError(t, err)
 
-	h2, err := ContentHash(dockerfile, nil, "")
+	h2, err := ContentHash(dockerfile, nil, "", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, h1, h2, "same input should produce same hash")
@@ -27,10 +27,10 @@ func TestContentHash_Sensitivity(t *testing.T) {
 	df1 := []byte("FROM alpine:latest\nRUN echo hello\n")
 	df2 := []byte("FROM alpine:latest\nRUN echo world\n")
 
-	h1, err := ContentHash(df1, nil, "")
+	h1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
-	h2, err := ContentHash(df2, nil, "")
+	h2, err := ContentHash(df2, nil, "", nil)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, h1, h2, "different Dockerfiles should produce different hashes")
@@ -46,17 +46,17 @@ func TestContentHash_IncludeFiles(t *testing.T) {
 	dockerfile := []byte("FROM alpine:latest\n")
 
 	// Hash with includes
-	h1, err := ContentHash(dockerfile, []string{"a.txt", "b.txt"}, dir)
+	h1, err := ContentHash(dockerfile, []string{"a.txt", "b.txt"}, dir, nil)
 	require.NoError(t, err)
 
 	// Hash without includes should differ
-	h2, err := ContentHash(dockerfile, nil, dir)
+	h2, err := ContentHash(dockerfile, nil, dir, nil)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, h1, h2, "adding includes should change the hash")
 
 	// Hash with same includes in different order should be the same (sorted)
-	h3, err := ContentHash(dockerfile, []string{"b.txt", "a.txt"}, dir)
+	h3, err := ContentHash(dockerfile, []string{"b.txt", "a.txt"}, dir, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, h1, h3, "include order should not affect hash")
@@ -68,13 +68,13 @@ func TestContentHash_IncludeContentChange(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("v1"), 0644))
 	dockerfile := []byte("FROM alpine:latest\n")
 
-	h1, err := ContentHash(dockerfile, []string{"file.txt"}, dir)
+	h1, err := ContentHash(dockerfile, []string{"file.txt"}, dir, nil)
 	require.NoError(t, err)
 
 	// Change file content
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("v2"), 0644))
 
-	h2, err := ContentHash(dockerfile, []string{"file.txt"}, dir)
+	h2, err := ContentHash(dockerfile, []string{"file.txt"}, dir, nil)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, h1, h2, "changing include file content should change hash")
@@ -84,7 +84,7 @@ func TestContentHash_MissingInclude(t *testing.T) {
 	dockerfile := []byte("FROM alpine:latest\n")
 
 	// Missing include files must return an error
-	_, err := ContentHash(dockerfile, []string{"nonexistent.txt"}, "/tmp")
+	_, err := ContentHash(dockerfile, []string{"nonexistent.txt"}, "/tmp", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent.txt")
 }
@@ -95,7 +95,7 @@ func TestContentHash_PermissionError(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("secret"), 0000))
 
 	dockerfile := []byte("FROM alpine:latest\n")
-	_, err := ContentHash(dockerfile, []string{"secret.txt"}, dir)
+	_, err := ContentHash(dockerfile, []string{"secret.txt"}, dir, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "secret.txt")
 }
@@ -124,7 +124,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen1 := NewProjectGenerator(baseConfig(), "/tmp/test")
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
-	hash1, err := ContentHash(df1, nil, "")
+	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
 	// Change env vars — hash should NOT change
@@ -133,7 +133,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen2 := NewProjectGenerator(cfg2, "/tmp/test")
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
-	hash2, err := ContentHash(df2, nil, "")
+	hash2, err := ContentHash(df2, nil, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash2, "changing agent env should not change hash")
 
@@ -144,7 +144,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen3 := NewProjectGenerator(cfg3, "/tmp/test")
 	df3, err := gen3.Generate()
 	require.NoError(t, err)
-	hash3, err := ContentHash(df3, nil, "")
+	hash3, err := ContentHash(df3, nil, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash3, "changing editor should not change hash")
 
@@ -154,7 +154,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen4 := NewProjectGenerator(cfg4, "/tmp/test")
 	df4, err := gen4.Generate()
 	require.NoError(t, err)
-	hash4, err := ContentHash(df4, nil, "")
+	hash4, err := ContentHash(df4, nil, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash4, "changing firewall domains should not change hash")
 
@@ -167,7 +167,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen5 := NewProjectGenerator(cfg5, "/tmp/test")
 	df5, err := gen5.Generate()
 	require.NoError(t, err)
-	hash5, err := ContentHash(df5, nil, "")
+	hash5, err := ContentHash(df5, nil, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash5, "changing labels and instruction env should not change hash")
 
@@ -177,7 +177,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen6 := NewProjectGenerator(cfg6, "/tmp/test")
 	df6, err := gen6.Generate()
 	require.NoError(t, err)
-	hash6, err := ContentHash(df6, nil, "")
+	hash6, err := ContentHash(df6, nil, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, hash1, hash6, "changing project name should not change hash")
 
@@ -187,7 +187,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	gen7 := NewProjectGenerator(cfg7, "/tmp/test")
 	df7, err := gen7.Generate()
 	require.NoError(t, err)
-	hash7, err := ContentHash(df7, nil, "")
+	hash7, err := ContentHash(df7, nil, "", nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash1, hash7, "changing packages should change hash")
 }
@@ -214,7 +214,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 	genBK.BuildKitEnabled = true
 	dfBK, err := genBK.Generate()
 	require.NoError(t, err)
-	hashBK, err := ContentHash(dfBK, nil, "")
+	hashBK, err := ContentHash(dfBK, nil, "", nil)
 	require.NoError(t, err)
 
 	// Legacy mode
@@ -222,7 +222,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 	genLegacy.BuildKitEnabled = false
 	dfLegacy, err := genLegacy.Generate()
 	require.NoError(t, err)
-	hashLegacy, err := ContentHash(dfLegacy, nil, "")
+	hashLegacy, err := ContentHash(dfLegacy, nil, "", nil)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, hashBK, hashLegacy, "BuildKit and legacy Dockerfiles should produce different hashes")
@@ -254,14 +254,14 @@ func TestContentHash_StableBuildKit(t *testing.T) {
 	gen1.BuildKitEnabled = true
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
-	hash1, err := ContentHash(df1, nil, "")
+	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
 	gen2 := NewProjectGenerator(cfg, "/tmp/test")
 	gen2.BuildKitEnabled = true
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
-	hash2, err := ContentHash(df2, nil, "")
+	hash2, err := ContentHash(df2, nil, "", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, hash1, hash2, "same config with BuildKit should produce stable hashes")
@@ -287,14 +287,14 @@ func TestContentHash_StableLegacy(t *testing.T) {
 	gen1.BuildKitEnabled = false
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
-	hash1, err := ContentHash(df1, nil, "")
+	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
 	gen2 := NewProjectGenerator(cfg, "/tmp/test")
 	gen2.BuildKitEnabled = false
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
-	hash2, err := ContentHash(df2, nil, "")
+	hash2, err := ContentHash(df2, nil, "", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, hash1, hash2, "same config with legacy builder should produce stable hashes")
@@ -328,9 +328,58 @@ func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
 	assert.Contains(t, string(dfBK), "--mount=type=cache", "Alpine BuildKit Dockerfile should contain cache mount directives")
 	assert.NotContains(t, string(dfLegacy), "--mount=type=cache", "Alpine legacy Dockerfile should not contain cache mount directives")
 
-	hashBK, err := ContentHash(dfBK, nil, "")
+	hashBK, err := ContentHash(dfBK, nil, "", nil)
 	require.NoError(t, err)
-	hashLegacy, err := ContentHash(dfLegacy, nil, "")
+	hashLegacy, err := ContentHash(dfLegacy, nil, "", nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, hashBK, hashLegacy, "Alpine BuildKit and legacy should produce different hashes")
+}
+
+// TestContentHash_EmbeddedScripts verifies that embedded scripts affect the hash.
+func TestContentHash_EmbeddedScripts(t *testing.T) {
+	dockerfile := []byte("FROM alpine:latest\n")
+
+	// Hash without embedded scripts
+	h1, err := ContentHash(dockerfile, nil, "", nil)
+	require.NoError(t, err)
+
+	// Hash with embedded scripts should differ
+	scripts := []string{"#!/bin/bash\necho 'script1'", "#!/bin/bash\necho 'script2'"}
+	h2, err := ContentHash(dockerfile, nil, "", scripts)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, h1, h2, "adding embedded scripts should change the hash")
+
+	// Hash with same scripts should be stable
+	h3, err := ContentHash(dockerfile, nil, "", scripts)
+	require.NoError(t, err)
+
+	assert.Equal(t, h2, h3, "same embedded scripts should produce same hash")
+
+	// Hash with different script content should differ
+	scripts2 := []string{"#!/bin/bash\necho 'script1'", "#!/bin/bash\necho 'modified'"}
+	h4, err := ContentHash(dockerfile, nil, "", scripts2)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, h2, h4, "different embedded script content should change hash")
+}
+
+// TestContentHash_EmbeddedScriptsHelper verifies that EmbeddedScripts() returns
+// a non-empty slice and that using it produces stable hashes.
+func TestContentHash_EmbeddedScriptsHelper(t *testing.T) {
+	scripts := EmbeddedScripts()
+	assert.NotEmpty(t, scripts, "EmbeddedScripts() should return non-empty slice")
+
+	// Verify all scripts are non-empty
+	for i, script := range scripts {
+		assert.NotEmpty(t, script, "embedded script %d should not be empty", i)
+	}
+
+	// Using EmbeddedScripts() should produce stable hashes
+	dockerfile := []byte("FROM alpine:latest\n")
+	h1, err := ContentHash(dockerfile, nil, "", EmbeddedScripts())
+	require.NoError(t, err)
+	h2, err := ContentHash(dockerfile, nil, "", EmbeddedScripts())
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "EmbeddedScripts() should produce stable hashes")
 }

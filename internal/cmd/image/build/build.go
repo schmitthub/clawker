@@ -180,8 +180,12 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		Str("image", imageTag).
 		Msg("building container image")
 
-	// Build with options
+	// Build with options.
+	// Defense in depth: --no-cache should also skip content hash check if
+	// EnsureImage() is ever used. This ensures explicit no-cache requests
+	// always trigger a full rebuild.
 	buildOpts := docker.BuilderOptions{
+		ForceBuild:      opts.NoCache,
 		NoCache:         opts.NoCache,
 		Labels:          labels,
 		Target:          opts.Target,

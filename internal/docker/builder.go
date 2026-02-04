@@ -80,7 +80,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 		return fmt.Errorf("failed to generate Dockerfile: %w", err)
 	}
 
-	hash, err := bundler.ContentHash(dockerfile, b.config.Agent.Includes, b.workDir)
+	hash, err := bundler.ContentHash(dockerfile, b.config.Agent.Includes, b.workDir, bundler.EmbeddedScripts())
 	if err != nil {
 		return fmt.Errorf("failed to compute content hash: %w", err)
 	}

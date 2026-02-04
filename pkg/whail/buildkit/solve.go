@@ -91,7 +91,7 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 		exportAttrs["name"] = strings.Join(opts.Tags, ",")
 	}
 
-	return bkclient.SolveOpt{
+	solveOpt := bkclient.SolveOpt{
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: attrs,
 		LocalMounts: map[string]fsutil.FS{
@@ -102,5 +102,15 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 			Type:  "moby",
 			Attrs: exportAttrs,
 		}},
-	}, nil
+	}
+
+	// Prevent cache import when NoCache is requested.
+	// The "no-cache" frontend attribute only "verifies cache" rather than disabling it
+	// (see moby/buildkit#2409). Setting empty CacheImports ensures no cached layers
+	// are imported from previous builds.
+	if opts.NoCache {
+		solveOpt.CacheImports = []bkclient.CacheOptionsEntry{}
+	}
+
+	return solveOpt, nil
 }

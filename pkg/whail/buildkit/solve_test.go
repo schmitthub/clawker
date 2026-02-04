@@ -90,6 +90,28 @@ func TestToSolveOpt_NoCache(t *testing.T) {
 
 	_, ok := solveOpt.FrontendAttrs["no-cache"]
 	assert.True(t, ok, "expected no-cache attribute to be set")
+
+	// Verify CacheImports is explicitly set to empty to prevent cache import
+	// (addresses moby/buildkit#2409 where no-cache only "verifies cache")
+	assert.NotNil(t, solveOpt.CacheImports, "expected CacheImports to be non-nil")
+	assert.Empty(t, solveOpt.CacheImports, "expected CacheImports to be empty when NoCache is true")
+}
+
+func TestToSolveOpt_NoCacheOff(t *testing.T) {
+	dir := t.TempDir()
+	opts := whail.ImageBuildKitOptions{
+		ContextDir: dir,
+		NoCache:    false,
+	}
+
+	solveOpt, err := toSolveOpt(opts)
+	require.NoError(t, err)
+
+	_, ok := solveOpt.FrontendAttrs["no-cache"]
+	assert.False(t, ok, "expected no-cache attribute to not be set when NoCache is false")
+
+	// CacheImports should not be explicitly set when NoCache is false
+	assert.Nil(t, solveOpt.CacheImports, "expected CacheImports to be nil when NoCache is false")
 }
 
 func TestToSolveOpt_Target(t *testing.T) {

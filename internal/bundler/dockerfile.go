@@ -47,6 +47,22 @@ var (
 	SSHAgentProxySource     = internals.SSHAgentProxySource
 )
 
+// EmbeddedScripts returns all embedded script contents for content hashing.
+// Order is deterministic (alphabetical by script name) to ensure stable hashes.
+// This includes both bundler-owned scripts and hostproxy container scripts.
+func EmbeddedScripts() []string {
+	return []string{
+		CallbackForwarderSource,
+		EntrypointScript,
+		FirewallScript,
+		GitCredentialScript,
+		HostOpenScript,
+		SettingsFile,
+		SSHAgentProxySource,
+		StatuslineScript,
+	}
+}
+
 // Default values for container configuration
 const (
 	DefaultClaudeCodeVersion = "latest"
