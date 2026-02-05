@@ -16,29 +16,23 @@ const ContainerGPGAgentPath = "/home/claude/.gnupg/S.gpg-agent"
 
 // IsGPGAgentAvailable checks if a GPG agent with an extra socket is available on the host.
 // The extra socket is specifically designed for restricted remote/forwarded access.
-// On macOS, we use the host proxy for GPG agent forwarding.
-// On Linux, we check if the extra socket exists.
+// Returns true if the socket exists and can be mounted into containers.
 func IsGPGAgentAvailable() bool {
+	if runtime.GOOS == "windows" {
+		// Windows not supported yet
+		return false
+	}
+
 	socketPath := GetGPGExtraSocketPath()
 	if socketPath == "" {
 		return false
 	}
 
-	switch runtime.GOOS {
-	case "darwin":
-		// On macOS, GPG agent is available via the host proxy
-		// We don't mount Docker Desktop's socket due to permission issues
-		return true
-	case "linux":
-		// Check if the socket exists
-		if _, err := os.Stat(socketPath); err != nil {
-			return false
-		}
-		return true
-	default:
-		// Windows and other platforms not supported yet
+	// Verify socket exists
+	if _, err := os.Stat(socketPath); err != nil {
 		return false
 	}
+	return true
 }
 
 // GetGPGExtraSocketPath returns the path to the GPG agent's extra socket on the host.
@@ -69,46 +63,44 @@ func GetGPGExtraSocketPath() string {
 }
 
 // UseGPGAgentProxy returns true if GPG agent should be forwarded via the host proxy
-// instead of direct socket mounting. This is used on macOS where Docker Desktop
-// mounts sockets with root ownership, causing permission issues.
+// instead of direct socket mounting.
+//
+// Returns false - direct socket mounting now works on Docker Desktop with VirtioFS.
+// The proxy code is kept as a fallback for older Docker Desktop versions if needed,
+// but is disabled by default.
 func UseGPGAgentProxy() bool {
-	return runtime.GOOS == "darwin" && IsGPGAgentAvailable()
+	return false
 }
 
 // GetGPGAgentMounts returns mount configurations for GPG agent forwarding.
-// Returns nil if GPG agent forwarding is not available on this platform
-// or if the host proxy should be used instead (macOS).
+// Returns nil if GPG agent forwarding is not available on this platform.
 //
-// On Linux, the GPG extra socket is bind-mounted into the container.
-// On macOS, we don't mount anything - the host proxy handles forwarding.
+// The GPG extra socket is bind-mounted into the container. This works on both
+// Linux and macOS (Docker Desktop 4.x+ with VirtioFS handles Unix sockets correctly).
 func GetGPGAgentMounts() []mount.Mount {
-	switch runtime.GOOS {
-	case "darwin":
-		// On macOS, we use the host proxy for GPG agent forwarding
-		// This avoids permission issues with Docker Desktop's socket mounting
-		logger.Debug().Msg("macOS: using host proxy for GPG agent forwarding")
+	if runtime.GOOS == "windows" {
+		logger.Debug().Msg("GPG agent forwarding not supported on Windows")
 		return nil
-	case "linux":
-		socketPath := GetGPGExtraSocketPath()
-		if socketPath == "" {
-			logger.Debug().Msg("GPG extra socket not found, skipping GPG agent mount")
-			return nil
-		}
-		// Verify socket exists
-		if _, err := os.Stat(socketPath); err != nil {
-			logger.Debug().Str("socket", socketPath).Err(err).Msg("GPG agent socket not found")
-			return nil
-		}
-		return []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   socketPath,
-				Target:   ContainerGPGAgentPath,
-				ReadOnly: false,
-			},
-		}
-	default:
-		logger.Debug().Str("os", runtime.GOOS).Msg("GPG agent forwarding not supported on this platform")
+	}
+
+	socketPath := GetGPGExtraSocketPath()
+	if socketPath == "" {
+		logger.Debug().Msg("GPG extra socket not found, skipping GPG agent mount")
 		return nil
+	}
+
+	// Verify socket exists
+	if _, err := os.Stat(socketPath); err != nil {
+		logger.Debug().Str("socket", socketPath).Err(err).Msg("GPG agent socket not found")
+		return nil
+	}
+
+	return []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   socketPath,
+			Target:   ContainerGPGAgentPath,
+			ReadOnly: false,
+		},
 	}
 }

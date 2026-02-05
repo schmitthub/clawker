@@ -44,12 +44,12 @@ func TestIsGPGAgentAvailable_NoGPGConf(t *testing.T) {
 	t.Logf("IsGPGAgentAvailable() = %v", available)
 }
 
-func TestIsGPGAgentAvailable_Linux_NonexistentSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Test only applies to Linux")
+func TestIsGPGAgentAvailable_NonexistentSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("GPG agent forwarding not supported on Windows")
 	}
 
-	// On Linux, if the socket doesn't exist, should return false
+	// If the socket doesn't exist, should return false
 	// This test relies on gpgconf returning a path that may not exist
 	socketPath := GetGPGExtraSocketPath()
 	if socketPath == "" {
@@ -65,34 +65,18 @@ func TestIsGPGAgentAvailable_Linux_NonexistentSocket(t *testing.T) {
 }
 
 func TestUseGPGAgentProxy(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		// On non-macOS, should always be false
-		if UseGPGAgentProxy() {
-			t.Error("UseGPGAgentProxy() = true on non-macOS, want false")
-		}
-		return
-	}
-
-	// On macOS, depends on IsGPGAgentAvailable
-	// If gpgconf is available, it should return based on socket availability
-	available := IsGPGAgentAvailable()
-	proxyNeeded := UseGPGAgentProxy()
-	if proxyNeeded != available {
-		t.Errorf("UseGPGAgentProxy() = %v, IsGPGAgentAvailable() = %v, want equal", proxyNeeded, available)
+	// UseGPGAgentProxy now always returns false - socket mounting works on Docker Desktop
+	if UseGPGAgentProxy() {
+		t.Error("UseGPGAgentProxy() = true, want false (socket mounting is preferred)")
 	}
 }
 
 func TestGetGPGAgentMounts_NoSocket(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		// On macOS, should return nil (uses host proxy instead)
-		mounts := GetGPGAgentMounts()
-		if mounts != nil {
-			t.Errorf("GetGPGAgentMounts() on macOS returned %v, want nil (uses host proxy)", mounts)
-		}
-		return
+	if runtime.GOOS == "windows" {
+		t.Skip("GPG agent forwarding not supported on Windows")
 	}
 
-	// On Linux without a valid socket, should return nil
+	// Without a valid socket, should return nil
 	socketPath := GetGPGExtraSocketPath()
 	if socketPath == "" {
 		mounts := GetGPGAgentMounts()
@@ -111,9 +95,9 @@ func TestGetGPGAgentMounts_NoSocket(t *testing.T) {
 	}
 }
 
-func TestGetGPGAgentMounts_Linux_ValidSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Test only applies to Linux")
+func TestGetGPGAgentMounts_ValidSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("GPG agent forwarding not supported on Windows")
 	}
 
 	socketPath := GetGPGExtraSocketPath()
@@ -154,9 +138,24 @@ func TestGetGPGAgentMounts_MacOS(t *testing.T) {
 		t.Skip("Test only applies to macOS")
 	}
 
-	// On macOS, should return nil (uses host proxy instead)
-	mounts := GetGPGAgentMounts()
-	if mounts != nil {
-		t.Errorf("GetGPGAgentMounts() on macOS returned %v, want nil (uses host proxy)", mounts)
+	socketPath := GetGPGExtraSocketPath()
+	if socketPath == "" {
+		t.Skip("gpgconf not available or GPG not configured")
+	}
+
+	// If socket exists, macOS should now return mounts (socket mounting works on Docker Desktop)
+	if _, err := os.Stat(socketPath); err == nil {
+		mounts := GetGPGAgentMounts()
+		if len(mounts) != 1 {
+			t.Fatalf("GetGPGAgentMounts() on macOS returned %d mounts, want 1 (socket mounting is preferred)", len(mounts))
+		}
+
+		m := mounts[0]
+		if m.Source != socketPath {
+			t.Errorf("mount.Source = %q, want %q", m.Source, socketPath)
+		}
+		if m.Target != ContainerGPGAgentPath {
+			t.Errorf("mount.Target = %q, want %q", m.Target, ContainerGPGAgentPath)
+		}
 	}
 }

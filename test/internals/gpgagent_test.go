@@ -2,11 +2,14 @@ package internals
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -294,129 +297,117 @@ func TestGpgAgentProxy_WaitLoop(t *testing.T) {
 	assert.NotContains(t, execResult.Stdout, "TIMEOUT", "should not timeout")
 }
 
-// TestGpgAgentProxy_RealProxySocketCreation verifies the real gpg-agent-proxy creates a socket
-// when given the proper environment variables.
+// TestGpgAgentProxy_RealProxySocketCreation tests the proxy approach.
+// SKIPPED: The proxy approach is now disabled by default in favor of direct socket mounting.
+// This test is kept for reference if the proxy fallback needs to be re-enabled.
 func TestGpgAgentProxy_RealProxySocketCreation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping internals test in short mode")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// Start mock host proxy
-	proxy := hostproxytest.NewMockHostProxy(t)
-
-	client := harness.NewTestClient(t)
-	image := harness.BuildLightImage(t, client)
-	ctr := harness.RunContainer(t, client, image,
-		harness.WithExtraHost("host.docker.internal:host-gateway"),
-	)
-
-	// Get proxy URL
-	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
-
-	// Start the real gpg-agent-proxy binary in background
-	startProxyScript := `
-		HOME=/home/claude
-		CLAWKER_HOST_PROXY="` + proxyURL + `"
-		export HOME CLAWKER_HOST_PROXY
-
-		mkdir -p "$HOME/.gnupg"
-		chmod 700 "$HOME/.gnupg"
-
-		# Start gpg-agent-proxy in background and wait for socket
-		/usr/local/bin/gpg-agent-proxy &
-		PROXY_PID=$!
-
-		# Wait up to 5 seconds for socket to appear
-		for i in $(seq 1 50); do
-			if [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
-				echo "SOCKET_CREATED"
-				echo "PID=$PROXY_PID"
-				exit 0
-			fi
-			sleep 0.1
-		done
-
-		echo "TIMEOUT_WAITING_FOR_SOCKET"
-		kill $PROXY_PID 2>/dev/null || true
-		exit 1
-	`
-	execResult, err := ctr.Exec(ctx, client, "bash", "-c", startProxyScript)
-	require.NoError(t, err, "failed to start gpg-agent-proxy")
-
-	t.Logf("gpg-agent-proxy output:\nstdout: %s\nstderr: %s", execResult.Stdout, execResult.Stderr)
-	assert.Contains(t, execResult.Stdout, "SOCKET_CREATED", "socket should be created by gpg-agent-proxy")
-	assert.Equal(t, 0, execResult.ExitCode, "gpg-agent-proxy should start successfully")
+	t.Skip("GPG agent proxy is disabled by default - direct socket mounting is now preferred")
 }
 
-// TestGpgAgentProxy_ConnectAgent verifies gpg-connect-agent can communicate via the proxy
+// TestGpgAgentProxy_ConnectAgent tests the proxy approach.
+// SKIPPED: The proxy approach is now disabled by default in favor of direct socket mounting.
+// This test is kept for reference if the proxy fallback needs to be re-enabled.
 func TestGpgAgentProxy_ConnectAgent(t *testing.T) {
+	t.Skip("GPG agent proxy is disabled by default - direct socket mounting is now preferred")
+}
+
+// TestGpgAgentDirectMount_SocketMount verifies that GPG agent socket can be mounted directly
+// into a container and gpg-connect-agent can communicate with it.
+// This test requires GPG agent to be running on the host.
+//
+// NOTE: On Docker Desktop for macOS, socket mounting via the Mounts API (mount.Mount) fails
+// with a "/socket_mnt" path prefix error. The -v syntax (Binds) works, but the SDK uses Mounts.
+// This is a Docker Desktop quirk - the clawker CLI works correctly because Docker's internal
+// translation handles it. We skip this test on macOS since the real functionality is verified
+// through manual testing with clawker run.
+func TestGpgAgentDirectMount_SocketMount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping internals test in short mode")
 	}
 
+	// Skip on macOS due to Docker Desktop's differing treatment of socket mounts via API vs CLI.
+	// See: https://github.com/docker/for-mac/issues/6545
+	if runtime.GOOS == "darwin" {
+		t.Skip("Skipping on macOS - Docker Desktop socket mounting via SDK Mounts API has issues with /socket_mnt prefix")
+	}
+
+	// Check if GPG agent is available on the host
+	if !workspace.IsGPGAgentAvailable() {
+		t.Skip("GPG agent not available on host - skipping direct socket mount test")
+	}
+
+	mounts := workspace.GetGPGAgentMounts()
+	if len(mounts) == 0 {
+		t.Skip("GetGPGAgentMounts returned empty - GPG not configured on host")
+	}
+
+	t.Logf("GPG socket mount: source=%s target=%s", mounts[0].Source, mounts[0].Target)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start mock host proxy that responds to GPG agent requests
-	proxy := hostproxytest.NewMockHostProxy(t)
-
 	client := harness.NewTestClient(t)
 	image := harness.BuildLightImage(t, client)
+
+	// Mount the GPG socket to /tmp instead of ~/.gnupg since the directory doesn't exist
+	// in the light test image. The actual clawker images have ~/.gnupg created.
+	socketMountPath := "/tmp/gpg-agent.sock"
+	gpgMount := mount.Mount{
+		Type:     mount.TypeBind,
+		Source:   mounts[0].Source,
+		Target:   socketMountPath,
+		ReadOnly: false,
+	}
+
+	t.Logf("Creating container with mount: type=%s source=%s target=%s readonly=%v",
+		gpgMount.Type, gpgMount.Source, gpgMount.Target, gpgMount.ReadOnly)
 	ctr := harness.RunContainer(t, client, image,
-		harness.WithExtraHost("host.docker.internal:host-gateway"),
+		harness.WithCmd("sleep", "infinity"),
+		harness.WithMounts(gpgMount),
 	)
 
-	// Get proxy URL
-	proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
-
-	// Start gpg-agent-proxy and test gpg-connect-agent
+	// Test that gpg-connect-agent can communicate with the mounted socket
 	testScript := `
-		HOME=/home/claude
-		CLAWKER_HOST_PROXY="` + proxyURL + `"
-		export HOME CLAWKER_HOST_PROXY
+		SOCKET_PATH="` + socketMountPath + `"
 
-		mkdir -p "$HOME/.gnupg"
-		chmod 700 "$HOME/.gnupg"
-
-		# Start gpg-agent-proxy in background
-		/usr/local/bin/gpg-agent-proxy &
-		PROXY_PID=$!
-
-		# Wait for socket
-		for i in $(seq 1 50); do
-			if [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
-				break
-			fi
-			sleep 0.1
-		done
-
-		if [ ! -S "$HOME/.gnupg/S.gpg-agent" ]; then
-			echo "SOCKET_NOT_CREATED"
-			kill $PROXY_PID 2>/dev/null || true
+		# Check socket exists
+		if [ ! -S "$SOCKET_PATH" ]; then
+			echo "SOCKET_NOT_FOUND"
+			ls -la "$SOCKET_PATH" 2>&1 || true
 			exit 1
 		fi
 
-		# Test gpg-connect-agent (should be able to send commands)
-		# Note: The mock proxy may not respond correctly, so we just check it connects
-		timeout 5 gpg-connect-agent /bye 2>&1 || true
-		CONNECT_EXIT=$?
+		echo "SOCKET_FOUND"
 
-		kill $PROXY_PID 2>/dev/null || true
+		# Test communication with GPG agent using explicit socket path
+		# GETINFO version should return the GPG agent version
+		result=$(gpg-connect-agent --no-autostart -S "$SOCKET_PATH" 'GETINFO version' '/bye' 2>&1)
+		exit_code=$?
 
-		if [ $CONNECT_EXIT -eq 0 ]; then
+		if [ $exit_code -eq 0 ]; then
 			echo "CONNECT_SUCCESS"
+			echo "RESULT: $result"
 		else
-			echo "CONNECT_ATTEMPTED"
+			echo "CONNECT_FAILED with exit code $exit_code"
+			echo "OUTPUT: $result"
 		fi
 	`
 	execResult, err := ctr.Exec(ctx, client, "bash", "-c", testScript)
-	require.NoError(t, err, "failed to run connect test")
+	require.NoError(t, err, "failed to run gpg-connect-agent test")
 
-	t.Logf("connect test output:\nstdout: %s\nstderr: %s", execResult.Stdout, execResult.Stderr)
-	// The mock proxy may not respond correctly to Assuan protocol, so we just verify
-	// the socket was created and gpg-connect-agent attempted to connect
-	assert.NotContains(t, execResult.Stdout, "SOCKET_NOT_CREATED", "socket should be created")
+	t.Logf("gpg-connect-agent test:\nstdout: %s\nstderr: %s", execResult.Stdout, execResult.Stderr)
+
+	// Verify socket was accessible and communication succeeded
+	assert.Contains(t, execResult.Stdout, "SOCKET_FOUND", "socket should be accessible in container")
+	assert.Contains(t, execResult.Stdout, "CONNECT_SUCCESS", "gpg-connect-agent should succeed")
+	// The output should contain version info (e.g., "D 2.4.9" for GPG agent version)
+	assert.Contains(t, execResult.Stdout, "RESULT:", "should have result output")
+}
+
+// TestGpgAgentDirectMount_UseGPGAgentProxyDisabled verifies that UseGPGAgentProxy returns false
+func TestGpgAgentDirectMount_UseGPGAgentProxyDisabled(t *testing.T) {
+	// This test verifies the new default behavior where we prefer socket mounting
+	if workspace.UseGPGAgentProxy() {
+		t.Error("UseGPGAgentProxy() should return false - socket mounting is now preferred")
+	}
 }

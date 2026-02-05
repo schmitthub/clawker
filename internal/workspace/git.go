@@ -48,15 +48,8 @@ func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool
 	// GPG agent forwarding
 	if cfg.GPGEnabled() {
 		if IsGPGAgentAvailable() {
-			// Add mounts (nil on macOS where we use proxy)
 			result.Mounts = append(result.Mounts, GetGPGAgentMounts()...)
-			// On macOS, tell entrypoint to use host proxy for GPG forwarding
-			if UseGPGAgentProxy() && hostProxyRunning {
-				result.Env = append(result.Env, "CLAWKER_GPG_VIA_PROXY=true")
-				logger.Debug().Msg("GPG agent forwarding enabled via host proxy")
-			} else {
-				logger.Debug().Msg("GPG agent forwarding enabled via socket mount")
-			}
+			logger.Debug().Msg("GPG agent forwarding enabled via socket mount")
 		} else {
 			logger.Debug().Msg("GPG agent not available, skipping GPG forwarding")
 		}

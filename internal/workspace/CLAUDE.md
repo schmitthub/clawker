@@ -99,16 +99,16 @@ func GetSSHAgentEnvVar() string   // Returns container SSH_AUTH_SOCK path (Linux
 ```go
 const ContainerGPGAgentPath = "/home/claude/.gnupg/S.gpg-agent"
 
-func IsGPGAgentAvailable() bool     // Checks gpgconf for extra socket (Linux: socket exists, macOS: gpgconf returns path)
-func UseGPGAgentProxy() bool        // true on macOS (avoids Docker Desktop socket permission issues)
+func IsGPGAgentAvailable() bool     // Checks gpgconf for extra socket, verifies socket exists
+func UseGPGAgentProxy() bool        // Always false - direct socket mounting works on Docker Desktop 4.x+
 func GetGPGExtraSocketPath() string // Gets path from `gpgconf --list-dir agent-extra-socket`
-func GetGPGAgentMounts() []mount.Mount  // Linux: bind mount extra socket; macOS: nil (uses proxy)
+func GetGPGAgentMounts() []mount.Mount  // Bind mount extra socket (works on both Linux and macOS)
 ```
 
-- Linux: Bind mount GPG extra socket (`S.gpg-agent.extra`) to container
-- macOS: GPG agent proxy binary via host proxy
+- Both Linux and macOS: Bind mount GPG extra socket (`S.gpg-agent.extra`) to container
 - Uses "extra socket" designed for restricted remote access (not main socket)
 - Pinentry prompts appear on HOST, not in container (expected behavior)
+- The proxy code is kept as a fallback but disabled by default (Docker Desktop 4.x+ with VirtioFS handles socket mounting correctly)
 
 ## Docker Socket
 
