@@ -121,7 +121,11 @@ type WorktreeInfo struct {
 }
 ```
 
-Note: If `Error` is non-nil, the worktree may be corrupted or inaccessible.
+Note: If `Error` is non-nil, the worktree may be:
+- Corrupted or inaccessible
+- Orphaned (git metadata exists but directory entry is missing)
+- Orphaned (directory entry exists but git metadata is missing)
+
 Check this field before using other fields.
 
 ## Utility Functions

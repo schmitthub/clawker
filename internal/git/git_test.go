@@ -98,7 +98,7 @@ func (f *fakeWorktreeDirProvider) DeleteWorktreeDir(name string) error {
 func (f *fakeWorktreeDirProvider) entries() []WorktreeDirEntry {
 	result := make([]WorktreeDirEntry, 0, len(f.worktrees))
 	for name, path := range f.worktrees {
-		// In the fake, slug is just the path basename (same as name since we don't slugify)
+		// Slug is the path basename (slugified version of name)
 		result = append(result, WorktreeDirEntry{
 			Name: name,
 			Slug: filepath.Base(path),
@@ -544,6 +544,87 @@ func TestGitManager_ListWorktrees(t *testing.T) {
 	assert.Contains(t, names, "list-test-2")
 }
 
+func TestGitManager_ListWorktrees_SlashedBranchNames(t *testing.T) {
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	provider := newFakeWorktreeDirProvider(t)
+
+	// Create worktrees with slashed branch names
+	path1, err := mgr.SetupWorktree(provider, "feature/foo", "")
+	require.NoError(t, err)
+
+	path2, err := mgr.SetupWorktree(provider, "bugfix/bar/baz", "")
+	require.NoError(t, err)
+
+	// List worktrees using entries from the provider
+	infos, err := mgr.ListWorktrees(provider.entries())
+	require.NoError(t, err)
+
+	// Build map for easier assertions
+	infoByName := make(map[string]WorktreeInfo)
+	for _, info := range infos {
+		infoByName[info.Name] = info
+	}
+
+	// Verify slashed names are preserved in Name field
+	info1, ok := infoByName["feature/foo"]
+	require.True(t, ok, "expected worktree with name 'feature/foo'")
+	assert.Equal(t, path1, info1.Path)
+	assert.Equal(t, "feature/foo", info1.Branch)
+
+	info2, ok := infoByName["bugfix/bar/baz"]
+	require.True(t, ok, "expected worktree with name 'bugfix/bar/baz'")
+	assert.Equal(t, path2, info2.Path)
+	assert.Equal(t, "bugfix/bar/baz", info2.Branch)
+}
+
+func TestGitManager_ListWorktrees_OrphanedDirectory(t *testing.T) {
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	provider := newFakeWorktreeDirProvider(t)
+
+	// Create a real worktree
+	_, err = mgr.SetupWorktree(provider, "real-worktree", "")
+	require.NoError(t, err)
+
+	// Create an orphaned directory (exists in config but not in git)
+	orphanDir := filepath.Join(provider.baseDir, "orphan-worktree")
+	err = os.MkdirAll(orphanDir, 0755)
+	require.NoError(t, err)
+
+	// Add entries including the orphan (which doesn't exist in git)
+	entries := provider.entries()
+	entries = append(entries, WorktreeDirEntry{
+		Name: "orphan-worktree",
+		Slug: "orphan-worktree",
+		Path: orphanDir,
+	})
+
+	infos, err := mgr.ListWorktrees(entries)
+	require.NoError(t, err)
+
+	// Build map for assertions
+	infoByName := make(map[string]WorktreeInfo)
+	for _, info := range infos {
+		infoByName[info.Name] = info
+	}
+
+	// Real worktree should have no error
+	realInfo, ok := infoByName["real-worktree"]
+	require.True(t, ok, "expected real-worktree in results")
+	assert.NoError(t, realInfo.Error)
+
+	// Orphan should have error indicating missing git metadata
+	orphanInfo, ok := infoByName["orphan-worktree"]
+	require.True(t, ok, "expected orphan-worktree in results")
+	require.Error(t, orphanInfo.Error)
+	assert.Contains(t, orphanInfo.Error.Error(), "no git metadata")
+	assert.Equal(t, orphanDir, orphanInfo.Path)
+}
 
 func TestGitManager_SetupWorktree_FailsWithExistingBranch(t *testing.T) {
 	_, repoDir := newTestRepoOnDisk(t)

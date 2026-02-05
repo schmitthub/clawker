@@ -218,8 +218,12 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		return nil, fmt.Errorf("listing worktrees: %w", err)
 	}
 
+	// Track which slugs we've seen from git
+	seenSlugs := make(map[string]bool, len(names))
+
 	var infos []WorktreeInfo
 	for _, slug := range names {
+		seenSlugs[slug] = true
 		entry, ok := entryBySlug[slug]
 		if !ok {
 			// Orphaned git worktree - no matching directory entry
@@ -251,6 +255,19 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		}
 
 		infos = append(infos, info)
+	}
+
+	// Second pass: find orphaned directories (entries without git metadata)
+	for _, entry := range entries {
+		if seenSlugs[entry.Slug] {
+			continue
+		}
+		// Orphaned directory - has config entry but no git metadata
+		infos = append(infos, WorktreeInfo{
+			Name:  entry.Name,
+			Path:  entry.Path,
+			Error: fmt.Errorf("worktree %q has directory but no git metadata (orphaned)", entry.Name),
+		})
 	}
 
 	return infos, nil
