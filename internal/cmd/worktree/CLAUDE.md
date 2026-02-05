@@ -7,6 +7,9 @@ Git worktree management commands for clawker projects.
 ```
 internal/cmd/worktree/
 ├── worktree.go           # Parent command, registers subcommands
+├── add/
+│   ├── add.go            # Create worktree for a branch
+│   └── add_test.go
 ├── list/
 │   ├── list.go           # List worktrees for current project
 │   └── list_test.go
@@ -21,9 +24,33 @@ internal/cmd/worktree/
 func NewCmdWorktree(f *cmdutil.Factory) *cobra.Command
 ```
 
-Registers: `NewCmdList`, `NewCmdRemove`
+Registers: `NewCmdAdd`, `NewCmdList`, `NewCmdRemove`
 
 ## Subcommands
+
+### Add (`add/add.go`)
+
+Creates a git worktree for a specified branch.
+
+```go
+type AddOptions struct {
+    IOStreams  *iostreams.IOStreams
+    GitManager func() (*git.GitManager, error)
+    Config     func() *config.Config
+    Branch     string
+    Base       string
+}
+```
+
+**Flags:**
+- `--base REF` — Base ref to create branch from (default: HEAD). Only used if branch doesn't exist.
+
+**Behavior:**
+- If worktree already exists → success (idempotent)
+- If branch exists but not checked out elsewhere → check it out in new worktree
+- If branch doesn't exist → create from base ref
+
+Wraps `GitManager.SetupWorktree()` which handles all the above logic.
 
 ### List (`list/list.go`)
 
@@ -97,4 +124,4 @@ cmd.SetArgs([]string{})
 err := cmd.Execute()
 ```
 
-See `list/list_test.go` and `remove/remove_test.go` for examples.
+See `add/add_test.go`, `list/list_test.go`, and `remove/remove_test.go` for examples.
