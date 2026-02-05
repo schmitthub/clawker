@@ -132,6 +132,10 @@ func runStop(opts *StopOptions) error {
 }
 ```
 
+## Exec Credential Forwarding
+
+The `exec` command automatically injects git credential forwarding env vars (like `CLAWKER_HOST_PROXY` and `CLAWKER_GPG_VIA_PROXY`) into exec'd processes. This enables git operations with GPG signing inside exec sessions. Credentials are set up via `workspace.SetupGitCredentials()` using the same pattern as `run`/`create`.
+
 ## Testing
 
 Container command tests use the **Cobra+Factory pattern** -- the canonical approach for testing commands end-to-end without a Docker daemon.

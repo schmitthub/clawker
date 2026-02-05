@@ -9,12 +9,17 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // maxGPGAgentMessageSize limits GPG agent message size (64KB should be plenty)
 const maxGPGAgentMessageSize = 64 * 1024
+
+// gpgReadTimeout is the maximum time to wait for a complete Assuan response
+// from the GPG agent. This prevents hanging forever if the agent becomes unresponsive.
+const gpgReadTimeout = 30 * time.Second
 
 // gpgAgentRequest is the JSON request body for POST /gpg/agent.
 type gpgAgentRequest struct {
@@ -53,7 +58,13 @@ func getGPGExtraSocket() (string, error) {
 // readAssuanResponse reads a complete Assuan protocol response from the connection.
 // The response is complete when a line starts with "OK" or "ERR".
 // Returns the complete response bytes or an error.
+// Times out after gpgReadTimeout to prevent hanging forever if the agent is unresponsive.
 func readAssuanResponse(conn net.Conn) ([]byte, error) {
+	// Set read deadline to prevent hanging forever if GPG agent becomes unresponsive
+	if err := conn.SetReadDeadline(time.Now().Add(gpgReadTimeout)); err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
+
 	var response []byte
 	buf := make([]byte, 4096)
 

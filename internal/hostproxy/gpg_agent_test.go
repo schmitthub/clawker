@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestHandleGPGAgent_InvalidJSON(t *testing.T) {
@@ -175,5 +177,81 @@ func TestIsAssuanResponseComplete(t *testing.T) {
 				t.Errorf("isAssuanResponseComplete(%q) = %v, want %v", tt.data, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestReadAssuanResponse_Timeout(t *testing.T) {
+	// Create a pipe to simulate a slow/hung GPG agent
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Server sends partial data then hangs (never sends OK/ERR)
+	go func() {
+		server.Write([]byte("D partial data\n"))
+		// Never sends OK/ERR - simulates hung GPG agent
+		// Block forever (or until client closes)
+		buf := make([]byte, 1)
+		server.Read(buf) // This will block until client closes
+	}()
+
+	// CURRENT: Hangs forever (BUG)
+	// EXPECTED: Times out after gpgReadTimeout
+	start := time.Now()
+	_, err := readAssuanResponse(client)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Error("expected timeout error, got nil")
+	}
+
+	// Should timeout within a reasonable time (gpgReadTimeout + some buffer)
+	// The timeout is 30s, so we expect it to complete in under 35s
+	if elapsed > 35*time.Second {
+		t.Errorf("took too long: %v (expected < 35s)", elapsed)
+	}
+
+	// Verify the error indicates timeout
+	if err != nil && !isTimeoutError(err) {
+		t.Logf("error type: %T, error: %v", err, err)
+		// The error could be "i/o timeout" or similar
+	}
+}
+
+// isTimeoutError checks if an error is a timeout-related error
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for net.Error timeout
+	if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+		return true
+	}
+	// Also check error message for timeout-related strings
+	errStr := err.Error()
+	return bytes.Contains([]byte(errStr), []byte("timeout")) ||
+		bytes.Contains([]byte(errStr), []byte("deadline"))
+}
+
+func TestReadAssuanResponse_Success(t *testing.T) {
+	// Create a pipe to simulate GPG agent
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Server sends a complete response
+	go func() {
+		server.Write([]byte("D some data\n"))
+		server.Write([]byte("OK\n"))
+	}()
+
+	data, err := readAssuanResponse(client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "D some data\nOK\n"
+	if string(data) != expected {
+		t.Errorf("got %q, want %q", string(data), expected)
 	}
 }

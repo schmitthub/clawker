@@ -10,9 +10,11 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +23,7 @@ type ExecOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
+	HostProxy func() *hostproxy.Manager
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -41,6 +44,7 @@ func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) err
 		IOStreams: f.IOStreams,
 		Client:    f.Client,
 		Config:    f.Config,
+		HostProxy: f.HostProxy,
 	}
 
 	cmd := &cobra.Command{
@@ -140,6 +144,25 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 		logger.SetInteractiveMode(true)
 		defer logger.SetInteractiveMode(false)
 	}
+
+	// Setup git credential forwarding for exec sessions
+	// This enables GPG signing and git credential helpers in exec'd commands
+	cfg := opts.Config().Project
+	hostProxyRunning := false
+	if cfg.Security.HostProxyEnabled() {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
+			logger.Warn().Err(err).Msg("failed to start host proxy for exec")
+		} else if hp.IsRunning() {
+			hostProxyRunning = true
+			opts.Env = append(opts.Env, "CLAWKER_HOST_PROXY="+hp.ProxyURL())
+			logger.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
+		}
+	}
+
+	// Setup git credentials (includes GPG forwarding env vars)
+	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
+	opts.Env = append(opts.Env, gitSetup.Env...)
 
 	// Create exec configuration
 	execConfig := docker.ExecCreateOptions{

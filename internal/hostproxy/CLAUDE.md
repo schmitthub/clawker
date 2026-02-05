@@ -25,6 +25,7 @@ The host proxy runs as a **daemon subprocess** that persists beyond CLI command 
 const DefaultPort = 18374
 const SessionIDLength = 16
 const DefaultCallbackTTL = 5 * time.Minute
+const gpgReadTimeout = 30 * time.Second  // Timeout for GPG agent response reads
 var ErrCallbackAlreadyReceived error
 ```
 

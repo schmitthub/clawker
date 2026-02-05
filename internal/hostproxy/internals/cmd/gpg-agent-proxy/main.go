@@ -109,9 +109,10 @@ func main() {
 				case <-shutdownCh:
 					return
 				default:
-					// Unexpected error - log it
-					fmt.Fprintf(os.Stderr, "error accepting connection: %v\n", err)
-					return
+					// Unexpected error - log it but continue accepting
+					// This prevents transient errors from killing the proxy
+					fmt.Fprintf(os.Stderr, "error accepting connection: %v (continuing)\n", err)
+					continue
 				}
 			}
 			go handleConnection(conn, hostProxy, httpClient)
@@ -127,10 +128,11 @@ func handleConnection(conn net.Conn, hostProxy string, client *http.Client) {
 
 	// GPG agent protocol (Assuan) is line-based
 	// Read commands from client and forward to host proxy
+	// Allocate buffer once outside the loop to avoid repeated allocations
+	buf := make([]byte, maxMessageSize)
 	for {
 		// Read up to maxMessageSize bytes
 		// Assuan commands are typically small, line-based messages
-		buf := make([]byte, maxMessageSize)
 		n, err := conn.Read(buf)
 		if err != nil {
 			if err != io.EOF {
