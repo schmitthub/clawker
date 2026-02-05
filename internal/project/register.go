@@ -11,7 +11,7 @@ import (
 // RegisterProject registers a project in the user's project registry.
 // It ensures the settings file exists and calls registryLoader.Register().
 // Returns the slug on success. On errors, prints warnings to stderr and returns the error.
-func RegisterProject(ios *iostreams.IOStreams, registryLoader *config.RegistryLoader, workDir string, projectName string) (string, error) {
+func RegisterProject(ios *iostreams.IOStreams, registryLoader config.Registry, workDir string, projectName string) (string, error) {
 	cs := ios.ColorScheme()
 
 	// Check if registry loader is available

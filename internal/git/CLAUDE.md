@@ -24,6 +24,9 @@ Top-level facade for git operations.
 // Create from any path within a git repo (walks up to find root)
 mgr, err := git.NewGitManager("/path/within/repo")
 
+// Create from existing go-git Repository (for testing with in-memory repos)
+mgr := git.NewGitManagerWithRepo(repo, "/logical/root/path")
+
 // Access sub-managers (returns error if storage doesn't support worktrees)
 wt, err := mgr.Worktrees()
 
@@ -113,6 +116,7 @@ Information about a worktree:
 ```go
 type WorktreeInfo struct {
     Name       string        // worktree name
+    Slug       string        // registry slug (preserved from WorktreeDirEntry)
     Path       string        // filesystem path
     Head       plumbing.Hash // current commit
     Branch     string        // branch name (empty if detached)
@@ -149,6 +153,8 @@ if errors.Is(err, git.ErrNotRepository) {
 
 ## Testing
 
+### On-Disk Testing
+
 This package uses temp directories for tests because go-git's worktree API
 requires real filesystem operations (worktrees create .git files and
 .git/worktrees/ directories).
@@ -161,6 +167,25 @@ func newTestRepoOnDisk(t *testing.T) (*gogit.Repository, string) {
     return repo, dir
 }
 ```
+
+### In-Memory Testing (`gittest` package)
+
+For tests that don't need real worktree operations, use the `gittest` package:
+
+```go
+import "github.com/schmitthub/clawker/internal/git/gittest"
+
+// Creates a GitManager backed by in-memory storage
+mgr := gittest.NewInMemoryGitManager(t, "/logical/project/root")
+
+// The underlying repository is seeded with an initial commit
+// Use mgr.GitManager for operations that work with GitManager
+// Use mgr.Repository() to access the underlying go-git Repository
+```
+
+**Note:** In-memory repos have limitations — `ListWorktrees` relies on worktree path lookups
+that may not work fully without real filesystem worktrees. Use for testing code that
+calls GitManager methods but doesn't depend on worktree enumeration accuracy.
 
 ## Dependencies
 

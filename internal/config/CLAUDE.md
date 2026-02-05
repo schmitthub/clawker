@@ -43,10 +43,10 @@ The `Config` type eagerly loads all configuration from `os.Getwd()`. All fields 
 
 ```go
 type Config struct {
-    Project    *Project        // from clawker.yaml, defaults if not found
-    Settings   *Settings       // from settings.yaml, defaults if not found
-    Resolution *Resolution     // project resolution from registry
-    Registry   *RegistryLoader // may be nil if initialization failed
+    Project    *Project    // from clawker.yaml, defaults if not found
+    Settings   *Settings   // from settings.yaml, defaults if not found
+    Resolution *Resolution // project resolution from registry
+    Registry   Registry    // interface type, may be nil if initialization failed
 }
 
 func NewConfig() *Config                                           // uses os.Getwd() internally
@@ -141,17 +141,129 @@ var ErrNotInProject = errors.New("not in a registered project directory")
 
 Persistent project registry at `~/.local/clawker/projects.yaml`.
 
+### Interfaces
+
+The registry uses interface types to enable clean DI and testing:
+
+```go
+// Registry provides access to project registry operations.
+type Registry interface {
+    Project(key string) ProjectHandle
+    Load() (*ProjectRegistry, error)
+    Save(r *ProjectRegistry) error
+    Register(displayName, rootDir string) (string, error)
+    Unregister(key string) (bool, error)
+    UpdateProject(key string, fn func(*ProjectEntry) error) error
+    Path() string
+    Exists() bool
+}
+
+// ProjectHandle provides operations on a single project entry.
+type ProjectHandle interface {
+    Key() string
+    Get() (*ProjectEntry, error)
+    Root() (string, error)
+    Exists() (bool, error)
+    Update(fn func(*ProjectEntry) error) error
+    Delete() (bool, error)
+    Worktree(name string) WorktreeHandle
+    ListWorktrees() ([]WorktreeHandle, error)
+}
+
+// WorktreeHandle provides operations on a single worktree.
+type WorktreeHandle interface {
+    Name() string
+    Slug() string
+    Path() (string, error)
+    DirExists() bool
+    GitExists() bool
+    Status() *WorktreeStatus
+    Delete() error
+}
+```
+
+### Core Types
+
 - `ProjectEntry` — `Name string`, `Root string`, `Worktrees map[string]string`
   - `(e ProjectEntry) Valid() error` — validates fields (name non-empty, root path absolute)
 - `ProjectRegistry` — `Projects map[string]ProjectEntry`
-- `NewRegistryLoader()` — creates loader for the registry file (resolves path from CLAWKER_HOME)
+- `RegistryLoader` — file-based implementation of `Registry` interface
+- `NewRegistryLoader() (*RegistryLoader, error)` — creates loader for the registry file (resolves path from CLAWKER_HOME)
+- `NewRegistryLoaderWithPath(dir) *RegistryLoader` — creates loader for testing (used by configtest)
 - `Slugify(name)` — converts project name to URL-safe slug
 - `UniqueSlug(name, registry)` — generates unique slug with numeric suffix if needed
-- `(*RegistryLoader).Register(displayName, rootDir)` — add/update project, returns slug key
-- `(*RegistryLoader).Unregister(key)` — remove project by key
-- `(*RegistryLoader).UpdateProject(key, func(*ProjectEntry) error)` — atomically modify a project entry
 - `(*ProjectRegistry).Lookup(path)` — find project by longest-prefix path match
 - `(*ProjectRegistry).LookupByKey(key)` / `HasKey(key)` — find/check by slug
+
+### Handle Pattern (DDD Aggregate Root)
+
+The registry uses a Handle Pattern for resource navigation, similar to Google Cloud SDK's `client.Bucket(name).Object(name)`.
+
+```go
+// Navigate to a project (returns ProjectHandle interface)
+handle := registry.Project("my-project")
+
+// Get project info
+entry, err := handle.Get()
+exists, err := handle.Exists()
+root, err := handle.Root()
+
+// Navigate to a worktree (returns WorktreeHandle interface)
+wtHandle := handle.Worktree("feature-branch")
+status := wtHandle.Status()  // Returns *WorktreeStatus
+
+// List all worktrees (returns []WorktreeHandle)
+handles, err := handle.ListWorktrees()
+```
+
+**WorktreeStatus** holds health check results:
+- `IsHealthy()` — both dir and git exist
+- `IsPrunable()` — both dir and git missing AND no error (safe to delete stale entries)
+- `Issues()` — returns `[]string` of issue descriptions
+- `String()` — "healthy", comma-separated issues, or "error: ..." if Error is set
+- `Error` field — non-nil if path resolution failed; prevents `IsPrunable()` from returning true
+
+## Test Utilities (`configtest/`)
+
+The `configtest` subpackage provides utilities for testing code that uses the registry:
+
+### File-based FakeRegistryBuilder (uses temp directory)
+
+```go
+// Set up a registry with worktrees (writes to filesystem)
+builder := configtest.NewFakeRegistryBuilder(tempDir)
+builder.WithProject("my-project", "My Project", projectRoot).
+    WithWorktree("feature-a", "feature-a").
+    WithWorktree("feature/b", "feature-b")
+registry, err := builder.Build()  // Returns config.Registry interface
+
+// Set up worktree filesystem state (for real DirExists/GitExists checks)
+fs := configtest.NewFakeWorktreeFS(clawkerHome, "my-project", "feature-a")
+fs.CreateDir()  // Makes DirExists() return true
+fs.CreateGitFile(projectRoot)  // Makes GitExists() return true
+fs.CreateBoth(projectRoot)  // Creates both
+```
+
+### In-Memory Registry (no filesystem I/O)
+
+For fully in-memory testing with controllable worktree status:
+
+```go
+// Build registry with controlled worktree states
+registry := configtest.NewInMemoryRegistryBuilder().
+    WithProject("test-project", "Test Project", "/fake/project").
+    WithHealthyWorktree("feature-a", "feature-a").  // DirExists=true, GitExists=true
+    WithStaleWorktree("stale-branch", "stale-branch").  // DirExists=false, GitExists=false
+    WithPartialWorktree("partial", "partial", true, false).  // custom state
+    WithErrorWorktree("error-branch", "error-branch", errors.New("path error")).  // Path() returns error
+    Registry().
+    Build()
+
+// Directly control worktree state
+inMemReg := configtest.NewInMemoryRegistry()
+inMemReg.SetWorktreeState("project-key", "worktree-name", true, false)
+inMemReg.SetWorktreePathError("project-key", "worktree-name", errors.New("simulated error"))
+```
 
 ## Resolver (`resolver.go`)
 

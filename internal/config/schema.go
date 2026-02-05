@@ -22,9 +22,9 @@ type Project struct {
 	Ralph        *RalphConfig    `yaml:"ralph,omitempty" mapstructure:"ralph"`
 
 	// Runtime context (not persisted, injected after loading)
-	projectEntry *ProjectEntry   `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
-	registry     *RegistryLoader `yaml:"-" mapstructure:"-"` // for write operations
-	worktreeMu   sync.RWMutex    `yaml:"-" mapstructure:"-"` // protects projectEntry.Worktrees
+	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
+	registry     Registry      `yaml:"-" mapstructure:"-"` // for write operations
+	worktreeMu   sync.RWMutex  `yaml:"-" mapstructure:"-"` // protects projectEntry.Worktrees
 }
 
 // BuildConfig defines the container build configuration

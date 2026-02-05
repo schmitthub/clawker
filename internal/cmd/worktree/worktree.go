@@ -4,6 +4,7 @@ package worktree
 import (
 	"github.com/schmitthub/clawker/internal/cmd/worktree/add"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/list"
+	"github.com/schmitthub/clawker/internal/cmd/worktree/prune"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
@@ -38,13 +39,20 @@ and stored in $CLAWKER_HOME/projects/<project>/worktrees/.`,
   clawker worktree remove --delete-branch feat-42
 
   # Force remove a worktree with uncommitted changes
-  clawker worktree remove --force feat-42`,
+  clawker worktree remove --force feat-42
+
+  # Preview stale entries that would be pruned
+  clawker worktree prune --dry-run
+
+  # Remove stale worktree entries from the registry
+  clawker worktree prune`,
 		// No RunE - this is a parent command
 	}
 
 	// Add subcommands
 	cmd.AddCommand(add.NewCmdAdd(f, nil))
 	cmd.AddCommand(list.NewCmdList(f, nil))
+	cmd.AddCommand(prune.NewCmdPrune(f, nil))
 	cmd.AddCommand(remove.NewCmdRemove(f, nil))
 
 	return cmd

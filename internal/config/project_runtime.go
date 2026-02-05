@@ -23,7 +23,7 @@ type WorktreeDirInfo struct {
 
 // setRuntimeContext injects runtime context from resolution into the project.
 // This is called after loading the project config.
-func (p *Project) setRuntimeContext(entry *ProjectEntry, registry *RegistryLoader) {
+func (p *Project) setRuntimeContext(entry *ProjectEntry, registry Registry) {
 	p.projectEntry = entry
 	p.registry = registry
 }

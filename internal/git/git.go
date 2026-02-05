@@ -69,6 +69,16 @@ func NewGitManager(path string) (*GitManager, error) {
 	}, nil
 }
 
+// NewGitManagerWithRepo creates a GitManager from an existing go-git Repository.
+// This is primarily used for testing with in-memory repositories.
+// The repoRoot parameter should be the logical root directory (can be a fake path for testing).
+func NewGitManagerWithRepo(repo *gogit.Repository, repoRoot string) *GitManager {
+	return &GitManager{
+		repo:     repo,
+		repoRoot: repoRoot,
+	}
+}
+
 // Repository returns the underlying go-git Repository.
 // Use this for operations not covered by the sub-managers.
 func (g *GitManager) Repository() *gogit.Repository {
@@ -229,6 +239,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 			// Orphaned git worktree - no matching directory entry
 			infos = append(infos, WorktreeInfo{
 				Name:  slug,
+				Slug:  slug,
 				Error: fmt.Errorf("worktree %q has git metadata but no directory entry (orphaned)", slug),
 			})
 			continue
@@ -236,6 +247,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 
 		info := WorktreeInfo{
 			Name: entry.Name, // Use original name (with slashes), not slug
+			Slug: entry.Slug,
 			Path: entry.Path,
 		}
 
@@ -265,6 +277,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		// Orphaned directory - has config entry but no git metadata
 		infos = append(infos, WorktreeInfo{
 			Name:  entry.Name,
+			Slug:  entry.Slug,
 			Path:  entry.Path,
 			Error: fmt.Errorf("worktree %q has directory but no git metadata (orphaned)", entry.Name),
 		})

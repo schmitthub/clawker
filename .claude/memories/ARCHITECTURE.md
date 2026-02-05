@@ -328,10 +328,10 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 ┌─────────────────────────────────────────────────────────────────┐
 │  LEAF PACKAGES — "Pure Utilities"                               │
 │                                                                 │
-│  Import: standard library only, no internal siblings            │
+│  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, tui, monitor, docs                    │
+│  Clawker examples: logger, tui, monitor, docs, git               │
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼

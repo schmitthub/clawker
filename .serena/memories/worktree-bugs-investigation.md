@@ -2,7 +2,15 @@
 
 ## STATUS: FIXED
 
-Bug 3 fixed. Bug 1 was already fixed in the codebase. Bug 2 was user error. Updated 2026-02-04.
+Bug 3 fixed (slashed branch names). Bug 1 was already fixed. Bug 2 was user error.
+
+**NEW (2026-02-04):** Added `clawker worktree prune` command and handle-based registry API to fix stale worktree entries.
+
+**NEW (2026-02-05):** Fixed `IsPrunable()` error handling bug — now returns `false` when `Error` is set, preventing accidental pruning of worktrees with path resolution errors.
+
+**NEW (2026-02-05):** Fixed worktree list path error handling — when `handle.Path()` fails, error entries are now handled separately from valid entries. Shows clear `path error: ...` status instead of confusing `opening worktree at :` errors.
+
+See also: `internal/config/registry.go` (ProjectHandle, WorktreeHandle, WorktreeStatus types)
 
 ### Changes Made
 

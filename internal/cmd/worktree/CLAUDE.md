@@ -13,6 +13,9 @@ internal/cmd/worktree/
 ├── list/
 │   ├── list.go           # List worktrees for current project
 │   └── list_test.go
+├── prune/
+│   ├── prune.go          # Remove stale registry entries
+│   └── prune_test.go
 └── remove/
     ├── remove.go         # Remove worktrees by branch name
     └── remove_test.go
@@ -24,7 +27,7 @@ internal/cmd/worktree/
 func NewCmdWorktree(f *cmdutil.Factory) *cobra.Command
 ```
 
-Registers: `NewCmdAdd`, `NewCmdList`, `NewCmdRemove`
+Registers: `NewCmdAdd`, `NewCmdList`, `NewCmdPrune`, `NewCmdRemove`
 
 ## Subcommands
 
@@ -65,10 +68,43 @@ type ListOptions struct {
 }
 ```
 
-**Output columns:** Branch, Path, Last Modified
+**Output columns:** Branch, Path, HEAD, Modified, Status
+
+**Status values:**
+- (empty) — healthy worktree
+- `dir missing` — worktree directory doesn't exist
+- `git missing` — .git file missing or invalid
+- `dir missing, git missing` — stale entry (prunable)
+- `error: path error: ...` — failed to resolve worktree path (not prunable)
 
 **Flags:**
 - `--quiet` / `-q` — Suppress headers, show branch names only
+
+**Prune Warning:** When stale entries are detected, shows a warning suggesting `clawker worktree prune`.
+
+### Prune (`prune/prune.go`)
+
+Removes stale worktree entries from the project registry.
+
+```go
+type PruneOptions struct {
+    IOStreams *iostreams.IOStreams
+    Config    func() *config.Config
+    DryRun    bool
+}
+```
+
+**When to use:**
+- After using native `git worktree remove` (bypasses clawker registry)
+- When `clawker worktree remove` failed partway through
+- After manual deletion of worktree directories
+
+**Flags:**
+- `--dry-run` — Show what would be pruned without removing
+
+**Prunable criteria:** Both directory and git metadata are missing (stale registry entry).
+
+Uses `config.WorktreeHandle.Status()` to detect stale entries and `WorktreeHandle.Delete()` to remove from registry.
 
 ### Remove (`remove/remove.go`)
 
