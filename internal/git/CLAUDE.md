@@ -64,13 +64,19 @@ if err != nil {
     // Handle error (storage doesn't support worktrees)
 }
 
-// Add worktree at commit
+// Add worktree at commit (NOTE: this creates a branch named after the worktree!)
+// For most use cases, prefer AddDetached, AddWithNewBranch, or AddWithExistingBranch.
 err = wt.Add("/path/to/worktree", "name", commitHash)
 
-// Add worktree with new branch
+// Add worktree with new branch (uses detached HEAD internally to avoid slugified branch)
+// Creates worktree and a NEW branch pointing to baseCommit (or HEAD if zero)
 err := wt.AddWithNewBranch("/path", "name", branchRef, baseCommit)
 
-// Add detached HEAD worktree
+// Add worktree for an EXISTING branch (no new branch created)
+// Use when the branch already exists and you want a worktree for it
+err := wt.AddWithExistingBranch("/path", "name", branchRef)
+
+// Add detached HEAD worktree (no branch created or checked out)
 err := wt.AddDetached("/path", "name", commitHash)
 
 // List worktree names
@@ -85,6 +91,11 @@ repo, err := wt.Open("/path")
 // Remove worktree metadata (not directory)
 err := wt.Remove("name")
 ```
+
+**Important**: `SetupWorktree` automatically chooses between `AddWithExistingBranch` and
+`AddWithNewBranch` based on whether the branch already exists. This prevents the bug
+where slashed branch names like "a/output-styling" would incorrectly create a slugified
+branch "a-output-styling".
 
 ### WorktreeDirProvider Interface
 

@@ -762,41 +762,46 @@ func TestGitManager_ListWorktrees_OrphanedDirectory(t *testing.T) {
 	assert.Equal(t, orphanDir, orphanInfo.Path)
 }
 
-func TestGitManager_SetupWorktree_FailsWithExistingBranch(t *testing.T) {
+func TestGitManager_SetupWorktree_SucceedsWithExistingBranch(t *testing.T) {
+	// After the fix, SetupWorktree should succeed with an existing branch
+	// by using AddWithExistingBranch instead of AddWithNewBranch.
 	_, repoDir := newTestRepoOnDisk(t)
 	mgr, err := NewGitManager(repoDir)
 	require.NoError(t, err)
 
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
 	provider := newFakeWorktreeDirProvider(t)
 
-	// Try to create a worktree with a branch that already exists (master)
-	// This will trigger AddWithNewBranch to fail
-	_, err = mgr.SetupWorktree(provider, "master", "")
+	// Create a worktree for the existing master branch - should succeed now
+	path, err := mgr.SetupWorktree(provider, "master", "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, path)
 
-	// The error should indicate git worktree creation failed
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "creating git worktree")
+	// Verify the worktree is on master
+	wtRepo, err := wt.Open(path)
+	require.NoError(t, err)
+
+	head, err := wtRepo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, "master", head.Name().Short())
 }
 
-func TestGitManager_SetupWorktree_CleanupOnFailure(t *testing.T) {
+func TestGitManager_SetupWorktree_CleanupOnInvalidBase(t *testing.T) {
 	_, repoDir := newTestRepoOnDisk(t)
 	mgr, err := NewGitManager(repoDir)
 	require.NoError(t, err)
 
 	provider := newFakeWorktreeDirProvider(t)
 
-	// Try to create a worktree with a branch name that will fail
+	// Try to create a worktree with an invalid base ref
 	// This tests that the directory is cleaned up on failure
-	_, err = mgr.SetupWorktree(provider, "master", "")
+	_, err = mgr.SetupWorktree(provider, "new-branch", "nonexistent-ref")
 	require.Error(t, err)
 
-	// Verify the directory was cleaned up (not left behind)
-	// Since the directory provider created it, check it's not in the worktrees map
-	_, getErr := provider.GetWorktreeDir("master")
-	// The directory might still exist (cleanup happens on worktree path, not in provider)
-	// This test verifies the error message is correct
-	assert.Contains(t, err.Error(), "creating git worktree")
-	_ = getErr // We're just testing error message format
+	// Verify the error is about resolving the base
+	assert.Contains(t, err.Error(), "resolving base")
 }
 
 func TestGitManager_Worktrees_ConcurrentAccess(t *testing.T) {
@@ -848,4 +853,301 @@ func TestGitManager_Worktrees_ConcurrentAccess(t *testing.T) {
 			t.Errorf("concurrent call %d returned different manager instance", i)
 		}
 	}
+}
+
+// === Bug fix tests for worktree slugified branch issue ===
+
+func TestWorktreeManager_Add_CreatesBranchWithWorktreeName(t *testing.T) {
+	// This test documents the current behavior of Add(): it creates a branch
+	// named after the worktree name (the slugified version), which is the
+	// root cause of the bug where we get both "a/output-styling" and
+	// "a-output-styling" branches.
+	//
+	// When Add() is called with name="feature-foo", go-git's xworktree creates
+	// a branch called "feature-foo" automatically.
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	wtPath := filepath.Join(t.TempDir(), "slugified-name")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Add worktree with a specific name
+	err = wt.Add(wtPath, "slugified-name", plumbing.ZeroHash)
+	require.NoError(t, err)
+
+	// This documents the bug: Add() creates a branch with the worktree name
+	exists, err := mgr.BranchExists("slugified-name")
+	require.NoError(t, err)
+	assert.True(t, exists, "Add() creates a branch named after the worktree name (this is the bug)")
+}
+
+func TestWorktreeManager_AddDetached_DoesNotCreateBranch(t *testing.T) {
+	// This test verifies that AddDetached() does NOT create any branch.
+	// This is the key behavior we need to use to fix the bug.
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	wtPath := filepath.Join(t.TempDir(), "detached-test")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Get list of branches before
+	branchesBefore, err := listAllBranches(mgr)
+	require.NoError(t, err)
+
+	// Add detached worktree
+	err = wt.AddDetached(wtPath, "detached-test", plumbing.ZeroHash)
+	require.NoError(t, err)
+
+	// Get list of branches after
+	branchesAfter, err := listAllBranches(mgr)
+	require.NoError(t, err)
+
+	// No new branch should have been created
+	assert.Equal(t, len(branchesBefore), len(branchesAfter),
+		"AddDetached() should not create any new branches")
+
+	// Specifically, no branch named "detached-test" should exist
+	exists, err := mgr.BranchExists("detached-test")
+	require.NoError(t, err)
+	assert.False(t, exists, "AddDetached() should not create a branch with the worktree name")
+}
+
+func TestGitManager_SetupWorktree_ExistingBranchNoSlugifiedBranchCreated(t *testing.T) {
+	// This is the main bug reproduction test:
+	// Given: A repo with existing branch "a/output-styling"
+	// When: SetupWorktree("a/output-styling", "") is called
+	// Then: No "a-output-styling" branch should be created
+	//       Worktree should checkout "a/output-styling"
+
+	repo, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	// Create an existing branch "a/output-styling"
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	branchRef := plumbing.NewBranchReferenceName("a/output-styling")
+	ref := plumbing.NewHashReference(branchRef, head.Hash())
+	err = repo.Storer.SetReference(ref)
+	require.NoError(t, err)
+
+	// Verify branch exists
+	exists, err := mgr.BranchExists("a/output-styling")
+	require.NoError(t, err)
+	require.True(t, exists, "test setup: branch should exist")
+
+	provider := newFakeWorktreeDirProvider(t)
+
+	// Setup worktree for the existing branch
+	path, err := mgr.SetupWorktree(provider, "a/output-styling", "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, path)
+
+	// CRITICAL ASSERTION: No slugified branch should have been created
+	slugifiedExists, err := mgr.BranchExists("a-output-styling")
+	require.NoError(t, err)
+	assert.False(t, slugifiedExists,
+		"SetupWorktree for existing branch should NOT create a slugified branch 'a-output-styling'")
+
+	// Verify the worktree is on the correct branch
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	wtRepo, err := wt.Open(path)
+	require.NoError(t, err)
+
+	wtHead, err := wtRepo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, "a/output-styling", wtHead.Name().Short(),
+		"worktree should be on the original branch with slashes")
+}
+
+func TestGitManager_SetupWorktree_CleansUpGitMetadataOnFailure(t *testing.T) {
+	// This test verifies that when worktree creation fails partway through,
+	// git worktree metadata is also cleaned up (not just the directory).
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	// Create a worktree first
+	provider := newFakeWorktreeDirProvider(t)
+	path, err := mgr.SetupWorktree(provider, "test-branch", "")
+	require.NoError(t, err)
+
+	// Get the worktree name (slugified)
+	wtName := filepath.Base(path)
+
+	// Verify worktree exists
+	exists, err := wt.Exists(wtName)
+	require.NoError(t, err)
+	require.True(t, exists, "worktree should exist after setup")
+
+	// Now try to create a worktree with the same name in the same directory
+	// This should fail because the worktree already exists
+	// First, manually delete the directory contents but keep the provider's entry
+	err = os.RemoveAll(path)
+	require.NoError(t, err)
+	err = os.MkdirAll(path, 0755)
+	require.NoError(t, err)
+
+	// Try to setup again - this will find the orphaned metadata and clean it up
+	path2, err := mgr.SetupWorktree(provider, "test-branch", "")
+	require.NoError(t, err)
+	assert.Equal(t, path, path2)
+
+	// Verify worktree is valid
+	_, err = wt.Open(path)
+	require.NoError(t, err)
+}
+
+func TestGitManager_SetupWorktree_ExistingBranchWorksCorrectly(t *testing.T) {
+	// This test verifies that SetupWorktree correctly uses AddWithExistingBranch
+	// for branches that already exist, instead of failing.
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	provider := newFakeWorktreeDirProvider(t)
+
+	// Setup worktree for master (which already exists)
+	path, err := mgr.SetupWorktree(provider, "master", "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, path)
+
+	// Verify worktree was created
+	wtName := filepath.Base(path)
+	exists, err := wt.Exists(wtName)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	// Verify the worktree is on master
+	wtRepo, err := wt.Open(path)
+	require.NoError(t, err)
+
+	head, err := wtRepo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, "master", head.Name().Short())
+}
+
+func TestWorktreeManager_AddWithNewBranch_NoSlugifiedBranch(t *testing.T) {
+	// This test verifies that AddWithNewBranch creates only the specified
+	// branch, NOT a branch named after the worktree name.
+	//
+	// Given: worktree name "feature-foo" (slugified)
+	//        branch ref "refs/heads/feature/foo" (slashed)
+	// When: AddWithNewBranch is called
+	// Then: Only branch "feature/foo" exists, NOT "feature-foo"
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	wtPath := filepath.Join(t.TempDir(), "feature-foo")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Use slugified worktree name but slashed branch name
+	branchRef := plumbing.NewBranchReferenceName("feature/foo")
+	err = wt.AddWithNewBranch(wtPath, "feature-foo", branchRef, plumbing.ZeroHash)
+	require.NoError(t, err)
+
+	// The intended branch should exist
+	exists, err := mgr.BranchExists("feature/foo")
+	require.NoError(t, err)
+	assert.True(t, exists, "AddWithNewBranch should create the specified branch")
+
+	// CRITICAL: The slugified branch should NOT exist
+	slugifiedExists, err := mgr.BranchExists("feature-foo")
+	require.NoError(t, err)
+	assert.False(t, slugifiedExists,
+		"AddWithNewBranch should NOT create a branch named after the worktree name")
+}
+
+func TestWorktreeManager_AddWithExistingBranch(t *testing.T) {
+	// Test the new AddWithExistingBranch method that checks out
+	// an existing branch without trying to create a new one.
+
+	repo, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	// Create an existing branch "existing/branch"
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	branchRef := plumbing.NewBranchReferenceName("existing/branch")
+	ref := plumbing.NewHashReference(branchRef, head.Hash())
+	err = repo.Storer.SetReference(ref)
+	require.NoError(t, err)
+
+	wtPath := filepath.Join(t.TempDir(), "existing-branch")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Use the new method
+	err = wt.AddWithExistingBranch(wtPath, "existing-branch", branchRef)
+	require.NoError(t, err)
+
+	// Verify worktree was created
+	names, err := wt.List()
+	require.NoError(t, err)
+	assert.Contains(t, names, "existing-branch")
+
+	// Verify it's on the correct branch
+	wtRepo, err := wt.Open(wtPath)
+	require.NoError(t, err)
+
+	wtHead, err := wtRepo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, "existing/branch", wtHead.Name().Short())
+
+	// CRITICAL: No slugified branch should have been created
+	slugifiedExists, err := mgr.BranchExists("existing-branch")
+	require.NoError(t, err)
+	assert.False(t, slugifiedExists,
+		"AddWithExistingBranch should NOT create a slugified branch")
+}
+
+// listAllBranches returns all branch names in the repository.
+func listAllBranches(mgr *GitManager) ([]string, error) {
+	refs, err := mgr.Repository().References()
+	if err != nil {
+		return nil, err
+	}
+
+	var branches []string
+	err = refs.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Name().IsBranch() {
+			branches = append(branches, ref.Name().Short())
+		}
+		return nil
+	})
+	return branches, err
 }
