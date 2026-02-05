@@ -140,6 +140,42 @@ elif [ -n "$SSH_AUTH_SOCK" ]; then
     fi
 fi
 
+# Setup GPG agent forwarding
+# Strategy: Use gpg-agent-proxy via host proxy when direct socket has permission issues
+
+# Start gpg-agent-proxy and verify it started successfully
+# Returns 0 if successful, 1 otherwise
+start_gpg_agent_proxy() {
+    /usr/local/bin/gpg-agent-proxy &
+    proxy_pid=$!
+    sleep 0.3
+    # Verify proxy is running
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+        echo "Warning: GPG agent proxy failed to start" >&2
+        return 1
+    fi
+    # Verify socket was created
+    if [ ! -S "$HOME/.gnupg/S.gpg-agent" ]; then
+        echo "Warning: GPG agent proxy socket not created" >&2
+        return 1
+    fi
+    return 0
+}
+
+# Determine GPG agent forwarding strategy
+if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GPG_VIA_PROXY" = "true" ]; then
+    # Use gpg-agent-proxy to forward via host proxy (macOS Docker Desktop case)
+    mkdir -p "$HOME/.gnupg"
+    chmod 700 "$HOME/.gnupg"
+    if ! start_gpg_agent_proxy; then
+        echo "Warning: GPG agent forwarding unavailable" >&2
+    fi
+elif [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
+    # Direct socket mount (Linux case) - socket already mounted
+    # Just ensure proper permissions on .gnupg directory
+    chmod 700 "$HOME/.gnupg" 2>/dev/null || true
+fi
+
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
     set -- claude "$@"

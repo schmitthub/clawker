@@ -131,6 +131,7 @@ func StopDaemon(pidFile) error
 | `/open/url` | POST | Open URL in host browser |
 | `/git/credential` | POST | Git credential get/store/erase |
 | `/ssh/agent` | POST | SSH agent forwarding (macOS) |
+| `/gpg/agent` | POST | GPG agent forwarding (macOS) |
 | `/callback/register` | POST | Register OAuth callback session |
 | `/callback/{session}/data` | GET | Poll for captured callback |
 | `/callback/{session}` | DELETE | Cleanup session |
@@ -140,11 +141,13 @@ func StopDaemon(pidFile) error
 
 Container registers session via `/callback/register`. Server starts dynamic listener on requested port. Browser redirects to `localhost:PORT/path`, listener captures request. Container polls `/callback/{session}/data` to retrieve data.
 
-## Git/SSH Credential Forwarding
+## Git/SSH/GPG Credential Forwarding
 
 - **HTTPS**: `git-credential-clawker` → POST `/git/credential` → host `git credential fill` → OS Keychain
 - **SSH Linux**: Bind mount `$SSH_AUTH_SOCK` to `/tmp/ssh-agent.sock`
 - **SSH macOS**: `ssh-agent-proxy` binary → POST `/ssh/agent` → host SSH agent
+- **GPG Linux**: Bind mount GPG extra socket to `~/.gnupg/S.gpg-agent`
+- **GPG macOS**: `gpg-agent-proxy` binary → POST `/gpg/agent` → host GPG extra socket
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
 
 ## Test Mock (`hostproxytest/`)
@@ -166,3 +169,4 @@ mock.SetHealthOK(ok bool)
 | `callback-forwarder` | Polls proxy, forwards callbacks to local server |
 | `git-credential-clawker` | Git credential helper |
 | `ssh-agent-proxy` | SSH agent proxy binary (macOS) |
+| `gpg-agent-proxy` | GPG agent proxy binary (macOS) |

@@ -10,6 +10,7 @@ Container-side scripts and binaries that communicate with the clawker host proxy
 | `host-open.sh` | BROWSER handler — opens URLs via host proxy, intercepts OAuth callbacks |
 | `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
 | `cmd/ssh-agent-proxy/main.go` | SSH agent forwarding — Unix socket → HTTP to host proxy `/ssh/agent` |
+| `cmd/gpg-agent-proxy/main.go` | GPG agent forwarding — Unix socket → HTTP to host proxy `/gpg/agent` |
 | `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port |
 
 ## API

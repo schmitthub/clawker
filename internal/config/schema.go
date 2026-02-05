@@ -229,6 +229,7 @@ func (s *SecurityConfig) FirewallEnabled() bool {
 type GitCredentialsConfig struct {
 	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" mapstructure:"forward_https"`     // Enable HTTPS credential forwarding (default: follows host_proxy)
 	ForwardSSH    *bool `yaml:"forward_ssh,omitempty" mapstructure:"forward_ssh"`         // Enable SSH agent forwarding (default: true)
+	ForwardGPG    *bool `yaml:"forward_gpg,omitempty" mapstructure:"forward_gpg"`         // Enable GPG agent forwarding (default: true)
 	CopyGitConfig *bool `yaml:"copy_git_config,omitempty" mapstructure:"copy_git_config"` // Copy host .gitconfig (default: true)
 }
 
@@ -257,6 +258,15 @@ func (g *GitCredentialsConfig) CopyGitConfigEnabled() bool {
 		return true // Default to enabled
 	}
 	return *g.CopyGitConfig
+}
+
+// GPGEnabled returns whether GPG agent forwarding should be enabled.
+// Returns true by default.
+func (g *GitCredentialsConfig) GPGEnabled() bool {
+	if g == nil || g.ForwardGPG == nil {
+		return true // Default to enabled
+	}
+	return *g.ForwardGPG
 }
 
 // RalphConfig defines configuration for autonomous ralph loops.

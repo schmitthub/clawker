@@ -1,6 +1,6 @@
 # Workspace Package
 
-Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials, SSH agent, and Docker socket forwarding.
+Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials, SSH agent, GPG agent, and Docker socket forwarding.
 
 ## TODO
 - [ ] Consider migrating this into docker pkg, seems to fit there better.
@@ -94,6 +94,22 @@ func GetSSHAgentEnvVar() string   // Returns container SSH_AUTH_SOCK path (Linux
 - Linux: Bind mount `$SSH_AUTH_SOCK`
 - macOS: SSH agent proxy binary via host proxy
 
+## GPG Agent
+
+```go
+const ContainerGPGAgentPath = "/home/claude/.gnupg/S.gpg-agent"
+
+func IsGPGAgentAvailable() bool     // Checks gpgconf for extra socket (Linux: socket exists, macOS: gpgconf returns path)
+func UseGPGAgentProxy() bool        // true on macOS (avoids Docker Desktop socket permission issues)
+func GetGPGExtraSocketPath() string // Gets path from `gpgconf --list-dir agent-extra-socket`
+func GetGPGAgentMounts() []mount.Mount  // Linux: bind mount extra socket; macOS: nil (uses proxy)
+```
+
+- Linux: Bind mount GPG extra socket (`S.gpg-agent.extra`) to container
+- macOS: GPG agent proxy binary via host proxy
+- Uses "extra socket" designed for restricted remote access (not main socket)
+- Pinentry prompts appear on HOST, not in container (expected behavior)
+
 ## Docker Socket
 
 ```go
@@ -106,6 +122,7 @@ Only available when `security.docker_socket: true`.
 
 ```go
 const ContainerSSHAgentPath    = "/tmp/ssh-agent.sock"
+const ContainerGPGAgentPath    = "/home/claude/.gnupg/S.gpg-agent"
 const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 ```
 

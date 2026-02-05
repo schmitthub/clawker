@@ -53,6 +53,7 @@ var (
 	CallbackForwarderSource = internals.CallbackForwarderSource
 	GitCredentialScript     = internals.GitCredentialScript
 	SSHAgentProxySource     = internals.SSHAgentProxySource
+	GPGAgentProxySource     = internals.GPGAgentProxySource
 )
 
 // EmbeddedScripts returns all embedded script contents for content hashing.
@@ -207,6 +208,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
+		{"gpg-agent-proxy.go", GPGAgentProxySource, 0644},
 	}
 
 	for _, script := range scripts {
@@ -386,6 +388,11 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
+	// Add gpg-agent-proxy source for compilation in multi-stage build
+	if err := addFileToTar(tw, "gpg-agent-proxy.go", []byte(GPGAgentProxySource)); err != nil {
+		return nil, err
+	}
+
 	// Add any include files from agent config
 	for _, include := range g.config.Agent.Includes {
 		includePath := include
@@ -433,6 +440,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
 		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
+		{"gpg-agent-proxy.go", GPGAgentProxySource, 0644},
 	}
 
 	for _, s := range scripts {

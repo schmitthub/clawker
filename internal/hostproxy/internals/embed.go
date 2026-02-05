@@ -38,6 +38,13 @@ var SSHAgentProxySource string
 //go:embed cmd/callback-forwarder/main.go
 var CallbackForwarderSource string
 
+// GPGAgentProxySource is the Go source for the gpg-agent-proxy binary.
+// It forwards GPG agent requests from the container to the host proxy.
+// Compiled during Docker image build via multi-stage Dockerfile.
+//
+//go:embed cmd/gpg-agent-proxy/main.go
+var GPGAgentProxySource string
+
 // AllScripts returns all embedded script contents for content hashing.
 // This is used by the bundler package to ensure image rebuilds when any
 // container-side script changes.
@@ -48,6 +55,7 @@ func AllScripts() []string {
 	return []string{
 		CallbackForwarderSource,
 		GitCredentialScript,
+		GPGAgentProxySource,
 		HostOpenScript,
 		SSHAgentProxySource,
 	}

@@ -23,6 +23,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o callback-forwarder callback-forwarder.go
 {{- end}}
 
+# Builder stage for gpg-agent-proxy
+FROM golang:1.23-alpine AS gpg-proxy-builder
+WORKDIR /build
+COPY gpg-agent-proxy.go .
+{{- if .BuildKitEnabled}}
+RUN --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o gpg-agent-proxy gpg-agent-proxy.go
+{{- else}}
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gpg-agent-proxy gpg-agent-proxy.go
+{{- end}}
+
 FROM {{.BaseImage}}
 
 ARG TZ=UTC
@@ -248,6 +259,10 @@ RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/loc
 # SSH agent proxy binary for forwarding SSH agent requests via host proxy
 COPY --from=ssh-proxy-builder /build/ssh-agent-proxy /usr/local/bin/ssh-agent-proxy
 RUN chmod +x /usr/local/bin/ssh-agent-proxy
+
+# GPG agent proxy binary for forwarding GPG agent requests via host proxy
+COPY --from=gpg-proxy-builder /build/gpg-agent-proxy /usr/local/bin/gpg-agent-proxy
+RUN chmod +x /usr/local/bin/gpg-agent-proxy
 
 # Switch to non-root user
 USER ${USERNAME}
