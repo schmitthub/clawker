@@ -239,6 +239,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 			// Orphaned git worktree - no matching directory entry
 			infos = append(infos, WorktreeInfo{
 				Name:  slug,
+				Slug:  slug,
 				Error: fmt.Errorf("worktree %q has git metadata but no directory entry (orphaned)", slug),
 			})
 			continue
@@ -246,6 +247,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 
 		info := WorktreeInfo{
 			Name: entry.Name, // Use original name (with slashes), not slug
+			Slug: entry.Slug,
 			Path: entry.Path,
 		}
 
@@ -275,6 +277,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		// Orphaned directory - has config entry but no git metadata
 		infos = append(infos, WorktreeInfo{
 			Name:  entry.Name,
+			Slug:  entry.Slug,
 			Path:  entry.Path,
 			Error: fmt.Errorf("worktree %q has directory but no git metadata (orphaned)", entry.Name),
 		})

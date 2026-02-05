@@ -40,7 +40,11 @@ Finding and fixing greater issues is fun, its more important than the task at ha
 
 ### Workflow Requirements
 
-**Planning**: You MUST adhere to design in `.claude/memories/DESIGN.md`
+**Planning**: You MUST adhere to design in `.claude/memories/DESIGN.md` and architecture in `.claude/memories/ARCHITECTURE.md` when planning work. If changes are needed, update those memories accordingly.
+**Testing**: You MUST adhere to TDD, writing tests before code changes. All tests must pass before considering a change complete. If a fixture, golden file, interface, mock, fake, or test helper is needed, add it.
+If an integration test is required, add it to the appropriate `test/*/` subpackage. If a new test suite is needed, create it under `test/`.
+**Documentation**: You MUST update README.md, */**CLAUDE.md, and relevant memories after
+It does not matter if the work has to be done in an out-of-scope dependency, it is for the greater good of the project which matters more than anything else.
 
 </critical_instructions>
 

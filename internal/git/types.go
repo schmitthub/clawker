@@ -11,6 +11,10 @@ type WorktreeInfo struct {
 	// Name is the worktree name (typically the branch name).
 	Name string
 
+	// Slug is the registry slug for this worktree entry.
+	// Preserved from WorktreeDirEntry to avoid re-computation.
+	Slug string
+
 	// Path is the filesystem path to the worktree directory.
 	Path string
 

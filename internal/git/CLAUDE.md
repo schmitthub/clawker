@@ -116,6 +116,7 @@ Information about a worktree:
 ```go
 type WorktreeInfo struct {
     Name       string        // worktree name
+    Slug       string        // registry slug (preserved from WorktreeDirEntry)
     Path       string        // filesystem path
     Head       plumbing.Hash // current commit
     Branch     string        // branch name (empty if detached)
