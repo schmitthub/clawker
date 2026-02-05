@@ -2,6 +2,122 @@
 
 > Extended test patterns and examples. For essential rules, see `.claude/rules/testing.md`.
 
+---
+
+## Testing Philosophy: DAG-Driven Test Infrastructure
+
+### The Core Principle
+
+Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Foundation  │ ──▶ │   Middle    │ ──▶ │  Composite  │ ──▶ │  Commands   │
+│  Packages   │     │  Packages   │     │  Packages   │     │             │
+├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
+│ git, logger │     │ bundler     │     │ docker,     │     │ cmd/*       │
+│ iostreams   │     │             │     │ workspace,  │     │             │
+│ config      │     │             │     │ ralph       │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+       │                                       │                   │
+       ▼                                       ▼                   ▼
+   gittest/                               dockertest/         Factory DI
+   configtest/                            whailtest/          + runF seam
+```
+
+**Each node in the DAG must provide test infrastructure for its dependents.**
+
+When every node provides fakes/mocks/stubs, any tier can independently test by mocking the entire chain below it.
+
+### Test Seams in Clawker
+
+**1. Factory Pattern DI**
+
+Factory fields are closures that return dependencies. Tests inject fakes:
+
+```go
+f := &cmdutil.Factory{
+    IOStreams: tio.IOStreams,
+    Client: func(ctx context.Context) (*docker.Client, error) {
+        return fake.Client, nil  // Fake from dockertest
+    },
+    Config: func() (*config.Config, error) {
+        return testConfig(), nil
+    },
+    // ... other fields
+}
+```
+
+**2. runF Test Seam**
+
+Every command constructor accepts `runF` to intercept execution:
+
+```go
+// Tier 1: Flag parsing only (intercept before run)
+var captured *RunOptions
+cmd := NewCmdRun(f, func(ctx context.Context, opts *RunOptions) error {
+    captured = opts
+    return nil  // Don't actually run
+})
+
+// Tier 2: Full execution with injected deps
+cmd := NewCmdRun(f, nil)  // nil = real run function with Factory's fakes
+```
+
+**3. Package Test Utilities**
+
+Each package with complex dependencies provides test infrastructure:
+
+| Package | Test Location | What It Provides |
+|---------|---------------|------------------|
+| `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
+| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/git` | `gittest/` | `InMemoryGitManager` |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
+| `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
+
+### The Agent Obligation
+
+**If a DAG node is missing test infrastructure, add it first.**
+
+This is not scope creep. A node without test infrastructure is an **incomplete node** — it blocks proper testing of everything downstream in the DAG.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  DECISION: Need to test component at tier N?                │
+├─────────────────────────────────────────────────────────────┤
+│  For each dependency at tier N-1:                           │
+│  ├─ Does it have a *test/ subpackage or test utils?         │
+│  ├─ Interface for the concrete type?                        │
+│  ├─ Fake/mock/stub implementation?                          │
+│  └─ Fixtures for common scenarios?                          │
+├─────────────────────────────────────────────────────────────┤
+│  ALL YES → Mock the entire chain, write your test           │
+│  ANY NO  → STOP. Complete that node's test infra first.     │
+│            Then write your test.                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Why This Compounds
+
+Each node that gains test infrastructure:
+- Enables all downstream nodes to mock it independently
+- Every future test at any tier benefits
+- The "incomplete node" case becomes rarer over time
+
+The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain below it**.
+
+### Anti-Patterns to Avoid
+
+❌ **Inline mocking**: Creating ad-hoc mocks inside a test file instead of using/creating package test utils
+❌ **Workaround tests**: Testing around missing infrastructure instead of adding it
+❌ **Copy-paste fakes**: Duplicating fake implementations across test files
+❌ **Skipping DI**: Directly instantiating concrete types instead of using Factory seams
+
+✅ **Pattern to follow**: Use existing `*test/` packages, or create them if missing
+
+---
+
 ## Command Test Tiers
 
 Command testing breaks into three tiers, each with distinct purpose and setup cost:
@@ -295,6 +411,195 @@ FakeCli would only add: (1) command routing tests (cobra's responsibility) and (
 
 ---
 
+## Container Testing (client.go)
+
+### Running Test Containers
+
+`RunContainer` creates and starts a container with automatic cleanup via `t.Cleanup()`:
+
+```go
+ctr := harness.RunContainer(t, dc, image,
+    harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+    harness.WithUser("root"),
+    harness.WithCmd("sleep", "infinity"),
+    harness.WithEnv("FOO=bar"),
+    harness.WithExtraHost("host.docker.internal:host-gateway"),
+    harness.WithMounts(mount.Mount{Type: mount.TypeBind, Source: "/tmp", Target: "/mnt"}),
+)
+```
+
+**Container Options:**
+
+| Option | Signature | Purpose |
+|--------|-----------|---------|
+| `WithCapAdd` | `(caps ...string) ContainerOpt` | Add Linux capabilities (e.g., NET_ADMIN) |
+| `WithUser` | `(user string) ContainerOpt` | Set container user |
+| `WithCmd` | `(cmd ...string) ContainerOpt` | Override entrypoint/command |
+| `WithEnv` | `(env ...string) ContainerOpt` | Add env vars in KEY=value format |
+| `WithExtraHost` | `(hosts ...string) ContainerOpt` | Add host mappings |
+| `WithMounts` | `(mounts ...mount.Mount) ContainerOpt` | Add bind/volume mounts |
+
+**RunningContainer struct:**
+```go
+type RunningContainer struct {
+    ID   string
+    Name string
+}
+```
+
+**RunningContainer methods:**
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `Exec` | `(ctx, dc, cmd...) (*ExecResult, error)` | Execute command in running container |
+| `WaitForFile` | `(ctx, dc, path, timeout) (string, error)` | Poll until file exists, return contents |
+| `GetLogs` | `(ctx, rawCli) (string, error)` | Retrieve all container logs |
+
+**ExecResult struct:**
+```go
+type ExecResult struct {
+    ExitCode int
+    Stdout   string
+    Stderr   string
+}
+// CleanOutput() string — Strip Docker multiplexed stream headers from Stdout
+```
+
+**UniqueContainerName(t)** — Generate unique name: `test-<testname>-<timestamp>-<random>`
+
+---
+
+## Readiness & Wait Functions (ready.go)
+
+### Timeout Constants
+
+| Constant | Value | When to Use |
+|----------|-------|-------------|
+| `DefaultReadyTimeout` | 60s | Local development tests |
+| `E2EReadyTimeout` | 120s | E2E tests needing more time |
+| `CIReadyTimeout` | 180s | CI environments (slower VMs) |
+| `BypassCommandTimeout` | 10s | Entrypoint bypass commands |
+
+`GetReadyTimeout()` auto-detects: uses `CLAWKER_READY_TIMEOUT` env var, or detects CI and returns `CIReadyTimeout`.
+
+### Ready Signal Constants
+
+| Constant | Value |
+|----------|-------|
+| `ReadyFilePath` | `/var/run/clawker/ready` |
+| `ReadyLogPrefix` | `[clawker] ready` |
+| `ErrorLogPrefix` | `[clawker] error` |
+
+### Wait Functions — When to Use Which
+
+| Function | Use Case | Notes |
+|----------|----------|-------|
+| `WaitForReadyFile(ctx, cli, containerID) error` | Clawker agent containers | Primary method — polls for `/var/run/clawker/ready` |
+| `WaitForContainerRunning(ctx, cli, name)` | Any container startup | Fails fast if container exits |
+| `WaitForContainerExit(ctx, cli, containerID)` | Vanilla containers (no ready file) | Waits for exit code 0 |
+| `WaitForContainerCompletion(ctx, cli, containerID)` | Short-lived command containers | Checks file OR logs |
+| `WaitForHealthy(ctx, cli, containerID)` | Containers with HEALTHCHECK | Uses Docker health status |
+| `WaitForLogPattern(ctx, cli, containerID, pattern)` | Custom readiness signals | Regex pattern in logs |
+| `WaitForReadyLog(ctx, cli, containerID)` | Log-based ready signal | Convenience for `[clawker] ready` |
+
+### Verification Functions
+
+```go
+// Check if process is running inside container (uses pgrep -f, returns error if not found)
+err := harness.VerifyProcessRunning(ctx, cli, containerID, "claude")
+
+// Convenience wrapper for Claude Code process
+err := harness.VerifyClaudeCodeRunning(ctx, cli, containerID)
+
+// Check logs for error patterns (returns hasError, errorMsg)
+hasError, msg := harness.CheckForErrorPattern(logs)
+
+// Get all container logs
+logs, err := harness.GetContainerLogs(ctx, cli, containerID)
+```
+
+### Ready File Parsing
+
+```go
+type ReadyFileContent struct {
+    Timestamp int64
+    PID       int
+}
+
+// Parse ready file format: "ts=<timestamp> pid=<pid>"
+content, err := harness.ParseReadyFile(rawContent)
+```
+
+---
+
+## Factory Testing (factory.go)
+
+### NewTestFactory vs testFactory Pattern
+
+Two different patterns exist for factory testing:
+
+| Pattern | Function | Use Case |
+|---------|----------|----------|
+| Integration testing | `harness.NewTestFactory(t, h)` | Real Docker client, full integration |
+| Command unit testing | Per-package `testFactory(t, fake)` | Fake Docker, tests command logic |
+
+**NewTestFactory** — For integration tests with real Docker:
+
+```go
+h := harness.NewHarness(t, harness.WithProject("test"))
+f, tio := harness.NewTestFactory(t, h)
+
+// Returns fully-wired Factory:
+// - f.IOStreams → tio.IOStreams
+// - f.Client → real Docker client
+// - f.Config → harness config
+// - f.HostProxy → no-op (for firewall-disabled tests)
+```
+
+**Per-package testFactory** — For command tests with fake Docker:
+
+```go
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+    tio := iostreams.NewTestIOStreams()
+    return &cmdutil.Factory{
+        IOStreams: tio.IOStreams,
+        Client: func(_ context.Context) (*docker.Client, error) {
+            return fake.Client, nil
+        },
+        // ... other fields
+    }, tio
+}
+```
+
+---
+
+## Content-Addressed Caching (hash.go)
+
+Test images are cached using content-addressed hashing to avoid rebuilds when templates haven't changed.
+
+```go
+// Full SHA256 hash of all template files
+hash := harness.ComputeTemplateHash()  // 64-char hex
+
+// Short version (first 12 chars) for cache keys
+shortHash := harness.TemplateHashShort()  // e.g., "a1b2c3d4e5f6"
+
+// Find project root (walks up looking for go.mod)
+root := harness.FindProjectRoot()
+
+// Hash with custom project root
+hash := harness.ComputeTemplateHashFromDir(projectRoot)
+```
+
+**What gets hashed:**
+- All files in `internal/bundler/assets/`
+- All files in `internal/hostproxy/internals/`
+- `internal/bundler/dockerfile.go`
+
+`BuildLightImage` uses `TemplateHashShort()` in the image tag for cross-test caching.
+
+---
+
 ## Container Exit Detection (Fail-Fast)
 
 `WaitForContainerRunning` fails fast when a container exits:
@@ -354,6 +659,280 @@ Script arg is ignored (kept for API compat) — single cached image shared acros
 h := harness.NewHarness(t, harness.WithProject("test"))
 imageTag := harness.BuildTestImage(t, h, harness.BuildTestImageOptions{SuppressOutput: true})
 // Image cleaned up via t.Cleanup()
+```
+
+---
+
+## Config Builders (builders/)
+
+### ConfigBuilder Fluent API
+
+```go
+cfg := builders.NewConfigBuilder().
+    WithVersion("1").
+    WithProject("myproject").
+    WithDefaultImage("alpine:latest").
+    WithBuild(builders.DefaultBuild()).
+    WithAgent(builders.DefaultAgent()).
+    WithWorkspace(builders.DefaultWorkspace()).
+    WithSecurity(builders.SecurityFirewallDisabled()).
+    ForTestBaseImage().  // Swap to alpine:latest for fast builds
+    Build()
+```
+
+### Preset Functions Reference
+
+**Config Presets:**
+
+| Function | Returns |
+|----------|---------|
+| `MinimalValidConfig()` | Bare minimum valid config |
+| `FullFeaturedConfig()` | All features enabled |
+
+**Build Presets:**
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `DefaultBuild()` | `()` | buildpack-deps with git/curl |
+| `AlpineBuild()` | `()` | Minimal alpine build |
+| `BuildWithPackages` | `(image string, pkgs ...string)` | Custom image + packages |
+| `BuildWithInstructions` | `(image string, instr DockerInstructions)` | Custom instructions |
+
+**Security Presets:**
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `SecurityFirewallEnabled()` | `()` | Firewall on |
+| `SecurityFirewallDisabled()` | `()` | Firewall off |
+| `SecurityWithDockerSocket` | `(enabled bool)` | Docker socket access |
+| `SecurityWithFirewallDomains` | `(add, remove, override []string)` | Domain configuration |
+| `SecurityWithGitCredentials` | `(https, ssh, config bool)` | Git credential forwarding |
+
+**Agent Presets:**
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `DefaultAgent()` | `()` | Standard agent config |
+| `AgentWithEnv` | `(env map[string]string)` | Agent with env vars |
+| `AgentWithIncludes` | `(includes ...string)` | Agent with file includes |
+
+**Workspace Presets:**
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `DefaultWorkspace()` | `()` | Standard workspace (bind mode) |
+| `WorkspaceSnapshot()` | `()` | Snapshot mode |
+| `WorkspaceWithPath` | `(path string)` | Custom remote path |
+
+**Instruction Presets:**
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `InstructionsWithEnv` | `(env map[string]string)` | ENV instructions |
+| `InstructionsWithRootRun` | `(cmds ...string)` | RUN as root |
+| `InstructionsWithUserRun` | `(cmds ...string)` | RUN as user |
+| `InstructionsWithCopy` | `(copies ...CopyInstruction)` | COPY instructions |
+
+---
+
+## Docker Test Fakes (dockertest/)
+
+### FakeClient Architecture
+
+`dockertest.FakeClient` wraps a real `*docker.Client` backed by `whailtest.FakeAPIClient`:
+
+```go
+type FakeClient struct {
+    Client  *docker.Client              // Real client to inject
+    FakeAPI *whailtest.FakeAPIClient    // Function-field fake
+}
+```
+
+**Why this beats mocking:** Docker-layer methods (`ListContainers`, `FindContainerByAgent`) run real code through whail's label-filtering jail. Tests catch actual integration bugs, not mock behavior.
+
+### Creating FakeClient
+
+```go
+// Basic
+fake := dockertest.NewFakeClient()
+
+// With config (for label generation)
+fake := dockertest.NewFakeClient(dockertest.WithConfig(cfg))
+```
+
+### Setup Helpers Reference
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `SetupContainerList` | `(containers ...container.Summary)` | Configure container list results |
+| `SetupFindContainer` | `(id string, fixture container.Summary)` | Setup name-based lookup |
+| `SetupImageExists` | `(exists bool)` | Image existence check |
+| `SetupImageTag` | `()` | ImageTag success |
+| `SetupImageList` | `(images ...whail.ImageSummary)` | Image enumeration |
+| `SetupContainerCreate` | `()` | Container creation success |
+| `SetupContainerStart` | `()` | Container start success |
+| `SetupVolumeExists` | `(name string, exists bool)` | Volume lookup (empty name = wildcard) |
+| `SetupNetworkExists` | `(name string, exists bool)` | Network lookup (empty name = wildcard) |
+| `SetupBuildKit` | `() *BuildKitCapture` | BuildKit builder with capture |
+
+### BuildKit Testing
+
+```go
+capture := fake.SetupBuildKit()
+
+// Run code that builds images...
+err := myBuildFunc(ctx, fake.Client, opts)
+
+// Assert BuildKit was invoked correctly
+assert.Equal(t, 1, capture.CallCount)
+assert.Equal(t, "myimage:v1", capture.Opts.Tag)
+```
+
+### Fixtures Reference
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `ContainerFixture` | `(project, agent, image string)` | Exited container with clawker labels |
+| `RunningContainerFixture` | `(project, agent string)` | Running container, node:20-slim |
+| `MinimalCreateOpts` | `()` | Minimal ContainerCreateOptions |
+| `MinimalStartOpts` | `(id string)` | Minimal ContainerStartOptions |
+| `ImageSummaryFixture` | `(ref string)` | Image for list results |
+| `BuildKitBuildOpts` | `()` | BuildKit-enabled build options |
+
+### Error Simulation
+
+```go
+// Simulate "not found" errors (satisfies errdefs.IsNotFound)
+// Note: notFoundError is unexported — configure via SetupFindContainer(id, fixture) for not-found behavior
+fake.FakeAPI.ImageInspectFn = func(ctx context.Context, ref string, opts ...client.ImageInspectOption) (types.ImageInspect, error) {
+    return types.ImageInspect{}, fmt.Errorf("image %s not found", ref)
+}
+
+// For proper not-found behavior, use SetupImageExists(false) which returns errdefs-compatible error
+fake.SetupImageExists(false)
+```
+
+### Assertions
+
+```go
+fake.AssertCalled(t, "ContainerCreate")      // Method was called
+fake.AssertNotCalled(t, "ImageBuild")        // Method was not called
+fake.AssertCalledN(t, "ContainerStart", 2)   // Called exactly N times
+fake.Reset()                                  // Clear call log
+```
+
+---
+
+## In-Memory Test Utilities
+
+The codebase provides in-memory implementations for testing without filesystem I/O.
+
+### configtest.InMemoryRegistryBuilder
+
+Creates an in-memory registry for testing worktree and project commands. Use instead of file-based fakes when you need:
+- Controllable worktree status (healthy, stale, mixed)
+- No filesystem side effects
+- Fast parallel tests
+
+```go
+registry := configtest.NewInMemoryRegistryBuilder().
+    WithProject("myproject", "/path/to/project").  // Returns InMemoryProjectBuilder
+    WithHealthyWorktree("feature-branch", "/path/to/worktree").
+    WithStaleWorktree("stale-branch", "/missing/path").
+    WithPartialWorktree("partial-branch", "/partial/path").
+    WithErrorWorktree("error-branch", "/error/path", errors.New("delete failed")).
+    Registry().  // Back to InMemoryRegistryBuilder
+    Build()
+
+// Use the handle pattern
+proj := registry.Project("myproject")
+wt := proj.Worktree("feature-branch")
+status := wt.Status()
+```
+
+**InMemoryProjectBuilder methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `WithWorktree(name, path string, state WorktreeState)` | Add worktree with explicit state |
+| `WithHealthyWorktree(name, path string)` | Add healthy worktree (dir+git exist) |
+| `WithStaleWorktree(name, path string)` | Add stale worktree (dir doesn't exist) |
+| `WithPartialWorktree(name, path string)` | Add partial worktree (dir exists, no .git) |
+| `WithErrorWorktree(name, path string, err error)` | Add worktree that errors on delete |
+| `Registry()` | Return to parent InMemoryRegistryBuilder |
+
+**InMemoryRegistry methods for state control:**
+
+```go
+// Control filesystem-like state after build
+registry.SetWorktreeState("myproject", "feature-branch", configtest.WorktreeState{
+    DirExists: true,
+    GitExists: false,
+})
+registry.SetWorktreeDeleteError("myproject", "feature-branch", errors.New("permission denied"))
+registry.SetWorktreePathError("myproject", "feature-branch", errors.New("invalid path"))
+```
+
+### gittest.NewInMemoryGitManager
+
+Creates an in-memory GitManager for testing git operations without touching the filesystem.
+
+```go
+gitMgr := gittest.NewInMemoryGitManager()
+// Currently provides Repository() method for go-git repo access
+```
+
+### When to Use Which
+
+| Need | Use |
+|------|-----|
+| Test worktree list/prune commands | `InMemoryRegistryBuilder` |
+| Test worktree add/remove commands | `InMemoryGitManager` + `InMemoryRegistryBuilder` |
+| Test registry persistence | `configtest.FakeRegistryBuilder` (file-based) |
+| Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
+
+---
+
+## CLI Workflow Tests (test/cli/)
+
+See `test/cli/README.md` for comprehensive documentation.
+
+### Quick Reference: Custom Commands
+
+| Command | Usage |
+|---------|-------|
+| `defer` | `defer clawker container rm --force --agent myagent` |
+| `replace` | `replace clawker.yaml PROJECT=$PROJECT` |
+| `wait_container_running` | `wait_container_running clawker.$PROJECT.myagent 30` |
+| `wait_container_exit` | `wait_container_exit clawker.$PROJECT.myagent 60 0` |
+| `wait_ready_file` | `wait_ready_file clawker.$PROJECT.myagent 120` |
+| `container_id` | `container_id clawker.$PROJECT.myagent CONTAINER_ID` |
+| `container_state` | `container_state clawker.$PROJECT.myagent STATE` |
+| `stdout2env` | `stdout2env IMAGE_ID` (captures previous stdout) |
+| `cleanup_project` | `cleanup_project $PROJECT` |
+| `sleep` | `sleep 2` |
+| `env2upper` | `env2upper UPPER_PROJECT=$PROJECT` |
+
+### Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| `$PROJECT` | Unique project name (e.g., `acceptance-run_basic-a1b2c3d4`) |
+| `$RANDOM_STRING` | Random 10-char alphanumeric |
+| `$SCRIPT_NAME` | Test script name (underscored) |
+| `$HOME` | Isolated temp directory |
+
+### Running Specific Tests
+
+```bash
+# All CLI tests
+go test ./test/cli/... -v -timeout 15m
+
+# Single category
+go test -run ^TestContainer$ ./test/cli/... -v
+
+# Single script
+CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test -run ^TestContainer$ ./test/cli/... -v
 ```
 
 ---
@@ -447,6 +1026,82 @@ func TestStopIntegration_BothPatterns(t *testing.T) {
     }
 }
 ```
+
+---
+
+## Integration Tests (`test/internals/`, `test/commands/`, `test/agents/`)
+
+Dogfoods clawker's own `docker.Client` via `harness.BuildLightImage` and `harness.RunContainer`. No testcontainers-go dependency.
+
+### Directory Structure
+
+| Directory | Purpose |
+|-----------|---------|
+| `test/internals/` | Container scripts/services (firewall, SSH, entrypoint, docker client) |
+| `test/commands/` | Command integration (container create/exec/run/start) |
+| `test/agents/` | Full agent lifecycle, ralph tests |
+
+### Running
+
+```bash
+go test ./test/internals/... -v -timeout 10m
+go test ./test/commands/... -v -timeout 10m
+go test ./test/agents/... -v -timeout 15m
+```
+
+### TestMain + Cleanup
+
+All Docker test packages use `RunTestMain` which provides:
+- **Pre-cleanup**: Removes stale resources from previous runs on startup
+- **Post-cleanup**: Removes all test resources after `m.Run()` completes
+- **SIGINT handler**: Goroutine catches Ctrl+C/SIGTERM, runs cleanup, then `os.Exit(1)`
+
+```go
+// test/internals/main_test.go (same pattern in commands/ and agents/)
+func TestMain(m *testing.M) {
+    os.Exit(harness.RunTestMain(m))
+}
+```
+
+`CleanupTestResources` filters on `com.clawker.test=true` label — removes containers, volumes, networks, and images (including dangling intermediates via `All: true` + `PruneChildren: true`). User's real clawker images (`com.clawker.managed` only) are never touched.
+
+### Key Components
+
+**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
+
+```go
+client := harness.NewTestClient(t)
+image := harness.BuildLightImage(t, client) // script args ignored, all scripts included
+ctr := harness.RunContainer(t, client, image,
+    harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
+    harness.WithUser("root"),
+    harness.WithExtraHost("host.docker.internal:host-gateway"),
+)
+```
+
+**Exec:** `ctr.Exec(ctx, client, cmd...)` returns `*ExecResult` with `ExitCode`, `Stdout`, `Stderr`, `CleanOutput()`
+
+**Additional RunningContainer methods:** `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`
+
+**MockHostProxy** (`internal/hostproxy/hostproxytest/`):
+```go
+proxy := hostproxytest.NewMockHostProxy(t)
+proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
+// Inspect: proxy.GetOpenedURLs(), proxy.GetGitCreds(), proxy.SetCallbackReady(id)
+```
+
+### Script Testing Pattern
+
+ALL scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` are baked into the image by `BuildLightImage`:
+
+```go
+image := harness.BuildLightImage(t, client)
+ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN", "NET_RAW"), harness.WithUser("root"))
+execResult, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
+require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
+```
+
+**IMPORTANT:** Tests use actual scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/`. Script changes are automatically tested.
 
 ---
 
@@ -557,125 +1212,3 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 - `matchPattern` had a bug: `**/*.ext` didn't work (literal HasSuffix). Fixed with `filepath.Match` against basename when suffix contains wildcards
 - `isNotFoundError` checks both `whail.DockerError` (via `errors.As`) and raw error strings
 - `LoadIgnorePatterns` returns `[]string{}` (not nil) on file-not-found
-
----
-
-## In-Memory Test Utilities
-
-The codebase provides in-memory implementations for testing without filesystem I/O.
-
-### configtest.InMemoryRegistryBuilder
-
-Creates an in-memory registry for testing worktree and project commands. Use instead of file-based fakes when you need:
-- Controllable worktree status (healthy, stale, mixed)
-- No filesystem side effects
-- Fast parallel tests
-
-```go
-registry := configtest.NewInMemoryRegistryBuilder().
-    WithProject("myproject", "/path/to/project").
-    WithWorktree("myproject", "feature-branch", "/path/to/worktree", config.WorktreeStatusHealthy).
-    WithWorktree("myproject", "stale-branch", "/missing/path", config.WorktreeStatusStale).
-    Build()
-
-// Use the handle pattern
-proj := registry.Project("myproject")
-wt := proj.Worktree("feature-branch")
-status := wt.Status()
-```
-
-### gittest.NewInMemoryGitManager
-
-Creates an in-memory GitManager for testing git operations without touching the filesystem.
-
-```go
-gitMgr := gittest.NewInMemoryGitManager().
-    WithWorktree("feature-branch", "/path/to/worktree").
-    WithCurrentBranch("main").
-    Build()
-```
-
-### When to Use Which
-
-| Need | Use |
-|------|-----|
-| Test worktree list/prune commands | `InMemoryRegistryBuilder` |
-| Test worktree add/remove commands | `InMemoryGitManager` + `InMemoryRegistryBuilder` |
-| Test registry persistence | `configtest.FakeRegistryBuilder` (file-based) |
-| Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
-
----
-
-## Integration Tests (`test/internals/`, `test/commands/`, `test/agents/`)
-
-Dogfoods clawker's own `docker.Client` via `harness.BuildLightImage` and `harness.RunContainer`. No testcontainers-go dependency.
-
-### Directory Structure
-
-| Directory | Purpose |
-|-----------|---------|
-| `test/internals/` | Container scripts/services (firewall, SSH, entrypoint, docker client) |
-| `test/commands/` | Command integration (container create/exec/run/start) |
-| `test/agents/` | Full agent lifecycle, ralph tests |
-
-### Running
-
-```bash
-go test ./test/internals/... -v -timeout 10m
-go test ./test/commands/... -v -timeout 10m
-go test ./test/agents/... -v -timeout 15m
-```
-
-### TestMain + Cleanup
-
-All Docker test packages use `RunTestMain` which provides:
-- **Pre-cleanup**: Removes stale resources from previous runs on startup
-- **Post-cleanup**: Removes all test resources after `m.Run()` completes
-- **SIGINT handler**: Goroutine catches Ctrl+C/SIGTERM, runs cleanup, then `os.Exit(1)`
-
-```go
-// test/internals/main_test.go (same pattern in commands/ and agents/)
-func TestMain(m *testing.M) {
-    os.Exit(harness.RunTestMain(m))
-}
-```
-
-`CleanupTestResources` filters on `com.clawker.test=true` label — removes containers, volumes, networks, and images (including dangling intermediates via `All: true` + `PruneChildren: true`). User's real clawker images (`com.clawker.managed` only) are never touched.
-
-### Key Components
-
-**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
-
-```go
-client := harness.NewTestClient(t)
-image := harness.BuildLightImage(t, client) // script args ignored, all scripts included
-ctr := harness.RunContainer(t, client, image,
-    harness.WithCapAdd("NET_ADMIN", "NET_RAW"),
-    harness.WithUser("root"),
-    harness.WithExtraHost("host.docker.internal:host-gateway"),
-)
-```
-
-**Exec:** `ctr.Exec(ctx, client, cmd...)` returns `*ExecResult` with `ExitCode`, `Stdout`, `Stderr`, `CleanOutput()`
-
-**Additional RunningContainer methods:** `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`
-
-**MockHostProxy** (`internal/hostproxy/hostproxytest/`):
-```go
-proxy := hostproxytest.NewMockHostProxy(t)
-proxyURL := strings.Replace(proxy.URL(), "127.0.0.1", "host.docker.internal", 1)
-// Inspect: proxy.GetOpenedURLs(), proxy.GetGitCreds(), proxy.SetCallbackReady(id)
-```
-
-### Script Testing Pattern
-
-ALL scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` are baked into the image by `BuildLightImage`:
-
-```go
-image := harness.BuildLightImage(t, client)
-ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN", "NET_RAW"), harness.WithUser("root"))
-execResult, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
-require.Equal(t, 0, execResult.ExitCode, "script failed: %s", execResult.CleanOutput())
-```
-
-**IMPORTANT:** Tests use actual scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/`. Script changes are automatically tested.

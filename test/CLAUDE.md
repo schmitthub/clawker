@@ -8,11 +8,12 @@ Test infrastructure for all non-unit tests. Uses directory separation instead of
 test/
 ├── harness/       # Shared test utilities (imported by all test packages)
 │   ├── builders/  # ConfigBuilder, presets (MinimalValidConfig, FullFeaturedConfig)
-│   ├── fixtures/  # Docker test fixtures (dockertest.NewFakeClient)
 │   ├── harness.go # NewHarness, HarnessOption, project/config setup
 │   ├── docker.go  # RequireDocker, SkipIfNoDocker, NewTestClient, NewRawDockerClient
 │   ├── client.go  # BuildLightImage, RunContainer, ExecResult, UniqueContainerName
-│   ├── ready.go   # WaitForReadyFile, WaitForContainerExit, WaitForHealthy
+│   ├── ready.go   # WaitForReadyFile, WaitForContainerExit, WaitForHealthy, timeouts
+│   ├── factory.go # NewTestFactory for integration tests
+│   ├── hash.go    # ComputeTemplateHash, TemplateHashShort, FindProjectRoot
 │   └── golden.go  # GoldenAssert, CompareGolden
 ├── whail/         # Whail BuildKit integration tests (requires Docker + BuildKit)
 ├── cli/           # Testscript-based CLI workflow tests (requires Docker)
@@ -78,21 +79,50 @@ func CleanupTestResources(ctx, cli) error         // Label-filtered removal of c
 func CleanupProjectResources(ctx, cli, project) error
 func ContainerExists(ctx, cli, name) bool
 func ContainerIsRunning(ctx, cli, name) bool
+func WaitForContainerRunning(ctx, cli, name) error  // Fails fast on container exit
 func VolumeExists(ctx, cli, name) bool
 func NetworkExists(ctx, cli, name) bool
-func GetContainerExitDiagnostics(ctx, cli, id) (*ContainerExitDiagnostics, error)
+func GetContainerExitDiagnostics(ctx, cli, id, logLines) (*ContainerExitDiagnostics, error)
 func StripDockerStreamHeaders(raw []byte) string
 func BuildTestImage(t, h, opts) string            // Full clawker image for e2e/agent tests
 func BuildSimpleTestImage(t, dockerfile, opts) string
 ```
 
-### Readiness
+### Readiness (ready.go)
 
+**Timeout Constants:**
 ```go
-func WaitForReadyFile(ctx, cli, containerID) (ReadyFileContent, error)
-func WaitForContainerExit(ctx, cli, containerID) error
-func WaitForContainerRunning(ctx, cli, containerID) error
-func WaitForHealthy(ctx, cli, containerID, checks...) error
+DefaultReadyTimeout  = 60s   // Local development tests
+E2EReadyTimeout     = 120s  // E2E tests needing more time
+CIReadyTimeout      = 180s  // CI environments (slower VMs)
+BypassCommandTimeout = 10s   // Entrypoint bypass commands
+```
+
+**Ready Signal Constants:**
+```go
+ReadyFilePath  = "/var/run/clawker/ready"
+ReadyLogPrefix = "[clawker] ready"
+ErrorLogPrefix = "[clawker] error"
+```
+
+**Wait Functions:**
+```go
+func WaitForReadyFile(ctx, cli, containerID) error                        // Primary for clawker agents
+func WaitForContainerExit(ctx, cli, containerID) error                    // Vanilla containers
+func WaitForContainerCompletion(ctx, cli, containerID) error              // Short-lived commands
+func WaitForHealthy(ctx, cli, containerID, checks...) error               // HEALTHCHECK containers
+func WaitForLogPattern(ctx, cli, containerID, pattern) error              // Custom readiness
+func WaitForReadyLog(ctx, cli, containerID) error                         // Log-based ready signal
+func GetReadyTimeout() time.Duration                                       // Auto-detects CI
+```
+
+**Verification Functions:**
+```go
+func VerifyProcessRunning(ctx, cli, containerID, pattern) error    // Error if not running
+func VerifyClaudeCodeRunning(ctx, cli, containerID) error          // Error if not running
+func CheckForErrorPattern(logs string) (bool, string)
+func GetContainerLogs(ctx, cli, containerID) (string, error)
+func ParseReadyFile(content string) (*ReadyFileContent, error)
 ```
 
 ### Container Testing (client.go)
@@ -107,19 +137,28 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 func UniqueContainerName(t *testing.T) string
 
 // Container options
-func WithCapAdd(caps ...string) ContainerOpt
-func WithUser(user string) ContainerOpt
-func WithCmd(cmd ...string) ContainerOpt
-func WithEnv(env ...string) ContainerOpt
-func WithExtraHost(hosts ...string) ContainerOpt
-func WithMounts(mounts ...mount.Mount) ContainerOpt
+func WithCapAdd(caps ...string) ContainerOpt     // Add Linux capabilities (NET_ADMIN, NET_RAW)
+func WithUser(user string) ContainerOpt          // Set container user
+func WithCmd(cmd ...string) ContainerOpt         // Override entrypoint/command
+func WithEnv(env ...string) ContainerOpt         // Add env vars (KEY=value format)
+func WithExtraHost(hosts ...string) ContainerOpt // Add host mappings
+func WithMounts(mounts ...mount.Mount) ContainerOpt // Add bind/volume mounts
 
-// RunningContainer methods
+// RunningContainer struct and methods
+type RunningContainer struct {
+    ID   string
+    Name string
+}
 func (c *RunningContainer) Exec(ctx, dc, cmd...) (*ExecResult, error)
 func (c *RunningContainer) WaitForFile(ctx, dc, path, timeout) (string, error)
 func (c *RunningContainer) GetLogs(ctx, dc) (string, error)
 
 // ExecResult
+type ExecResult struct {
+    ExitCode int
+    Stdout   string
+    Stderr   string
+}
 func (r *ExecResult) CleanOutput() string  // Strip Docker stream headers
 ```
 
@@ -133,6 +172,26 @@ ctr := harness.RunContainer(t, client, image,
 )
 result, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 ```
+
+### Factory Testing (factory.go)
+
+```go
+// For integration tests with real Docker client
+func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.TestIOStreams)
+```
+
+Returns fully-wired Factory with IOStreams, Client, Config, HostProxy (no-op for firewall-disabled tests).
+
+### Content-Addressed Caching (hash.go)
+
+```go
+func ComputeTemplateHash() string           // Full SHA256 hash (64-char hex)
+func ComputeTemplateHashFromDir(root string) string
+func TemplateHashShort() string             // First 12 chars for cache keys
+func FindProjectRoot() string               // Walks up looking for go.mod
+```
+
+What gets hashed: `internal/bundler/assets/`, `internal/hostproxy/internals/`, `internal/bundler/dockerfile.go`
 
 ### Golden Files
 
