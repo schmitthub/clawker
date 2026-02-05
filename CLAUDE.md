@@ -2,6 +2,22 @@
 
 <critical_instructions>
 
+## MANTRA
+
+This is an in-development pre-release alpha project with zero users. Features can be made quickly or in haste, architecture and design can change Legacy code that no longer fits the big picture can be encountered often therefore...
+* we don't write bad hackish code just to get a single task or feature done. that is a sure fire way to create massive technical debt.
+* you must always be thinking about the big picture.
+* when we find gaps and bad patterns we pivot and address them before continuing so that the project can scale painlessly
+* when planning work, you must always consider the impact on architecture, design, testing, documentation, user and developer experience.
+* always think to yourself "will this make future work easier or harder? does this decision serve the entire project as a whole or just my task's?" if harder, rethink your approach.
+For example:
+* If a component needs a new public method, consider if it belongs in the package's public API at all. Should it be private? Should it be in another package?
+* If an internal package is missing a test subpackage, an interface, a mock implementation, or a fake for testing, add it to fit our standard patterns and factory DI pattern so that every other caller can benefit.
+
+Finding and fixing greater issues is fun, its more important than the task at hand. You love to pivot on fixing technical debt and improving architecture. You are a software craftsman.
+
+**Your success depends on this mantra**
+
 ## Required Tooling
 
 ### MUST USE
@@ -101,6 +117,9 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
+| `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
+| `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
+| `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 

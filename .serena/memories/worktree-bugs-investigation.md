@@ -2,7 +2,11 @@
 
 ## STATUS: FIXED
 
-Bug 3 fixed. Bug 1 was already fixed in the codebase. Bug 2 was user error. Updated 2026-02-04.
+Bug 3 fixed (slashed branch names). Bug 1 was already fixed. Bug 2 was user error.
+
+**NEW (2026-02-04):** Added `clawker worktree prune` command and handle-based registry API to fix stale worktree entries.
+
+See also: `internal/config/registry.go` (ProjectHandle, WorktreeHandle, WorktreeStatus types)
 
 ### Changes Made
 

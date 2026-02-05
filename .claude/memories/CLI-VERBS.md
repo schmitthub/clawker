@@ -453,7 +453,8 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 | Command | Description |
 |---------|-------------|
 | `add <branch>` | Create a worktree for a branch (idempotent) |
-| `list` | List git worktrees for the current project |
+| `list`, `ls` | List git worktrees for the current project |
+| `prune` | Remove stale worktree entries from registry |
 | `remove <branch>` | Remove a git worktree |
 
 **Flags for `add`:**
@@ -462,6 +463,18 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 |------|-------------|
 | `--base REF` | Base ref to create branch from (default: HEAD) |
 
+**Flags for `list`:**
+
+| Flag | Description |
+|------|-------------|
+| `--quiet`, `-q` | Suppress headers, show branch names only |
+
+**Flags for `prune`:**
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show what would be pruned without removing |
+
 **Flags for `remove`:**
 
 | Flag | Description |
@@ -469,10 +482,17 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 | `--force` | Remove worktree even if it has uncommitted changes |
 | `--delete-branch` | Also delete the git branch after removing worktree |
 
+**Status column in `list`:**
+- (empty) — healthy worktree
+- `dir missing` — worktree directory doesn't exist
+- `git missing` — .git file missing or invalid
+- `dir missing, git missing` — stale entry, use `prune` to clean up
+
 **Notes:**
 - Branch names with slashes (e.g., `feature/foo`, `a/my-branch`) are fully supported
 - The `add` command is idempotent: if the worktree exists, it returns the existing path
 - Worktree directories use slugified names (e.g., `feature/foo` → `feature-foo`)
+- Use `prune` to clean up stale registry entries after using native `git worktree remove`
 
 ---
 

@@ -1,6 +1,9 @@
 # Git Worktree — Abstract Behavioral Test Cases
 
-## STATUS: NOT STARTED
+## STATUS: REFERENCE
+
+These are abstract behavioral test cases for reference when writing worktree tests.
+See `worktree-test-coverage-plan` memory for implementation plan.
 
 Plain-language descriptions of expected behavior for a git worktree wrapper.
 Each case states a situation and what should happen. No implementation details,

@@ -560,6 +560,52 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 
 ---
 
+## In-Memory Test Utilities
+
+The codebase provides in-memory implementations for testing without filesystem I/O.
+
+### configtest.InMemoryRegistryBuilder
+
+Creates an in-memory registry for testing worktree and project commands. Use instead of file-based fakes when you need:
+- Controllable worktree status (healthy, stale, mixed)
+- No filesystem side effects
+- Fast parallel tests
+
+```go
+registry := configtest.NewInMemoryRegistryBuilder().
+    WithProject("myproject", "/path/to/project").
+    WithWorktree("myproject", "feature-branch", "/path/to/worktree", config.WorktreeStatusHealthy).
+    WithWorktree("myproject", "stale-branch", "/missing/path", config.WorktreeStatusStale).
+    Build()
+
+// Use the handle pattern
+proj := registry.Project("myproject")
+wt := proj.Worktree("feature-branch")
+status := wt.Status()
+```
+
+### gittest.NewInMemoryGitManager
+
+Creates an in-memory GitManager for testing git operations without touching the filesystem.
+
+```go
+gitMgr := gittest.NewInMemoryGitManager().
+    WithWorktree("feature-branch", "/path/to/worktree").
+    WithCurrentBranch("main").
+    Build()
+```
+
+### When to Use Which
+
+| Need | Use |
+|------|-----|
+| Test worktree list/prune commands | `InMemoryRegistryBuilder` |
+| Test worktree add/remove commands | `InMemoryGitManager` + `InMemoryRegistryBuilder` |
+| Test registry persistence | `configtest.FakeRegistryBuilder` (file-based) |
+| Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
+
+---
+
 ## Integration Tests (`test/internals/`, `test/commands/`, `test/agents/`)
 
 Dogfoods clawker's own `docker.Client` via `harness.BuildLightImage` and `harness.RunContainer`. No testcontainers-go dependency.
