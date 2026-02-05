@@ -44,10 +44,11 @@ func NewSnapshotStrategy(cfg Config) *SnapshotStrategy
 
 ```go
 type SetupMountsConfig struct {
-    ModeOverride string        // CLI flag value (empty = use config default)
-    Config       *config.Project
-    AgentName    string
-    WorkDir      string        // Host working directory (empty = os.Getwd() fallback)
+    ModeOverride   string          // CLI flag value (empty = use config default)
+    Config         *config.Project
+    AgentName      string
+    WorkDir        string          // Host working directory (empty = os.Getwd() fallback)
+    ProjectRootDir string          // Main repo root for worktree .git mounting (empty for non-worktree)
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error)
@@ -57,7 +58,9 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 
 `SetupMounts` is the main entry point -- combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
-**Note on worktrees**: When using `--worktree`, `WorkDir` receives the worktree path (e.g., `~/.local/clawker/projects/myapp/worktrees/feature-branch/`). The workspace package doesn't need any special handling — it treats worktree paths the same as project root paths. Both bind and snapshot strategies work unchanged.
+**Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
+
+Note: `SetupMounts` resolves symlinks in `ProjectRootDir` using `filepath.EvalSymlinks` to match git's behavior (e.g., `/var` → `/private/var` on macOS).
 
 ## Git Credentials
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
@@ -22,6 +23,10 @@ type SetupMountsConfig struct {
 	// WorkDir is the host working directory for workspace mounts.
 	// If empty, falls back to os.Getwd() for backward compatibility.
 	WorkDir string
+	// ProjectRootDir is the main repository root when using a worktree.
+	// If set, the .git directory will be mounted at the same absolute path
+	// in the container to allow git worktree references to resolve.
+	ProjectRootDir string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -78,6 +83,31 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Get workspace mount
 	mounts = append(mounts, strategy.GetMounts()...)
+
+	// Mount main repo's .git directory for worktree support.
+	// Worktrees use a .git file that references the main repo's .git directory.
+	// By mounting at the same absolute path, the reference works in-container.
+	if cfg.ProjectRootDir != "" {
+		// Resolve symlinks to match git's behavior. On macOS, /var -> /private/var,
+		// and git records absolute paths with symlinks resolved. The mount target
+		// must match what git wrote in the worktree's .git file.
+		resolvedRoot, err := filepath.EvalSymlinks(cfg.ProjectRootDir)
+		if err != nil {
+			// Fall back to unresolved path if symlink resolution fails
+			resolvedRoot = cfg.ProjectRootDir
+			logger.Debug().Err(err).Str("path", cfg.ProjectRootDir).Msg("failed to resolve symlinks, using original path")
+		}
+		gitDir := filepath.Join(resolvedRoot, ".git")
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   gitDir,
+			Target:   gitDir, // Same absolute path preserves worktree references
+			ReadOnly: false,
+		})
+		logger.Debug().
+			Str("gitdir", gitDir).
+			Msg("mounting main repo .git for worktree")
+	}
 
 	// Ensure and get config volumes
 	if err := EnsureConfigVolumes(ctx, client, cfg.Config.Project, cfg.AgentName); err != nil {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -29,6 +30,7 @@ type containerConfig struct {
 	cmd       []string
 	env       []string
 	extraHost []string
+	mounts    []mount.Mount
 }
 
 // ContainerOpt configures a test container.
@@ -66,6 +68,14 @@ func WithEnv(env ...string) ContainerOpt {
 func WithExtraHost(hosts ...string) ContainerOpt {
 	return func(c *containerConfig) {
 		c.extraHost = append(c.extraHost, hosts...)
+	}
+}
+
+
+// WithMounts adds bind or volume mounts to the container.
+func WithMounts(mounts ...mount.Mount) ContainerOpt {
+	return func(c *containerConfig) {
+		c.mounts = append(c.mounts, mounts...)
 	}
 }
 
@@ -219,6 +229,7 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 		HostConfig: &container.HostConfig{
 			CapAdd:     cfg.capAdd,
 			ExtraHosts: cfg.extraHost,
+			Mounts:     cfg.mounts,
 		},
 		Name: name,
 	})
