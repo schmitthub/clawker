@@ -19,9 +19,11 @@
 
 2. **Pass configuration as parameters** — No config package dependency. Use WorktreeDirProvider interface.
 
-3. **WorktreeDirProvider enables DI** — High-level methods (SetupWorktree, RemoveWorktree, ListWorktrees) take this interface parameter. Config.Project() implements it.
+3. **WorktreeDirProvider enables DI** — SetupWorktree and RemoveWorktree take this interface. ListWorktrees takes `[]WorktreeDirEntry` (caller converts from config types).
 
-4. **Facade pattern** — GitManager is the entry point. Access sub-managers via Worktrees().
+4. **Slashed branch names supported** — Branch names like `feature/foo` work correctly. The worktree name uses the slugified directory basename, not the branch name.
+
+5. **Facade pattern** — GitManager is the entry point. Access sub-managers via Worktrees().
 
 ## Testing Requirements
 
