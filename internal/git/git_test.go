@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,7 +65,9 @@ func (f *fakeWorktreeDirProvider) GetOrCreateWorktreeDir(name string) (string, e
 	if path, ok := f.worktrees[name]; ok {
 		return path, nil
 	}
-	path := filepath.Join(f.baseDir, name)
+	// Slugify the name like the real config does (replace slashes with hyphens)
+	slug := strings.ReplaceAll(name, "/", "-")
+	path := filepath.Join(f.baseDir, slug)
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return "", err
 	}
@@ -89,6 +92,20 @@ func (f *fakeWorktreeDirProvider) DeleteWorktreeDir(name string) error {
 	}
 	delete(f.worktrees, name)
 	return nil
+}
+
+// entries returns all worktrees as WorktreeDirEntry slice for ListWorktrees tests.
+func (f *fakeWorktreeDirProvider) entries() []WorktreeDirEntry {
+	result := make([]WorktreeDirEntry, 0, len(f.worktrees))
+	for name, path := range f.worktrees {
+		// In the fake, slug is just the path basename (same as name since we don't slugify)
+		result = append(result, WorktreeDirEntry{
+			Name: name,
+			Slug: filepath.Base(path),
+			Path: path,
+		})
+	}
+	return result
 }
 
 func TestNewGitManager(t *testing.T) {
@@ -404,6 +421,46 @@ func TestGitManager_SetupWorktree(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, headHash, wtHead.Hash())
 	})
+
+	t.Run("handles branch names with slashes", func(t *testing.T) {
+		// This was Bug #3: branch names like "a/output-styling" would fail
+		// because go-git rejects slashes in worktree names.
+		// The fix uses filepath.Base(wtPath) as the worktree name (already slugified).
+		path, err := mgr.SetupWorktree(provider, "feature/test-slash", "")
+		require.NoError(t, err)
+		assert.NotEmpty(t, path)
+		assert.DirExists(t, path)
+
+		// Verify worktree is in git (name should be slugified)
+		names, err := wt.List()
+		require.NoError(t, err)
+		// The worktree name should be the path basename (slugified by the provider)
+		assert.Contains(t, names, filepath.Base(path))
+
+		// Verify the branch has the original name with slashes
+		wtRepo, err := wt.Open(path)
+		require.NoError(t, err)
+
+		head, err := wtRepo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, "feature/test-slash", head.Name().Short())
+	})
+
+	t.Run("handles deeply nested branch names", func(t *testing.T) {
+		// Test a more complex branch name with multiple slashes
+		path, err := mgr.SetupWorktree(provider, "a/b/c/deep-branch", "")
+		require.NoError(t, err)
+		assert.NotEmpty(t, path)
+		assert.DirExists(t, path)
+
+		// Verify the branch name is preserved
+		wtRepo, err := wt.Open(path)
+		require.NoError(t, err)
+
+		head, err := wtRepo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, "a/b/c/deep-branch", head.Name().Short())
+	})
 }
 
 func TestGitManager_RemoveWorktree(t *testing.T) {
@@ -416,22 +473,44 @@ func TestGitManager_RemoveWorktree(t *testing.T) {
 
 	provider := newFakeWorktreeDirProvider(t)
 
-	// Setup a worktree first
-	path, err := mgr.SetupWorktree(provider, "to-remove", "")
-	require.NoError(t, err)
-	assert.DirExists(t, path)
+	t.Run("removes simple branch worktree", func(t *testing.T) {
+		// Setup a worktree first
+		path, err := mgr.SetupWorktree(provider, "to-remove", "")
+		require.NoError(t, err)
+		assert.DirExists(t, path)
 
-	// Remove it
-	err = mgr.RemoveWorktree(provider, "to-remove")
-	require.NoError(t, err)
+		// Remove it
+		err = mgr.RemoveWorktree(provider, "to-remove")
+		require.NoError(t, err)
 
-	// Verify it's gone from git
-	names, err := wt.List()
-	require.NoError(t, err)
-	assert.NotContains(t, names, "to-remove")
+		// Verify it's gone from git
+		names, err := wt.List()
+		require.NoError(t, err)
+		assert.NotContains(t, names, "to-remove")
 
-	// Verify directory is removed
-	assert.NoDirExists(t, path)
+		// Verify directory is removed
+		assert.NoDirExists(t, path)
+	})
+
+	t.Run("removes slashed branch worktree", func(t *testing.T) {
+		// Setup a worktree with slashes in the branch name
+		path, err := mgr.SetupWorktree(provider, "feature/to-remove", "")
+		require.NoError(t, err)
+		assert.DirExists(t, path)
+
+		// Remove it using the original branch name (with slashes)
+		err = mgr.RemoveWorktree(provider, "feature/to-remove")
+		require.NoError(t, err)
+
+		// Verify it's gone from git (the name in git is the slugified version)
+		names, err := wt.List()
+		require.NoError(t, err)
+		slugifiedName := filepath.Base(path)
+		assert.NotContains(t, names, slugifiedName)
+
+		// Verify directory is removed
+		assert.NoDirExists(t, path)
+	})
 }
 
 func TestGitManager_ListWorktrees(t *testing.T) {
@@ -448,7 +527,8 @@ func TestGitManager_ListWorktrees(t *testing.T) {
 	_, err = mgr.SetupWorktree(provider, "list-test-2", "")
 	require.NoError(t, err)
 
-	infos, err := mgr.ListWorktrees(provider)
+	// List worktrees using entries from the provider
+	infos, err := mgr.ListWorktrees(provider.entries())
 	require.NoError(t, err)
 
 	// Should have at least our two worktrees

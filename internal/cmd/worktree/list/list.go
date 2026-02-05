@@ -75,8 +75,24 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return fmt.Errorf("initializing git: %w", err)
 	}
 
-	// List worktrees
-	worktrees, err := gitMgr.ListWorktrees(cfg.Project)
+	// Get worktree directories from config
+	dirInfos, err := cfg.Project.ListWorktreeDirs()
+	if err != nil {
+		return fmt.Errorf("listing worktree directories: %w", err)
+	}
+
+	// Convert to git.WorktreeDirEntry slice
+	entries := make([]git.WorktreeDirEntry, len(dirInfos))
+	for i, info := range dirInfos {
+		entries[i] = git.WorktreeDirEntry{
+			Name: info.Name,
+			Slug: info.Slug,
+			Path: info.Path,
+		}
+	}
+
+	// List worktrees with git metadata
+	worktrees, err := gitMgr.ListWorktrees(entries)
 	if err != nil {
 		return fmt.Errorf("listing worktrees: %w", err)
 	}
