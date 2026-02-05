@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	gogit "github.com/go-git/go-git/v6"
@@ -145,7 +144,11 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 		return "", fmt.Errorf("initializing worktree manager: %w", err)
 	}
 	branchRef := plumbing.NewBranchReferenceName(branch)
-	if err := wt.AddWithNewBranch(wtPath, branch, branchRef, baseCommit); err != nil {
+	// Use directory basename as worktree name (already slugified by GetOrCreateWorktreeDir).
+	// Branch names like "a/foo" have slashes that go-git rejects in worktree names,
+	// but the path basename "a-foo" is safe. This matches native git behavior.
+	wtName := filepath.Base(wtPath)
+	if err := wt.AddWithNewBranch(wtPath, wtName, branchRef, baseCommit); err != nil {
 		// Clean up the directory on failure - include cleanup error if it occurs
 		if cleanupErr := os.RemoveAll(wtPath); cleanupErr != nil {
 			return "", fmt.Errorf("creating git worktree: %w (cleanup also failed: %v)", err, cleanupErr)
@@ -162,8 +165,9 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 //   - dirs: Provider for worktree directory management
 //   - branch: Branch/worktree name to remove
 func (g *GitManager) RemoveWorktree(dirs WorktreeDirProvider, branch string) error {
-	// 1. Verify worktree directory exists (early error if not)
-	if _, err := dirs.GetWorktreeDir(branch); err != nil {
+	// 1. Get worktree directory path (also verifies it exists)
+	wtPath, err := dirs.GetWorktreeDir(branch)
+	if err != nil {
 		return fmt.Errorf("looking up worktree: %w", err)
 	}
 
@@ -172,7 +176,10 @@ func (g *GitManager) RemoveWorktree(dirs WorktreeDirProvider, branch string) err
 	if err != nil {
 		return fmt.Errorf("initializing worktree manager: %w", err)
 	}
-	if err := wt.Remove(branch); err != nil {
+	// Use directory basename as worktree name (matches SetupWorktree behavior).
+	// The worktree was created with the slugified name, not the branch name.
+	wtName := filepath.Base(wtPath)
+	if err := wt.Remove(wtName); err != nil {
 		return fmt.Errorf("removing git worktree: %w", err)
 	}
 
@@ -188,43 +195,52 @@ func (g *GitManager) RemoveWorktree(dirs WorktreeDirProvider, branch string) err
 // Worktrees that have errors reading their info will have the Error field set.
 //
 // Parameters:
-//   - dirs: Provider for worktree directory management
-func (g *GitManager) ListWorktrees(dirs WorktreeDirProvider) ([]WorktreeInfo, error) {
+//   - entries: Worktree directory entries from the provider (name, slug, path)
+//
+// The function matches entries to git worktree metadata by slug (which matches
+// the go-git worktree name). Entries without corresponding git metadata are
+// included with an error, as are entries that can't be opened.
+func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, error) {
 	wt, err := g.Worktrees()
 	if err != nil {
 		return nil, fmt.Errorf("initializing worktree manager: %w", err)
 	}
 
+	// Build a map of slug -> entry for quick lookup
+	entryBySlug := make(map[string]WorktreeDirEntry, len(entries))
+	for _, e := range entries {
+		entryBySlug[e.Slug] = e
+	}
+
+	// Get worktree names from go-git (these are slugs)
 	names, err := wt.List()
 	if err != nil {
 		return nil, fmt.Errorf("listing worktrees: %w", err)
 	}
 
+	// Track which slugs we've seen from git
+	seenSlugs := make(map[string]bool, len(names))
+
 	var infos []WorktreeInfo
-	for _, name := range names {
-		wtPath, err := dirs.GetWorktreeDir(name)
-		if err != nil {
-			// Check if this is a "not found" type error (orphaned metadata)
-			// vs a real error (permissions, I/O, etc.)
-			if isNotFoundError(err) {
-				// Orphaned metadata - skip silently
-				continue
-			}
-			// Include worktree with error info for debugging
+	for _, slug := range names {
+		seenSlugs[slug] = true
+		entry, ok := entryBySlug[slug]
+		if !ok {
+			// Orphaned git worktree - no matching directory entry
 			infos = append(infos, WorktreeInfo{
-				Name:  name,
-				Error: fmt.Errorf("getting worktree directory: %w", err),
+				Name:  slug,
+				Error: fmt.Errorf("worktree %q has git metadata but no directory entry (orphaned)", slug),
 			})
 			continue
 		}
 
 		info := WorktreeInfo{
-			Name: name,
-			Path: wtPath,
+			Name: entry.Name, // Use original name (with slashes), not slug
+			Path: entry.Path,
 		}
 
 		// Try to get HEAD info - capture errors
-		wtRepo, err := wt.Open(wtPath)
+		wtRepo, err := wt.Open(entry.Path)
 		if err != nil {
 			info.Error = fmt.Errorf("opening worktree: %w", err)
 		} else {
@@ -241,23 +257,20 @@ func (g *GitManager) ListWorktrees(dirs WorktreeDirProvider) ([]WorktreeInfo, er
 		infos = append(infos, info)
 	}
 
-	return infos, nil
-}
-
-// isNotFoundError checks if an error indicates a resource doesn't exist.
-// It uses errors.Is for proper error chain checking of os.ErrNotExist,
-// with string-based fallback for go-git errors that may not wrap standard errors.
-func isNotFoundError(err error) bool {
-	if errors.Is(err, os.ErrNotExist) {
-		return true
+	// Second pass: find orphaned directories (entries without git metadata)
+	for _, entry := range entries {
+		if seenSlugs[entry.Slug] {
+			continue
+		}
+		// Orphaned directory - has config entry but no git metadata
+		infos = append(infos, WorktreeInfo{
+			Name:  entry.Name,
+			Path:  entry.Path,
+			Error: fmt.Errorf("worktree %q has directory but no git metadata (orphaned)", entry.Name),
+		})
 	}
-	// Fallback: check for common "not found" error patterns.
-	// This catches variations in error message formatting across go-git versions
-	// where errors may not properly wrap os.ErrNotExist.
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "not found") ||
-		strings.Contains(errStr, "does not exist") ||
-		strings.Contains(errStr, "no such file or directory")
+
+	return infos, nil
 }
 
 // GetCurrentBranch returns the current branch name of the repository.

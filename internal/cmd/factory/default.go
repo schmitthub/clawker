@@ -22,13 +22,14 @@ func New(version, commit string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
 		Version: version,
 		Commit:  commit,
+
+		Config:    configFunc(),
+		IOStreams: ioStreams(),
+		HostProxy: hostProxyFunc(),
 	}
 
-	f.IOStreams = ioStreams()
-	f.Config = configFunc()
 	f.Client = clientFunc(f)         // depends on Config
 	f.GitManager = gitManagerFunc(f) // depends on Config
-	f.HostProxy = hostProxyFunc()
 	f.Prompter = prompterFunc(f)
 
 	return f

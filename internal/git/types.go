@@ -29,6 +29,17 @@ type WorktreeInfo struct {
 	Error error
 }
 
+// WorktreeDirEntry contains information about a worktree directory.
+// This is the directory-level info (name, slug, path), separate from git metadata.
+type WorktreeDirEntry struct {
+	// Name is the original name (typically a branch name with slashes).
+	Name string
+	// Slug is the filesystem-safe version of the name.
+	Slug string
+	// Path is the absolute filesystem path to the worktree directory.
+	Path string
+}
+
 // WorktreeDirProvider is implemented by Config.Project() to manage
 // worktree directories in CLAWKER_HOME. Defined here for dependency inversion —
 // the git package does not import config.

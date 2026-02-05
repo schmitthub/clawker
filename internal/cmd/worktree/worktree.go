@@ -2,6 +2,7 @@
 package worktree
 
 import (
+	"github.com/schmitthub/clawker/internal/cmd/worktree/add"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/list"
 	"github.com/schmitthub/clawker/internal/cmd/worktree/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -21,7 +22,13 @@ separate checkout of the repository at a specific branch.
 
 Worktrees are created automatically when using 'clawker run --worktree <branch>'
 and stored in $CLAWKER_HOME/projects/<project>/worktrees/.`,
-		Example: `  # List all worktrees for the current project
+		Example: `  # Create a worktree for a new branch
+  clawker worktree add feat-42
+
+  # Create a worktree from a specific base
+  clawker worktree add feat-43 --base main
+
+  # List all worktrees for the current project
   clawker worktree list
 
   # Remove a worktree by branch name
@@ -36,6 +43,7 @@ and stored in $CLAWKER_HOME/projects/<project>/worktrees/.`,
 	}
 
 	// Add subcommands
+	cmd.AddCommand(add.NewCmdAdd(f, nil))
 	cmd.AddCommand(list.NewCmdList(f, nil))
 	cmd.AddCommand(remove.NewCmdRemove(f, nil))
 

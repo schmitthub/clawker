@@ -38,13 +38,17 @@ These methods coordinate git operations with directory management:
 
 ```go
 // Setup worktree (create dir + git worktree add)
+// Branch names with slashes (e.g., "feature/foo") are supported.
 path, err := mgr.SetupWorktree(provider, "feature-branch", "main")
 
 // Remove worktree (git metadata + directory)
+// Use the original branch name (with slashes if applicable).
 err := mgr.RemoveWorktree(provider, "feature-branch")
 
-// List all worktrees with info
-infos, err := mgr.ListWorktrees(provider)
+// List all worktrees with info (takes entries from provider, not provider itself)
+// Caller converts config.WorktreeDirInfo to git.WorktreeDirEntry
+entries := []git.WorktreeDirEntry{{Name: "feature/foo", Slug: "feature-foo", Path: "/path"}}
+infos, err := mgr.ListWorktrees(entries)
 ```
 
 ### WorktreeManager (Low-level)
@@ -88,6 +92,20 @@ type WorktreeDirProvider interface {
 }
 ```
 
+### WorktreeDirEntry
+
+Used by `ListWorktrees` to map between branch names, slugs, and paths:
+
+```go
+type WorktreeDirEntry struct {
+    Name string // Original name (e.g., "feature/foo" with slashes)
+    Slug string // Filesystem-safe slug (e.g., "feature-foo")
+    Path string // Absolute filesystem path
+}
+```
+
+Callers convert from `config.WorktreeDirInfo` to `git.WorktreeDirEntry` when calling `ListWorktrees`.
+
 ### WorktreeInfo
 
 Information about a worktree:
@@ -103,7 +121,11 @@ type WorktreeInfo struct {
 }
 ```
 
-Note: If `Error` is non-nil, the worktree may be corrupted or inaccessible.
+Note: If `Error` is non-nil, the worktree may be:
+- Corrupted or inaccessible
+- Orphaned (git metadata exists but directory entry is missing)
+- Orphaned (directory entry exists but git metadata is missing)
+
 Check this field before using other fields.
 
 ## Utility Functions

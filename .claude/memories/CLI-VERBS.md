@@ -452,8 +452,15 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 
 | Command | Description |
 |---------|-------------|
+| `add <branch>` | Create a worktree for a branch (idempotent) |
 | `list` | List git worktrees for the current project |
 | `remove <branch>` | Remove a git worktree |
+
+**Flags for `add`:**
+
+| Flag | Description |
+|------|-------------|
+| `--base REF` | Base ref to create branch from (default: HEAD) |
 
 **Flags for `remove`:**
 
@@ -461,6 +468,11 @@ Add instructions to your project's CLAUDE.md to have the agent output this block
 |------|-------------|
 | `--force` | Remove worktree even if it has uncommitted changes |
 | `--delete-branch` | Also delete the git branch after removing worktree |
+
+**Notes:**
+- Branch names with slashes (e.g., `feature/foo`, `a/my-branch`) are fully supported
+- The `add` command is idempotent: if the worktree exists, it returns the existing path
+- Worktree directories use slugified names (e.g., `feature/foo` → `feature-foo`)
 
 ---
 
