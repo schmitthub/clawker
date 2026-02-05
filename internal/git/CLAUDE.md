@@ -76,6 +76,9 @@ err := wt.AddDetached("/path", "name", commitHash)
 // List worktree names
 names, err := wt.List()
 
+// Check if worktree exists in git metadata
+exists, err := wt.Exists("name")
+
 // Open worktree as Repository
 repo, err := wt.Open("/path")
 
@@ -183,9 +186,9 @@ mgr := gittest.NewInMemoryGitManager(t, "/logical/project/root")
 // Use mgr.Repository() to access the underlying go-git Repository
 ```
 
-**Note:** In-memory repos have limitations — `ListWorktrees` relies on worktree path lookups
-that may not work fully without real filesystem worktrees. Use for testing code that
-calls GitManager methods but doesn't depend on worktree enumeration accuracy.
+**Note:** In-memory repos are suitable for testing GitManager methods that don't
+require actual worktree filesystem operations. Use `newTestRepoOnDisk(t)` in `git_test.go`
+when testing worktree creation, opening, or listing with real git metadata.
 
 ## Dependencies
 

@@ -182,10 +182,14 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		if handle, ok := handleBySlug[wt.Slug]; ok {
 			wtStatus := handle.Status()
 			// Skip handle status for path errors - use wt.Error instead (has better context)
-			if wtStatus.Error == nil && !wtStatus.IsHealthy() {
-				status = wtStatus.String()
-				if wtStatus.IsPrunable() {
-					staleCount++
+			if wtStatus.Error == nil {
+				if wtStatus.IsHealthy() {
+					status = "healthy"
+				} else {
+					status = wtStatus.String()
+					if wtStatus.IsPrunable() {
+						staleCount++
+					}
 				}
 			}
 		}

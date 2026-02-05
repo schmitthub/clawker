@@ -122,6 +122,20 @@ func (w *WorktreeManager) List() ([]string, error) {
 	return names, nil
 }
 
+// Exists checks if a worktree with the given name exists in git's metadata.
+func (w *WorktreeManager) Exists(name string) (bool, error) {
+	names, err := w.List()
+	if err != nil {
+		return false, err
+	}
+	for _, n := range names {
+		if n == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Open opens a linked worktree as a full *git.Repository.
 // The path must point to an existing worktree directory.
 func (w *WorktreeManager) Open(path string) (*gogit.Repository, error) {

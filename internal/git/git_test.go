@@ -336,6 +336,55 @@ func TestWorktreeManager_Remove(t *testing.T) {
 	assert.NotContains(t, names, "toremove")
 }
 
+func TestWorktreeManager_Exists(t *testing.T) {
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	t.Run("returns false for non-existent worktree", func(t *testing.T) {
+		exists, err := wt.Exists("nonexistent")
+		require.NoError(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("returns true for existing worktree", func(t *testing.T) {
+		// Create a worktree
+		wtPath := filepath.Join(t.TempDir(), "exists-test")
+		err := os.MkdirAll(wtPath, 0755)
+		require.NoError(t, err)
+
+		err = wt.Add(wtPath, "exists-test", plumbing.ZeroHash)
+		require.NoError(t, err)
+
+		// Check it exists
+		exists, err := wt.Exists("exists-test")
+		require.NoError(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("returns false after worktree removed", func(t *testing.T) {
+		// Create and remove a worktree
+		wtPath := filepath.Join(t.TempDir(), "removed-test")
+		err := os.MkdirAll(wtPath, 0755)
+		require.NoError(t, err)
+
+		err = wt.Add(wtPath, "removed-test", plumbing.ZeroHash)
+		require.NoError(t, err)
+
+		// Remove it
+		err = wt.Remove("removed-test")
+		require.NoError(t, err)
+
+		// Should no longer exist
+		exists, err := wt.Exists("removed-test")
+		require.NoError(t, err)
+		assert.False(t, exists)
+	})
+}
+
 func TestWorktreeManager_AddWithNewBranch(t *testing.T) {
 	_, repoDir := newTestRepoOnDisk(t)
 	mgr, err := NewGitManager(repoDir)
@@ -461,6 +510,93 @@ func TestGitManager_SetupWorktree(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "a/b/c/deep-branch", head.Name().Short())
 	})
+}
+
+func TestGitManager_SetupWorktree_DetectsPreExistingGitWorktree(t *testing.T) {
+	// This test verifies that SetupWorktree handles the case where git
+	// already has worktree metadata, but clawker's directory might be empty.
+	// This can happen if someone manually creates a worktree or if previous
+	// cleanup failed.
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	// Create a worktree directly using the low-level API
+	wtPath := filepath.Join(t.TempDir(), "pre-existing")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	err = wt.Add(wtPath, "pre-existing", plumbing.ZeroHash)
+	require.NoError(t, err)
+
+	// Create a provider that returns the same path
+	provider := &fakeWorktreeDirProvider{
+		baseDir:   filepath.Dir(wtPath),
+		worktrees: map[string]string{"pre-existing": wtPath},
+	}
+
+	// SetupWorktree should detect the existing worktree and return it (idempotent)
+	path, err := mgr.SetupWorktree(provider, "pre-existing", "")
+	require.NoError(t, err)
+	assert.Equal(t, wtPath, path)
+}
+
+func TestGitManager_SetupWorktree_RecoversOrphanedGitWorktree(t *testing.T) {
+	// This test verifies that SetupWorktree handles orphaned git metadata.
+	// An orphan is when git has worktree metadata but the directory is empty
+	// (no .git file, which means Open() will fail).
+
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+
+	wt, err := mgr.Worktrees()
+	require.NoError(t, err)
+
+	// Create a worktree directory
+	wtPath := filepath.Join(t.TempDir(), "orphaned")
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Create the worktree properly first
+	err = wt.Add(wtPath, "orphaned", plumbing.ZeroHash)
+	require.NoError(t, err)
+
+	// Verify it was created
+	exists, err := wt.Exists("orphaned")
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	// Now simulate an orphan: delete the directory contents but leave git metadata
+	err = os.RemoveAll(wtPath)
+	require.NoError(t, err)
+	err = os.MkdirAll(wtPath, 0755)
+	require.NoError(t, err)
+
+	// Verify the worktree still exists in git metadata
+	exists, err = wt.Exists("orphaned")
+	require.NoError(t, err)
+	require.True(t, exists, "git should still have the worktree metadata")
+
+	// Create a provider that returns the empty directory
+	provider := &fakeWorktreeDirProvider{
+		baseDir:   filepath.Dir(wtPath),
+		worktrees: map[string]string{"orphaned": wtPath},
+	}
+
+	// SetupWorktree should detect orphaned metadata, clean it up, and recreate
+	path, err := mgr.SetupWorktree(provider, "orphaned", "")
+	require.NoError(t, err)
+	assert.Equal(t, wtPath, path)
+
+	// Verify the worktree is now valid
+	wtRepo, err := wt.Open(path)
+	require.NoError(t, err)
+	assert.NotNil(t, wtRepo)
 }
 
 func TestGitManager_RemoveWorktree(t *testing.T) {
