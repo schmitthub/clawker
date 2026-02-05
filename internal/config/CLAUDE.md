@@ -218,9 +218,10 @@ handles, err := handle.ListWorktrees()
 
 **WorktreeStatus** holds health check results:
 - `IsHealthy()` — both dir and git exist
-- `IsPrunable()` — both dir and git missing (stale entry)
+- `IsPrunable()` — both dir and git missing AND no error (safe to delete stale entries)
 - `Issues()` — returns `[]string` of issue descriptions
-- `String()` — "healthy" or comma-separated issues
+- `String()` — "healthy", comma-separated issues, or "error: ..." if Error is set
+- `Error` field — non-nil if path resolution failed; prevents `IsPrunable()` from returning true
 
 ## Test Utilities (`configtest/`)
 
@@ -254,12 +255,14 @@ registry := configtest.NewInMemoryRegistryBuilder().
     WithHealthyWorktree("feature-a", "feature-a").  // DirExists=true, GitExists=true
     WithStaleWorktree("stale-branch", "stale-branch").  // DirExists=false, GitExists=false
     WithPartialWorktree("partial", "partial", true, false).  // custom state
+    WithErrorWorktree("error-branch", "error-branch", errors.New("path error")).  // Path() returns error
     Registry().
     Build()
 
 // Directly control worktree state
 inMemReg := configtest.NewInMemoryRegistry()
 inMemReg.SetWorktreeState("project-key", "worktree-name", true, false)
+inMemReg.SetWorktreePathError("project-key", "worktree-name", errors.New("simulated error"))
 ```
 
 ## Resolver (`resolver.go`)

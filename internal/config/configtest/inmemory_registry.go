@@ -14,6 +14,7 @@ type WorktreeState struct {
 	DirExists   bool
 	GitExists   bool
 	DeleteError error // If non-nil, Delete() will return this error
+	PathError   error // If non-nil, Path() will return this error
 }
 
 // InMemoryRegistry implements config.Registry with in-memory storage.
@@ -59,6 +60,20 @@ func (r *InMemoryRegistry) SetWorktreeDeleteError(projectKey, worktreeName strin
 	}
 	state := r.worktreeState[projectKey][worktreeName]
 	state.DeleteError = err
+	r.worktreeState[projectKey][worktreeName] = state
+}
+
+// SetWorktreePathError configures Path() to return an error for a worktree.
+// Useful for testing error handling when path resolution fails.
+func (r *InMemoryRegistry) SetWorktreePathError(projectKey, worktreeName string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.worktreeState[projectKey] == nil {
+		r.worktreeState[projectKey] = make(map[string]WorktreeState)
+	}
+	state := r.worktreeState[projectKey][worktreeName]
+	state.PathError = err
 	r.worktreeState[projectKey][worktreeName] = state
 }
 
@@ -267,17 +282,29 @@ func (w *inMemoryWorktreeHandle) Slug() string {
 }
 
 func (w *inMemoryWorktreeHandle) Path() (string, error) {
+	state := w.registry.getWorktreeState(w.projectKey, w.name)
+	if state.PathError != nil {
+		return "", state.PathError
+	}
 	// Return a fake path for testing
 	return filepath.Join("/fake", "projects", w.projectKey, "worktrees", w.slug), nil
 }
 
 func (w *inMemoryWorktreeHandle) DirExists() bool {
 	state := w.registry.getWorktreeState(w.projectKey, w.name)
+	// Mimic real behavior: if Path() would fail, return false
+	if state.PathError != nil {
+		return false
+	}
 	return state.DirExists
 }
 
 func (w *inMemoryWorktreeHandle) GitExists() bool {
 	state := w.registry.getWorktreeState(w.projectKey, w.name)
+	// Mimic real behavior: if Path() would fail, return false
+	if state.PathError != nil {
+		return false
+	}
 	return state.GitExists
 }
 
@@ -383,6 +410,14 @@ func (pb *InMemoryProjectBuilder) WithStaleWorktree(name, slug string) *InMemory
 func (pb *InMemoryProjectBuilder) WithPartialWorktree(name, slug string, dirExists, gitExists bool) *InMemoryProjectBuilder {
 	pb.WithWorktree(name, slug)
 	pb.parent.registry.SetWorktreeState(pb.key, name, dirExists, gitExists)
+	return pb
+}
+
+// WithErrorWorktree adds a worktree that returns an error from Path().
+// This is useful for testing error handling when path resolution fails.
+func (pb *InMemoryProjectBuilder) WithErrorWorktree(name, slug string, err error) *InMemoryProjectBuilder {
+	pb.WithWorktree(name, slug)
+	pb.parent.registry.SetWorktreePathError(pb.key, name, err)
 	return pb
 }
 

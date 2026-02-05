@@ -647,8 +647,9 @@ type WorktreeStatus struct {
 }
 
 // IsPrunable returns true if registry entry exists but both dir and git are missing.
+// Returns false if there was an error checking status (we can't safely prune if we don't know the state).
 func (s *WorktreeStatus) IsPrunable() bool {
-	return !s.DirExists && !s.GitExists
+	return s.Error == nil && !s.DirExists && !s.GitExists
 }
 
 // IsHealthy returns true if both directory and git metadata exist.

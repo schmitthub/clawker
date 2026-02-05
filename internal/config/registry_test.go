@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -582,6 +584,38 @@ func TestWorktreeStatus_Methods(t *testing.T) {
 				t.Errorf("String() = %q, want %q", status.String(), tt.wantString)
 			}
 		})
+	}
+}
+
+func TestWorktreeStatus_IsPrunable_WithError(t *testing.T) {
+	// When Path() fails (e.g., ClawkerHome() error), both DirExists() and GitExists()
+	// return false because they can't check the filesystem. However, IsPrunable()
+	// should NOT return true because we don't know the actual state - the worktree
+	// might exist and we just can't resolve the path.
+
+	status := &WorktreeStatus{
+		Name:      "error-branch",
+		Slug:      "error-branch",
+		Path:      "",
+		DirExists: false, // Can't check - path resolution failed
+		GitExists: false, // Can't check - path resolution failed
+		Error:     errors.New("failed to resolve clawker home"),
+	}
+
+	// THE KEY ASSERTION: worktree with error should NOT be prunable
+	// When we have an error, we don't know if the directory exists, so we can't safely prune
+	if status.IsPrunable() {
+		t.Error("worktree with path error should NOT be prunable - we don't know if it exists")
+	}
+
+	// Also verify IsHealthy returns false when there's an error
+	if status.IsHealthy() {
+		t.Error("worktree with error should not be healthy")
+	}
+
+	// Verify String() shows the error
+	if !strings.Contains(status.String(), "error:") {
+		t.Errorf("String() should indicate error, got: %s", status.String())
 	}
 }
 
