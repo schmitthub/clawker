@@ -112,6 +112,7 @@ func WithUser(user string) ContainerOpt
 func WithCmd(cmd ...string) ContainerOpt
 func WithEnv(env ...string) ContainerOpt
 func WithExtraHost(hosts ...string) ContainerOpt
+func WithMounts(mounts ...mount.Mount) ContainerOpt
 
 // RunningContainer methods
 func (c *RunningContainer) Exec(ctx, dc, cmd...) (*ExecResult, error)

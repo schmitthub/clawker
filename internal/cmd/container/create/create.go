@@ -171,6 +171,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// Determine working directory based on --worktree flag
 	var wd string
+	var projectRootDir string // Set when using worktree, for .git mount
 	if containerOpts.Worktree != "" {
 		// Use git worktree as workspace source
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
@@ -188,6 +189,10 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			return fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 		}
 		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
+
+		// Capture project root for mounting .git in container.
+		// Worktrees use a .git file that references the main repo's .git directory.
+		projectRootDir = cfg.RootDir()
 	} else {
 		// Get working directory from project root, or fall back to current directory
 		wd = cfg.RootDir()
@@ -202,10 +207,11 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// Setup workspace mounts
 	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride: containerOpts.Mode,
-		Config:       cfg,
-		AgentName:    agentName,
-		WorkDir:      wd,
+		ModeOverride:   containerOpts.Mode,
+		Config:         cfg,
+		AgentName:      agentName,
+		WorkDir:        wd,
+		ProjectRootDir: projectRootDir,
 	})
 	if err != nil {
 		return err
