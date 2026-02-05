@@ -2,8 +2,14 @@
 // This allows containers to use the host's GPG agent even when direct socket
 // mounting has permission issues (e.g., macOS Docker Desktop).
 //
+// The proxy creates a Unix socket at ~/.gnupg/S.gpg-agent and forwards
+// Assuan protocol messages to the host proxy's /gpg/agent endpoint.
+//
 // Build: go build -o gpg-agent-proxy main.go
 // Usage: gpg-agent-proxy (runs in background, creates GPG socket)
+//
+// Environment:
+//   - CLAWKER_HOST_PROXY: Required. URL of the host proxy (e.g., http://host.docker.internal:18374)
 package main
 
 import (
@@ -21,16 +27,24 @@ import (
 	"time"
 )
 
+// maxMessageSize is the maximum size of a GPG agent message (64KB).
+// This matches the limit in the host proxy's /gpg/agent endpoint.
 const maxMessageSize = 64 * 1024
 
+// gpgAgentRequest is the JSON request body for POST /gpg/agent.
 type gpgAgentRequest struct {
+	// Data is the base64-encoded GPG agent protocol message
 	Data string `json:"data"`
 }
 
+// gpgAgentResponse is the JSON response body from POST /gpg/agent.
 type gpgAgentResponse struct {
-	Success bool   `json:"success"`
-	Data    string `json:"data,omitempty"`
-	Error   string `json:"error,omitempty"`
+	// Success indicates whether the request was processed successfully
+	Success bool `json:"success"`
+	// Data is the base64-encoded response from the GPG agent (present on success)
+	Data string `json:"data,omitempty"`
+	// Error contains the error message (present on failure)
+	Error string `json:"error,omitempty"`
 }
 
 func main() {
@@ -83,17 +97,29 @@ func main() {
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 
+	// Flag to track expected shutdown
+	shutdownCh := make(chan struct{})
+
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				return
+				// Check if this is an expected shutdown
+				select {
+				case <-shutdownCh:
+					return
+				default:
+					// Unexpected error - log it
+					fmt.Fprintf(os.Stderr, "error accepting connection: %v\n", err)
+					return
+				}
 			}
 			go handleConnection(conn, hostProxy, httpClient)
 		}
 	}()
 
 	<-sigCh
+	close(shutdownCh)
 }
 
 func handleConnection(conn net.Conn, hostProxy string, client *http.Client) {
@@ -148,7 +174,10 @@ func forwardToProxy(client *http.Client, hostProxy string, msgData []byte) ([]by
 
 	// Check HTTP status before attempting to decode JSON
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+		if err != nil {
+			return nil, fmt.Errorf("host proxy returned HTTP %d (failed to read body: %v)", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("host proxy returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -159,6 +188,11 @@ func forwardToProxy(client *http.Client, hostProxy string, msgData []byte) ([]by
 
 	if !agentResp.Success {
 		return nil, fmt.Errorf("proxy error: %s", agentResp.Error)
+	}
+
+	// Defensive check: success response should have data
+	if agentResp.Data == "" {
+		return nil, fmt.Errorf("proxy returned success but no data")
 	}
 
 	responseData, err := base64.StdEncoding.DecodeString(agentResp.Data)

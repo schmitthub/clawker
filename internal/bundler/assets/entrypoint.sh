@@ -101,19 +101,29 @@ KNOWN_HOSTS
 start_ssh_agent_proxy() {
     /usr/local/bin/ssh-agent-proxy &
     proxy_pid=$!
-    sleep 0.3
-    # Verify proxy is running
-    if ! kill -0 "$proxy_pid" 2>/dev/null; then
-        echo "Warning: SSH agent proxy failed to start" >&2
-        return 1
-    fi
-    # Verify socket was created
-    if [ ! -S "$HOME/.ssh/agent.sock" ]; then
-        echo "Warning: SSH agent proxy socket not created" >&2
-        return 1
-    fi
-    export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
-    return 0
+
+    # Wait for socket creation with timeout (up to 2 seconds)
+    socket_path="$HOME/.ssh/agent.sock"
+    wait_count=0
+    max_wait=20  # 20 * 100ms = 2 seconds
+    while [ $wait_count -lt $max_wait ]; do
+        # Check if proxy is still running
+        if ! kill -0 "$proxy_pid" 2>/dev/null; then
+            echo "[clawker] warn component=ssh-agent-proxy msg=\"proxy process exited prematurely\"" >&2
+            return 1
+        fi
+        # Check if socket was created
+        if [ -S "$socket_path" ]; then
+            export SSH_AUTH_SOCK="$socket_path"
+            return 0
+        fi
+        sleep 0.1
+        wait_count=$((wait_count + 1))
+    done
+
+    # Timeout waiting for socket
+    echo "[clawker] warn component=ssh-agent-proxy msg=\"socket not created within timeout\"" >&2
+    return 1
 }
 
 # Determine SSH agent forwarding strategy
@@ -121,7 +131,7 @@ if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_SSH_VIA_PROXY" = "true" ]; then
     # Use ssh-agent-proxy to forward via host proxy (macOS Docker Desktop case)
     ssh_setup_known_hosts
     if ! start_ssh_agent_proxy; then
-        echo "Warning: SSH agent forwarding unavailable" >&2
+        echo "[clawker] warn component=ssh msg=\"SSH agent forwarding unavailable\"" >&2
     fi
 elif [ -n "$SSH_AUTH_SOCK" ]; then
     # Direct socket mount (Linux case or when proxy not needed)
@@ -148,18 +158,28 @@ fi
 start_gpg_agent_proxy() {
     /usr/local/bin/gpg-agent-proxy &
     proxy_pid=$!
-    sleep 0.3
-    # Verify proxy is running
-    if ! kill -0 "$proxy_pid" 2>/dev/null; then
-        echo "Warning: GPG agent proxy failed to start" >&2
-        return 1
-    fi
-    # Verify socket was created
-    if [ ! -S "$HOME/.gnupg/S.gpg-agent" ]; then
-        echo "Warning: GPG agent proxy socket not created" >&2
-        return 1
-    fi
-    return 0
+
+    # Wait for socket creation with timeout (up to 2 seconds)
+    socket_path="$HOME/.gnupg/S.gpg-agent"
+    wait_count=0
+    max_wait=20  # 20 * 100ms = 2 seconds
+    while [ $wait_count -lt $max_wait ]; do
+        # Check if proxy is still running
+        if ! kill -0 "$proxy_pid" 2>/dev/null; then
+            echo "[clawker] warn component=gpg-agent-proxy msg=\"proxy process exited prematurely\"" >&2
+            return 1
+        fi
+        # Check if socket was created
+        if [ -S "$socket_path" ]; then
+            return 0
+        fi
+        sleep 0.1
+        wait_count=$((wait_count + 1))
+    done
+
+    # Timeout waiting for socket
+    echo "[clawker] warn component=gpg-agent-proxy msg=\"socket not created within timeout\"" >&2
+    return 1
 }
 
 # Determine GPG agent forwarding strategy
@@ -168,7 +188,7 @@ if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GPG_VIA_PROXY" = "true" ]; then
     mkdir -p "$HOME/.gnupg"
     chmod 700 "$HOME/.gnupg"
     if ! start_gpg_agent_proxy; then
-        echo "Warning: GPG agent forwarding unavailable" >&2
+        echo "[clawker] warn component=gpg msg=\"GPG agent forwarding unavailable\"" >&2
     fi
 elif [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
     # Direct socket mount (Linux case) - socket already mounted

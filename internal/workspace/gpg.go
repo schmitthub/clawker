@@ -44,6 +44,12 @@ func IsGPGAgentAvailable() bool {
 // GetGPGExtraSocketPath returns the path to the GPG agent's extra socket on the host.
 // The extra socket is designed for restricted remote access and is what should be
 // forwarded to containers. Returns empty string if gpgconf is not available or fails.
+//
+// NOTE: A similar function exists in internal/hostproxy/gpg_agent.go (getGPGExtraSocket).
+// The duplication is intentional: hostproxy is a server-side package that should not
+// import workspace, and workspace provides container configuration logic. Both need
+// the socket path but for different purposes (hostproxy for forwarding requests,
+// workspace for mount configuration).
 func GetGPGExtraSocketPath() string {
 	// Run gpgconf to get the extra socket path
 	cmd := exec.Command("gpgconf", "--list-dir", "agent-extra-socket")

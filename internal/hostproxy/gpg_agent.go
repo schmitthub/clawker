@@ -31,13 +31,79 @@ type gpgAgentResponse struct {
 
 // getGPGExtraSocket returns the path to the GPG agent's extra socket.
 // The extra socket is designed for restricted remote access.
-func getGPGExtraSocket() string {
+//
+// NOTE: A similar function exists in internal/workspace/gpg.go (GetGPGExtraSocketPath).
+// The duplication is intentional: hostproxy is a server-side package that handles
+// forwarding requests from containers, while workspace provides container configuration.
+// Each package needs the socket path for different purposes. The hostproxy version
+// returns an error for better diagnostics, while workspace logs and returns empty string.
+func getGPGExtraSocket() (string, error) {
 	cmd := exec.Command("gpgconf", "--list-dir", "agent-extra-socket")
 	output, err := cmd.Output()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("gpgconf failed: %w", err)
 	}
-	return strings.TrimSpace(string(output))
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		return "", fmt.Errorf("gpgconf returned empty socket path")
+	}
+	return path, nil
+}
+
+// readAssuanResponse reads a complete Assuan protocol response from the connection.
+// The response is complete when a line starts with "OK" or "ERR".
+// Returns the complete response bytes or an error.
+func readAssuanResponse(conn net.Conn) ([]byte, error) {
+	var response []byte
+	buf := make([]byte, 4096)
+
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF && len(response) > 0 {
+				// EOF with data means response is complete
+				return response, nil
+			}
+			return nil, err
+		}
+
+		response = append(response, buf[:n]...)
+
+		// Check if response is complete (ends with OK or ERR line)
+		if isAssuanResponseComplete(response) {
+			return response, nil
+		}
+
+		// Safety check: don't read more than maxGPGAgentMessageSize
+		if len(response) > maxGPGAgentMessageSize {
+			return nil, fmt.Errorf("response exceeds maximum size (%d bytes)", maxGPGAgentMessageSize)
+		}
+	}
+}
+
+// isAssuanResponseComplete checks if an Assuan response buffer contains a complete response.
+// A response is complete when the last line starts with "OK" or "ERR".
+func isAssuanResponseComplete(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// Find the last newline to get the last complete line
+	// Assuan responses end with newline
+	if data[len(data)-1] != '\n' {
+		return false
+	}
+
+	// Find the start of the last line
+	lastLineStart := len(data) - 1
+	for lastLineStart > 0 && data[lastLineStart-1] != '\n' {
+		lastLineStart--
+	}
+
+	lastLine := data[lastLineStart : len(data)-1] // Exclude trailing newline
+
+	// Check if last line starts with OK or ERR
+	return len(lastLine) >= 2 && (string(lastLine[:2]) == "OK" || (len(lastLine) >= 3 && string(lastLine[:3]) == "ERR"))
 }
 
 // handleGPGAgent handles POST /gpg/agent requests.
@@ -90,12 +156,12 @@ func (s *Server) handleGPGAgent(w http.ResponseWriter, r *http.Request) {
 		Msg("GPG agent request")
 
 	// Get GPG extra socket path
-	gpgSocket := getGPGExtraSocket()
-	if gpgSocket == "" {
-		logger.Debug().Msg("GPG extra socket not available")
+	gpgSocket, err := getGPGExtraSocket()
+	if err != nil {
+		logger.Debug().Err(err).Msg("GPG extra socket not available")
 		s.writeJSON(w, http.StatusServiceUnavailable, gpgAgentResponse{
 			Success: false,
-			Error:   "GPG agent not available (gpgconf failed or extra socket not found)",
+			Error:   fmt.Sprintf("GPG agent not available: %v", err),
 		})
 		return
 	}
@@ -122,12 +188,13 @@ func (s *Server) handleGPGAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read response from GPG agent
-	// The Assuan protocol is line-based, responses end with OK, ERR, or other status lines
-	// We read until we get a complete response (ending with OK or ERR line)
-	responseBuf := make([]byte, maxGPGAgentMessageSize)
-	n, err := conn.Read(responseBuf)
-	if err != nil && err != io.EOF {
+	// Read response from GPG agent using Assuan-aware reading.
+	// The Assuan protocol is line-based with responses ending in status lines:
+	// - "OK" or "OK <message>" indicates success
+	// - "ERR <code> <message>" indicates error
+	// We read until we encounter a complete response ending with OK/ERR.
+	response, err := readAssuanResponse(conn)
+	if err != nil {
 		logger.Debug().Err(err).Msg("failed to read GPG agent response")
 		s.writeJSON(w, http.StatusInternalServerError, gpgAgentResponse{
 			Success: false,
@@ -137,12 +204,12 @@ func (s *Server) handleGPGAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Debug().
-		Int("response_size", n).
+		Int("response_size", len(response)).
 		Msg("GPG agent response")
 
 	// Encode response as base64
 	s.writeJSON(w, http.StatusOK, gpgAgentResponse{
 		Success: true,
-		Data:    base64.StdEncoding.EncodeToString(responseBuf[:n]),
+		Data:    base64.StdEncoding.EncodeToString(response),
 	})
 }

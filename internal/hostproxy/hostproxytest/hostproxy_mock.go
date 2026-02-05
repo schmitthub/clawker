@@ -1,6 +1,7 @@
 package hostproxytest
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ type MockHostProxy struct {
 	Callbacks   map[string]*CallbackData // Registered callback sessions
 	GitCreds    []GitCredRequest         // Git credential requests
 	SSHRequests [][]byte                 // SSH agent requests
+	GPGRequests [][]byte                 // GPG agent requests (decoded from base64)
 	healthOK    bool                     // Health check response
 	t           *testing.T
 }
@@ -75,6 +77,9 @@ func NewMockHostProxy(t *testing.T) *MockHostProxy {
 
 	// SSH agent forwarding
 	mux.HandleFunc("/ssh/agent", m.handleSSHAgent)
+
+	// GPG agent forwarding
+	mux.HandleFunc("/gpg/agent", m.handleGPGAgent)
 
 	m.Server = httptest.NewServer(mux)
 	t.Cleanup(func() {
@@ -386,6 +391,58 @@ func (m *MockHostProxy) handleSSHAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Return empty response (no keys)
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleGPGAgent handles /gpg/agent requests.
+func (m *MockHostProxy) handleGPGAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Decode base64 data
+	decoded, err := base64.StdEncoding.DecodeString(req.Data)
+	if err != nil {
+		resp := struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		}{Success: false, Error: "invalid base64 data"}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	m.mu.Lock()
+	m.GPGRequests = append(m.GPGRequests, decoded)
+	m.mu.Unlock()
+
+	m.t.Logf("MockHostProxy: received GPG agent request (%d bytes): %q", len(decoded), string(decoded))
+
+	// Return a mock "OK" response (Assuan protocol)
+	mockResponse := "OK Pleased to meet you\n"
+	resp := struct {
+		Success bool   `json:"success"`
+		Data    string `json:"data"`
+	}{
+		Success: true,
+		Data:    base64.StdEncoding.EncodeToString([]byte(mockResponse)),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // Helper functions

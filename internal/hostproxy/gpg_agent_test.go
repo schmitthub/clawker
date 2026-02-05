@@ -143,9 +143,37 @@ func TestHandleGPGAgent_NoGPGSocket(t *testing.T) {
 
 func TestGetGPGExtraSocket(t *testing.T) {
 	// Test the internal helper function
-	socket := getGPGExtraSocket()
-	t.Logf("getGPGExtraSocket() = %q", socket)
+	socket, err := getGPGExtraSocket()
+	t.Logf("getGPGExtraSocket() = %q, err = %v", socket, err)
 
 	// We can't assert a specific value as it depends on the system
-	// but we verify the function doesn't panic
+	// The function now returns an error instead of empty string on failure
+}
+
+func TestIsAssuanResponseComplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected bool
+	}{
+		{"empty", []byte{}, false},
+		{"no newline", []byte("OK"), false},
+		{"OK response", []byte("OK\n"), true},
+		{"OK with message", []byte("OK Pleased to meet you\n"), true},
+		{"ERR response", []byte("ERR 67108922 agent not running\n"), true},
+		{"incomplete", []byte("D data\n"), false},
+		{"multi-line ending OK", []byte("D data\nOK\n"), true},
+		{"multi-line ending ERR", []byte("D data\nERR 123 error\n"), true},
+		{"partial OK", []byte("O"), false},
+		{"partial line no newline", []byte("D data\nOK"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isAssuanResponseComplete(tt.data)
+			if result != tt.expected {
+				t.Errorf("isAssuanResponseComplete(%q) = %v, want %v", tt.data, result, tt.expected)
+			}
+		})
+	}
 }
