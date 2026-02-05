@@ -326,6 +326,7 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 		basename string
 	}{
 		{filepath.Join(internalsDir, "cmd", "ssh-agent-proxy", "main.go"), "ssh-agent-proxy.go"},
+		{filepath.Join(internalsDir, "cmd", "gpg-agent-proxy", "main.go"), "gpg-agent-proxy.go"},
 		{filepath.Join(internalsDir, "cmd", "callback-forwarder", "main.go"), "callback-forwarder.go"},
 	}
 	for _, gs := range goSourcePaths {
@@ -418,7 +419,7 @@ func generateLightDockerfile(scripts []string, goSources []string) string {
 
 	sb.WriteString("FROM alpine:3.21\n")
 	fmt.Fprintf(&sb, "LABEL %s=%s %s=true\n", TestLabel, TestLabelValue, ClawkerManagedLabel)
-	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools\n")
+	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools gnupg\n")
 	sb.WriteString("RUN adduser -D -s /bin/bash -h /home/claude claude\n")
 	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
 
