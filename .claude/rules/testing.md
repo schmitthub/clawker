@@ -23,6 +23,48 @@ make test-all                                    # All test suites
 
 ---
 
+## Testing Philosophy: DAG Nodes Must Provide Test Infrastructure
+
+**Each package (node) in the dependency DAG must provide test utilities so dependents can mock the entire chain.**
+
+```
+foundation → middle → composite → commands
+     │                     │          │
+     ▼                     ▼          ▼
+  *test/                *test/    Factory DI
+(gittest/             (dockertest/  + runF
+ configtest/)          whailtest/)
+```
+
+### Test Seams
+
+| Seam | Level | Example |
+|------|-------|---------|
+| **Package `*test/`** | Any package | `dockertest.NewFakeClient()` |
+| **Factory DI** | Commands | `f.Client = func() { return fake.Client }` |
+| **runF override** | Commands | `NewCmdRun(f, captureOpts)` |
+
+### Agent Obligation
+
+If a dependency node lacks test infrastructure:
+1. **STOP** — The node is incomplete
+2. **Add the infrastructure** — Interface, fake/mock, fixtures
+3. **Then proceed** — Your tier can now mock that node
+
+This compounds: each completed node enables all downstream tests.
+
+### Existing Test Infrastructure
+
+| Package | Test Utils | Provides |
+|---------|------------|----------|
+| `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
+| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/git` | `gittest/` | `InMemoryGitManager` |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
+| `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
+
+---
+
 ## Test Categories
 
 | Category | Directory | Docker Required | Purpose |
@@ -58,9 +100,12 @@ CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test \
 |------|---------|
 | `harness.go` | Test harness with project/config setup |
 | `docker.go` | Docker client helpers, cleanup, container state waiting |
-| `ready.go` | Application readiness detection |
-| `builders/` | Fluent config construction |
+| `ready.go` | Readiness detection, wait functions, timeouts |
 | `golden.go` | Golden file comparison |
+| `client.go` | Container execution, RunContainer, light image building |
+| `factory.go` | Factory construction for integration tests |
+| `hash.go` | Content-addressed template hashing |
+| `builders/` | Fluent config construction with presets |
 
 ### Test Harness
 
@@ -74,13 +119,33 @@ h := harness.NewHarness(t, harness.WithProject("myproject"),
 
 `MinimalValidConfig()`, `FullFeaturedConfig()`, `DefaultBuild()`, `AlpineBuild()`, `SecurityFirewallEnabled/Disabled()`, `WorkspaceSnapshot()`
 
+### Timeout Constants
+
+| Constant | Value | Use Case |
+|----------|-------|----------|
+| `DefaultReadyTimeout` | 60s | Local tests |
+| `E2EReadyTimeout` | 120s | E2E tests |
+| `CIReadyTimeout` | 180s | CI environments |
+| `BypassCommandTimeout` | 10s | Entrypoint bypass |
+
 ### Docker Helpers
 
 ```go
-harness.SkipIfNoDocker(t)           // Skip if no Docker
-harness.RequireDocker(t)            // Fail if no Docker
-client := harness.NewTestClient(t)  // whail.Engine with test labels
-rawClient := harness.NewRawDockerClient(t)  // Low-level Docker client
+harness.SkipIfNoDocker(t)                    // Skip if no Docker
+harness.RequireDocker(t)                     // Fail if no Docker
+client := harness.NewTestClient(t)           // whail.Engine with test labels
+rawClient := harness.NewRawDockerClient(t)   // Low-level Docker client
+
+// Container testing
+ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
+result, _ := ctr.Exec(ctx, client, "echo", "hello")
+
+// Wait functions
+harness.WaitForReadyFile(ctx, cli, containerID)
+harness.WaitForContainerRunning(ctx, cli, name)
+harness.WaitForContainerExit(ctx, cli, containerID)
+harness.WaitForHealthy(ctx, cli, containerID)
+harness.WaitForLogPattern(ctx, cli, containerID, pattern)
 ```
 
 ### Docker Test Fakes (Recommended for New Command Tests)
@@ -93,9 +158,9 @@ fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 fake.AssertCalled(t, "ContainerList")
 ```
 
-**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupContainerCreate`, `SetupContainerStart`, `SetupVolumeExists`, `SetupNetworkExists`
+**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupVolumeExists`, `SetupNetworkExists`, `SetupBuildKit`
 
-**Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`
+**Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`, `BuildKitBuildOpts`
 
 **Assertions**: `AssertCalled`, `AssertNotCalled`, `AssertCalledN`, `Reset`
 
@@ -153,11 +218,32 @@ Agent names: include timestamp AND random suffix for parallel safety.
 ## Quick Reference
 
 ```go
-harness.RequireDocker(t)
-h := harness.NewHarness(t, harness.WithProject("test"))
+// Harness setup
+h := harness.NewHarness(t, harness.WithProject("test"),
+    harness.WithConfigBuilder(builders.MinimalValidConfig()))
+
+// Docker clients
 client := harness.NewTestClient(t)
 rawClient := harness.NewRawDockerClient(t)
-err = harness.WaitForContainerRunning(ctx, rawClient, containerID)
+
+// Factory for integration tests
+f, tio := harness.NewTestFactory(t, h)
+
+// Container testing
+ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
+result, err := ctr.Exec(ctx, client, "bash", "-c", "echo hello")
+
+// Readiness
 err = harness.WaitForReadyFile(ctx, rawClient, containerID)
-// Cleanup is automatic via t.Cleanup in NewHarness
+err = harness.WaitForContainerRunning(ctx, rawClient, containerName)
+err = harness.WaitForContainerExit(ctx, rawClient, containerID)
+err = harness.WaitForHealthy(ctx, rawClient, containerID)
+
+// Fake Docker for command tests
+fake := dockertest.NewFakeClient()
+fake.SetupContainerCreate()
+fake.SetupContainerStart()
+fake.AssertCalled(t, "ContainerCreate")
+fake.AssertNotCalled(t, "ContainerStart")
+fake.Reset()
 ```
