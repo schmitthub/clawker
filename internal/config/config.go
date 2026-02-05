@@ -23,9 +23,9 @@ type Config struct {
 	// Never nil - empty resolution if not in a registered project.
 	Resolution *Resolution
 
-	// Registry is the registry loader for write operations.
+	// Registry is the registry for write operations.
 	// May be nil if registry initialization failed. Check RegistryInitErr() for details.
-	Registry *RegistryLoader
+	Registry Registry
 
 	// Internal loaders for operations that need them
 	projectLoader   *Loader
@@ -99,7 +99,7 @@ func NewConfigForTestWithEntry(project *Project, settings *Settings, entry *Proj
 	// Create a registry loader pointing to the test config dir
 	var registry *RegistryLoader
 	if configDir != "" {
-		registry = newRegistryLoaderWithPath(configDir)
+		registry = NewRegistryLoaderWithPath(configDir)
 	}
 
 	// Inject full runtime context for tests

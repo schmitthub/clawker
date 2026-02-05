@@ -69,6 +69,16 @@ func NewGitManager(path string) (*GitManager, error) {
 	}, nil
 }
 
+// NewGitManagerWithRepo creates a GitManager from an existing go-git Repository.
+// This is primarily used for testing with in-memory repositories.
+// The repoRoot parameter should be the logical root directory (can be a fake path for testing).
+func NewGitManagerWithRepo(repo *gogit.Repository, repoRoot string) *GitManager {
+	return &GitManager{
+		repo:     repo,
+		repoRoot: repoRoot,
+	}
+}
+
 // Repository returns the underlying go-git Repository.
 // Use this for operations not covered by the sub-managers.
 func (g *GitManager) Repository() *gogit.Repository {

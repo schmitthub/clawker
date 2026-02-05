@@ -10,7 +10,9 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/git/gittest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +51,25 @@ func TestListRun_NotInProject(t *testing.T) {
 func TestListRun_GitManagerError(t *testing.T) {
 	ios, _, _ := testIOStreams()
 
+	// Create a temp dir for registry
+	tempDir := t.TempDir()
+
+	// Create registry with a worktree entry
+	loader := config.NewRegistryLoaderWithPath(tempDir)
+	registry := &config.ProjectRegistry{
+		Projects: map[string]config.ProjectEntry{
+			"test-project": {
+				Name: "test-project",
+				Root: tempDir,
+				Worktrees: map[string]string{
+					"feature-branch": "feature-branch",
+				},
+			},
+		},
+	}
+	err := loader.Save(registry)
+	require.NoError(t, err)
+
 	// Create a project that appears to be found
 	proj := &config.Project{
 		Project: "test-project",
@@ -57,14 +78,16 @@ func TestListRun_GitManagerError(t *testing.T) {
 	opts := &ListOptions{
 		IOStreams: ios,
 		Config: func() *config.Config {
-			return config.NewConfigForTest(proj, nil)
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = loader
+			return cfg
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, errors.New("git init failed")
 		},
 	}
 
-	err := listRun(context.Background(), opts)
+	err = listRun(context.Background(), opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "initializing git")
 }
@@ -144,4 +167,135 @@ func TestNewCmdList(t *testing.T) {
 	quietFlag := cmd.Flags().Lookup("quiet")
 	assert.NotNil(t, quietFlag)
 	assert.Equal(t, "q", quietFlag.Shorthand)
+}
+
+func TestListRun_HealthyWorktree(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	// Use in-memory registry with healthy worktree
+	registry := configtest.NewInMemoryRegistryBuilder().
+		WithProject("test-project", "Test Project", "/fake/project").
+		WithHealthyWorktree("feature-a", "feature-a").
+		Registry().
+		Build()
+
+	// Create project config
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Create in-memory git manager
+	gitMgr := gittest.NewInMemoryGitManager(t, "/fake/project")
+
+	opts := &ListOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = registry
+			return cfg
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return gitMgr.GitManager, nil
+		},
+	}
+
+	err := listRun(context.Background(), opts)
+	require.NoError(t, err)
+
+	// Healthy worktree should NOT show "missing" messages
+	output := outBuf.String()
+	assert.NotContains(t, output, "missing")
+
+	// No prune warning should appear
+	errOutput := errBuf.String()
+	assert.NotContains(t, errOutput, "stale")
+	assert.NotContains(t, errOutput, "prune")
+}
+
+func TestListRun_StaleWorktree(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	// Use in-memory registry with stale worktree (dir missing, git missing)
+	registry := configtest.NewInMemoryRegistryBuilder().
+		WithProject("test-project", "Test Project", "/fake/project").
+		WithStaleWorktree("stale-branch", "stale-branch").
+		Registry().
+		Build()
+
+	// Create project config
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Create in-memory git manager
+	gitMgr := gittest.NewInMemoryGitManager(t, "/fake/project")
+
+	opts := &ListOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = registry
+			return cfg
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return gitMgr.GitManager, nil
+		},
+	}
+
+	err := listRun(context.Background(), opts)
+	require.NoError(t, err)
+
+	// Stale worktree should show "dir missing, git missing" in status
+	output := outBuf.String()
+	assert.Contains(t, output, "dir missing")
+	assert.Contains(t, output, "git missing")
+
+	// Prune warning should appear on stderr
+	errOutput := errBuf.String()
+	assert.Contains(t, errOutput, "stale")
+	assert.Contains(t, errOutput, "prune")
+}
+
+func TestListRun_MixedWorktrees(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	// Use in-memory registry with both healthy and stale worktrees
+	registry := configtest.NewInMemoryRegistryBuilder().
+		WithProject("test-project", "Test Project", "/fake/project").
+		WithHealthyWorktree("healthy-branch", "healthy-branch").
+		WithStaleWorktree("stale-branch", "stale-branch").
+		WithPartialWorktree("partial-branch", "partial-branch", true, false). // dir exists, git missing
+		Registry().
+		Build()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	gitMgr := gittest.NewInMemoryGitManager(t, "/fake/project")
+
+	opts := &ListOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = registry
+			return cfg
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return gitMgr.GitManager, nil
+		},
+	}
+
+	err := listRun(context.Background(), opts)
+	require.NoError(t, err)
+
+	output := outBuf.String()
+	// Should show the worktree branches
+	assert.Contains(t, output, "healthy-branch")
+	assert.Contains(t, output, "stale-branch")
+	assert.Contains(t, output, "partial-branch")
+
+	// Prune warning for 1 stale entry (partial-branch has dir, so not prunable)
+	errOutput := errBuf.String()
+	assert.Contains(t, errOutput, "1 stale entry")
 }
