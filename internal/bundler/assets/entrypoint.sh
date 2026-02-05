@@ -184,16 +184,19 @@ start_gpg_agent_proxy() {
 
 # Determine GPG agent forwarding strategy
 if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GPG_VIA_PROXY" = "true" ]; then
-    # Use gpg-agent-proxy to forward via host proxy (macOS Docker Desktop case)
+    # Use gpg-agent-proxy to forward via host proxy (fallback for older Docker Desktop)
     mkdir -p "$HOME/.gnupg"
     chmod 700 "$HOME/.gnupg"
     if ! start_gpg_agent_proxy; then
         echo "[clawker] warn component=gpg msg=\"GPG agent forwarding unavailable\"" >&2
     fi
 elif [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
-    # Direct socket mount (Linux case) - socket already mounted
-    # Just ensure proper permissions on .gnupg directory
+    # Direct socket mount (Linux and macOS) - socket already mounted
+    # The .gnupg directory is pre-created in the Dockerfile with correct ownership
     chmod 700 "$HOME/.gnupg" 2>/dev/null || true
+    # Fix socket permissions - Docker Desktop maps sockets as root-owned
+    # Use sudo to make socket accessible to current user
+    sudo chmod 666 "$HOME/.gnupg/S.gpg-agent" 2>/dev/null || true
 fi
 
 # If first argument starts with "-" or isn't a command, prepend "claude"
