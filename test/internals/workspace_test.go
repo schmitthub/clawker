@@ -144,6 +144,21 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	require.NoError(t, err, "git log should succeed")
 	require.Equal(t, 0, result.ExitCode, "git log exit code should be 0, stderr: %s", result.Stderr)
 	assert.Contains(t, result.CleanOutput(), "Initial commit")
+
+	// Test: git add and commit (verify write operations work)
+	// The .git mount is read-write, so we should be able to commit changes
+	result, err = ctr.Exec(ctx, client, "sh", "-c",
+		"echo 'new content' > /workspace/newfile.txt && "+
+			"git -C /workspace add newfile.txt && "+
+			"git -C /workspace commit -m 'Add newfile from container'")
+	require.NoError(t, err, "git add + commit should succeed")
+	require.Equal(t, 0, result.ExitCode, "git commit exit code should be 0, stderr: %s", result.Stderr)
+
+	// Verify the commit exists
+	result, err = ctr.Exec(ctx, client, "git", "-C", "/workspace", "log", "--oneline", "-1")
+	require.NoError(t, err, "git log after commit should succeed")
+	require.Equal(t, 0, result.ExitCode, "git log exit code should be 0")
+	assert.Contains(t, result.CleanOutput(), "Add newfile from container")
 }
 
 // TestWorktreeGitMounts_WithoutProjectRootDir verifies that when ProjectRootDir
@@ -197,8 +212,7 @@ type gitResult struct {
 // runGitCmd executes a git command and returns its output
 func runGitCmd(t *testing.T, args ...string) gitResult {
 	t.Helper()
-	cmdArgs := append([]string{"git"}, args...)
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd := exec.Command("git", args...)
 	output, err := cmd.Output()
 	var stderr string
 	if exitErr, ok := err.(*exec.ExitError); ok {

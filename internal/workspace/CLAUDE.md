@@ -60,7 +60,11 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
-Note: `SetupMounts` resolves symlinks in `ProjectRootDir` using `filepath.EvalSymlinks` to match git's behavior (e.g., `/var` → `/private/var` on macOS).
+The `buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error)` helper validates and creates the `.git` mount:
+- Resolves symlinks to match git's behavior (e.g., `/var` → `/private/var` on macOS)
+- Returns clear errors if `ProjectRootDir` doesn't exist or has permission issues
+- Validates `.git` exists and is a directory (not a worktree `.git` file)
+- Returns a bind mount with `Source == Target` (same absolute path) for worktree reference resolution
 
 ## Git Credentials
 

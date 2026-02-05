@@ -84,28 +84,15 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// Get workspace mount
 	mounts = append(mounts, strategy.GetMounts()...)
 
-	// Mount main repo's .git directory for worktree support.
-	// Worktrees use a .git file that references the main repo's .git directory.
-	// By mounting at the same absolute path, the reference works in-container.
+	// Mount main repo's .git directory for worktree support
 	if cfg.ProjectRootDir != "" {
-		// Resolve symlinks to match git's behavior. On macOS, /var -> /private/var,
-		// and git records absolute paths with symlinks resolved. The mount target
-		// must match what git wrote in the worktree's .git file.
-		resolvedRoot, err := filepath.EvalSymlinks(cfg.ProjectRootDir)
+		gitMount, err := buildWorktreeGitMount(cfg.ProjectRootDir)
 		if err != nil {
-			// Fall back to unresolved path if symlink resolution fails
-			resolvedRoot = cfg.ProjectRootDir
-			logger.Debug().Err(err).Str("path", cfg.ProjectRootDir).Msg("failed to resolve symlinks, using original path")
+			return nil, err
 		}
-		gitDir := filepath.Join(resolvedRoot, ".git")
-		mounts = append(mounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   gitDir,
-			Target:   gitDir, // Same absolute path preserves worktree references
-			ReadOnly: false,
-		})
+		mounts = append(mounts, *gitMount)
 		logger.Debug().
-			Str("gitdir", gitDir).
+			Str("gitdir", gitMount.Source).
 			Msg("mounting main repo .git for worktree")
 	}
 
@@ -121,4 +108,48 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	return mounts, nil
+}
+
+// buildWorktreeGitMount creates a bind mount for the main repository's .git directory.
+// This is needed for worktree support because worktrees use a .git file that references
+// the main repo's .git directory. By mounting at the same absolute path, git commands
+// work correctly inside the container.
+func buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error) {
+	// Resolve symlinks to match git's behavior. Git records absolute paths with
+	// symlinks resolved (e.g., on macOS /var -> /private/var). The mount target
+	// must match the path git wrote in the worktree's .git file.
+	resolvedRoot, err := filepath.EvalSymlinks(projectRootDir)
+	if err != nil {
+		// Critical errors should fail rather than silently fall back
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("project root directory does not exist: %s", projectRootDir)
+		}
+		if os.IsPermission(err) {
+			return nil, fmt.Errorf("permission denied reading project root directory: %s", projectRootDir)
+		}
+		// For other errors (rare), warn and fall back to original path
+		resolvedRoot = projectRootDir
+		logger.Warn().Err(err).Str("path", projectRootDir).
+			Msg("failed to resolve symlinks, using original path - git commands in container may fail")
+	}
+
+	// Validate .git exists and is a directory before mounting
+	gitDir := filepath.Join(resolvedRoot, ".git")
+	gitInfo, err := os.Stat(gitDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("main repository .git not found at %s (required for worktree support)", gitDir)
+		}
+		return nil, fmt.Errorf("cannot access .git directory at %s: %w", gitDir, err)
+	}
+	if !gitInfo.IsDir() {
+		return nil, fmt.Errorf(".git at %s is not a directory (expected main repository, got worktree)", gitDir)
+	}
+
+	return &mount.Mount{
+		Type:     mount.TypeBind,
+		Source:   gitDir,
+		Target:   gitDir, // Same absolute path preserves worktree references
+		ReadOnly: false,
+	}, nil
 }

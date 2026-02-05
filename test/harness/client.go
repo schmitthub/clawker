@@ -71,7 +71,6 @@ func WithExtraHost(hosts ...string) ContainerOpt {
 	}
 }
 
-
 // WithMounts adds bind or volume mounts to the container.
 func WithMounts(mounts ...mount.Mount) ContainerOpt {
 	return func(c *containerConfig) {
