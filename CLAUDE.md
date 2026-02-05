@@ -230,6 +230,7 @@ security:
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
 - `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.ralph`), not 3 (`clawker..ralph`)
+- Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds. See `.serena/memories/docker-desktop-socket-mounting.md` for details.
 
 ## Context Management (Critical)
 
