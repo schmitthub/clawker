@@ -299,3 +299,49 @@ func TestListRun_MixedWorktrees(t *testing.T) {
 	errOutput := errBuf.String()
 	assert.Contains(t, errOutput, "1 stale entry")
 }
+
+func TestListRun_QuietMode(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	// Use in-memory registry with healthy worktrees
+	registry := configtest.NewInMemoryRegistryBuilder().
+		WithProject("test-project", "Test Project", "/fake/project").
+		WithHealthyWorktree("feature-a", "feature-a").
+		WithHealthyWorktree("feature-b", "feature-b").
+		Registry().
+		Build()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	gitMgr := gittest.NewInMemoryGitManager(t, "/fake/project")
+
+	opts := &ListOptions{
+		IOStreams: ios,
+		Quiet:     true,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = registry
+			return cfg
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return gitMgr.GitManager, nil
+		},
+	}
+
+	err := listRun(context.Background(), opts)
+	require.NoError(t, err)
+
+	output := outBuf.String()
+	// Should contain branch names
+	assert.Contains(t, output, "feature-a")
+	assert.Contains(t, output, "feature-b")
+	// Should NOT contain headers or table formatting
+	assert.NotContains(t, output, "BRANCH")
+	assert.NotContains(t, output, "PATH")
+	assert.NotContains(t, output, "HEAD")
+
+	// No prune warning in quiet mode (healthy worktrees)
+	assert.Empty(t, errBuf.String())
+}

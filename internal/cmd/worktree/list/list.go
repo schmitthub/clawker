@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -97,7 +98,10 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 	// Convert handles to git.WorktreeDirEntry for git metadata lookup
 	entries := make([]git.WorktreeDirEntry, len(worktreeHandles))
 	for i, handle := range worktreeHandles {
-		path, _ := handle.Path()
+		path, err := handle.Path()
+		if err != nil {
+			logger.Debug().Err(err).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
+		}
 		entries[i] = git.WorktreeDirEntry{
 			Name: handle.Name(),
 			Slug: handle.Slug(),

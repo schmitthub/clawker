@@ -3,12 +3,14 @@ package prune
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -267,4 +269,84 @@ func TestNewCmdPrune(t *testing.T) {
 	dryRunFlag := cmd.Flags().Lookup("dry-run")
 	assert.NotNil(t, dryRunFlag)
 	assert.Equal(t, "false", dryRunFlag.DefValue)
+}
+
+func TestPruneRun_RegistryNil(t *testing.T) {
+	ios, _, _ := testIOStreams()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	opts := &PruneOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = nil // Explicitly nil
+			return cfg
+		},
+	}
+
+	err := pruneRun(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry not available")
+}
+
+func TestPruneRun_PartialDeleteFailure(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	// Use in-memory registry with multiple stale worktrees
+	inMemRegistry := configtest.NewInMemoryRegistry()
+	inMemRegistry.Save(&config.ProjectRegistry{
+		Projects: map[string]config.ProjectEntry{
+			"test-project": {
+				Name: "Test Project",
+				Root: "/fake/project",
+				Worktrees: map[string]string{
+					"stale-a": "stale-a",
+					"stale-b": "stale-b",
+					"stale-c": "stale-c",
+				},
+			},
+		},
+	})
+
+	// Set all as stale (prunable)
+	inMemRegistry.SetWorktreeState("test-project", "stale-a", false, false)
+	inMemRegistry.SetWorktreeState("test-project", "stale-b", false, false)
+	inMemRegistry.SetWorktreeState("test-project", "stale-c", false, false)
+
+	// Make stale-b fail to delete
+	inMemRegistry.SetWorktreeDeleteError("test-project", "stale-b", errors.New("permission denied"))
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	opts := &PruneOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = inMemRegistry
+			return cfg
+		},
+		DryRun: false,
+	}
+
+	err := pruneRun(context.Background(), opts)
+	// Should return an error because one deletion failed
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 of 3 entries failed")
+
+	// Should still have processed the successful ones
+	output := outBuf.String()
+	assert.Contains(t, output, "Removed:")
+
+	// Should have error output for failed deletion
+	errOutput := errBuf.String()
+	assert.Contains(t, errOutput, "Failed to remove stale-b")
+	assert.Contains(t, errOutput, "permission denied")
+
+	// Summary should reflect actual success count
+	assert.Contains(t, output, "2 stale entries removed")
 }

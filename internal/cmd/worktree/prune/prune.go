@@ -98,12 +98,14 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	}
 
 	// Process prunable entries
+	var failedCount int
 	for _, h := range prunable {
 		if opts.DryRun {
 			fmt.Fprintf(opts.IOStreams.Out, "Would remove: %s\n", h.Name())
 		} else {
 			if err := h.Delete(); err != nil {
 				fmt.Fprintf(opts.IOStreams.ErrOut, "Failed to remove %s: %v\n", h.Name(), err)
+				failedCount++
 				continue
 			}
 			fmt.Fprintf(opts.IOStreams.Out, "Removed: %s\n", h.Name())
@@ -118,10 +120,14 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries would be removed.\n", len(prunable))
 		}
 	} else {
-		if len(prunable) == 1 {
+		successCount := len(prunable) - failedCount
+		if successCount == 1 {
 			fmt.Fprintln(opts.IOStreams.Out, "\n1 stale entry removed.")
-		} else {
-			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries removed.\n", len(prunable))
+		} else if successCount > 0 {
+			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries removed.\n", successCount)
+		}
+		if failedCount > 0 {
+			return fmt.Errorf("%d of %d entries failed to prune", failedCount, len(prunable))
 		}
 	}
 

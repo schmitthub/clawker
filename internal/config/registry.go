@@ -62,15 +62,18 @@ type ProjectHandle interface {
 // WorktreeHandle provides operations and queries on a single worktree.
 // Implemented by worktreeHandleImpl (file-based) and test fakes.
 type WorktreeHandle interface {
-	// Name returns the worktree name (branch name).
+	// Name returns the branch name that the worktree is tracking.
 	Name() string
 	// Slug returns the filesystem-safe slug.
 	Slug() string
 	// Path returns the worktree directory path.
 	Path() (string, error)
-	// DirExists returns true if the worktree directory exists on disk.
+	// DirExists returns true if the clawker-managed worktree directory exists
+	// at ~/.local/clawker/projects/<key>/worktrees/<slug>.
 	DirExists() bool
 	// GitExists returns true if git worktree metadata is valid.
+	// Reads <worktree-path>/.git file and validates it points to the correct location
+	// in the project's .git/worktrees/<slug> directory.
 	GitExists() bool
 	// Status returns the health status by calling DirExists() and GitExists().
 	Status() *WorktreeStatus
@@ -496,7 +499,10 @@ func (p *projectHandleImpl) Delete() (bool, error) {
 
 // Worktree returns a handle for operating on a specific worktree.
 func (p *projectHandleImpl) Worktree(name string) WorktreeHandle {
-	entry, _ := p.Get()
+	entry, err := p.Get()
+	if err != nil {
+		logger.Debug().Err(err).Str("project", p.key).Msg("failed to load project entry for worktree handle")
+	}
 	var slug string
 	if entry != nil && entry.Worktrees != nil {
 		slug = entry.Worktrees[name]
@@ -541,7 +547,7 @@ type worktreeHandleImpl struct {
 	slug    string
 }
 
-// Name returns the worktree name (branch name).
+// Name returns the branch name that the worktree is tracking.
 func (w *worktreeHandleImpl) Name() string {
 	return w.name
 }
@@ -607,13 +613,14 @@ func (w *worktreeHandleImpl) GitExists() bool {
 
 // Status returns the health status by calling DirExists() and GitExists().
 func (w *worktreeHandleImpl) Status() *WorktreeStatus {
-	path, _ := w.Path()
+	path, err := w.Path()
 	return &WorktreeStatus{
 		Name:      w.name,
 		Slug:      w.slug,
 		Path:      path,
 		DirExists: w.DirExists(),
 		GitExists: w.GitExists(),
+		Error:     err,
 	}
 }
 
@@ -631,11 +638,12 @@ func (w *worktreeHandleImpl) Delete() error {
 
 // WorktreeStatus holds the health check results for a worktree.
 type WorktreeStatus struct {
-	Name      string // Worktree name (branch name)
+	Name      string // Branch name that the worktree is tracking
 	Slug      string // Filesystem-safe slug
 	Path      string // Worktree directory path
 	DirExists bool   // Worktree directory exists on filesystem
 	GitExists bool   // .git file exists and points to valid git metadata
+	Error     error  // Non-nil if path resolution failed
 }
 
 // IsPrunable returns true if registry entry exists but both dir and git are missing.
@@ -661,7 +669,11 @@ func (s *WorktreeStatus) Issues() []string {
 }
 
 // String returns "healthy" when all checks pass, or comma-separated issues.
+// If Error is non-nil, returns the error message.
 func (s *WorktreeStatus) String() string {
+	if s.Error != nil {
+		return fmt.Sprintf("error: %v", s.Error)
+	}
 	if s.IsHealthy() {
 		return "healthy"
 	}

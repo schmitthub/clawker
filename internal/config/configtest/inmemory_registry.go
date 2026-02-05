@@ -6,16 +6,19 @@ import (
 	"sync"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // WorktreeState holds the controllable state for a worktree.
 type WorktreeState struct {
-	DirExists bool
-	GitExists bool
+	DirExists   bool
+	GitExists   bool
+	DeleteError error // If non-nil, Delete() will return this error
 }
 
 // InMemoryRegistry implements config.Registry with in-memory storage.
 // Useful for tests that don't need filesystem I/O.
+// Worktree health status (DirExists/GitExists) is controllable via SetWorktreeState().
 type InMemoryRegistry struct {
 	mu            sync.Mutex
 	registry      *config.ProjectRegistry
@@ -43,6 +46,20 @@ func (r *InMemoryRegistry) SetWorktreeState(projectKey, worktreeName string, dir
 		DirExists: dirExists,
 		GitExists: gitExists,
 	}
+}
+
+// SetWorktreeDeleteError configures Delete() to return an error for a worktree.
+// Useful for testing partial failure scenarios in prune.
+func (r *InMemoryRegistry) SetWorktreeDeleteError(projectKey, worktreeName string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.worktreeState[projectKey] == nil {
+		r.worktreeState[projectKey] = make(map[string]WorktreeState)
+	}
+	state := r.worktreeState[projectKey][worktreeName]
+	state.DeleteError = err
+	r.worktreeState[projectKey][worktreeName] = state
 }
 
 // getWorktreeState returns the configured state for a worktree.
@@ -192,7 +209,10 @@ func (p *inMemoryProjectHandle) Delete() (bool, error) {
 }
 
 func (p *inMemoryProjectHandle) Worktree(name string) config.WorktreeHandle {
-	entry, _ := p.Get()
+	entry, err := p.Get()
+	if err != nil {
+		logger.Debug().Err(err).Str("project", p.key).Msg("failed to load project entry for worktree handle")
+	}
 	var slug string
 	if entry != nil && entry.Worktrees != nil {
 		slug = entry.Worktrees[name]
@@ -262,17 +282,23 @@ func (w *inMemoryWorktreeHandle) GitExists() bool {
 }
 
 func (w *inMemoryWorktreeHandle) Status() *config.WorktreeStatus {
-	path, _ := w.Path()
+	path, err := w.Path()
 	return &config.WorktreeStatus{
 		Name:      w.name,
 		Slug:      w.slug,
 		Path:      path,
 		DirExists: w.DirExists(),
 		GitExists: w.GitExists(),
+		Error:     err,
 	}
 }
 
 func (w *inMemoryWorktreeHandle) Delete() error {
+	// Check if a delete error was configured for testing
+	state := w.registry.getWorktreeState(w.projectKey, w.name)
+	if state.DeleteError != nil {
+		return state.DeleteError
+	}
 	return w.registry.UpdateProject(w.projectKey, func(entry *config.ProjectEntry) error {
 		if entry.Worktrees == nil {
 			return nil
