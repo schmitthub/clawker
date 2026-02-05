@@ -345,3 +345,52 @@ func TestListRun_QuietMode(t *testing.T) {
 	// No prune warning in quiet mode (healthy worktrees)
 	assert.Empty(t, errBuf.String())
 }
+
+func TestListRun_PathError(t *testing.T) {
+	ios, outBuf, errBuf := testIOStreams()
+
+	pathErr := errors.New("failed to resolve worktree path")
+
+	// Use in-memory registry with one healthy worktree and one with path error
+	registry := configtest.NewInMemoryRegistryBuilder().
+		WithProject("test-project", "Test Project", "/fake/project").
+		WithHealthyWorktree("healthy-branch", "healthy-branch").
+		WithErrorWorktree("error-branch", "error-branch", pathErr).
+		Registry().
+		Build()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	gitMgr := gittest.NewInMemoryGitManager(t, "/fake/project")
+
+	opts := &ListOptions{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			cfg := config.NewConfigForTest(proj, nil)
+			cfg.Registry = registry
+			return cfg
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return gitMgr.GitManager, nil
+		},
+	}
+
+	err := listRun(context.Background(), opts)
+	require.NoError(t, err)
+
+	output := outBuf.String()
+
+	// Both worktrees should appear in output
+	assert.Contains(t, output, "healthy-branch")
+	assert.Contains(t, output, "error-branch")
+
+	// Error worktree should show a clear "path error" message, NOT confusing "opening worktree at :"
+	assert.Contains(t, output, "path error", "Expected clear path error message")
+	assert.NotContains(t, output, "opening worktree at :", "Should not show confusing empty path error")
+
+	// Error entries are NOT prunable - no prune warning
+	errOutput := errBuf.String()
+	assert.NotContains(t, errOutput, "prune")
+}

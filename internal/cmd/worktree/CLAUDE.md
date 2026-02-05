@@ -75,6 +75,7 @@ type ListOptions struct {
 - `dir missing` — worktree directory doesn't exist
 - `git missing` — .git file missing or invalid
 - `dir missing, git missing` — stale entry (prunable)
+- `error: path error: ...` — failed to resolve worktree path (not prunable)
 
 **Flags:**
 - `--quiet` / `-q` — Suppress headers, show branch names only

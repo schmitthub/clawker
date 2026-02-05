@@ -95,25 +95,39 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return fmt.Errorf("initializing git: %w", err)
 	}
 
-	// Convert handles to git.WorktreeDirEntry for git metadata lookup
-	entries := make([]git.WorktreeDirEntry, len(worktreeHandles))
-	for i, handle := range worktreeHandles {
-		path, err := handle.Path()
-		if err != nil {
-			logger.Debug().Err(err).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
+	// Separate entries with valid paths from those with path errors
+	var validEntries []git.WorktreeDirEntry
+	var errorWorktrees []git.WorktreeInfo
+
+	for _, handle := range worktreeHandles {
+		status := handle.Status()
+		if status.Error != nil {
+			// Path resolution failed - skip git lookup, record error for display
+			logger.Debug().Err(status.Error).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
+			errorWorktrees = append(errorWorktrees, git.WorktreeInfo{
+				Name:   handle.Name(),
+				Slug:   handle.Slug(),
+				Branch: handle.Name(), // Set Branch for display in table
+				Path:   "",            // No valid path
+				Error:  fmt.Errorf("path error: %w", status.Error),
+			})
+			continue
 		}
-		entries[i] = git.WorktreeDirEntry{
+		validEntries = append(validEntries, git.WorktreeDirEntry{
 			Name: handle.Name(),
 			Slug: handle.Slug(),
-			Path: path,
-		}
+			Path: status.Path,
+		})
 	}
 
-	// List worktrees with git metadata
-	worktrees, err := gitMgr.ListWorktrees(entries)
+	// List worktrees with git metadata (only for entries with valid paths)
+	worktrees, err := gitMgr.ListWorktrees(validEntries)
 	if err != nil {
 		return fmt.Errorf("listing worktrees: %w", err)
 	}
+
+	// Append error entries to the list
+	worktrees = append(worktrees, errorWorktrees...)
 
 	// Quiet mode - just branch names
 	if opts.Quiet {
@@ -165,16 +179,17 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 
 		// Determine status using handle-based health check
 		status := ""
-		if handle, ok := handleBySlug[config.Slugify(wt.Name)]; ok {
+		if handle, ok := handleBySlug[wt.Slug]; ok {
 			wtStatus := handle.Status()
-			if !wtStatus.IsHealthy() {
+			// Skip handle status for path errors - use wt.Error instead (has better context)
+			if wtStatus.Error == nil && !wtStatus.IsHealthy() {
 				status = wtStatus.String()
 				if wtStatus.IsPrunable() {
 					staleCount++
 				}
 			}
 		}
-		// Fall back to error from git manager if we didn't get a handle status
+		// Fall back to error from wt.Error if we didn't get a handle status
 		if status == "" && wt.Error != nil {
 			status = fmt.Sprintf("error: %v", wt.Error)
 		}
