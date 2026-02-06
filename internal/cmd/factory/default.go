@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
@@ -23,9 +24,10 @@ func New(version, commit string) *cmdutil.Factory {
 		Version: version,
 		Commit:  commit,
 
-		Config:    configFunc(),
-		IOStreams: ioStreams(),
-		HostProxy: hostProxyFunc(),
+		Config:       configFunc(),
+		IOStreams:     ioStreams(),
+		HostProxy:    hostProxyFunc(),
+		SocketBridge: socketBridgeFunc(),
 	}
 
 	f.Client = clientFunc(f)         // depends on Config
@@ -74,6 +76,20 @@ func hostProxyFunc() func() *hostproxy.Manager {
 	return func() *hostproxy.Manager {
 		once.Do(func() {
 			manager = hostproxy.NewManager()
+		})
+		return manager
+	}
+}
+
+// socketBridgeFunc returns a lazy closure that creates a socket bridge manager once.
+func socketBridgeFunc() func() *socketbridge.Manager {
+	var (
+		once    sync.Once
+		manager *socketbridge.Manager
+	)
+	return func() *socketbridge.Manager {
+		once.Do(func() {
+			manager = socketbridge.NewManager()
 		})
 		return manager
 	}

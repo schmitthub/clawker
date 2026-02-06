@@ -75,9 +75,6 @@ if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
     fi
 fi
 
-# Setup SSH agent forwarding
-# Strategy: Use ssh-agent-proxy via host proxy when direct socket has permission issues
-
 # Setup SSH known hosts for common git hosting services
 ssh_setup_known_hosts() {
     mkdir -p "$HOME/.ssh"
@@ -96,108 +93,9 @@ KNOWN_HOSTS
     chmod 600 "$HOME/.ssh/known_hosts"
 }
 
-# Start ssh-agent-proxy and verify it started successfully
-# Returns 0 if successful, 1 otherwise
-start_ssh_agent_proxy() {
-    /usr/local/bin/ssh-agent-proxy &
-    proxy_pid=$!
-
-    # Wait for socket creation with timeout (up to 2 seconds)
-    socket_path="$HOME/.ssh/agent.sock"
-    wait_count=0
-    max_wait=20  # 20 * 100ms = 2 seconds
-    while [ $wait_count -lt $max_wait ]; do
-        # Check if proxy is still running
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            echo "[clawker] warn component=ssh-agent-proxy msg=\"proxy process exited prematurely\"" >&2
-            return 1
-        fi
-        # Check if socket was created
-        if [ -S "$socket_path" ]; then
-            export SSH_AUTH_SOCK="$socket_path"
-            return 0
-        fi
-        sleep 0.1
-        wait_count=$((wait_count + 1))
-    done
-
-    # Timeout waiting for socket
-    echo "[clawker] warn component=ssh-agent-proxy msg=\"socket not created within timeout\"" >&2
-    return 1
-}
-
-# Determine SSH agent forwarding strategy
-if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_SSH_VIA_PROXY" = "true" ]; then
-    # Use ssh-agent-proxy to forward via host proxy (macOS Docker Desktop case)
-    ssh_setup_known_hosts
-    if ! start_ssh_agent_proxy; then
-        echo "[clawker] warn component=ssh msg=\"SSH agent forwarding unavailable\"" >&2
-    fi
-elif [ -n "$SSH_AUTH_SOCK" ]; then
-    # Direct socket mount (Linux case or when proxy not needed)
-    if [ -S "$SSH_AUTH_SOCK" ]; then
-        # Check if socket is accessible
-        if ssh-add -l >/dev/null 2>&1 || [ $? -eq 1 ]; then
-            # Socket is accessible (exit code 1 means no identities, but socket works)
-            ssh_setup_known_hosts
-        elif [ -n "$CLAWKER_HOST_PROXY" ]; then
-            # Socket exists but not accessible, try proxy fallback
-            ssh_setup_known_hosts
-            if ! start_ssh_agent_proxy; then
-                echo "Warning: SSH agent forwarding unavailable" >&2
-            fi
-        fi
-    fi
-fi
-
-# Setup GPG agent forwarding
-# Strategy: Use gpg-agent-proxy via host proxy when direct socket has permission issues
-
-# Start gpg-agent-proxy and verify it started successfully
-# Returns 0 if successful, 1 otherwise
-start_gpg_agent_proxy() {
-    /usr/local/bin/gpg-agent-proxy &
-    proxy_pid=$!
-
-    # Wait for socket creation with timeout (up to 2 seconds)
-    socket_path="$HOME/.gnupg/S.gpg-agent"
-    wait_count=0
-    max_wait=20  # 20 * 100ms = 2 seconds
-    while [ $wait_count -lt $max_wait ]; do
-        # Check if proxy is still running
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            echo "[clawker] warn component=gpg-agent-proxy msg=\"proxy process exited prematurely\"" >&2
-            return 1
-        fi
-        # Check if socket was created
-        if [ -S "$socket_path" ]; then
-            return 0
-        fi
-        sleep 0.1
-        wait_count=$((wait_count + 1))
-    done
-
-    # Timeout waiting for socket
-    echo "[clawker] warn component=gpg-agent-proxy msg=\"socket not created within timeout\"" >&2
-    return 1
-}
-
-# Determine GPG agent forwarding strategy
-if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GPG_VIA_PROXY" = "true" ]; then
-    # Use gpg-agent-proxy to forward via host proxy (fallback for older Docker Desktop)
-    mkdir -p "$HOME/.gnupg"
-    chmod 700 "$HOME/.gnupg"
-    if ! start_gpg_agent_proxy; then
-        echo "[clawker] warn component=gpg msg=\"GPG agent forwarding unavailable\"" >&2
-    fi
-elif [ -S "$HOME/.gnupg/S.gpg-agent" ]; then
-    # Direct socket mount (Linux and macOS) - socket already mounted
-    # The .gnupg directory is pre-created in the Dockerfile with correct ownership
-    chmod 700 "$HOME/.gnupg" 2>/dev/null || true
-    # Fix socket permissions - Docker Desktop maps sockets as root-owned
-    # Use sudo to make socket accessible to current user
-    sudo chmod 666 "$HOME/.gnupg/S.gpg-agent" 2>/dev/null || true
-fi
+# Setup SSH known hosts unconditionally — socketbridge handles SSH/GPG agent forwarding
+# via docker exec, but known_hosts are still needed for SSH operations
+ssh_setup_known_hosts
 
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then

@@ -134,7 +134,11 @@ func runStop(opts *StopOptions) error {
 
 ## Exec Credential Forwarding
 
-The `exec` command automatically injects git credential forwarding env vars (like `CLAWKER_HOST_PROXY` and `CLAWKER_GPG_VIA_PROXY`) into exec'd processes. This enables git operations with GPG signing inside exec sessions. Credentials are set up via `workspace.SetupGitCredentials()` using the same pattern as `run`/`create`.
+The `exec` command automatically injects git credential forwarding env vars (like `CLAWKER_HOST_PROXY` and `CLAWKER_GIT_HTTPS`) into exec'd processes. This enables git operations inside exec sessions. HTTPS credentials are forwarded via host proxy, while SSH/GPG agent forwarding is handled by the socketbridge (started automatically via `SocketBridge.EnsureBridge`). Credentials are set up via `workspace.SetupGitCredentials()`.
+
+## SocketBridge Wiring
+
+The `run`, `start`, and `exec` commands wire `f.SocketBridge()` to start a per-container bridge daemon that forwards SSH/GPG agent sockets via `docker exec` + muxrpc protocol. `EnsureBridge` is idempotent — safe to call from both `run` and subsequent `exec` invocations on the same container.
 
 ## Testing
 

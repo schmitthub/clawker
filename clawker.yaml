@@ -117,6 +117,7 @@ security:
   git_credentials:
     forward_https: true
     forward_ssh: true
+    forward_gpg: true
     copy_git_config: true
 
 ralph:

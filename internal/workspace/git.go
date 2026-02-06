@@ -16,6 +16,9 @@ type GitCredentialSetupResult struct {
 // SetupGitCredentials configures mounts and environment variables for git credential forwarding.
 // It returns the mounts to add and environment variables to set based on the config and
 // whether the host proxy is running.
+//
+// SSH and GPG agent forwarding are handled by the socketbridge package (via docker exec),
+// not by host proxy or socket mounts. Only HTTPS credentials and git config are handled here.
 func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool) GitCredentialSetupResult {
 	var result GitCredentialSetupResult
 
@@ -23,36 +26,6 @@ func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool
 	if cfg.GitHTTPSEnabled(hostProxyRunning) {
 		result.Env = append(result.Env, "CLAWKER_GIT_HTTPS=true")
 		logger.Debug().Msg("git HTTPS credential forwarding enabled")
-	}
-
-	// SSH agent forwarding
-	if cfg.GitSSHEnabled() {
-		if IsSSHAgentAvailable() {
-			// Add mounts (nil on macOS where we use proxy)
-			result.Mounts = append(result.Mounts, GetSSHAgentMounts()...)
-			if sshEnv := GetSSHAgentEnvVar(); sshEnv != "" {
-				result.Env = append(result.Env, "SSH_AUTH_SOCK="+sshEnv)
-			}
-			// On macOS, tell entrypoint to use host proxy for SSH forwarding
-			if UseSSHAgentProxy() && hostProxyRunning {
-				result.Env = append(result.Env, "CLAWKER_SSH_VIA_PROXY=true")
-				logger.Debug().Msg("SSH agent forwarding enabled via host proxy")
-			} else {
-				logger.Debug().Msg("SSH agent forwarding enabled via socket mount")
-			}
-		} else {
-			logger.Debug().Msg("SSH agent not available, skipping SSH forwarding")
-		}
-	}
-
-	// GPG agent forwarding
-	if cfg.GPGEnabled() {
-		if IsGPGAgentAvailable() {
-			result.Mounts = append(result.Mounts, GetGPGAgentMounts()...)
-			logger.Debug().Msg("GPG agent forwarding enabled via socket mount")
-		} else {
-			logger.Debug().Msg("GPG agent not available, skipping GPG forwarding")
-		}
 	}
 
 	// Git config forwarding

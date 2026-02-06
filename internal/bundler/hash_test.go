@@ -401,5 +401,5 @@ func TestEmbeddedScripts_ContainsExpectedContent(t *testing.T) {
 	// Hostproxy scripts should be present (from internals.AllScripts())
 	assert.Contains(t, combined, "host-open", "Should contain host-open script")
 	assert.Contains(t, combined, "callback", "Should contain callback forwarder")
-	assert.Contains(t, combined, "SSH_AUTH_SOCK", "Should contain SSH agent proxy")
+	assert.Contains(t, combined, "MsgReady", "Should contain socket server source")
 }

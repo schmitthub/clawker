@@ -52,8 +52,7 @@ var (
 	HostOpenScript          = internals.HostOpenScript
 	CallbackForwarderSource = internals.CallbackForwarderSource
 	GitCredentialScript     = internals.GitCredentialScript
-	SSHAgentProxySource     = internals.SSHAgentProxySource
-	GPGAgentProxySource     = internals.GPGAgentProxySource
+	SocketForwarderSource   = internals.SocketForwarderSource
 )
 
 // EmbeddedScripts returns all embedded script contents for content hashing.
@@ -207,8 +206,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"host-open.sh", HostOpenScript, 0755},
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
-		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
-		{"gpg-agent-proxy.go", GPGAgentProxySource, 0644},
+		{"clawker-socket-server.go", SocketForwarderSource, 0644},
 	}
 
 	for _, script := range scripts {
@@ -383,13 +381,8 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add ssh-agent-proxy source for compilation in multi-stage build
-	if err := addFileToTar(tw, "ssh-agent-proxy.go", []byte(SSHAgentProxySource)); err != nil {
-		return nil, err
-	}
-
-	// Add gpg-agent-proxy source for compilation in multi-stage build
-	if err := addFileToTar(tw, "gpg-agent-proxy.go", []byte(GPGAgentProxySource)); err != nil {
+	// Add clawker-socket-server source for compilation in multi-stage build
+	if err := addFileToTar(tw, "clawker-socket-server.go", []byte(SocketForwarderSource)); err != nil {
 		return nil, err
 	}
 
@@ -439,8 +432,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"host-open.sh", HostOpenScript, 0755},
 		{"callback-forwarder.go", CallbackForwarderSource, 0644},
 		{"git-credential-clawker.sh", GitCredentialScript, 0755},
-		{"ssh-agent-proxy.go", SSHAgentProxySource, 0644},
-		{"gpg-agent-proxy.go", GPGAgentProxySource, 0644},
+		{"clawker-socket-server.go", SocketForwarderSource, 0644},
 	}
 
 	for _, s := range scripts {

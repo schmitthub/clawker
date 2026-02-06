@@ -45,7 +45,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 		"host-open.sh",
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",
-		"ssh-agent-proxy.go",
+		"clawker-socket-server.go",
 		"init-firewall.sh", // firewall enabled
 	}
 	for _, name := range expectedFiles {

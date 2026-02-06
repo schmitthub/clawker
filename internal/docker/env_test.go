@@ -358,6 +358,84 @@ func TestRuntimeEnv_ClawkerIdentityEmpty(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnv_SSHForwardingEnabled(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		SSHForwardingEnabled: true,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/claude/.ssh/agent.sock",
+		"SSH_AUTH_SOCK should be set when SSH forwarding enabled")
+
+	// Should also have CLAWKER_REMOTE_SOCKETS with ssh-agent entry
+	var found bool
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "CLAWKER_REMOTE_SOCKETS="); ok {
+			found = true
+			assert.Contains(t, val, `"type":"ssh-agent"`)
+			assert.Contains(t, val, `"path":"/home/claude/.ssh/agent.sock"`)
+		}
+	}
+	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
+}
+
+func TestRuntimeEnv_GPGForwardingEnabled(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		GPGForwardingEnabled: true,
+	})
+	require.NoError(t, err)
+
+	// Should NOT have SSH_AUTH_SOCK
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "SSH_AUTH_SOCK="),
+			"should not set SSH_AUTH_SOCK when only GPG forwarding enabled")
+	}
+
+	// Should have CLAWKER_REMOTE_SOCKETS with gpg-agent entry
+	var found bool
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "CLAWKER_REMOTE_SOCKETS="); ok {
+			found = true
+			assert.Contains(t, val, `"type":"gpg-agent"`)
+			assert.Contains(t, val, `"path":"/home/claude/.gnupg/S.gpg-agent"`)
+		}
+	}
+	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
+}
+
+func TestRuntimeEnv_BothForwardingEnabled(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		GPGForwardingEnabled: true,
+		SSHForwardingEnabled: true,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "SSH_AUTH_SOCK=/home/claude/.ssh/agent.sock")
+
+	// Should have both sockets in CLAWKER_REMOTE_SOCKETS
+	var found bool
+	for _, e := range env {
+		if val, ok := strings.CutPrefix(e, "CLAWKER_REMOTE_SOCKETS="); ok {
+			found = true
+			assert.Contains(t, val, `"type":"gpg-agent"`)
+			assert.Contains(t, val, `"type":"ssh-agent"`)
+		}
+	}
+	require.True(t, found, "expected CLAWKER_REMOTE_SOCKETS env var")
+}
+
+func TestRuntimeEnv_NoForwardingNoSocketVars(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_REMOTE_SOCKETS="),
+			"should not set CLAWKER_REMOTE_SOCKETS when no forwarding")
+		assert.False(t, strings.HasPrefix(e, "SSH_AUTH_SOCK="),
+			"should not set SSH_AUTH_SOCK when no forwarding")
+	}
+}
+
 func TestRuntimeEnv_ClawkerIdentityPartial(t *testing.T) {
 	// Partial identity (e.g., orphaned project with no project name)
 	env, err := RuntimeEnv(RuntimeEnvOpts{

@@ -23,13 +23,6 @@ var HostOpenScript string
 //go:embed git-credential-clawker.sh
 var GitCredentialScript string
 
-// SSHAgentProxySource is the Go source for the ssh-agent-proxy binary.
-// It forwards SSH agent requests from the container to the host proxy.
-// Compiled during Docker image build via multi-stage Dockerfile.
-//
-//go:embed cmd/ssh-agent-proxy/main.go
-var SSHAgentProxySource string
-
 // CallbackForwarderSource is the Go source for the callback-forwarder binary.
 // It polls the host proxy for captured OAuth callbacks and forwards them
 // to the local HTTP server inside the container.
@@ -38,12 +31,13 @@ var SSHAgentProxySource string
 //go:embed cmd/callback-forwarder/main.go
 var CallbackForwarderSource string
 
-// GPGAgentProxySource is the Go source for the gpg-agent-proxy binary.
-// It forwards GPG agent requests from the container to the host proxy.
+// SocketForwarderSource is the Go source for the clawker-socket-server binary.
+// It provides unified socket forwarding (GPG, SSH) via muxrpc-style protocol
+// over stdin/stdout, replacing the separate agent proxy binaries.
 // Compiled during Docker image build via multi-stage Dockerfile.
 //
-//go:embed cmd/gpg-agent-proxy/main.go
-var GPGAgentProxySource string
+//go:embed cmd/clawker-socket-server/main.go
+var SocketForwarderSource string
 
 // AllScripts returns all embedded script contents for content hashing.
 // This is used by the bundler package to ensure image rebuilds when any
@@ -55,8 +49,7 @@ func AllScripts() []string {
 	return []string{
 		CallbackForwarderSource,
 		GitCredentialScript,
-		GPGAgentProxySource,
 		HostOpenScript,
-		SSHAgentProxySource,
+		SocketForwarderSource,
 	}
 }

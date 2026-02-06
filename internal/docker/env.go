@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -26,6 +27,10 @@ type RuntimeEnvOpts struct {
 	FirewallDomains        []string
 	FirewallOverride       bool
 	FirewallIPRangeSources []config.IPRangeSource
+
+	// Socket forwarding (consumed by socket-forwarder in container)
+	GPGForwardingEnabled bool // Enable GPG agent forwarding
+	SSHForwardingEnabled bool // Enable SSH agent forwarding
 
 	// Terminal capabilities (from host)
 	Is256Color bool
@@ -104,15 +109,35 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["CLAWKER_FIREWALL_IP_RANGE_SOURCES"] = string(ipSourcesBytes)
 	}
 
-	// Agent env vars (override base defaults and terminal)
-	for k, v := range opts.AgentEnv {
-		m[k] = v
+	// Socket forwarding (consumed by clawker-socket-server binary inside container)
+	if opts.GPGForwardingEnabled || opts.SSHForwardingEnabled {
+		var sockets []map[string]string
+		if opts.GPGForwardingEnabled {
+			sockets = append(sockets, map[string]string{
+				"path": "/home/claude/.gnupg/S.gpg-agent",
+				"type": "gpg-agent",
+			})
+		}
+		if opts.SSHForwardingEnabled {
+			sockets = append(sockets, map[string]string{
+				"path": "/home/claude/.ssh/agent.sock",
+				"type": "ssh-agent",
+			})
+			// SSH tools need SSH_AUTH_SOCK to find the forwarded socket
+			m["SSH_AUTH_SOCK"] = "/home/claude/.ssh/agent.sock"
+		}
+		socketsBytes, err := json.Marshal(sockets)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal remote sockets: %w", err)
+		}
+		m["CLAWKER_REMOTE_SOCKETS"] = string(socketsBytes)
 	}
 
+	// Agent env vars (override base defaults and terminal)
+	maps.Copy(m, opts.AgentEnv)
+
 	// User-defined env from build instructions (highest precedence)
-	for k, v := range opts.InstructionEnv {
-		m[k] = v
-	}
+	maps.Copy(m, opts.InstructionEnv)
 
 	// Sort keys for deterministic output
 	keys := make([]string, 0, len(m))

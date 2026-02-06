@@ -101,7 +101,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 const DefaultUID, DefaultGID = 1001, 1001
 ```
 
-Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SSHAgentProxySource`.
+Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
 
 ## Version Management (`versions.go`)
 

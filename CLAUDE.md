@@ -70,6 +70,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
+│   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   ├── term/                  # PTY/terminal handling
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -115,6 +116,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
+| `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |

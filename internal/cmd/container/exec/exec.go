@@ -13,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -20,10 +21,11 @@ import (
 
 // ExecOptions holds options for the exec command.
 type ExecOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	HostProxy    func() *hostproxy.Manager
+	SocketBridge func() *socketbridge.Manager
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -41,10 +43,11 @@ type ExecOptions struct {
 // NewCmdExec creates a new exec command.
 func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
 	opts := &ExecOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
-		HostProxy: f.HostProxy,
+		IOStreams:     f.IOStreams,
+		Client:       f.Client,
+		Config:       f.Config,
+		HostProxy:    f.HostProxy,
+		SocketBridge: f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -163,6 +166,17 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Setup git credentials (includes GPG forwarding env vars)
 	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
 	opts.Env = append(opts.Env, gitSetup.Env...)
+
+	// Ensure socket bridge is running for GPG/SSH forwarding
+	// The bridge may already be running from a prior run/start command
+	if cfg.Security.GitCredentials != nil && opts.SocketBridge != nil {
+		if cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled() {
+			gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+			if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
+				logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
+			}
+		}
+	}
 
 	// Create exec configuration
 	execConfig := docker.ExecCreateOptions{

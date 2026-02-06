@@ -1,194 +1,115 @@
 # GPG Agent Forwarding Implementation Guide
 
-## DIRECTIVE FOR IMPLEMENTERS
+## ✅ IMPLEMENTATION STATUS: FULLY INTEGRATED
 
-**Your mission:** Implement GPG agent forwarding in clawker that mirrors VS Code's devcontainer approach.
+**Test Status:** All SSH and GPG agent forwarding tests pass (unit + integration)
 
-**Rules:**
-1. Review the VS Code architecture diagrams below
-2. Implement using clawker internals (hostproxy, container-side components)
-3. **YOU ARE NOT DONE UNTIL `go test -run TestGpgAgentForwarding_EndToEnd ./test/internals/... -v` PASSES**
-4. **YOU MUST NEVER MODIFY THE TEST** - fix your implementation until it passes (TDD)
+**Completed:** 2026-02-05
+
+**Phase 2 (Lifecycle Integration):** SocketBridge.Manager wired into run/start/exec commands.
+Legacy SSH/GPG proxy code fully removed. Only socketbridge path remains.
 
 ---
 
-## VS Code Architecture (Reference Implementation)
+## Implemented Components
+
+### 1. Host-side Bridge (`internal/socketbridge/bridge.go`)
+- muxrpc-style protocol over docker exec stdin/stdout
+- Message types: DATA, OPEN, CLOSE, PUBKEY, READY, ERROR
+- Sends PUBKEY message with exported GPG public key
+- Handles OPEN/DATA/CLOSE for bidirectional socket forwarding
+- Connects to host GPG/SSH agents via Unix sockets
+
+### 2. Container-side Server (`internal/hostproxy/internals/cmd/clawker-socket-server/main.go`)
+- Reads `CLAWKER_REMOTE_SOCKETS` env var (JSON array of socket configs)
+- Creates Unix socket listeners at specified paths
+- Forwards connections via muxrpc protocol to host
+- Handles file ownership (chown to target user for GPG access)
+- Creates pubring.kbx with exported public key
+
+### 3. RuntimeEnv Integration (`internal/docker/env.go`)
+- Added `GPGForwardingEnabled`, `SSHForwardingEnabled` to RuntimeEnvOpts
+- Produces `CLAWKER_REMOTE_SOCKETS` JSON env var from config
+
+### 4. Entrypoint Updates (`internal/bundler/assets/entrypoint.sh`)
+- Legacy SSH/GPG proxy functions removed
+- Socket forwarding handled entirely by clawker-socket-server started via docker exec
+
+### 5. SocketBridge Manager (`internal/socketbridge/manager.go`)
+- Per-container bridge daemon process manager with PID file tracking
+- `EnsureBridge()` is idempotent — spawns `clawker bridge serve` as detached subprocess
+- Wired into `run`, `start`, `exec` commands via Factory DI
+
+### 6. Bridge Command (`internal/cmd/bridge/bridge.go`)
+- Hidden CLI: `clawker bridge serve --container <id> [--gpg]`
+- Writes PID file, creates bridge, handles graceful shutdown
+
+### 7. Test Harness (`test/harness/client.go`)
+- Auto-detects GPG/SSH availability on host
+- Sets `CLAWKER_REMOTE_SOCKETS` env var
+- Starts socket bridge via `StartSocketBridge()`
+
+---
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                   HOST (macOS)                                   │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  ┌─────────────────────────────────────┐     ┌─────────────────────────────────┐│
-│  │         VS Code Application         │     │        Host GPG Agent           ││
-│  │          (Electron/Node)            │     │        (gpg-agent daemon)       ││
-│  │                                     │     │                                 ││
-│  │  ┌───────────────────────────────┐  │     │  Socket:                        ││
-│  │  │ Remote Containers Extension   │  │     │  ~/.gnupg/S.gpg-agent           ││
-│  │  │                               │  │     │                                 ││
-│  │  │ - Injects server.js into ctr  │  │     │  - Holds secret keys            ││
-│  │  │ - Sets REMOTE_CONTAINERS_*    │  │     │  - Performs crypto ops          ││
-│  │  │ - Exports public key          │  │     │  - Responds to Assuan           ││
-│  │  │ - Maintains muxrpc channel    │◄─┼─────┼─►                               ││
-│  │  └───────────────────────────────┘  │     │                                 ││
-│  └──────────────────┬──────────────────┘     └─────────────────────────────────┘│
-│                     │                                                            │
-│                     │ docker exec (stdin/stdout bidirectional)                   │
-│                     │                                                            │
-└─────────────────────┼────────────────────────────────────────────────────────────┘
-                      │
-                      │ muxrpc over stdin/stdout
-                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            CONTAINER                                             │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                    vscode-remote-containers-server.js                      │  │
-│  │                           (PID 267, node)                                  │  │
-│  │                                                                            │  │
-│  │  Environment:                                                              │  │
-│  │  REMOTE_CONTAINERS_SOCKETS=[                                               │  │
-│  │    "/tmp/vscode-ssh-auth-xxx.sock",                                        │  │
-│  │    "/home/node/.gnupg/S.gpg-agent"     ◄── Created by this server          │  │
-│  │  ]                                                                         │  │
-│  │                                                                            │  │
-│  │  On startup:                                                               │  │
-│  │  1. Parse REMOTE_CONTAINERS_SOCKETS                                        │  │
-│  │  2. For each path: net.createServer().listen(path)                         │  │
-│  │  3. Forward connections via muxrpc to VS Code host                         │  │
-│  └────────────────────────────────┬──────────────────────────────────────────┘  │
-│                               │                                                  │
-│                               │ creates & listens                                │
-│                               ▼                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │                        ~/.gnupg/S.gpg-agent                                 │ │
-│  │                    (Unix socket, owned by socket server)                    │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                               ▲                                                  │
-│                               │ connects                                         │
-│  ┌────────────────────────────┴───────────────────────────────────────────────┐ │
-│  │                              GPG Binary                                     │ │
-│  │                                                                             │ │
-│  │  1. Reads ~/.gnupg/pubring.kbx (674 bytes) → has public key                 │ │
-│  │  2. Connects to ~/.gnupg/S.gpg-agent                                        │ │
-│  │  3. Sends "HAVEKEY <keygrip>" Assuan command                                │ │
-│  │  4. Server forwards to host, host agent responds "OK"                       │ │
-│  │  5. GPG displays "sec" (secret key available via agent)                     │ │
-│  └─────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                  │
-│  ~/.gnupg/ contents:                                                             │
-│  ├── S.gpg-agent       (socket, created by server.js)                            │
-│  ├── pubring.kbx       (674 bytes, public key only - NOT a directory)            │
-│  └── trustdb.gpg       (trust levels)                                            │
-│                                                                                  │
-│  NO private-keys-v1.d/ - all crypto via forwarded agent                          │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Data Flow: Signing Operation
-
-```
-CONTAINER                                    HOST
-─────────────────────────────────────────────────────────────────────────────────
-1. gpg --armor --detach-sign
-      │
-2. GPG reads pubring.kbx → finds keygrip
-      │
-3. GPG connects to S.gpg-agent socket
-      │
-4. Assuan: "SIGKEY <keygrip>", "PKSIGN"
-      │
-      └─────────────────────────────────────► 5. Socket server receives
-                                                    │
-                                              6. Forwards to host GPG agent
-                                                    │
-                                              7. Host agent signs with private key
-                                                    │
-      ◄─────────────────────────────────────── 8. Returns "D <signature>" + "OK"
-      │
-9. GPG outputs -----BEGIN PGP SIGNATURE-----
+HOST                                    CONTAINER
+┌─────────────────────┐                ┌─────────────────────────────────┐
+│  socketbridge       │                │     clawker-socket-server       │
+│                     │                │                                 │
+│  Bridge.Start()     │◄──docker exec──►│  1. Parse CLAWKER_REMOTE_SOCKETS│
+│  - Sends PUBKEY msg │   stdin/stdout │  2. Write pubring.kbx           │
+│  - Handles OPEN     │                │  3. Create Unix socket listeners│
+│  - Handles DATA     │                │  4. Forward via muxrpc protocol │
+│  - Handles CLOSE    │                │                                 │
+│                     │                │  Creates:                       │
+│  Connects to:       │                │  - ~/.gnupg/S.gpg-agent (socket)│
+│  - GPG extra socket │                │  - ~/.gnupg/pubring.kbx (file)  │
+│  - SSH_AUTH_SOCK    │                │  - ~/.ssh/agent.sock (socket)   │
+└─────────────────────┘                └─────────────────────────────────┘
 ```
 
 ---
 
-## Clawker Equivalent Architecture (TO IMPLEMENT)
+## Protocol
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                   HOST                                           │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────┐     ┌─────────────────────────────────┐│
-│  │           clawker hostproxy         │     │        Host GPG Agent           ││
-│  │                                     │     │                                 ││
-│  │  - Receives forwarded connections   │     │  Socket: ~/.gnupg/S.gpg-agent   ││
-│  │  - Connects to host GPG agent       │◄────┼─►                               ││
-│  │  - Exports public key at startup    │     │                                 ││
-│  └──────────────────┬──────────────────┘     └─────────────────────────────────┘│
-│                     │                                                            │
-│                     │ HTTP/WebSocket (via CLAWKER_HOST_PROXY env var)            │
-│                     │                                                            │
-└─────────────────────┼────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            CONTAINER                                             │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │                    clawker-socket-server (or similar)                      │  │
-│  │                                                                            │  │
-│  │  Environment:                                                              │  │
-│  │  CLAWKER_REMOTE_SOCKETS='["/home/claude/.gnupg/S.gpg-agent"]'              │  │
-│  │  CLAWKER_HOST_PROXY="http://host.docker.internal:18374"                    │  │
-│  │                                                                            │  │
-│  │  On startup:                                                               │  │
-│  │  1. Parse CLAWKER_REMOTE_SOCKETS                                           │  │
-│  │  2. For each path: create Unix socket listener                             │  │
-│  │  3. Forward connections to hostproxy                                       │  │
-│  └────────────────────────────────┬──────────────────────────────────────────┘  │
-│                               │                                                  │
-│                               ▼                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │                   /home/claude/.gnupg/S.gpg-agent                           │ │
-│  │                   (Unix socket, created by socket server)                   │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                  │
-│  /home/claude/.gnupg/ contents (CREATED BY CLAWKER):                             │
-│  ├── S.gpg-agent       (socket, created by socket server)                        │
-│  ├── pubring.kbx       (~674 bytes, exported public key - MUST BE A FILE)        │
-│  └── trustdb.gpg       (trust levels)                                            │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+Message format: `[4-byte length][1-byte type][4-byte stream ID][payload]`
+
+| Type | Value | Description |
+|------|-------|-------------|
+| DATA | 1 | Socket data (bidirectional) |
+| OPEN | 2 | New connection (payload = socket type) |
+| CLOSE | 3 | Connection closed |
+| PUBKEY | 4 | GPG public key data |
+| READY | 5 | Forwarder ready |
+| ERROR | 6 | Error message |
 
 ---
 
-## Test Requirements (What You Must Implement)
+## Configuration
 
-The test at `test/internals/gpgagent_test.go` checks these steps IN ORDER:
+Socket forwarding is controlled by clawker.yaml via `GitCredentialsConfig`:
 
-| Step | Requirement | Test Assertion |
-|------|-------------|----------------|
-| 2 | `CLAWKER_REMOTE_SOCKETS` env var set | Must contain GPG socket path |
-| 3 | Socket server process running | `ps aux` shows clawker/socket-server process |
-| 4 | GPG socket exists | `/home/claude/.gnupg/S.gpg-agent` is a socket file |
-| 5 | Public key exported | `pubring.kbx` > 32 bytes (not empty stub) |
-| 6 | GPG sees secret key | `gpg --list-secret-keys` shows "sec" marker |
-| 7 | GPG can sign | `gpg --detach-sign` produces valid signature |
-| 8 | Git signed commit | `git commit -S` succeeds |
-| 9 | Signature verifies | `git log --show-signature` shows signature |
+```yaml
+security:
+  git_credentials:
+    forward_gpg: true   # Enable GPG agent forwarding
+    forward_ssh: true   # Enable SSH agent forwarding
+```
+
+This flows through `RuntimeEnvOpts` → `RuntimeEnv()` → `CLAWKER_REMOTE_SOCKETS` env var.
 
 ---
 
-## ⚠️ INVALID APPROACHES - DO NOT ATTEMPT ⚠️
+## Test Verification
 
-### 1. Direct Socket Bind Mounting
-**Why it fails:** Docker Desktop on macOS doesn't properly forward Unix sockets via SDK's `HostConfig.Mounts`. Socket appears but connections fail.
+```bash
+# Run the TDD test
+go test -run TestGpgAgentForwarding_EndToEnd ./test/internals/... -v -timeout 3m
 
-### 2. Using Only Extra Socket (`S.gpg-agent.extra`)
-**Why it fails:** Extra socket can sign but `KEYINFO --list` is restricted. Without pubring.kbx, `gpg --list-secret-keys` returns empty.
-
-### 3. Host's pubring.kbx Structure
-**Why it fails:** Modern hosts use keyboxd (pubring.kbx is a DIRECTORY). Container needs traditional keyring (pubring.kbx as FILE with exported public key).
+# Expected output: PASS
+```
 
 ---
 
@@ -196,30 +117,23 @@ The test at `test/internals/gpgagent_test.go` checks these steps IN ORDER:
 
 | File | Purpose |
 |------|---------|
-| `test/internals/gpgagent_test.go` | **TDD test - DO NOT MODIFY** |
-| `internal/hostproxy/gpg_agent.go` | Hostproxy GPG forwarding (needs work) |
-| `internal/hostproxy/internals/cmd/gpg-agent-proxy/` | Container-side proxy binary |
-| `internal/workspace/gpg.go` | Current broken mount configuration |
+| `internal/socketbridge/bridge.go` | Host-side muxrpc bridge |
+| `internal/socketbridge/manager.go` | Per-container bridge daemon manager |
+| `internal/cmd/bridge/bridge.go` | Hidden `clawker bridge serve` command |
+| `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` | Container-side socket server |
+| `internal/docker/env.go` | RuntimeEnvOpts with socket forwarding fields + SSH_AUTH_SOCK |
+| `internal/bundler/assets/entrypoint.sh` | Entrypoint (legacy proxy code removed) |
+| `test/harness/client.go` | Test harness with auto-detection |
+| `test/internals/gpgagent_test.go` | GPG agent TDD test |
+| `test/internals/sshagent_test.go` | SSH agent integration tests |
 
----
+## Removed Files (Legacy Proxies)
 
-## Verification Commands
-
-```bash
-# Run the TDD test (must pass when implementation is complete)
-go test -run TestGpgAgentForwarding_EndToEnd ./test/internals/... -v -timeout 3m
-
-# Compare with working VS Code devcontainer
-docker exec eager_murdock gpg --list-secret-keys
-docker exec eager_murdock bash -c 'echo "test" | gpg --armor --detach-sign'
-```
-
----
-
-## IMPERATIVE
-
-**YOU MUST NOT MODIFY `test/internals/gpgagent_test.go`.**
-
-The test defines the contract. Your implementation must satisfy it. This is TDD - write code until the test passes.
-
-When the test passes, GPG agent forwarding works correctly.
+| File | Was |
+|------|-----|
+| `internal/workspace/ssh.go` | SSH agent mount logic |
+| `internal/workspace/gpg.go` | GPG agent mount logic |
+| `internal/hostproxy/ssh_agent.go` | SSH HTTP handler |
+| `internal/hostproxy/gpg_agent.go` | GPG HTTP handler |
+| `internal/hostproxy/internals/cmd/ssh-agent-proxy/` | Container SSH proxy binary |
+| `internal/hostproxy/internals/cmd/gpg-agent-proxy/` | Container GPG proxy binary |

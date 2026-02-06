@@ -149,6 +149,7 @@ type RuntimeEnvOpts struct {
     Editor, Visual string                                   // defaults to "nano"
     FirewallEnabled bool; FirewallDomains []string; FirewallOverride bool
     FirewallIPRangeSources []config.IPRangeSource
+    GPGForwardingEnabled, SSHForwardingEnabled bool         // socket forwarding
     Is256Color, TrueColor bool                              // terminal capabilities
     AgentEnv, InstructionEnv map[string]string              // from config
 }
@@ -157,7 +158,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
 
 Precedence (last wins): base defaults → terminal → agent env → instruction env. Output sorted by key.
 
-**Container env vars:** `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_WORKSPACE_SOURCE` (identity); `CLAWKER_FIREWALL_DOMAINS`, `CLAWKER_FIREWALL_OVERRIDE`, `CLAWKER_FIREWALL_IP_RANGE_SOURCES` (firewall)
+**Container env vars:** `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_WORKSPACE_SOURCE` (identity); `CLAWKER_FIREWALL_DOMAINS`, `CLAWKER_FIREWALL_OVERRIDE`, `CLAWKER_FIREWALL_IP_RANGE_SOURCES` (firewall); `CLAWKER_REMOTE_SOCKETS` (socket forwarding, JSON array of `{path, type}`); `SSH_AUTH_SOCK` (set when `SSHForwardingEnabled`, points to `/home/claude/.ssh/agent.sock`)
 
 ## Volume Utilities (`volume.go`)
 
