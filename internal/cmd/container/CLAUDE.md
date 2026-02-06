@@ -141,6 +141,8 @@ The `exec` command automatically injects git credential forwarding env vars (lik
 
 The `run`, `start`, and `exec` commands wire `f.SocketBridge()` to start a per-container bridge daemon that forwards SSH/GPG agent sockets via `docker exec` + muxrpc protocol. `EnsureBridge` is idempotent — safe to call from both `run` and subsequent `exec` invocations on the same container.
 
+The `stop` and `remove` commands wire `f.SocketBridge()` to stop the bridge daemon before the container is stopped or removed. This prevents stale bridge processes whose docker exec sessions are dead from being reused on container restart. Bridge cleanup is best-effort — errors are logged via `logger.Warn()` but do not fail the stop/remove operation. A nil `SocketBridge` is safe (guarded by nil check).
+
 ## Testing
 
 Container command tests use the **Cobra+Factory pattern** -- the canonical approach for testing commands end-to-end without a Docker daemon.

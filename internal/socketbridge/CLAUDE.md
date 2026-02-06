@@ -66,6 +66,21 @@ Constants: `ProtocolVersion`, `readBufSize` (64KB), `maxMessageSize` (1MB).
 4. `StopBridge(containerID)` -- kills process, removes PID file
 5. `StopAll()` -- scans bridges directory for all PID files
 
+**Lifecycle integration with container commands:**
+- `run`, `start`, `exec` call `EnsureBridge` to start the daemon
+- `stop`, `remove` call `StopBridge` before the Docker operation to prevent stale bridges
+- Without stop-side cleanup, a quick restart reuses the old bridge whose docker exec session is dead
+
+**Three-layer lifecycle defense:**
+
+| Layer | Where | Covers |
+|-------|-------|--------|
+| Docker events stream | Bridge daemon (`bridge serve`) | ALL deaths (crash, kill, OOM, Docker restart, stop, rm) |
+| Stop/rm hooks | `container stop`, `container rm` | Happy-path CLI usage |
+| EnsureBridge container inspect | Manager.EnsureBridge | Safety net for missed events (future) |
+
+The bridge daemon subscribes to Docker `die` events for the target container. On `die` (or stream disconnect), it calls `bridge.Stop()` and cancels context, ensuring the PID file is cleaned up immediately. This covers crashes, external kills, OOM, and Docker restarts — not just happy-path CLI stop/remove.
+
 ## Testing
 
 ```go

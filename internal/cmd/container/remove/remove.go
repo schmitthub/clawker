@@ -8,14 +8,17 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent   bool
 	Force   bool
@@ -27,9 +30,10 @@ type RemoveOptions struct {
 // NewCmdRemove creates the container remove command.
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:     f.IOStreams,
+		Client:       f.Client,
+		Config:       f.Config,
+		SocketBridge: f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -119,6 +123,13 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	}
 	if container == nil {
 		return fmt.Errorf("container %q not found", name)
+	}
+
+	// Stop socket bridge before removing the container (best-effort)
+	if opts.SocketBridge != nil {
+		if err := opts.SocketBridge().StopBridge(container.ID); err != nil {
+			logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+		}
 	}
 
 	// Use RemoveContainerWithVolumes if volumes flag is set

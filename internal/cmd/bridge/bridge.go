@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
@@ -94,6 +96,25 @@ func NewCmdBridgeServe() *cobra.Command {
 
 			logger.Info().Msg("bridge started, waiting for container exit")
 
+			// Watch Docker events for container death (parallel to exec EOF)
+			go func() {
+				cli, err := client.New(client.WithAPIVersionFromEnv())
+				if err != nil {
+					logger.Warn().Err(err).Msg("failed to create events client, relying on exec EOF only")
+					return
+				}
+				if err := watchContainerEvents(ctx, cli, containerID, func() {
+					logger.Info().Str("container", containerID).Msg("container died, stopping bridge")
+					bridge.Stop()
+					cancel()
+				}); err != nil && ctx.Err() == nil {
+					// Events stream failed (Docker crashed?) — also stop bridge
+					logger.Warn().Err(err).Msg("events stream failed, stopping bridge")
+					bridge.Stop()
+					cancel()
+				}
+			}()
+
 			// Wait for bridge to finish (docker exec EOF / container exit)
 			if err := bridge.Wait(); err != nil {
 				logger.Error().Err(err).Msg("bridge wait error")
@@ -110,4 +131,39 @@ func NewCmdBridgeServe() *cobra.Command {
 	cmd.Flags().StringVar(&pidFile, "pid-file", "", "Path to PID file")
 
 	return cmd
+}
+
+// dockerEventsClient is the subset of Docker API needed for events watching.
+// This interface enables dependency injection for testing.
+type dockerEventsClient interface {
+	Events(ctx context.Context, options client.EventsListOptions) client.EventsResult
+	Close() error
+}
+
+// watchContainerEvents subscribes to Docker events for the given container and
+// calls onDeath when a "die" event is received. It blocks until one of:
+//   - a "die" event fires (calls onDeath, returns nil)
+//   - the events stream errors (returns the error — caller should treat as Docker crash)
+//   - the context is cancelled (returns ctx.Err())
+//
+// The eventsClient is closed when watchContainerEvents returns.
+func watchContainerEvents(ctx context.Context, eventsClient dockerEventsClient, containerID string, onDeath func()) error {
+	defer eventsClient.Close()
+
+	result := eventsClient.Events(ctx, client.EventsListOptions{
+		Filters: make(client.Filters).
+			Add("type", string(events.ContainerEventType)).
+			Add("container", containerID).
+			Add("event", string(events.ActionDie)),
+	})
+
+	select {
+	case <-result.Messages:
+		onDeath()
+		return nil
+	case err := <-result.Err:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

@@ -3,11 +3,18 @@ package stop
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
+	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/socketbridge/socketbridgetest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,4 +141,137 @@ func TestCmdStop_Properties(t *testing.T) {
 
 	timeout, _ := cmd.Flags().GetInt("time")
 	require.Equal(t, 10, timeout)
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func TestStopRun_StopsBridge(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+
+	// Wire ContainerStop to succeed
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	mock := socketbridgetest.NewMockManager()
+	f, tio := testFactory(t, fake, mock)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// StopBridge called with container ID before docker stop
+	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	fake.AssertCalled(t, "ContainerStop")
+}
+
+func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	mock := socketbridgetest.NewMockManager()
+	mock.StopBridgeFn = func(_ string) error {
+		return fmt.Errorf("bridge not found")
+	}
+	f, tio := testFactory(t, fake, mock)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// Bridge error was best-effort — stop still succeeded
+	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	fake.AssertCalled(t, "ContainerStop")
+}
+
+func TestStopRun_NilSocketBridge(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+
+	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		return mobyclient.ContainerStopResult{}, nil
+	}
+
+	// nil SocketBridge — no bridge configured
+	f, tio := testFactory(t, fake, nil)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err) // no panic, stop succeeds
+
+	fake.AssertCalled(t, "ContainerStop")
+}
+
+func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+
+	fake.FakeAPI.ContainerKillFn = func(_ context.Context, _ string, _ mobyclient.ContainerKillOptions) (mobyclient.ContainerKillResult, error) {
+		return mobyclient.ContainerKillResult{}, nil
+	}
+
+	mock := socketbridgetest.NewMockManager()
+	f, tio := testFactory(t, fake, mock)
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"--signal", "SIGKILL", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// StopBridge called even with --signal (kill path)
+	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	fake.AssertCalled(t, "ContainerKill")
+}
+
+// --- Per-package test helpers ---
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	if mock != nil {
+		f.SocketBridge = func() socketbridge.SocketBridgeManager {
+			return mock
+		}
+	}
+
+	return f, tio
 }
