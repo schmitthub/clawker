@@ -177,6 +177,9 @@ User interaction utilities with TTY and CI awareness.
 | `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
+| `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
+| `internal/project` | Project registration in user registry (`RegisterProject` shared helper) |
+| `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
 

@@ -167,49 +167,8 @@ if errors.Is(err, git.ErrNotRepository) {
 
 ## Testing
 
-### On-Disk Testing
-
-This package uses temp directories for tests because go-git's worktree API
-requires real filesystem operations (worktrees create .git files and
-.git/worktrees/ directories).
-
-```go
-func newTestRepoOnDisk(t *testing.T) (*gogit.Repository, string) {
-    dir := t.TempDir()
-    repo, _ := gogit.PlainInit(dir, false)
-    // ... seed with initial commit
-    return repo, dir
-}
-```
-
-### In-Memory Testing (`gittest` package)
-
-For tests that don't need real worktree operations, use the `gittest` package:
-
-```go
-import "github.com/schmitthub/clawker/internal/git/gittest"
-
-// Creates a GitManager backed by in-memory storage
-mgr := gittest.NewInMemoryGitManager(t, "/logical/project/root")
-
-// The underlying repository is seeded with an initial commit
-// Use mgr.GitManager for operations that work with GitManager
-// Use mgr.Repository() to access the underlying go-git Repository
-```
-
-**Note:** In-memory repos are suitable for testing GitManager methods that don't
-require actual worktree filesystem operations. Use `newTestRepoOnDisk(t)` in `git_test.go`
-when testing worktree creation, opening, or listing with real git metadata.
+Worktrees require real filesystem operations (`.git` files and `.git/worktrees/` directories), so worktree tests use `newTestRepoOnDisk(t)` with `t.TempDir()`. For non-worktree tests, use `gittest.NewInMemoryGitManager(t, "/logical/root")` which provides a seeded in-memory repository. The `gittest` subpackage is the public entry point for test consumers.
 
 ## Dependencies
 
-- `github.com/go-git/go-git/v6` - Git operations
-- `github.com/go-git/go-billy/v6` - Filesystem abstraction
-- `github.com/go-git/go-git/v6/x/plumbing/worktree` - Experimental worktree API
-
-## Rules
-
-1. **Never import internal packages** — this is a leaf package
-2. **Return errors, don't log** — callers handle logging
-3. **Pass configuration as parameters** — no config package dependency
-4. **WorktreeDirProvider enables DI** — high-level methods work with any implementation
+`go-git/go-git/v6`, `go-git/go-billy/v6`, `go-git/go-git/v6/x/plumbing/worktree`

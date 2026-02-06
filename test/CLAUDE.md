@@ -56,12 +56,7 @@ No build tags needed — directory separation provides test categorization.
 
 ### Core
 
-```go
-func NewHarness(t *testing.T, opts ...HarnessOption) *Harness
-func WithProject(name string) HarnessOption
-func WithConfig(cfg *config.Project) HarnessOption
-func WithConfigBuilder(builder *ConfigBuilder) HarnessOption
-```
+`NewHarness(t, opts ...HarnessOption) *Harness` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`
 
 Key methods: `SetEnv`, `UnsetEnv`, `Chdir`, `ContainerName`, `ImageName`, `VolumeName`, `NetworkName`, `ConfigPath`, `WriteFile`, `ReadFile`, `FileExists`, `UpdateConfig`
 
@@ -175,12 +170,7 @@ result, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 
 ### Factory Testing (factory.go)
 
-```go
-// For integration tests with real Docker client
-func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.TestIOStreams)
-```
-
-Returns fully-wired Factory with IOStreams, Client, Config, HostProxy (no-op for firewall-disabled tests).
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.TestIOStreams)` — fully-wired Factory with IOStreams, Client, Config, HostProxy (no-op for firewall-disabled tests).
 
 ### Content-Addressed Caching (hash.go)
 
@@ -202,11 +192,7 @@ func CompareGolden(t, testName, actual string) error
 
 ### Constants (docker.go)
 
-```go
-TestLabel           = "com.clawker.test"     // Label key for test resources
-TestLabelValue      = "true"
-ClawkerManagedLabel = "com.clawker.managed"  // Label key for clawker-managed resources
-```
+`TestLabel = "com.clawker.test"`, `TestLabelValue = "true"`, `ClawkerManagedLabel = "com.clawker.managed"`
 
 ## Dependencies
 

@@ -252,7 +252,7 @@ FIELD     (command imports package directly)
 Rules:
 - Implementation always lives in `internal/<package>/` — never in `cmdutil/`
 - `cmdutil/` contains only: Factory struct (DI container), output utilities, arg validators
-- Heavy command helpers live in dedicated packages: `internal/resolver/` (image resolution), `internal/bundler/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming)
+- Heavy command helpers live in dedicated packages: `internal/bundler/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming). Image resolution helpers live in `internal/cmdutil/` (`ResolveImageWithSource`, `FindProjectImage`)
 
 See also `.claude/rules/dependency-placement.md` (auto-loaded).
 

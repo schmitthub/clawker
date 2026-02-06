@@ -59,7 +59,6 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
-│   ├── credentials/           # Env vars, .env parsing, OTEL
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
