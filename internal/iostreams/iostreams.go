@@ -272,18 +272,21 @@ func (s *IOStreams) InvalidateTerminalSizeCache() {
 }
 
 // StartProgressIndicator starts a spinner on stderr.
+//
 // Deprecated: Use StartSpinner instead.
 func (s *IOStreams) StartProgressIndicator() {
 	s.StartSpinner("")
 }
 
 // StartProgressIndicatorWithLabel starts a spinner with a label on stderr.
+//
 // Deprecated: Use StartSpinner instead.
 func (s *IOStreams) StartProgressIndicatorWithLabel(label string) {
 	s.StartSpinner(label)
 }
 
 // StopProgressIndicator stops the spinner.
+//
 // Deprecated: Use StopSpinner instead.
 func (s *IOStreams) StopProgressIndicator() {
 	s.StopSpinner()
@@ -300,6 +303,7 @@ func (s *IOStreams) SetSpinnerDisabled(v bool) {
 }
 
 // RunWithProgress runs a function while showing a spinner.
+//
 // Deprecated: Use RunWithSpinner instead.
 func (s *IOStreams) RunWithProgress(label string, fn func() error) error {
 	return s.RunWithSpinner(label, fn)

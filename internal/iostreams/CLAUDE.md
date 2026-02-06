@@ -150,7 +150,7 @@ ios.SetSpinnerDisabled(bool)                       // toggle text-only mode
 
 **Spinner types:** `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`, `SpinnerGlobe`, `SpinnerMoon`
 
-**Pure rendering function** (shared with `tui/` for visual consistency):
+**Pure rendering function** (used by the iostreams goroutine spinner):
 ```go
 SpinnerFrame(t SpinnerType, tick int, label string, cs *ColorScheme) string
 ```
@@ -159,7 +159,7 @@ SpinnerFrame(t SpinnerType, tick int, label string, cs *ColorScheme) string
 - Only animates when both stdout and stderr are TTYs
 - Text fallback: `CLAWKER_SPINNER_DISABLED=1` or `SetSpinnerDisabled(true)` — prints `label...` once
 - Thread-safe (mutex-protected)
-- `SpinnerFrame` is a pure function with no side effects — safe for tui's `View()` method
+- `SpinnerFrame` is a pure function with no side effects
 
 **Deprecated wrappers** (still functional, delegate to new API):
 - `StartProgressIndicator()` → `StartSpinner("")`
@@ -215,7 +215,7 @@ ios.GetNeverPrompt() bool    // check if prompts disabled
 tp := ios.NewTablePrinter("NAME", "STATUS", "IMAGE")  // column headers
 tp.AddRow("web", "running", "nginx:latest")
 tp.AddRow("db", "stopped", "postgres:16")
-tp.Render()  // writes to ios.Out
+err := tp.Render()  // writes to ios.Out; returns error on write failure
 tp.Len()     // number of data rows
 ```
 
@@ -243,7 +243,7 @@ ios.RenderHeader("Containers", "3 running")          // title + subtitle
 ios.RenderDivider()                                  // ──────────
 ios.RenderLabeledDivider("Details")                  // ──── Details ────
 ios.RenderBadge("ACTIVE")                            // styled badge or [ACTIVE]
-ios.RenderBadge("ERROR", BadgeErrorStyle)             // custom badge style
+ios.RenderBadge("ERROR", func(s string) string { return BadgeErrorStyle.Render(s) }) // custom badge render
 ios.RenderKeyValue("Name", "web-app")                // Name: web-app
 ios.RenderKeyValueBlock(pairs...)                    // aligned key-value block
 ios.RenderStatus("web", "running")                   // web ● RUNNING
@@ -389,7 +389,7 @@ GetContentHeight(totalHeight, headerHeight, footerHeight) int
 ```go
 StatusStyle(running bool) lipgloss.Style
 StatusText(running bool) string
-StatusIndicator(status string) (lipgloss.Style, string)  // "running"|"stopped"|"error"|"warning"|"pending"
+StatusIndicator(status string) (lipgloss.Style, string)  // "running"|"stopped"|"error"|"warning"|"pending" — returns lipgloss.Style; callers outside the presentation layer should use tui.StatusIndicator which returns (string, string)
 ```
 
 ## Gotchas

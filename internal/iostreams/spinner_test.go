@@ -2,6 +2,7 @@ package iostreams
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -308,6 +309,32 @@ func TestSpinner_ConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// Test passes if no panic/deadlock/race
+}
+
+func TestSpinner_ConcurrentAccess_AnimatedMode(t *testing.T) {
+	ios := NewTestIOStreams()
+	ios.SetProgressEnabled(true)
+	// spinnerDisabled is false → animated mode
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			ios.IOStreams.StartSpinner("concurrent")
+		}()
+		go func() {
+			defer wg.Done()
+			ios.IOStreams.StopSpinner()
+		}()
+		go func(label string) {
+			defer wg.Done()
+			ios.IOStreams.StartSpinner(label)
+		}(fmt.Sprintf("label-%d", i))
+	}
+	wg.Wait()
+	ios.IOStreams.StopSpinner() // ensure cleanup
 	// Test passes if no panic/deadlock/race
 }
 

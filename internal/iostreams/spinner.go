@@ -42,8 +42,9 @@ func spinnerFrames(t SpinnerType) []string {
 }
 
 // SpinnerFrame returns the rendered frame string for a given type, tick, label, and color scheme.
-// This is a pure function with no side effects — tui's SpinnerModel can delegate to it
-// in its View() method for visual consistency with iostream's spinner.
+// This is a pure function with no side effects, used by the iostreams goroutine spinner.
+// The tui SpinnerModel uses bubbles/spinner directly but maintains visual consistency
+// through shared CyanStyle.
 func SpinnerFrame(t SpinnerType, tick int, label string, cs *ColorScheme) string {
 	frames := spinnerFrames(t)
 	frame := frames[tick%len(frames)]

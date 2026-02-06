@@ -3,8 +3,6 @@ package iostreams
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // KeyValuePair represents a label-value pair for RenderKeyValueBlock.
@@ -74,17 +72,17 @@ func (ios *IOStreams) RenderLabeledDivider(label string) {
 }
 
 // RenderBadge writes a badge-styled label to Out.
-// With colors: styled badge (default BadgeStyle or custom).
+// With colors: styled badge (default BadgeStyle or custom render function).
 // Without colors: [TEXT]
-func (ios *IOStreams) RenderBadge(text string, style ...lipgloss.Style) {
+func (ios *IOStreams) RenderBadge(text string, render ...func(string) string) {
 	cs := ios.ColorScheme()
 
 	if cs.Enabled() {
-		s := BadgeStyle
-		if len(style) > 0 {
-			s = style[0]
+		if len(render) > 0 {
+			fmt.Fprintln(ios.Out, render[0](text))
+		} else {
+			fmt.Fprintln(ios.Out, BadgeStyle.Render(text))
 		}
-		fmt.Fprintln(ios.Out, s.Render(text))
 	} else {
 		fmt.Fprintf(ios.Out, "[%s]\n", text)
 	}

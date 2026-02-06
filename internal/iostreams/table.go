@@ -81,22 +81,27 @@ func (tp *TablePrinter) renderStyled() error {
 	colWidth := available / numCols
 
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+	spacing := strings.Repeat(" ", gap)
 
 	// Render header row
 	var headerParts []string
 	for _, h := range tp.headers {
-		rendered := headerStyle.Width(colWidth).Render(truncateStr(h, colWidth))
+		rendered := headerStyle.Width(colWidth).Render(Truncate(h, colWidth))
 		headerParts = append(headerParts, rendered)
 	}
-	fmt.Fprintln(tp.ios.Out, strings.Join(headerParts, strings.Repeat(" ", gap)))
+	if _, err := fmt.Fprintln(tp.ios.Out, strings.Join(headerParts, spacing)); err != nil {
+		return err
+	}
 
 	// Render divider
 	var dividerParts []string
 	for range tp.headers {
 		dividerParts = append(dividerParts, strings.Repeat("─", colWidth))
 	}
-	divider := DividerStyle.Render(strings.Join(dividerParts, strings.Repeat(" ", gap)))
-	fmt.Fprintln(tp.ios.Out, divider)
+	divider := DividerStyle.Render(strings.Join(dividerParts, spacing))
+	if _, err := fmt.Fprintln(tp.ios.Out, divider); err != nil {
+		return err
+	}
 
 	// Render data rows
 	cellStyle := lipgloss.NewStyle().Width(colWidth)
@@ -104,9 +109,11 @@ func (tp *TablePrinter) renderStyled() error {
 		cols := tp.normalizeRow(row)
 		var parts []string
 		for _, col := range cols {
-			parts = append(parts, cellStyle.Render(truncateStr(col, colWidth)))
+			parts = append(parts, cellStyle.Render(Truncate(col, colWidth)))
 		}
-		fmt.Fprintln(tp.ios.Out, strings.Join(parts, strings.Repeat(" ", gap)))
+		if _, err := fmt.Fprintln(tp.ios.Out, strings.Join(parts, spacing)); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -121,18 +128,4 @@ func (tp *TablePrinter) normalizeRow(row []string) []string {
 		}
 	}
 	return cols
-}
-
-// truncateStr truncates a string to the given width, adding "…" if truncated.
-func truncateStr(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if len(s) <= width {
-		return s
-	}
-	if width <= 1 {
-		return "…"
-	}
-	return s[:width-1] + "…"
 }

@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // HeaderConfig configures a header component.
@@ -40,33 +42,13 @@ type StatusConfig struct {
 }
 
 // RenderStatus renders a status indicator like "● RUNNING".
+// Delegates to iostreams.StatusIndicator for style and symbol selection.
 func RenderStatus(cfg StatusConfig) string {
-	rendered, symbol := StatusIndicator(cfg.Status)
-	_ = rendered // rendered indicator already has the symbol styled
+	style, symbol := iostreams.StatusIndicator(cfg.Status)
 	if cfg.Label == "" {
 		cfg.Label = strings.ToUpper(cfg.Status)
 	}
-	// Use the style from iostreams directly to render symbol + label together
-	style, _ := statusIndicatorStyle(cfg.Status)
-	return style(symbol + " " + cfg.Label)
-}
-
-// statusIndicatorStyle returns a render function for a status string.
-func statusIndicatorStyle(status string) (func(string) string, string) {
-	switch status {
-	case "running":
-		return func(s string) string { return StatusRunningStyle.Render(s) }, "\u25cf" // ●
-	case "stopped", "exited":
-		return func(s string) string { return StatusStoppedStyle.Render(s) }, "\u25cb" // ○
-	case "error", "failed":
-		return func(s string) string { return StatusErrorStyle.Render(s) }, "\u2717" // ✗
-	case "warning":
-		return func(s string) string { return StatusWarningStyle.Render(s) }, "\u26a0" // ⚠
-	case "pending", "waiting":
-		return func(s string) string { return StatusInfoStyle.Render(s) }, "\u25cb" // ○
-	default:
-		return func(s string) string { return MutedStyle.Render(s) }, "\u25cb" // ○
-	}
+	return style.Render(symbol + " " + cfg.Label)
 }
 
 // RenderBadge renders text as a styled badge.

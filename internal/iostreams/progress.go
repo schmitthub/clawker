@@ -13,6 +13,7 @@ type ProgressBar struct {
 	current  int
 	label    string
 	finished bool
+	writeErr bool // circuit-breaker: skip renders after first write failure
 	mu       sync.Mutex
 
 	// Non-TTY threshold tracking: only print at 25% intervals
@@ -101,6 +102,9 @@ func (pb *ProgressBar) Finish() {
 // render dispatches to TTY or non-TTY rendering.
 // Caller must hold pb.mu.
 func (pb *ProgressBar) render() {
+	if pb.writeErr {
+		return
+	}
 	if pb.ios.IsStderrTTY() {
 		pb.renderTTY()
 	} else {
@@ -127,10 +131,14 @@ func (pb *ProgressBar) renderTTY() {
 		}
 	}
 
+	var err error
 	if pb.total > 0 {
-		fmt.Fprintf(pb.ios.ErrOut, "\r\033[K%s [%s] %d%% (%d/%d)", pb.label, bar, pct, pb.current, pb.total)
+		_, err = fmt.Fprintf(pb.ios.ErrOut, "\r\033[K%s [%s] %d%% (%d/%d)", pb.label, bar, pct, pb.current, pb.total)
 	} else {
-		fmt.Fprintf(pb.ios.ErrOut, "\r\033[K%s [%s] %d%%", pb.label, bar, pct)
+		_, err = fmt.Fprintf(pb.ios.ErrOut, "\r\033[K%s [%s] %d%%", pb.label, bar, pct)
+	}
+	if err != nil {
+		pb.writeErr = true
 	}
 }
 
@@ -145,7 +153,9 @@ func (pb *ProgressBar) renderNonTTY(force bool) {
 	}
 
 	pb.lastPrintedPct = threshold
-	fmt.Fprintf(pb.ios.ErrOut, "%s... %d%%\n", pb.label, pct)
+	if _, err := fmt.Fprintf(pb.ios.ErrOut, "%s... %d%%\n", pb.label, pct); err != nil {
+		pb.writeErr = true
+	}
 }
 
 // percentage calculates the current percentage.

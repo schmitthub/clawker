@@ -2,28 +2,28 @@
 
 **Branch:** `a/output-styling`
 **Parent memory:** `PRESENTATION-LAYER-DESIGN.md`
-**Status:** All 6 tasks complete. Ready for merge and command migration follow-up.
+**Status:** All 6 tasks complete. PR review fixes applied. Ready for merge and command migration follow-up.
 
 ---
 
 ## Architecture
 
 ```
-simple commands  →  f.IOStreams  →  iostream  →  lipgloss
-monitor command  →  f.TUI        →  tui  →  iostream (palette only)  →  lipgloss
+simple commands  →  f.IOStreams  →  iostreams  →  lipgloss
+monitor command  →  f.TUI        →  tui  →  iostreams (palette only)  →  lipgloss
 ```
 
 Two packages, **mutually exclusive per command** — no command ever imports both.
 
-**`internal/iostream`** — Core output package. Every non-TUI command uses it via `f.IOStreams`.
+**`internal/iostreams`** — Core output package. Every non-TUI command uses it via `f.IOStreams`.
 **`internal/tui`** — Full-screen BubbleTea experiences. Only monitor uses it via `f.TUI`.
 
 ### Import Boundaries
 
 | Package | Can import | Cannot import |
 |---------|-----------|---------------|
-| `internal/iostream` | `lipgloss`, stdlib | `bubbletea`, `bubbles`, `internal/tui` |
-| `internal/tui` | `bubbletea`, `bubbles`, `internal/iostream` (palette only) | `lipgloss` |
+| `internal/iostreams` | `lipgloss`, stdlib | `bubbletea`, `bubbles`, `internal/tui` |
+| `internal/tui` | `bubbletea`, `bubbles`, `internal/iostreams` (palette only) | `lipgloss` |
 
 ---
 
@@ -75,7 +75,7 @@ Two packages, **mutually exclusive per command** — no command ever imports bot
 
 ### Task 3 Learnings
 - Replaced `briandowns/spinner` 3rd-party library with internal spinner implementation — one fewer dependency, full control over rendering
-- `SpinnerFrame` is a pure function (no I/O, no side effects) that both iostream and tui can call for visual consistency
+- `SpinnerFrame` is a pure function (no I/O, no side effects) that the iostreams goroutine spinner uses for visual consistency
 - `spinnerRunner` uses `sync.Once` for idempotent `Stop()` and a `stopped` channel to wait for goroutine exit before clearing the line — prevents double-close panic and ghost frame artifacts
 - Goroutine exits on write error (broken pipe, terminal disconnect) to avoid a hot error loop
 - Text fallback mode (`spinnerDisabled=true`) prints a new line for each `StartSpinner` call (intentional: CI environments benefit from seeing each status update). Animated mode updates in-place. This behavioral difference is documented in the method comment.

@@ -140,7 +140,7 @@ func TestRenderBadge(t *testing.T) {
 	t.Run("custom style", func(t *testing.T) {
 		tio := NewTestIOStreams()
 		tio.SetColorEnabled(true)
-		tio.IOStreams.RenderBadge("ERROR", BadgeErrorStyle)
+		tio.IOStreams.RenderBadge("ERROR", func(s string) string { return BadgeErrorStyle.Render(s) })
 		output := tio.OutBuf.String()
 		if !strings.Contains(output, "ERROR") {
 			t.Errorf("expected 'ERROR', got: %q", output)

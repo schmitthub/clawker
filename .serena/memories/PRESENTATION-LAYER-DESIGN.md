@@ -15,7 +15,7 @@ graph TD
     end
 
     subgraph "1ST PARTY PRESENTATION — App Style & Interaction"
-        IOSTREAM["<b>internal/iostream</b><br/>App-wide style vocabulary:<br/>colors, icons, tables,<br/>spinners, progress bars,<br/>reusable format helpers"]
+        IOSTREAM["<b>internal/iostreams\1/b><br/>App-wide style vocabulary:<br/>colors, icons, tables,<br/>spinners, progress bars,<br/>reusable format helpers"]
 
         TUI["<b>internal/tui</b><br/>Interactive TUI wrapper:<br/>exposes bubbletea programs,<br/>app-specific models & views,<br/>wraps bubbles components"]
     end

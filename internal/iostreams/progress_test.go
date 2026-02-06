@@ -187,6 +187,22 @@ func TestProgressBar_FinishTwice(t *testing.T) {
 	pb.Finish() // Should not panic
 }
 
+func TestProgressBar_SetAfterFinish(t *testing.T) {
+	ios := NewTestIOStreams()
+	ios.SetProgressEnabled(true)
+
+	pb := ios.IOStreams.NewProgressBar(10, "Test")
+	pb.Finish()
+	ios.ErrBuf.Reset()
+
+	pb.Set(5)
+	pb.Increment()
+
+	if ios.ErrBuf.String() != "" {
+		t.Errorf("Set/Increment after Finish should produce no output, got: %q", ios.ErrBuf.String())
+	}
+}
+
 func TestProgressBar_BarVisuals(t *testing.T) {
 	ios := NewTestIOStreams()
 	ios.SetProgressEnabled(true)

@@ -232,3 +232,24 @@ func TestTablePrinter_Render_WritesToOut(t *testing.T) {
 		t.Errorf("expected no output in ErrBuf, got: %q", tio.ErrBuf.String())
 	}
 }
+
+func TestTablePrinter_Render_StyledMode_Unicode(t *testing.T) {
+	tio := NewTestIOStreams()
+	tio.SetInteractive(true)
+	tio.SetColorEnabled(true)
+	tio.SetTerminalSize(40, 24)
+
+	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tp.AddRow("日本語テスト", "running")
+	tp.AddRow("emoji-🎉-test", "stopped")
+
+	if err := tp.Render(); err != nil {
+		t.Fatalf("Render() error: %v", err)
+	}
+
+	output := tio.OutBuf.String()
+	// Should produce valid output without panicking on multi-byte content
+	if output == "" {
+		t.Error("expected non-empty output with Unicode content")
+	}
+}

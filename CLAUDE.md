@@ -120,7 +120,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | Presentation layer: streams, TTY, colors, tables, spinners, progress, messages, renders |
 | `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
-| `iostreams.SpinnerFrame` | Pure spinner rendering function shared between iostreams and tui for visual consistency |
+| `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
 | `tui.RunProgram` | Launches BubbleTea programs wired to IOStreams (input/output) |
 | `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
 | `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
@@ -225,7 +225,7 @@ security:
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
 10. Presentation layer import boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`. Commands use `f.IOStreams` OR `f.TUI`, never both
 11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` re-exports them via `iostreams.go` shim — no duplicate definitions
-12. `SpinnerFrame()` is a pure function in `iostreams` — both the iostreams goroutine spinner and tui's BubbleTea SpinnerModel can call it for visual consistency
+12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 
 ## Important Gotchas
 
