@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,51 @@ const (
 	readBufSize    = 64 * 1024 // Per-stream read buffer
 	maxMessageSize = 1 << 20   // 1 MiB maximum message payload
 )
+
+// logWriter is the destination for all log output. Defaults to stderr,
+// upgraded to MultiWriter(stderr, file) by initLogging().
+var logWriter io.Writer = os.Stderr
+
+const (
+	logDir     = "/var/log/clawker"
+	logFile    = "socket-server.log"
+	maxLogSize = 1 << 20 // 1 MiB
+)
+
+// initLogging sets up file logging alongside stderr. Returns a cleanup function
+// that closes the log file. Errors are non-fatal — logging degrades to stderr only.
+func initLogging() func() {
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot create log dir %s: %v\n", logDir, err)
+		return func() {}
+	}
+
+	logPath := filepath.Join(logDir, logFile)
+
+	// Simple rotation: if existing log > maxLogSize, rename to .1
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxLogSize {
+		_ = os.Rename(logPath, logPath+".1")
+	}
+
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: cannot open log file %s: %v\n", logPath, err)
+		return func() {}
+	}
+
+	logWriter = io.MultiWriter(os.Stderr, f)
+	return func() { f.Close() }
+}
+
+// logf writes a formatted log message to logWriter.
+func logf(format string, args ...any) {
+	fmt.Fprintf(logWriter, format, args...)
+}
+
+// logln writes a log line to logWriter.
+func logln(msg string) {
+	fmt.Fprintln(logWriter, msg)
+}
 
 // SocketConfig defines a socket to create and forward.
 type SocketConfig struct {
@@ -82,6 +128,7 @@ func getTargetUserFromPath(path string) (int, int) {
 	// Parse username from /home/<username>/... path
 	parts := strings.Split(path, "/")
 	if len(parts) < 3 || parts[1] != "home" {
+		logf("[socket-forwarder] warning: path %q not under /home/, cannot determine target user\n", path)
 		return -1, -1
 	}
 	username := parts[2]
@@ -89,37 +136,56 @@ func getTargetUserFromPath(path string) (int, int) {
 	// Look up user
 	u, err := user.Lookup(username)
 	if err != nil {
+		logf("[socket-forwarder] warning: user lookup failed for %q: %v\n", username, err)
 		return -1, -1
 	}
 
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
+		logf("[socket-forwarder] warning: failed to parse UID %q for user %s: %v\n", u.Uid, username, err)
 		return -1, -1
 	}
 	gid, err := strconv.Atoi(u.Gid)
 	if err != nil {
+		logf("[socket-forwarder] warning: failed to parse GID %q for user %s: %v\n", u.Gid, username, err)
 		return -1, -1
 	}
 
 	return uid, gid
 }
 
+// killExistingGPGAgent kills any running gpg-agent for the given GNUPGHOME directory.
+// This is GPG's own sanctioned mechanism — gpgconf --kill targets only the agent for
+// the specific homedir, needs no sudo, and doesn't depend on procps/pkill.
+// Errors are non-fatal: the agent may not exist (common/expected case).
+func killExistingGPGAgent(gnupgDir string) {
+	cmd := exec.Command("gpgconf", "--homedir", gnupgDir, "--kill", "gpg-agent")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		logf("[socket-forwarder] warning: gpgconf --kill gpg-agent failed: %v (output: %s)\n", err, strings.TrimSpace(string(output)))
+	} else {
+		logf("[socket-forwarder] killed existing gpg-agent for %s\n", gnupgDir)
+	}
+}
+
 func main() {
+	cleanupLog := initLogging()
+	defer cleanupLog()
+
 	// Read socket config from environment
 	socketsJSON := os.Getenv("CLAWKER_REMOTE_SOCKETS")
 	if socketsJSON == "" {
-		fmt.Fprintln(os.Stderr, "[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS not set")
+		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS not set")
 		os.Exit(1)
 	}
 
 	var sockets []SocketConfig
 	if err := json.Unmarshal([]byte(socketsJSON), &sockets); err != nil {
-		fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to parse CLAWKER_REMOTE_SOCKETS: %v\n", err)
+		logf("[socket-forwarder] error: failed to parse CLAWKER_REMOTE_SOCKETS: %v\n", err)
 		os.Exit(1)
 	}
 
 	if len(sockets) == 0 {
-		fmt.Fprintln(os.Stderr, "[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS is empty")
+		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS is empty")
 		os.Exit(1)
 	}
 
@@ -141,22 +207,31 @@ func main() {
 	}
 
 	if hasGPG {
-		fmt.Fprintln(os.Stderr, "[socket-forwarder] waiting for PUBKEY message...")
+		logln("[socket-forwarder] waiting for PUBKEY message...")
 		msg, err := readMessage(reader)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to read pubkey: %v\n", err)
+			logf("[socket-forwarder] error: failed to read pubkey: %v\n", err)
 			f.sendError(0, "failed to read pubkey: "+err.Error())
 			os.Exit(1)
 		}
 		if msg.Type != MsgPubkey {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] error: expected PUBKEY message, got type %d\n", msg.Type)
+			logf("[socket-forwarder] error: expected PUBKEY message, got type %d\n", msg.Type)
 			f.sendError(0, "expected PUBKEY message")
 			os.Exit(1)
 		}
 		if err := f.setupGPGPubkey(msg.Payload); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to setup GPG pubkey: %v\n", err)
+			logf("[socket-forwarder] error: failed to setup GPG pubkey: %v\n", err)
 			f.sendError(0, "failed to setup GPG pubkey: "+err.Error())
 			os.Exit(1)
+		}
+
+		// Kill any existing gpg-agent that may have been auto-started before
+		// our config files were in place. This is GPG's sanctioned mechanism.
+		for _, s := range sockets {
+			if s.Type == "gpg-agent" {
+				killExistingGPGAgent(filepath.Dir(s.Path))
+				break
+			}
 		}
 	}
 
@@ -165,7 +240,7 @@ func main() {
 	for _, sock := range sockets {
 		listener, err := f.createSocketListener(sock)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to create socket %s: %v\n", sock.Path, err)
+			logf("[socket-forwarder] error: failed to create socket %s: %v\n", sock.Path, err)
 			f.sendError(0, fmt.Sprintf("failed to create socket %s: %v", sock.Path, err))
 			os.Exit(1)
 		}
@@ -176,9 +251,9 @@ func main() {
 	}
 
 	// Send READY
-	fmt.Fprintln(os.Stderr, "[socket-forwarder] ready, listening on sockets")
+	logln("[socket-forwarder] ready, listening on sockets")
 	if err := f.sendMessage(Message{Type: MsgReady, StreamID: 0}); err != nil {
-		fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to send READY: %v\n", err)
+		logf("[socket-forwarder] error: failed to send READY: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -187,10 +262,10 @@ func main() {
 		msg, err := readMessage(reader)
 		if err != nil {
 			if err == io.EOF {
-				fmt.Fprintln(os.Stderr, "[socket-forwarder] stdin closed, exiting")
+				logln("[socket-forwarder] stdin closed, exiting")
 				break
 			}
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] read error: %v\n", err)
+			logf("[socket-forwarder] read error: %v\n", err)
 			break
 		}
 
@@ -233,7 +308,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	// Chown directory to target user
 	if uid >= 0 && gid >= 0 {
 		if err := os.Chown(gnupgDir, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", gnupgDir, err)
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", gnupgDir, err)
 		}
 	}
 
@@ -245,11 +320,49 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	// Chown file to target user
 	if uid >= 0 && gid >= 0 {
 		if err := os.Chown(pubringPath, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", pubringPath, err)
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", pubringPath, err)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "[socket-forwarder] wrote %d bytes to %s\n", len(pubkey), pubringPath)
+	logf("[socket-forwarder] wrote %d bytes to %s\n", len(pubkey), pubringPath)
+
+	// Write gpg.conf with no-autostart to prevent GPG from spawning gpg-agent.
+	// Without this, any GPG operation (e.g., gpg --list-secret-keys) auto-starts
+	// gpg-agent --daemon which rebinds S.gpg-agent, stealing the socket from
+	// our forwarding server.
+	gpgConfPath := filepath.Join(gnupgDir, "gpg.conf")
+	gpgConfContent := "# Written by clawker-socket-server to prevent gpg-agent auto-start.\n" +
+		"# The clawker socket bridge handles agent forwarding to the host.\n" +
+		"no-autostart\n"
+	if err := os.WriteFile(gpgConfPath, []byte(gpgConfContent), 0600); err != nil {
+		return fmt.Errorf("write gpg.conf failed: %w", err)
+	}
+	if uid >= 0 && gid >= 0 {
+		if err := os.Chown(gpgConfPath, uid, gid); err != nil {
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", gpgConfPath, err)
+		}
+	}
+	logf("[socket-forwarder] wrote %s (no-autostart)\n", gpgConfPath)
+
+	// Write gpg-agent.conf with sensible container defaults. Note: no-grab and
+	// disable-scdaemon are useful container settings but do NOT prevent gpg-agent
+	// from binding the standard socket (GnuPG 2.1+ mandates it). The real protection
+	// is no-autostart in gpg.conf above, plus killExistingGPGAgent() in main().
+	agentConfPath := filepath.Join(gnupgDir, "gpg-agent.conf")
+	agentConfContent := "# Written by clawker-socket-server — sensible container defaults.\n" +
+		"# These do NOT prevent socket binding; see gpg.conf no-autostart for that.\n" +
+		"no-grab\n" +
+		"disable-scdaemon\n"
+	if err := os.WriteFile(agentConfPath, []byte(agentConfContent), 0600); err != nil {
+		return fmt.Errorf("write gpg-agent.conf failed: %w", err)
+	}
+	if uid >= 0 && gid >= 0 {
+		if err := os.Chown(agentConfPath, uid, gid); err != nil {
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", agentConfPath, err)
+		}
+	}
+	logf("[socket-forwarder] wrote %s (no-grab, disable-scdaemon)\n", agentConfPath)
+
 	return nil
 }
 
@@ -264,12 +377,14 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 	uid, gid := getTargetUserFromPath(sock.Path)
 	if uid >= 0 && gid >= 0 {
 		if err := os.Chown(dir, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
 		}
 	}
 
 	// Remove existing socket
-	os.Remove(sock.Path)
+	if err := os.Remove(sock.Path); err != nil && !os.IsNotExist(err) {
+		logf("[socket-forwarder] warning: failed to remove existing socket %s: %v\n", sock.Path, err)
+	}
 
 	// Create listener
 	listener, err := net.Listen("unix", sock.Path)
@@ -284,11 +399,11 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 	}
 	if uid >= 0 && gid >= 0 {
 		if err := os.Chown(sock.Path, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
+			logf("[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
+	logf("[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
 	return listener, nil
 }
 
@@ -299,7 +414,7 @@ func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] accept error: %v\n", err)
+			logf("[socket-forwarder] accept error: %v\n", err)
 			continue
 		}
 
@@ -316,7 +431,7 @@ func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
 			StreamID: streamID,
 			Payload:  []byte(socketType),
 		}); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send OPEN: %v\n", err)
+			logf("[socket-forwarder] failed to send OPEN: %v\n", err)
 			conn.Close()
 			continue
 		}
@@ -376,7 +491,7 @@ func (f *Forwarder) closeStream(streamID uint32) {
 	if ok {
 		conn.Close()
 		if err := f.sendMessage(Message{Type: MsgClose, StreamID: streamID}); err != nil {
-			fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send CLOSE for stream %d: %v\n", streamID, err)
+			logf("[socket-forwarder] failed to send CLOSE for stream %d: %v\n", streamID, err)
 		}
 	}
 }
@@ -397,7 +512,7 @@ func (f *Forwarder) sendError(streamID uint32, errMsg string) {
 		StreamID: streamID,
 		Payload:  []byte(errMsg),
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send error message: %v\n", err)
+		logf("[socket-forwarder] failed to send error message: %v\n", err)
 	}
 }
 

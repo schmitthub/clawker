@@ -221,6 +221,49 @@ func TestGpgAgentForwarding_EndToEnd(t *testing.T) {
 			"Expected size ~600+ bytes for a real key.")
 
 	// =========================================================================
+	// STEP 5b: Verify gpg.conf exists with no-autostart
+	//
+	// The socket-server must write gpg.conf with "no-autostart" to prevent
+	// GPG from spawning its own gpg-agent daemon, which would steal the
+	// S.gpg-agent socket from our forwarding server.
+	// =========================================================================
+	t.Log("STEP 5b: Checking gpg.conf prevents agent auto-start...")
+
+	result, err = ctr.Exec(ctx, client, "sh", "-c",
+		"cat /home/claude/.gnupg/gpg.conf 2>&1")
+	require.NoError(t, err, "failed to read gpg.conf")
+
+	gpgConf := strings.TrimSpace(result.Stdout)
+	t.Logf("gpg.conf contents:\n%s", gpgConf)
+
+	require.Contains(t, gpgConf, "no-autostart",
+		"gpg.conf must contain 'no-autostart' to prevent GPG from spawning gpg-agent. "+
+			"Without this, gpg-agent --daemon auto-starts and steals the S.gpg-agent socket "+
+			"from the clawker socket-server forwarding bridge.")
+
+	// =========================================================================
+	// STEP 5c: Verify gpg-agent.conf exists with sensible container defaults
+	//
+	// The socket-server writes gpg-agent.conf with no-grab and disable-scdaemon.
+	// These are sensible container defaults (no-grab avoids X11 issues,
+	// disable-scdaemon avoids smartcard probing). They do NOT prevent socket
+	// binding — that's handled by no-autostart in gpg.conf.
+	// =========================================================================
+	t.Log("STEP 5c: Checking gpg-agent.conf has sensible container defaults...")
+
+	result, err = ctr.Exec(ctx, client, "sh", "-c",
+		"cat /home/claude/.gnupg/gpg-agent.conf 2>&1")
+	require.NoError(t, err, "failed to read gpg-agent.conf")
+
+	agentConf := strings.TrimSpace(result.Stdout)
+	t.Logf("gpg-agent.conf contents:\n%s", agentConf)
+
+	require.Contains(t, agentConf, "no-grab",
+		"gpg-agent.conf must contain 'no-grab' for sensible container defaults.")
+	require.Contains(t, agentConf, "disable-scdaemon",
+		"gpg-agent.conf must contain 'disable-scdaemon' to avoid smartcard daemon probing in containers.")
+
+	// =========================================================================
 	// STEP 6: Verify GPG can see the secret key via agent forwarding
 	//
 	// This is the critical test - GPG must show "sec" (secret key available)
@@ -244,6 +287,26 @@ func TestGpgAgentForwarding_EndToEnd(t *testing.T) {
 		"GPG must show 'sec' marker indicating secret key is accessible via agent. "+
 			"This means the socket forwarding to host GPG agent is working. "+
 			"Without 'sec', GPG can see the public key but cannot sign.")
+
+	// =========================================================================
+	// STEP 6b: Verify no competing gpg-agent process is running
+	//
+	// With no-autostart in gpg.conf, the gpg --list-secret-keys call above
+	// should NOT have spawned a competing gpg-agent daemon.
+	// =========================================================================
+	t.Log("STEP 6b: Checking no competing gpg-agent process exists...")
+
+	result, err = ctr.Exec(ctx, client, "sh", "-c",
+		"pgrep -x gpg-agent >/dev/null 2>&1 && echo 'AGENT_RUNNING' || echo 'NO_AGENT'")
+	require.NoError(t, err, "failed to check for gpg-agent process")
+
+	agentStatus := strings.TrimSpace(result.Stdout)
+	t.Logf("gpg-agent process check: %s", agentStatus)
+
+	require.Equal(t, "NO_AGENT", agentStatus,
+		"No competing gpg-agent process should be running. "+
+			"If gpg-agent is running, it means no-autostart is not working and the agent "+
+			"will steal the S.gpg-agent socket from the clawker socket-server.")
 
 	// =========================================================================
 	// STEP 7: Verify GPG can sign data
@@ -325,6 +388,34 @@ func TestGpgAgentForwarding_EndToEnd(t *testing.T) {
 	require.True(t, signatureVerified,
 		"git log --show-signature must show the commit was signed. "+
 			"Expected 'Good signature' or 'gpg: Signature made'. Got: %s", verifyOutput)
+
+	// =========================================================================
+	// STEP 10: Verify socket-server log file exists with expected content
+	//
+	// The socket-server writes to /var/log/clawker/socket-server.log alongside
+	// stderr. Verify the log file exists and contains key lifecycle messages.
+	// =========================================================================
+	t.Log("STEP 10: Checking socket-server log file...")
+
+	result, err = ctr.Exec(ctx, client, "sh", "-c",
+		"cat /var/log/clawker/socket-server.log 2>&1")
+	require.NoError(t, err, "failed to read socket-server log")
+
+	logContent := result.Stdout
+	t.Logf("socket-server.log contents:\n%s", logContent)
+
+	require.Contains(t, logContent, "wrote",
+		"Log file must contain 'wrote' confirming config file writes were logged.")
+	require.Contains(t, logContent, "no-autostart",
+		"Log file must contain 'no-autostart' confirming gpg.conf write was logged.")
+	require.Contains(t, logContent, "ready, listening",
+		"Log file must contain 'ready, listening' confirming socket-server reached ready state.")
+
+	// Soft check: gpgconf --kill should not have reported errors (it may not be
+	// installed in all images, so a warning about gpgconf not found is acceptable,
+	// but an actual kill failure would be concerning).
+	assert.NotContains(t, logContent, "gpgconf --kill gpg-agent failed",
+		"gpgconf --kill gpg-agent should not report failures in the log.")
 
 	t.Log("SUCCESS: GPG agent forwarding is fully functional!")
 }
