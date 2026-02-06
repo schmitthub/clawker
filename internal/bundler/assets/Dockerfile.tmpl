@@ -54,10 +54,12 @@ RUN apk add \
 {{- end}}
     bash \
     less \
-    git \
     procps \
     sudo \
     fzf \
+    gcc \
+    git \
+    musl-dev \
     zsh \
     make \
     man-db \
@@ -88,10 +90,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN apt-get update && apt-get install -y --no-install-recommends \
 {{- end}}
     less \
-    git \
     procps \
     sudo \
     fzf \
+    gcc \
+    git \
+    libc6-dev \
     zsh \
     make \
     man-db \

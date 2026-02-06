@@ -1,8 +1,9 @@
 # No GCC in default dockerfile template
 
-## Status: NOT STARTED
+## Status: DONE
 
 ## Summary
 
-Default dockerfile template does not include GCC, which is required for building in many software projects.
-This issue needs to be addressed to ensure that all necessary tools are available for clawker agents.
+Added `gcc` + `musl-dev` (Alpine) and `gcc` + `libc6-dev` (Debian) to the default Dockerfile template
+in `internal/bundler/assets/Dockerfile.tmpl`. This ensures C compilation toolchains are available
+for clawker agents that need to build native extensions or C code.
