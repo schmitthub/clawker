@@ -412,10 +412,12 @@ func TestGpgAgentForwarding_EndToEnd(t *testing.T) {
 		"Log file must contain 'ready, listening' confirming socket-server reached ready state.")
 
 	// Soft check: gpgconf --kill should not have reported errors (it may not be
-	// installed in all images, so a warning about gpgconf not found is acceptable,
+	// installed in all images, so "executable file not found" is acceptable,
 	// but an actual kill failure would be concerning).
-	assert.NotContains(t, logContent, "gpgconf --kill gpg-agent failed",
-		"gpgconf --kill gpg-agent should not report failures in the log.")
+	if strings.Contains(logContent, "gpgconf --kill gpg-agent failed") {
+		assert.Contains(t, logContent, "executable file not found",
+			"gpgconf --kill failed for a reason other than gpgconf not being installed")
+	}
 
 	t.Log("SUCCESS: GPG agent forwarding is fully functional!")
 }

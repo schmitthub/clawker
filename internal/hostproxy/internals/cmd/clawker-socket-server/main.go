@@ -86,7 +86,11 @@ func initLogging() func() {
 	}
 
 	logWriter = io.MultiWriter(os.Stderr, f)
-	return func() { f.Close() }
+	return func() {
+		if err := f.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to close log file: %v\n", err)
+		}
+	}
 }
 
 // logf writes a formatted log message to logWriter.
