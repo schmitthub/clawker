@@ -1,43 +1,31 @@
-# GPG Socket Conflict Bug [OPEN]
+# GPG Socket Conflict Bug [RESOLVED]
 
-**Status:** OPEN - Not yet addressed
+**Status:** RESOLVED — Multi-layered fix in `clawker-socket-server` (branch `a/gpg-socket-conflict`)
 **Discovered:** 2026-02-05 during bridge lifecycle investigation
-**Related:** Bridge lifecycle fix (PR on branch `a/bridge-bug`)
-
-## Bridge Lifecycle Status (a/bridge-bug branch)
-
-**Completed layers:**
-- Layer 1: Docker events stream in bridge daemon — `watchContainerEvents` subscribes to `die` events, auto-stops bridge on container death
-- Layer 2: Stop/rm hooks — `container stop` and `container rm` call `StopBridge` before Docker operation
-- Layer 3: EnsureBridge container inspect — future work (separate PR)
 
 ## Problem
 
 Inside containers, `gpg-agent --daemon` auto-starts and steals the `S.gpg-agent` Unix socket from the bridge's `clawker-socket-server`. After this happens, GPG operations inside the container talk to the local gpg-agent (which has no keys) instead of being forwarded through the bridge to the host's GPG agent.
 
-## Evidence
+## Fix Applied (Multi-Layered)
 
-`ss -lnx` inside container shows TWO listeners on `/home/claude/.gnupg/S.gpg-agent`:
-- inode 131205 (backlog 64) — `gpg-agent --daemon` (PID 11185, started 04:31)
-- inode 119855 (backlog 4096) — `clawker-socket-server` (PID 24, started 04:29)
+Three layers of protection against gpg-agent socket conflict:
 
-The socket-server creates the socket first, then gpg-agent replaces it when auto-started by the first GPG operation (likely the pubkey import triggered by the bridge).
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| 1 | `gpg.conf` with `no-autostart` | Prevents GPG from spawning gpg-agent on any operation |
+| 2 | `gpgconf --kill gpg-agent` after setup | Kills any pre-existing agent (GPG's sanctioned mechanism) |
+| 3 | `gpg-agent.conf` with `no-grab`, `disable-scdaemon` | Sensible container defaults (do NOT prevent socket binding) |
 
-## Impact
+**Key insight:** GnuPG 2.1+ mandates the standard socket — no `gpg-agent.conf` directive can prevent socket binding. Layer 3 is honest about this (comments say "sensible container defaults" not "defense-in-depth").
 
-- `gpg --list-secret-keys` returns empty inside container (connects to local agent, no keys)
-- `ssh-add -l` works fine (SSH agent forwarding unaffected)
-- `gpg-connect-agent 'KEYINFO --list' '/bye'` returns `OK` with no keys (local agent)
+### Additional improvements:
+- **File logging:** socket-server logs to `/var/log/clawker/socket-server.log` alongside stderr (1MB rotation)
+- **Error visibility:** `getTargetUserFromPath()` now logs on all 4 failure paths; `os.Remove()` logs non-NotExist errors
+- **`logf()`/`logln()`** helpers replace all direct `fmt.Fprintf(os.Stderr)` calls
 
-## Potential Fixes
-
-1. **Prevent gpg-agent auto-start:** Add `no-autostart` to GPG config inside container, or set `GNUPGHOME` env to prevent agent spawning
-2. **Kill competing gpg-agent:** Socket-server or entrypoint script kills any auto-started gpg-agent after creating sockets
-3. **Use abstract sockets or alternative paths:** Avoid the standard `S.gpg-agent` path that gpg-agent auto-binds to
-4. **Socket-server resilience:** Detect when socket is stolen and re-bind
-
-## Files Likely Involved
-
-- Container-side: `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` (socket-server binary code)
-- Container entrypoint scripts: `internal/hostproxy/internals/` (container setup)
-- Bridge start: `internal/socketbridge/bridge.go` (pubkey sending triggers gpg-agent)
+### Test coverage:
+- STEP 5b: `gpg.conf` contains `no-autostart`
+- STEP 5c: `gpg-agent.conf` contains `no-grab` and `disable-scdaemon`
+- STEP 6b: no competing `gpg-agent` process (now `require.Equal`, hard-fail)
+- STEP 10: log file exists with expected lifecycle messages

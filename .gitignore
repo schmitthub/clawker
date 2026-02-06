@@ -82,3 +82,4 @@ RALPH-TEST.md
 
 .idea/
 **/callback-forwarder
+**/clawker-socket-server
