@@ -3,8 +3,6 @@ package tui
 import (
 	"strconv"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // StatusBarModel represents a single-line status bar with left/center/right sections.
@@ -13,17 +11,12 @@ type StatusBarModel struct {
 	center string
 	right  string
 	width  int
-	style  lipgloss.Style
 }
 
 // NewStatusBar creates a new status bar with the given width.
 func NewStatusBar(width int) StatusBarModel {
 	return StatusBarModel{
 		width: width,
-		style: lipgloss.NewStyle().
-			Background(ColorBgAlt).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Padding(0, 1),
 	}
 }
 
@@ -51,19 +44,13 @@ func (m StatusBarModel) SetWidth(width int) StatusBarModel {
 	return m
 }
 
-// SetStyle sets the status bar style.
-func (m StatusBarModel) SetStyle(style lipgloss.Style) StatusBarModel {
-	m.style = style
-	return m
-}
-
 // View renders the status bar.
 func (m StatusBarModel) View() string {
 	// Calculate content with padding removed for space calculation
 	innerWidth := m.width - 2 // Account for padding
 
 	content := FlexRow(innerWidth, m.left, m.center, m.right)
-	return m.style.Width(m.width).Render(content)
+	return StatusBarStyle.Width(m.width).Render(content)
 }
 
 // Left returns the left section content.
@@ -98,7 +85,7 @@ func RenderStatusBar(left, center, right string, width int) string {
 // StatusBarSection represents a styled section of the status bar.
 type StatusBarSection struct {
 	Content string
-	Style   lipgloss.Style
+	Render  func(string) string
 }
 
 // RenderStatusBarWithSections renders a status bar with styled sections.
@@ -107,7 +94,7 @@ func RenderStatusBarWithSections(sections []StatusBarSection, width int) string 
 	totalContent := 0
 
 	for _, s := range sections {
-		content := s.Style.Render(s.Content)
+		content := s.Render(s.Content)
 		parts = append(parts, content)
 		totalContent += CountVisibleWidth(s.Content)
 	}
@@ -140,13 +127,10 @@ func RenderStatusBarWithSections(sections []StatusBarSection, width int) string 
 
 // ModeIndicator creates a styled mode indicator for the status bar.
 func ModeIndicator(mode string, active bool) string {
-	var style lipgloss.Style
 	if active {
-		style = BadgeStyle
-	} else {
-		style = BadgeMutedStyle
+		return BadgeStyle.Render(strings.ToUpper(mode))
 	}
-	return style.Render(strings.ToUpper(mode))
+	return BadgeMutedStyle.Render(strings.ToUpper(mode))
 }
 
 // ConnectionIndicator creates a connection status indicator.

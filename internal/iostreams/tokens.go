@@ -1,7 +1,6 @@
-// Package tui provides shared TUI components for clawker CLI.
-package tui
+package iostreams
 
-// Spacing tokens - consistent spacing values for layouts
+// Spacing tokens — consistent spacing values for layouts.
 const (
 	SpaceNone = 0
 	SpaceXS   = 1
@@ -10,7 +9,7 @@ const (
 	SpaceLG   = 8
 )
 
-// Layout breakpoints - terminal width thresholds
+// Layout breakpoints — terminal width thresholds.
 const (
 	WidthCompact = 60  // Narrow terminals
 	WidthNormal  = 80  // Standard terminals
@@ -55,7 +54,6 @@ func GetLayoutMode(width int) LayoutMode {
 // GetContentWidth calculates usable content width given total width and padding.
 // This accounts for borders (2 chars) and internal padding (2*padding).
 func GetContentWidth(totalWidth, padding int) int {
-	// Account for left/right borders (2) plus internal padding on each side
 	content := totalWidth - 2 - (2 * padding)
 	if content < 0 {
 		return 0

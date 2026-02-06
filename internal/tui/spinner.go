@@ -3,7 +3,6 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // SpinnerType defines the animation style for a spinner.
@@ -25,19 +24,17 @@ const (
 type SpinnerModel struct {
 	spinner spinner.Model
 	label   string
-	style   lipgloss.Style
 }
 
 // NewSpinner creates a new spinner with the specified type and label.
 func NewSpinner(spinnerType SpinnerType, label string) SpinnerModel {
 	s := spinner.New()
 	s.Spinner = mapSpinnerType(spinnerType)
-	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
+	s.Style = CyanStyle
 
 	return SpinnerModel{
 		spinner: s,
 		label:   label,
-		style:   MutedStyle,
 	}
 }
 
@@ -89,24 +86,12 @@ func (m SpinnerModel) View() string {
 	if m.label == "" {
 		return m.spinner.View()
 	}
-	return m.spinner.View() + " " + m.style.Render(m.label)
+	return m.spinner.View() + " " + MutedStyle.Render(m.label)
 }
 
 // SetLabel updates the spinner's label.
 func (m SpinnerModel) SetLabel(label string) SpinnerModel {
 	m.label = label
-	return m
-}
-
-// SetStyle sets the label style.
-func (m SpinnerModel) SetStyle(style lipgloss.Style) SpinnerModel {
-	m.style = style
-	return m
-}
-
-// SetSpinnerStyle sets the spinner animation style.
-func (m SpinnerModel) SetSpinnerStyle(style lipgloss.Style) SpinnerModel {
-	m.spinner.Style = style
 	return m
 }
 

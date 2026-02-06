@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"testing"
@@ -6,69 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStatusStyle(t *testing.T) {
-	tests := []struct {
-		name    string
-		running bool
-	}{
-		{"running", true},
-		{"stopped", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			style := StatusStyle(tt.running)
-			// Verify style can render text
-			result := style.Render("test")
-			assert.Contains(t, result, "test")
-		})
-	}
-}
-
-func TestStatusText(t *testing.T) {
-	tests := []struct {
-		name     string
-		running  bool
-		contains string
-	}{
-		{"running", true, "RUNNING"},
-		{"stopped", false, "STOPPED"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			text := StatusText(tt.running)
-			assert.Contains(t, text, tt.contains)
-		})
-	}
-}
-
-func TestStylesAreDefined(t *testing.T) {
-	// Verify all styles are defined and usable
-	tests := []struct {
-		name   string
-		render func() string
-	}{
-		{"TitleStyle", func() string { return TitleStyle.Render("test") }},
-		{"SubtitleStyle", func() string { return SubtitleStyle.Render("test") }},
-		{"ErrorStyle", func() string { return ErrorStyle.Render("test") }},
-		{"SuccessStyle", func() string { return SuccessStyle.Render("test") }},
-		{"WarningStyle", func() string { return WarningStyle.Render("test") }},
-		{"MutedStyle", func() string { return MutedStyle.Render("test") }},
-		{"HighlightStyle", func() string { return HighlightStyle.Render("test") }},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.render()
-			// Styled text should contain the original text
-			assert.Contains(t, result, "test")
-		})
-	}
-}
-
 func TestColorsAreDefined(t *testing.T) {
-	// Verify all colors are defined
 	colors := []struct {
 		name  string
 		color string
@@ -91,13 +29,52 @@ func TestColorsAreDefined(t *testing.T) {
 
 	for _, tt := range colors {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.NotEmpty(t, tt.color)
+			assert.NotEmpty(t, tt.color, "%s should not be empty", tt.name)
+		})
+	}
+}
+
+func TestTextStylesAreDefined(t *testing.T) {
+	tests := []struct {
+		name   string
+		render func() string
+	}{
+		{"TitleStyle", func() string { return TitleStyle.Render("test") }},
+		{"SubtitleStyle", func() string { return SubtitleStyle.Render("test") }},
+		{"ErrorStyle", func() string { return ErrorStyle.Render("test") }},
+		{"SuccessStyle", func() string { return SuccessStyle.Render("test") }},
+		{"WarningStyle", func() string { return WarningStyle.Render("test") }},
+		{"MutedStyle", func() string { return MutedStyle.Render("test") }},
+		{"HighlightStyle", func() string { return HighlightStyle.Render("test") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.render()
+			assert.Contains(t, result, "test")
+		})
+	}
+}
+
+func TestBorderStylesAreDefined(t *testing.T) {
+	tests := []struct {
+		name   string
+		render func() string
+	}{
+		{"BorderStyle", func() string { return BorderStyle.Render("test") }},
+		{"BorderActiveStyle", func() string { return BorderActiveStyle.Render("test") }},
+		{"BorderMutedStyle", func() string { return BorderMutedStyle.Render("test") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.render()
+			assert.Contains(t, result, "test")
 		})
 	}
 }
 
 func TestComponentStylesAreDefined(t *testing.T) {
-	// Verify component styles can render
 	tests := []struct {
 		name   string
 		render func() string
@@ -129,6 +106,8 @@ func TestComponentStylesAreDefined(t *testing.T) {
 		{"BadgeMutedStyle", func() string { return BadgeMutedStyle.Render("test") }},
 		{"DividerStyle", func() string { return DividerStyle.Render("test") }},
 		{"EmptyStateStyle", func() string { return EmptyStateStyle.Render("test") }},
+		{"StatusBarStyle", func() string { return StatusBarStyle.Render("test") }},
+		{"TagStyle", func() string { return TagStyle.Render("test") }},
 	}
 
 	for _, tt := range tests {
@@ -139,7 +118,43 @@ func TestComponentStylesAreDefined(t *testing.T) {
 	}
 }
 
-func TestStatusIndicator(t *testing.T) {
+func TestStatusStyleFunc(t *testing.T) {
+	tests := []struct {
+		name    string
+		running bool
+	}{
+		{"running", true},
+		{"stopped", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			style := StatusStyle(tt.running)
+			result := style.Render("test")
+			assert.Contains(t, result, "test")
+		})
+	}
+}
+
+func TestStatusTextFunc(t *testing.T) {
+	tests := []struct {
+		name     string
+		running  bool
+		contains string
+	}{
+		{"running", true, "RUNNING"},
+		{"stopped", false, "STOPPED"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text := StatusText(tt.running)
+			assert.Contains(t, text, tt.contains)
+		})
+	}
+}
+
+func TestStatusIndicatorFunc(t *testing.T) {
 	tests := []struct {
 		name       string
 		status     string
@@ -160,7 +175,6 @@ func TestStatusIndicator(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			style, symbol := StatusIndicator(tt.status)
 			assert.Equal(t, tt.wantSymbol, symbol)
-			// Verify style can render
 			result := style.Render("test")
 			assert.Contains(t, result, "test")
 		})

@@ -1,10 +1,28 @@
-package tui
+package iostreams
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestSpacingTokenValues(t *testing.T) {
+	assert.Equal(t, 0, SpaceNone)
+	assert.Equal(t, 1, SpaceXS)
+	assert.Equal(t, 2, SpaceSM)
+	assert.Equal(t, 4, SpaceMD)
+	assert.Equal(t, 8, SpaceLG)
+}
+
+func TestWidthBreakpointValues(t *testing.T) {
+	assert.Equal(t, 60, WidthCompact)
+	assert.Equal(t, 80, WidthNormal)
+	assert.Equal(t, 120, WidthWide)
+
+	// Breakpoints should be in ascending order
+	assert.Less(t, WidthCompact, WidthNormal)
+	assert.Less(t, WidthNormal, WidthWide)
+}
 
 func TestLayoutMode_String(t *testing.T) {
 	tests := []struct {
@@ -39,6 +57,8 @@ func TestGetLayoutMode(t *testing.T) {
 		{"below wide", 119, LayoutNormal},
 		{"wide threshold", 120, LayoutWide},
 		{"very wide", 200, LayoutWide},
+		{"zero width", 0, LayoutCompact},
+		{"negative width", -1, LayoutCompact},
 	}
 
 	for _, tt := range tests {
@@ -55,12 +75,12 @@ func TestGetContentWidth(t *testing.T) {
 		padding    int
 		want       int
 	}{
-		{"standard", 80, 1, 76},       // 80 - 2 (borders) - 2 (padding)
-		{"no padding", 80, 0, 78},     // 80 - 2 (borders)
-		{"large padding", 80, 4, 70},  // 80 - 2 - 8
-		{"narrow", 20, 1, 16},         // 20 - 2 - 2
-		{"too narrow", 4, 2, 0},       // Would be negative, returns 0
-		{"zero width", 0, 0, 0},       // Edge case
+		{"standard", 80, 1, 76},
+		{"no padding", 80, 0, 78},
+		{"large padding", 80, 4, 70},
+		{"narrow", 20, 1, 16},
+		{"too narrow", 4, 2, 0},
+		{"zero width", 0, 0, 0},
 	}
 
 	for _, tt := range tests {
@@ -81,7 +101,7 @@ func TestGetContentHeight(t *testing.T) {
 		{"standard", 24, 3, 1, 20},
 		{"no header/footer", 24, 0, 0, 24},
 		{"large header", 24, 10, 2, 12},
-		{"too small", 5, 3, 3, 0}, // Would be negative, returns 0
+		{"too small", 5, 3, 3, 0},
 		{"zero height", 0, 0, 0, 0},
 	}
 
@@ -134,10 +154,10 @@ func TestMaxInt(t *testing.T) {
 
 func TestClampInt(t *testing.T) {
 	tests := []struct {
-		name       string
-		value      int
-		min, max   int
-		want       int
+		name     string
+		value    int
+		min, max int
+		want     int
 	}{
 		{"within range", 5, 0, 10, 5},
 		{"at min", 0, 0, 10, 0},
@@ -152,24 +172,4 @@ func TestClampInt(t *testing.T) {
 			assert.Equal(t, tt.want, ClampInt(tt.value, tt.min, tt.max))
 		})
 	}
-}
-
-func TestSpacingTokensValues(t *testing.T) {
-	// Verify spacing tokens have expected values
-	assert.Equal(t, 0, SpaceNone)
-	assert.Equal(t, 1, SpaceXS)
-	assert.Equal(t, 2, SpaceSM)
-	assert.Equal(t, 4, SpaceMD)
-	assert.Equal(t, 8, SpaceLG)
-}
-
-func TestWidthBreakpointValues(t *testing.T) {
-	// Verify breakpoint values are sensible
-	assert.Equal(t, 60, WidthCompact)
-	assert.Equal(t, 80, WidthNormal)
-	assert.Equal(t, 120, WidthWide)
-
-	// Breakpoints should be in ascending order
-	assert.Less(t, WidthCompact, WidthNormal)
-	assert.Less(t, WidthNormal, WidthWide)
 }

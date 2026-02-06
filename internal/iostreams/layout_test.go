@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"strings"
@@ -9,11 +9,11 @@ import (
 
 func TestSplitHorizontal(t *testing.T) {
 	tests := []struct {
-		name       string
-		width      int
-		cfg        SplitConfig
-		wantLeft   int
-		wantRight  int
+		name      string
+		width     int
+		cfg       SplitConfig
+		wantLeft  int
+		wantRight int
 	}{
 		{
 			name:  "50/50 split",
@@ -172,8 +172,8 @@ func TestRow(t *testing.T) {
 		wantParts  []string
 	}{
 		{
-			name:       "no spacing",
-			spacing:    0,
+			name:       "joins with spacing",
+			spacing:    2,
 			components: []string{"a", "b"},
 			wantParts:  []string{"a", "b"},
 		},
@@ -184,9 +184,15 @@ func TestRow(t *testing.T) {
 			wantParts:  []string{"a", "c"},
 		},
 		{
-			name:       "all empty",
+			name:       "all empty returns empty",
 			spacing:    0,
 			components: []string{"", ""},
+			wantParts:  nil,
+		},
+		{
+			name:       "no components",
+			spacing:    0,
+			components: []string{},
 			wantParts:  nil,
 		},
 	}
@@ -194,8 +200,12 @@ func TestRow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := Row(tt.spacing, tt.components...)
-			for _, part := range tt.wantParts {
-				assert.Contains(t, result, part)
+			if tt.wantParts == nil {
+				assert.Empty(t, result)
+			} else {
+				for _, part := range tt.wantParts {
+					assert.Contains(t, result, part)
+				}
 			}
 		})
 	}
@@ -206,12 +216,14 @@ func TestColumns(t *testing.T) {
 	assert.Contains(t, result, "col1")
 	assert.Contains(t, result, "col2")
 	assert.Contains(t, result, "col3")
+
+	// Empty returns empty
+	assert.Empty(t, Columns(80, 2))
 }
 
 func TestCenterInRect(t *testing.T) {
 	result := CenterInRect("test", 20, 5)
 	assert.Contains(t, result, "test")
-	// Check that it has some width
 	lines := strings.Split(result, "\n")
 	assert.True(t, len(lines) > 0)
 }
@@ -302,13 +314,25 @@ func TestGrid(t *testing.T) {
 			},
 			items: []string{},
 		},
+		{
+			name: "zero columns",
+			cfg: GridConfig{
+				Columns: 0,
+				Width:   40,
+			},
+			items: []string{"a"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := Grid(tt.cfg, tt.items...)
-			for _, item := range tt.items {
-				assert.Contains(t, result, item)
+			if tt.cfg.Columns <= 0 || len(tt.items) == 0 {
+				assert.Empty(t, result)
+			} else {
+				for _, item := range tt.items {
+					assert.Contains(t, result, item)
+				}
 			}
 		})
 	}
@@ -326,9 +350,9 @@ func TestBox(t *testing.T) {
 
 func TestResponsiveLayout(t *testing.T) {
 	layout := ResponsiveLayout{
-		Compact: func() string { return "compact" },
-		Normal:  func() string { return "normal" },
-		Wide:    func() string { return "wide" },
+		Compact: func(w int) string { return "compact" },
+		Normal:  func(w int) string { return "normal" },
+		Wide:    func(w int) string { return "wide" },
 	}
 
 	tests := []struct {
@@ -350,15 +374,26 @@ func TestResponsiveLayout(t *testing.T) {
 }
 
 func TestResponsiveLayout_Fallback(t *testing.T) {
-	// Test fallback when only compact is defined
 	layout := ResponsiveLayout{
-		Compact: func() string { return "compact" },
+		Compact: func(w int) string { return "compact" },
 	}
 
-	// Should fallback to compact for all widths
 	assert.Equal(t, "compact", layout.Render(50))
 	assert.Equal(t, "compact", layout.Render(80))
 	assert.Equal(t, "compact", layout.Render(120))
+}
+
+func TestResponsiveLayout_PassesWidth(t *testing.T) {
+	layout := ResponsiveLayout{
+		Compact: func(w int) string { return "" },
+		Normal: func(w int) string {
+			assert.Equal(t, 90, w)
+			return "got width"
+		},
+	}
+
+	result := layout.Render(90)
+	assert.Equal(t, "got width", result)
 }
 
 func TestDefaultSplitConfig(t *testing.T) {

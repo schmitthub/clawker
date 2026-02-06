@@ -36,3 +36,4 @@ Date: 2026-02-03. All 39 doc files fresh. Root CLAUDE.md at 231 lines. IP range 
 - Commands: `NewCmd(f, runF)` pattern — `runF` is the test seam
 - Docker: `docker.Client` wraps `whail.Engine` wraps moby `APIClient`
 - Mock chain: `dockertest.FakeClient` → function-field fakes → `docker.Client`
+- Presentation: `iostreams` (lipgloss styles/tables/spinners) → `tui` (bubbletea models) — strict import boundaries, commands use one or the other

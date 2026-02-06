@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // HeaderConfig configures a header component.
@@ -42,8 +42,9 @@ type StatusConfig struct {
 }
 
 // RenderStatus renders a status indicator like "● RUNNING".
+// Delegates to iostreams.StatusIndicator for style and symbol selection.
 func RenderStatus(cfg StatusConfig) string {
-	style, symbol := StatusIndicator(cfg.Status)
+	style, symbol := iostreams.StatusIndicator(cfg.Status)
 	if cfg.Label == "" {
 		cfg.Label = strings.ToUpper(cfg.Status)
 	}
@@ -51,8 +52,12 @@ func RenderStatus(cfg StatusConfig) string {
 }
 
 // RenderBadge renders text as a styled badge.
-func RenderBadge(text string, style lipgloss.Style) string {
-	return style.Render(text)
+// If no render function is provided, uses BadgeStyle.
+func RenderBadge(text string, render ...func(string) string) string {
+	if len(render) > 0 {
+		return render[0](text)
+	}
+	return BadgeStyle.Render(text)
 }
 
 // RenderCountBadge renders a count with a label, like "3 tasks".
@@ -238,7 +243,7 @@ func RenderTable(cfg TableConfig) string {
 			if i < len(row) {
 				val = row[i]
 			}
-			rowParts = append(rowParts, lipgloss.NewStyle().Width(width).Render(Truncate(val, width)))
+			rowParts = append(rowParts, PadRight(Truncate(val, width), width))
 		}
 		lines = append(lines, strings.Join(rowParts, " "))
 	}
@@ -278,25 +283,24 @@ func RenderBytes(bytes int64) string {
 }
 
 // RenderTag renders a tag-like element.
-func RenderTag(text string, color lipgloss.Color) string {
-	style := lipgloss.NewStyle().
-		Foreground(color).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(color).
-		Padding(0, 1)
-
-	return style.Render(text)
+// If no render function is provided, uses TagStyle.
+func RenderTag(text string, render ...func(string) string) string {
+	if len(render) > 0 {
+		return render[0](text)
+	}
+	return TagStyle.Render(text)
 }
 
 // RenderTags renders multiple tags inline.
-func RenderTags(tags []string, color lipgloss.Color) string {
+// If no render function is provided, uses TagStyle.
+func RenderTags(tags []string, render ...func(string) string) string {
 	if len(tags) == 0 {
 		return ""
 	}
 
 	var rendered []string
 	for _, tag := range tags {
-		rendered = append(rendered, RenderTag(tag, color))
+		rendered = append(rendered, RenderTag(tag, render...))
 	}
 
 	return strings.Join(rendered, " ")

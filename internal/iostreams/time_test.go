@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"testing"
@@ -39,7 +39,6 @@ func TestFormatRelative(t *testing.T) {
 }
 
 func TestFormatRelative_Future(t *testing.T) {
-	// Add a small buffer to account for test execution time
 	buffer := 2 * time.Second
 	now := time.Now()
 
@@ -86,27 +85,19 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestFormatTimestamp(t *testing.T) {
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 14, 30, 45, 0, time.Local)
-	yesterday := today.Add(-24 * time.Hour)
-
 	tests := []struct {
-		name  string
-		time  time.Time
-		short bool
-		want  string
+		name string
+		time time.Time
+		want string
 	}{
-		{"zero time short", time.Time{}, true, "-"},
-		{"zero time long", time.Time{}, false, "-"},
-		{"today short", today, true, "14:30"},
-		{"today long", today, false, "14:30:45"},
-		{"yesterday short", yesterday, true, yesterday.Format("Jan 2 15:04")},
-		{"yesterday long", yesterday, false, yesterday.Format("Jan 2 15:04:05")},
+		{"zero time", time.Time{}, "-"},
+		{"normal timestamp", time.Date(2024, 1, 15, 14, 30, 0, 0, time.UTC), "2024-01-15 14:30:00"},
+		{"midnight", time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), "2024-06-01 00:00:00"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, FormatTimestamp(tt.time, tt.short))
+			assert.Equal(t, tt.want, FormatTimestamp(tt.time))
 		})
 	}
 }
@@ -117,12 +108,12 @@ func TestFormatUptime(t *testing.T) {
 		duration time.Duration
 		want     string
 	}{
-		{"zero", 0, "00:00:00"},
-		{"seconds only", 45 * time.Second, "00:00:45"},
-		{"minutes and seconds", 5*time.Minute + 30*time.Second, "00:05:30"},
-		{"hours minutes seconds", 2*time.Hour + 15*time.Minute + 30*time.Second, "02:15:30"},
-		{"over 99 hours", 100*time.Hour + 30*time.Minute, "4d 04:30:00"},
-		{"negative becomes zero", -5 * time.Minute, "00:00:00"},
+		{"zero", 0, "0s"},
+		{"seconds", 45 * time.Second, "45s"},
+		{"minutes and seconds", 5*time.Minute + 30*time.Second, "5m 30s"},
+		{"hours and minutes", 2*time.Hour + 15*time.Minute, "2h 15m"},
+		{"days", 50*time.Hour + 30*time.Minute, "2d 2h 30m"},
+		{"negative becomes zero", -5 * time.Minute, "0s"},
 	}
 
 	for _, tt := range tests {
@@ -156,32 +147,12 @@ func TestFormatDateTime(t *testing.T) {
 		want string
 	}{
 		{"zero time", time.Time{}, "-"},
-		{"normal datetime", time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC), "Mar 15, 2024 14:30"},
+		{"normal datetime", time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC), "Mar 15, 2024 2:30 PM"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, FormatDateTime(tt.time))
-		})
-	}
-}
-
-func TestParseDurationOrDefault(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      string
-		defaultVal time.Duration
-		want       time.Duration
-	}{
-		{"valid duration", "5m", time.Minute, 5 * time.Minute},
-		{"empty string", "", time.Minute, time.Minute},
-		{"invalid string", "invalid", time.Minute, time.Minute},
-		{"zero duration", "0s", time.Minute, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, ParseDurationOrDefault(tt.input, tt.defaultVal))
 		})
 	}
 }

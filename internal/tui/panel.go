@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // PanelConfig configures a panel component.
@@ -85,21 +83,13 @@ func (p PanelModel) SetPadding(padding int) PanelModel {
 
 // View renders the panel.
 func (p PanelModel) View() string {
-	var style lipgloss.Style
+	style := PanelStyle
 	if p.focused {
 		style = PanelActiveStyle
-	} else {
-		style = PanelStyle
 	}
 
 	// Calculate content dimensions
 	contentWidth := max(p.width-2-(p.padding*2), 0) // borders + padding
-
-	contentHeight := p.height - 2 // borders
-	if p.title != "" {
-		contentHeight-- // Title takes a line
-	}
-	contentHeight = max(contentHeight, 0)
 
 	// Build content
 	var content strings.Builder
@@ -285,8 +275,7 @@ func (g PanelGroup) RenderHorizontal(gap int) string {
 		views = append(views, p.View())
 	}
 
-	spacer := strings.Repeat(" ", gap)
-	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(views, spacer))
+	return Row(gap, views...)
 }
 
 // RenderVertical renders panels in a vertical stack.

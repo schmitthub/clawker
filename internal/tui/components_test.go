@@ -72,7 +72,12 @@ func TestRenderStatus(t *testing.T) {
 }
 
 func TestRenderBadge(t *testing.T) {
-	result := RenderBadge("TEST", BadgeStyle)
+	result := RenderBadge("TEST", func(s string) string { return BadgeStyle.Render(s) })
+	assert.Contains(t, result, "TEST")
+}
+
+func TestRenderBadge_Default(t *testing.T) {
+	result := RenderBadge("TEST")
 	assert.Contains(t, result, "TEST")
 }
 
@@ -298,7 +303,12 @@ func TestRenderBytes(t *testing.T) {
 }
 
 func TestRenderTag(t *testing.T) {
-	result := RenderTag("production", ColorSuccess)
+	result := RenderTag("production", func(s string) string { return SuccessStyle.Render(s) })
+	assert.Contains(t, result, "production")
+}
+
+func TestRenderTag_Default(t *testing.T) {
+	result := RenderTag("production")
 	assert.Contains(t, result, "production")
 }
 
@@ -314,10 +324,16 @@ func TestRenderTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := RenderTags(tt.tags, ColorPrimary)
+			result := RenderTags(tt.tags, func(s string) string { return BadgeStyle.Render(s) })
 			for _, tag := range tt.tags {
 				assert.Contains(t, result, tag)
 			}
 		})
 	}
+}
+
+func TestRenderTags_Default(t *testing.T) {
+	result := RenderTags([]string{"tag1", "tag2"})
+	assert.Contains(t, result, "tag1")
+	assert.Contains(t, result, "tag2")
 }

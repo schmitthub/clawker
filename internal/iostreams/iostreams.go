@@ -7,9 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/briandowns/spinner"
 	"github.com/schmitthub/clawker/internal/logger"
 	termcap "github.com/schmitthub/clawker/internal/term"
 	goterm "golang.org/x/term"
@@ -50,10 +48,10 @@ type IOStreams struct {
 	// terminalTheme is the detected terminal theme: "light", "dark", or "none"
 	terminalTheme string
 
-	// Progress indicator state
+	// Spinner state
 	progressIndicatorEnabled bool
-	progressIndicator        *spinner.Spinner
-	progressIndicatorMu      sync.Mutex
+	activeSpinner            *spinnerRunner
+	spinnerMu                sync.Mutex
 	spinnerDisabled          bool
 
 	// Pager state
@@ -274,77 +272,24 @@ func (s *IOStreams) InvalidateTerminalSizeCache() {
 }
 
 // StartProgressIndicator starts a spinner on stderr.
+//
+// Deprecated: Use StartSpinner instead.
 func (s *IOStreams) StartProgressIndicator() {
-	s.StartProgressIndicatorWithLabel("")
+	s.StartSpinner("")
 }
 
 // StartProgressIndicatorWithLabel starts a spinner with a label on stderr.
+//
+// Deprecated: Use StartSpinner instead.
 func (s *IOStreams) StartProgressIndicatorWithLabel(label string) {
-	if !s.progressIndicatorEnabled {
-		return
-	}
-
-	s.progressIndicatorMu.Lock()
-	defer s.progressIndicatorMu.Unlock()
-
-	// Check spinnerDisabled inside mutex for thread safety
-	if s.spinnerDisabled {
-		s.startTextualProgressIndicatorLocked(label)
-		return
-	}
-
-	// If spinner already running, just update the prefix
-	if s.progressIndicator != nil {
-		if label == "" {
-			s.progressIndicator.Prefix = ""
-		} else {
-			s.progressIndicator.Prefix = label + " "
-		}
-		return
-	}
-
-	// Create new spinner
-	// CharSets[11] is braille: ⣾ ⣷ ⣽ ⣻ ⡿
-	// Note: spinner.WithColor silently ignores invalid colors per library design.
-	// "fgCyan" is a verified valid color (see TestProgressIndicator_ColorIsValid).
-	sp := spinner.New(spinner.CharSets[11], 120*time.Millisecond,
-		spinner.WithWriter(s.ErrOut),
-		spinner.WithColor("fgCyan"))
-	if label != "" {
-		sp.Prefix = label + " "
-	}
-
-	sp.Start()
-	s.progressIndicator = sp
-}
-
-// startTextualProgressIndicatorLocked prints a one-time text message instead of animated spinner.
-// Caller must hold progressIndicatorMu.
-func (s *IOStreams) startTextualProgressIndicatorLocked(label string) {
-	// Default label when spinner disabled
-	if label == "" {
-		label = "Working..."
-	}
-
-	// Add ellipsis if not present
-	if !strings.HasSuffix(label, "...") {
-		label = label + "..."
-	}
-
-	fmt.Fprintf(s.ErrOut, "%s\n", s.ColorScheme().Cyan(label))
+	s.StartSpinner(label)
 }
 
 // StopProgressIndicator stops the spinner.
+//
+// Deprecated: Use StopSpinner instead.
 func (s *IOStreams) StopProgressIndicator() {
-	s.progressIndicatorMu.Lock()
-	defer s.progressIndicatorMu.Unlock()
-
-	if s.progressIndicator == nil {
-		return
-	}
-
-	s.progressIndicator.Stop()
-	s.progressIndicator = nil
+	s.StopSpinner()
 }
 
 // GetSpinnerDisabled returns whether the animated spinner is disabled.
@@ -358,11 +303,10 @@ func (s *IOStreams) SetSpinnerDisabled(v bool) {
 }
 
 // RunWithProgress runs a function while showing a spinner.
-// The spinner is automatically stopped when the function returns.
+//
+// Deprecated: Use RunWithSpinner instead.
 func (s *IOStreams) RunWithProgress(label string, fn func() error) error {
-	s.StartProgressIndicatorWithLabel(label)
-	defer s.StopProgressIndicator()
-	return fn()
+	return s.RunWithSpinner(label, fn)
 }
 
 // SetPager sets the pager command to use for output.
@@ -503,10 +447,13 @@ type TestIOStreams struct {
 
 // testBuffer wraps a byte slice for use in tests.
 type testBuffer struct {
+	mu   sync.Mutex
 	data []byte
 }
 
 func (b *testBuffer) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if len(b.data) == 0 {
 		return 0, io.EOF
 	}
@@ -516,20 +463,28 @@ func (b *testBuffer) Read(p []byte) (int, error) {
 }
 
 func (b *testBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = append(b.data, p...)
 	return len(p), nil
 }
 
 func (b *testBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return string(b.data)
 }
 
 func (b *testBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = nil
 }
 
 // SetInput sets the input data for the test buffer.
 func (b *testBuffer) SetInput(s string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = []byte(s)
 }
 
