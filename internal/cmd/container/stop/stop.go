@@ -8,14 +8,17 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent   bool
 	Timeout int
@@ -27,9 +30,10 @@ type StopOptions struct {
 // NewCmdStop creates the container stop command.
 func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
 	opts := &StopOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:     f.IOStreams,
+		Client:       f.Client,
+		Config:       f.Config,
+		SocketBridge: f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -113,6 +117,15 @@ func stopContainer(ctx context.Context, client *docker.Client, name string, opts
 	}
 	if container == nil {
 		return fmt.Errorf("container %q not found", name)
+	}
+
+	// Stop socket bridge before stopping the container (best-effort)
+	if opts.SocketBridge != nil {
+		if mgr := opts.SocketBridge(); mgr != nil {
+			if err := mgr.StopBridge(container.ID); err != nil {
+				logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+			}
+		}
 	}
 
 	// If signal specified, send that signal instead of using stop
