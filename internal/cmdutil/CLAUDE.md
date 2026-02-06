@@ -20,7 +20,7 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 7 fields total: 3 eager values + 4 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 9 fields total: 3 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -30,11 +30,12 @@ type Factory struct {
     IOStreams *iostreams.IOStreams
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
-    Client     func(context.Context) (*docker.Client, error)
-    Config     func() *config.Config
-    GitManager func() (*git.GitManager, error)
-    HostProxy  func() *hostproxy.Manager
-    Prompter   func() *prompter.Prompter
+    Client       func(context.Context) (*docker.Client, error)
+    Config       func() *config.Config
+    GitManager   func() (*git.GitManager, error)
+    HostProxy    func() *hostproxy.Manager
+    SocketBridge func() socketbridge.SocketBridgeManager
+    Prompter     func() *prompter.Prompter
 }
 ```
 
@@ -44,6 +45,7 @@ type Factory struct {
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
 - `HostProxy()` -- returns `*hostproxy.Manager`; commands call `.EnsureRunning()` / `.Stop(ctx)` on it
+- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `socketbridgetest.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 
 **Config gateway pattern:** Instead of separate `f.Settings()`, `f.Registry()`, `f.Resolution()` fields, commands now use `f.Config().Settings()`, `f.Config().Registry()`, `f.Config().Resolution()`, etc.

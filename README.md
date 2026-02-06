@@ -712,7 +712,7 @@ CLAUDE_CODE_ENABLE_TELEMETRY=1
 |  |  Host Proxy  |<--------|  - host-open (browser URLs)           |  |
 |  |   (:18374)   |         |  - callback-forwarder (OAuth)         |  |
 |  |              |         |  - git-credential-clawker (HTTPS)     |  |
-|  | - OAuth      |         |  - ssh-agent-proxy (SSH keys)         |  |
+|  | - OAuth      |         |  - clawker-socket-server (SSH/GPG)    |  |
 |  | - Git creds  |         +--------------------------------------+  |
 |  | - URL open   |                                                    |
 |  +--------------+         +--------------------------------------+  |

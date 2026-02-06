@@ -181,6 +181,43 @@ func TestManagerStopAll(t *testing.T) {
 	})
 }
 
+func TestShortID(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"abcdefghijklmnop", "abcdefghijkl"},
+		{"abc", "abc"},
+		{"", ""},
+		{"exactly12ch", "exactly12ch"},
+		{"1234567890ab", "1234567890ab"},
+		{"1234567890abc", "1234567890ab"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, shortID(tt.input), "shortID(%q)", tt.input)
+	}
+}
+
+func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAWKER_HOME", dir)
+
+	m := NewManager()
+	// Pre-track a bridge with a short container ID and the current PID
+	shortContainerID := "short"
+	pidFile := filepath.Join(dir, "bridges", shortContainerID+".pid")
+	m.bridges[shortContainerID] = &bridgeProcess{
+		pid:     os.Getpid(),
+		pidFile: pidFile,
+	}
+
+	// This should NOT panic from containerID[:12] slicing
+	assert.NotPanics(t, func() {
+		err := m.EnsureBridge(shortContainerID, false)
+		assert.NoError(t, err)
+	})
+}
+
 func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAWKER_HOME", dir)

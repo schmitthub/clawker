@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -33,6 +34,9 @@ import (
 	"sync/atomic"
 )
 
+// ProtocolVersion is the muxrpc wire protocol version.
+const ProtocolVersion = 1
+
 // Message types
 const (
 	MsgData   byte = 1 // Socket data
@@ -41,6 +45,12 @@ const (
 	MsgPubkey byte = 4 // GPG public key data
 	MsgReady  byte = 5 // Forwarder ready
 	MsgError  byte = 6 // Error message
+)
+
+// Buffer and message size limits.
+const (
+	readBufSize    = 64 * 1024 // Per-stream read buffer
+	maxMessageSize = 1 << 20   // 1 MiB maximum message payload
 )
 
 // SocketConfig defines a socket to create and forward.
@@ -167,7 +177,10 @@ func main() {
 
 	// Send READY
 	fmt.Fprintln(os.Stderr, "[socket-forwarder] ready, listening on sockets")
-	f.sendMessage(Message{Type: MsgReady, StreamID: 0})
+	if err := f.sendMessage(Message{Type: MsgReady, StreamID: 0}); err != nil {
+		fmt.Fprintf(os.Stderr, "[socket-forwarder] error: failed to send READY: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Main loop: read messages from host and dispatch to streams
 	for {
@@ -219,7 +232,9 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	}
 	// Chown directory to target user
 	if uid >= 0 && gid >= 0 {
-		os.Chown(gnupgDir, uid, gid)
+		if err := os.Chown(gnupgDir, uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", gnupgDir, err)
+		}
 	}
 
 	// Write pubring.kbx
@@ -229,7 +244,9 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	}
 	// Chown file to target user
 	if uid >= 0 && gid >= 0 {
-		os.Chown(pubringPath, uid, gid)
+		if err := os.Chown(pubringPath, uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", pubringPath, err)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "[socket-forwarder] wrote %d bytes to %s\n", len(pubkey), pubringPath)
@@ -246,7 +263,9 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 	// Get target user from socket path
 	uid, gid := getTargetUserFromPath(sock.Path)
 	if uid >= 0 && gid >= 0 {
-		os.Chown(dir, uid, gid)
+		if err := os.Chown(dir, uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", dir, err)
+		}
 	}
 
 	// Remove existing socket
@@ -264,7 +283,9 @@ func (f *Forwarder) createSocketListener(sock SocketConfig) (net.Listener, error
 		return nil, err
 	}
 	if uid >= 0 && gid >= 0 {
-		os.Chown(sock.Path, uid, gid)
+		if err := os.Chown(sock.Path, uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] warning: failed to chown %s: %v\n", sock.Path, err)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "[socket-forwarder] listening on %s (%s)\n", sock.Path, sock.Type)
@@ -275,7 +296,7 @@ func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if strings.Contains(err.Error(), "use of closed") {
+			if errors.Is(err, net.ErrClosed) {
 				return
 			}
 			fmt.Fprintf(os.Stderr, "[socket-forwarder] accept error: %v\n", err)
@@ -290,11 +311,15 @@ func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
 		f.streamMu.Unlock()
 
 		// Send OPEN message to host
-		f.sendMessage(Message{
+		if err := f.sendMessage(Message{
 			Type:     MsgOpen,
 			StreamID: streamID,
 			Payload:  []byte(socketType),
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send OPEN: %v\n", err)
+			conn.Close()
+			continue
+		}
 
 		// Start reading from connection
 		go f.readFromConn(streamID, conn)
@@ -302,7 +327,7 @@ func (f *Forwarder) acceptLoop(listener net.Listener, socketType string) {
 }
 
 func (f *Forwarder) readFromConn(streamID uint32, conn net.Conn) {
-	buf := make([]byte, 64*1024)
+	buf := make([]byte, readBufSize)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -311,11 +336,14 @@ func (f *Forwarder) readFromConn(streamID uint32, conn net.Conn) {
 		}
 
 		// Send DATA to host
-		f.sendMessage(Message{
+		if err := f.sendMessage(Message{
 			Type:     MsgData,
 			StreamID: streamID,
 			Payload:  buf[:n],
-		})
+		}); err != nil {
+			f.closeStream(streamID)
+			return
+		}
 	}
 }
 
@@ -347,24 +375,30 @@ func (f *Forwarder) closeStream(streamID uint32) {
 
 	if ok {
 		conn.Close()
-		f.sendMessage(Message{Type: MsgClose, StreamID: streamID})
+		if err := f.sendMessage(Message{Type: MsgClose, StreamID: streamID}); err != nil {
+			fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send CLOSE for stream %d: %v\n", streamID, err)
+		}
 	}
 }
 
-func (f *Forwarder) sendMessage(msg Message) {
+func (f *Forwarder) sendMessage(msg Message) error {
 	f.writeMu.Lock()
 	defer f.writeMu.Unlock()
 
-	writeMessage(f.stdout, msg)
-	f.stdout.Flush()
+	if err := writeMessage(f.stdout, msg); err != nil {
+		return err
+	}
+	return f.stdout.Flush()
 }
 
 func (f *Forwarder) sendError(streamID uint32, errMsg string) {
-	f.sendMessage(Message{
+	if err := f.sendMessage(Message{
 		Type:     MsgError,
 		StreamID: streamID,
 		Payload:  []byte(errMsg),
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[socket-forwarder] failed to send error message: %v\n", err)
+	}
 }
 
 // readMessage reads a length-prefixed message from the reader.
@@ -379,7 +413,7 @@ func readMessage(r *bufio.Reader) (Message, error) {
 	if length < 5 {
 		return Message{}, fmt.Errorf("message too short: %d", length)
 	}
-	if length > 1024*1024 {
+	if length > maxMessageSize {
 		return Message{}, fmt.Errorf("message too large: %d", length)
 	}
 

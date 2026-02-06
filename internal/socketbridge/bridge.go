@@ -21,6 +21,10 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// ProtocolVersion is the muxrpc wire protocol version.
+// Bump when the message format or semantics change incompatibly.
+const ProtocolVersion = 1
+
 // Message types (must match socket-forwarder)
 const (
 	MsgData   byte = 1 // Socket data
@@ -29,6 +33,12 @@ const (
 	MsgPubkey byte = 4 // GPG public key data
 	MsgReady  byte = 5 // Forwarder ready
 	MsgError  byte = 6 // Error message
+)
+
+// Buffer and message size limits.
+const (
+	readBufSize    = 64 * 1024 // Per-stream read buffer
+	maxMessageSize = 1 << 20   // 1 MiB maximum message payload
 )
 
 // SocketConfig defines a socket to forward.
@@ -54,13 +64,18 @@ type Bridge struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 
+	// Warnings receives user-visible warning messages (typically stderr).
+	// If nil, warnings are suppressed.
+	Warnings io.Writer
+
 	streams  map[uint32]net.Conn
 	streamMu sync.RWMutex
 	writeMu  sync.Mutex
 
-	done   chan struct{}
-	errCh  chan error
-	readWg sync.WaitGroup
+	done      chan struct{}
+	closeOnce sync.Once // Prevents double-close panic on done channel
+	errCh     chan error
+	readWg    sync.WaitGroup
 }
 
 // NewBridge creates a new socket bridge for the given container.
@@ -117,6 +132,9 @@ func (b *Bridge) Start(ctx context.Context) error {
 	// The socket-forwarder reads socket config from CLAWKER_REMOTE_SOCKETS env var
 	if b.gpgEnabled {
 		if err := b.sendMessage(Message{Type: MsgPubkey, StreamID: 0, Payload: b.gpgPubkey}); err != nil {
+			// Clean up the subprocess we started
+			b.cmd.Process.Kill()
+			b.cmd.Wait() //nolint:errcheck // best-effort cleanup
 			return fmt.Errorf("failed to send pubkey: %w", err)
 		}
 	}
@@ -135,8 +153,9 @@ func (b *Bridge) Start(ctx context.Context) error {
 }
 
 // Stop terminates the bridge and cleans up.
+// It is safe to call multiple times.
 func (b *Bridge) Stop() error {
-	close(b.done)
+	b.closeOnce.Do(func() { close(b.done) })
 
 	// Close streams
 	b.streamMu.Lock()
@@ -177,6 +196,15 @@ func (b *Bridge) readLoop() {
 
 	reader := bufio.NewReader(b.stdout)
 	readyReceived := false
+
+	defer func() {
+		if !readyReceived {
+			select {
+			case b.errCh <- fmt.Errorf("bridge exited before READY"):
+			default:
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -228,26 +256,12 @@ func (b *Bridge) handleOpen(msg Message) {
 	socketType := string(msg.Payload)
 	streamID := msg.StreamID
 
-	// Connect to the appropriate host socket
-	var socketPath string
-	switch socketType {
-	case "gpg-agent":
-		var err error
-		socketPath, err = getGPGExtraSocket()
-		if err != nil {
-			logger.Error().Err(err).Msg("failed to get GPG socket")
-			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
-			return
+	socketPath, err := resolveHostSocket(socketType)
+	if err != nil {
+		logger.Error().Err(err).Str("type", socketType).Msg("failed to resolve host socket")
+		if b.Warnings != nil {
+			fmt.Fprintf(b.Warnings, "Warning: %v\n", err)
 		}
-	case "ssh-agent":
-		socketPath = os.Getenv("SSH_AUTH_SOCK")
-		if socketPath == "" {
-			logger.Error().Msg("SSH_AUTH_SOCK not set")
-			b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
-			return
-		}
-	default:
-		logger.Error().Str("type", socketType).Msg("unknown socket type")
 		b.sendMessage(Message{Type: MsgClose, StreamID: streamID})
 		return
 	}
@@ -269,8 +283,24 @@ func (b *Bridge) handleOpen(msg Message) {
 	logger.Debug().Uint32("stream", streamID).Str("type", socketType).Msg("opened host socket")
 }
 
+// resolveHostSocket returns the host Unix socket path for the given type.
+func resolveHostSocket(socketType string) (string, error) {
+	switch socketType {
+	case "gpg-agent":
+		return getGPGExtraSocket()
+	case "ssh-agent":
+		path := os.Getenv("SSH_AUTH_SOCK")
+		if path == "" {
+			return "", fmt.Errorf("SSH_AUTH_SOCK not set on host; SSH agent forwarding unavailable")
+		}
+		return path, nil
+	default:
+		return "", fmt.Errorf("unknown socket type: %s", socketType)
+	}
+}
+
 func (b *Bridge) readFromHostSocket(streamID uint32, conn net.Conn) {
-	buf := make([]byte, 64*1024)
+	buf := make([]byte, readBufSize)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -325,35 +355,21 @@ func (b *Bridge) sendMessage(msg Message) error {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
 
-	// Calculate length: type (1) + streamID (4) + payload
+	// Single 9-byte header: length(4) + type(1) + streamID(4)
+	var header [9]byte
 	length := uint32(1 + 4 + len(msg.Payload))
+	binary.BigEndian.PutUint32(header[0:4], length)
+	header[4] = msg.Type
+	binary.BigEndian.PutUint32(header[5:9], msg.StreamID)
 
-	// Write length
-	lenBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBuf, length)
-	if _, err := b.stdin.Write(lenBuf); err != nil {
+	if _, err := b.stdin.Write(header[:]); err != nil {
 		return err
 	}
-
-	// Write type
-	if _, err := b.stdin.Write([]byte{msg.Type}); err != nil {
-		return err
-	}
-
-	// Write stream ID
-	streamBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(streamBuf, msg.StreamID)
-	if _, err := b.stdin.Write(streamBuf); err != nil {
-		return err
-	}
-
-	// Write payload
 	if len(msg.Payload) > 0 {
 		if _, err := b.stdin.Write(msg.Payload); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -369,7 +385,7 @@ func readMessage(r *bufio.Reader) (Message, error) {
 	if length < 5 {
 		return Message{}, fmt.Errorf("message too short: %d", length)
 	}
-	if length > 1024*1024 {
+	if length > maxMessageSize {
 		return Message{}, fmt.Errorf("message too large: %d", length)
 	}
 

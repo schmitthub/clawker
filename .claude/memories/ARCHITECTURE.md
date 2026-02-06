@@ -189,13 +189,13 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - `SessionStore` - Generic session management with TTL
 - `CallbackChannel` - OAuth callback interception/forwarding
 - `Manager` - Lifecycle management (lazy init via Factory)
-- `GitCredential` / `SSHAgent` - Credential forwarding handlers
+- `GitCredential` - HTTPS credential forwarding handler
 
 **Key flows:**
 - URL opening: Container → `host-open` script → POST /open/url → host browser
 - OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
-- SSH (macOS): `ssh-agent-proxy` binary → POST /ssh/agent → host SSH agent
+- SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
 ### internal/ralph - Autonomous Loop Engine
 
@@ -361,6 +361,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
 │    hostproxy/ → logger                                          │
+│    socketbridge/ → config, logger                               │
 │    prompter/ → iostreams                                        │
 │    project/ → config, iostreams, logger                         │
 └────────────────────────────┬────────────────────────────────────┘

@@ -82,12 +82,12 @@ func hostProxyFunc() func() *hostproxy.Manager {
 }
 
 // socketBridgeFunc returns a lazy closure that creates a socket bridge manager once.
-func socketBridgeFunc() func() *socketbridge.Manager {
+func socketBridgeFunc() func() socketbridge.SocketBridgeManager {
 	var (
 		once    sync.Once
-		manager *socketbridge.Manager
+		manager socketbridge.SocketBridgeManager
 	)
-	return func() *socketbridge.Manager {
+	return func() socketbridge.SocketBridgeManager {
 		once.Do(func() {
 			manager = socketbridge.NewManager()
 		})

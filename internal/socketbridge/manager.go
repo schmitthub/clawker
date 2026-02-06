@@ -17,9 +17,26 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// SocketBridgeManager is the interface for managing socket bridge daemons.
+// Commands interact with this interface (not the concrete Manager) to enable
+// test mocking via socketbridgetest.MockManager.
+type SocketBridgeManager interface {
+	// EnsureBridge ensures a bridge daemon is running for the given container.
+	// It is idempotent — if a bridge is already running, it returns immediately.
+	EnsureBridge(containerID string, gpgEnabled bool) error
+	// StopBridge stops the bridge daemon for the given container.
+	StopBridge(containerID string) error
+	// StopAll stops all known bridge daemons.
+	StopAll() error
+	// IsRunning returns true if a bridge daemon is running for the given container.
+	IsRunning(containerID string) bool
+}
+
 // Manager tracks per-container bridge daemon processes.
 // It spawns detached "clawker bridge serve" subprocesses that forward
 // GPG and SSH agent sockets into running containers.
+//
+// Manager implements SocketBridgeManager.
 type Manager struct {
 	mu      sync.Mutex
 	bridges map[string]*bridgeProcess // containerID -> running bridge
@@ -29,6 +46,18 @@ type Manager struct {
 type bridgeProcess struct {
 	pid     int
 	pidFile string
+}
+
+// Compile-time assertion that Manager implements SocketBridgeManager.
+var _ SocketBridgeManager = (*Manager)(nil)
+
+// shortID returns a truncated container ID suitable for log messages.
+// Safe to call with IDs shorter than 12 characters.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // NewManager creates a new socket bridge Manager.
@@ -47,7 +76,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	// Check if we already track a running bridge
 	if bp, ok := m.bridges[containerID]; ok {
 		if isProcessAlive(bp.pid) {
-			logger.Debug().Str("container", containerID[:12]).Int("pid", bp.pid).Msg("bridge already running")
+			logger.Debug().Str("container", shortID(containerID)).Int("pid", bp.pid).Msg("bridge already running")
 			return nil
 		}
 		// Process died — clean up stale entry
@@ -61,7 +90,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	}
 
 	if pid := readPIDFile(pidFile); pid > 0 && isProcessAlive(pid) {
-		logger.Debug().Str("container", containerID[:12]).Int("pid", pid).Msg("found existing bridge via PID file")
+		logger.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("found existing bridge via PID file")
 		m.bridges[containerID] = &bridgeProcess{pid: pid, pidFile: pidFile}
 		return nil
 	}
@@ -196,13 +225,20 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 		return fmt.Errorf("failed to start bridge daemon: %w", err)
 	}
 
+	// Capture PID before Release — the Process handle may be invalid after Release.
+	pid := cmd.Process.Pid
+
+	// Close the log file in parent — child inherited the fd.
+	if logFile != nil {
+		logFile.Close()
+	}
+
 	// Release the child process so it can run independently
 	if err := cmd.Process.Release(); err != nil {
 		logger.Debug().Err(err).Msg("failed to release bridge process (non-fatal)")
 	}
 
-	pid := cmd.Process.Pid
-	logger.Debug().Str("container", containerID[:12]).Int("pid", pid).Msg("started bridge daemon")
+	logger.Debug().Str("container", shortID(containerID)).Int("pid", pid).Msg("started bridge daemon")
 
 	// Wait for PID file to appear (confirms bridge is initialized)
 	if err := waitForPIDFile(pidFile, 5*time.Second); err != nil {
@@ -232,13 +268,8 @@ func (m *Manager) openBridgeLogFile(containerID string) (*os.File, error) {
 	if err := config.EnsureDir(logsDir); err != nil {
 		return nil, err
 	}
-	// Use short container ID in log filename
-	shortID := containerID
-	if len(shortID) > 12 {
-		shortID = shortID[:12]
-	}
 	return os.OpenFile(
-		filepath.Join(logsDir, fmt.Sprintf("bridge-%s.log", shortID)),
+		filepath.Join(logsDir, fmt.Sprintf("bridge-%s.log", shortID(containerID))),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0644,
 	)

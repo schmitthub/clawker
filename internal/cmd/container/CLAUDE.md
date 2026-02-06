@@ -72,6 +72,7 @@ containerOpts.ValidateFlags()                      // Cross-field validation
 - `FormatContainerName(project, agent)` — format `clawker.<project>.<agent>`
 - `ParseLabelsToMap(labels)` — convert `[]string{"k=v"}` to `map[string]string`
 - `MergeLabels(base, user)` — merge label maps (base takes precedence)
+- `NeedsSocketBridge(cfg)` — returns true if config enables GPG or SSH forwarding (shared by run/start/exec)
 
 **BuildConfigs validation**: `--memory-swap` requires `--memory`; `--no-healthcheck` conflicts with `--health-*`; `--restart` (except "no") conflicts with `--rm`; namespace mode validation (PID, IPC, UTS, userns, cgroupns).
 

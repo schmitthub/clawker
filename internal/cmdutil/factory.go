@@ -32,6 +32,6 @@ type Factory struct {
 	Config     func() *config.Config
 	GitManager func() (*git.GitManager, error)
 	HostProxy    func() *hostproxy.Manager
-	SocketBridge func() *socketbridge.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter
 }

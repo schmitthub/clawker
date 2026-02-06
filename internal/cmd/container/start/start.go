@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -24,7 +25,7 @@ type StartOptions struct {
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	HostProxy    func() *hostproxy.Manager
-	SocketBridge func() *socketbridge.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
@@ -199,14 +200,12 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 
 	// Start socket bridge for GPG/SSH forwarding
 	cfg := opts.Config().Project
-	if cfg.Security.GitCredentials != nil && opts.SocketBridge != nil {
-		if cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled() {
-			gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
-			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-				logger.Warn().Err(err).Msg("failed to start socket bridge")
-			} else {
-				defer opts.SocketBridge().StopBridge(containerID)
-			}
+	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+			logger.Warn().Err(err).Msg("failed to start socket bridge")
+		} else {
+			defer opts.SocketBridge().StopBridge(containerID)
 		}
 	}
 
@@ -339,12 +338,15 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 
 			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
 			cfg := opts.Config().Project
-			if cfg.Security.GitCredentials != nil && opts.SocketBridge != nil {
-				if cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled() {
-					gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
-					if err := opts.SocketBridge().EnsureBridge(name, gpgEnabled); err != nil {
-						logger.Warn().Err(err).Str("container", name).Msg("failed to start socket bridge")
-					}
+			if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+				gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+				// Inspect to get full container ID — EnsureBridge must use the same key
+				// as exec/run commands (which use the container ID, not name).
+				info, inspErr := client.ContainerInspect(ctx, name, docker.ContainerInspectOptions{})
+				if inspErr != nil {
+					logger.Warn().Err(inspErr).Str("container", name).Msg("failed to inspect container for socket bridge")
+				} else if err := opts.SocketBridge().EnsureBridge(info.Container.ID, gpgEnabled); err != nil {
+					logger.Warn().Err(err).Str("container", name).Msg("failed to start socket bridge")
 				}
 			}
 		}

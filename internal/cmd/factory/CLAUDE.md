@@ -43,7 +43,9 @@ f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
 - `ioStreams()` -- creates IOStreams (eager)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
 - `configFunc()` -- returns lazy `*config.Config` gateway constructor (the gateway itself uses `os.Getwd()` internally and lazy-loads Project, Settings, Resolution, Registry via `sync.Once`)
+- `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().Project.RootDir()`
 - `hostProxyFunc()` -- returns lazy host proxy manager constructor
+- `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(ios)` -- returns lazy prompter constructor
 
 Each helper is a standalone function in `default.go`, making the wiring easy to read and test.

@@ -37,7 +37,7 @@ type RunOptions struct {
 	Config       func() *config.Config
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() *hostproxy.Manager
-	SocketBridge func() *socketbridge.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter
 
 	// Run-specific options
@@ -355,7 +355,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			return err
 		}
 		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-		if needsSocketBridge(cfg) && opts.SocketBridge != nil {
+		if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 				logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
@@ -454,7 +454,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 
 	// Start socket bridge for GPG/SSH forwarding
 	cfg := opts.Config().Project
-	if needsSocketBridge(cfg) && opts.SocketBridge != nil {
+	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 			logger.Warn().Err(err).Msg("failed to start socket bridge")
@@ -643,11 +643,3 @@ func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway
 	return nil
 }
 
-// needsSocketBridge returns true if the config enables GPG or SSH forwarding,
-// which requires a socket bridge daemon.
-func needsSocketBridge(cfg *config.Project) bool {
-	if cfg == nil || cfg.Security.GitCredentials == nil {
-		return false
-	}
-	return cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled()
-}

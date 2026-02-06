@@ -1,7 +1,7 @@
 // Package internals provides embedded container-side scripts and source code
-// that run inside clawker containers to communicate with the host proxy.
-// These are leaf assets (stdlib + embed only) consumed by the bundler package
-// when assembling Docker build contexts.
+// that run inside clawker containers to communicate with the host proxy
+// and socketbridge. These are leaf assets (stdlib + embed only) consumed by
+// the bundler package when assembling Docker build contexts.
 //
 // IMPORTANT: All embedded scripts in this package are automatically included
 // in image content hashing via AllScripts(). When adding new scripts, export
