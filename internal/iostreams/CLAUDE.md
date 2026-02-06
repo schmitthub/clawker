@@ -224,31 +224,33 @@ tp.Len()     // number of data rows
 
 ### Messages (stderr)
 
-```go
-ios.PrintSuccess("build complete: %s", "v1.0")    // ✓ message  or  [ok] message
-ios.PrintWarning("disk space low: %d%%", 5)        // ! message  or  [warn] message
-ios.PrintInfo("using image %s", "node:20")         // ℹ message  or  [info] message
-ios.PrintFailure("connection refused: %s", addr)   // ✗ message  or  [error] message
-ios.PrintEmpty("containers")                       // No containers found.
-ios.PrintEmpty("volumes", "Run 'clawker volume create' to create one")
-```
+All message methods return `error` from the underlying write and write to `ios.ErrOut` with icon prefix (Unicode when colors enabled, ASCII fallback).
 
-All message methods write to `ios.ErrOut` with icon prefix (Unicode when colors enabled, ASCII fallback).
+```go
+err := ios.PrintSuccess("build complete: %s", "v1.0")    // ✓ message  or  [ok] message
+err := ios.PrintWarning("disk space low: %d%%", 5)        // ! message  or  [warn] message
+err := ios.PrintInfo("using image %s", "node:20")         // ℹ message  or  [info] message
+err := ios.PrintFailure("connection refused: %s", addr)   // ✗ message  or  [error] message
+err := ios.PrintEmpty("containers")                       // No containers found.
+err := ios.PrintEmpty("volumes", "Run 'clawker volume create' to create one")
+```
 
 ### Structural Renders (stdout)
 
+All render methods return `error` from the underlying write.
+
 ```go
-ios.RenderHeader("Containers")                      // bold title
-ios.RenderHeader("Containers", "3 running")          // title + subtitle
-ios.RenderDivider()                                  // ──────────
-ios.RenderLabeledDivider("Details")                  // ──── Details ────
-ios.RenderBadge("ACTIVE")                            // styled badge or [ACTIVE]
-ios.RenderBadge("ERROR", func(s string) string { return BadgeErrorStyle.Render(s) }) // custom badge render
-ios.RenderKeyValue("Name", "web-app")                // Name: web-app
-ios.RenderKeyValueBlock(pairs...)                    // aligned key-value block
-ios.RenderStatus("web", "running")                   // web ● RUNNING
-ios.RenderEmptyState("No containers found")          // muted italic message
-ios.RenderError(err)                                 // ✗ error message (→ ErrOut)
+err := ios.RenderHeader("Containers")                      // bold title
+err := ios.RenderHeader("Containers", "3 running")          // title + subtitle
+err := ios.RenderDivider()                                  // ──────────
+err := ios.RenderLabeledDivider("Details")                  // ──── Details ────
+err := ios.RenderBadge("ACTIVE")                            // styled badge or [ACTIVE]
+err := ios.RenderBadge("ERROR", func(s string) string { return BadgeErrorStyle.Render(s) }) // custom badge render
+err := ios.RenderKeyValue("Name", "web-app")                // Name: web-app
+err := ios.RenderKeyValueBlock(pairs...)                    // aligned key-value block
+err := ios.RenderStatus("web", "running")                   // web ● RUNNING
+err := ios.RenderEmptyState("No containers found")          // muted italic message
+err := ios.RenderError(err)                                 // ✗ error message (→ ErrOut)
 ```
 
 `RenderError` writes to `ios.ErrOut`. All other Render methods write to `ios.Out`.

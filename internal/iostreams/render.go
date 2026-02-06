@@ -14,7 +14,7 @@ type KeyValuePair struct {
 // RenderHeader writes a styled header to Out.
 // With colors: bold primary title, optional muted subtitle.
 // Without colors: "TITLE" or "TITLE — subtitle".
-func (ios *IOStreams) RenderHeader(title string, subtitle ...string) {
+func (ios *IOStreams) RenderHeader(title string, subtitle ...string) error {
 	cs := ios.ColorScheme()
 
 	if cs.Enabled() {
@@ -22,19 +22,21 @@ func (ios *IOStreams) RenderHeader(title string, subtitle ...string) {
 		if len(subtitle) > 0 && subtitle[0] != "" {
 			header += " " + SubtitleStyle.Render(subtitle[0])
 		}
-		fmt.Fprintln(ios.Out, header)
-	} else {
-		if len(subtitle) > 0 && subtitle[0] != "" {
-			fmt.Fprintf(ios.Out, "%s — %s\n", title, subtitle[0])
-		} else {
-			fmt.Fprintln(ios.Out, title)
-		}
+		_, err := fmt.Fprintln(ios.Out, header)
+		return err
 	}
+
+	if len(subtitle) > 0 && subtitle[0] != "" {
+		_, err := fmt.Fprintf(ios.Out, "%s — %s\n", title, subtitle[0])
+		return err
+	}
+	_, err := fmt.Fprintln(ios.Out, title)
+	return err
 }
 
 // RenderDivider writes a horizontal divider line to Out.
 // Uses the terminal width for the divider length.
-func (ios *IOStreams) RenderDivider() {
+func (ios *IOStreams) RenderDivider() error {
 	width := ios.TerminalWidth()
 	cs := ios.ColorScheme()
 
@@ -42,20 +44,20 @@ func (ios *IOStreams) RenderDivider() {
 	if cs.Enabled() {
 		divider = DividerStyle.Render(divider)
 	}
-	fmt.Fprintln(ios.Out, divider)
+	_, err := fmt.Fprintln(ios.Out, divider)
+	return err
 }
 
 // RenderLabeledDivider writes a divider with a centered label to Out.
 // Example: "──── Section ────"
-func (ios *IOStreams) RenderLabeledDivider(label string) {
+func (ios *IOStreams) RenderLabeledDivider(label string) error {
 	width := ios.TerminalWidth()
 	cs := ios.ColorScheme()
 
 	labelLen := len(label)
 	if labelLen+4 >= width {
 		// Label too long for divider, just render a plain divider
-		ios.RenderDivider()
-		return
+		return ios.RenderDivider()
 	}
 
 	leftWidth := (width - labelLen - 2) / 2
@@ -64,49 +66,55 @@ func (ios *IOStreams) RenderLabeledDivider(label string) {
 	left := strings.Repeat("─", leftWidth)
 	right := strings.Repeat("─", rightWidth)
 
+	var err error
 	if cs.Enabled() {
-		fmt.Fprintln(ios.Out, DividerStyle.Render(left)+" "+cs.Muted(label)+" "+DividerStyle.Render(right))
+		_, err = fmt.Fprintln(ios.Out, DividerStyle.Render(left)+" "+cs.Muted(label)+" "+DividerStyle.Render(right))
 	} else {
-		fmt.Fprintf(ios.Out, "%s %s %s\n", left, label, right)
+		_, err = fmt.Fprintf(ios.Out, "%s %s %s\n", left, label, right)
 	}
+	return err
 }
 
 // RenderBadge writes a badge-styled label to Out.
 // With colors: styled badge (default BadgeStyle or custom render function).
 // Without colors: [TEXT]
-func (ios *IOStreams) RenderBadge(text string, render ...func(string) string) {
+func (ios *IOStreams) RenderBadge(text string, render ...func(string) string) error {
 	cs := ios.ColorScheme()
 
+	var err error
 	if cs.Enabled() {
 		if len(render) > 0 {
-			fmt.Fprintln(ios.Out, render[0](text))
+			_, err = fmt.Fprintln(ios.Out, render[0](text))
 		} else {
-			fmt.Fprintln(ios.Out, BadgeStyle.Render(text))
+			_, err = fmt.Fprintln(ios.Out, BadgeStyle.Render(text))
 		}
 	} else {
-		fmt.Fprintf(ios.Out, "[%s]\n", text)
+		_, err = fmt.Fprintf(ios.Out, "[%s]\n", text)
 	}
+	return err
 }
 
 // RenderKeyValue writes a single key: value line to Out.
 // With colors: muted key, bright value.
 // Without colors: "key: value"
-func (ios *IOStreams) RenderKeyValue(label, value string) {
+func (ios *IOStreams) RenderKeyValue(label, value string) error {
 	cs := ios.ColorScheme()
 
+	var err error
 	if cs.Enabled() {
-		fmt.Fprintln(ios.Out, LabelStyle.Render(label+":")+
+		_, err = fmt.Fprintln(ios.Out, LabelStyle.Render(label+":")+
 			" "+ValueStyle.Render(value))
 	} else {
-		fmt.Fprintf(ios.Out, "%s: %s\n", label, value)
+		_, err = fmt.Fprintf(ios.Out, "%s: %s\n", label, value)
 	}
+	return err
 }
 
 // RenderKeyValueBlock writes multiple key-value pairs with aligned colons to Out.
 // Returns without output if no pairs are provided.
-func (ios *IOStreams) RenderKeyValueBlock(pairs ...KeyValuePair) {
+func (ios *IOStreams) RenderKeyValueBlock(pairs ...KeyValuePair) error {
 	if len(pairs) == 0 {
-		return
+		return nil
 	}
 
 	cs := ios.ColorScheme()
@@ -120,29 +128,36 @@ func (ios *IOStreams) RenderKeyValueBlock(pairs ...KeyValuePair) {
 	}
 
 	for _, p := range pairs {
+		var err error
 		if cs.Enabled() {
 			key := LabelStyle.Width(maxKeyLen + 1).Render(p.Key + ":")
 			val := ValueStyle.Render(p.Value)
-			fmt.Fprintln(ios.Out, key+" "+val)
+			_, err = fmt.Fprintln(ios.Out, key+" "+val)
 		} else {
-			fmt.Fprintf(ios.Out, "%-*s %s\n", maxKeyLen+1, p.Key+":", p.Value)
+			_, err = fmt.Fprintf(ios.Out, "%-*s %s\n", maxKeyLen+1, p.Key+":", p.Value)
+		}
+		if err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // RenderStatus writes a status indicator with a label to Out.
 // Uses StatusIndicator to select the appropriate icon and color.
-func (ios *IOStreams) RenderStatus(label, status string) {
+func (ios *IOStreams) RenderStatus(label, status string) error {
 	cs := ios.ColorScheme()
 
 	style, symbol := StatusIndicator(status)
 	statusLabel := strings.ToUpper(status)
 
+	var err error
 	if cs.Enabled() {
-		fmt.Fprintln(ios.Out, label+" "+style.Render(symbol+" "+statusLabel))
+		_, err = fmt.Fprintln(ios.Out, label+" "+style.Render(symbol+" "+statusLabel))
 	} else {
-		fmt.Fprintf(ios.Out, "%s %s\n", label, statusLabel)
+		_, err = fmt.Fprintf(ios.Out, "%s %s\n", label, statusLabel)
 	}
+	return err
 }
 
 // RenderEmptyState writes an empty state message to Out.
@@ -150,30 +165,33 @@ func (ios *IOStreams) RenderStatus(label, status string) {
 // it replaces where table data would normally appear.
 // Use PrintEmpty() for status notifications to ErrOut.
 // With colors: muted italic text. Without colors: plain text.
-func (ios *IOStreams) RenderEmptyState(message string) {
+func (ios *IOStreams) RenderEmptyState(message string) error {
 	cs := ios.ColorScheme()
 
 	if cs.Enabled() {
-		fmt.Fprintln(ios.Out, EmptyStateStyle.Render(message))
-	} else {
-		fmt.Fprintln(ios.Out, message)
+		_, err := fmt.Fprintln(ios.Out, EmptyStateStyle.Render(message))
+		return err
 	}
+	_, err := fmt.Fprintln(ios.Out, message)
+	return err
 }
 
 // RenderError writes a styled error to ErrOut.
 // With colors: red ✗ prefix.
 // Without colors: "Error: message"
 // Does nothing if err is nil.
-func (ios *IOStreams) RenderError(err error) {
+func (ios *IOStreams) RenderError(err error) error {
 	if err == nil {
-		return
+		return nil
 	}
 
 	cs := ios.ColorScheme()
 
+	var werr error
 	if cs.Enabled() {
-		fmt.Fprintln(ios.ErrOut, cs.Red("✗")+" "+cs.Error(err.Error()))
+		_, werr = fmt.Fprintln(ios.ErrOut, cs.Red("✗")+" "+cs.Error(err.Error()))
 	} else {
-		fmt.Fprintf(ios.ErrOut, "Error: %s\n", err.Error())
+		_, werr = fmt.Fprintf(ios.ErrOut, "Error: %s\n", err.Error())
 	}
+	return werr
 }

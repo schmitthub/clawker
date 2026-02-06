@@ -2,6 +2,7 @@ package iostreams
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -31,16 +32,19 @@ func (s *IOStreams) NewProgressBar(total int, label string) *ProgressBar {
 	}
 }
 
+// canUpdate reports whether the progress bar should accept updates.
+// Caller must hold pb.mu.
+func (pb *ProgressBar) canUpdate() bool {
+	return !pb.finished && pb.ios.progressIndicatorEnabled
+}
+
 // Set updates the progress bar to the given value.
 // Values are clamped to [0, total].
 func (pb *ProgressBar) Set(current int) {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
-	if pb.finished {
-		return
-	}
-	if !pb.ios.progressIndicatorEnabled {
+	if !pb.canUpdate() {
 		return
 	}
 
@@ -61,10 +65,7 @@ func (pb *ProgressBar) Increment() {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
-	if pb.finished {
-		return
-	}
-	if !pb.ios.progressIndicatorEnabled {
+	if !pb.canUpdate() {
 		return
 	}
 
@@ -122,14 +123,7 @@ func (pb *ProgressBar) renderTTY() {
 		filled = barWidth
 	}
 
-	bar := ""
-	for i := 0; i < barWidth; i++ {
-		if i < filled {
-			bar += "="
-		} else {
-			bar += "-"
-		}
-	}
+	bar := strings.Repeat("=", filled) + strings.Repeat("-", barWidth-filled)
 
 	var err error
 	if pb.total > 0 {

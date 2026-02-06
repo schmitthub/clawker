@@ -447,10 +447,13 @@ type TestIOStreams struct {
 
 // testBuffer wraps a byte slice for use in tests.
 type testBuffer struct {
+	mu   sync.Mutex
 	data []byte
 }
 
 func (b *testBuffer) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if len(b.data) == 0 {
 		return 0, io.EOF
 	}
@@ -460,20 +463,28 @@ func (b *testBuffer) Read(p []byte) (int, error) {
 }
 
 func (b *testBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = append(b.data, p...)
 	return len(p), nil
 }
 
 func (b *testBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return string(b.data)
 }
 
 func (b *testBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = nil
 }
 
 // SetInput sets the input data for the test buffer.
 func (b *testBuffer) SetInput(s string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = []byte(s)
 }
 

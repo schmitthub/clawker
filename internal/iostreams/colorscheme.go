@@ -36,20 +36,20 @@ func (cs *ColorScheme) Theme() string {
 	return cs.theme
 }
 
+// Package-level decoration styles (allocated once, reused by Bold/Italic/Underline/Dim).
+var (
+	boldStyle      = lipgloss.NewStyle().Bold(true)
+	italicStyle    = lipgloss.NewStyle().Italic(true)
+	underlineStyle = lipgloss.NewStyle().Underline(true)
+	dimStyle       = lipgloss.NewStyle().Faint(true)
+)
+
 // render applies a lipgloss style if colors are enabled.
 func (cs *ColorScheme) render(style lipgloss.Style, s string) string {
 	if !cs.enabled {
 		return s
 	}
 	return style.Render(s)
-}
-
-// renderDecoration applies a lipgloss style decoration if colors are enabled.
-func (cs *ColorScheme) renderDecoration(styleFn func(lipgloss.Style) lipgloss.Style, s string) string {
-	if !cs.enabled {
-		return s
-	}
-	return styleFn(lipgloss.NewStyle()).Render(s)
 }
 
 // --- Concrete colors — specific visual effects ---
@@ -220,9 +220,7 @@ func (cs *ColorScheme) Disabledf(format string, a ...any) string {
 
 // Bold returns the string in bold.
 func (cs *ColorScheme) Bold(s string) string {
-	return cs.renderDecoration(func(st lipgloss.Style) lipgloss.Style {
-		return st.Bold(true)
-	}, s)
+	return cs.render(boldStyle, s)
 }
 
 // Boldf returns a formatted string in bold.
@@ -232,9 +230,7 @@ func (cs *ColorScheme) Boldf(format string, a ...any) string {
 
 // Italic returns the string in italic.
 func (cs *ColorScheme) Italic(s string) string {
-	return cs.renderDecoration(func(st lipgloss.Style) lipgloss.Style {
-		return st.Italic(true)
-	}, s)
+	return cs.render(italicStyle, s)
 }
 
 // Italicf returns a formatted string in italic.
@@ -244,9 +240,7 @@ func (cs *ColorScheme) Italicf(format string, a ...any) string {
 
 // Underline returns the string underlined.
 func (cs *ColorScheme) Underline(s string) string {
-	return cs.renderDecoration(func(st lipgloss.Style) lipgloss.Style {
-		return st.Underline(true)
-	}, s)
+	return cs.render(underlineStyle, s)
 }
 
 // Underlinef returns a formatted string underlined.
@@ -256,9 +250,7 @@ func (cs *ColorScheme) Underlinef(format string, a ...any) string {
 
 // Dim returns the string in dim/faint style.
 func (cs *ColorScheme) Dim(s string) string {
-	return cs.renderDecoration(func(st lipgloss.Style) lipgloss.Style {
-		return st.Faint(true)
-	}, s)
+	return cs.render(dimStyle, s)
 }
 
 // Dimf returns a formatted string in dim style.

@@ -2,7 +2,7 @@
 
 **Branch:** `a/output-styling`
 **Created:** 2026-02-06 after PR review critical fixes
-**Status:** Critical issues #1-5 fixed. Items below deferred for follow-up.
+**Status:** ALL ITEMS FIXED. #1-8 fixed in first session, #9-14 fixed in second session.
 
 ---
 
@@ -48,27 +48,18 @@
 
 ## Simplification Opportunities (nice to have)
 
-**9. Replace `renderDecoration` closures with pre-defined styles (~25 lines)**
-- File: `internal/iostreams/colorscheme.go`
-- Four text decoration methods (Bold, Italic, Underline, Dim) each create closures. Define package-level styles and reuse `render`.
+~~**9. Replace `renderDecoration` closures with pre-defined styles (~25 lines)** — FIXED: package-level `boldStyle`/`italicStyle`/`underlineStyle`/`dimStyle` vars; `renderDecoration` removed~~
 
-**10. Replace bar-building loop with `strings.Repeat` (~6 lines)**
-- File: `internal/iostreams/progress.go:121-128`
-- `bar := strings.Repeat("=", filled) + strings.Repeat("-", barWidth-filled)`
+~~**10. Replace bar-building loop with `strings.Repeat` (~6 lines)** — FIXED: 7-line loop replaced with `strings.Repeat("=", filled) + strings.Repeat("-", barWidth-filled)`~~
 
-**11. Extract common early-return guard in ProgressBar (~4 lines)**
-- File: `internal/iostreams/progress.go`
-- Both `Set` and `Increment` have identical `if pb.finished / if !pb.ios.progressIndicatorEnabled` guards. Could extract to `canUpdate() bool`.
+~~**11. Extract common early-return guard in ProgressBar (~4 lines)** — FIXED: `canUpdate() bool` helper extracts duplicate guards in `Set()` and `Increment()`~~
 
 ---
 
 ## Silent Failure Audit Notes
 
-**12. render.go void signatures discard stdout write errors**
-- All ~20 `fmt.Fprintln`/`fmt.Fprintf` calls in render functions (RenderHeader, RenderDivider, etc.) have void signatures. Acceptable for alpha but consider returning `error` in future API revision.
+~~**12. render.go void signatures discard stdout write errors** — FIXED: all 9 Render methods now return `error`~~
 
-**13. message.go void signatures discard stderr write errors**
-- PrintSuccess, PrintWarning, PrintInfo, PrintFailure, PrintEmpty all discard stderr write errors. Lower severity since stderr failures mean no user to see the message anyway.
+~~**13. message.go void signatures discard stderr write errors** — FIXED: all 5 Print methods now return `error`~~
 
-**14. testBuffer is not thread-safe**
-- `internal/iostreams/iostreams.go:444-473` — `testBuffer.Write` uses unprotected `append`. Used by concurrent spinner/progress tests. Add `sync.Mutex` for reliability.
+~~**14. testBuffer is not thread-safe** — FIXED: `sync.Mutex` added to `testBuffer` struct; all 5 methods (`Read`, `Write`, `String`, `Reset`, `SetInput`) now lock/unlock~~
