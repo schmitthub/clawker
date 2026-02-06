@@ -150,12 +150,18 @@ func TestStopRun_StopsBridge(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
 	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
 
-	// Wire ContainerStop to succeed
+	// Track ordering: bridge must stop before docker stop
+	var dockerStopCalled bool
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
+		dockerStopCalled = true
 		return mobyclient.ContainerStopResult{}, nil
 	}
 
 	mock := socketbridgetest.NewMockManager()
+	mock.StopBridgeFn = func(_ string) error {
+		require.False(t, dockerStopCalled, "bridge must stop before docker stop")
+		return nil
+	}
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
@@ -167,7 +173,7 @@ func TestStopRun_StopsBridge(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	// StopBridge called with container ID before docker stop
+	// Both operations were called
 	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerStop")
 }

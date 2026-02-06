@@ -15,9 +15,10 @@ import (
 
 // fakeEventsClient implements dockerEventsClient for testing.
 type fakeEventsClient struct {
-	messagesCh chan events.Message
-	errCh      chan error
-	closed     atomic.Bool
+	messagesCh      chan events.Message
+	errCh           chan error
+	closed          atomic.Bool
+	capturedOptions client.EventsListOptions
 }
 
 func newFakeEventsClient() *fakeEventsClient {
@@ -27,7 +28,8 @@ func newFakeEventsClient() *fakeEventsClient {
 	}
 }
 
-func (f *fakeEventsClient) Events(_ context.Context, _ client.EventsListOptions) client.EventsResult {
+func (f *fakeEventsClient) Events(_ context.Context, options client.EventsListOptions) client.EventsResult {
+	f.capturedOptions = options
 	return client.EventsResult{
 		Messages: f.messagesCh,
 		Err:      f.errCh,
@@ -57,6 +59,12 @@ func TestWatchContainerEvents_DieEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deathCalled.Load(), "onDeath should have been called")
 	assert.True(t, fake.closed.Load(), "client should have been closed")
+
+	// Verify the events filter includes the expected container, type, and event
+	filters := fake.capturedOptions.Filters
+	assert.True(t, filters["type"][string(events.ContainerEventType)], "filter should include type=container")
+	assert.True(t, filters["container"]["abc123"], "filter should include container=abc123")
+	assert.True(t, filters["event"][string(events.ActionDie)], "filter should include event=die")
 }
 
 func TestWatchContainerEvents_StreamError(t *testing.T) {

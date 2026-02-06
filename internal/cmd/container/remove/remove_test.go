@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/shlex"
+	dockercontainer "github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -152,11 +153,18 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
 
+	// Track ordering: bridge must stop before docker remove
+	var dockerRemoveCalled bool
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		dockerRemoveCalled = true
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
 	mock := socketbridgetest.NewMockManager()
+	mock.StopBridgeFn = func(_ string) error {
+		require.False(t, dockerRemoveCalled, "bridge must stop before docker remove")
+		return nil
+	}
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdRemove(f, nil)
@@ -168,7 +176,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	// StopBridge called with container ID before docker remove
+	// Both operations were called
 	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerRemove")
 }
@@ -224,6 +232,50 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 	require.NoError(t, err) // no panic, remove succeeds
 
 	fake.AssertCalled(t, "ContainerRemove")
+}
+
+func TestRemoveRun_WithVolumes(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+
+	// Override ContainerInspect to include State (RemoveContainerWithVolumes accesses State.Running)
+	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: dockercontainer.InspectResponse{
+				ID:     fixture.ID,
+				Name:   "/" + fixture.Names[0],
+				Config: &dockercontainer.Config{Labels: fixture.Labels},
+				State:  &dockercontainer.State{Running: false},
+			},
+		}, nil
+	}
+
+	// RemoveContainerWithVolumes calls ContainerRemove, VolumeList, and VolumeRemove
+	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+		return mobyclient.ContainerRemoveResult{}, nil
+	}
+	fake.FakeAPI.VolumeListFn = func(_ context.Context, _ mobyclient.VolumeListOptions) (mobyclient.VolumeListResult, error) {
+		return mobyclient.VolumeListResult{}, nil
+	}
+	fake.FakeAPI.VolumeRemoveFn = func(_ context.Context, _ string, _ mobyclient.VolumeRemoveOptions) (mobyclient.VolumeRemoveResult, error) {
+		return mobyclient.VolumeRemoveResult{}, nil
+	}
+
+	f, tio := testFactory(t, fake, nil)
+
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetArgs([]string{"--force", "--volumes", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// --volumes triggers RemoveContainerWithVolumes path (VolumeList called for cleanup)
+	fake.AssertCalled(t, "ContainerRemove")
+	fake.AssertCalled(t, "VolumeList")
 }
 
 // --- Per-package test helpers ---

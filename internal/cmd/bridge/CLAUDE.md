@@ -35,7 +35,7 @@ all container death scenarios:
 | Scenario | Event |
 |----------|-------|
 | `docker stop` | `die` (then `stop`) |
-| `docker kill` | `die` (then `kill`) |
+| `docker kill` | `kill` (then `die`) |
 | `docker rm -f` | `die` (then `destroy`) |
 | Container crash | `die` |
 | OOM kill | `die` (exitCode=137) |

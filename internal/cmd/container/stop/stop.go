@@ -121,8 +121,10 @@ func stopContainer(ctx context.Context, client *docker.Client, name string, opts
 
 	// Stop socket bridge before stopping the container (best-effort)
 	if opts.SocketBridge != nil {
-		if err := opts.SocketBridge().StopBridge(container.ID); err != nil {
-			logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+		if mgr := opts.SocketBridge(); mgr != nil {
+			if err := mgr.StopBridge(container.ID); err != nil {
+				logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+			}
 		}
 	}
 

@@ -98,7 +98,7 @@ func NewCmdBridgeServe() *cobra.Command {
 
 			// Watch Docker events for container death (parallel to exec EOF)
 			go func() {
-				cli, err := client.New(client.WithAPIVersionFromEnv())
+				cli, err := client.New(client.FromEnv)
 				if err != nil {
 					logger.Warn().Err(err).Msg("failed to create events client, relying on exec EOF only")
 					return

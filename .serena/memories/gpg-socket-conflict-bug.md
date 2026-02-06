@@ -38,6 +38,6 @@ The socket-server creates the socket first, then gpg-agent replaces it when auto
 
 ## Files Likely Involved
 
-- Container-side: `internal/socketbridge/` (socket-server binary code)
+- Container-side: `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` (socket-server binary code)
 - Container entrypoint scripts: `internal/hostproxy/internals/` (container setup)
 - Bridge start: `internal/socketbridge/bridge.go` (pubkey sending triggers gpg-agent)
