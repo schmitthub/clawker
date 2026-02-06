@@ -138,32 +138,68 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 		return wtPath, nil
 	}
 
-	// 3. Resolve base commit
-	var baseCommit plumbing.Hash
-	if base != "" {
-		hash, err := g.repo.ResolveRevision(plumbing.Revision(base))
-		if err != nil {
-			return "", fmt.Errorf("resolving base %q: %w", base, err)
-		}
-		baseCommit = *hash
-	}
-
-	// 4. Create git worktree with branch
+	// 3. Initialize worktree manager
 	wt, err := g.Worktrees()
 	if err != nil {
 		return "", fmt.Errorf("initializing worktree manager: %w", err)
 	}
+
+	// 4. Check if git already has this worktree registered (orphaned metadata)
+	// This can happen if someone manually deletes the worktree directory but
+	// the git metadata in .git/worktrees/ remains.
+	wtName := filepath.Base(wtPath)
+	exists, err := wt.Exists(wtName)
+	if err != nil {
+		return "", fmt.Errorf("checking existing worktree: %w", err)
+	}
+	if exists {
+		// Git has worktree metadata - try to open it
+		if _, err := wt.Open(wtPath); err == nil {
+			// Valid worktree exists, return it (idempotent)
+			return wtPath, nil
+		}
+		// Orphaned metadata - remove it before creating fresh
+		if err := wt.Remove(wtName); err != nil {
+			return "", fmt.Errorf("git worktree %q exists but is orphaned, failed to clean: %w", wtName, err)
+		}
+	}
+
+	// 5. Check if branch already exists
 	branchRef := plumbing.NewBranchReferenceName(branch)
+	branchExists, err := g.BranchExists(branch)
+	if err != nil {
+		return "", fmt.Errorf("checking if branch exists: %w", err)
+	}
+
+	// 6. Create git worktree
 	// Use directory basename as worktree name (already slugified by GetOrCreateWorktreeDir).
 	// Branch names like "a/foo" have slashes that go-git rejects in worktree names,
 	// but the path basename "a-foo" is safe. This matches native git behavior.
-	wtName := filepath.Base(wtPath)
-	if err := wt.AddWithNewBranch(wtPath, wtName, branchRef, baseCommit); err != nil {
-		// Clean up the directory on failure - include cleanup error if it occurs
-		if cleanupErr := os.RemoveAll(wtPath); cleanupErr != nil {
-			return "", fmt.Errorf("creating git worktree: %w (cleanup also failed: %v)", err, cleanupErr)
+	if branchExists {
+		// Branch exists - check it out without creating a new one
+		if err := wt.AddWithExistingBranch(wtPath, wtName, branchRef); err != nil {
+			// Clean up directory and git metadata on failure
+			_ = os.RemoveAll(wtPath)
+			_ = wt.Remove(wtName) // best effort - may not exist if Add failed early
+			return "", fmt.Errorf("creating git worktree for existing branch: %w", err)
 		}
-		return "", fmt.Errorf("creating git worktree: %w", err)
+	} else {
+		// Branch doesn't exist - create it
+		var baseCommit plumbing.Hash
+		if base != "" {
+			hash, err := g.repo.ResolveRevision(plumbing.Revision(base))
+			if err != nil {
+				return "", fmt.Errorf("resolving base %q: %w", base, err)
+			}
+			baseCommit = *hash
+		}
+
+		if err := wt.AddWithNewBranch(wtPath, wtName, branchRef, baseCommit); err != nil {
+			// Clean up directory and git metadata on failure
+			_ = os.RemoveAll(wtPath)
+			_ = wt.Remove(wtName) // best effort - may not exist if Add failed early
+			return "", fmt.Errorf("creating git worktree: %w", err)
+		}
 	}
 
 	return wtPath, nil

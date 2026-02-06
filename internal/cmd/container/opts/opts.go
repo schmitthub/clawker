@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -488,10 +489,17 @@ func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.
 		}
 	}
 
+	// On macOS Docker Desktop, socket files don't work correctly with HostConfig.Mounts
+	// (the SDK's mount.Mount API). They fail with "/socket_mnt" path errors.
+	// However, they work correctly with HostConfig.Binds (the CLI -v syntax).
+	// Filter socket mounts to Binds format on macOS.
+	filteredMounts, socketBinds := filterSocketMountsForMacOS(mounts)
+
 	// Host config
 	hostCfg := &container.HostConfig{
 		AutoRemove:      opts.AutoRemove,
-		Mounts:          mounts,
+		Mounts:          filteredMounts,
+		Binds:           socketBinds,
 		DNSSearch:       opts.DNSSearch,
 		DNSOptions:      opts.DNSOptions,
 		ExtraHosts:      opts.ExtraHosts,
@@ -739,12 +747,11 @@ func (opts *ContainerOptions) BuildConfigs(flags *pflag.FlagSet, mounts []mount.
 	}
 
 	// Parse user-provided volumes (via -v flag) as Binds, resolving relative paths
+	// Append to existing Binds (which may include socket mounts from filterSocketMountsForMacOS)
 	if len(opts.Volumes) > 0 {
-		binds := make([]string, 0, len(opts.Volumes))
 		for _, v := range opts.Volumes {
-			binds = append(binds, resolveVolumePath(v))
+			hostCfg.Binds = append(hostCfg.Binds, resolveVolumePath(v))
 		}
-		hostCfg.Binds = binds
 	}
 
 	// Process and runtime options
@@ -1367,4 +1374,50 @@ func readLabelFile(filename string) ([]string, error) {
 		lines = append(lines, line)
 	}
 	return lines, scanner.Err()
+}
+
+
+// filterSocketMountsForMacOS separates socket file bind mounts from regular mounts.
+// On macOS with Docker Desktop, socket files don't work correctly with the SDK's
+// HostConfig.Mounts API (mount.Mount struct) - they fail with "/socket_mnt" path errors.
+// However, they work correctly with HostConfig.Binds (the CLI -v syntax).
+//
+// This function returns:
+// - filteredMounts: mounts that are not socket files (or all mounts on non-macOS)
+// - socketBinds: socket file mounts converted to Binds format (source:target)
+func filterSocketMountsForMacOS(mounts []mount.Mount) (filteredMounts []mount.Mount, socketBinds []string) {
+	// On non-macOS platforms, all mounts work fine via the Mounts API
+	if runtime.GOOS != "darwin" {
+		return mounts, nil
+	}
+
+	for _, m := range mounts {
+		// Only bind mounts can be socket files
+		if m.Type != mount.TypeBind {
+			filteredMounts = append(filteredMounts, m)
+			continue
+		}
+
+		// Check if the source is a socket file
+		fi, err := os.Stat(m.Source)
+		if err != nil {
+			// Can't stat - keep in Mounts, let Docker handle the error
+			filteredMounts = append(filteredMounts, m)
+			continue
+		}
+
+		if fi.Mode().Type()&os.ModeSocket != 0 {
+			// Socket file - convert to Binds format for macOS Docker Desktop compatibility
+			bind := m.Source + ":" + m.Target
+			if m.ReadOnly {
+				bind += ":ro"
+			}
+			socketBinds = append(socketBinds, bind)
+		} else {
+			// Regular file/directory - keep in Mounts
+			filteredMounts = append(filteredMounts, m)
+		}
+	}
+
+	return filteredMounts, socketBinds
 }

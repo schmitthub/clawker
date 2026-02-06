@@ -48,26 +48,31 @@ func (w *WorktreeManager) Add(path, name string, commit plumbing.Hash) error {
 }
 
 // AddWithNewBranch creates a linked worktree at the given path and creates a new branch.
-// It creates the worktree, creates the branch pointing to base (or HEAD if base is zero),
-// and checks out the branch.
+// It creates the worktree with a detached HEAD, then creates the branch pointing to base
+// (or HEAD if base is zero), and checks out the branch.
 //
-// Note: go-git's worktree API doesn't have WithBranch, so we create the worktree
-// first, then create and checkout the branch using the worktree's Repository.
+// IMPORTANT: We use AddDetached first to avoid go-git's default behavior of creating
+// a branch named after the worktree name. This prevents the bug where slashed branch
+// names like "feature/foo" would also create a slugified branch "feature-foo".
 func (w *WorktreeManager) AddWithNewBranch(path, name string, branch plumbing.ReferenceName, base plumbing.Hash) error {
-	// First, create the worktree at the commit
-	if err := w.Add(path, name, base); err != nil {
+	// Use detached HEAD to avoid creating a branch named after the worktree name.
+	// go-git's Add() without WithDetachedHead creates a branch matching the worktree name,
+	// which causes the bug where "a-output-styling" gets created for "a/output-styling".
+	if err := w.AddDetached(path, name, base); err != nil {
 		return err
 	}
 
 	// Open the worktree as a repository
 	wtRepo, err := w.Open(path)
 	if err != nil {
+		_ = w.Remove(name) // best effort cleanup
 		return fmt.Errorf("opening newly created worktree: %w", err)
 	}
 
 	// Get the worktree to checkout the branch
 	wt, err := wtRepo.Worktree()
 	if err != nil {
+		_ = w.Remove(name) // best effort cleanup
 		return fmt.Errorf("getting worktree: %w", err)
 	}
 
@@ -76,6 +81,7 @@ func (w *WorktreeManager) AddWithNewBranch(path, name string, branch plumbing.Re
 	if commitHash.IsZero() {
 		head, err := w.repo.Head()
 		if err != nil {
+			_ = w.Remove(name) // best effort cleanup
 			return fmt.Errorf("getting HEAD: %w", err)
 		}
 		commitHash = head.Hash()
@@ -84,6 +90,7 @@ func (w *WorktreeManager) AddWithNewBranch(path, name string, branch plumbing.Re
 	// Create the branch reference
 	ref := plumbing.NewHashReference(branch, commitHash)
 	if err := wtRepo.Storer.SetReference(ref); err != nil {
+		_ = w.Remove(name) // best effort cleanup
 		return fmt.Errorf("creating branch reference: %w", err)
 	}
 
@@ -91,6 +98,7 @@ func (w *WorktreeManager) AddWithNewBranch(path, name string, branch plumbing.Re
 	if err := wt.Checkout(&gogit.CheckoutOptions{
 		Branch: branch,
 	}); err != nil {
+		_ = w.Remove(name) // best effort cleanup
 		return fmt.Errorf("checking out branch %s: %w", branch.Short(), err)
 	}
 
@@ -122,6 +130,20 @@ func (w *WorktreeManager) List() ([]string, error) {
 	return names, nil
 }
 
+// Exists checks if a worktree with the given name exists in git's metadata.
+func (w *WorktreeManager) Exists(name string) (bool, error) {
+	names, err := w.List()
+	if err != nil {
+		return false, err
+	}
+	for _, n := range names {
+		if n == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Open opens a linked worktree as a full *git.Repository.
 // The path must point to an existing worktree directory.
 func (w *WorktreeManager) Open(path string) (*gogit.Repository, error) {
@@ -139,5 +161,48 @@ func (w *WorktreeManager) Remove(name string) error {
 	if err := w.wt.Remove(name); err != nil {
 		return fmt.Errorf("removing worktree %q: %w", name, err)
 	}
+	return nil
+}
+
+// AddWithExistingBranch creates a linked worktree that checks out an existing branch.
+// Unlike AddWithNewBranch, this does NOT try to create a new branch.
+//
+// Use this when the branch already exists and you want to create a worktree for it.
+// The branch MUST exist; this method does not verify branch existence (caller's responsibility).
+func (w *WorktreeManager) AddWithExistingBranch(path, name string, branch plumbing.ReferenceName) error {
+	// Resolve the branch to get its commit hash
+	ref, err := w.repo.Reference(branch, true)
+	if err != nil {
+		return fmt.Errorf("resolving branch %s: %w", branch.Short(), err)
+	}
+
+	// Create worktree with detached HEAD at the branch's commit.
+	// We use detached mode to avoid creating any branch with the worktree name.
+	if err := w.AddDetached(path, name, ref.Hash()); err != nil {
+		return err
+	}
+
+	// Open the worktree as a repository
+	wtRepo, err := w.Open(path)
+	if err != nil {
+		_ = w.Remove(name) // best effort cleanup
+		return fmt.Errorf("opening newly created worktree: %w", err)
+	}
+
+	// Get the worktree to checkout the branch
+	wt, err := wtRepo.Worktree()
+	if err != nil {
+		_ = w.Remove(name) // best effort cleanup
+		return fmt.Errorf("getting worktree: %w", err)
+	}
+
+	// Checkout the existing branch
+	if err := wt.Checkout(&gogit.CheckoutOptions{
+		Branch: branch,
+	}); err != nil {
+		_ = w.Remove(name) // best effort cleanup
+		return fmt.Errorf("checking out branch %s: %w", branch.Short(), err)
+	}
+
 	return nil
 }

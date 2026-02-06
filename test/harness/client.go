@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
@@ -197,12 +200,34 @@ func UniqueContainerName(t *testing.T) string {
 
 // RunContainer creates and starts a container from the given image, returning a
 // RunningContainer with automatic cleanup registered via t.Cleanup.
+//
+// If GPG is available on the host, socket forwarding is automatically configured
+// by setting CLAWKER_REMOTE_SOCKETS and starting the socket bridge. This allows
+// TDD tests to validate socket forwarding without explicit configuration.
+//
+// For production code, socket forwarding config comes from clawker.yaml via RuntimeEnv.
 func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...ContainerOpt) *RunningContainer {
 	t.Helper()
 
 	cfg := &containerConfig{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	// Auto-detect socket forwarding for test harness
+	// Production code uses RuntimeEnv with config from clawker.yaml
+	gpgAvailable := isHostGPGAvailable()
+	sshAvailable := os.Getenv("SSH_AUTH_SOCK") != ""
+	socketCfg := SocketBridgeConfig{
+		GPGEnabled: gpgAvailable,
+		SSHEnabled: sshAvailable,
+	}
+
+	if gpgAvailable || sshAvailable {
+		envVal := BuildRemoteSocketsEnv(socketCfg)
+		if envVal != "" {
+			cfg.env = append(cfg.env, "CLAWKER_REMOTE_SOCKETS="+envVal)
+		}
 	}
 
 	name := UniqueContainerName(t)
@@ -240,6 +265,20 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 		t.Fatalf("RunContainer: start failed: %v", err)
 	}
 
+	ctr := &RunningContainer{
+		ID:   createResp.ID,
+		Name: name,
+	}
+
+	// Start socket bridge for GPG/SSH forwarding if enabled
+	if gpgAvailable || sshAvailable {
+		t.Logf("RunContainer: starting socket bridge (GPG=%v, SSH=%v)", gpgAvailable, sshAvailable)
+		_, err := StartSocketBridge(t, createResp.ID, socketCfg)
+		if err != nil {
+			t.Logf("WARNING: failed to start socket bridge: %v", err)
+		}
+	}
+
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
 		if _, err := dc.ContainerStop(cleanupCtx, createResp.ID, nil); err != nil {
@@ -250,10 +289,17 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 		}
 	})
 
-	return &RunningContainer{
-		ID:   createResp.ID,
-		Name: name,
+	return ctr
+}
+
+// isHostGPGAvailable checks if GPG is available on the host with signing keys.
+func isHostGPGAvailable() bool {
+	cmd := exec.Command("gpg", "--list-secret-keys", "--keyid-format", "long")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
 	}
+	return strings.Contains(string(output), "sec")
 }
 
 // BuildLightImage builds a lightweight Alpine test image with all *.sh scripts
@@ -325,8 +371,8 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 		path     string
 		basename string
 	}{
-		{filepath.Join(internalsDir, "cmd", "ssh-agent-proxy", "main.go"), "ssh-agent-proxy.go"},
 		{filepath.Join(internalsDir, "cmd", "callback-forwarder", "main.go"), "callback-forwarder.go"},
+		{filepath.Join(internalsDir, "cmd", "clawker-socket-server", "main.go"), "clawker-socket-server.go"},
 	}
 	for _, gs := range goSourcePaths {
 		content, err := os.ReadFile(gs.path)
@@ -418,7 +464,7 @@ func generateLightDockerfile(scripts []string, goSources []string) string {
 
 	sb.WriteString("FROM alpine:3.21\n")
 	fmt.Fprintf(&sb, "LABEL %s=%s %s=true\n", TestLabel, TestLabelValue, ClawkerManagedLabel)
-	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools\n")
+	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools gnupg file\n")
 	sb.WriteString("RUN adduser -D -s /bin/bash -h /home/claude claude\n")
 	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
 
@@ -491,4 +537,93 @@ func addTarFile(tw *tar.Writer, name string, content []byte) error {
 	}
 	_, err := tw.Write(content)
 	return err
+}
+
+// SocketBridgeConfig defines which sockets to forward.
+type SocketBridgeConfig struct {
+	GPGEnabled bool // Forward GPG agent
+	SSHEnabled bool // Forward SSH agent
+}
+
+// DefaultGPGSocketPath returns the default GPG socket path for the claude user.
+func DefaultGPGSocketPath() string {
+	return "/home/claude/.gnupg/S.gpg-agent"
+}
+
+// DefaultSSHSocketPath returns the default SSH socket path for the claude user.
+func DefaultSSHSocketPath() string {
+	return "/home/claude/.ssh/agent.sock"
+}
+
+// BuildRemoteSocketsEnv builds the CLAWKER_REMOTE_SOCKETS env var value.
+func BuildRemoteSocketsEnv(cfg SocketBridgeConfig) string {
+	var sockets []map[string]string
+	if cfg.GPGEnabled {
+		sockets = append(sockets, map[string]string{
+			"path": DefaultGPGSocketPath(),
+			"type": "gpg-agent",
+		})
+	}
+	if cfg.SSHEnabled {
+		sockets = append(sockets, map[string]string{
+			"path": DefaultSSHSocketPath(),
+			"type": "ssh-agent",
+		})
+	}
+	if len(sockets) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(sockets)
+	return string(data)
+}
+
+// WithSocketForwarding configures socket forwarding for a container.
+// Returns a ContainerOpt that sets the CLAWKER_REMOTE_SOCKETS env var.
+func WithSocketForwarding(cfg SocketBridgeConfig) ContainerOpt {
+	return func(c *containerConfig) {
+		envVal := BuildRemoteSocketsEnv(cfg)
+		if envVal != "" {
+			c.env = append(c.env, "CLAWKER_REMOTE_SOCKETS="+envVal)
+		}
+	}
+}
+
+// StartSocketBridge starts a socket bridge for the given container.
+// It launches the socket-forwarder via docker exec and handles the muxrpc protocol.
+// The bridge runs in a goroutine and should be stopped via the returned stop function.
+// Returns a stop function and any error from starting the bridge.
+func StartSocketBridge(t *testing.T, containerID string, cfg SocketBridgeConfig) (stop func(), err error) {
+	t.Helper()
+
+	bridge := socketbridge.NewBridge(containerID, cfg.GPGEnabled)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start bridge in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- bridge.Start(ctx)
+	}()
+
+	// Wait for ready or error
+	select {
+	case err := <-errCh:
+		if err != nil {
+			cancel() // Only cancel on error
+			return nil, fmt.Errorf("socket bridge start failed: %w", err)
+		}
+		// Success - don't cancel! The context keeps the docker exec running.
+	case <-time.After(30 * time.Second):
+		cancel()
+		return nil, fmt.Errorf("socket bridge start timed out")
+	}
+
+	// Return stop function
+	stop = func() {
+		cancel()
+		bridge.Stop()
+	}
+
+	t.Cleanup(stop)
+	return stop, nil
 }

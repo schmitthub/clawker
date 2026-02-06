@@ -1,7 +1,7 @@
 // Package internals provides embedded container-side scripts and source code
-// that run inside clawker containers to communicate with the host proxy.
-// These are leaf assets (stdlib + embed only) consumed by the bundler package
-// when assembling Docker build contexts.
+// that run inside clawker containers to communicate with the host proxy
+// and socketbridge. These are leaf assets (stdlib + embed only) consumed by
+// the bundler package when assembling Docker build contexts.
 //
 // IMPORTANT: All embedded scripts in this package are automatically included
 // in image content hashing via AllScripts(). When adding new scripts, export
@@ -23,13 +23,6 @@ var HostOpenScript string
 //go:embed git-credential-clawker.sh
 var GitCredentialScript string
 
-// SSHAgentProxySource is the Go source for the ssh-agent-proxy binary.
-// It forwards SSH agent requests from the container to the host proxy.
-// Compiled during Docker image build via multi-stage Dockerfile.
-//
-//go:embed cmd/ssh-agent-proxy/main.go
-var SSHAgentProxySource string
-
 // CallbackForwarderSource is the Go source for the callback-forwarder binary.
 // It polls the host proxy for captured OAuth callbacks and forwards them
 // to the local HTTP server inside the container.
@@ -37,6 +30,14 @@ var SSHAgentProxySource string
 //
 //go:embed cmd/callback-forwarder/main.go
 var CallbackForwarderSource string
+
+// SocketForwarderSource is the Go source for the clawker-socket-server binary.
+// It provides unified socket forwarding (GPG, SSH) via muxrpc-style protocol
+// over stdin/stdout, replacing the separate agent proxy binaries.
+// Compiled during Docker image build via multi-stage Dockerfile.
+//
+//go:embed cmd/clawker-socket-server/main.go
+var SocketForwarderSource string
 
 // AllScripts returns all embedded script contents for content hashing.
 // This is used by the bundler package to ensure image rebuilds when any
@@ -49,6 +50,6 @@ func AllScripts() []string {
 		CallbackForwarderSource,
 		GitCredentialScript,
 		HostOpenScript,
-		SSHAgentProxySource,
+		SocketForwarderSource,
 	}
 }

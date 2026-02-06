@@ -72,6 +72,7 @@ containerOpts.ValidateFlags()                      // Cross-field validation
 - `FormatContainerName(project, agent)` — format `clawker.<project>.<agent>`
 - `ParseLabelsToMap(labels)` — convert `[]string{"k=v"}` to `map[string]string`
 - `MergeLabels(base, user)` — merge label maps (base takes precedence)
+- `NeedsSocketBridge(cfg)` — returns true if config enables GPG or SSH forwarding (shared by run/start/exec)
 
 **BuildConfigs validation**: `--memory-swap` requires `--memory`; `--no-healthcheck` conflicts with `--health-*`; `--restart` (except "no") conflicts with `--rm`; namespace mode validation (PID, IPC, UTS, userns, cgroupns).
 
@@ -131,6 +132,14 @@ func runStop(opts *StopOptions) error {
     project := resolution.ProjectKey
 }
 ```
+
+## Exec Credential Forwarding
+
+The `exec` command automatically injects git credential forwarding env vars (like `CLAWKER_HOST_PROXY` and `CLAWKER_GIT_HTTPS`) into exec'd processes. This enables git operations inside exec sessions. HTTPS credentials are forwarded via host proxy, while SSH/GPG agent forwarding is handled by the socketbridge (started automatically via `SocketBridge.EnsureBridge`). Credentials are set up via `workspace.SetupGitCredentials()`.
+
+## SocketBridge Wiring
+
+The `run`, `start`, and `exec` commands wire `f.SocketBridge()` to start a per-container bridge daemon that forwards SSH/GPG agent sockets via `docker exec` + muxrpc protocol. `EnsureBridge` is idempotent — safe to call from both `run` and subsequent `exec` invocations on the same container.
 
 ## Testing
 

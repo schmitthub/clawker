@@ -7,22 +7,25 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
 )
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	HostProxy    func() *hostproxy.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent       bool // Use agent name (resolves to clawker.<project>.<agent>)
 	Attach      bool
@@ -33,10 +36,11 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
-		HostProxy: f.HostProxy,
+		IOStreams:     f.IOStreams,
+		Client:       f.Client,
+		Config:       f.Config,
+		HostProxy:    f.HostProxy,
+		SocketBridge: f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -133,7 +137,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	}
 
 	// Start all containers without attaching
-	return startContainersWithoutAttach(ctx, ios, client, containers)
+	return startContainersWithoutAttach(ctx, ios, client, containers, opts)
 }
 
 // attachAndStart attaches to container first, then starts it.
@@ -192,6 +196,17 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err
+	}
+
+	// Start socket bridge for GPG/SSH forwarding
+	cfg := opts.Config().Project
+	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+			logger.Warn().Err(err).Msg("failed to start socket bridge")
+		} else {
+			defer opts.SocketBridge().StopBridge(containerID)
+		}
 	}
 
 	// Set up wait channel for container exit
@@ -305,7 +320,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
-func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string) error {
+func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StartOptions) error {
 	var errs []error
 	for _, name := range containers {
 		_, err := client.ContainerStart(ctx, docker.ContainerStartOptions{
@@ -320,6 +335,20 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 		} else {
 			// Print container name on success
 			fmt.Fprintln(ios.Out, name)
+
+			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
+			cfg := opts.Config().Project
+			if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+				gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+				// Inspect to get full container ID — EnsureBridge must use the same key
+				// as exec/run commands (which use the container ID, not name).
+				info, inspErr := client.ContainerInspect(ctx, name, docker.ContainerInspectOptions{})
+				if inspErr != nil {
+					logger.Warn().Err(inspErr).Str("container", name).Msg("failed to inspect container for socket bridge")
+				} else if err := opts.SocketBridge().EnsureBridge(info.Container.ID, gpgEnabled); err != nil {
+					logger.Warn().Err(err).Str("container", name).Msg("failed to start socket bridge")
+				}
+			}
 		}
 	}
 

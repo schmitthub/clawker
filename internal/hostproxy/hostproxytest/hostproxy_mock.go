@@ -16,11 +16,10 @@ import (
 type MockHostProxy struct {
 	Server      *httptest.Server
 	mu          sync.Mutex
-	OpenedURLs  []string                 // URLs received at /open/url
-	Callbacks   map[string]*CallbackData // Registered callback sessions
-	GitCreds    []GitCredRequest         // Git credential requests
-	SSHRequests [][]byte                 // SSH agent requests
-	healthOK    bool                     // Health check response
+	OpenedURLs []string                 // URLs received at /open/url
+	Callbacks  map[string]*CallbackData // Registered callback sessions
+	GitCreds   []GitCredRequest         // Git credential requests
+	healthOK   bool                     // Health check response
 	t           *testing.T
 }
 
@@ -72,9 +71,6 @@ func NewMockHostProxy(t *testing.T) *MockHostProxy {
 
 	// Git credential forwarding
 	mux.HandleFunc("/git/credential", m.handleGitCredential)
-
-	// SSH agent forwarding
-	mux.HandleFunc("/ssh/agent", m.handleSSHAgent)
 
 	m.Server = httptest.NewServer(mux)
 	t.Cleanup(func() {
@@ -363,29 +359,6 @@ func (m *MockHostProxy) handleGitCredential(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(struct {
 		Success bool `json:"success"`
 	}{Success: true})
-}
-
-// handleSSHAgent handles /ssh/agent requests.
-func (m *MockHostProxy) handleSSHAgent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
-		return
-	}
-
-	m.mu.Lock()
-	m.SSHRequests = append(m.SSHRequests, body)
-	m.mu.Unlock()
-
-	m.t.Logf("MockHostProxy: received SSH agent request (%d bytes)", len(body))
-
-	// Return empty response (no keys)
-	w.WriteHeader(http.StatusOK)
 }
 
 // Helper functions

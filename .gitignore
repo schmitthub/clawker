@@ -81,5 +81,4 @@ go.work.sum
 RALPH-TEST.md
 
 .idea/
-**/ssh-agent-proxy
 **/callback-forwarder

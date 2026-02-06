@@ -264,6 +264,10 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		envOpts.FirewallOverride = cfg.Security.Firewall.IsOverrideMode()
 		envOpts.FirewallIPRangeSources = cfg.Security.Firewall.GetIPRangeSources()
 	}
+	if cfg.Security.GitCredentials != nil {
+		envOpts.GPGForwardingEnabled = cfg.Security.GitCredentials.GPGEnabled()
+		envOpts.SSHForwardingEnabled = cfg.Security.GitCredentials.GitSSHEnabled()
+	}
 	if cfg.Build.Instructions != nil {
 		envOpts.InstructionEnv = cfg.Build.Instructions.Env
 	}

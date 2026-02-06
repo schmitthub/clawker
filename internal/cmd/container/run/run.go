@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 
 	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -31,12 +32,13 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams  *iostreams.IOStreams
-	Client     func(context.Context) (*docker.Client, error)
-	Config     func() *config.Config
-	GitManager func() (*git.GitManager, error)
-	HostProxy  func() *hostproxy.Manager
-	Prompter   func() *prompter.Prompter
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	GitManager   func() (*git.GitManager, error)
+	HostProxy    func() *hostproxy.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
+	Prompter     func() *prompter.Prompter
 
 	// Run-specific options
 	Detach bool
@@ -58,6 +60,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Config:           f.Config,
 		GitManager:       f.GitManager,
 		HostProxy:        f.HostProxy,
+		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
 	}
 
@@ -291,6 +294,10 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		envOpts.FirewallOverride = cfg.Security.Firewall.IsOverrideMode()
 		envOpts.FirewallIPRangeSources = cfg.Security.Firewall.GetIPRangeSources()
 	}
+	if cfg.Security.GitCredentials != nil {
+		envOpts.GPGForwardingEnabled = cfg.Security.GitCredentials.GPGEnabled()
+		envOpts.SSHForwardingEnabled = cfg.Security.GitCredentials.GitSSHEnabled()
+	}
 	if cfg.Build.Instructions != nil {
 		envOpts.InstructionEnv = cfg.Build.Instructions.Env
 	}
@@ -346,6 +353,13 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 			cmdutil.HandleError(ios, err)
 			return err
+		}
+		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
+		if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
+			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+				logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
+			}
 		}
 		fmt.Fprintln(ios.Out, containerID[:12])
 		return nil
@@ -437,6 +451,17 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		return err
 	}
 	logger.Debug().Msg("container started successfully")
+
+	// Start socket bridge for GPG/SSH forwarding
+	cfg := opts.Config().Project
+	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
+		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+			logger.Warn().Err(err).Msg("failed to start socket bridge")
+		} else {
+			defer opts.SocketBridge().StopBridge(containerID)
+		}
+	}
 
 	// Set up TTY resize AFTER container is running (Docker CLI's MonitorTtySize pattern).
 	// The +1/-1 trick forces a SIGWINCH to trigger TUI redraw on re-attach.
@@ -617,3 +642,4 @@ func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway
 
 	return nil
 }
+

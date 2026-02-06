@@ -130,7 +130,6 @@ func StopDaemon(pidFile) error
 | `/health` | GET | Health check |
 | `/open/url` | POST | Open URL in host browser |
 | `/git/credential` | POST | Git credential get/store/erase |
-| `/ssh/agent` | POST | SSH agent forwarding (macOS) |
 | `/callback/register` | POST | Register OAuth callback session |
 | `/callback/{session}/data` | GET | Poll for captured callback |
 | `/callback/{session}` | DELETE | Cleanup session |
@@ -140,12 +139,11 @@ func StopDaemon(pidFile) error
 
 Container registers session via `/callback/register`. Server starts dynamic listener on requested port. Browser redirects to `localhost:PORT/path`, listener captures request. Container polls `/callback/{session}/data` to retrieve data.
 
-## Git/SSH Credential Forwarding
+## Git Credential Forwarding
 
 - **HTTPS**: `git-credential-clawker` → POST `/git/credential` → host `git credential fill` → OS Keychain
-- **SSH Linux**: Bind mount `$SSH_AUTH_SOCK` to `/tmp/ssh-agent.sock`
-- **SSH macOS**: `ssh-agent-proxy` binary → POST `/ssh/agent` → host SSH agent
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
+- **SSH/GPG**: Handled by `internal/socketbridge` package (muxrpc over `docker exec`, not via host proxy)
 
 ## Test Mock (`hostproxytest/`)
 
@@ -165,4 +163,4 @@ mock.SetHealthOK(ok bool)
 | `host-open` | Opens URLs, detects OAuth, rewrites callbacks |
 | `callback-forwarder` | Polls proxy, forwards callbacks to local server |
 | `git-credential-clawker` | Git credential helper |
-| `ssh-agent-proxy` | SSH agent proxy binary (macOS) |
+| `clawker-socket-server` | Unix socket server for SSH/GPG agent forwarding (muxrpc protocol) |

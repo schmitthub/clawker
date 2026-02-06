@@ -20,6 +20,8 @@ const (
 	ClawkerNetwork = "clawker-net"
 	// LogsSubdir is the subdirectory for log files
 	LogsSubdir = "logs"
+	// BridgesSubdir is the subdirectory for socket bridge PID files
+	BridgesSubdir = "bridges"
 )
 
 // ClawkerHome returns the clawker home directory.
@@ -92,4 +94,22 @@ func HostProxyLogFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(logsDir, "hostproxy.log"), nil
+}
+
+// BridgesDir returns the socket bridge PID files directory (~/.local/clawker/bridges)
+func BridgesDir() (string, error) {
+	home, err := ClawkerHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, BridgesSubdir), nil
+}
+
+// BridgePIDFile returns the path to a bridge PID file (~/.local/clawker/bridges/<containerID>.pid)
+func BridgePIDFile(containerID string) (string, error) {
+	dir, err := BridgesDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, containerID+".pid"), nil
 }

@@ -206,6 +206,9 @@ func TestListRun_HealthyWorktree(t *testing.T) {
 	output := outBuf.String()
 	assert.NotContains(t, output, "missing")
 
+	// Healthy worktree should show "healthy" status
+	assert.Contains(t, output, "healthy", "STATUS column should show 'healthy' for healthy worktrees")
+
 	// No prune warning should appear
 	errOutput := errBuf.String()
 	assert.NotContains(t, errOutput, "stale")

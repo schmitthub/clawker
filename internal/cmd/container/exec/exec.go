@@ -7,20 +7,26 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
+	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
 // ExecOptions holds options for the exec command.
 type ExecOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	IOStreams     *iostreams.IOStreams
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	HostProxy    func() *hostproxy.Manager
+	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	Interactive bool
@@ -38,9 +44,11 @@ type ExecOptions struct {
 // NewCmdExec creates a new exec command.
 func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
 	opts := &ExecOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		IOStreams:     f.IOStreams,
+		Client:       f.Client,
+		Config:       f.Config,
+		HostProxy:    f.HostProxy,
+		SocketBridge: f.SocketBridge,
 	}
 
 	cmd := &cobra.Command{
@@ -139,6 +147,34 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if !opts.Detach && opts.TTY && opts.Interactive {
 		logger.SetInteractiveMode(true)
 		defer logger.SetInteractiveMode(false)
+	}
+
+	// Setup git credential forwarding for exec sessions
+	// This enables GPG signing and git credential helpers in exec'd commands
+	cfg := opts.Config().Project
+	hostProxyRunning := false
+	if cfg.Security.HostProxyEnabled() {
+		hp := opts.HostProxy()
+		if err := hp.EnsureRunning(); err != nil {
+			logger.Warn().Err(err).Msg("failed to start host proxy for exec")
+		} else if hp.IsRunning() {
+			hostProxyRunning = true
+			opts.Env = append(opts.Env, "CLAWKER_HOST_PROXY="+hp.ProxyURL())
+			logger.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
+		}
+	}
+
+	// Setup git credentials (includes GPG forwarding env vars)
+	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
+	opts.Env = append(opts.Env, gitSetup.Env...)
+
+	// Ensure socket bridge is running for GPG/SSH forwarding
+	// The bridge may already be running from a prior run/start command
+	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
+			logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
+		}
 	}
 
 	// Create exec configuration

@@ -431,7 +431,6 @@ func TestFirewall_DockerNetworkAllowed(t *testing.T) {
 	assert.Equal(t, 0, pingResult.ExitCode, "should be able to ping Docker gateway")
 }
 
-
 // TestFirewall_IPRangeSourcesParsing verifies the init-firewall.sh script correctly parses
 // CLAWKER_FIREWALL_IP_RANGE_SOURCES environment variable with lowercase JSON keys.
 // This is a regression test for the JSON tag bug where Go serialized PascalCase keys

@@ -75,9 +75,6 @@ if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
     fi
 fi
 
-# Setup SSH agent forwarding
-# Strategy: Use ssh-agent-proxy via host proxy when direct socket has permission issues
-
 # Setup SSH known hosts for common git hosting services
 ssh_setup_known_hosts() {
     mkdir -p "$HOME/.ssh"
@@ -96,49 +93,9 @@ KNOWN_HOSTS
     chmod 600 "$HOME/.ssh/known_hosts"
 }
 
-# Start ssh-agent-proxy and verify it started successfully
-# Returns 0 if successful, 1 otherwise
-start_ssh_agent_proxy() {
-    /usr/local/bin/ssh-agent-proxy &
-    proxy_pid=$!
-    sleep 0.3
-    # Verify proxy is running
-    if ! kill -0 "$proxy_pid" 2>/dev/null; then
-        echo "Warning: SSH agent proxy failed to start" >&2
-        return 1
-    fi
-    # Verify socket was created
-    if [ ! -S "$HOME/.ssh/agent.sock" ]; then
-        echo "Warning: SSH agent proxy socket not created" >&2
-        return 1
-    fi
-    export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
-    return 0
-}
-
-# Determine SSH agent forwarding strategy
-if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_SSH_VIA_PROXY" = "true" ]; then
-    # Use ssh-agent-proxy to forward via host proxy (macOS Docker Desktop case)
-    ssh_setup_known_hosts
-    if ! start_ssh_agent_proxy; then
-        echo "Warning: SSH agent forwarding unavailable" >&2
-    fi
-elif [ -n "$SSH_AUTH_SOCK" ]; then
-    # Direct socket mount (Linux case or when proxy not needed)
-    if [ -S "$SSH_AUTH_SOCK" ]; then
-        # Check if socket is accessible
-        if ssh-add -l >/dev/null 2>&1 || [ $? -eq 1 ]; then
-            # Socket is accessible (exit code 1 means no identities, but socket works)
-            ssh_setup_known_hosts
-        elif [ -n "$CLAWKER_HOST_PROXY" ]; then
-            # Socket exists but not accessible, try proxy fallback
-            ssh_setup_known_hosts
-            if ! start_ssh_agent_proxy; then
-                echo "Warning: SSH agent forwarding unavailable" >&2
-            fi
-        fi
-    fi
-fi
+# Setup SSH known hosts unconditionally — socketbridge handles SSH/GPG agent forwarding
+# via docker exec, but known_hosts are still needed for SSH operations
+ssh_setup_known_hosts
 
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then

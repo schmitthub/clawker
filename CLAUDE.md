@@ -70,6 +70,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
+│   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   ├── term/                  # PTY/terminal handling
 │   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
 │   └── workspace/             # Bind vs Snapshot strategies
@@ -106,7 +107,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (8 fields: 3 eager + 5 lazy nouns); constructor in cmd/factory |
+| `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
 | `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
@@ -115,6 +116,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `PTYHandler` | Raw terminal mode, bidirectional streaming |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
+| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
+| `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
@@ -170,7 +173,7 @@ build:
   inject: { after_from: [], after_packages: [] }
 agent: { includes: [], env: {} }
 workspace: { remote_path: "/workspace", default_mode: "snapshot" }
-security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, copy_git_config: true } }
+security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
@@ -230,6 +233,7 @@ security:
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
 - `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.ralph`), not 3 (`clawker..ralph`)
+- Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 
 ## Context Management (Critical)
 

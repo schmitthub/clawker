@@ -1,6 +1,8 @@
 # Workspace Package
 
-Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials, SSH agent, and Docker socket forwarding.
+Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials (HTTPS) and Docker socket forwarding.
+
+SSH and GPG agent forwarding are handled by the `internal/socketbridge` package (via `docker exec`), not by this package.
 
 ## TODO
 - [ ] Consider migrating this into docker pkg, seems to fit there better.
@@ -56,7 +58,7 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error
 ```
 
-`SetupMounts` is the main entry point -- combines workspace, git credentials, SSH, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- combines workspace, git credentials, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
@@ -82,18 +84,6 @@ func GetGitConfigMount() []mount.Mount
 **HTTPS**: Forwarded via host proxy (`git-credential-clawker`).
 **Git config**: `~/.gitconfig` mounted read-only to staging path, entrypoint copies filtering `credential.helper`.
 
-## SSH Agent
-
-```go
-func IsSSHAgentAvailable() bool   // Checks SSH_AUTH_SOCK (Linux: socket exists, macOS: env set)
-func UseSSHAgentProxy() bool      // true on macOS (avoids Docker Desktop socket permission issues)
-func GetSSHAgentMounts() []mount.Mount  // Linux: bind mount socket; macOS: nil (uses proxy)
-func GetSSHAgentEnvVar() string   // Returns container SSH_AUTH_SOCK path (Linux only)
-```
-
-- Linux: Bind mount `$SSH_AUTH_SOCK`
-- macOS: SSH agent proxy binary via host proxy
-
 ## Docker Socket
 
 ```go
@@ -105,7 +95,6 @@ Only available when `security.docker_socket: true`.
 ## Constants
 
 ```go
-const ContainerSSHAgentPath    = "/tmp/ssh-agent.sock"
 const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 ```
 
