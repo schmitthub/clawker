@@ -1,9 +1,9 @@
-// Package tui provides shared TUI components for clawker CLI.
-package tui
+package iostreams
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette - consistent across all TUI features
+// Color palette — consistent across all clawker output.
+// These are the canonical color definitions; tui/ will be migrated to import these.
 var (
 	ColorPrimary   = lipgloss.Color("#7D56F4")
 	ColorSecondary = lipgloss.Color("#6C6C6C")
@@ -14,7 +14,7 @@ var (
 	ColorHighlight = lipgloss.Color("#AD58B4")
 )
 
-// Additional colors for components
+// Additional colors for components.
 var (
 	ColorInfo     = lipgloss.Color("#87CEEB") // Light sky blue for info
 	ColorDisabled = lipgloss.Color("#4A4A4A") // Dark gray for disabled
@@ -25,43 +25,34 @@ var (
 	ColorBgAlt    = lipgloss.Color("#2A2A2A") // Alternate background
 )
 
-// Common text styles
+// Text styles — common text formatting.
 var (
-	TitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
-	SubtitleStyle = lipgloss.NewStyle().Foreground(ColorSecondary)
-	ErrorStyle    = lipgloss.NewStyle().Foreground(ColorError)
-	SuccessStyle  = lipgloss.NewStyle().Foreground(ColorSuccess)
-	WarningStyle  = lipgloss.NewStyle().Foreground(ColorWarning)
-	MutedStyle    = lipgloss.NewStyle().Foreground(ColorMuted)
+	TitleStyle     = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+	SubtitleStyle  = lipgloss.NewStyle().Foreground(ColorSecondary)
+	ErrorStyle     = lipgloss.NewStyle().Foreground(ColorError)
+	SuccessStyle   = lipgloss.NewStyle().Foreground(ColorSuccess)
+	WarningStyle   = lipgloss.NewStyle().Foreground(ColorWarning)
+	MutedStyle     = lipgloss.NewStyle().Foreground(ColorMuted)
 	HighlightStyle = lipgloss.NewStyle().Foreground(ColorHighlight)
+	AccentStyle    = lipgloss.NewStyle().Foreground(ColorAccent)
+	DisabledStyle  = lipgloss.NewStyle().Foreground(ColorDisabled)
 )
 
-// Border styles
+// Concrete color styles — pure foreground color, no decorations.
+// Used by ColorScheme concrete color methods (Red, Blue, etc.).
 var (
-	BorderStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
-	BorderActiveStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorPrimary)
-	BorderMutedStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorMuted)
+	BlueStyle = lipgloss.NewStyle().Foreground(ColorPrimary)
+	CyanStyle = lipgloss.NewStyle().Foreground(ColorInfo)
 )
 
-// StatusStyle returns a style appropriate for running/stopped status.
-func StatusStyle(running bool) lipgloss.Style {
-	if running {
-		return SuccessStyle
-	}
-	return MutedStyle
-}
+// Border styles.
+var (
+	BorderStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	BorderActiveStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorPrimary)
+	BorderMutedStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorMuted)
+)
 
-// StatusText returns display text for running/stopped status.
-func StatusText(running bool) string {
-	if running {
-		return SuccessStyle.Render("RUNNING")
-	}
-	return MutedStyle.Render("STOPPED")
-}
-
-// Component styles - used by TUI components
-
-// Header styles
+// Header styles.
 var (
 	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -77,7 +68,7 @@ var (
 				Italic(true)
 )
 
-// Panel styles
+// Panel styles.
 var (
 	PanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -95,7 +86,7 @@ var (
 			Padding(0, 1)
 )
 
-// List styles
+// List styles.
 var (
 	ListItemStyle = lipgloss.NewStyle().
 			Padding(0, 1)
@@ -110,7 +101,7 @@ var (
 				Padding(0, 1)
 )
 
-// Help bar styles
+// Help bar styles.
 var (
 	HelpKeyStyle = lipgloss.NewStyle().
 			Foreground(ColorPrimary).
@@ -123,7 +114,7 @@ var (
 				Foreground(ColorBorder)
 )
 
-// Label-value pair styles
+// Label-value pair styles.
 var (
 	LabelStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted).
@@ -137,7 +128,7 @@ var (
 			Bold(true)
 )
 
-// Status indicator styles
+// Status indicator styles.
 var (
 	StatusRunningStyle = lipgloss.NewStyle().
 				Foreground(ColorSuccess).
@@ -157,7 +148,7 @@ var (
 			Foreground(ColorInfo)
 )
 
-// Badge styles
+// Badge styles.
 var (
 	BadgeStyle = lipgloss.NewStyle().
 			Padding(0, 1).
@@ -185,15 +176,43 @@ var (
 			Foreground(lipgloss.Color("#FFFFFF"))
 )
 
-// Divider style
+// DividerStyle for horizontal rules.
 var DividerStyle = lipgloss.NewStyle().
 	Foreground(ColorBorder)
 
-// Empty state style
+// EmptyStateStyle for empty state messages.
 var EmptyStateStyle = lipgloss.NewStyle().
 	Foreground(ColorMuted).
 	Italic(true).
 	Align(lipgloss.Center)
+
+// StatusBarStyle for status bar backgrounds.
+var StatusBarStyle = lipgloss.NewStyle().
+	Background(ColorBgAlt).
+	Foreground(lipgloss.Color("#FFFFFF")).
+	Padding(0, 1)
+
+// TagStyle for bordered tag elements.
+var TagStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(ColorPrimary).
+	Padding(0, 1)
+
+// StatusStyle returns a style appropriate for running/stopped status.
+func StatusStyle(running bool) lipgloss.Style {
+	if running {
+		return SuccessStyle
+	}
+	return MutedStyle
+}
+
+// StatusText returns display text for running/stopped status.
+func StatusText(running bool) string {
+	if running {
+		return SuccessStyle.Render("RUNNING")
+	}
+	return MutedStyle.Render("STOPPED")
+}
 
 // StatusIndicator returns the appropriate style and symbol for a status.
 func StatusIndicator(status string) (lipgloss.Style, string) {

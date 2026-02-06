@@ -18,10 +18,20 @@ description: Code style guidelines for the clawker codebase
 - `pkg/whail` decorates moby client, exposing the same interface — all moby methods available through whail
 - It is ok to import `github.com/moby/moby/api/types` and related types directly as needed
 
+## Presentation Layer Import Boundaries
+- Only `internal/iostreams` imports `lipgloss` — no other package should
+- Only `internal/tui` imports `bubbletea` and `bubbles` — no other package should
+- Simple commands use `f.IOStreams` only — never import `tui`
+- TUI commands (monitor) use `f.TUI` only — never import `iostreams`
+- A command never imports both `iostreams` and `tui`
+
 ## Output Conventions
-- User output: `cmdutil.PrintError()`, `cmdutil.PrintNextSteps()` → stderr
+- Use `ios.NewTablePrinter()` for tables, never raw `tabwriter`
+- Use `ios.PrintSuccess/Warning/Info/Failure()` for icon-prefixed status output (stderr)
+- Use `cs.Primary/Success/Warning/Error()` for semantic coloring via `ios.ColorScheme()`
+- Use `ios.RenderHeader/Divider/KeyValue/Status()` for structural stdout output
 - Data output: stdout only (for scripting, e.g., `ls` table output)
-- Errors: `cmdutil.HandleError(err)` for Docker errors
+- Errors: `cmdutil.HandleError(err)` for Docker errors, `ios.RenderError(err)` for styled errors
 
 ## Cobra Commands
 - Always use `PersistentPreRunE` (never `PersistentPreRun`)

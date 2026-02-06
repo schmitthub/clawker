@@ -70,13 +70,6 @@ func TestSpinnerModel_SetLabel(t *testing.T) {
 	assert.Equal(t, "Updated", s.label)
 }
 
-func TestSpinnerModel_SetStyle(t *testing.T) {
-	s := NewDefaultSpinner("Loading")
-	s = s.SetStyle(SuccessStyle)
-	// Style should be updated
-	assert.NotNil(t, s.style)
-}
-
 func TestSpinnerModel_SetSpinnerType(t *testing.T) {
 	s := NewDefaultSpinner("Loading")
 	s = s.SetSpinnerType(SpinnerMoon)

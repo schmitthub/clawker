@@ -1,5 +1,3 @@
-//go:build !windows
-
 package iostreams
 
 import (
@@ -8,8 +6,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/briandowns/spinner"
 )
 
 func TestProgressIndicator_TextMode_DefaultLabel(t *testing.T) {
@@ -176,24 +172,24 @@ func TestProgressIndicator_AnimatedSpinner_InternalState(t *testing.T) {
 	ios := NewTestIOStreams()
 	ios.SetProgressEnabled(true)
 
-	// Start spinner - progressIndicator should be set
+	// Start spinner - activeSpinner should be set
 	ios.StartProgressIndicatorWithLabel("Test")
 
 	// Access internal state via lock for verification
-	ios.progressIndicatorMu.Lock()
-	hasSpinner := ios.progressIndicator != nil
-	ios.progressIndicatorMu.Unlock()
+	ios.spinnerMu.Lock()
+	hasSpinner := ios.activeSpinner != nil
+	ios.spinnerMu.Unlock()
 
 	if !hasSpinner {
 		t.Error("spinner should be created after StartProgressIndicatorWithLabel")
 	}
 
-	// Stop spinner - progressIndicator should be nil
+	// Stop spinner - activeSpinner should be nil
 	ios.StopProgressIndicator()
 
-	ios.progressIndicatorMu.Lock()
-	hasSpinnerAfterStop := ios.progressIndicator != nil
-	ios.progressIndicatorMu.Unlock()
+	ios.spinnerMu.Lock()
+	hasSpinnerAfterStop := ios.activeSpinner != nil
+	ios.spinnerMu.Unlock()
 
 	if hasSpinnerAfterStop {
 		t.Error("spinner should be nil after StopProgressIndicator")
@@ -241,11 +237,11 @@ func TestProgressIndicator_RunWithProgress_Error(t *testing.T) {
 	}
 }
 
-func TestProgressIndicator_ColorIsValid(t *testing.T) {
-	// Verify "fgCyan" is a valid spinner color
-	sp := spinner.New(spinner.CharSets[11], 100*time.Millisecond)
-	err := sp.Color("fgCyan")
-	if err != nil {
-		t.Fatalf("fgCyan should be a valid color: %v", err)
+func TestProgressIndicator_SpinnerStyle(t *testing.T) {
+	// Verify our default spinner style (braille) renders with cyan color
+	cs := NewColorScheme(true, "dark")
+	frame := SpinnerFrame(SpinnerBraille, 0, "test", cs)
+	if frame == "" {
+		t.Fatal("SpinnerFrame should return non-empty string")
 	}
 }

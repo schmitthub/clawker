@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"strings"
@@ -9,8 +9,6 @@ import (
 // SplitConfig configures horizontal or vertical splitting.
 type SplitConfig struct {
 	// Ratio is the proportion for the first section (0.0 to 1.0).
-	// For horizontal splits: left section ratio.
-	// For vertical splits: top section ratio.
 	Ratio float64
 
 	// MinFirst is the minimum size for the first section.
@@ -43,7 +41,6 @@ func SplitHorizontal(width int, cfg SplitConfig) (leftW, rightW int) {
 	leftW = int(float64(available) * cfg.Ratio)
 	rightW = available - leftW
 
-	// Apply minimums
 	if leftW < cfg.MinFirst {
 		leftW = cfg.MinFirst
 		rightW = available - leftW
@@ -53,7 +50,6 @@ func SplitHorizontal(width int, cfg SplitConfig) (leftW, rightW int) {
 		leftW = available - rightW
 	}
 
-	// Clamp to available space
 	if leftW < 0 {
 		leftW = 0
 	}
@@ -74,7 +70,6 @@ func SplitVertical(height int, cfg SplitConfig) (topH, bottomH int) {
 	topH = int(float64(available) * cfg.Ratio)
 	bottomH = available - topH
 
-	// Apply minimums
 	if topH < cfg.MinFirst {
 		topH = cfg.MinFirst
 		bottomH = available - topH
@@ -84,7 +79,6 @@ func SplitVertical(height int, cfg SplitConfig) (topH, bottomH int) {
 		topH = available - bottomH
 	}
 
-	// Clamp to available space
 	if topH < 0 {
 		topH = 0
 	}
@@ -96,6 +90,7 @@ func SplitVertical(height int, cfg SplitConfig) (topH, bottomH int) {
 }
 
 // Stack vertically stacks components with the given spacing between them.
+// Empty strings are filtered out. Negative spacing is clamped to zero.
 func Stack(spacing int, components ...string) string {
 	if len(components) == 0 {
 		return ""
@@ -112,11 +107,12 @@ func Stack(spacing int, components ...string) string {
 		return ""
 	}
 
-	spacer := strings.Repeat("\n", spacing)
+	spacer := strings.Repeat("\n", max(spacing, 0))
 	return strings.Join(nonEmpty, "\n"+spacer)
 }
 
 // Row arranges components horizontally with the given spacing.
+// Empty strings are filtered out. Negative spacing is clamped to zero.
 func Row(spacing int, components ...string) string {
 	if len(components) == 0 {
 		return ""
@@ -133,16 +129,18 @@ func Row(spacing int, components ...string) string {
 		return ""
 	}
 
-	gap := strings.Repeat(" ", spacing)
+	gap := strings.Repeat(" ", max(spacing, 0))
 	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(nonEmpty, gap))
 }
 
-// Columns arranges content in fixed-width columns.
+// Columns arranges content in equal-width columns.
+// Negative gap is clamped to zero.
 func Columns(width, gap int, contents ...string) string {
 	if len(contents) == 0 {
 		return ""
 	}
 
+	gap = max(gap, 0)
 	colWidth := max((width-gap*(len(contents)-1))/len(contents), 1)
 
 	var cols []string
@@ -153,6 +151,85 @@ func Columns(width, gap int, contents ...string) string {
 
 	spacer := strings.Repeat(" ", gap)
 	return strings.Join(cols, spacer)
+}
+
+// FlexRow arranges items with flexible spacing to fill width.
+// Left, center, and right content are distributed across the width.
+func FlexRow(width int, left, center, right string) string {
+	leftW := CountVisibleWidth(left)
+	centerW := CountVisibleWidth(center)
+	rightW := CountVisibleWidth(right)
+
+	totalContent := leftW + centerW + rightW
+	available := max(width-totalContent, 0)
+
+	leftPad := available / 2
+	rightPad := available - leftPad
+
+	if center == "" {
+		leftPad = available
+		rightPad = 0
+	}
+	if left == "" {
+		leftPad = 0
+	}
+	if right == "" {
+		rightPad = 0
+	}
+
+	return left + strings.Repeat(" ", leftPad) + center + strings.Repeat(" ", rightPad) + right
+}
+
+// GridConfig configures a grid layout.
+type GridConfig struct {
+	Columns int
+	Gap     int
+	Width   int
+}
+
+// Grid arranges items in a grid with the specified number of columns.
+// Negative gap is clamped to zero.
+func Grid(cfg GridConfig, items ...string) string {
+	if len(items) == 0 || cfg.Columns <= 0 {
+		return ""
+	}
+
+	gap := max(cfg.Gap, 0)
+	colWidth := max((cfg.Width-gap*(cfg.Columns-1))/cfg.Columns, 1)
+
+	var rows []string
+	for i := 0; i < len(items); i += cfg.Columns {
+		end := min(i+cfg.Columns, len(items))
+
+		rowItems := items[i:end]
+		var rowParts []string
+		for _, item := range rowItems {
+			cell := lipgloss.NewStyle().Width(colWidth).Render(item)
+			rowParts = append(rowParts, cell)
+		}
+
+		row := strings.Join(rowParts, strings.Repeat(" ", gap))
+		rows = append(rows, row)
+	}
+
+	return strings.Join(rows, "\n")
+}
+
+// BoxConfig configures a box layout.
+type BoxConfig struct {
+	Width   int
+	Height  int
+	Padding int
+}
+
+// Box creates a fixed-size box with the given content.
+func Box(cfg BoxConfig, content string) string {
+	style := lipgloss.NewStyle().
+		Width(cfg.Width).
+		Height(cfg.Height).
+		Padding(cfg.Padding)
+
+	return style.Render(content)
 }
 
 // CenterInRect centers content within a rectangle of the given dimensions.
@@ -180,91 +257,13 @@ func AlignCenter(content string, width int) string {
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(content)
 }
 
-// FlexRow arranges items with flexible spacing to fill width.
-// Items at the start, middle, and end are distributed across the width.
-func FlexRow(width int, left, center, right string) string {
-	leftW := CountVisibleWidth(left)
-	centerW := CountVisibleWidth(center)
-	rightW := CountVisibleWidth(right)
-
-	// Calculate available space for padding
-	totalContent := leftW + centerW + rightW
-	available := max(width-totalContent, 0)
-
-	// Distribute space
-	leftPad := available / 2
-	rightPad := available - leftPad
-
-	// Handle empty sections
-	if center == "" {
-		leftPad = available
-		rightPad = 0
-	}
-	if left == "" {
-		leftPad = 0
-	}
-	if right == "" {
-		rightPad = 0
-	}
-
-	return left + strings.Repeat(" ", leftPad) + center + strings.Repeat(" ", rightPad) + right
-}
-
-// GridConfig configures a grid layout.
-type GridConfig struct {
-	Columns int
-	Gap     int
-	Width   int
-}
-
-// Grid arranges items in a grid with the specified number of columns.
-func Grid(cfg GridConfig, items ...string) string {
-	if len(items) == 0 || cfg.Columns <= 0 {
-		return ""
-	}
-
-	colWidth := max((cfg.Width-cfg.Gap*(cfg.Columns-1))/cfg.Columns, 1)
-
-	var rows []string
-	for i := 0; i < len(items); i += cfg.Columns {
-		end := min(i+cfg.Columns, len(items))
-
-		rowItems := items[i:end]
-		var rowParts []string
-		for _, item := range rowItems {
-			cell := lipgloss.NewStyle().Width(colWidth).Render(item)
-			rowParts = append(rowParts, cell)
-		}
-
-		row := strings.Join(rowParts, strings.Repeat(" ", cfg.Gap))
-		rows = append(rows, row)
-	}
-
-	return strings.Join(rows, "\n")
-}
-
-// BoxConfig configures a box layout.
-type BoxConfig struct {
-	Width   int
-	Height  int
-	Padding int
-}
-
-// Box creates a fixed-size box with the given content.
-func Box(cfg BoxConfig, content string) string {
-	style := lipgloss.NewStyle().
-		Width(cfg.Width).
-		Height(cfg.Height).
-		Padding(cfg.Padding)
-
-	return style.Render(content)
-}
-
-// ResponsiveLayout returns different layouts based on width.
+// ResponsiveLayout returns different layouts based on terminal width.
+// Unlike the tui equivalent, layout functions receive the width parameter
+// so they can adapt their content accordingly.
 type ResponsiveLayout struct {
-	Compact func() string
-	Normal  func() string
-	Wide    func() string
+	Compact func(width int) string
+	Normal  func(width int) string
+	Wide    func(width int) string
 }
 
 // Render returns the appropriate layout for the given width.
@@ -273,17 +272,17 @@ func (r ResponsiveLayout) Render(width int) string {
 	switch mode {
 	case LayoutWide:
 		if r.Wide != nil {
-			return r.Wide()
+			return r.Wide(width)
 		}
 		fallthrough
 	case LayoutNormal:
 		if r.Normal != nil {
-			return r.Normal()
+			return r.Normal(width)
 		}
 		fallthrough
 	default:
 		if r.Compact != nil {
-			return r.Compact()
+			return r.Compact(width)
 		}
 		return ""
 	}

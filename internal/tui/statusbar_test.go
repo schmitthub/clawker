@@ -34,19 +34,13 @@ func TestStatusBarModel_SetWidth(t *testing.T) {
 	assert.Equal(t, 120, sb.Width())
 }
 
-func TestStatusBarModel_SetStyle(t *testing.T) {
-	sb := NewStatusBar(80).SetStyle(ErrorStyle)
-	// Just verify it doesn't panic
-	assert.NotNil(t, sb.style)
-}
-
 func TestStatusBarModel_View(t *testing.T) {
 	tests := []struct {
-		name       string
-		left       string
-		center     string
-		right      string
-		wantParts  []string
+		name      string
+		left      string
+		center    string
+		right     string
+		wantParts []string
 	}{
 		{
 			name:      "all sections",
@@ -109,9 +103,9 @@ func TestRenderStatusBar(t *testing.T) {
 
 func TestRenderStatusBarWithSections(t *testing.T) {
 	sections := []StatusBarSection{
-		{Content: "Section 1", Style: SuccessStyle},
-		{Content: "Section 2", Style: MutedStyle},
-		{Content: "Section 3", Style: ErrorStyle},
+		{Content: "Section 1", Render: func(s string) string { return SuccessStyle.Render(s) }},
+		{Content: "Section 2", Render: func(s string) string { return MutedStyle.Render(s) }},
+		{Content: "Section 3", Render: func(s string) string { return ErrorStyle.Render(s) }},
 	}
 
 	result := RenderStatusBarWithSections(sections, 80)
@@ -127,7 +121,7 @@ func TestRenderStatusBarWithSections_Empty(t *testing.T) {
 
 func TestRenderStatusBarWithSections_Single(t *testing.T) {
 	sections := []StatusBarSection{
-		{Content: "Only Section", Style: SuccessStyle},
+		{Content: "Only Section", Render: func(s string) string { return SuccessStyle.Render(s) }},
 	}
 
 	result := RenderStatusBarWithSections(sections, 80)
@@ -181,6 +175,4 @@ func TestTimerIndicator(t *testing.T) {
 func TestCounterIndicator(t *testing.T) {
 	result := CounterIndicator("Loop", 5, 10)
 	assert.Contains(t, result, "Loop")
-	// Note: current implementation uses runes which only works for single digits
-	// In production, you'd want to use fmt.Sprintf
 }

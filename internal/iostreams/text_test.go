@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"testing"
@@ -8,46 +8,54 @@ import (
 
 func TestTruncate(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		maxLen int
-		want   string
+		name  string
+		input string
+		width int
+		want  string
 	}{
 		{"no truncation needed", "hello", 10, "hello"},
 		{"exact length", "hello", 5, "hello"},
-		{"truncate", "hello world", 8, "hello..."},
-		{"very short max", "hello", 3, "hel"},
-		{"zero max", "hello", 0, ""},
-		{"negative max", "hello", -1, ""},
+		{"truncate with ellipsis", "hello world", 8, "hello..."},
+		{"very short width", "hello", 3, "hel"},
+		{"zero width", "hello", 0, ""},
+		{"negative width", "hello", -1, ""},
 		{"empty string", "", 10, ""},
-		{"unicode", "Hello\u4e16\u754c", 8, "Hello\u4e16\u754c"}, // 7 runes fits in 8
+		{"unicode fits", "Hello世界", 8, "Hello世界"},
+		{"with ANSI no truncation", "\x1b[31mhello\x1b[0m", 5, "\x1b[31mhello\x1b[0m"},
+		{"truncate with ANSI", "\x1b[31mhello world\x1b[0m", 8, "hello..."},
+		{"width 1", "hello", 1, "h"},
+		{"width 2", "hello", 2, "he"},
+		{"width 4 with ellipsis", "hello world", 4, "h..."},
+		{"width 3 with ANSI", "\x1b[31mhello\x1b[0m", 3, "hel"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, Truncate(tt.input, tt.maxLen))
+			assert.Equal(t, tt.want, Truncate(tt.input, tt.width))
 		})
 	}
 }
 
 func TestTruncateMiddle(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		maxLen int
-		want   string
+		name  string
+		input string
+		width int
+		want  string
 	}{
 		{"no truncation needed", "hello", 10, "hello"},
 		{"exact length", "hello", 5, "hello"},
 		{"truncate middle", "abcdefghij", 7, "ab...ij"},
-		{"short max uses regular truncate", "hello", 4, "h..."},
-		{"zero max", "hello", 0, ""},
+		{"short width uses regular truncate", "hello", 4, "h..."},
+		{"zero width", "hello", 0, ""},
+		{"negative width", "hello", -1, ""},
 		{"path example", "/Users/foo/bar", 10, "/Us.../bar"},
+		{"empty string", "", 10, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, TruncateMiddle(tt.input, tt.maxLen))
+			assert.Equal(t, tt.want, TruncateMiddle(tt.input, tt.width))
 		})
 	}
 }
@@ -64,6 +72,7 @@ func TestPadRight(t *testing.T) {
 		{"already wider", "hello world", 5, "hello world"},
 		{"empty string", "", 5, "     "},
 		{"zero width", "hello", 0, "hello"},
+		{"with ANSI", "\x1b[31mhi\x1b[0m", 5, "\x1b[31mhi\x1b[0m   "},
 	}
 
 	for _, tt := range tests {
@@ -84,6 +93,8 @@ func TestPadLeft(t *testing.T) {
 		{"no padding needed", "hello", 5, "hello"},
 		{"already wider", "hello world", 5, "hello world"},
 		{"empty string", "", 5, "     "},
+		{"zero width", "hello", 0, "hello"},
+		{"with ANSI", "\x1b[31mhi\x1b[0m", 5, "   \x1b[31mhi\x1b[0m"},
 	}
 
 	for _, tt := range tests {
@@ -148,6 +159,7 @@ func TestWrapLines(t *testing.T) {
 		{"multiple paragraphs", "hello\nworld", 20, []string{"hello", "world"}},
 		{"empty paragraph", "hello\n\nworld", 20, []string{"hello", "", "world"}},
 		{"empty string", "", 10, []string{""}},
+		{"zero width", "hello", 0, []string{"hello"}},
 	}
 
 	for _, tt := range tests {
@@ -164,10 +176,10 @@ func TestCountVisibleWidth(t *testing.T) {
 		want  int
 	}{
 		{"plain text", "hello", 5},
-		{"with ansi", "\x1b[31mhello\x1b[0m", 5},
-		{"multiple ansi", "\x1b[1m\x1b[31mhi\x1b[0m", 2},
+		{"with ANSI", "\x1b[31mhello\x1b[0m", 5},
+		{"multiple ANSI", "\x1b[1m\x1b[31mhi\x1b[0m", 2},
 		{"empty", "", 0},
-		{"unicode", "\u4e16\u754c", 2},
+		{"unicode", "世界", 2},
 	}
 
 	for _, tt := range tests {
@@ -183,7 +195,7 @@ func TestStripANSI(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"no ansi", "hello", "hello"},
+		{"no ANSI", "hello", "hello"},
 		{"color code", "\x1b[31mhello\x1b[0m", "hello"},
 		{"bold", "\x1b[1mbold\x1b[0m", "bold"},
 		{"multiple codes", "\x1b[1m\x1b[31mhi\x1b[0m", "hi"},
@@ -201,19 +213,20 @@ func TestIndent(t *testing.T) {
 	tests := []struct {
 		name   string
 		input  string
-		prefix string
+		spaces int
 		want   string
 	}{
-		{"single line", "hello", "  ", "  hello"},
-		{"multi line", "hello\nworld", "  ", "  hello\n  world"},
-		{"empty line preserved", "hello\n\nworld", "  ", "  hello\n\n  world"},
-		{"empty string", "", "  ", ""},
-		{"no prefix", "hello", "", "hello"},
+		{"single line", "hello", 2, "  hello"},
+		{"multi line", "hello\nworld", 2, "  hello\n  world"},
+		{"empty line preserved", "hello\n\nworld", 2, "  hello\n\n  world"},
+		{"empty string", "", 2, ""},
+		{"zero spaces", "hello", 0, "hello"},
+		{"four spaces", "hello", 4, "    hello"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, Indent(tt.input, tt.prefix))
+			assert.Equal(t, tt.want, Indent(tt.input, tt.spaces))
 		})
 	}
 }

@@ -10,7 +10,6 @@ func TestColorScheme_New(t *testing.T) {
 		name    string
 		enabled bool
 		theme   string
-		wantErr bool
 	}{
 		{
 			name:    "enabled with dark theme",
@@ -54,95 +53,32 @@ func TestColorScheme_New(t *testing.T) {
 	}
 }
 
-func TestColorScheme_ColorMethods(t *testing.T) {
+func TestColorScheme_ConcreteColorMethods_Disabled(t *testing.T) {
 	tests := []struct {
-		name     string
-		method   func(*ColorScheme, string) string
-		input    string
-		enabled  bool
-		wantSame bool // If true, expect unchanged string when disabled
+		name   string
+		method func(*ColorScheme, string) string
+		input  string
 	}{
-		{
-			name:     "Red disabled",
-			method:   (*ColorScheme).Red,
-			input:    "error",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Green disabled",
-			method:   (*ColorScheme).Green,
-			input:    "success",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Yellow disabled",
-			method:   (*ColorScheme).Yellow,
-			input:    "warning",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Blue disabled",
-			method:   (*ColorScheme).Blue,
-			input:    "info",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Cyan disabled",
-			method:   (*ColorScheme).Cyan,
-			input:    "info",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Magenta disabled",
-			method:   (*ColorScheme).Magenta,
-			input:    "highlight",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Bold disabled",
-			method:   (*ColorScheme).Bold,
-			input:    "important",
-			enabled:  false,
-			wantSame: true,
-		},
-		{
-			name:     "Muted disabled",
-			method:   (*ColorScheme).Muted,
-			input:    "secondary",
-			enabled:  false,
-			wantSame: true,
-		},
+		{"Red", (*ColorScheme).Red, "error"},
+		{"Green", (*ColorScheme).Green, "success"},
+		{"Yellow", (*ColorScheme).Yellow, "warning"},
+		{"Blue", (*ColorScheme).Blue, "info"},
+		{"Cyan", (*ColorScheme).Cyan, "info"},
+		{"Magenta", (*ColorScheme).Magenta, "highlight"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs := NewColorScheme(tt.enabled, "dark")
+			cs := NewColorScheme(false, "dark")
 			result := tt.method(cs, tt.input)
-
-			if tt.wantSame {
-				if result != tt.input {
-					t.Errorf("got %q, want %q (unchanged)", result, tt.input)
-				}
-			} else {
-				// When enabled, result should contain the input
-				// Note: lipgloss may not add ANSI codes if there's no TTY
-				if !strings.Contains(result, tt.input) {
-					t.Errorf("result %q does not contain input %q", result, tt.input)
-				}
+			if result != tt.input {
+				t.Errorf("got %q, want %q (unchanged when disabled)", result, tt.input)
 			}
 		})
 	}
 }
 
-func TestColorScheme_ColorMethodsContainInput(t *testing.T) {
-	// Test that when enabled, output at minimum contains the input
-	// (ANSI codes depend on TTY detection by lipgloss)
+func TestColorScheme_ConcreteColorMethods_ContainInput(t *testing.T) {
 	cs := NewColorScheme(true, "dark")
 
 	methods := []struct {
@@ -155,8 +91,6 @@ func TestColorScheme_ColorMethodsContainInput(t *testing.T) {
 		{"Blue", (*ColorScheme).Blue},
 		{"Cyan", (*ColorScheme).Cyan},
 		{"Magenta", (*ColorScheme).Magenta},
-		{"Bold", (*ColorScheme).Bold},
-		{"Muted", (*ColorScheme).Muted},
 	}
 
 	for _, m := range methods {
@@ -170,10 +104,9 @@ func TestColorScheme_ColorMethodsContainInput(t *testing.T) {
 	}
 }
 
-func TestColorScheme_FormatMethods(t *testing.T) {
+func TestColorScheme_ConcreteColorFormatMethods(t *testing.T) {
 	cs := NewColorScheme(false, "dark")
 
-	// Test format methods return formatted strings when disabled
 	if got := cs.Redf("error: %d", 42); got != "error: 42" {
 		t.Errorf("Redf() = %q, want %q", got, "error: 42")
 	}
@@ -192,11 +125,163 @@ func TestColorScheme_FormatMethods(t *testing.T) {
 	if got := cs.Magentaf("hl: %s", "text"); got != "hl: text" {
 		t.Errorf("Magentaf() = %q, want %q", got, "hl: text")
 	}
+}
+
+func TestColorScheme_SemanticColorMethods_Disabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		method func(*ColorScheme, string) string
+		input  string
+	}{
+		{"Primary", (*ColorScheme).Primary, "main"},
+		{"Secondary", (*ColorScheme).Secondary, "sub"},
+		{"Accent", (*ColorScheme).Accent, "emphasis"},
+		{"Success", (*ColorScheme).Success, "ok"},
+		{"Warning", (*ColorScheme).Warning, "caution"},
+		{"Error", (*ColorScheme).Error, "fail"},
+		{"Info", (*ColorScheme).Info, "note"},
+		{"Muted", (*ColorScheme).Muted, "dim"},
+		{"Highlight", (*ColorScheme).Highlight, "bright"},
+		{"Disabled", (*ColorScheme).Disabled, "inactive"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := NewColorScheme(false, "dark")
+			result := tt.method(cs, tt.input)
+			if result != tt.input {
+				t.Errorf("got %q, want %q (unchanged when disabled)", result, tt.input)
+			}
+		})
+	}
+}
+
+func TestColorScheme_SemanticColorMethods_ContainInput(t *testing.T) {
+	cs := NewColorScheme(true, "dark")
+
+	methods := []struct {
+		name   string
+		method func(*ColorScheme, string) string
+	}{
+		{"Primary", (*ColorScheme).Primary},
+		{"Secondary", (*ColorScheme).Secondary},
+		{"Accent", (*ColorScheme).Accent},
+		{"Success", (*ColorScheme).Success},
+		{"Warning", (*ColorScheme).Warning},
+		{"Error", (*ColorScheme).Error},
+		{"Info", (*ColorScheme).Info},
+		{"Muted", (*ColorScheme).Muted},
+		{"Highlight", (*ColorScheme).Highlight},
+		{"Disabled", (*ColorScheme).Disabled},
+	}
+
+	for _, m := range methods {
+		t.Run(m.name, func(t *testing.T) {
+			input := "test-string"
+			result := m.method(cs, input)
+			if !strings.Contains(result, input) {
+				t.Errorf("%s(%q) = %q, does not contain input", m.name, input, result)
+			}
+		})
+	}
+}
+
+func TestColorScheme_SemanticColorFormatMethods(t *testing.T) {
+	cs := NewColorScheme(false, "dark")
+
+	if got := cs.Primaryf("main: %d", 1); got != "main: 1" {
+		t.Errorf("Primaryf() = %q, want %q", got, "main: 1")
+	}
+	if got := cs.Secondaryf("sub: %s", "text"); got != "sub: text" {
+		t.Errorf("Secondaryf() = %q, want %q", got, "sub: text")
+	}
+	if got := cs.Accentf("accent: %s", "text"); got != "accent: text" {
+		t.Errorf("Accentf() = %q, want %q", got, "accent: text")
+	}
+	if got := cs.Successf("ok: %d", 1); got != "ok: 1" {
+		t.Errorf("Successf() = %q, want %q", got, "ok: 1")
+	}
+	if got := cs.Warningf("warn: %s", "x"); got != "warn: x" {
+		t.Errorf("Warningf() = %q, want %q", got, "warn: x")
+	}
+	if got := cs.Errorf("err: %s", "x"); got != "err: x" {
+		t.Errorf("Errorf() = %q, want %q", got, "err: x")
+	}
+	if got := cs.Infof("info: %s", "x"); got != "info: x" {
+		t.Errorf("Infof() = %q, want %q", got, "info: x")
+	}
+	if got := cs.Mutedf("muted: %s", "x"); got != "muted: x" {
+		t.Errorf("Mutedf() = %q, want %q", got, "muted: x")
+	}
+	if got := cs.Highlightf("hl: %s", "x"); got != "hl: x" {
+		t.Errorf("Highlightf() = %q, want %q", got, "hl: x")
+	}
+	if got := cs.Disabledf("dis: %s", "x"); got != "dis: x" {
+		t.Errorf("Disabledf() = %q, want %q", got, "dis: x")
+	}
+}
+
+func TestColorScheme_TextDecorations_Disabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		method func(*ColorScheme, string) string
+		input  string
+	}{
+		{"Bold", (*ColorScheme).Bold, "important"},
+		{"Italic", (*ColorScheme).Italic, "emphasis"},
+		{"Underline", (*ColorScheme).Underline, "link"},
+		{"Dim", (*ColorScheme).Dim, "faint"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := NewColorScheme(false, "dark")
+			result := tt.method(cs, tt.input)
+			if result != tt.input {
+				t.Errorf("got %q, want %q (unchanged when disabled)", result, tt.input)
+			}
+		})
+	}
+}
+
+func TestColorScheme_TextDecorations_ContainInput(t *testing.T) {
+	cs := NewColorScheme(true, "dark")
+
+	methods := []struct {
+		name   string
+		method func(*ColorScheme, string) string
+	}{
+		{"Bold", (*ColorScheme).Bold},
+		{"Italic", (*ColorScheme).Italic},
+		{"Underline", (*ColorScheme).Underline},
+		{"Dim", (*ColorScheme).Dim},
+	}
+
+	for _, m := range methods {
+		t.Run(m.name, func(t *testing.T) {
+			input := "test-string"
+			result := m.method(cs, input)
+			if !strings.Contains(result, input) {
+				t.Errorf("%s(%q) = %q, does not contain input", m.name, input, result)
+			}
+		})
+	}
+}
+
+func TestColorScheme_TextDecorationFormatMethods(t *testing.T) {
+	cs := NewColorScheme(false, "dark")
+
 	if got := cs.Boldf("bold: %s", "str"); got != "bold: str" {
 		t.Errorf("Boldf() = %q, want %q", got, "bold: str")
 	}
-	if got := cs.Mutedf("muted: %s", "val"); got != "muted: val" {
-		t.Errorf("Mutedf() = %q, want %q", got, "muted: val")
+	if got := cs.Italicf("italic: %s", "str"); got != "italic: str" {
+		t.Errorf("Italicf() = %q, want %q", got, "italic: str")
+	}
+	if got := cs.Underlinef("underline: %s", "str"); got != "underline: str" {
+		t.Errorf("Underlinef() = %q, want %q", got, "underline: str")
+	}
+	if got := cs.Dimf("dim: %s", "str"); got != "dim: str" {
+		t.Errorf("Dimf() = %q, want %q", got, "dim: str")
 	}
 }
 
@@ -230,7 +315,6 @@ func TestColorScheme_Icons(t *testing.T) {
 			cs := NewColorScheme(tt.enabled, "dark")
 
 			if tt.containsEmoji {
-				// When enabled, icons should contain special characters
 				if !strings.Contains(cs.SuccessIcon(), "✓") {
 					t.Error("SuccessIcon should contain ✓ when enabled")
 				}
@@ -261,7 +345,7 @@ func TestColorScheme_Icons(t *testing.T) {
 	}
 }
 
-func TestColorScheme_IconsWithText(t *testing.T) {
+func TestColorScheme_IconsWithText_Disabled(t *testing.T) {
 	cs := NewColorScheme(false, "dark")
 
 	if got := cs.SuccessIconWithColor("done"); got != "[ok] done" {
@@ -275,5 +359,22 @@ func TestColorScheme_IconsWithText(t *testing.T) {
 	}
 	if got := cs.InfoIconWithColor("note"); got != "[info] note" {
 		t.Errorf("InfoIconWithColor() = %q, want %q", got, "[info] note")
+	}
+}
+
+func TestColorScheme_IconsWithText_Enabled(t *testing.T) {
+	cs := NewColorScheme(true, "dark")
+
+	if got := cs.SuccessIconWithColor("done"); !strings.Contains(got, "done") || !strings.Contains(got, "✓") {
+		t.Errorf("SuccessIconWithColor() = %q, want to contain both ✓ and 'done'", got)
+	}
+	if got := cs.WarningIconWithColor("caution"); !strings.Contains(got, "caution") || !strings.Contains(got, "!") {
+		t.Errorf("WarningIconWithColor() = %q, want to contain both ! and 'caution'", got)
+	}
+	if got := cs.FailureIconWithColor("failed"); !strings.Contains(got, "failed") || !strings.Contains(got, "✗") {
+		t.Errorf("FailureIconWithColor() = %q, want to contain both ✗ and 'failed'", got)
+	}
+	if got := cs.InfoIconWithColor("note"); !strings.Contains(got, "note") || !strings.Contains(got, "ℹ") {
+		t.Errorf("InfoIconWithColor() = %q, want to contain both ℹ and 'note'", got)
 	}
 }

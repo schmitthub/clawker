@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"fmt"
@@ -15,9 +15,7 @@ func FormatRelative(t time.Time) string {
 	diff := now.Sub(t)
 
 	if diff < 0 {
-		// Future time
-		diff = -diff
-		return formatFutureRelative(diff)
+		return formatFutureRelative(-diff)
 	}
 
 	return formatPastRelative(diff)
@@ -100,52 +98,51 @@ func FormatDuration(d time.Duration) string {
 	}
 }
 
-// FormatTimestamp formats a time for display.
-// If short is true, uses compact format like "15:04".
-// If short is false, uses full format like "15:04:05".
-func FormatTimestamp(t time.Time, short bool) string {
+// FormatTimestamp formats a time as "2006-01-02 15:04:05".
+func FormatTimestamp(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-
-	now := time.Now()
-	sameDay := t.Year() == now.Year() && t.YearDay() == now.YearDay()
-
-	if sameDay {
-		if short {
-			return t.Format("15:04")
-		}
-		return t.Format("15:04:05")
-	}
-
-	// Different day
-	if short {
-		return t.Format("Jan 2 15:04")
-	}
-	return t.Format("Jan 2 15:04:05")
+	return t.Format("2006-01-02 15:04:05")
 }
 
-// FormatUptime formats a duration as an uptime string like "01:15:42".
+// FormatUptime formats a duration as a human-readable uptime string like "2d 5h 30m".
+// Negative durations are clamped to zero.
 func FormatUptime(d time.Duration) string {
-	if d < 0 {
-		d = 0
+	if d <= 0 {
+		return "0s"
 	}
 
-	hours := int(d.Hours())
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60
 	seconds := int(d.Seconds()) % 60
 
-	if hours > 99 {
-		// For very long uptimes, show days
-		days := hours / 24
-		hours = hours % 24
-		return fmt.Sprintf("%dd %02d:%02d:%02d", days, hours, minutes, seconds)
+	switch {
+	case days > 0:
+		if minutes > 0 {
+			return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+		}
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	case hours > 0:
+		if minutes > 0 {
+			return fmt.Sprintf("%dh %dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	case minutes > 0:
+		if seconds > 0 {
+			return fmt.Sprintf("%dm %ds", minutes, seconds)
+		}
+		return fmt.Sprintf("%dm", minutes)
+	default:
+		return fmt.Sprintf("%ds", seconds)
 	}
-
-	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
-// FormatDate formats a date for display like "Jan 2, 2006".
+// FormatDate formats a date for display like "Jan 15, 2024".
 func FormatDate(t time.Time) string {
 	if t.IsZero() {
 		return "-"
@@ -153,22 +150,10 @@ func FormatDate(t time.Time) string {
 	return t.Format("Jan 2, 2006")
 }
 
-// FormatDateTime formats a date and time like "Jan 2, 2006 15:04".
+// FormatDateTime formats a date and time like "Jan 15, 2024 2:30 PM".
 func FormatDateTime(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	return t.Format("Jan 2, 2006 15:04")
-}
-
-// ParseDurationOrDefault parses a duration string, returning defaultVal on error.
-func ParseDurationOrDefault(s string, defaultVal time.Duration) time.Duration {
-	if s == "" {
-		return defaultVal
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return defaultVal
-	}
-	return d
+	return t.Format("Jan 2, 2006 3:04 PM")
 }

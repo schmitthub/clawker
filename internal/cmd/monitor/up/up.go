@@ -104,9 +104,9 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	cmd.Stdout = ios.Out
 	cmd.Stderr = ios.ErrOut
 
-	ios.StartProgressIndicatorWithLabel("Starting monitoring stack...")
+	ios.StartSpinner("Starting monitoring stack...")
 	err = cmd.Run()
-	ios.StopProgressIndicator()
+	ios.StopSpinner()
 
 	if err != nil {
 		return fmt.Errorf("failed to start monitoring stack: %w", err)

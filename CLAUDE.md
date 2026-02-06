@@ -65,14 +65,14 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   │   ├── hostproxytest/    # MockHostProxy for integration tests
 │   │   └── internals/        # Container-side hostproxy client scripts
-│   ├── iostreams/             # Testable I/O: TTY, colors, progress, pager
+│   ├── iostreams/             # Presentation layer: streams, colors, styles, tables, spinners, text/layout/time
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   ├── term/                  # PTY/terminal handling
-│   ├── tui/                   # Reusable TUI components (BubbleTea/Lipgloss)
+│   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   └── whail/                 # Reusable Docker engine with label-based isolation
@@ -118,7 +118,13 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | Testable I/O with TTY detection, colors, progress |
+| `iostreams.IOStreams` | Presentation layer: streams, TTY, colors, tables, spinners, progress, messages, renders |
+| `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
+| `iostreams.SpinnerFrame` | Pure spinner rendering function shared between iostreams and tui for visual consistency |
+| `tui.RunProgram` | Launches BubbleTea programs wired to IOStreams (input/output) |
+| `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
+| `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
+| `tui.ViewportModel` | Scrollable content wrapping bubbles/viewport |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
@@ -217,6 +223,9 @@ security:
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
+10. Presentation layer import boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`. Commands use `f.IOStreams` OR `f.TUI`, never both
+11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` re-exports them via `iostreams.go` shim — no duplicate definitions
+12. `SpinnerFrame()` is a pure function in `iostreams` — both the iostreams goroutine spinner and tui's BubbleTea SpinnerModel can call it for visual consistency
 
 ## Important Gotchas
 

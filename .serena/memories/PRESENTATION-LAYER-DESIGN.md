@@ -1,3 +1,5 @@
+**Status: IMPLEMENTED** — All components built and tested. See `internal/iostreams/CLAUDE.md` and `internal/tui/CLAUDE.md` for API references.
+
 ```mermaid
 graph TD
     subgraph "CMD LAYER — Command Routing"

@@ -1,4 +1,4 @@
-package tui
+package iostreams
 
 import (
 	"regexp"
@@ -9,53 +9,50 @@ import (
 // ansiPattern matches ANSI escape sequences for stripping.
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
-// Truncate shortens a string to maxLen characters, adding "..." if truncated.
-// It handles ANSI escape codes by counting visible characters only.
-func Truncate(s string, maxLen int) string {
-	if maxLen <= 0 {
+// Truncate shortens a string to width visible characters, adding "..." if truncated.
+// ANSI-aware: counts visible characters only. When truncation occurs, ANSI codes
+// are stripped from the result (reinserting codes at truncation boundaries is not supported).
+func Truncate(s string, width int) string {
+	if width <= 0 {
 		return ""
-	}
-	if maxLen <= 3 {
-		return s[:MinInt(maxLen, len(s))]
 	}
 
 	visible := CountVisibleWidth(s)
-	if visible <= maxLen {
+	if visible <= width {
 		return s
 	}
 
-	// Strip ANSI codes to truncate visible text
 	plain := StripANSI(s)
-	if utf8.RuneCountInString(plain) <= maxLen {
-		return s
+	runes := []rune(plain)
+
+	if width <= 3 {
+		return string(runes[:min(width, len(runes))])
 	}
 
-	// Truncate plain text and add ellipsis
-	runes := []rune(plain)
-	return string(runes[:maxLen-3]) + "..."
+	return string(runes[:width-3]) + "..."
 }
 
 // TruncateMiddle shortens a string by removing characters from the middle.
-// Useful for paths: "/Users/foo/very/long/path" -> "/Users/...path"
-func TruncateMiddle(s string, maxLen int) string {
-	if maxLen <= 0 {
+// Useful for paths: "/Users/foo/very/long/path" -> "/Us.../path"
+// ANSI-aware: when truncation occurs, ANSI codes are stripped from the result.
+func TruncateMiddle(s string, width int) string {
+	if width <= 0 {
 		return ""
 	}
-	if maxLen <= 5 {
-		return Truncate(s, maxLen)
+	if width <= 5 {
+		return Truncate(s, width)
 	}
 
 	plain := StripANSI(s)
 	runes := []rune(plain)
 	length := len(runes)
 
-	if length <= maxLen {
+	if length <= width {
 		return s
 	}
 
-	// Split available space between start and end
 	ellipsis := "..."
-	available := maxLen - len(ellipsis)
+	available := width - len(ellipsis)
 	startLen := available / 2
 	endLen := available - startLen
 
@@ -63,6 +60,7 @@ func TruncateMiddle(s string, maxLen int) string {
 }
 
 // PadRight pads a string on the right to the specified width.
+// ANSI-aware: counts visible characters only.
 func PadRight(s string, width int) string {
 	visible := CountVisibleWidth(s)
 	if visible >= width {
@@ -72,6 +70,7 @@ func PadRight(s string, width int) string {
 }
 
 // PadLeft pads a string on the left to the specified width.
+// ANSI-aware: counts visible characters only.
 func PadLeft(s string, width int) string {
 	visible := CountVisibleWidth(s)
 	if visible >= width {
@@ -81,6 +80,7 @@ func PadLeft(s string, width int) string {
 }
 
 // PadCenter centers a string within the specified width.
+// ANSI-aware: counts visible characters only.
 func PadCenter(s string, width int) string {
 	visible := CountVisibleWidth(s)
 	if visible >= width {
@@ -132,16 +132,13 @@ func WrapLines(s string, width int) []string {
 			wordLen := utf8.RuneCountInString(word)
 
 			if currentLen == 0 {
-				// First word on line
 				currentLine.WriteString(word)
 				currentLen = wordLen
 			} else if currentLen+1+wordLen <= width {
-				// Word fits on current line
 				currentLine.WriteString(" ")
 				currentLine.WriteString(word)
 				currentLen += 1 + wordLen
 			} else {
-				// Word doesn't fit, start new line
 				lines = append(lines, currentLine.String())
 				currentLine.Reset()
 				currentLine.WriteString(word)
@@ -168,12 +165,13 @@ func StripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
 }
 
-// Indent prefixes each line in s with the given prefix.
-func Indent(s string, prefix string) string {
-	if s == "" {
-		return ""
+// Indent prefixes each non-empty line with the given number of spaces.
+func Indent(s string, spaces int) string {
+	if s == "" || spaces <= 0 {
+		return s
 	}
 
+	prefix := strings.Repeat(" ", spaces)
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		if line != "" {

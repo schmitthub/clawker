@@ -158,11 +158,11 @@ func initRun(ctx context.Context, opts *InitOptions) error {
 	// Wait for build if started
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)
-		ios.StartProgressIndicatorWithLabel(fmt.Sprintf("Building %s...", docker.DefaultImageTag))
+		ios.StartSpinner(fmt.Sprintf("Building %s...", docker.DefaultImageTag))
 
 		result := <-buildResultCh
 
-		ios.StopProgressIndicator()
+		ios.StopSpinner()
 
 		if result.err != nil {
 			fmt.Fprintln(ios.ErrOut)

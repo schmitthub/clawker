@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ListItem represents an item that can be displayed in a list.
@@ -41,10 +40,10 @@ func (i SimpleListItem) FilterValue() string {
 
 // ListConfig configures a list component.
 type ListConfig struct {
-	Width          int
-	Height         int
+	Width            int
+	Height           int
 	ShowDescriptions bool
-	Wrap           bool
+	Wrap             bool
 }
 
 // DefaultListConfig returns sensible defaults for a list.
@@ -179,14 +178,12 @@ func (m ListModel) View() string {
 
 // renderItem renders a single list item.
 func (m ListModel) renderItem(item ListItem, selected bool) string {
-	var style lipgloss.Style
+	style := ListItemStyle
 	prefix := "  "
 
 	if selected {
 		style = ListItemSelectedStyle
 		prefix = "> "
-	} else {
-		style = ListItemStyle
 	}
 
 	title := Truncate(item.Title(), m.width-4)

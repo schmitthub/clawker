@@ -82,9 +82,9 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	cmd.Stdout = ios.Out
 	cmd.Stderr = ios.ErrOut
 
-	ios.StartProgressIndicatorWithLabel("Stopping monitoring stack...")
+	ios.StartSpinner("Stopping monitoring stack...")
 	err = cmd.Run()
-	ios.StopProgressIndicator()
+	ios.StopSpinner()
 
 	if err != nil {
 		return fmt.Errorf("failed to stop monitoring stack: %w", err)

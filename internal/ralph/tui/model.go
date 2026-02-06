@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -75,11 +74,7 @@ func (m Model) View() string {
 	}
 
 	// Placeholder for agent list (future phases)
-	placeholder := lipgloss.NewStyle().
-		Foreground(tui.ColorMuted).
-		Italic(true).
-		Render("No agents discovered yet. Agent list will appear here.")
-	b.WriteString(placeholder)
+	b.WriteString(tui.EmptyStateStyle.Render("No agents discovered yet. Agent list will appear here."))
 	b.WriteString("\n\n")
 
 	// Help text
