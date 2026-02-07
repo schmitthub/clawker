@@ -58,21 +58,23 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
-│   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
+│   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   │   ├── hostproxytest/    # MockHostProxy for integration tests
 │   │   └── internals/        # Container-side hostproxy client scripts
-│   ├── iostreams/             # Presentation layer: streams, colors, styles, tables, spinners, text/layout/time
+│   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
+│   ├── tableprinter/          # Table printing extracted from iostreams (TTY-aware)
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
+│   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
@@ -132,9 +134,13 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | Presentation layer: streams, TTY, colors, tables, spinners, progress, messages, renders |
+| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
 | `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
 | `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
+| `text.*` | Pure ANSI-aware text utilities (leaf package): Truncate, PadRight, CountVisibleWidth, StripANSI, etc. |
+| `tableprinter.New` | Table printing: TTY-aware styled headers + tabwriter fallback |
+| `cmdutil.FlagError` | Error type triggering usage display in Main()'s centralized `printError` |
+| `cmdutil.SilentError` | Sentinel error: already displayed, Main() just exits non-zero |
 | `tui.TUI` | Factory noun for presentation layer; owns hooks + delegates to RunProgress. Commands capture `*TUI` eagerly, hooks registered later via `RegisterHooks()` |
 | `tui.RunProgress` | Generic progress display: BubbleTea TTY mode (sliding window) + plain text; domain-agnostic via callbacks |
 | `tui.ProgressStep` | Channel event type for progress display (ID, Name, Status, LogLine, Cached, Error) |
@@ -245,7 +251,7 @@ security:
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
 10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
-11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` re-exports them via `iostreams.go` shim — no duplicate definitions
+11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams
 

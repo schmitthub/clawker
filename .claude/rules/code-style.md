@@ -47,13 +47,31 @@ Commands fall into one of four output scenarios. Choose imports accordingly:
 - Commands access TUI via `f.TUI` (Factory noun), not by calling tui package functions directly
 - zerolog is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams
 
-## Output Conventions
-- Use `ios.NewTablePrinter()` for tables, never raw `tabwriter`
-- Use `ios.PrintSuccess/Warning/Info/Failure()` for icon-prefixed status output (stderr)
-- Use `cs.Primary/Success/Warning/Error()` for semantic coloring via `ios.ColorScheme()`
-- Use `ios.RenderHeader/Divider/KeyValue/Status()` for structural stdout output
-- Data output: stdout only (for scripting, e.g., `ls` table output)
-- Errors: `cmdutil.HandleError(err)` for Docker errors, `ios.RenderError(err)` for styled errors
+## Output Conventions (gh-style)
+
+**Pattern**: Follow GitHub CLI (`gh`) conventions — `fmt.Fprintf` with `ios.ColorScheme()` directly.
+
+```go
+cs := ios.ColorScheme()
+fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available")
+```
+
+- **Tables**: `tableprinter.New(ios, headers...)` — never raw `tabwriter`
+- **Semantic colors**: `cs.Primary/Success/Warning/Error()` via `ios.ColorScheme()`
+- **Icons**: `cs.SuccessIcon()`, `cs.WarningIcon()`, `cs.FailureIcon()`, `cs.InfoIcon()`
+- **Data output**: stdout only (for scripting, e.g., `ls` table output)
+- **Status messages**: `fmt.Fprintf(ios.ErrOut, ...)` for human-readable stderr output
+- **Errors**: Return typed errors to Main() for centralized rendering — never print errors directly
+  - `return fmt.Errorf("context: %w", err)` — default error
+  - `return cmdutil.FlagErrorf("bad flag: %s", val)` — triggers usage display
+  - `return cmdutil.SilentError` — error already displayed
+- **Warnings**: Inline `fmt.Fprintf(ios.ErrOut, "%s ...\n", cs.WarningIcon(), msg)` — not errors, not bubbled
+- **Next steps**: Inline numbered guidance with `fmt.Fprintf(ios.ErrOut, ...)`
+
+### Deprecated (do not use in new code)
+- `cmdutil.HandleError`, `cmdutil.PrintError`, `cmdutil.PrintWarning`, `cmdutil.PrintNextSteps`
+- `ios.PrintSuccess/Warning/Info/Failure()` — deleted
+- `ios.RenderHeader/Divider/KeyValue/Status()` — deleted
 
 ## Cobra Commands
 - Always use `PersistentPreRunE` (never `PersistentPreRun`)

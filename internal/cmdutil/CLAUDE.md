@@ -13,7 +13,8 @@ Heavy command helpers have been extracted to dedicated packages:
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` -- pure struct with closure fields (no methods, no construction logic) |
-| `output.go` | `HandleError`, `PrintError`, `PrintNextSteps`, `PrintWarning`, `PrintStatus`, `OutputJSON`, `PrintHelpHint`, `ExitError` |
+| `output.go` | `PrintStatus`, `OutputJSON`, `PrintHelpHint`, `ExitError` + deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps` |
+| `errors.go` | `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
@@ -65,15 +66,30 @@ f := &cmdutil.Factory{
 
 Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need it.
 
-## Error Handling & Output (`output.go`)
+## Error Handling & Output (`output.go`, `errors.go`)
 
-`HandleError(ios, err)` -- format errors for users (duck-typed `FormatUserError()` interface)
-`PrintError(ios, format, args...)` -- print "Error: ..." to stderr
-`PrintWarning(ios, format, args...)` -- print "Warning: ..." to stderr
-`PrintNextSteps(ios, steps...)` -- print numbered next-steps guidance to stderr
+### Active Functions
 `PrintStatus(ios, quiet, format, args...)` -- print status message (suppressed with --quiet)
 `OutputJSON(ios, data) error` -- marshal to stdout as indented JSON
 `PrintHelpHint(ios, cmdPath)` -- print "Run '<cmd> --help' for more information" to stderr
+
+### Deprecated Functions (use gh-style fprintf instead)
+`HandleError(ios, err)` -- **Deprecated**: return errors to Main() for centralized rendering
+`PrintError(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)`
+`PrintWarning(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...)`
+`PrintNextSteps(ios, steps...)` -- **Deprecated**: inline next-steps output with `fmt.Fprintf(ios.ErrOut, ...)`
+
+### Error Types (`errors.go`)
+
+```go
+// FlagError triggers usage display in Main()'s centralized error rendering.
+type FlagError struct{ err error }
+func FlagErrorf(format string, args ...any) error
+func FlagErrorWrap(err error) error
+
+// SilentError signals the error was already displayed — Main() just exits non-zero.
+var SilentError = errors.New("SilentError")
+```
 
 ### ExitError
 

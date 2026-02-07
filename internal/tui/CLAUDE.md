@@ -4,17 +4,16 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 ## Architecture
 
-**Import boundary**: This package does NOT import `lipgloss` directly. All colors, styles, text/layout/time utilities are re-exported from `internal/iostreams` via `iostreams.go`. The `import_boundary_test.go` enforces this constraint.
+**Import boundary**: This package does NOT import `lipgloss` directly. Styles and colors are accessed via qualified imports from `internal/iostreams` (e.g., `iostreams.PanelStyle`). Text utilities come from `internal/text` (e.g., `text.Truncate`). The `import_boundary_test.go` enforces the no-lipgloss constraint.
 
-**Allowed imports**: `bubbletea`, `bubbles/*`, `internal/iostreams`. The tui package sits one layer above iostreams in the DAG — it adds BubbleTea interactivity on top of iostreams' visual primitives.
+**Allowed imports**: `bubbletea`, `bubbles/*`, `internal/iostreams`, `internal/text`. The tui package sits one layer above iostreams in the DAG — it adds BubbleTea interactivity on top of iostreams' visual primitives.
 
-**Style usage pattern**: Since `lipgloss.Style` cannot appear in type signatures without importing lipgloss, functions that would return a style instead return `func(string) string` (a render function). Styles can still be used inline via type inference: `style := PanelStyle` (Go infers the lipgloss.Style type from the re-exported variable).
+**Style usage pattern**: Since `lipgloss.Style` cannot appear in type signatures without importing lipgloss, functions that would return a style instead return `func(string) string` (a render function). Styles can be used inline via type inference: `style := iostreams.PanelStyle` (Go infers the lipgloss.Style type).
 
 ## File Overview
 
 | File | Purpose |
 |------|---------|
-| `iostreams.go` | Re-export shim: colors, styles, tokens, text, layout, time from iostreams |
 | `tui.go` | `TUI` struct — Factory noun, owns hooks + progress display; `NewTUI`, `RegisterHooks`, `RunProgress` |
 | `hooks.go` | `HookResult`, `LifecycleHook` — generic lifecycle hook types for TUI components |
 | `keys.go` | `KeyMap` struct, `DefaultKeyMap()`, `Is*` key matchers |
@@ -28,39 +27,6 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `program.go` | `RunProgram` helper for running BubbleTea programs with IOStreams |
 | `progress.go` | Generic progress display: BubbleTea TTY mode + plain text mode |
 | `import_boundary_test.go` | Enforces no lipgloss imports in non-test files |
-
-## Re-exports (`iostreams.go`)
-
-All of the following are delegated to `internal/iostreams`:
-
-**Colors**: `ColorPrimary`, `ColorSecondary`, `ColorSuccess`, `ColorWarning`, `ColorError`, `ColorInfo`, `ColorMuted`, `ColorHighlight`, `ColorDisabled`, `ColorSelected`, `ColorBorder`, `ColorAccent`, `ColorBg`, `ColorBgAlt`
-
-**Text styles**: `TitleStyle`, `SubtitleStyle`, `ErrorStyle`, `SuccessStyle`, `WarningStyle`, `MutedStyle`, `HighlightStyle`, `AccentStyle`, `DisabledStyle`, `BlueStyle`, `CyanStyle`
-
-**Border styles**: `BorderStyle`, `BorderActiveStyle`, `BorderMutedStyle`
-
-**Component styles**: `PanelStyle`, `PanelActiveStyle`, `PanelTitleStyle`, `HeaderStyle`, `HeaderTitleStyle`, `HeaderSubtitleStyle`, `ListItemStyle`, `ListItemSelectedStyle`, `ListItemDimStyle`, `HelpKeyStyle`, `HelpDescStyle`, `HelpSeparatorStyle`, `LabelStyle`, `ValueStyle`, `CountStyle`, `DividerStyle`, `EmptyStateStyle`, `StatusBarStyle`, `TagStyle`
-
-**Status styles**: `StatusRunningStyle`, `StatusStoppedStyle`, `StatusErrorStyle`, `StatusWarningStyle`, `StatusInfoStyle`
-
-**Badge styles**: `BadgeStyle`, `BadgeSuccessStyle`, `BadgeWarningStyle`, `BadgeErrorStyle`, `BadgeMutedStyle`
-
-**Tokens**: `SpaceNone` (0), `SpaceXS` (1), `SpaceSM` (2), `SpaceMD` (4), `SpaceLG` (8), `WidthCompact` (60), `WidthNormal` (80), `WidthWide` (120)
-
-**Layout mode**: `LayoutMode` type alias, `LayoutCompact`, `LayoutNormal`, `LayoutWide`, `GetLayoutMode(width)`
-
-**Math**: `MinInt`, `MaxInt`, `ClampInt`, `GetContentWidth`, `GetContentHeight`
-
-**Text**: `Truncate`, `TruncateMiddle`, `PadRight`, `PadLeft`, `PadCenter`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`
-
-**Layout**: `SplitConfig`, `GridConfig`, `BoxConfig`, `ResponsiveLayout` (type aliases), `DefaultSplitConfig`, `SplitHorizontal`, `SplitVertical`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid`, `Box`, `CenterInRect`, `AlignLeft`, `AlignRight`, `AlignCenter`
-
-**Time**: `FormatRelative`, `FormatDuration`, `FormatUptime`, `FormatDate`, `FormatDateTime`, `FormatTimestamp`
-
-**Status helpers** (wrapped to avoid lipgloss in return types):
-- `StatusStyle(running bool) func(string) string` — returns render function, not lipgloss.Style
-- `StatusText(running bool) string`
-- `StatusIndicator(status string) (string, string)` — returns (rendered_indicator, symbol), not (lipgloss.Style, string)
 
 ## Keys (`keys.go`)
 

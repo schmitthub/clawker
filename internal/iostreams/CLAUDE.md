@@ -82,33 +82,24 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 ### Table Output
 
+**Moved to `internal/tableprinter/`** — See `internal/tableprinter/CLAUDE.md` for full API.
+
 ```go
-tp := ios.NewTablePrinter("NAME", "STATUS", "IMAGE")
+tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
 tp.AddRow("web", "running", "nginx:latest")
 err := tp.Render()  // writes to ios.Out
 ```
 
-TTY: lipgloss-styled headers, `─` divider, width-aware. Non-TTY: plain tabwriter.
+## Layout Helpers (`layout.go`)
 
-### Messages (stderr)
+Lipgloss-based pure functions for composing visual output:
 
-`PrintSuccess/Warning/Info/Failure(format, args...)` — icon-prefixed messages to `ios.ErrOut`. `PrintEmpty(resource, hint...)` — "No X found" message. All return `error`.
-
-### Structural Renders (stdout)
-
-`RenderHeader(title, subtitle...)`, `RenderDivider()`, `RenderLabeledDivider(label)`, `RenderBadge(text, renderFn...)`, `RenderKeyValue(k, v)`, `RenderKeyValueBlock(pairs...)`, `RenderStatus(name, status)`, `RenderEmptyState(msg)`, `RenderError(err)` (→ ErrOut). All return `error`. Type: `KeyValuePair{Key, Value string}`.
-
-## Text Utilities
-
-ANSI-aware pure functions: `Truncate`, `TruncateMiddle`, `PadRight/Left/Center`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`
-
-## Layout Helpers
-
-Lipgloss-based pure functions: `SplitHorizontal/Vertical(width, SplitConfig)`, `Stack`, `Row`, `Columns`, `FlexRow`, `Grid(GridConfig, ...)`, `Box(BoxConfig, content)`, `CenterInRect`, `AlignLeft/Right/Center`, `ResponsiveLayout{Compact, Normal, Wide}`. Config types: `SplitConfig`, `GridConfig`, `BoxConfig`.
-
-## Time Formatting
-
-Pure functions: `FormatRelative`, `FormatDuration`, `FormatTimestamp`, `FormatUptime`, `FormatDate`, `FormatDateTime`
+| Function | Purpose |
+|----------|---------|
+| `Stack(spacing, components...)` | Vertical stack with blank-line spacing, filters empty strings |
+| `Row(spacing, components...)` | Horizontal arrangement, filters empty strings |
+| `FlexRow(width, left, center, right)` | Three-section row with flexible padding |
+| `CenterInRect(content, width, height)` | Center content in a rectangle |
 
 ## Color Palette (styles.go)
 
@@ -138,6 +129,10 @@ Pure functions: `FormatRelative`, `FormatDuration`, `FormatTimestamp`, `FormatUp
 - `Blue()` = BlueStyle (no bold); `Primary()` = TitleStyle (bold)
 - `tui/` re-exports styles, tokens, text, layout, time via `tui/iostreams.go`
 
+## Text Utilities
+
+**Moved to `internal/text/`** — See `internal/text/CLAUDE.md`. Pure leaf package (stdlib only). Provides: `Truncate`, `TruncateMiddle`, `PadRight/Left/Center`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`.
+
 ## Import Boundary
 
-Canonical source for all visual styling. Can import: `lipgloss`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`. Only `internal/iostreams` imports `lipgloss`.
+Canonical source for all visual styling. Can import: `lipgloss`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`. Only `internal/iostreams` imports `lipgloss`.
