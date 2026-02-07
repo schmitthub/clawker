@@ -14,9 +14,9 @@ type userFormattedError interface {
 	FormatUserError() string
 }
 
-// HandleError prints an error to stderr with user-friendly formatting.
-// If the error implements FormatUserError() string, it uses that for rich output.
-// Otherwise, it prints a simple error message.
+// Deprecated: Use fmt.Fprintf(ios.ErrOut, ...) with ios.ColorScheme() directly.
+// Errors should be returned to Main() for centralized rendering via printError.
+// This function will be removed once all commands are migrated.
 func HandleError(ios *iostreams.IOStreams, err error) {
 	if err == nil {
 		return
@@ -31,8 +31,9 @@ func HandleError(ios *iostreams.IOStreams, err error) {
 	fmt.Fprintf(ios.ErrOut, "Error: %s\n", err)
 }
 
-// PrintNextSteps prints a "Next Steps" section to stderr.
-// Use this when you have actionable suggestions for the user.
+// Deprecated: Inline the next-steps output in the command's run function.
+// Use fmt.Fprintf(ios.ErrOut, ...) with ios.ColorScheme() directly.
+// This function will be removed once all commands are migrated.
 func PrintNextSteps(ios *iostreams.IOStreams, steps ...string) {
 	if len(steps) == 0 {
 		return
@@ -44,13 +45,15 @@ func PrintNextSteps(ios *iostreams.IOStreams, steps ...string) {
 	}
 }
 
-// PrintError prints a simple error message to stderr.
-// Use HandleError instead when the error might be a DockerError.
+// Deprecated: Use fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...) directly.
+// Errors should be returned to Main() for centralized rendering.
+// This function will be removed once all commands are migrated.
 func PrintError(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)
 }
 
-// PrintWarning prints a warning message to stderr.
+// Deprecated: Use fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...) directly.
+// This function will be removed once all commands are migrated.
 func PrintWarning(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Warning: "+format+"\n", args...)
 }
