@@ -1,4 +1,8 @@
-package iostreams
+// Package tableprinter renders tabular data to IOStreams.
+// When the output is a TTY with colors enabled, it renders styled headers
+// and a divider. When piped or in non-TTY mode, it uses plain tabwriter
+// for machine-friendly output.
+package tableprinter
 
 import (
 	"fmt"
@@ -7,22 +11,20 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
 )
 
 // TablePrinter renders tabular data to IOStreams.Out.
-// When the output is a TTY with colors enabled, it renders styled headers
-// and a divider. When piped or in non-TTY mode, it uses plain tabwriter
-// for machine-friendly output.
 type TablePrinter struct {
-	ios     *IOStreams
+	ios     *iostreams.IOStreams
 	headers []string
 	rows    [][]string
 }
 
-// NewTablePrinter creates a new table printer with the given column headers.
+// New creates a new table printer with the given column headers.
 // The table writes to ios.Out when Render() is called.
-func (ios *IOStreams) NewTablePrinter(headers ...string) *TablePrinter {
+func New(ios *iostreams.IOStreams, headers ...string) *TablePrinter {
 	return &TablePrinter{
 		ios:     ios,
 		headers: headers,
@@ -82,7 +84,7 @@ func (tp *TablePrinter) renderStyled() error {
 	}
 	colWidth := available / numCols
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(iostreams.ColorPrimary)
 	spacing := strings.Repeat(" ", gap)
 
 	// Render header row
@@ -100,7 +102,7 @@ func (tp *TablePrinter) renderStyled() error {
 	for range tp.headers {
 		dividerParts = append(dividerParts, strings.Repeat("─", colWidth))
 	}
-	divider := DividerStyle.Render(strings.Join(dividerParts, spacing))
+	divider := iostreams.DividerStyle.Render(strings.Join(dividerParts, spacing))
 	if _, err := fmt.Fprintln(tp.ios.Out, divider); err != nil {
 		return err
 	}

@@ -1,15 +1,17 @@
-package iostreams
+package tableprinter
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
-func TestTablePrinter_NewTablePrinter(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+func TestTablePrinter_New(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	if tp == nil {
-		t.Fatal("NewTablePrinter returned nil")
+		t.Fatal("New returned nil")
 	}
 	if tp.Len() != 0 {
 		t.Errorf("Len() = %d, want 0", tp.Len())
@@ -17,8 +19,8 @@ func TestTablePrinter_NewTablePrinter(t *testing.T) {
 }
 
 func TestTablePrinter_AddRow(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	tp.AddRow("web", "running")
 	tp.AddRow("db", "stopped")
 	if tp.Len() != 2 {
@@ -27,9 +29,9 @@ func TestTablePrinter_AddRow(t *testing.T) {
 }
 
 func TestTablePrinter_Render_PlainMode(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	// Non-TTY by default → plain mode
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS", "IMAGE")
+	tp := New(tio.IOStreams, "NAME", "STATUS", "IMAGE")
 	tp.AddRow("web", "running", "nginx:latest")
 	tp.AddRow("db", "stopped", "postgres:16")
 
@@ -60,8 +62,8 @@ func TestTablePrinter_Render_PlainMode(t *testing.T) {
 }
 
 func TestTablePrinter_Render_PlainMode_NoANSI(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	tp.AddRow("web", "running")
 
 	if err := tp.Render(); err != nil {
@@ -77,12 +79,12 @@ func TestTablePrinter_Render_PlainMode_NoANSI(t *testing.T) {
 }
 
 func TestTablePrinter_Render_StyledMode(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
 
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	tp.AddRow("web", "running")
 
 	if err := tp.Render(); err != nil {
@@ -106,8 +108,8 @@ func TestTablePrinter_Render_StyledMode(t *testing.T) {
 }
 
 func TestTablePrinter_Render_EmptyTable(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 
 	if err := tp.Render(); err != nil {
 		t.Fatalf("Render() error: %v", err)
@@ -121,8 +123,8 @@ func TestTablePrinter_Render_EmptyTable(t *testing.T) {
 }
 
 func TestTablePrinter_Render_MismatchedColumns(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS", "IMAGE")
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "NAME", "STATUS", "IMAGE")
 	tp.AddRow("web", "running") // Missing IMAGE column
 	tp.AddRow("db")             // Only NAME
 
@@ -141,12 +143,12 @@ func TestTablePrinter_Render_MismatchedColumns(t *testing.T) {
 }
 
 func TestTablePrinter_Render_StyledMode_WidthAware(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(40, 24) // Narrow terminal
 
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	tp.AddRow("very-long-container-name-that-exceeds-width", "running")
 
 	if err := tp.Render(); err != nil {
@@ -161,12 +163,12 @@ func TestTablePrinter_Render_StyledMode_WidthAware(t *testing.T) {
 }
 
 func TestTablePrinter_Render_StyledMode_EmptyRows(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
 
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	// No rows added
 
 	if err := tp.Render(); err != nil {
@@ -183,12 +185,12 @@ func TestTablePrinter_Render_StyledMode_EmptyRows(t *testing.T) {
 }
 
 func TestTablePrinter_Render_ExtremelyNarrowWidth(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(5, 24) // Extremely narrow
 
-	tp := tio.IOStreams.NewTablePrinter("NAME")
+	tp := New(tio.IOStreams, "NAME")
 	tp.AddRow("value")
 
 	if err := tp.Render(); err != nil {
@@ -202,8 +204,8 @@ func TestTablePrinter_Render_ExtremelyNarrowWidth(t *testing.T) {
 }
 
 func TestTablePrinter_Render_NoHeaders(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter()
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams)
 
 	if err := tp.Render(); err != nil {
 		t.Fatalf("Render() error: %v", err)
@@ -216,8 +218,8 @@ func TestTablePrinter_Render_NoHeaders(t *testing.T) {
 }
 
 func TestTablePrinter_Render_WritesToOut(t *testing.T) {
-	tio := NewTestIOStreams()
-	tp := tio.IOStreams.NewTablePrinter("COL")
+	tio := iostreams.NewTestIOStreams()
+	tp := New(tio.IOStreams, "COL")
 	tp.AddRow("val")
 
 	if err := tp.Render(); err != nil {
@@ -234,12 +236,12 @@ func TestTablePrinter_Render_WritesToOut(t *testing.T) {
 }
 
 func TestTablePrinter_Render_StyledMode_Unicode(t *testing.T) {
-	tio := NewTestIOStreams()
+	tio := iostreams.NewTestIOStreams()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(40, 24)
 
-	tp := tio.IOStreams.NewTablePrinter("NAME", "STATUS")
+	tp := New(tio.IOStreams, "NAME", "STATUS")
 	tp.AddRow("日本語テスト", "running")
 	tp.AddRow("emoji-🎉-test", "stopped")
 
