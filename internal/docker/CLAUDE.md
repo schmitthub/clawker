@@ -10,6 +10,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 
 | File | Purpose |
 |------|---------|
+| `pty.go` | `PTYHandler` — terminal session lifecycle for container I/O (raw mode, stream, resize) |
 | `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
 | `builder.go` | `Builder` — project image building (EnsureImage, Build, BuilderOptions) |
@@ -22,6 +23,43 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 | `opts.go` | Resource limit types implementing `pflag.Value` for CLI flags |
 | `types.go` | Re-exports ~35 Docker types from whail for consumer convenience |
 | `dockertest/` | Test fakes: `NewFakeClient()` with function-field overrides |
+
+## PTYHandler (`pty.go`)
+
+Full terminal session lifecycle for interactive container sessions: raw mode, bidirectional I/O streaming, resize propagation.
+
+```go
+type PTYHandler struct {
+    stdin, stdout, stderr *os.File
+    rawMode               *term.RawMode
+    mu                    sync.Mutex
+}
+
+func NewPTYHandler() *PTYHandler
+```
+
+### Methods
+
+```go
+(*PTYHandler).Setup() error                                    // Enable raw mode on stdin
+(*PTYHandler).Restore() error                                  // Reset visual state (ANSI) + restore termios
+(*PTYHandler).Stream(ctx, hijacked) error                      // Bidirectional I/O (stdin→conn, conn→stdout)
+(*PTYHandler).StreamWithResize(ctx, hijacked, resizeFunc) error // Stream + resize propagation
+(*PTYHandler).GetSize() (width, height int, err error)
+(*PTYHandler).IsTerminal() bool
+```
+
+**Dependencies**: `internal/term` (RawMode), `internal/signals` (ResizeHandler in StreamWithResize).
+
+**Consumers**: container `run`, `start`, `attach`, `exec` commands.
+
+### Gotchas
+
+- **Visual state vs termios**: `Restore()` sends ANSI reset sequences (alternate screen, cursor, colors) _before_ restoring raw/cooked mode. These are separate concerns.
+- **Resize +1/-1 trick**: Resize to `(h+1, w+1)` then actual size forces SIGWINCH for TUI redraw.
+- **os.Exit() skips defers**: Always call `Restore()` explicitly before exit paths.
+- **Ctrl+C in raw mode**: Goes to container, not as SIGINT to host process.
+- **Don't wait on stdin goroutine**: Container exit should not block on `Read()`.
 
 ## Naming Convention
 

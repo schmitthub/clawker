@@ -89,3 +89,10 @@ func IsStdoutTerminal() bool {
 func GetStdinSize() (width, height int, err error) {
 	return term.GetSize(int(os.Stdin.Fd()))
 }
+
+// GetTerminalSize returns the terminal size for the given file descriptor.
+// This is the canonical wrapper for x/term.GetSize — use this instead of
+// importing golang.org/x/term directly.
+func GetTerminalSize(fd int) (width, height int, err error) {
+	return term.GetSize(fd)
+}

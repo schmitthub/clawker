@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
 )
 
@@ -135,9 +134,9 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	}
 
 	// Set up TTY if container has one
-	var pty *term.PTYHandler
+	var pty *docker.PTYHandler
 	if hasTTY && !opts.NoStdin {
-		pty = term.NewPTYHandler()
+		pty = docker.NewPTYHandler()
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

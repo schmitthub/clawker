@@ -86,6 +86,13 @@ Experimental design for abstracting simple output:
 - Handles scenario 1 (non-interactive/static) in the 4-scenario model
 - Design questions: wrap `IOStreams` or live alongside? Factory field or per-command? Interaction with `HandleError` duck-typing?
 
+### ~~Investigate `internal/term` Import Boundary~~ (RESOLVED)
+Resolved: `internal/term` refactored into three packages:
+- `internal/term` — leaf (stdlib + x/term only), sole `golang.org/x/term` gateway, capability detection + raw mode
+- `internal/signals` — leaf (stdlib only), `SetupSignalContext` + `ResizeHandler`
+- `internal/docker/pty.go` — `PTYHandler` moved here (where it belongs — Docker session hijacking)
+- `internal/iostreams` — no longer imports `x/term` directly, uses `internal/term` gateway
+
 ### TTY Visual Bugs (noted, not blocking)
 - Invisible lines printed in TTY mode
 - Viewport lower-right border collapses in/out

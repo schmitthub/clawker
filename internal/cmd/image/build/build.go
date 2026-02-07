@@ -12,7 +12,7 @@ import (
   "github.com/schmitthub/clawker/internal/docker"
   "github.com/schmitthub/clawker/internal/iostreams"
   "github.com/schmitthub/clawker/internal/logger"
-  "github.com/schmitthub/clawker/internal/term"
+  "github.com/schmitthub/clawker/internal/signals"
   "github.com/schmitthub/clawker/internal/tui"
   "github.com/schmitthub/clawker/pkg/whail"
   "github.com/spf13/cobra"
@@ -104,7 +104,7 @@ Build-time variables can be passed using --build-arg.`,
 }
 
 func buildRun(ctx context.Context, opts *BuildOptions) error {
-  ctx, cancel := term.SetupSignalContext(ctx)
+  ctx, cancel := signals.SetupSignalContext(ctx)
   defer cancel()
 
   ios := opts.IOStreams

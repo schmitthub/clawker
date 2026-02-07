@@ -18,6 +18,11 @@ description: Code style guidelines for the clawker codebase
 - `pkg/whail` decorates moby client, exposing the same interface — all moby methods available through whail
 - It is ok to import `github.com/moby/moby/api/types` and related types directly as needed
 
+## Terminal Gateway
+- Only `internal/term` imports `golang.org/x/term` — no other package should
+- Use `term.IsTerminalFd(fd)` and `term.GetTerminalSize(fd)` instead of `x/term` directly
+- `internal/term` is a leaf package (stdlib + `x/term` only, zero `internal/` imports)
+
 ## Presentation Layer
 
 ### Library Import Boundaries

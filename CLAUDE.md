@@ -70,8 +70,9 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
+│   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
-│   ├── term/                  # PTY/terminal handling
+│   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
@@ -126,7 +127,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `PTYHandler` | Raw terminal mode, bidirectional streaming |
+| `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
@@ -243,7 +244,7 @@ security:
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
-10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`
+10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
 11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` re-exports them via `iostreams.go` shim — no duplicate definitions
 12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams

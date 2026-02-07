@@ -1,4 +1,4 @@
-package term
+package docker
 
 import (
 	"context"
@@ -7,8 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/signals"
+	"github.com/schmitthub/clawker/internal/term"
 )
 
 // resetSequence contains ANSI escape sequences to reset terminal visual state.
@@ -23,7 +24,7 @@ type PTYHandler struct {
 	stdin   *os.File
 	stdout  *os.File
 	stderr  *os.File
-	rawMode *RawMode
+	rawMode *term.RawMode
 
 	// mu protects concurrent access
 	mu sync.Mutex
@@ -35,7 +36,7 @@ func NewPTYHandler() *PTYHandler {
 		stdin:   os.Stdin,
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
-		rawMode: NewRawModeStdin(),
+		rawMode: term.NewRawModeStdin(),
 	}
 }
 
@@ -87,7 +88,7 @@ func (p *PTYHandler) resetVisualStateUnlocked() {
 }
 
 // Stream handles bidirectional I/O between local terminal and container
-func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedResponse) error {
+func (p *PTYHandler) Stream(ctx context.Context, hijacked HijackedResponse) error {
 	// NOTE: caller owns hijacked.Close() — do not close here to avoid double-close.
 
 	outputDone := make(chan struct{})
@@ -128,7 +129,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked docker.HijackedRespons
 // StreamWithResize handles bidirectional I/O with terminal resize support
 func (p *PTYHandler) StreamWithResize(
 	ctx context.Context,
-	hijacked docker.HijackedResponse,
+	hijacked HijackedResponse,
 	resizeFunc func(height, width uint) error,
 ) error {
 	// NOTE: caller owns hijacked.Close() — do not close here to avoid double-close.
@@ -154,7 +155,7 @@ func (p *PTYHandler) StreamWithResize(
 		}
 
 		// Start monitoring for window resize events (SIGWINCH)
-		resizeHandler := NewResizeHandler(resizeFunc, p.GetSize)
+		resizeHandler := signals.NewResizeHandler(resizeFunc, p.GetSize)
 		resizeHandler.Start()
 		defer resizeHandler.Stop()
 	}

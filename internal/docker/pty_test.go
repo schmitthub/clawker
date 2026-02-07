@@ -1,9 +1,11 @@
-package term
+package docker
 
 import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/term"
 )
 
 func TestResetVisualStateUnlocked_Terminal(t *testing.T) {
@@ -24,13 +26,10 @@ func TestResetVisualStateUnlocked_Terminal(t *testing.T) {
 	// For this test, we verify that when stdout IS writable, the sequence is written.
 	// Create a handler with a custom fd that simulates terminal behavior.
 	handler := &PTYHandler{
-		stdin:  os.Stdin,
-		stdout: w,
-		stderr: os.Stderr,
-		rawMode: &RawMode{
-			fd:    int(w.Fd()),
-			isRaw: false,
-		},
+		stdin:   os.Stdin,
+		stdout:  w,
+		stderr:  os.Stderr,
+		rawMode: term.NewRawMode(int(w.Fd())),
 	}
 
 	// Since the pipe fd is not a real terminal, IsTerminal() will return false.
@@ -60,13 +59,10 @@ func TestResetVisualStateUnlocked_NonTerminal(t *testing.T) {
 	defer r.Close()
 
 	handler := &PTYHandler{
-		stdin:  os.Stdin,
-		stdout: w,
-		stderr: os.Stderr,
-		rawMode: &RawMode{
-			fd:    int(w.Fd()), // pipe is not a terminal
-			isRaw: false,
-		},
+		stdin:   os.Stdin,
+		stdout:  w,
+		stderr:  os.Stderr,
+		rawMode: term.NewRawMode(int(w.Fd())), // pipe is not a terminal
 	}
 
 	// Call resetVisualStateUnlocked - should be no-op for non-terminal
@@ -94,13 +90,10 @@ func TestRestore_ResetsVisualState(t *testing.T) {
 	defer r.Close()
 
 	handler := &PTYHandler{
-		stdin:  os.Stdin,
-		stdout: w,
-		stderr: os.Stderr,
-		rawMode: &RawMode{
-			fd:    int(w.Fd()), // pipe is not a terminal
-			isRaw: false,
-		},
+		stdin:   os.Stdin,
+		stdout:  w,
+		stderr:  os.Stderr,
+		rawMode: term.NewRawMode(int(w.Fd())), // pipe is not a terminal
 	}
 
 	// Call Restore - should attempt to reset visual state then restore termios
@@ -125,13 +118,10 @@ func TestRestore_ResetsVisualState(t *testing.T) {
 func TestRestore_NoErrorOnNonTerminal(t *testing.T) {
 	// Create a handler with non-terminal stdout
 	handler := &PTYHandler{
-		stdin:  os.Stdin,
-		stdout: os.Stdout,
-		stderr: os.Stderr,
-		rawMode: &RawMode{
-			fd:    -1, // invalid fd, but IsTerminal will return false
-			isRaw: false,
-		},
+		stdin:   os.Stdin,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+		rawMode: term.NewRawMode(-1), // invalid fd, but IsTerminal will return false
 	}
 
 	// Restore should succeed (no-op) for non-terminal
