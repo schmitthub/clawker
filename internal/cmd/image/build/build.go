@@ -128,14 +128,13 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   // Validate configuration
   validator := config.NewValidator(wd)
   if err := validator.Validate(cfg); err != nil {
-    cmdutil.PrintError(ios, "Configuration validation failed")
-    fmt.Fprintln(ios.ErrOut, err)
-    return err
+    return fmt.Errorf("configuration validation failed: %w", err)
   }
 
   // Print any warnings
+  cs := ios.ColorScheme()
   for _, warning := range validator.Warnings() {
-    cmdutil.PrintWarning(ios, "%s", warning)
+    fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), warning)
   }
 
   // Handle Dockerfile path from -f/--file flag
@@ -154,7 +153,6 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   // Connect to Docker
   client, err := opts.Client(ctx)
   if err != nil {
-    cmdutil.HandleError(ios, err)
     return err
   }
 
@@ -164,7 +162,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   if bkErr != nil {
     logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
   } else if !buildkitEnabled {
-    cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
+    fmt.Fprintf(ios.ErrOut, "%s BuildKit is not available — cache mount directives will be ignored and builds may be slower\n", cs.WarningIcon())
   }
 
   // Determine image tag(s)
@@ -234,24 +232,12 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
       FormatDuration: whail.FormatBuildDuration,
     }, ch)
     if result.Err != nil {
-      cmdutil.HandleError(ios, result.Err)
-      cmdutil.PrintNextSteps(ios,
-        "Check your Dockerfile for syntax errors",
-        "Ensure the base image exists and is accessible",
-        "Run 'clawker build --no-cache' to rebuild from scratch",
-        "Use '--progress=plain' for detailed build output",
-      )
+      printBuildNextSteps(ios, cs)
       return result.Err
     }
 
     if buildErr != nil {
-      cmdutil.HandleError(ios, buildErr)
-      cmdutil.PrintNextSteps(ios,
-        "Check your Dockerfile for syntax errors",
-        "Ensure the base image exists and is accessible",
-        "Run 'clawker build --no-cache' to rebuild from scratch",
-        "Use '--progress=plain' for detailed build output",
-      )
+      printBuildNextSteps(ios, cs)
       return buildErr
     }
 
@@ -260,13 +246,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
   // Suppressed output — build synchronously without progress display.
   if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
-    cmdutil.HandleError(ios, err)
-    cmdutil.PrintNextSteps(ios,
-      "Check your Dockerfile for syntax errors",
-      "Ensure the base image exists and is accessible",
-      "Run 'clawker build --no-cache' to rebuild from scratch",
-      "Use '--progress=plain' for detailed build output",
-    )
+    printBuildNextSteps(ios, cs)
     return err
   }
 
@@ -331,6 +311,15 @@ func parseKeyValuePairs(pairs []string) map[string]string {
       Msg("labels without '=' were ignored, use format KEY=VALUE")
   }
   return result
+}
+
+// printBuildNextSteps prints actionable guidance after a build failure.
+func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
+  fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+  fmt.Fprintln(ios.ErrOut, "  1. Check your Dockerfile for syntax errors")
+  fmt.Fprintln(ios.ErrOut, "  2. Ensure the base image exists and is accessible")
+  fmt.Fprintln(ios.ErrOut, "  3. Run 'clawker build --no-cache' to rebuild from scratch")
+  fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
 }
 
 // mergeLabels merges user labels with clawker labels.
