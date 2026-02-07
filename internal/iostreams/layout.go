@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // SplitConfig configures horizontal or vertical splitting.
@@ -156,9 +158,9 @@ func Columns(width, gap int, contents ...string) string {
 // FlexRow arranges items with flexible spacing to fill width.
 // Left, center, and right content are distributed across the width.
 func FlexRow(width int, left, center, right string) string {
-	leftW := CountVisibleWidth(left)
-	centerW := CountVisibleWidth(center)
-	rightW := CountVisibleWidth(right)
+	leftW := text.CountVisibleWidth(left)
+	centerW := text.CountVisibleWidth(center)
+	rightW := text.CountVisibleWidth(right)
 
 	totalContent := leftW + centerW + rightW
 	available := max(width-totalContent, 0)

@@ -1,4 +1,7 @@
-package iostreams
+// Package text provides pure text/string utility functions.
+// All functions are ANSI-aware where relevant (counting visible width,
+// truncation, padding). This is a leaf package with zero internal imports.
+package text
 
 import (
 	"regexp"

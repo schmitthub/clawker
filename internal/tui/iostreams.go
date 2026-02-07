@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // ---------------------------------------------------------------------------
@@ -221,50 +222,50 @@ func MaxInt(a, b int) int { return iostreams.MaxInt(a, b) }
 func ClampInt(value, minVal, maxVal int) int { return iostreams.ClampInt(value, minVal, maxVal) }
 
 // ---------------------------------------------------------------------------
-// Text utilities
+// Text utilities — delegated to internal/text
 // ---------------------------------------------------------------------------
 
 // Truncate shortens a string to maxLen characters, adding "..." if truncated.
-func Truncate(s string, maxLen int) string { return iostreams.Truncate(s, maxLen) }
+func Truncate(s string, maxLen int) string { return text.Truncate(s, maxLen) }
 
 // TruncateMiddle shortens a string by removing characters from the middle.
-func TruncateMiddle(s string, maxLen int) string { return iostreams.TruncateMiddle(s, maxLen) }
+func TruncateMiddle(s string, maxLen int) string { return text.TruncateMiddle(s, maxLen) }
 
 // PadRight pads a string on the right to the specified width.
-func PadRight(s string, width int) string { return iostreams.PadRight(s, width) }
+func PadRight(s string, width int) string { return text.PadRight(s, width) }
 
 // PadLeft pads a string on the left to the specified width.
-func PadLeft(s string, width int) string { return iostreams.PadLeft(s, width) }
+func PadLeft(s string, width int) string { return text.PadLeft(s, width) }
 
 // PadCenter centers a string within the specified width.
-func PadCenter(s string, width int) string { return iostreams.PadCenter(s, width) }
+func PadCenter(s string, width int) string { return text.PadCenter(s, width) }
 
 // WordWrap wraps text to the specified width, breaking on word boundaries.
-func WordWrap(s string, width int) string { return iostreams.WordWrap(s, width) }
+func WordWrap(s string, width int) string { return text.WordWrap(s, width) }
 
 // WrapLines wraps text to the specified width and returns individual lines.
-func WrapLines(s string, width int) []string { return iostreams.WrapLines(s, width) }
+func WrapLines(s string, width int) []string { return text.WrapLines(s, width) }
 
 // CountVisibleWidth returns the visible width of a string, excluding ANSI codes.
-func CountVisibleWidth(s string) int { return iostreams.CountVisibleWidth(s) }
+func CountVisibleWidth(s string) int { return text.CountVisibleWidth(s) }
 
 // StripANSI removes all ANSI escape sequences from a string.
-func StripANSI(s string) string { return iostreams.StripANSI(s) }
+func StripANSI(s string) string { return text.StripANSI(s) }
 
 // Indent prefixes each line with the given number of spaces.
-func Indent(s string, spaces int) string { return iostreams.Indent(s, spaces) }
+func Indent(s string, spaces int) string { return text.Indent(s, spaces) }
 
 // JoinNonEmpty joins non-empty strings with the given separator.
-func JoinNonEmpty(sep string, parts ...string) string { return iostreams.JoinNonEmpty(sep, parts...) }
+func JoinNonEmpty(sep string, parts ...string) string { return text.JoinNonEmpty(sep, parts...) }
 
 // Repeat returns s repeated n times. Returns empty string if n <= 0.
-func Repeat(s string, n int) string { return iostreams.Repeat(s, n) }
+func Repeat(s string, n int) string { return text.Repeat(s, n) }
 
 // FirstLine returns the first line of a multi-line string.
-func FirstLine(s string) string { return iostreams.FirstLine(s) }
+func FirstLine(s string) string { return text.FirstLine(s) }
 
 // LineCount returns the number of lines in a string.
-func LineCount(s string) int { return iostreams.LineCount(s) }
+func LineCount(s string) int { return text.LineCount(s) }
 
 // ---------------------------------------------------------------------------
 // Layout helpers

@@ -6,6 +6,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // TablePrinter renders tabular data to IOStreams.Out.
@@ -86,7 +88,7 @@ func (tp *TablePrinter) renderStyled() error {
 	// Render header row
 	var headerParts []string
 	for _, h := range tp.headers {
-		rendered := headerStyle.Width(colWidth).Render(Truncate(h, colWidth))
+		rendered := headerStyle.Width(colWidth).Render(text.Truncate(h, colWidth))
 		headerParts = append(headerParts, rendered)
 	}
 	if _, err := fmt.Fprintln(tp.ios.Out, strings.Join(headerParts, spacing)); err != nil {
@@ -109,7 +111,7 @@ func (tp *TablePrinter) renderStyled() error {
 		cols := tp.normalizeRow(row)
 		var parts []string
 		for _, col := range cols {
-			parts = append(parts, cellStyle.Render(Truncate(col, colWidth)))
+			parts = append(parts, cellStyle.Render(text.Truncate(col, colWidth)))
 		}
 		if _, err := fmt.Fprintln(tp.ios.Out, strings.Join(parts, spacing)); err != nil {
 			return err
