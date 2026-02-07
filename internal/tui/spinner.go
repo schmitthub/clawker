@@ -3,6 +3,8 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // SpinnerType defines the animation style for a spinner.
@@ -30,7 +32,7 @@ type SpinnerModel struct {
 func NewSpinner(spinnerType SpinnerType, label string) SpinnerModel {
 	s := spinner.New()
 	s.Spinner = mapSpinnerType(spinnerType)
-	s.Style = CyanStyle
+	s.Style = iostreams.CyanStyle
 
 	return SpinnerModel{
 		spinner: s,
@@ -86,7 +88,7 @@ func (m SpinnerModel) View() string {
 	if m.label == "" {
 		return m.spinner.View()
 	}
-	return m.spinner.View() + " " + MutedStyle.Render(m.label)
+	return m.spinner.View() + " " + iostreams.MutedStyle.Render(m.label)
 }
 
 // SetLabel updates the spinner's label.

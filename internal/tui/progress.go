@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // ---------------------------------------------------------------------------
@@ -275,7 +276,7 @@ func newProgressModel(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, event
 		Frames: []string{"●", "○"},
 		FPS:    150 * time.Millisecond,
 	}
-	s.Style = BrandOrangeStyle
+	s.Style = iostreams.BrandOrangeStyle
 
 	return progressModel{
 		ios:       ios,
@@ -469,8 +470,8 @@ func renderProgressHeader(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *
 	titleRendered := cs.Bold(cs.BrandOrange(title))
 	subtitleRendered := cs.Muted(subtitle)
 
-	titleWidth := CountVisibleWidth(titleRendered)
-	subtitleWidth := CountVisibleWidth(subtitleRendered)
+	titleWidth := text.CountVisibleWidth(titleRendered)
+	subtitleWidth := text.CountVisibleWidth(subtitleRendered)
 	fillWidth := width - titleWidth - subtitleWidth
 	if fillWidth < 3 {
 		fillWidth = 3
@@ -511,10 +512,10 @@ func renderProgressStepLine(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 		duration = cs.Muted(cfg.formatDuration(d))
 	}
 
-	durationWidth := CountVisibleWidth(duration)
+	durationWidth := text.CountVisibleWidth(duration)
 	maxNameWidth := width - durationWidth - 6
 	if maxNameWidth > 0 {
-		name = Truncate(name, maxNameWidth)
+		name = text.Truncate(name, maxNameWidth)
 	}
 
 	buf.WriteString("  ")
@@ -522,7 +523,7 @@ func renderProgressStepLine(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 	buf.WriteByte(' ')
 	buf.WriteString(name)
 	if duration != "" {
-		nameWidth := CountVisibleWidth(name)
+		nameWidth := text.CountVisibleWidth(name)
 		pad := width - 4 - nameWidth - durationWidth
 		if pad < 2 {
 			pad = 2
@@ -559,9 +560,9 @@ func renderProgressViewport(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 	topLeft := "  ┌"
 	topRight := "┐"
 	if title != "" {
-		title = Truncate(title, innerWidth-4)
+		title = text.Truncate(title, innerWidth-4)
 		titleStr := " " + title + " "
-		fillLen := innerWidth - CountVisibleWidth(titleStr)
+		fillLen := innerWidth - text.CountVisibleWidth(titleStr)
 		if fillLen < 0 {
 			fillLen = 0
 		}
@@ -574,8 +575,8 @@ func renderProgressViewport(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 
 	// Content lines.
 	for _, line := range lines {
-		line = Truncate(line, innerWidth)
-		padLen := innerWidth - CountVisibleWidth(line)
+		line = text.Truncate(line, innerWidth)
+		padLen := innerWidth - text.CountVisibleWidth(line)
 		if padLen < 0 {
 			padLen = 0
 		}
@@ -599,7 +600,7 @@ func renderProgressViewport(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 	if totalCount > len(lines) {
 		counter = fmt.Sprintf(" %d of %d lines ", len(lines), totalCount)
 	}
-	counterWidth := CountVisibleWidth(counter)
+	counterWidth := text.CountVisibleWidth(counter)
 	bottomFillLen := innerWidth - counterWidth
 	if bottomFillLen < 0 {
 		bottomFillLen = 0

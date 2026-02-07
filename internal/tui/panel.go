@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // PanelConfig configures a panel component.
@@ -83,9 +85,9 @@ func (p PanelModel) SetPadding(padding int) PanelModel {
 
 // View renders the panel.
 func (p PanelModel) View() string {
-	style := PanelStyle
+	style := iostreams.PanelStyle
 	if p.focused {
-		style = PanelActiveStyle
+		style = iostreams.PanelActiveStyle
 	}
 
 	// Calculate content dimensions
@@ -96,7 +98,7 @@ func (p PanelModel) View() string {
 
 	// Add title if present
 	if p.title != "" {
-		titleStyle := PanelTitleStyle.Width(contentWidth)
+		titleStyle := iostreams.PanelTitleStyle.Width(contentWidth)
 		content.WriteString(titleStyle.Render(p.title))
 		content.WriteString("\n")
 	}
@@ -166,7 +168,7 @@ func RenderDetailPanel(title string, pairs []KeyValuePair, width int) string {
 // RenderScrollablePanel renders a panel that shows scrollable content.
 func RenderScrollablePanel(title string, lines []string, offset, visibleLines, width int) string {
 	if len(lines) == 0 {
-		return RenderInfoPanel(title, EmptyStateStyle.Render("No content"), width)
+		return RenderInfoPanel(title, iostreams.EmptyStateStyle.Render("No content"), width)
 	}
 
 	// Calculate visible range
@@ -179,7 +181,7 @@ func RenderScrollablePanel(title string, lines []string, offset, visibleLines, w
 
 	// Add scroll indicator if needed
 	if len(lines) > visibleLines {
-		indicator := MutedStyle.Render(fmt.Sprintf(" [%d-%d/%d]", start+1, end, len(lines)))
+		indicator := iostreams.MutedStyle.Render(fmt.Sprintf(" [%d-%d/%d]", start+1, end, len(lines)))
 		title = title + indicator
 	}
 
@@ -275,7 +277,7 @@ func (g PanelGroup) RenderHorizontal(gap int) string {
 		views = append(views, p.View())
 	}
 
-	return Row(gap, views...)
+	return iostreams.Row(gap, views...)
 }
 
 // RenderVertical renders panels in a vertical stack.

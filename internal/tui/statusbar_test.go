@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func TestNewStatusBar(t *testing.T) {
@@ -103,9 +105,9 @@ func TestRenderStatusBar(t *testing.T) {
 
 func TestRenderStatusBarWithSections(t *testing.T) {
 	sections := []StatusBarSection{
-		{Content: "Section 1", Render: func(s string) string { return SuccessStyle.Render(s) }},
-		{Content: "Section 2", Render: func(s string) string { return MutedStyle.Render(s) }},
-		{Content: "Section 3", Render: func(s string) string { return ErrorStyle.Render(s) }},
+		{Content: "Section 1", Render: func(s string) string { return iostreams.SuccessStyle.Render(s) }},
+		{Content: "Section 2", Render: func(s string) string { return iostreams.MutedStyle.Render(s) }},
+		{Content: "Section 3", Render: func(s string) string { return iostreams.ErrorStyle.Render(s) }},
 	}
 
 	result := RenderStatusBarWithSections(sections, 80)
@@ -121,7 +123,7 @@ func TestRenderStatusBarWithSections_Empty(t *testing.T) {
 
 func TestRenderStatusBarWithSections_Single(t *testing.T) {
 	sections := []StatusBarSection{
-		{Content: "Only Section", Render: func(s string) string { return SuccessStyle.Render(s) }},
+		{Content: "Only Section", Render: func(s string) string { return iostreams.SuccessStyle.Render(s) }},
 	}
 
 	result := RenderStatusBarWithSections(sections, 80)

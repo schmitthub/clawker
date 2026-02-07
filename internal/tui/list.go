@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // ListItem represents an item that can be displayed in a list.
@@ -150,7 +153,7 @@ func keyMatches(msg tea.KeyMsg, k string) bool {
 // View renders the list.
 func (m ListModel) View() string {
 	if len(m.items) == 0 {
-		return EmptyStateStyle.Render("No items")
+		return iostreams.EmptyStateStyle.Render("No items")
 	}
 
 	visibleCount := m.visibleItemCount()
@@ -178,20 +181,20 @@ func (m ListModel) View() string {
 
 // renderItem renders a single list item.
 func (m ListModel) renderItem(item ListItem, selected bool) string {
-	style := ListItemStyle
+	style := iostreams.ListItemStyle
 	prefix := "  "
 
 	if selected {
-		style = ListItemSelectedStyle
+		style = iostreams.ListItemSelectedStyle
 		prefix = "> "
 	}
 
-	title := Truncate(item.Title(), m.width-4)
+	title := text.Truncate(item.Title(), m.width-4)
 	line := prefix + style.Render(title)
 
 	if m.showDescriptions && item.Description() != "" {
-		desc := Truncate(item.Description(), m.width-6)
-		line += "\n    " + ListItemDimStyle.Render(desc)
+		desc := text.Truncate(item.Description(), m.width-6)
+		line += "\n    " + iostreams.ListItemDimStyle.Render(desc)
 	}
 
 	return line
@@ -205,10 +208,10 @@ func (m ListModel) renderScrollIndicator() string {
 
 	pos := m.selectedIndex + 1
 	total := len(m.items)
-	indicator := MutedStyle.Render(strings.Repeat(" ", m.width-10))
-	indicator += MutedStyle.Render("[")
-	indicator += CountStyle.Render(fmt.Sprintf("%d/%d", pos, total))
-	indicator += MutedStyle.Render("]")
+	indicator := iostreams.MutedStyle.Render(strings.Repeat(" ", m.width-10))
+	indicator += iostreams.MutedStyle.Render("[")
+	indicator += iostreams.CountStyle.Render(fmt.Sprintf("%d/%d", pos, total))
+	indicator += iostreams.MutedStyle.Render("]")
 
 	return indicator
 }
@@ -239,7 +242,7 @@ func (m *ListModel) updateOffset() {
 	}
 
 	// Clamp offset
-	m.offset = ClampInt(m.offset, 0, max(len(m.items)-visible, 0))
+	m.offset = max(0, min(m.offset, max(len(m.items)-visible, 0)))
 }
 
 // SelectNext moves selection to the next item.
@@ -299,7 +302,7 @@ func (m ListModel) Select(index int) ListModel {
 	if len(m.items) == 0 {
 		return m
 	}
-	m.selectedIndex = ClampInt(index, 0, len(m.items)-1)
+	m.selectedIndex = max(0, min(index, len(m.items)-1))
 	m.updateOffset()
 	return m
 }

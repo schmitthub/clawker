@@ -3,6 +3,9 @@ package tui
 import (
 	"strconv"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // StatusBarModel represents a single-line status bar with left/center/right sections.
@@ -49,8 +52,8 @@ func (m StatusBarModel) View() string {
 	// Calculate content with padding removed for space calculation
 	innerWidth := m.width - 2 // Account for padding
 
-	content := FlexRow(innerWidth, m.left, m.center, m.right)
-	return StatusBarStyle.Width(m.width).Render(content)
+	content := iostreams.FlexRow(innerWidth, m.left, m.center, m.right)
+	return iostreams.StatusBarStyle.Width(m.width).Render(content)
 }
 
 // Left returns the left section content.
@@ -96,7 +99,7 @@ func RenderStatusBarWithSections(sections []StatusBarSection, width int) string 
 	for _, s := range sections {
 		content := s.Render(s.Content)
 		parts = append(parts, content)
-		totalContent += CountVisibleWidth(s.Content)
+		totalContent += text.CountVisibleWidth(s.Content)
 	}
 
 	// Calculate spacing
@@ -128,28 +131,28 @@ func RenderStatusBarWithSections(sections []StatusBarSection, width int) string 
 // ModeIndicator creates a styled mode indicator for the status bar.
 func ModeIndicator(mode string, active bool) string {
 	if active {
-		return BadgeStyle.Render(strings.ToUpper(mode))
+		return iostreams.BadgeStyle.Render(strings.ToUpper(mode))
 	}
-	return BadgeMutedStyle.Render(strings.ToUpper(mode))
+	return iostreams.BadgeMutedStyle.Render(strings.ToUpper(mode))
 }
 
 // ConnectionIndicator creates a connection status indicator.
 func ConnectionIndicator(connected bool) string {
 	if connected {
-		return StatusRunningStyle.Render("\u25cf Connected") // ●
+		return iostreams.StatusRunningStyle.Render("\u25cf Connected") // ●
 	}
-	return StatusErrorStyle.Render("\u25cb Disconnected") // ○
+	return iostreams.StatusErrorStyle.Render("\u25cb Disconnected") // ○
 }
 
 // TimerIndicator creates a timer display for the status bar.
 func TimerIndicator(label string, value string) string {
-	return MutedStyle.Render(label+": ") + ValueStyle.Render(value)
+	return iostreams.MutedStyle.Render(label+": ") + iostreams.ValueStyle.Render(value)
 }
 
 // CounterIndicator creates a counter display for the status bar.
 func CounterIndicator(label string, current, total int) string {
-	return MutedStyle.Render(label+": ") +
-		CountStyle.Render(strconv.Itoa(current)) +
-		MutedStyle.Render("/") +
-		MutedStyle.Render(strconv.Itoa(total))
+	return iostreams.MutedStyle.Render(label+": ") +
+		iostreams.CountStyle.Render(strconv.Itoa(current)) +
+		iostreams.MutedStyle.Render("/") +
+		iostreams.MutedStyle.Render(strconv.Itoa(total))
 }

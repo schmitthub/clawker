@@ -3,6 +3,8 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // ViewportConfig configures a viewport component.
@@ -23,7 +25,7 @@ type ViewportModel struct {
 // NewViewport creates a new viewport with the given configuration.
 func NewViewport(cfg ViewportConfig) ViewportModel {
 	vp := viewport.New(cfg.Width, cfg.Height)
-	vp.Style = PanelStyle
+	vp.Style = iostreams.PanelStyle
 	if cfg.Content != "" {
 		vp.SetContent(cfg.Content)
 	}
@@ -110,8 +112,8 @@ func (v ViewportModel) Update(msg tea.Msg) (ViewportModel, tea.Cmd) {
 func (v ViewportModel) View() string {
 	content := v.viewport.View()
 	if v.title != "" {
-		header := PanelTitleStyle.Render(v.title)
-		return Stack(0, header, content)
+		header := iostreams.PanelTitleStyle.Render(v.title)
+		return iostreams.Stack(0, header, content)
 	}
 	return content
 }
