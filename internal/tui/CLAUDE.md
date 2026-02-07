@@ -15,6 +15,8 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | File | Purpose |
 |------|---------|
 | `iostreams.go` | Re-export shim: colors, styles, tokens, text, layout, time from iostreams |
+| `tui.go` | `TUI` struct — Factory noun, owns hooks + progress display; `NewTUI`, `RegisterHooks`, `RunProgress` |
+| `hooks.go` | `HookResult`, `LifecycleHook` — generic lifecycle hook types for TUI components |
 | `keys.go` | `KeyMap` struct, `DefaultKeyMap()`, `Is*` key matchers |
 | `components.go` | Stateless renders: header, status, badge, progress, table, divider |
 | `spinner.go` | Animated spinner wrapping bubbles/spinner |
@@ -24,6 +26,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `viewport.go` | Scrollable content viewport wrapping bubbles/viewport |
 | `help.go` | Help bar/grid, binding presets, `QuickHelp` |
 | `program.go` | `RunProgram` helper for running BubbleTea programs with IOStreams |
+| `progress.go` | Generic progress display: BubbleTea TTY mode + plain text mode |
 | `import_boundary_test.go` | Enforces no lipgloss imports in non-test files |
 
 ## Re-exports (`iostreams.go`)
@@ -177,6 +180,102 @@ Runs a BubbleTea program using IOStreams for input/output. Reads from `ios.In`, 
 
 **Options**: `WithAltScreen(bool)`, `WithMouseMotion(bool)`
 
+## Generic Progress Display (`progress.go`)
+
+Generic multi-step progress display using BubbleTea for TTY mode and sequential text for plain mode. Zero domain knowledge — build-specific logic flows in through callbacks.
+
+```go
+ch := make(chan tui.ProgressStep, 64)
+
+buildOpts.OnProgress = func(event whail.BuildProgressEvent) {
+    ch <- tui.ProgressStep{
+        ID: event.StepID, Name: event.StepName,
+        Status: progressStatus(event.Status), // explicit switch, no iota alignment
+        Cached: event.Cached, Error: event.Error, LogLine: event.LogLine,
+    }
+}
+
+go func() {
+    buildErr = builder.Build(ctx, imageTag, buildOpts)
+    close(ch) // channel closure = done signal
+}()
+
+result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
+    Title: "Building " + project, Subtitle: imageTag,
+    MaxVisible: 5, LogLines: 3,
+    IsInternal:     whail.IsInternalStep,
+    CleanName:      whail.CleanStepName,
+    ParseGroup:     whail.ParseBuildStage,
+    FormatDuration: whail.FormatBuildDuration,
+}, ch)
+```
+
+**Types**: `ProgressStepStatus` (`StepPending`, `StepRunning`, `StepComplete`, `StepCached`, `StepError`), `ProgressStep`, `ProgressDisplayConfig`, `ProgressResult`
+
+**Entry point**: `RunProgress(ios, mode, cfg, ch)` — mode is `"auto"`, `"plain"`, or `"tty"`; cfg provides callbacks for domain-specific behavior
+
+**Callbacks in ProgressDisplayConfig**:
+- `IsInternal func(string) bool` — filter hidden steps (nil = show all)
+- `CleanName func(string) string` — strip noise from step names (nil = pass through)
+- `ParseGroup func(string) string` — extract group/stage names (nil = no groups)
+- `FormatDuration func(time.Duration) string` — format step durations (nil = default)
+
+**TTY mode**: BubbleTea model with pulsing spinner in BrandOrange, fixed-height sliding window (configurable via MaxVisible), group headings, bordered log viewport (configurable via LogLines), Ctrl+C handling
+
+**Plain mode**: Sequential `[run]`/`[ok]`/`[fail]` lines, internal steps hidden via IsInternal callback, dedup on status transitions
+
+**Domain helpers** (moved to `pkg/whail/progress.go`): `whail.IsInternalStep(name)`, `whail.CleanStepName(name)`, `whail.ParseBuildStage(name)`, `whail.FormatBuildDuration(d)`
+
+## Lifecycle Hooks (`hooks.go`)
+
+Generic lifecycle hook mechanism for TUI components. Hooks fire at key moments during component execution, enabling callers to inject behavior (pausing, logging, test assertions) without the TUI package knowing about the caller's domain.
+
+```go
+// HookResult controls execution flow after a lifecycle hook fires.
+type HookResult struct {
+    Continue bool   // false = quit execution
+    Message  string // reason for quitting (only meaningful when Continue=false)
+    Err      error  // hook's own failure (independent of Continue)
+}
+
+// LifecycleHook is called at key moments during TUI component execution.
+type LifecycleHook func(component, event string) HookResult
+```
+
+**Wiring**: Hooks are threaded via component config structs. `ProgressDisplayConfig.OnLifecycle` is the first; future components follow the same pattern. Nil hooks are never called — each config struct has a nil-safe `fireHook()` helper.
+
+**Firing**: Hooks fire AFTER BubbleTea exits (no stdin conflict) but BEFORE the summary is rendered. The `View()` fix ensures the progress display persists in BubbleTea's final frame via `viewFinished()`.
+
+**Hook events for progress display**:
+- `"progress"`, `"before_complete"` — fired after all steps complete, before summary
+
+**Factory threading**: `cmdutil.Factory.TUI` → `BuildOptions.TUI` → `TUI.RunProgress()` injects hooks into `ProgressDisplayConfig.OnLifecycle`. Hooks registered on TUI struct via `.RegisterHooks()` in PersistentPreRunE; pointer sharing ensures commands see them.
+
+## TUI Struct (`tui.go`)
+
+The `TUI` struct is the Factory noun for the presentation layer. Commands receive it eagerly; hooks are registered post-construction.
+
+```go
+type TUI struct {
+    ios   *iostreams.IOStreams
+    hooks []LifecycleHook
+}
+
+func NewTUI(ios *iostreams.IOStreams) *TUI
+func (t *TUI) RegisterHooks(hooks ...LifecycleHook)
+func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan ProgressStep) ProgressResult
+func (t *TUI) IOStreams() *iostreams.IOStreams
+```
+
+- `NewTUI(ios)` -- constructor, binds to IOStreams
+- `RegisterHooks(hooks...)` -- appends lifecycle hooks; hooks fire in registration order
+- `RunProgress(mode, cfg, ch)` -- delegates to package-level `RunProgress()`, injecting composed hooks into `cfg.OnLifecycle` if caller hasn't set one explicitly
+- `IOStreams()` -- accessor for the underlying IOStreams
+
+**Hook composition**: Multiple hooks are composed into a single `LifecycleHook` that fires in order. First abort (`Continue=false`) or error short-circuits remaining hooks.
+
+**Pointer-sharing pattern**: TUI is constructed eagerly in Factory and captured by commands at `NewCmd` time. Hooks are registered later in `PersistentPreRunE` (after flag parsing). Since it's a pointer, commands see the hooks when `RunE` fires. This fixes the `--step` flag bug where hooks were captured eagerly before flag values were resolved.
+
 ## Tests & Limitations
 
 Every file has a corresponding `*_test.go` with `testify/assert`.
@@ -185,3 +284,11 @@ Every file has a corresponding `*_test.go` with `testify/assert`.
 - `StripANSI` may not handle all nested ANSI sequences
 - Spinner requires `Init()` and tick message handling in BubbleTea Update loop
 - `import_boundary_test.go` enforces that no non-test `.go` files import lipgloss
+
+### Golden Output Tests (`progress_golden_test.go`)
+
+Golden snapshot tests for `RunProgress` in plain mode. Each JSON scenario from `pkg/whail/whailtest/testdata/` is played through the progress display with deterministic config (`FormatDuration` returns "0.0s") and compared against `.golden` files in `testdata/`.
+
+Uses inline golden helper (avoids `test/harness` heavy transitive deps). Regenerate: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v`
+
+Golden files: `internal/tui/testdata/TestProgressPlain_Golden_*/*.golden`

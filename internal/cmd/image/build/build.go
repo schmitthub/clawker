@@ -2,50 +2,54 @@
 package build
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"strings"
+  "context"
+  "fmt"
+  "os"
+  "strings"
 
-	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/term"
-	"github.com/spf13/cobra"
+  "github.com/schmitthub/clawker/internal/cmdutil"
+  "github.com/schmitthub/clawker/internal/config"
+  "github.com/schmitthub/clawker/internal/docker"
+  "github.com/schmitthub/clawker/internal/iostreams"
+  "github.com/schmitthub/clawker/internal/logger"
+  "github.com/schmitthub/clawker/internal/term"
+  "github.com/schmitthub/clawker/internal/tui"
+  "github.com/schmitthub/clawker/pkg/whail"
+  "github.com/spf13/cobra"
 )
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
-	Client    func(context.Context) (*docker.Client, error)
+  IOStreams *iostreams.IOStreams
+  TUI      *tui.TUI
+  Config    func() *config.Config
+  Client    func(context.Context) (*docker.Client, error)
 
-	File      string   // -f, --file (Dockerfile path)
-	Tags      []string // -t, --tag (multiple allowed)
-	NoCache   bool     // --no-cache
-	Pull      bool     // --pull
-	BuildArgs []string // --build-arg KEY=VALUE
-	Labels    []string // --label KEY=VALUE (user labels)
-	Target    string   // --target
-	Quiet     bool     // -q, --quiet
-	Progress  string   // --progress (output formatting)
-	Network   string   // --network
+  File      string   // -f, --file (Dockerfile path)
+  Tags      []string // -t, --tag (multiple allowed)
+  NoCache   bool     // --no-cache
+  Pull      bool     // --pull
+  BuildArgs []string // --build-arg KEY=VALUE
+  Labels    []string // --label KEY=VALUE (user labels)
+  Target    string   // --target
+  Quiet     bool     // -q, --quiet
+  Progress  string   // --progress (output formatting)
+  Network   string   // --network
 }
 
 // NewCmdBuild creates the image build command.
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
-	opts := &BuildOptions{
-		IOStreams: f.IOStreams,
-		Config:    f.Config,
-		Client:    f.Client,
-	}
+  opts := &BuildOptions{
+    IOStreams: f.IOStreams,
+    TUI:      f.TUI,
+    Config:    f.Config,
+    Client:    f.Client,
+  }
 
-	cmd := &cobra.Command{
-		Use:   "build",
-		Short: "Build an image from a clawker project",
-		Long: `Builds a container image from a clawker project configuration.
+  cmd := &cobra.Command{
+    Use:   "build",
+    Short: "Build an image from a clawker project",
+    Long: `Builds a container image from a clawker project configuration.
 
 The image is built from the project's clawker.yaml configuration,
 generating a Dockerfile and building the image. Alternatively,
@@ -53,7 +57,7 @@ use -f/--file to specify a custom Dockerfile.
 
 Multiple tags can be applied to the built image using -t/--tag.
 Build-time variables can be passed using --build-arg.`,
-		Example: `  # Build the project image
+    Example: `  # Build the project image
   clawker image build
 
   # Build without Docker cache
@@ -76,206 +80,273 @@ Build-time variables can be passed using --build-arg.`,
 
   # Always pull base image
   clawker image build --pull`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if runF != nil {
-				return runF(cmd.Context(), opts)
-			}
-			return buildRun(cmd.Context(), opts)
-		},
-	}
+    RunE: func(cmd *cobra.Command, args []string) error {
+      if runF != nil {
+        return runF(cmd.Context(), opts)
+      }
+      return buildRun(cmd.Context(), opts)
+    },
+  }
 
-	// Docker CLI-compatible flags
-	cmd.Flags().StringVarP(&opts.File, "file", "f", "", "Path to Dockerfile (overrides build.dockerfile in config)")
-	cmd.Flags().StringArrayVarP(&opts.Tags, "tag", "t", nil, "Name and optionally a tag (format: name:tag)")
-	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Do not use cache when building the image")
-	cmd.Flags().BoolVar(&opts.Pull, "pull", false, "Always attempt to pull a newer version of the base image")
-	cmd.Flags().StringArrayVar(&opts.BuildArgs, "build-arg", nil, "Set build-time variables (format: KEY=VALUE)")
-	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Set metadata for the image (format: KEY=VALUE)")
-	cmd.Flags().StringVar(&opts.Target, "target", "", "Set the target build stage to build")
-	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress the build output")
-	cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
-	cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
+  // Docker CLI-compatible flags
+  cmd.Flags().StringVarP(&opts.File, "file", "f", "", "Path to Dockerfile (overrides build.dockerfile in config)")
+  cmd.Flags().StringArrayVarP(&opts.Tags, "tag", "t", nil, "Name and optionally a tag (format: name:tag)")
+  cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Do not use cache when building the image")
+  cmd.Flags().BoolVar(&opts.Pull, "pull", false, "Always attempt to pull a newer version of the base image")
+  cmd.Flags().StringArrayVar(&opts.BuildArgs, "build-arg", nil, "Set build-time variables (format: KEY=VALUE)")
+  cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Set metadata for the image (format: KEY=VALUE)")
+  cmd.Flags().StringVar(&opts.Target, "target", "", "Set the target build stage to build")
+  cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress the build output")
+  cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
+  cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
 
-	return cmd
+  return cmd
 }
 
 func buildRun(ctx context.Context, opts *BuildOptions) error {
-	ctx, cancel := term.SetupSignalContext(ctx)
-	defer cancel()
+  ctx, cancel := term.SetupSignalContext(ctx)
+  defer cancel()
 
-	ios := opts.IOStreams
-	cs := ios.ColorScheme()
+  ios := opts.IOStreams
 
-	// Get configuration
-	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+  suppressed := opts.Quiet || opts.Progress == "none"
 
-	// Get working directory from project root, or fall back to current directory
-	wd := cfg.RootDir()
-	if wd == "" {
-		var wdErr error
-		wd, wdErr = os.Getwd()
-		if wdErr != nil {
-			return fmt.Errorf("failed to get working directory: %w", wdErr)
-		}
-	}
+  // Get configuration
+  cfgGateway := opts.Config()
+  cfg := cfgGateway.Project
 
-	// Validate configuration
-	validator := config.NewValidator(wd)
-	if err := validator.Validate(cfg); err != nil {
-		cmdutil.PrintError(ios, "Configuration validation failed")
-		fmt.Fprintln(ios.ErrOut, err)
-		return err
-	}
+  // Get working directory from project root, or fall back to current directory
+  wd := cfg.RootDir()
+  if wd == "" {
+    var wdErr error
+    wd, wdErr = os.Getwd()
+    if wdErr != nil {
+      return fmt.Errorf("failed to get working directory: %w", wdErr)
+    }
+  }
 
-	// Print any warnings
-	for _, warning := range validator.Warnings() {
-		cmdutil.PrintWarning(ios, "%s", warning)
-	}
+  // Validate configuration
+  validator := config.NewValidator(wd)
+  if err := validator.Validate(cfg); err != nil {
+    cmdutil.PrintError(ios, "Configuration validation failed")
+    fmt.Fprintln(ios.ErrOut, err)
+    return err
+  }
 
-	// Handle Dockerfile path from -f/--file flag
-	if opts.File != "" {
-		cfg.Build.Dockerfile = opts.File
-	}
+  // Print any warnings
+  for _, warning := range validator.Warnings() {
+    cmdutil.PrintWarning(ios, "%s", warning)
+  }
 
-	logger.Debug().
-		Str("project", cfg.Project).
-		Bool("no-cache", opts.NoCache).
-		Bool("pull", opts.Pull).
-		Str("target", opts.Target).
-		Bool("quiet", opts.Quiet).
-		Msg("starting build")
+  // Handle Dockerfile path from -f/--file flag
+  if opts.File != "" {
+    cfg.Build.Dockerfile = opts.File
+  }
 
-	// Connect to Docker
-	client, err := opts.Client(ctx)
-	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
-	}
+  logger.Debug().
+    Str("project", cfg.Project).
+    Bool("no-cache", opts.NoCache).
+    Bool("pull", opts.Pull).
+    Str("target", opts.Target).
+    Bool("quiet", opts.Quiet).
+    Msg("starting build")
 
-	// Check BuildKit availability — cache mounts in Dockerfile require it
-	var buildkitEnabled bool
-	buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
-	if bkErr != nil {
-		logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
-	} else if !buildkitEnabled {
-		cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
-	}
+  // Connect to Docker
+  client, err := opts.Client(ctx)
+  if err != nil {
+    cmdutil.HandleError(ios, err)
+    return err
+  }
 
-	// Determine image tag(s)
-	imageTag := docker.ImageTag(cfg.Project)
+  // Check BuildKit availability — cache mounts in Dockerfile require it
+  var buildkitEnabled bool
+  buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
+  if bkErr != nil {
+    logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+  } else if !buildkitEnabled {
+    cmdutil.PrintWarning(ios, "BuildKit is not available — cache mount directives will be ignored and builds may be slower\n")
+  }
 
-	// Parse build args
-	buildArgs := parseBuildArgs(opts.BuildArgs)
+  // Determine image tag(s)
+  imageTag := docker.ImageTag(cfg.Project)
 
-	// Merge user labels with clawker labels (clawker labels take precedence)
-	userLabels := parseKeyValuePairs(opts.Labels)
-	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
-	labels := mergeLabels(userLabels, clawkerLabels)
+  // Parse build args
+  buildArgs := parseBuildArgs(opts.BuildArgs)
 
-	builder := docker.NewBuilder(client, cfg, wd)
+  // Merge user labels with clawker labels (clawker labels take precedence)
+  userLabels := parseKeyValuePairs(opts.Labels)
+  clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
+  labels := mergeLabels(userLabels, clawkerLabels)
 
-	logger.Info().
-		Str("project", cfg.Project).
-		Str("image", imageTag).
-		Msg("building container image")
+  builder := docker.NewBuilder(client, cfg, wd)
 
-	// Build with options.
-	// Defense in depth: --no-cache should also skip content hash check if
-	// EnsureImage() is ever used. This ensures explicit no-cache requests
-	// always trigger a full rebuild.
-	buildOpts := docker.BuilderOptions{
-		ForceBuild:      opts.NoCache,
-		NoCache:         opts.NoCache,
-		Labels:          labels,
-		Target:          opts.Target,
-		Pull:            opts.Pull,
-		SuppressOutput:  opts.Quiet || opts.Progress == "none",
-		NetworkMode:     opts.Network,
-		BuildArgs:       buildArgs,
-		Tags:            opts.Tags,
-		BuildKitEnabled: buildkitEnabled,
-	}
+  // Build with options.
+  // Defense in depth: --no-cache should also skip content hash check if
+  // EnsureImage() is ever used. This ensures explicit no-cache requests
+  // always trigger a full rebuild.
+  logger.Debug().
+    Str("project", cfg.Project).
+    Str("image", imageTag).
+    Msg("building container image")
+  buildOpts := docker.BuilderOptions{
+    ForceBuild:      opts.NoCache,
+    NoCache:         opts.NoCache,
+    Labels:          labels,
+    Target:          opts.Target,
+    Pull:            opts.Pull,
+    SuppressOutput:  suppressed,
+    NetworkMode:     opts.Network,
+    BuildArgs:       buildArgs,
+    Tags:            opts.Tags,
+    BuildKitEnabled: buildkitEnabled,
+  }
 
-	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
-		cmdutil.HandleError(ios, err)
-		cmdutil.PrintNextSteps(ios,
-			"Check your Dockerfile for syntax errors",
-			"Ensure the base image exists and is accessible",
-			"Run 'clawker build --no-cache' to rebuild from scratch",
-			"Use '--progress=plain' for detailed build output",
-		)
-		return err
-	}
+  // Wire progress display when output is not suppressed.
+  // The build runs in a goroutine with events streamed to a TUI display.
+  if !suppressed {
+    ch := make(chan tui.ProgressStep, 64)
 
-	if !opts.Quiet {
-		if len(opts.Tags) > 0 {
-			allTags := append([]string{imageTag}, opts.Tags...)
-			fmt.Fprintf(ios.ErrOut, "%s Built image with tags: %s\n", cs.SuccessIcon(), strings.Join(allTags, ", "))
-		} else {
-			fmt.Fprintf(ios.ErrOut, "%s Built image: %s\n", cs.SuccessIcon(), imageTag)
-		}
-	}
-	return nil
+    buildOpts.OnProgress = func(event whail.BuildProgressEvent) {
+      ch <- tui.ProgressStep{
+        ID:      event.StepID,
+        Name:    event.StepName,
+        Status:  progressStatus(event.Status),
+        Cached:  event.Cached,
+        Error:   event.Error,
+        LogLine: event.LogLine,
+      }
+    }
+
+    var buildErr error
+    go func() {
+      buildErr = builder.Build(ctx, imageTag, buildOpts)
+      close(ch) // channel closure = done signal
+    }()
+
+    result := opts.TUI.RunProgress(opts.Progress, tui.ProgressDisplayConfig{
+      Title:          "Building " + cfg.Project,
+      Subtitle:       imageTag,
+      MaxVisible:     5,
+      LogLines:       3,
+      IsInternal:     whail.IsInternalStep,
+      CleanName:      whail.CleanStepName,
+      ParseGroup:     whail.ParseBuildStage,
+      FormatDuration: whail.FormatBuildDuration,
+    }, ch)
+    if result.Err != nil {
+      cmdutil.HandleError(ios, result.Err)
+      cmdutil.PrintNextSteps(ios,
+        "Check your Dockerfile for syntax errors",
+        "Ensure the base image exists and is accessible",
+        "Run 'clawker build --no-cache' to rebuild from scratch",
+        "Use '--progress=plain' for detailed build output",
+      )
+      return result.Err
+    }
+
+    if buildErr != nil {
+      cmdutil.HandleError(ios, buildErr)
+      cmdutil.PrintNextSteps(ios,
+        "Check your Dockerfile for syntax errors",
+        "Ensure the base image exists and is accessible",
+        "Run 'clawker build --no-cache' to rebuild from scratch",
+        "Use '--progress=plain' for detailed build output",
+      )
+      return buildErr
+    }
+
+    return nil
+  }
+
+  // Suppressed output — build synchronously without progress display.
+  if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
+    cmdutil.HandleError(ios, err)
+    cmdutil.PrintNextSteps(ios,
+      "Check your Dockerfile for syntax errors",
+      "Ensure the base image exists and is accessible",
+      "Run 'clawker build --no-cache' to rebuild from scratch",
+      "Use '--progress=plain' for detailed build output",
+    )
+    return err
+  }
+
+  return nil
+}
+
+// progressStatus converts a whail build step status to a tui progress step status.
+// Explicit switch avoids iota alignment tricks between packages.
+func progressStatus(s whail.BuildStepStatus) tui.ProgressStepStatus {
+  switch s {
+  case whail.BuildStepRunning:
+    return tui.StepRunning
+  case whail.BuildStepComplete:
+    return tui.StepComplete
+  case whail.BuildStepCached:
+    return tui.StepCached
+  case whail.BuildStepError:
+    return tui.StepError
+  default:
+    return tui.StepPending
+  }
 }
 
 // parseBuildArgs parses KEY=VALUE build arguments into a map.
 func parseBuildArgs(args []string) map[string]*string {
-	if len(args) == 0 {
-		return nil
-	}
-	result := make(map[string]*string)
-	for _, arg := range args {
-		parts := strings.SplitN(arg, "=", 2)
-		if len(parts) == 2 {
-			value := parts[1]
-			result[parts[0]] = &value
-		} else if len(parts) == 1 {
-			// Allow KEY without value (uses env var)
-			result[parts[0]] = nil
-		}
-	}
-	return result
+  if len(args) == 0 {
+    return nil
+  }
+  result := make(map[string]*string)
+  for _, arg := range args {
+    parts := strings.SplitN(arg, "=", 2)
+    if len(parts) == 2 {
+      value := parts[1]
+      result[parts[0]] = &value
+    } else if len(parts) == 1 {
+      // Allow KEY without value (uses env var)
+      result[parts[0]] = nil
+    }
+  }
+  return result
 }
 
 // parseKeyValuePairs parses KEY=VALUE pairs into a string map.
 // Labels without '=' are logged as warnings and ignored.
 func parseKeyValuePairs(pairs []string) map[string]string {
-	if len(pairs) == 0 {
-		return nil
-	}
-	result := make(map[string]string)
-	var warnings []string
-	for _, pair := range pairs {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) == 2 {
-			result[parts[0]] = parts[1]
-		} else {
-			warnings = append(warnings, pair)
-		}
-	}
-	if len(warnings) > 0 {
-		logger.Warn().
-			Strs("invalid_labels", warnings).
-			Msg("labels without '=' were ignored, use format KEY=VALUE")
-	}
-	return result
+  if len(pairs) == 0 {
+    return nil
+  }
+  result := make(map[string]string)
+  var warnings []string
+  for _, pair := range pairs {
+    parts := strings.SplitN(pair, "=", 2)
+    if len(parts) == 2 {
+      result[parts[0]] = parts[1]
+    } else {
+      warnings = append(warnings, pair)
+    }
+  }
+  if len(warnings) > 0 {
+    logger.Warn().
+      Strs("invalid_labels", warnings).
+      Msg("labels without '=' were ignored, use format KEY=VALUE")
+  }
+  return result
 }
 
 // mergeLabels merges user labels with clawker labels.
 // Clawker labels take precedence over user labels.
 func mergeLabels(userLabels, clawkerLabels map[string]string) map[string]string {
-	result := make(map[string]string)
+  result := make(map[string]string)
 
-	// Add user labels first
-	for k, v := range userLabels {
-		result[k] = v
-	}
+  // Add user labels first
+  for k, v := range userLabels {
+    result[k] = v
+  }
 
-	// Clawker labels override user labels
-	for k, v := range clawkerLabels {
-		result[k] = v
-	}
+  // Clawker labels override user labels
+  for k, v := range clawkerLabels {
+    result[k] = v
+  }
 
-	return result
+  return result
 }

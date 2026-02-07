@@ -1,0 +1,695 @@
+{
+  "name": "large-log",
+  "description": "Single-step build emitting 50 log lines",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[1/50] Compiling source file_1.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[2/50] Compiling source file_2.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[3/50] Compiling source file_3.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[4/50] Compiling source file_4.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[5/50] Compiling source file_5.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[6/50] Compiling source file_6.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[7/50] Compiling source file_7.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[8/50] Compiling source file_8.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[9/50] Compiling source file_9.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[10/50] Compiling source file_10.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[11/50] Compiling source file_11.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[12/50] Compiling source file_12.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[13/50] Compiling source file_13.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[14/50] Compiling source file_14.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[15/50] Compiling source file_15.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[16/50] Compiling source file_16.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[17/50] Compiling source file_17.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[18/50] Compiling source file_18.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[19/50] Compiling source file_19.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[20/50] Compiling source file_20.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[21/50] Compiling source file_21.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[22/50] Compiling source file_22.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[23/50] Compiling source file_23.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[24/50] Compiling source file_24.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[25/50] Compiling source file_25.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[26/50] Compiling source file_26.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[27/50] Compiling source file_27.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[28/50] Compiling source file_28.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[29/50] Compiling source file_29.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[30/50] Compiling source file_30.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[31/50] Compiling source file_31.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[32/50] Compiling source file_32.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[33/50] Compiling source file_33.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[34/50] Compiling source file_34.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[35/50] Compiling source file_35.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[36/50] Compiling source file_36.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[37/50] Compiling source file_37.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[38/50] Compiling source file_38.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[39/50] Compiling source file_39.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[40/50] Compiling source file_40.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[41/50] Compiling source file_41.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[42/50] Compiling source file_42.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[43/50] Compiling source file_43.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[44/50] Compiling source file_44.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[45/50] Compiling source file_45.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[46/50] Compiling source file_46.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[47/50] Compiling source file_47.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[48/50] Compiling source file_48.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[49/50] Compiling source file_49.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "[50/50] Compiling source file_50.go",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[stage-0 1/1] RUN make build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

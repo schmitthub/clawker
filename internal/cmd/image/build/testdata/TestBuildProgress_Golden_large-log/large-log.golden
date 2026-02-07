@@ -1,0 +1,4 @@
+━━ Building test-project (clawker-test-project:latest)
+[run]  [stage-0 1/1] RUN make build
+[ok]   [stage-0 1/1] RUN make build (0.0s)
+[ok] Built clawker-test-project:latest 0.0s

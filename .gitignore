@@ -37,6 +37,10 @@ Temporary Items
 bin/
 dist/
 
+# Root-level binaries (build output belongs in bin/)
+/clawker
+/fawker
+
 # Binaries for programs and plugins
 *.exe
 *.exe~

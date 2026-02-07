@@ -80,8 +80,9 @@ type BuildImageOpts struct {
     Tags []string; Dockerfile string; BuildArgs map[string]*string
     NoCache bool; Labels map[string]string; Target string
     Pull, SuppressOutput bool; NetworkMode string
-    BuildKitEnabled bool   // Routes to BuildKit when true + ContextDir set
-    ContextDir      string // Build context directory (required for BuildKit)
+    BuildKitEnabled bool                    // Routes to BuildKit when true + ContextDir set
+    ContextDir      string                  // Build context directory (required for BuildKit)
+    OnProgress      whail.BuildProgressFunc // Progress callback for build events
 }
 ```
 
@@ -119,6 +120,7 @@ type BuilderOptions struct {
     ForceBuild, NoCache, Pull, SuppressOutput, BuildKitEnabled bool
     Labels map[string]string; Target, NetworkMode string
     BuildArgs map[string]*string; Tags []string; Dockerfile []byte
+    OnProgress whail.BuildProgressFunc // Forwarded to BuildImageOpts
 }
 ```
 
@@ -186,3 +188,9 @@ Re-exports ~35 Docker types from whail for consumer convenience: container optio
 ## Testing
 
 Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. Use `dockertest.WithConfig(cfg)` to inject a `*config.Config` for image resolution tests. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
+
+**BuildKit setup helpers**:
+- `SetupBuildKit()` — wires fake BuildKit builder, returns `*BuildKitCapture` for assertions
+- `SetupBuildKitWithProgress(events []whail.BuildProgressEvent)` — same as `SetupBuildKit` but also emits the given progress events via `OnProgress` callback. Use with `whailtest.SimpleBuildEvents()` etc. for pipeline testing
+- `SetupBuildKitWithRecordedProgress(events []whailtest.RecordedBuildEvent)` — wires timed replay builder that sleeps between events for realistic simulation. Use with JSON scenarios from `whailtest/testdata/`
+- `SetupPingBuildKit()` — wires `PingFn` to report BuildKit as preferred builder. Required when exercising code paths that call `BuildKitEnabled()` for detection (e.g. fawker demo CLI)

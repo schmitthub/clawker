@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // Builder handles Docker image building for clawker projects.
@@ -31,6 +32,7 @@ type BuilderOptions struct {
 	Tags            []string           // Additional tags for the image (merged with imageTag)
 	Dockerfile      []byte             // Pre-rendered Dockerfile bytes (avoids re-generation)
 	BuildKitEnabled bool               // Use BuildKit builder for cache mount support
+	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 }
 
 // toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
@@ -47,6 +49,7 @@ func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, conte
 		BuildArgs:       o.BuildArgs,
 		BuildKitEnabled: o.BuildKitEnabled,
 		ContextDir:      contextDir,
+		OnProgress:      o.OnProgress,
 	}
 }
 
@@ -142,7 +145,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext()))
 	}
 
-	logger.Info().Str("image", imageTag).Msg("building container image")
+	logger.Debug().Str("image", imageTag).Msg("building container image")
 
 	// Generate Dockerfile bytes if not already provided
 	var dockerfile []byte

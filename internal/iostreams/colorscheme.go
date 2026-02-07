@@ -104,6 +104,16 @@ func (cs *ColorScheme) Cyanf(format string, a ...any) string {
 	return cs.Cyan(fmt.Sprintf(format, a...))
 }
 
+// BrandOrange returns the string in warm orange (brand accent color).
+func (cs *ColorScheme) BrandOrange(s string) string {
+	return cs.render(BrandOrangeStyle, s)
+}
+
+// BrandOrangef returns a formatted string in warm orange.
+func (cs *ColorScheme) BrandOrangef(format string, a ...any) string {
+	return cs.BrandOrange(fmt.Sprintf(format, a...))
+}
+
 // Magenta returns the string in magenta (highlight color).
 func (cs *ColorScheme) Magenta(s string) string {
 	return cs.render(HighlightStyle, s)

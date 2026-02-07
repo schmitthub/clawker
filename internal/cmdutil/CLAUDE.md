@@ -20,7 +20,7 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 9 fields total: 3 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 10 fields total: 4 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -28,6 +28,7 @@ type Factory struct {
     Version  string
     Commit   string
     IOStreams *iostreams.IOStreams
+    TUI      *tui.TUI
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
     Client       func(context.Context) (*docker.Client, error)
@@ -41,6 +42,7 @@ type Factory struct {
 
 **Field semantics:**
 - `Version`, `Commit`, `IOStreams` -- set eagerly at construction
+- `TUI` -- eager `*tui.TUI` presentation layer noun; commands call `.RunProgress()` on it. Hooks are registered post-construction via `.RegisterHooks()` (pointer sharing ensures commands see hooks registered in PersistentPreRunE)
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
@@ -57,8 +59,11 @@ f := &cmdutil.Factory{
     Version:  "1.0.0",
     Commit:   "abc123",
     IOStreams: tio.IOStreams,
+    TUI:      tui.NewTUI(tio.IOStreams),
 }
 ```
+
+Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need it.
 
 ## Error Handling & Output (`output.go`)
 

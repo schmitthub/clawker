@@ -112,4 +112,59 @@ type ImageBuildKitOptions struct {
 
 	// NetworkMode sets the network mode for RUN instructions.
 	NetworkMode string
+
+	// OnProgress receives build progress events when non-nil.
+	// Called from the progress-draining goroutine — must be safe for concurrent use.
+	OnProgress BuildProgressFunc
 }
+
+// BuildProgressFunc is a callback invoked by build pipelines to report step progress.
+// Implementations must be safe for concurrent use.
+type BuildProgressFunc func(event BuildProgressEvent)
+
+// BuildProgressEvent represents a single progress update from a build pipeline.
+type BuildProgressEvent struct {
+	// StepID uniquely identifies a build step (digest for BuildKit, "step-N" for legacy).
+	StepID string
+
+	// StepName is a human-readable label (e.g., "RUN npm install").
+	StepName string
+
+	// StepIndex is the 0-based ordinal position (-1 if unknown).
+	StepIndex int
+
+	// TotalSteps is the total number of steps (-1 if unknown).
+	TotalSteps int
+
+	// Status indicates the current state of this step.
+	Status BuildStepStatus
+
+	// LogLine contains a single output line (empty for status-only events).
+	LogLine string
+
+	// Error contains an error message (empty if no error).
+	Error string
+
+	// Cached indicates the step result was served from cache.
+	Cached bool
+}
+
+// BuildStepStatus represents the state of a build step.
+type BuildStepStatus int
+
+const (
+	// BuildStepPending means the step has not started yet.
+	BuildStepPending BuildStepStatus = iota
+
+	// BuildStepRunning means the step is actively executing.
+	BuildStepRunning
+
+	// BuildStepComplete means the step finished successfully.
+	BuildStepComplete
+
+	// BuildStepCached means the step was served from cache.
+	BuildStepCached
+
+	// BuildStepError means the step failed.
+	BuildStepError
+)

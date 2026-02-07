@@ -48,9 +48,10 @@ var (
 	MutedStyle     = iostreams.MutedStyle
 	HighlightStyle = iostreams.HighlightStyle
 	AccentStyle    = iostreams.AccentStyle
-	DisabledStyle  = iostreams.DisabledStyle
-	BlueStyle      = iostreams.BlueStyle
-	CyanStyle      = iostreams.CyanStyle
+	DisabledStyle    = iostreams.DisabledStyle
+	BlueStyle        = iostreams.BlueStyle
+	CyanStyle        = iostreams.CyanStyle
+	BrandOrangeStyle = iostreams.BrandOrangeStyle
 )
 
 // ---------------------------------------------------------------------------

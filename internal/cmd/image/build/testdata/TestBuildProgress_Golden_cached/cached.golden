@@ -1,0 +1,8 @@
+━━ Building test-project (clawker-test-project:latest)
+[ok]   [stage-0 1/5] FROM node:20-slim (cached)
+[ok]   [stage-0 2/5] RUN apt-get update (cached)
+[ok]   [stage-0 3/5] RUN npm install -g pnpm (cached)
+[ok]   [stage-0 4/5] COPY package.json /app/ (cached)
+[run]  [stage-0 5/5] COPY . /app
+[ok]   [stage-0 5/5] COPY . /app (0.0s)
+[ok] Built clawker-test-project:latest (4/5 cached) 0.0s

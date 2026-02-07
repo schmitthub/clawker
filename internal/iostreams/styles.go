@@ -16,13 +16,14 @@ var (
 
 // Additional colors for components.
 var (
-	ColorInfo     = lipgloss.Color("#87CEEB") // Light sky blue for info
-	ColorDisabled = lipgloss.Color("#4A4A4A") // Dark gray for disabled
-	ColorSelected = lipgloss.Color("#FFD700") // Gold for selection
-	ColorBorder   = lipgloss.Color("#3C3C3C") // Subtle border color
-	ColorAccent   = lipgloss.Color("#FF6B6B") // Accent for emphasis
-	ColorBg       = lipgloss.Color("#1A1A1A") // Dark background
-	ColorBgAlt    = lipgloss.Color("#2A2A2A") // Alternate background
+	ColorInfo        = lipgloss.Color("#87CEEB") // Light sky blue for info
+	ColorDisabled    = lipgloss.Color("#4A4A4A") // Dark gray for disabled
+	ColorSelected    = lipgloss.Color("#FFD700") // Gold for selection
+	ColorBorder      = lipgloss.Color("#3C3C3C") // Subtle border color
+	ColorAccent      = lipgloss.Color("#FF6B6B") // Accent for emphasis
+	ColorBg          = lipgloss.Color("#1A1A1A") // Dark background
+	ColorBgAlt       = lipgloss.Color("#2A2A2A") // Alternate background
+	ColorBrandOrange = lipgloss.Color("#E8714A") // Warm orange accent (Claude Code-inspired)
 )
 
 // Text styles — common text formatting.
@@ -41,8 +42,9 @@ var (
 // Concrete color styles — pure foreground color, no decorations.
 // Used by ColorScheme concrete color methods (Red, Blue, etc.).
 var (
-	BlueStyle = lipgloss.NewStyle().Foreground(ColorPrimary)
-	CyanStyle = lipgloss.NewStyle().Foreground(ColorInfo)
+	BlueStyle        = lipgloss.NewStyle().Foreground(ColorPrimary)
+	CyanStyle        = lipgloss.NewStyle().Foreground(ColorInfo)
+	BrandOrangeStyle = lipgloss.NewStyle().Foreground(ColorBrandOrange)
 )
 
 // Border styles.

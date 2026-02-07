@@ -1,0 +1,110 @@
+{
+  "name": "cached",
+  "description": "5-step build with 4 cached steps, typical incremental rebuild",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[internal] load .dockerignore",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[stage-0 1/5] FROM node:20-slim",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 3,
+        "LogLine": "",
+        "Error": "",
+        "Cached": true
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/5] RUN apt-get update",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 3,
+        "LogLine": "",
+        "Error": "",
+        "Cached": true
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[stage-0 3/5] RUN npm install -g pnpm",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 3,
+        "LogLine": "",
+        "Error": "",
+        "Cached": true
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "StepName": "[stage-0 4/5] COPY package.json /app/",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 3,
+        "LogLine": "",
+        "Error": "",
+        "Cached": true
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[stage-0 5/5] COPY . /app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[stage-0 5/5] COPY . /app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

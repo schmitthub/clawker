@@ -1,6 +1,7 @@
 .PHONY: help update apply-templates build build-version build-all \
         list-versions list-variants clean \
         cli cli-build cli-generate cli-test cli-test-internals cli-lint cli-staticcheck cli-install cli-clean \
+        fawker \
         test test-commands test-whail test-internals test-agents test-cli test-all test-coverage test-clean golden-update
 
 # Variables
@@ -176,6 +177,12 @@ cli-build:
 	@echo "Building $(BINARY_NAME) $(CLI_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
+
+# Build the fawker demo CLI (faked deps, no Docker required)
+fawker:
+	@echo "Building fawker..."
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BIN_DIR)/fawker ./cmd/fawker
 
 # Build the standalone generate binary
 cli-generate:

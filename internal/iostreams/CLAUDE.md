@@ -40,7 +40,7 @@ Embeds `*IOStreams`. Fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`. Setup: `Se
 
 | Category | Methods |
 |----------|---------|
-| Concrete colors | `Red/Redf`, `Yellow/Yellowf`, `Green/Greenf`, `Blue/Bluef`, `Cyan/Cyanf`, `Magenta/Magentaf` |
+| Concrete colors | `Red/Redf`, `Yellow/Yellowf`, `Green/Greenf`, `Blue/Bluef`, `Cyan/Cyanf`, `Magenta/Magentaf`, `BrandOrange/BrandOrangef` |
 | Semantic colors | `Primary/f`, `Secondary/f`, `Accent/f`, `Success/f`, `Warning/f`, `Error/f`, `Info/f`, `Muted/f`, `Highlight/f`, `Disabled/f` |
 | Text decoration | `Bold/f`, `Italic/f`, `Underline/f`, `Dim/f` |
 | Icons | `SuccessIcon()`, `WarningIcon()`, `FailureIcon()`, `InfoIcon()` + `*WithColor(text)` variants |
@@ -69,6 +69,10 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 ### Progress Bar
 
 `ios.NewProgressBar(total, label)` → `pb.Set(n)`, `pb.Increment()`, `pb.Finish()`. TTY: animated bar. Non-TTY: periodic 25% updates. Thread-safe, output to `ios.ErrOut`.
+
+### Build Progress Display
+
+**Moved to `internal/tui/buildprogress.go`** — See `internal/tui/CLAUDE.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `tui.RunBuildProgress(ios, project, imageTag, mode, eventCh)`.
 
 **Pager**: `SetPager(cmd)`, `GetPager()`, `StartPager()`, `StopPager()`. Precedence: `CLAWKER_PAGER` > `PAGER` > platform default.
 
@@ -120,6 +124,7 @@ Pure functions: `FormatRelative`, `FormatDuration`, `FormatTimestamp`, `FormatUp
 | `ColorAccent` | `#FF6B6B` | Emphasis |
 | `ColorSecondary` | `#6C6C6C` | Supporting |
 | `ColorDisabled` | `#4A4A4A` | Inactive |
+| `ColorBrandOrange` | `#E8714A` | Build progress accent |
 
 **Status helpers**: `StatusStyle(running)`, `StatusText(running)`, `StatusIndicator(status)` — return lipgloss styles; outside presentation layer use `tui.StatusIndicator`.
 

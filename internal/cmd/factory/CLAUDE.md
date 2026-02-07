@@ -34,13 +34,14 @@ rootCmd := root.NewCmdRoot(f)
 **Tests NEVER import this package.** Tests construct minimal Factory structs:
 ```go
 tio := iostreams.NewTestIOStreams()
-f := &cmdutil.Factory{IOStreams: tio.IOStreams, Version: "1.0.0"}
+f := &cmdutil.Factory{IOStreams: tio.IOStreams, TUI: tui.NewTUI(tio.IOStreams), Version: "1.0.0"}
 ```
 
 ## Extracted Helper Pattern
 
 `New()` delegates to extracted helper functions for each Factory field:
 - `ioStreams()` -- creates IOStreams (eager)
+- `tui.NewTUI(ios)` -- creates TUI struct bound to IOStreams (eager, inline in `New()`)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
 - `configFunc()` -- returns lazy `*config.Config` gateway constructor (the gateway itself uses `os.Getwd()` internally and lazy-loads Project, Settings, Resolution, Registry via `sync.Once`)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().Project.RootDir()`
