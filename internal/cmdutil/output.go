@@ -58,24 +58,35 @@ func PrintWarning(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Warning: "+format+"\n", args...)
 }
 
-// PrintStatus prints a status message to stderr unless quiet is enabled.
-// Use this for informational messages that can be suppressed with --quiet.
+// Deprecated: Inline the quiet check and fprintf in the command's run function:
+//
+//	if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }
+//
+// This function will be removed once all commands are migrated.
 func PrintStatus(ios *iostreams.IOStreams, quiet bool, format string, args ...any) {
 	if !quiet {
 		fmt.Fprintf(ios.ErrOut, format+"\n", args...)
 	}
 }
 
-// OutputJSON marshals data to stdout as JSON with indentation.
-// Use this for machine-readable output when --json flag is set.
+// Deprecated: Inline the JSON encoding in the command's run function:
+//
+//	enc := json.NewEncoder(ios.Out)
+//	enc.SetIndent("", "  ")
+//	return enc.Encode(data)
+//
+// This function will be removed once all commands are migrated.
 func OutputJSON(ios *iostreams.IOStreams, data any) error {
 	enc := json.NewEncoder(ios.Out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
 }
 
-// PrintHelpHint prints a contextual help hint to stderr.
-// cmdPath should be cmd.CommandPath() (e.g., "clawker container stop")
+// Deprecated: Inline the fprintf in the caller:
+//
+//	fmt.Fprintf(ios.ErrOut, "\nRun '%s --help' for more information.\n", cmdPath)
+//
+// This function will be removed once all commands are migrated.
 func PrintHelpHint(ios *iostreams.IOStreams, cmdPath string) {
 	fmt.Fprintf(ios.ErrOut, "\nRun '%s --help' for more information.\n", cmdPath)
 }

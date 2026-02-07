@@ -62,46 +62,616 @@ func TestRingBuffer_SingleCapacity(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Visible steps sliding window tests
+// Stage tree tests
 // ---------------------------------------------------------------------------
 
-func TestVisibleSteps_FewSteps(t *testing.T) {
+func TestStageState_AllPending(t *testing.T) {
+	s := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepPending},
+			{status: StepPending},
+		},
+	}
+	assert.Equal(t, StepPending, s.stageState())
+}
+
+func TestStageState_HasRunning(t *testing.T) {
+	s := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepRunning},
+			{status: StepPending},
+		},
+	}
+	assert.Equal(t, StepRunning, s.stageState())
+}
+
+func TestStageState_AllComplete(t *testing.T) {
+	s := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepCached},
+		},
+	}
+	assert.Equal(t, StepComplete, s.stageState())
+}
+
+func TestStageState_HasError(t *testing.T) {
+	// Error takes precedence over everything.
+	s := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepError},
+			{status: StepRunning},
+		},
+	}
+	assert.Equal(t, StepError, s.stageState())
+}
+
+func TestStageState_CompleteAndPending(t *testing.T) {
+	// Some complete, rest pending — no running/error → Complete (stage has progress).
+	s := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepPending},
+		},
+	}
+	assert.Equal(t, StepComplete, s.stageState())
+}
+
+func TestBuildStageTree_SingleGroup(t *testing.T) {
 	steps := []*progressStep{
-		{name: "step 1", status: StepComplete},
-		{name: "step 2", status: StepRunning},
+		{name: "[builder 1/3] FROM golang", group: "builder", status: StepComplete},
+		{name: "[builder 2/3] COPY go.mod", group: "builder", status: StepRunning},
+		{name: "[builder 3/3] RUN go build", group: "builder", status: StepPending},
 	}
 
-	visible, hidden := visibleProgressSteps(steps, defaultMaxVisible, nil)
-	assert.Len(t, visible, 2)
-	assert.Equal(t, 0, hidden)
+	tree := buildStageTree(steps, nil)
+	require.Len(t, tree.stages, 1)
+	assert.Equal(t, "builder", tree.stages[0].name)
+	assert.Len(t, tree.stages[0].steps, 3)
+	assert.Empty(t, tree.ungrouped)
 }
 
-func TestVisibleSteps_SlidingWindow(t *testing.T) {
-	steps := make([]*progressStep, 8)
-	for i := range 6 {
-		steps[i] = &progressStep{name: "completed step", status: StepComplete}
+func TestBuildStageTree_MultipleGroups(t *testing.T) {
+	steps := []*progressStep{
+		{name: "[builder 1/2] FROM golang", group: "builder", status: StepComplete},
+		{name: "[builder 2/2] RUN go build", group: "builder", status: StepComplete},
+		{name: "[assets 1/2] FROM node", group: "assets", status: StepComplete},
+		{name: "[assets 2/2] RUN npm build", group: "assets", status: StepRunning},
+		{name: "[runtime 1/1] FROM alpine", group: "runtime", status: StepPending},
 	}
-	steps[6] = &progressStep{name: "running step", status: StepRunning}
-	steps[7] = &progressStep{name: "pending step", status: StepPending}
 
-	visible, hidden := visibleProgressSteps(steps, defaultMaxVisible, nil)
-	assert.Len(t, visible, defaultMaxVisible)
-	assert.Equal(t, 3, hidden) // 3 completed steps hidden (steps 0, 1, 2)
+	tree := buildStageTree(steps, nil)
+	require.Len(t, tree.stages, 3)
+	assert.Equal(t, "builder", tree.stages[0].name)
+	assert.Len(t, tree.stages[0].steps, 2)
+	assert.Equal(t, "assets", tree.stages[1].name)
+	assert.Len(t, tree.stages[1].steps, 2)
+	assert.Equal(t, "runtime", tree.stages[2].name)
+	assert.Len(t, tree.stages[2].steps, 1)
+	assert.Empty(t, tree.ungrouped)
 }
 
-func TestVisibleSteps_InternalStepsExcluded(t *testing.T) {
+func TestBuildStageTree_InterleavedGroups(t *testing.T) {
+	// BuildKit interleaves stages: stage-2 → builder-a → stage-2 → builder-a.
+	steps := []*progressStep{
+		{name: "[stage-2 1/3] FROM node", group: "stage-2", status: StepComplete},
+		{name: "[builder-a 1/2] FROM golang", group: "builder-a", status: StepComplete},
+		{name: "[stage-2 2/3] COPY .", group: "stage-2", status: StepComplete},
+		{name: "[builder-a 2/2] RUN go build", group: "builder-a", status: StepComplete},
+		{name: "[stage-2 3/3] RUN npm install", group: "stage-2", status: StepRunning},
+	}
+
+	tree := buildStageTree(steps, nil)
+	require.Len(t, tree.stages, 2)
+	// Ordered by first appearance.
+	assert.Equal(t, "stage-2", tree.stages[0].name)
+	assert.Len(t, tree.stages[0].steps, 3)
+	assert.Equal(t, "builder-a", tree.stages[1].name)
+	assert.Len(t, tree.stages[1].steps, 2)
+}
+
+func TestBuildStageTree_InternalFiltered(t *testing.T) {
 	isInternal := func(name string) bool { return strings.HasPrefix(name, "[internal]") }
 	steps := []*progressStep{
-		{name: "[internal] load build definition", status: StepComplete},
-		{name: "[internal] load .dockerignore", status: StepComplete},
-		{name: "[stage-2 1/7] FROM node:20", status: StepComplete},
-		{name: "[stage-2 2/7] RUN apt-get", status: StepRunning},
+		{name: "[internal] load build definition", group: "", status: StepComplete},
+		{name: "[internal] load .dockerignore", group: "", status: StepComplete},
+		{name: "[stage-2 1/3] FROM node:20", group: "stage-2", status: StepRunning},
 	}
 
-	visible, hidden := visibleProgressSteps(steps, defaultMaxVisible, isInternal)
-	assert.Len(t, visible, 2) // only non-internal steps
-	assert.Equal(t, 0, hidden)
-	assert.Equal(t, "[stage-2 1/7] FROM node:20", visible[0].name)
+	tree := buildStageTree(steps, isInternal)
+	require.Len(t, tree.stages, 1)
+	assert.Equal(t, "stage-2", tree.stages[0].name)
+	assert.Empty(t, tree.ungrouped, "internal steps should be filtered, not placed in ungrouped")
+}
+
+func TestBuildStageTree_UngroupedSteps(t *testing.T) {
+	steps := []*progressStep{
+		{name: "COPY . /workspace", group: "", status: StepComplete},
+		{name: "[builder 1/2] FROM golang", group: "builder", status: StepRunning},
+		{name: "RUN echo hello", group: "", status: StepPending},
+	}
+
+	tree := buildStageTree(steps, nil)
+	require.Len(t, tree.stages, 1)
+	assert.Equal(t, "builder", tree.stages[0].name)
+	require.Len(t, tree.ungrouped, 2)
+	assert.Equal(t, "COPY . /workspace", tree.ungrouped[0].name)
+	assert.Equal(t, "RUN echo hello", tree.ungrouped[1].name)
+}
+
+func TestBuildStageTree_Empty(t *testing.T) {
+	tree := buildStageTree(nil, nil)
+	assert.Empty(t, tree.stages)
+	assert.Empty(t, tree.ungrouped)
+}
+
+func TestBuildStageTree_AllInternal(t *testing.T) {
+	isInternal := func(name string) bool { return true }
+	steps := []*progressStep{
+		{name: "[internal] step 1", group: "", status: StepComplete},
+		{name: "[internal] step 2", group: "", status: StepComplete},
+	}
+
+	tree := buildStageTree(steps, isInternal)
+	assert.Empty(t, tree.stages)
+	assert.Empty(t, tree.ungrouped)
+}
+
+// ---------------------------------------------------------------------------
+// Tree rendering tests
+// ---------------------------------------------------------------------------
+
+// noColorScheme returns a ColorScheme that doesn't apply colors.
+func noColorScheme() *iostreams.ColorScheme {
+	tio := iostreams.NewTestIOStreams()
+	return tio.IOStreams.ColorScheme()
+}
+
+func TestRenderCollapsedStage_Complete(t *testing.T) {
+	cs := noColorScheme()
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepComplete},
+			{status: StepCached},
+		},
+	}
+
+	var buf strings.Builder
+	renderCollapsedStage(&buf, cs, stage, "●")
+
+	output := buf.String()
+	assert.Contains(t, output, "✓")
+	assert.Contains(t, output, "builder")
+	assert.Contains(t, output, "── 3 steps")
+}
+
+func TestRenderCollapsedStage_SingleStep(t *testing.T) {
+	cs := noColorScheme()
+	stage := &stageNode{
+		name: "helper",
+		steps: []*progressStep{
+			{status: StepCached},
+		},
+	}
+
+	var buf strings.Builder
+	renderCollapsedStage(&buf, cs, stage, "●")
+
+	output := buf.String()
+	assert.Contains(t, output, "── 1 step")
+	assert.NotContains(t, output, "steps") // singular
+}
+
+func TestRenderCollapsedStage_Error(t *testing.T) {
+	cs := noColorScheme()
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{status: StepComplete},
+			{status: StepError},
+		},
+	}
+
+	var buf strings.Builder
+	renderCollapsedStage(&buf, cs, stage, "●")
+
+	output := buf.String()
+	assert.Contains(t, output, "✗")
+	assert.Contains(t, output, "builder")
+}
+
+func TestRenderCollapsedStage_Pending(t *testing.T) {
+	cs := noColorScheme()
+	stage := &stageNode{
+		name: "runtime",
+		steps: []*progressStep{
+			{status: StepPending},
+			{status: StepPending},
+		},
+	}
+
+	var buf strings.Builder
+	renderCollapsedStage(&buf, cs, stage, "●")
+
+	output := buf.String()
+	assert.Contains(t, output, "○")
+	assert.Contains(t, output, "runtime")
+}
+
+func TestRenderTreeStepLine_WithConnector(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{}
+	step := &progressStep{
+		name:      "RUN npm install",
+		status:    StepRunning,
+		startTime: time.Now(),
+	}
+
+	var buf strings.Builder
+	renderTreeStepLine(&buf, cs, cfg, step, "●", treeMid, 80)
+
+	output := buf.String()
+	assert.Contains(t, output, "├─")
+	assert.Contains(t, output, "●")
+	assert.Contains(t, output, "RUN npm install")
+}
+
+func TestRenderTreeStepLine_LastConnector(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{}
+	step := &progressStep{
+		name:   "COPY . /app",
+		status: StepPending,
+	}
+
+	var buf strings.Builder
+	renderTreeStepLine(&buf, cs, cfg, step, "●", treeLast, 80)
+
+	output := buf.String()
+	assert.Contains(t, output, "└─")
+	assert.Contains(t, output, "○")
+	assert.Contains(t, output, "COPY . /app")
+}
+
+func TestRenderTreeLogLines(t *testing.T) {
+	cs := noColorScheme()
+	step := &progressStep{
+		name:   "RUN npm install",
+		status: StepRunning,
+		logBuf: newRingBuffer(3),
+	}
+	step.logBuf.Push("installing dependencies...")
+	step.logBuf.Push("npm WARN deprecated rimraf@3.0.2")
+
+	var buf strings.Builder
+	renderTreeLogLines(&buf, cs, step, false, 80)
+
+	output := buf.String()
+	assert.Contains(t, output, "⎿")
+	assert.Contains(t, output, "installing dependencies...")
+	assert.Contains(t, output, "npm WARN deprecated")
+	// Non-last: pipe continuation.
+	assert.Contains(t, output, "│")
+}
+
+func TestRenderTreeLogLines_NilLogBuf(t *testing.T) {
+	cs := noColorScheme()
+	step := &progressStep{name: "step", status: StepRunning}
+
+	var buf strings.Builder
+	renderTreeLogLines(&buf, cs, step, false, 80)
+	assert.Empty(t, buf.String())
+}
+
+func TestRenderStageChildren_FewSteps(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "apt-get update", status: StepComplete, startTime: now, endTime: now.Add(800 * time.Millisecond)},
+			{name: "npm install", status: StepRunning, startTime: now},
+			{name: "npm run build", status: StepPending},
+		},
+	}
+
+	var buf strings.Builder
+	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 5, 80)
+
+	output := buf.String()
+	assert.Equal(t, 3, lines)
+	// First two get ├─, last gets └─.
+	assert.Contains(t, output, "├─")
+	assert.Contains(t, output, "└─")
+	assert.Contains(t, output, "apt-get update")
+	assert.Contains(t, output, "npm install")
+	assert.Contains(t, output, "npm run build")
+}
+
+func TestRenderStageChildren_WindowedWithCollapse(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 3}
+	now := time.Now()
+
+	steps := make([]*progressStep, 10)
+	for i := range steps {
+		steps[i] = &progressStep{
+			name:      fmt.Sprintf("step %d", i+1),
+			status:    StepPending,
+			startTime: now,
+		}
+	}
+	// First 3 complete, step 4 running, rest pending.
+	steps[0].status = StepComplete
+	steps[0].endTime = now.Add(time.Second)
+	steps[1].status = StepComplete
+	steps[1].endTime = now.Add(time.Second)
+	steps[2].status = StepComplete
+	steps[2].endTime = now.Add(time.Second)
+	steps[3].status = StepRunning
+
+	stage := &stageNode{name: "builder", steps: steps}
+
+	var buf strings.Builder
+	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 3, 80)
+
+	output := buf.String()
+	// Should show collapsed header for completed steps before window.
+	assert.Contains(t, output, "steps completed")
+	// Should show collapsed footer for pending steps after window.
+	assert.Contains(t, output, "more steps")
+	// Running step should be visible.
+	assert.Contains(t, output, "step 4")
+	assert.True(t, lines >= 3, "should have at least window + collapse lines")
+}
+
+func TestRenderStageNode_ActiveExpanded(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "FROM golang", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+			{name: "COPY go.mod", status: StepRunning, startTime: now},
+			{name: "RUN go build", status: StepPending},
+		},
+	}
+
+	var buf strings.Builder
+	lines := renderStageNode(&buf, cs, cfg, stage, "●", 5, 80)
+
+	output := buf.String()
+	// Heading + 3 children = 4 lines.
+	assert.Equal(t, 4, lines)
+	assert.Contains(t, output, "● builder")
+	assert.Contains(t, output, "├─")
+	assert.Contains(t, output, "└─")
+}
+
+func TestRenderStageNode_Collapsed(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "FROM golang", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+			{name: "RUN go build", status: StepComplete, startTime: now, endTime: now.Add(2 * time.Second)},
+		},
+	}
+
+	var buf strings.Builder
+	lines := renderStageNode(&buf, cs, cfg, stage, "●", 5, 80)
+
+	output := buf.String()
+	assert.Equal(t, 1, lines) // Single collapsed line.
+	assert.Contains(t, output, "✓")
+	assert.Contains(t, output, "builder")
+	assert.Contains(t, output, "── 2 steps")
+}
+
+func TestRenderTreeSection_MultiStage(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+
+	tree := stageTree{
+		stages: []*stageNode{
+			{
+				name: "builder",
+				steps: []*progressStep{
+					{name: "FROM golang", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+					{name: "RUN go build", status: StepComplete, startTime: now, endTime: now.Add(2 * time.Second)},
+				},
+			},
+			{
+				name: "runtime",
+				steps: []*progressStep{
+					{name: "FROM alpine", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+					{name: "COPY /app", status: StepRunning, startTime: now},
+					{name: "ENTRYPOINT", status: StepPending},
+				},
+			},
+		},
+	}
+
+	var buf strings.Builder
+	hw := 0
+	renderTreeSection(&buf, cs, cfg, tree, "●", &hw, 80)
+
+	output := buf.String()
+	// builder is collapsed.
+	assert.Contains(t, output, "builder")
+	assert.Contains(t, output, "── 2 steps")
+	// runtime is expanded (has running step).
+	assert.Contains(t, output, "● runtime")
+	assert.Contains(t, output, "FROM alpine")
+	assert.Contains(t, output, "COPY /app")
+	assert.Contains(t, output, "ENTRYPOINT")
+}
+
+func TestRenderTreeSection_HighWaterPadding(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+
+	// First render: expanded stage (4 lines).
+	tree1 := stageTree{
+		stages: []*stageNode{
+			{
+				name: "builder",
+				steps: []*progressStep{
+					{name: "FROM golang", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+					{name: "COPY go.mod", status: StepRunning, startTime: now},
+					{name: "RUN go build", status: StepPending},
+				},
+			},
+		},
+	}
+
+	var buf1 strings.Builder
+	hw := 0
+	renderTreeSection(&buf1, cs, cfg, tree1, "●", &hw, 80)
+	lines1 := strings.Count(buf1.String(), "\n")
+
+	// Second render: collapsed stage (1 line) — should pad to high water.
+	tree2 := stageTree{
+		stages: []*stageNode{
+			{
+				name: "builder",
+				steps: []*progressStep{
+					{name: "FROM golang", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+					{name: "COPY go.mod", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+					{name: "RUN go build", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+				},
+			},
+		},
+	}
+
+	var buf2 strings.Builder
+	renderTreeSection(&buf2, cs, cfg, tree2, "●", &hw, 80)
+	lines2 := strings.Count(buf2.String(), "\n")
+
+	assert.GreaterOrEqual(t, lines2, lines1, "collapsed frame should be padded to high-water mark")
+}
+
+func TestRenderStageChildren_WithLogLines(t *testing.T) {
+	cs := noColorScheme()
+	cfg := &ProgressDisplayConfig{MaxVisible: 5}
+	now := time.Now()
+
+	logBuf := newRingBuffer(3)
+	logBuf.Push("installing dependencies...")
+	logBuf.Push("npm WARN deprecated rimraf@3.0.2")
+
+	stage := &stageNode{
+		name: "builder",
+		steps: []*progressStep{
+			{name: "FROM node", status: StepComplete, startTime: now, endTime: now.Add(time.Second)},
+			{name: "npm install", status: StepRunning, startTime: now, logBuf: logBuf},
+			{name: "npm run build", status: StepPending},
+		},
+	}
+
+	var buf strings.Builder
+	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 5, 80)
+
+	output := buf.String()
+	// 3 step lines + 2 log lines = 5.
+	assert.Equal(t, 5, lines)
+	assert.Contains(t, output, "⎿")
+	assert.Contains(t, output, "installing dependencies...")
+	assert.Contains(t, output, "npm WARN deprecated")
+}
+
+// ---------------------------------------------------------------------------
+// Frame height stability tests (BubbleTea inline renderer — tree-based)
+// ---------------------------------------------------------------------------
+
+// TestViewFrameHeight_StableAcrossGroupCollapse verifies that View() and
+// viewFinished() produce the same number of lines. BubbleTea's inline renderer
+// tracks line count between frames — if the final frame is shorter, old lines
+// remain as artifacts and the cursor position is wrong.
+func TestViewFrameHeight_StableAcrossGroupCollapse(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	cfg := ProgressDisplayConfig{
+		Title:      "Building test",
+		Subtitle:   "test:latest",
+		MaxVisible: 5,
+		LogLines:   3,
+		ParseGroup: func(name string) string {
+			if len(name) > 1 && name[0] == '[' {
+				if sp := strings.Index(name, " "); sp > 1 {
+					return name[1:sp]
+				}
+			}
+			return ""
+		},
+	}
+
+	ch := make(chan ProgressStep)
+	close(ch)
+	m := newProgressModel(tio.IOStreams, cfg, ch)
+
+	// 3 stages, 3 steps each.
+	// Mid-build: builder done (collapsed), assets has running step (expanded), runtime pending (collapsed).
+	m.steps = []*progressStep{
+		{name: "[builder 1/3] FROM golang", status: StepComplete, group: "builder"},
+		{name: "[builder 2/3] COPY go.mod", status: StepComplete, group: "builder"},
+		{name: "[builder 3/3] RUN go build", status: StepComplete, group: "builder"},
+		{name: "[assets 1/3] FROM node:20-slim", status: StepComplete, group: "assets"},
+		{name: "[assets 2/3] COPY package.json", status: StepComplete, group: "assets"},
+		{name: "[assets 3/3] RUN npm run build", status: StepRunning, group: "assets"},
+		{name: "[runtime 1/3] FROM alpine:3.19", status: StepPending, group: "runtime"},
+		{name: "[runtime 2/3] COPY --from=builder /bin/app", status: StepPending, group: "runtime"},
+		{name: "[runtime 3/3] ENTRYPOINT", status: StepPending, group: "runtime"},
+	}
+
+	// Simulate frame sequence: as groups complete, View() line count must not shrink.
+	frames := []struct {
+		name  string
+		setup func()
+	}{
+		{"assets running + runtime pending", func() {
+			// builder: collapsed (all complete)
+			// assets: expanded (has running step) — heading + 3 children
+			// runtime: collapsed (all pending)
+		}},
+		{"all complete", func() {
+			for _, s := range m.steps {
+				s.status = StepComplete
+			}
+			// All 3 groups collapse: 3 collapsed headings.
+			// Without high-water mark, this frame is shorter → BubbleTea cursor breaks.
+		}},
+		{"finished", func() {
+			m.finished = true
+			// viewFinished() must match previous frame height.
+		}},
+	}
+
+	var prevLines int
+	for _, frame := range frames {
+		frame.setup()
+		view := m.View()
+		lines := strings.Count(view, "\n")
+		if prevLines > 0 {
+			assert.GreaterOrEqual(t, lines, prevLines,
+				"frame %q shrank from %d to %d lines\n%s", frame.name, prevLines, lines, view)
+		}
+		prevLines = lines
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +688,9 @@ func sendProgressSteps(ch chan<- ProgressStep, steps ...ProgressStep) {
 // testDisplayConfig returns a ProgressDisplayConfig wired with build-like callbacks for tests.
 func testDisplayConfig() ProgressDisplayConfig {
 	return ProgressDisplayConfig{
-		Title:    "Building myproject",
-		Subtitle: "myproject:latest",
+		Title:          "Building myproject",
+		Subtitle:       "myproject:latest",
+		CompletionVerb: "Built",
 		IsInternal: func(name string) bool {
 			return strings.HasPrefix(name, "[internal]")
 		},
@@ -308,8 +879,9 @@ func newTestProgressModel(t *testing.T) (progressModel, *iostreams.TestIOStreams
 	tio := iostreams.NewTestIOStreams()
 	ch := make(chan ProgressStep, 10) // channel not used in direct model tests
 	cfg := ProgressDisplayConfig{
-		Title:    "Building myproject",
-		Subtitle: "myproject:latest",
+		Title:          "Building myproject",
+		Subtitle:       "myproject:latest",
+		CompletionVerb: "Built",
 		ParseGroup: func(name string) string {
 			if !strings.HasPrefix(name, "[") {
 				return ""
@@ -364,8 +936,10 @@ func TestProgressModel_ProcessEvent_LogLine(t *testing.T) {
 	m.processEvent(ProgressStep{ID: "s1", LogLine: "added 512 packages"})
 	m.processEvent(ProgressStep{ID: "s1", LogLine: "done in 2.1s"})
 
-	assert.Equal(t, 2, m.logBuf.Count())
-	lines := m.logBuf.Lines()
+	// Log lines are routed to per-step buffers.
+	require.NotNil(t, m.steps[0].logBuf)
+	assert.Equal(t, 2, m.steps[0].logBuf.Count())
+	lines := m.steps[0].logBuf.Lines()
 	assert.Equal(t, "added 512 packages", lines[0])
 	assert.Equal(t, "done in 2.1s", lines[1])
 }
@@ -404,43 +978,22 @@ func TestProgressModel_View_Steps(t *testing.T) {
 	assert.Contains(t, output, "COPY . /workspace")
 }
 
-func TestProgressModel_View_Viewport(t *testing.T) {
+func TestProgressModel_View_InlineLogLines(t *testing.T) {
 	m, _ := newTestProgressModel(t)
 	m.width = 60
 
-	m.processEvent(ProgressStep{ID: "s1", Name: "RUN npm install", Status: StepRunning})
+	m.processEvent(ProgressStep{ID: "s1", Name: "[stage-2 1/3] RUN npm install", Status: StepRunning})
 	m.processEvent(ProgressStep{ID: "s1", LogLine: "npm warn deprecated rimraf@3.0.2"})
 	m.processEvent(ProgressStep{ID: "s1", LogLine: "added 512 packages in 2.5s"})
 
 	output := m.View()
+	// Log lines appear inline under the running step with ⎿ connector.
 	assert.Contains(t, output, "rimraf@3.0.2")
 	assert.Contains(t, output, "512 packages")
-	// Viewport borders
-	assert.Contains(t, output, "┌")
-	assert.Contains(t, output, "└")
+	assert.Contains(t, output, "⎿")
 }
 
-func TestProgressModel_View_SlidingWindow(t *testing.T) {
-	m, _ := newTestProgressModel(t)
-	m.width = 80
-
-	// Add more steps than defaultMaxVisible.
-	for i := range defaultMaxVisible + 3 {
-		id := "s" + string(rune('A'+i))
-		name := "step " + string(rune('A'+i))
-		m.processEvent(ProgressStep{ID: id, Name: name, Status: StepComplete})
-		m.steps[i].endTime = m.steps[i].startTime.Add(100 * time.Millisecond)
-	}
-
-	output := m.View()
-	// Should show collapsed count for hidden steps.
-	assert.Contains(t, output, "steps completed")
-	// Last steps should be visible.
-	lastStep := m.steps[len(m.steps)-1]
-	assert.Contains(t, output, lastStep.name)
-}
-
-func TestProgressModel_View_GroupHeadings(t *testing.T) {
+func TestProgressModel_View_TreeStages(t *testing.T) {
 	m, _ := newTestProgressModel(t)
 	m.width = 80
 
@@ -449,8 +1002,10 @@ func TestProgressModel_View_GroupHeadings(t *testing.T) {
 	m.processEvent(ProgressStep{ID: "s2", Name: "[builder 1/2] FROM golang:1.21", Status: StepRunning})
 
 	output := m.View()
-	// Both group names should appear as headings.
+	// stage-2 has only complete steps → collapsed.
 	assert.Contains(t, output, "stage-2")
+	assert.Contains(t, output, "── 1 step")
+	// builder has running step → expanded with tree connectors.
 	assert.Contains(t, output, "builder")
 }
 
@@ -468,11 +1023,8 @@ func TestProgressModel_View_Finished(t *testing.T) {
 	// viewFinished renders a static snapshot — not empty.
 	assert.NotEmpty(t, output)
 	assert.Contains(t, output, "Building myproject")
-	assert.Contains(t, output, "✓")
+	assert.Contains(t, output, "●") // completed step = green dot
 	assert.Contains(t, output, "FROM node:20")
-	// Viewport persists in finished view.
-	assert.Contains(t, output, "┌")
-	assert.Contains(t, output, "└")
 }
 
 func TestProgressModel_View_InternalStepsHidden(t *testing.T) {

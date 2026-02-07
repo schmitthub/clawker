@@ -248,6 +248,9 @@ type BuildKitCapture struct {
 	// builder is invoked. If non-nil, takes precedence over ProgressEvents.
 	// Use with FakeTimedBuildKitBuilder for realistic replay.
 	RecordedEvents []RecordedBuildEvent
+	// DelayMultiplier scales all RecordedEvent delays. 0 or 1 = no change,
+	// 2 = twice as slow, 0.5 = twice as fast. Applied in FakeTimedBuildKitBuilder.
+	DelayMultiplier float64
 }
 
 // FakeBuildKitBuilder returns a BuildKit builder closure that captures
@@ -290,14 +293,20 @@ func FakeTimedBuildKitBuilder(capture *BuildKitCapture) func(context.Context, wh
 			return capture.Err
 		}
 
+		mult := capture.DelayMultiplier
+		if mult <= 0 {
+			mult = 1
+		}
+
 		// Prefer RecordedEvents (timed) over ProgressEvents (instant).
 		if len(capture.RecordedEvents) > 0 {
 			for _, re := range capture.RecordedEvents {
 				if re.DelayMs > 0 {
+					delay := time.Duration(float64(re.Delay()) * mult)
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
-					case <-time.After(re.Delay()):
+					case <-time.After(delay):
 					}
 				}
 				opts.OnProgress(re.Event)

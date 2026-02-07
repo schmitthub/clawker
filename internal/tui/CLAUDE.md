@@ -168,6 +168,7 @@ go func() {
 
 result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
     Title: "Building " + project, Subtitle: imageTag,
+    CompletionVerb: "Built",
     MaxVisible: 5, LogLines: 3,
     IsInternal:     whail.IsInternalStep,
     CleanName:      whail.CleanStepName,
@@ -180,13 +181,20 @@ result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
 
 **Entry point**: `RunProgress(ios, mode, cfg, ch)` — mode is `"auto"`, `"plain"`, or `"tty"`; cfg provides callbacks for domain-specific behavior
 
+**Fields in ProgressDisplayConfig**:
+- `CompletionVerb string` — success summary verb (e.g., "Built", "Deployed"). Default: "Completed"
+
 **Callbacks in ProgressDisplayConfig**:
 - `IsInternal func(string) bool` — filter hidden steps (nil = show all)
 - `CleanName func(string) string` — strip noise from step names (nil = pass through)
 - `ParseGroup func(string) string` — extract group/stage names (nil = no groups)
 - `FormatDuration func(time.Duration) string` — format step durations (nil = default)
 
-**TTY mode**: BubbleTea model with pulsing spinner in BrandOrange, fixed-height sliding window (configurable via MaxVisible), group headings, bordered log viewport (configurable via LogLines), Ctrl+C handling
+**TTY mode**: BubbleTea model with tree-based stage display. Stages are parent nodes with tree-connected child steps (`├─`/`└─` connectors). Complete/pending/error stages show collapsed (`✓ name ── N steps`). Active stages (with running step) show expanded with inline log lines (`⎿` connector) under the running step. Per-stage child window (MaxVisible) centers on the running step with collapsed header/footer for overflow. High-water mark frame padding prevents BubbleTea inline renderer cursor drift. Pulsing spinner in BrandOrange. Per-step log buffers (LogLines capacity). Ctrl+C handling.
+
+**Internal types**: `stageNode` (group with steps), `stageTree` (stages + ungrouped), `progressStep.logBuf` (per-step ring buffer). `buildStageTree()` groups steps by ParseGroup callback. `stageState()` returns aggregate: Error > Running > Complete > Pending.
+
+**Tree rendering pipeline**: `renderTreeSection()` → `renderStageNode()` (dispatches collapsed vs expanded) → `renderStageChildren()` (tree connectors + child window + inline logs) → `renderTreeStepLine()` (step with connector prefix) + `renderTreeLogLines()` (inline `⎿` log output).
 
 **Plain mode**: Sequential `[run]`/`[ok]`/`[fail]` lines, internal steps hidden via IsInternal callback, dedup on status transitions
 

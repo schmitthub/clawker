@@ -128,7 +128,7 @@ Isolated subpackage — only place that imports `moby/buildkit`. Zero dependency
 - `NewBuildKitClient(ctx, DockerDialer)` — creates `*bkclient.Client` (caller must Close)
 - `VerifyConnection(ctx, *bkclient.Client)` — lists workers to verify connectivity (diagnostic only)
 - `toSolveOpt(opts)` — converts `ImageBuildKitOptions` to `bkclient.SolveOpt`; uses "moby" exporter, "dockerfile.v0" frontend. When `NoCache=true`, sets both `no-cache` frontend attribute AND empty `CacheImports` (per moby/buildkit#2409, the attribute alone only verifies cache rather than disabling it)
-- `drainProgress(ch, suppress, onProgress)` — reads `SolveStatus` channel; when `onProgress != nil`, converts vertices to `BuildProgressEvent` with state transition deduplication and forwards log lines; falls back to zerolog when no callback
+- `drainProgress(ch, suppress, onProgress)` — reads `SolveStatus` channel; when `onProgress != nil`, converts vertices to `BuildProgressEvent` with state transition deduplication and forwards log lines (stripping `\r` carriage returns from build tool progress bars); falls back to zerolog when no callback
 
 Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)`
 

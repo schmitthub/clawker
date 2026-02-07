@@ -144,7 +144,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `tui.TUI` | Factory noun for presentation layer; owns hooks + delegates to RunProgress. Commands capture `*TUI` eagerly, hooks registered later via `RegisterHooks()` |
 | `tui.RunProgress` | Generic progress display: BubbleTea TTY mode (sliding window) + plain text; domain-agnostic via callbacks |
 | `tui.ProgressStep` | Channel event type for progress display (ID, Name, Status, LogLine, Cached, Error) |
-| `tui.ProgressDisplayConfig` | Configuration with callback functions: IsInternal, CleanName, ParseGroup, FormatDuration, OnLifecycle |
+| `tui.ProgressDisplayConfig` | Configuration with CompletionVerb and callback functions: IsInternal, CleanName, ParseGroup, FormatDuration, OnLifecycle |
 | `tui.LifecycleHook` | Generic hook function type for TUI lifecycle events; threaded via config structs, nil = no-op |
 | `tui.HookResult` | Hook return type: Continue (bool), Message (string), Err (error) — controls post-hook execution flow |
 | `whail.BuildProgressFunc` | Callback type threading build progress events through the options chain |

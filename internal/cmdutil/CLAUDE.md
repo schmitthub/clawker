@@ -13,7 +13,7 @@ Heavy command helpers have been extracted to dedicated packages:
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` -- pure struct with closure fields (no methods, no construction logic) |
-| `output.go` | `PrintStatus`, `OutputJSON`, `PrintHelpHint`, `ExitError` + deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps` |
+| `output.go` | `ExitError` + deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` |
 | `errors.go` | `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
@@ -69,11 +69,13 @@ Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands tha
 ## Error Handling & Output (`output.go`, `errors.go`)
 
 ### Active Functions
-`PrintStatus(ios, quiet, format, args...)` -- print status message (suppressed with --quiet)
-`OutputJSON(ios, data) error` -- marshal to stdout as indented JSON
-`PrintHelpHint(ios, cmdPath)` -- print "Run '<cmd> --help' for more information" to stderr
+
+None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorScheme()` directly.
 
 ### Deprecated Functions (use gh-style fprintf instead)
+`PrintStatus(ios, quiet, format, args...)` -- **Deprecated**: inline `if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }`
+`OutputJSON(ios, data) error` -- **Deprecated**: inline `json.NewEncoder(ios.Out)` with `SetIndent`
+`PrintHelpHint(ios, cmdPath)` -- **Deprecated**: inline `fmt.Fprintf(ios.ErrOut, "\nRun '%s --help'...\n", cmdPath)`
 `HandleError(ios, err)` -- **Deprecated**: return errors to Main() for centralized rendering
 `PrintError(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)`
 `PrintWarning(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...)`

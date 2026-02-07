@@ -53,8 +53,9 @@ func TestProgressPlain_Golden(t *testing.T) {
 // Uses fixed duration formatting to avoid timing variance.
 func goldenDisplayConfig() ProgressDisplayConfig {
 	return ProgressDisplayConfig{
-		Title:    "Building test-project",
-		Subtitle: "test-project:latest",
+		Title:          "Building test-project",
+		Subtitle:       "test-project:latest",
+		CompletionVerb: "Built",
 		IsInternal: func(name string) bool {
 			return strings.HasPrefix(name, "[internal]")
 		},

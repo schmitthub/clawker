@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -46,8 +45,10 @@ type ProgressDisplayConfig struct {
 	Title    string // e.g., "Building"
 	Subtitle string // e.g., image tag
 
-	MaxVisible int // sliding window size (default: 5)
-	LogLines   int // viewport height (default: 3)
+	CompletionVerb string // Success summary verb (e.g., "Built", "Deployed"). Default: "Completed"
+
+	MaxVisible int // per-stage child window size (default: 5)
+	LogLines   int // per-step log buffer capacity (default: 3)
 
 	// Callbacks — all optional. nil = passthrough / no-op.
 	IsInternal     func(string) bool         // filter function (nil = show all)
@@ -115,6 +116,13 @@ func (cfg *ProgressDisplayConfig) formatDuration(d time.Duration) string {
 	return cfg.FormatDuration(d)
 }
 
+func (cfg *ProgressDisplayConfig) completionVerb() string {
+	if cfg.CompletionVerb != "" {
+		return cfg.CompletionVerb
+	}
+	return "Completed"
+}
+
 func (cfg *ProgressDisplayConfig) fireHook(component, event string) HookResult {
 	if cfg.OnLifecycle == nil {
 		return HookResult{Continue: true}
@@ -179,6 +187,76 @@ type progressStep struct {
 	startTime time.Time
 	endTime   time.Time
 	group     string // parsed group name (e.g., stage name)
+	logBuf    *ringBuffer // per-step log buffer (nil until first log received)
+}
+
+// Tree connector constants for tree-based progress rendering.
+const (
+	treeMid  = "├─" // middle child
+	treeLast = "└─" // last child
+	treePipe = "│"  // vertical continuation
+	treeLog  = "⎿"  // log sub-output
+)
+
+// stageNode represents a build stage (group) in the display tree.
+type stageNode struct {
+	name  string
+	steps []*progressStep
+}
+
+// stageState returns the aggregate state: Error > Running > Complete > Pending.
+func (s *stageNode) stageState() ProgressStepStatus {
+	hasRunning := false
+	hasComplete := false
+	for _, step := range s.steps {
+		switch step.status {
+		case StepError:
+			return StepError
+		case StepRunning:
+			hasRunning = true
+		case StepComplete, StepCached:
+			hasComplete = true
+		}
+	}
+	if hasRunning {
+		return StepRunning
+	}
+	if hasComplete {
+		return StepComplete
+	}
+	return StepPending
+}
+
+// stageTree is the result of buildStageTree.
+type stageTree struct {
+	stages    []*stageNode    // ordered by first appearance
+	ungrouped []*progressStep // steps with no group
+}
+
+// buildStageTree groups steps into stages, ordered by first appearance.
+// Internal steps are filtered out. Steps with no group go to ungrouped.
+func buildStageTree(steps []*progressStep, isInternal func(string) bool) stageTree {
+	var tree stageTree
+	stageIndex := make(map[string]int) // group name → index in tree.stages
+
+	for _, s := range steps {
+		if isInternal != nil && isInternal(s.name) {
+			continue
+		}
+		if s.group == "" {
+			tree.ungrouped = append(tree.ungrouped, s)
+			continue
+		}
+		idx, exists := stageIndex[s.group]
+		if !exists {
+			idx = len(tree.stages)
+			stageIndex[s.group] = idx
+			tree.stages = append(tree.stages, &stageNode{name: s.group})
+		}
+		tree.stages[idx].steps = append(tree.stages[idx].steps, s)
+	}
+
+	return tree
 }
 
 // ringBuffer is a fixed-size circular buffer for log lines.
@@ -258,44 +336,36 @@ type progressModel struct {
 
 	steps     []*progressStep
 	stepIndex map[string]int
-	logBuf    *ringBuffer
 	startTime time.Time
 
 	finished    bool
 	interrupted bool // true if user pressed Ctrl+C
 
-	spinner spinner.Model
-	width   int
+	width int
+
+	// stepHighWater tracks the maximum line count rendered by the step section.
+	// Pointer so View() (value receiver) can update it through dereference.
+	// renderTreeSection pads to this value to prevent BubbleTea inline frame shrinkage.
+	stepHighWater *int
 
 	eventCh <-chan ProgressStep
 }
 
 func newProgressModel(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, eventCh <-chan ProgressStep) progressModel {
-	s := spinner.New()
-	s.Spinner = spinner.Spinner{
-		Frames: []string{"●", "○"},
-		FPS:    150 * time.Millisecond,
-	}
-	s.Style = iostreams.BrandOrangeStyle
-
 	return progressModel{
-		ios:       ios,
-		cs:        ios.ColorScheme(),
-		cfg:       cfg,
-		stepIndex: make(map[string]int),
-		logBuf:    newRingBuffer(cfg.logLines()),
-		startTime: time.Now(),
-		spinner:   s,
-		width:     ios.TerminalWidth(),
-		eventCh:   eventCh,
+		ios:           ios,
+		cs:            ios.ColorScheme(),
+		cfg:           cfg,
+		stepIndex:     make(map[string]int),
+		startTime:     time.Now(),
+		width:         ios.TerminalWidth(),
+		stepHighWater: new(int),
+		eventCh:       eventCh,
 	}
 }
 
 func (m progressModel) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Tick,
-		waitForProgressStep(m.eventCh),
-	)
+	return waitForProgressStep(m.eventCh)
 }
 
 func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -312,11 +382,6 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		return m, nil
 
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-
 	case progressStepMsg:
 		step := ProgressStep(msg)
 		m.processEvent(step)
@@ -331,8 +396,19 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *progressModel) processEvent(step ProgressStep) {
+	// Route log lines to per-step buffers.
 	if step.LogLine != "" {
-		m.logBuf.Push(step.LogLine)
+		if idx, exists := m.stepIndex[step.ID]; exists {
+			s := m.steps[idx]
+			if s.logBuf == nil {
+				s.logBuf = newRingBuffer(m.cfg.logLines())
+			}
+			s.logBuf.Push(step.LogLine)
+		}
+		// Log-only events (no Name, no Status change) stop here.
+		if step.Name == "" {
+			return
+		}
 	}
 
 	if step.ID == "" {
@@ -387,37 +463,15 @@ func (m progressModel) View() string {
 	renderProgressHeader(&buf, cs, &m.cfg, width)
 	buf.WriteByte('\n')
 
-	// Visible steps with sliding window
-	maxVis := m.cfg.maxVisible()
-	visible, hiddenCount := visibleProgressSteps(m.steps, maxVis, m.cfg.isInternal)
-
-	if hiddenCount > 0 {
-		icon := cs.Green("✓")
-		label := fmt.Sprintf("%d steps completed", hiddenCount)
-		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Muted(label)))
-	}
-
-	lastGroup := ""
-	for _, step := range visible {
-		// Group heading when group changes.
-		if step.group != "" && step.group != lastGroup {
-			heading := cs.Bold(cs.BrandOrange(step.group))
-			buf.WriteString(fmt.Sprintf("  ─ %s\n", heading))
-		}
-		lastGroup = step.group
-		renderProgressStepLine(&buf, cs, &m.cfg, step, m.spinner.View(), width)
-	}
-
-	buf.WriteByte('\n')
-
-	// Output viewport
-	renderProgressViewport(&buf, cs, &m.cfg, m.logBuf, m.steps, width)
+	// Tree-based step display.
+	tree := buildStageTree(m.steps, m.cfg.isInternal)
+	renderTreeSection(&buf, cs, &m.cfg, tree, "", m.stepHighWater, width)
 
 	return buf.String()
 }
 
 // viewFinished renders a static final snapshot for BubbleTea's last frame.
-// Shows header + all visible steps with final status icons + log viewport — no spinner animation.
+// Shows header + tree with final status icons — no spinner animation.
 func (m progressModel) viewFinished() string {
 	cs := m.cs
 	width := m.width
@@ -431,30 +485,9 @@ func (m progressModel) viewFinished() string {
 	renderProgressHeader(&buf, cs, &m.cfg, width)
 	buf.WriteByte('\n')
 
-	// All visible steps — pass empty spinnerView so running steps show no animation.
-	maxVis := m.cfg.maxVisible()
-	visible, hiddenCount := visibleProgressSteps(m.steps, maxVis, m.cfg.isInternal)
-
-	if hiddenCount > 0 {
-		icon := cs.Green("✓")
-		label := fmt.Sprintf("%d steps completed", hiddenCount)
-		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Muted(label)))
-	}
-
-	lastGroup := ""
-	for _, step := range visible {
-		if step.group != "" && step.group != lastGroup {
-			heading := cs.Bold(cs.BrandOrange(step.group))
-			buf.WriteString(fmt.Sprintf("  ─ %s\n", heading))
-		}
-		lastGroup = step.group
-		renderProgressStepLine(&buf, cs, &m.cfg, step, "", width)
-	}
-
-	buf.WriteByte('\n')
-
-	// Output viewport — preserve log lines so they're visible after exit.
-	renderProgressViewport(&buf, cs, &m.cfg, m.logBuf, m.steps, width)
+	// Tree-based step display — empty spinnerView so running steps show no animation.
+	tree := buildStageTree(m.steps, m.cfg.isInternal)
+	renderTreeSection(&buf, cs, &m.cfg, tree, "", m.stepHighWater, width)
 
 	return buf.String()
 }
@@ -485,32 +518,7 @@ func renderProgressHeader(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *
 }
 
 func renderProgressStepLine(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, step *progressStep, spinnerView string, width int) {
-	var icon, name, duration string
-
-	switch step.status {
-	case StepComplete:
-		icon = cs.Green("✓")
-		name = cfg.cleanName(step.name)
-		d := step.endTime.Sub(step.startTime)
-		duration = cs.Muted(cfg.formatDuration(d))
-	case StepCached:
-		icon = cs.Green("✓")
-		name = cfg.cleanName(step.name)
-		duration = cs.Muted("cached")
-	case StepRunning:
-		icon = spinnerView
-		name = cfg.cleanName(step.name)
-		d := time.Since(step.startTime)
-		duration = cs.Muted(cfg.formatDuration(d))
-	case StepPending:
-		icon = cs.Muted("○")
-		name = cs.Muted(cfg.cleanName(step.name))
-	case StepError:
-		icon = cs.Error("✗")
-		name = cfg.cleanName(step.name)
-		d := step.endTime.Sub(step.startTime)
-		duration = cs.Muted(cfg.formatDuration(d))
-	}
+	icon, name, duration := stepLineParts(cs, cfg, step, spinnerView)
 
 	durationWidth := text.CountVisibleWidth(duration)
 	maxNameWidth := width - durationWidth - 6
@@ -534,109 +542,276 @@ func renderProgressStepLine(buf *strings.Builder, cs *iostreams.ColorScheme, cfg
 	buf.WriteByte('\n')
 }
 
-func renderProgressViewport(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, logBuf *ringBuffer, steps []*progressStep, width int) {
-	lines := logBuf.Lines()
-	totalCount := logBuf.Count()
-	logHeight := cfg.logLines()
+// stepLineParts returns the icon, display name, and duration string for a step.
+func stepLineParts(cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, step *progressStep, spinnerView string) (icon, name, duration string) {
+	switch step.status {
+	case StepComplete:
+		icon = cs.Green("●")
+		name = cfg.cleanName(step.name)
+		d := step.endTime.Sub(step.startTime)
+		duration = cs.Muted(cfg.formatDuration(d))
+	case StepCached:
+		icon = cs.Green("●")
+		name = cfg.cleanName(step.name)
+		duration = cs.Muted("cached")
+	case StepRunning:
+		icon = cs.Muted("●")
+		name = cfg.cleanName(step.name)
+		d := time.Since(step.startTime)
+		duration = cs.Muted(cfg.formatDuration(d))
+	case StepPending:
+		icon = cs.Muted("○")
+		name = cs.Muted(cfg.cleanName(step.name))
+	case StepError:
+		icon = cs.Error("●")
+		name = cfg.cleanName(step.name)
+		d := step.endTime.Sub(step.startTime)
+		duration = cs.Muted(cfg.formatDuration(d))
+	}
+	return icon, name, duration
+}
 
-	// Find the active step's short name for the title.
-	title := ""
-	for _, step := range steps {
-		if step.status == StepRunning {
-			title = step.name
-			if idx := strings.Index(title, " "); idx > 0 {
-				title = title[idx+1:]
+// ---------------------------------------------------------------------------
+// Tree-based rendering
+// ---------------------------------------------------------------------------
+
+// stageIcon returns the status icon for a stage heading.
+func stageIcon(cs *iostreams.ColorScheme, state ProgressStepStatus, spinnerView string) string {
+	switch state {
+	case StepComplete, StepCached:
+		return cs.Green("✓")
+	case StepRunning:
+		return cs.Muted("●")
+	case StepError:
+		return cs.Error("✗")
+	default:
+		return cs.Muted("○")
+	}
+}
+
+// renderCollapsedStage writes a single collapsed stage line: "  ✓ name ── N steps".
+func renderCollapsedStage(buf *strings.Builder, cs *iostreams.ColorScheme, stage *stageNode, spinnerView string) {
+	icon := stageIcon(cs, stage.stageState(), spinnerView)
+	noun := "steps"
+	if len(stage.steps) == 1 {
+		noun = "step"
+	}
+	label := fmt.Sprintf("── %d %s", len(stage.steps), noun)
+	buf.WriteString(fmt.Sprintf("  %s %s %s\n", icon, cs.Bold(stage.name), cs.Muted(label)))
+}
+
+// renderTreeStepLine writes a step line with a tree connector prefix.
+// connector is treeMid or treeLast; continuation is treePipe or "  " for vertical lines below.
+func renderTreeStepLine(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, step *progressStep, spinnerView string, connector string, width int) {
+	icon, name, duration := stepLineParts(cs, cfg, step, spinnerView)
+
+	// Prefix: "    ├─ " or "    └─ " (4 indent + connector + space)
+	prefix := "    " + connector + " "
+	prefixWidth := text.CountVisibleWidth(prefix)
+
+	durationWidth := text.CountVisibleWidth(duration)
+	maxNameWidth := width - prefixWidth - durationWidth - 3 // icon + space + margin
+	if maxNameWidth > 0 {
+		name = text.Truncate(name, maxNameWidth)
+	}
+
+	buf.WriteString(prefix)
+	buf.WriteString(icon)
+	buf.WriteByte(' ')
+	buf.WriteString(name)
+	if duration != "" {
+		nameWidth := text.CountVisibleWidth(name)
+		pad := width - prefixWidth - 2 - nameWidth - durationWidth // 2 = icon+space
+		if pad < 2 {
+			pad = 2
+		}
+		buf.WriteString(strings.Repeat(" ", pad))
+		buf.WriteString(duration)
+	}
+	buf.WriteByte('\n')
+}
+
+// renderTreeLogLines writes inline log lines below a running step with tree connectors.
+func renderTreeLogLines(buf *strings.Builder, cs *iostreams.ColorScheme, step *progressStep, isLast bool, width int) {
+	if step.logBuf == nil {
+		return
+	}
+	lines := step.logBuf.Lines()
+	if len(lines) == 0 {
+		return
+	}
+
+	pipe := treePipe
+	if isLast {
+		pipe = " "
+	}
+
+	innerWidth := width - 10 // "    │  ⎿ " or "       ⎿ " = ~9-10 chars
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	for i, line := range lines {
+		line = text.Truncate(line, innerWidth)
+		if i == 0 {
+			buf.WriteString(fmt.Sprintf("    %s  %s %s\n", cs.Muted(pipe), cs.Muted(treeLog), line))
+		} else {
+			buf.WriteString(fmt.Sprintf("    %s    %s\n", cs.Muted(pipe), line))
+		}
+	}
+}
+
+// renderStageChildren writes the children of an active stage with tree connectors.
+// If children exceed maxVisible, a centered window is shown around the running step.
+func renderStageChildren(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, stage *stageNode, spinnerView string, maxVisible int, width int) int {
+	steps := stage.steps
+	lines := 0
+
+	if len(steps) <= maxVisible {
+		// Show all children directly.
+		for i, step := range steps {
+			isLast := i == len(steps)-1
+			connector := treeMid
+			if isLast {
+				connector = treeLast
 			}
+			renderTreeStepLine(buf, cs, cfg, step, spinnerView, connector, width)
+			lines++
+			if step.status == StepRunning {
+				renderTreeLogLines(buf, cs, step, isLast, width)
+				if step.logBuf != nil {
+					n := len(step.logBuf.Lines())
+					lines += n
+				}
+			}
+		}
+		return lines
+	}
+
+	// Centered window: find first running step.
+	runIdx := -1
+	for i, step := range steps {
+		if step.status == StepRunning {
+			runIdx = i
 			break
 		}
 	}
-
-	innerWidth := width - 6
-	if innerWidth < 20 {
-		innerWidth = 20
+	if runIdx < 0 {
+		runIdx = 0
 	}
 
-	// Top border with title.
-	topLeft := "  ┌"
-	topRight := "┐"
-	if title != "" {
-		title = text.Truncate(title, innerWidth-4)
-		titleStr := " " + title + " "
-		fillLen := innerWidth - text.CountVisibleWidth(titleStr)
-		if fillLen < 0 {
-			fillLen = 0
+	// Center window on running step.
+	half := maxVisible / 2
+	winStart := runIdx - half
+	winEnd := winStart + maxVisible
+	if winStart < 0 {
+		winStart = 0
+		winEnd = maxVisible
+	}
+	if winEnd > len(steps) {
+		winEnd = len(steps)
+		winStart = winEnd - maxVisible
+		if winStart < 0 {
+			winStart = 0
 		}
-		borderLine := topLeft + titleStr + strings.Repeat("─", fillLen) + topRight
-		buf.WriteString(cs.Muted(borderLine))
-	} else {
-		buf.WriteString(cs.Muted(topLeft + strings.Repeat("─", innerWidth) + topRight))
 	}
-	buf.WriteByte('\n')
 
-	// Content lines.
-	for _, line := range lines {
-		line = text.Truncate(line, innerWidth)
-		padLen := innerWidth - text.CountVisibleWidth(line)
-		if padLen < 0 {
-			padLen = 0
+	// Collapsed header for completed steps before window.
+	completedBefore := 0
+	for i := 0; i < winStart; i++ {
+		if steps[i].status == StepComplete || steps[i].status == StepCached {
+			completedBefore++
 		}
-		buf.WriteString(cs.Muted("  │ "))
-		buf.WriteString(line)
-		buf.WriteString(strings.Repeat(" ", padLen))
-		buf.WriteString(cs.Muted(" │"))
-		buf.WriteByte('\n')
+	}
+	if winStart > 0 {
+		noun := "steps"
+		if completedBefore == 1 {
+			noun = "step"
+		}
+		label := fmt.Sprintf("✓ %d %s completed", completedBefore, noun)
+		buf.WriteString(fmt.Sprintf("    %s %s\n", treeMid, cs.Muted(label)))
+		lines++
 	}
 
-	// Pad empty viewport lines.
-	for range logHeight - len(lines) {
-		buf.WriteString(cs.Muted("  │ "))
-		buf.WriteString(strings.Repeat(" ", innerWidth))
-		buf.WriteString(cs.Muted(" │"))
-		buf.WriteByte('\n')
+	// Window steps.
+	pendingAfter := len(steps) - winEnd
+	for i := winStart; i < winEnd; i++ {
+		isLast := i == len(steps)-1 && pendingAfter == 0
+		connector := treeMid
+		if isLast {
+			connector = treeLast
+		}
+		renderTreeStepLine(buf, cs, cfg, steps[i], spinnerView, connector, width)
+		lines++
+		if steps[i].status == StepRunning {
+			renderTreeLogLines(buf, cs, steps[i], isLast, width)
+			if steps[i].logBuf != nil {
+				n := len(steps[i].logBuf.Lines())
+				lines += n
+			}
+		}
 	}
 
-	// Bottom border with counter.
-	counter := ""
-	if totalCount > len(lines) {
-		counter = fmt.Sprintf(" %d of %d lines ", len(lines), totalCount)
+	// Collapsed footer for pending steps after window.
+	if pendingAfter > 0 {
+		noun := "steps"
+		if pendingAfter == 1 {
+			noun = "step"
+		}
+		label := fmt.Sprintf("○ %d more %s", pendingAfter, noun)
+		buf.WriteString(fmt.Sprintf("    %s %s\n", treeLast, cs.Muted(label)))
+		lines++
 	}
-	counterWidth := text.CountVisibleWidth(counter)
-	bottomFillLen := innerWidth - counterWidth
-	if bottomFillLen < 0 {
-		bottomFillLen = 0
-	}
-	bottomLine := "  └" + strings.Repeat("─", bottomFillLen) + counter + "┘"
-	buf.WriteString(cs.Muted(bottomLine))
-	buf.WriteByte('\n')
+
+	return lines
 }
 
-// visibleProgressSteps returns the steps to display in the sliding window and the count
-// of hidden completed steps. Internal steps are excluded via the isInternal callback.
-func visibleProgressSteps(steps []*progressStep, maxVisible int, isInternal func(string) bool) (visible []*progressStep, hiddenCount int) {
-	// Filter out internal steps.
-	var filtered []*progressStep
-	for _, s := range steps {
-		if isInternal != nil && isInternal(s.name) {
-			continue
-		}
-		filtered = append(filtered, s)
+// renderStageNode writes a single stage: collapsed if complete/error/pending, expanded if active.
+func renderStageNode(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, stage *stageNode, spinnerView string, maxVisible int, width int) int {
+	state := stage.stageState()
+	lines := 0
+
+	switch state {
+	case StepRunning:
+		// Active stage: heading + expanded children.
+		icon := stageIcon(cs, state, spinnerView)
+		buf.WriteString(fmt.Sprintf("  %s %s\n", icon, cs.Bold(stage.name)))
+		lines++
+		lines += renderStageChildren(buf, cs, cfg, stage, spinnerView, maxVisible, width)
+	default:
+		// Collapsed stage (complete, pending, error).
+		renderCollapsedStage(buf, cs, stage, spinnerView)
+		lines++
 	}
 
-	if len(filtered) <= maxVisible {
-		return filtered, 0
-	}
-
-	// Show the last maxVisible steps, but always include any running step.
-	// Count completed steps that will be hidden.
-	cutoff := len(filtered) - maxVisible
-	for _, s := range filtered[:cutoff] {
-		if s.status == StepComplete || s.status == StepCached {
-			hiddenCount++
-		}
-	}
-
-	return filtered[cutoff:], hiddenCount
+	return lines
 }
+
+// renderTreeSection writes the full tree display: stages + ungrouped steps.
+// It tracks the maximum line count via highWater for stable frame height.
+func renderTreeSection(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *ProgressDisplayConfig, tree stageTree, spinnerView string, highWater *int, width int) {
+	lines := 0
+
+	// Ungrouped steps first (if any).
+	for _, step := range tree.ungrouped {
+		renderProgressStepLine(buf, cs, cfg, step, spinnerView, width)
+		lines++
+	}
+
+	// Stage nodes.
+	for _, stage := range tree.stages {
+		lines += renderStageNode(buf, cs, cfg, stage, spinnerView, cfg.maxVisible(), width)
+	}
+
+	// Update high-water mark and pad.
+	if lines > *highWater {
+		*highWater = lines
+	}
+	for range *highWater - lines {
+		buf.WriteByte('\n')
+	}
+}
+
 
 // ---------------------------------------------------------------------------
 // TTY mode — BubbleTea
@@ -759,12 +934,12 @@ func renderPlainProgressStepLine(ios *iostreams.IOStreams, cs *iostreams.ColorSc
 	}
 	switch step.status {
 	case StepRunning:
-		fmt.Fprintf(ios.ErrOut, "[run]  %s\n", name)
+		fmt.Fprintf(ios.ErrOut, "%s  %s\n", cs.Cyan("[run]"), name)
 	case StepComplete:
 		d := step.endTime.Sub(step.startTime)
-		fmt.Fprintf(ios.ErrOut, "[ok]   %s (%s)\n", name, cfg.formatDuration(d))
+		fmt.Fprintf(ios.ErrOut, "%s   %s (%s)\n", cs.Success("[ok]"), name, cfg.formatDuration(d))
 	case StepCached:
-		fmt.Fprintf(ios.ErrOut, "[ok]   %s (cached)\n", name)
+		fmt.Fprintf(ios.ErrOut, "%s   %s (cached)\n", cs.Success("[ok]"), name)
 	case StepError:
 		fmt.Fprintf(ios.ErrOut, "%s %s: %s\n", cs.Error("[fail]"), name, step.errMsg)
 	}
@@ -804,7 +979,7 @@ func renderProgressSummary(ios *iostreams.IOStreams, cfg *ProgressDisplayConfig,
 		}
 	}
 
-	summary := fmt.Sprintf("Built %s", cfg.Subtitle)
+	summary := fmt.Sprintf("%s %s", cfg.completionVerb(), cfg.Subtitle)
 	if cachedCount > 0 {
 		summary += fmt.Sprintf(" (%d/%d cached)", cachedCount, visibleCount)
 	}

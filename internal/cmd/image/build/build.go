@@ -224,6 +224,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
     result := opts.TUI.RunProgress(opts.Progress, tui.ProgressDisplayConfig{
       Title:          "Building " + cfg.Project,
       Subtitle:       imageTag,
+      CompletionVerb: "Built",
       MaxVisible:     5,
       LogLines:       3,
       IsInternal:     whail.IsInternalStep,

@@ -84,7 +84,8 @@ func fawkerClient(scenarioName string) (*docker.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fawker: %w", err)
 	}
-	fake.SetupBuildKitWithRecordedProgress(scenario.Events)
+	capture := fake.SetupBuildKitWithRecordedProgress(scenario.Events)
+	capture.DelayMultiplier = 5 // slow down for visual review
 
 	// Wire container list with some demo fixtures.
 	fake.SetupContainerList(

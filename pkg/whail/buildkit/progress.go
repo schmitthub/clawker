@@ -109,10 +109,19 @@ func drainProgress(ch chan *bkclient.SolveStatus, suppress bool, onProgress whai
 			}
 			if onProgress != nil {
 				// Split log data into lines for the callback.
-				lines := strings.Split(strings.TrimRight(string(l.Data), "\n"), "\n")
+				// Strip \r from lines: build tools (apt-get, pip, npm) use \r to
+				// overwrite progress bars in-place. Keep only content after the last
+				// \r, mimicking terminal rendering. Also handles CRLF line endings.
+				lines := strings.Split(strings.TrimRight(string(l.Data), "\n\r"), "\n")
 				for _, line := range lines {
 					if line == "" {
 						continue
+					}
+					if idx := strings.LastIndex(line, "\r"); idx >= 0 {
+						line = line[idx+1:]
+						if line == "" {
+							continue
+						}
 					}
 					onProgress(whail.BuildProgressEvent{
 						StepID:     l.Vertex.String(),
