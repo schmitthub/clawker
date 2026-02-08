@@ -1,6 +1,6 @@
 {
   "name": "many-steps",
-  "description": "10-step build exercising sliding window display",
+  "description": "10-step build exercising per-stage child window display",
   "events": [
     {
       "delay_ms": 10,

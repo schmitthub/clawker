@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
@@ -35,9 +36,10 @@ func SetupSignalContext(parent context.Context) (context.Context, context.Cancel
 // free of terminal or Docker imports.
 type ResizeHandler struct {
 	sigChan    chan os.Signal
-	resizeFunc func(height, width uint) error
+	resizeFunc func(height, width uint) error // called with (height, width) — note: swapped from getSize's (width, height)
 	getSize    func() (width, height int, err error)
 	done       chan struct{}
+	stopOnce   sync.Once
 }
 
 // NewResizeHandler creates a new resize handler.
@@ -60,11 +62,12 @@ func (h *ResizeHandler) Start() {
 	go h.handle()
 }
 
-// Stop stops listening for resize signals.
+// Stop stops listening for resize signals. Safe to call multiple times.
 func (h *ResizeHandler) Stop() {
-	signal.Stop(h.sigChan)
-	close(h.done)
-	close(h.sigChan)
+	h.stopOnce.Do(func() {
+		signal.Stop(h.sigChan)
+		close(h.done)
+	})
 }
 
 // handle processes resize signals.
@@ -72,7 +75,7 @@ func (h *ResizeHandler) handle() {
 	defer func() {
 		// Recover from panics (e.g. send on closed channel) to avoid
 		// crashing the host process — resize is best-effort.
-		recover() //nolint:errcheck
+		recover() //nolint:revive // intentionally discarding recovered value
 	}()
 	for {
 		select {

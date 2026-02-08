@@ -3,7 +3,7 @@ package iostreams
 import "github.com/charmbracelet/lipgloss"
 
 // Color palette — consistent across all clawker output.
-// These are the canonical color definitions; tui/ will be migrated to import these.
+// These are the canonical color definitions used by all packages via iostreams.
 var (
 	ColorPrimary   = lipgloss.Color("#7D56F4")
 	ColorSecondary = lipgloss.Color("#6C6C6C")
@@ -177,6 +177,18 @@ var (
 			Background(ColorMuted).
 			Foreground(lipgloss.Color("#FFFFFF"))
 )
+
+// Table styles.
+var (
+	// TableHeaderStyle for table column headers: bold + primary color, no padding.
+	TableHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+)
+
+// RenderFixedWidth renders text at a fixed width using lipgloss.
+// Used by tableprinter to set column widths without importing lipgloss directly.
+func RenderFixedWidth(s string, width int) string {
+	return lipgloss.NewStyle().Width(width).Render(s)
+}
 
 // DividerStyle for horizontal rules.
 var DividerStyle = lipgloss.NewStyle().

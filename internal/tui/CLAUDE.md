@@ -194,7 +194,7 @@ result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
 
 **Internal types**: `stageNode` (group with steps), `stageTree` (stages + ungrouped), `progressStep.logBuf` (per-step ring buffer). `buildStageTree()` groups steps by ParseGroup callback. `stageState()` returns aggregate: Error > Running > Complete > Pending.
 
-**Tree rendering pipeline**: `renderTreeSection()` → `renderStageNode()` (dispatches collapsed vs expanded) → `renderStageChildren()` (tree connectors + child window + inline logs) → `renderTreeStepLine()` (step with connector prefix) + `renderTreeLogLines()` (inline `⎿` log output).
+**Tree rendering pipeline**: `renderTreeSection()` → `renderStageNode()` (dispatches collapsed vs expanded) → `renderStageChildren()` (tree connectors + child window + inline logs) → `renderTreeStepLine()` (step with connector prefix) + `renderTreeLogLines()` (inline `⎿` log output). Both `renderProgressStepLine()` and `renderTreeStepLine()` delegate to `renderStepLineWithPrefix()` for shared layout (icon + name + right-aligned duration).
 
 **Plain mode**: Sequential `[run]`/`[ok]`/`[fail]` lines, internal steps hidden via IsInternal callback, dedup on status transitions
 
@@ -218,7 +218,9 @@ type LifecycleHook func(component, event string) HookResult
 
 **Wiring**: Hooks are threaded via component config structs. `ProgressDisplayConfig.OnLifecycle` is the first; future components follow the same pattern. Nil hooks are never called — each config struct has a nil-safe `fireHook()` helper.
 
-**Firing**: Hooks fire AFTER BubbleTea exits (no stdin conflict) but BEFORE the summary is rendered. The `View()` fix ensures the progress display persists in BubbleTea's final frame via `viewFinished()`.
+**Firing**: Hooks fire AFTER BubbleTea exits (no stdin conflict) but BEFORE the summary is rendered. `View()` handles both live and finished states, ensuring the progress display persists in BubbleTea's final frame.
+
+**Hook abort handling**: `handleHookResult()` converts a `HookResult` to a `ProgressResult`. When a hook aborts (`Continue: false`) with no error or message, a default error "aborted by lifecycle hook" is produced — preventing silent success on abort.
 
 **Hook events for progress display**:
 - `"progress"`, `"before_complete"` — fired after all steps complete, before summary

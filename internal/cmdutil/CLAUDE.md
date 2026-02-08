@@ -87,7 +87,7 @@ None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorSch
 // FlagError triggers usage display in Main()'s centralized error rendering.
 type FlagError struct{ err error }
 func FlagErrorf(format string, args ...any) error
-func FlagErrorWrap(err error) error
+func FlagErrorWrap(err error) error  // nil-safe: returns nil for nil input
 
 // SilentError signals the error was already displayed — Main() just exits non-zero.
 var SilentError = errors.New("SilentError")

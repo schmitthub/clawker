@@ -26,9 +26,10 @@ Terminal resize propagation via SIGWINCH. Takes closures so it has no terminal o
 ```go
 type ResizeHandler struct {
     sigChan    chan os.Signal
-    resizeFunc func(height, width uint) error
+    resizeFunc func(height, width uint) error  // NOTE: height, width — swapped from getSize order
     getSize    func() (width, height int, err error)
     done       chan struct{}
+    stopOnce   sync.Once
 }
 
 func NewResizeHandler(resizeFunc func(height, width uint) error, getSize func() (width, height int, err error)) *ResizeHandler
@@ -46,3 +47,4 @@ func NewResizeHandler(resizeFunc func(height, width uint) error, getSize func() 
 - Closures for resize/size operations — caller decides what to resize and how to measure
 - Panic recovery in handler goroutine — resize is best-effort, never crashes host process
 - Errors from `getSize` and `resizeFunc` are silently dropped (no logger available; resize is best-effort)
+- `Stop()` is idempotent via `sync.Once` — safe to call multiple times (e.g., deferred cleanup + explicit stop)

@@ -112,7 +112,7 @@ func LargeLogOutputEvents() []whail.BuildProgressEvent {
 }
 
 // ManyStepsBuildEvents returns a 10-visible-step build that exercises
-// the sliding window (MaxVisible is typically 5).
+// the per-stage child window (MaxVisible is typically 5).
 func ManyStepsBuildEvents() []whail.BuildProgressEvent {
 	events := []whail.BuildProgressEvent{
 		{StepID: StepDigest(1), StepName: "[internal] load build definition from Dockerfile", Status: whail.BuildStepComplete},

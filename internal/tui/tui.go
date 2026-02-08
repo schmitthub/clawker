@@ -13,6 +13,9 @@ type TUI struct {
 
 // NewTUI creates a TUI bound to the given IOStreams.
 func NewTUI(ios *iostreams.IOStreams) *TUI {
+	if ios == nil {
+		panic("NewTUI: IOStreams must not be nil")
+	}
 	return &TUI{ios: ios}
 }
 

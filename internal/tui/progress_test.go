@@ -246,7 +246,7 @@ func TestRenderCollapsedStage_Complete(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderCollapsedStage(&buf, cs, stage, "●")
+	renderCollapsedStage(&buf, cs, stage)
 
 	output := buf.String()
 	assert.Contains(t, output, "✓")
@@ -264,7 +264,7 @@ func TestRenderCollapsedStage_SingleStep(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderCollapsedStage(&buf, cs, stage, "●")
+	renderCollapsedStage(&buf, cs, stage)
 
 	output := buf.String()
 	assert.Contains(t, output, "── 1 step")
@@ -282,7 +282,7 @@ func TestRenderCollapsedStage_Error(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderCollapsedStage(&buf, cs, stage, "●")
+	renderCollapsedStage(&buf, cs, stage)
 
 	output := buf.String()
 	assert.Contains(t, output, "✗")
@@ -300,7 +300,7 @@ func TestRenderCollapsedStage_Pending(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderCollapsedStage(&buf, cs, stage, "●")
+	renderCollapsedStage(&buf, cs, stage)
 
 	output := buf.String()
 	assert.Contains(t, output, "○")
@@ -317,7 +317,7 @@ func TestRenderTreeStepLine_WithConnector(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderTreeStepLine(&buf, cs, cfg, step, "●", treeMid, 80)
+	renderTreeStepLine(&buf, cs, cfg, step, treeMid, 80)
 
 	output := buf.String()
 	assert.Contains(t, output, "├─")
@@ -334,7 +334,7 @@ func TestRenderTreeStepLine_LastConnector(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	renderTreeStepLine(&buf, cs, cfg, step, "●", treeLast, 80)
+	renderTreeStepLine(&buf, cs, cfg, step, treeLast, 80)
 
 	output := buf.String()
 	assert.Contains(t, output, "└─")
@@ -386,7 +386,7 @@ func TestRenderStageChildren_FewSteps(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 5, 80)
+	lines := renderStageChildren(&buf, cs, cfg, stage, 5, 80)
 
 	output := buf.String()
 	assert.Equal(t, 3, lines)
@@ -423,7 +423,7 @@ func TestRenderStageChildren_WindowedWithCollapse(t *testing.T) {
 	stage := &stageNode{name: "builder", steps: steps}
 
 	var buf strings.Builder
-	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 3, 80)
+	lines := renderStageChildren(&buf, cs, cfg, stage, 3, 80)
 
 	output := buf.String()
 	// Should show collapsed header for completed steps before window.
@@ -449,7 +449,7 @@ func TestRenderStageNode_ActiveExpanded(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	lines := renderStageNode(&buf, cs, cfg, stage, "●", 5, 80)
+	lines := renderStageNode(&buf, cs, cfg, stage, 5, 80)
 
 	output := buf.String()
 	// Heading + 3 children = 4 lines.
@@ -472,7 +472,7 @@ func TestRenderStageNode_Collapsed(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	lines := renderStageNode(&buf, cs, cfg, stage, "●", 5, 80)
+	lines := renderStageNode(&buf, cs, cfg, stage, 5, 80)
 
 	output := buf.String()
 	assert.Equal(t, 1, lines) // Single collapsed line.
@@ -508,7 +508,7 @@ func TestRenderTreeSection_MultiStage(t *testing.T) {
 
 	var buf strings.Builder
 	hw := 0
-	renderTreeSection(&buf, cs, cfg, tree, "●", &hw, 80)
+	renderTreeSection(&buf, cs, cfg, tree, &hw, 80)
 
 	output := buf.String()
 	// builder is collapsed.
@@ -542,7 +542,7 @@ func TestRenderTreeSection_HighWaterPadding(t *testing.T) {
 
 	var buf1 strings.Builder
 	hw := 0
-	renderTreeSection(&buf1, cs, cfg, tree1, "●", &hw, 80)
+	renderTreeSection(&buf1, cs, cfg, tree1, &hw, 80)
 	lines1 := strings.Count(buf1.String(), "\n")
 
 	// Second render: collapsed stage (1 line) — should pad to high water.
@@ -560,7 +560,7 @@ func TestRenderTreeSection_HighWaterPadding(t *testing.T) {
 	}
 
 	var buf2 strings.Builder
-	renderTreeSection(&buf2, cs, cfg, tree2, "●", &hw, 80)
+	renderTreeSection(&buf2, cs, cfg, tree2, &hw, 80)
 	lines2 := strings.Count(buf2.String(), "\n")
 
 	assert.GreaterOrEqual(t, lines2, lines1, "collapsed frame should be padded to high-water mark")
@@ -585,7 +585,7 @@ func TestRenderStageChildren_WithLogLines(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	lines := renderStageChildren(&buf, cs, cfg, stage, "●", 5, 80)
+	lines := renderStageChildren(&buf, cs, cfg, stage, 5, 80)
 
 	output := buf.String()
 	// 3 step lines + 2 log lines = 5.
@@ -1173,6 +1173,47 @@ func TestPlainMode_Hook_ErrorPropagates(t *testing.T) {
 	assert.ErrorIs(t, result.Err, hookErr)
 }
 
+func TestPlainMode_Hook_AbortNoMessage(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "FROM node:20", Status: StepComplete},
+	)
+
+	cfg := testDisplayConfig()
+	cfg.OnLifecycle = func(_, _ string) HookResult {
+		return HookResult{Continue: false} // no Err, no Message
+	}
+
+	result := runProgressPlain(tio.IOStreams, cfg, ch)
+	assert.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "aborted by lifecycle hook")
+}
+
+func TestHandleHookResult_Continue(t *testing.T) {
+	r := handleHookResult(HookResult{Continue: true})
+	assert.NoError(t, r.Err)
+}
+
+func TestHandleHookResult_AbortWithErr(t *testing.T) {
+	err := fmt.Errorf("hook failed")
+	r := handleHookResult(HookResult{Continue: false, Err: err})
+	assert.ErrorIs(t, r.Err, err)
+}
+
+func TestHandleHookResult_AbortWithMessage(t *testing.T) {
+	r := handleHookResult(HookResult{Continue: false, Message: "custom reason"})
+	assert.Error(t, r.Err)
+	assert.Contains(t, r.Err.Error(), "custom reason")
+}
+
+func TestHandleHookResult_AbortEmpty(t *testing.T) {
+	r := handleHookResult(HookResult{Continue: false})
+	assert.Error(t, r.Err)
+	assert.Contains(t, r.Err.Error(), "aborted by lifecycle hook")
+}
+
 func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	ch := make(chan ProgressStep, 10)
@@ -1194,4 +1235,136 @@ func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
 
 	output := tio.ErrBuf.String()
 	assert.Contains(t, output, "Built myproject:latest")
+}
+
+// ---------------------------------------------------------------------------
+// RunProgress mode selection tests
+// ---------------------------------------------------------------------------
+
+func TestRunProgress_PlainModeForced(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	tio.SetInteractive(true) // TTY available, but "plain" overrides
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "FROM node:20", Status: StepRunning},
+		ProgressStep{ID: "s1", Status: StepComplete},
+	)
+
+	cfg := testDisplayConfig()
+	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
+	assert.NoError(t, result.Err)
+	// Plain mode writes to stderr line by line.
+	output := tio.ErrBuf.String()
+	assert.Contains(t, output, "[ok]")
+}
+
+func TestRunProgress_AutoFallsBackToPlain(t *testing.T) {
+	tio := iostreams.NewTestIOStreams() // non-TTY by default
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "FROM node:20", Status: StepRunning},
+		ProgressStep{ID: "s1", Status: StepComplete},
+	)
+
+	cfg := testDisplayConfig()
+	result := RunProgress(tio.IOStreams, "auto", cfg, ch)
+	assert.NoError(t, result.Err)
+	output := tio.ErrBuf.String()
+	assert.Contains(t, output, "[ok]")
+}
+
+func TestRunProgress_UnknownModeFallsToAuto(t *testing.T) {
+	tio := iostreams.NewTestIOStreams() // non-TTY → plain
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "RUN build", Status: StepRunning},
+		ProgressStep{ID: "s1", Status: StepComplete},
+	)
+
+	cfg := testDisplayConfig()
+	result := RunProgress(tio.IOStreams, "nonexistent", cfg, ch)
+	assert.NoError(t, result.Err)
+	output := tio.ErrBuf.String()
+	assert.Contains(t, output, "[ok]")
+}
+
+func TestRunProgress_EmptyChannel(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	ch := make(chan ProgressStep)
+	close(ch) // immediately closed = no events
+
+	cfg := testDisplayConfig()
+	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
+	assert.NoError(t, result.Err)
+}
+
+func TestRunProgress_ZeroValueConfig(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	ch := make(chan ProgressStep, 10)
+
+	go sendProgressSteps(ch,
+		ProgressStep{ID: "s1", Name: "step 1", Status: StepRunning},
+		ProgressStep{ID: "s1", Status: StepComplete},
+	)
+
+	// Zero-value config should use sensible defaults without panicking.
+	cfg := ProgressDisplayConfig{}
+	result := RunProgress(tio.IOStreams, "plain", cfg, ch)
+	assert.NoError(t, result.Err)
+}
+
+// ---------------------------------------------------------------------------
+// processEvent edge case tests
+// ---------------------------------------------------------------------------
+
+func TestProgressModel_ProcessEvent_EmptyID(t *testing.T) {
+	m, _ := newTestProgressModel(t)
+
+	// Empty ID event should not create a step.
+	m.processEvent(ProgressStep{ID: "", Name: "orphan", Status: StepRunning})
+	assert.Empty(t, m.steps)
+}
+
+func TestProgressModel_ProcessEvent_UnknownIDLogLine(t *testing.T) {
+	m, _ := newTestProgressModel(t)
+
+	// Log line for an ID that hasn't been seen as a step yet.
+	m.processEvent(ProgressStep{ID: "unknown", LogLine: "output line"})
+	// Should either ignore or create a step — must not panic.
+	// The ID-not-found path should be safe.
+}
+
+func TestProgressModel_ProcessEvent_EventAfterCompletion(t *testing.T) {
+	m, _ := newTestProgressModel(t)
+
+	m.processEvent(ProgressStep{ID: "s1", Name: "RUN build", Status: StepRunning})
+	m.processEvent(ProgressStep{ID: "s1", Status: StepComplete})
+
+	// Late event for the same step after completion.
+	m.processEvent(ProgressStep{ID: "s1", LogLine: "straggler log"})
+	// Must not panic; step should still be in final state.
+	assert.Equal(t, StepComplete, m.steps[0].status)
+}
+
+func TestProgressModel_ProcessEvent_CachedStep(t *testing.T) {
+	m, _ := newTestProgressModel(t)
+
+	m.processEvent(ProgressStep{ID: "s1", Name: "FROM node:20", Status: StepCached, Cached: true})
+	require.Len(t, m.steps, 1)
+	assert.Equal(t, StepCached, m.steps[0].status)
+	assert.True(t, m.steps[0].cached)
+}
+
+func TestProgressModel_ProcessEvent_ErrorStep(t *testing.T) {
+	m, _ := newTestProgressModel(t)
+
+	m.processEvent(ProgressStep{ID: "s1", Name: "RUN npm install", Status: StepRunning})
+	m.processEvent(ProgressStep{ID: "s1", Status: StepError, Error: "exit code 1"})
+
+	require.Len(t, m.steps, 1)
+	assert.Equal(t, StepError, m.steps[0].status)
+	assert.Equal(t, "exit code 1", m.steps[0].errMsg)
 }

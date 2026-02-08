@@ -214,5 +214,8 @@ func isClosedConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
+	// NOTE: net.ErrClosed is not always wrapped by the hijacked connection, so
+	// we fall back to string matching. This is fragile but matches the Go stdlib
+	// internal error string from net/fd_posix.go ("use of closed network connection").
 	return strings.Contains(err.Error(), "use of closed network connection")
 }

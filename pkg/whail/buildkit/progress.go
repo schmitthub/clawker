@@ -1,6 +1,7 @@
 package buildkit
 
 import (
+	"regexp"
 	"strings"
 
 	bkclient "github.com/moby/buildkit/client"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/schmitthub/clawker/pkg/whail"
 )
+
+// ansiPattern matches ANSI escape sequences for stripping from log output.
+// Build tools may inject escape sequences to colorize or control cursor
+// positioning — forwarding them raw would allow escape injection.
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // drainProgress reads from the BuildKit status channel until it is closed.
 // When suppress is true, only error-state vertexes are logged. Otherwise,
@@ -28,7 +34,7 @@ func drainProgress(ch chan *bkclient.SolveStatus, suppress bool, onProgress whai
 				if name == "" {
 					name = v.Digest.String()
 				}
-				log.Error().Str("vertex", name).Str("error", v.Error).Msg("buildkit vertex error")
+				log.Warn().Str("vertex", name).Str("error", v.Error).Msg("buildkit vertex error")
 				if onProgress != nil {
 					idx, ok := stepIndex[v.Digest]
 					if !ok {
@@ -122,6 +128,12 @@ func drainProgress(ch chan *bkclient.SolveStatus, suppress bool, onProgress whai
 						if line == "" {
 							continue
 						}
+					}
+					// Strip ANSI escape sequences to prevent escape injection
+					// from build tool output.
+					line = ansiPattern.ReplaceAllString(line, "")
+					if line == "" {
+						continue
 					}
 					onProgress(whail.BuildProgressEvent{
 						StepID:     l.Vertex.String(),

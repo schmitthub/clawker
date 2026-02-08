@@ -28,23 +28,46 @@ Split `internal/term` (was middle-tier due to docker import) into three packages
 - Dead code removed: `SignalHandler`, `WaitForSignal` (zero consumers).
 - 6 consumer commands updated to new import paths.
 
-## Remaining Work
+## PR Review Fixes (Complete)
 
-### Output Interface (experimental, not started)
-- `Output` interface — `HandleError(err)`, `PrintWarning(format, args...)`, `PrintSuccess(format, args...)`, `PrintNextSteps(steps...)`
-- Replaces `cmdutil.Print*` free functions scattered across `cmdutil/output.go`
-- Handles scenario 1 (non-interactive/static) in the 4-scenario model
-- Design questions: wrap `IOStreams` or live alongside? Factory field or per-command?
+All 24 review issues + 7 test coverage gaps addressed:
 
-### TTY Visual Bugs (Fixed & Remaining)
-- **REPLACED: Sliding window with tree-based display** — The entire sliding window system (`visibleProgressSteps`, `collapseCompleteGroups`, `mergeCollapsed`, `renderStepSection`, `renderProgressViewport`) has been replaced with a tree-based stage display (`buildStageTree`, `renderTreeSection`, `renderStageNode`, `renderStageChildren`). Stages are parent nodes with tree-connected child steps. Active stages expand with `├─`/`└─` connectors and inline `⎿` log lines under running steps. Complete/pending/error stages collapse to single lines. Per-stage child window centers on running step. All previous sliding window bugs (duplicate collapsed headings, active group falsely collapsed, running step hidden, viewport border collapse from `\r`) are eliminated by the new design.
-- **KEPT: High-water mark frame padding** — Prevents BubbleTea inline renderer cursor drift when stages collapse.
-- **KEPT: `\r` stripping in `drainProgress()`** — Independent fix in `pkg/whail/buildkit/progress.go`.
-- Summary/statusline sometimes duplicates (not blocking)
-- Root causes for remaining: width floor, ANSI width miscounting
+### Critical (Phase 1)
+- **#1 Channel panic + #2 Data race** — `build.go`: replaced shared `var buildErr` with `buildErrCh` channel; `done` channel guards OnProgress sends
+- **#15 Redundant var** — removed `var buildkitEnabled bool`
+- **#6 BuildKit warning** — user-visible warning when detection fails
+- **#14 Silent label drop** — `parseKeyValuePairs` returns invalid entries; caller warns
 
-### Phase 7: Generic Completion Verb
-Added `CompletionVerb` field to `ProgressDisplayConfig` (default: "Completed"). Build command sets `"Built"`. Success summary now uses `cfg.completionVerb()` instead of hardcoded `"Built %s"`. All tests pass without golden file regeneration.
+### High Priority (Phase 2)
+- **#4 Double-close panic** — `signals.go`: `sync.Once` on Stop()
+- **#23 Wrong lint directive** — `//nolint:errcheck` → `//nolint:revive`
+- **#12 Godoc param trap** — added comment about height/width swap
+- **#5 Hook abort silent success** — extracted `handleHookResult()` helper; default error on empty abort
+- **#10 Duplicated hook handling** — both TTY and plain paths use shared helper
+- **#3 Lipgloss boundary** — added `TableHeaderStyle`/`RenderFixedWidth()` to iostreams; removed lipgloss import from tableprinter
+- **#7 Escape injection** — ANSI stripping in `buildkit/progress.go` log lines
+- **#20 Log level** — `log.Error()` → `log.Warn()` for vertex errors
+- **#16 Stale comment** — "sliding window" → "per-stage child window" in build_scenarios
+
+### Medium Priority (Phase 3)
+- **#8 Dead spinnerView parameter** — removed from all 10 render functions + tests
+- **#9 viewFinished duplicate** — deleted method, View() handles both states
+- **#11 Duplicated step line layout** — extracted `renderStepLineWithPrefix()` shared helper
+- **#13 Inconsistent receiver** — `maxVisible()` now pointer receiver
+
+### Low Priority (Phase 4)
+- **#17 NewTUI nil guard** — panic on nil IOStreams
+- **#18 FlagErrorWrap nil** — returns nil for nil input
+- **#19 Fawker error path** — prints actual error before help hint
+- **#21 Fawker stdin EOF** — handles io.EOF from Read
+- **#22 isClosedConnectionError** — documented fragility of string matching
+- **#24 Stale comment** — updated styles.go migration comment
+
+### Test Coverage (Phase 5)
+- ExitError: Error(), zero code, errors.As wrapping
+- FlagErrorWrap(nil), FlagError usage trigger, SilentError distinction
+- RunProgress: plain forced, auto fallback, unknown mode, empty channel, zero-value config
+- processEvent: empty ID, unknown ID log, event after completion, cached, error
 
 ## Key Design Decisions
 - **TUI is a Factory noun** (`*tui.TUI`) — pointer sharing fixes eager capture bugs

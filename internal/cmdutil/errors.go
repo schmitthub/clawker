@@ -32,6 +32,9 @@ func FlagErrorf(format string, args ...any) error {
 
 // FlagErrorWrap wraps an existing error as a FlagError.
 func FlagErrorWrap(err error) error {
+	if err == nil {
+		return nil
+	}
 	return &FlagError{err: err}
 }
 

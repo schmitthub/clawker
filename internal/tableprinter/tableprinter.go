@@ -9,8 +9,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
 )
@@ -84,7 +82,7 @@ func (tp *TablePrinter) renderStyled() error {
 	}
 	colWidth := available / numCols
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(iostreams.ColorPrimary)
+	headerStyle := iostreams.TableHeaderStyle
 	spacing := strings.Repeat(" ", gap)
 
 	// Render header row
@@ -108,12 +106,11 @@ func (tp *TablePrinter) renderStyled() error {
 	}
 
 	// Render data rows
-	cellStyle := lipgloss.NewStyle().Width(colWidth)
 	for _, row := range tp.rows {
 		cols := tp.normalizeRow(row)
 		var parts []string
 		for _, col := range cols {
-			parts = append(parts, cellStyle.Render(text.Truncate(col, colWidth)))
+			parts = append(parts, iostreams.RenderFixedWidth(text.Truncate(col, colWidth), colWidth))
 		}
 		if _, err := fmt.Fprintln(tp.ios.Out, strings.Join(parts, spacing)); err != nil {
 			return err

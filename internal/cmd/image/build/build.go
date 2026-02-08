@@ -157,10 +157,10 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   }
 
   // Check BuildKit availability — cache mounts in Dockerfile require it
-  var buildkitEnabled bool
   buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
   if bkErr != nil {
     logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+    fmt.Fprintf(ios.ErrOut, "%s BuildKit detection failed — falling back to legacy builder\n", cs.WarningIcon())
   } else if !buildkitEnabled {
     fmt.Fprintf(ios.ErrOut, "%s BuildKit is not available — cache mount directives will be ignored and builds may be slower\n", cs.WarningIcon())
   }
@@ -172,7 +172,10 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   buildArgs := parseBuildArgs(opts.BuildArgs)
 
   // Merge user labels with clawker labels (clawker labels take precedence)
-  userLabels := parseKeyValuePairs(opts.Labels)
+  userLabels, invalidLabels := parseKeyValuePairs(opts.Labels)
+  for _, label := range invalidLabels {
+    fmt.Fprintf(ios.ErrOut, "%s Ignoring malformed label %q — use format KEY=VALUE\n", cs.WarningIcon(), label)
+  }
   clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
   labels := mergeLabels(userLabels, clawkerLabels)
 
@@ -203,21 +206,26 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   // The build runs in a goroutine with events streamed to a TUI display.
   if !suppressed {
     ch := make(chan tui.ProgressStep, 64)
+    done := make(chan struct{})
 
     buildOpts.OnProgress = func(event whail.BuildProgressEvent) {
-      ch <- tui.ProgressStep{
+      select {
+      case <-done:
+        return // display already finished, discard late events
+      case ch <- tui.ProgressStep{
         ID:      event.StepID,
         Name:    event.StepName,
         Status:  progressStatus(event.Status),
         Cached:  event.Cached,
         Error:   event.Error,
         LogLine: event.LogLine,
+      }:
       }
     }
 
-    var buildErr error
+    buildErrCh := make(chan error, 1)
     go func() {
-      buildErr = builder.Build(ctx, imageTag, buildOpts)
+      buildErrCh <- builder.Build(ctx, imageTag, buildOpts)
       close(ch) // channel closure = done signal
     }()
 
@@ -232,12 +240,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
       ParseGroup:     whail.ParseBuildStage,
       FormatDuration: whail.FormatBuildDuration,
     }, ch)
+    close(done) // signal OnProgress callback to stop sending
+
     if result.Err != nil {
       printBuildNextSteps(ios, cs)
       return result.Err
     }
 
-    if buildErr != nil {
+    if buildErr := <-buildErrCh; buildErr != nil {
       printBuildNextSteps(ios, cs)
       return buildErr
     }
@@ -291,27 +301,22 @@ func parseBuildArgs(args []string) map[string]*string {
 }
 
 // parseKeyValuePairs parses KEY=VALUE pairs into a string map.
-// Labels without '=' are logged as warnings and ignored.
-func parseKeyValuePairs(pairs []string) map[string]string {
+// Labels without '=' are returned as invalid so the caller can warn.
+func parseKeyValuePairs(pairs []string) (map[string]string, []string) {
   if len(pairs) == 0 {
-    return nil
+    return nil, nil
   }
   result := make(map[string]string)
-  var warnings []string
+  var invalid []string
   for _, pair := range pairs {
     parts := strings.SplitN(pair, "=", 2)
     if len(parts) == 2 {
       result[parts[0]] = parts[1]
     } else {
-      warnings = append(warnings, pair)
+      invalid = append(invalid, pair)
     }
   }
-  if len(warnings) > 0 {
-    logger.Warn().
-      Strs("invalid_labels", warnings).
-      Msg("labels without '=' were ignored, use format KEY=VALUE")
-  }
-  return result
+  return result, invalid
 }
 
 // printBuildNextSteps prints actionable guidance after a build failure.

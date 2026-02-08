@@ -101,3 +101,15 @@ func TestResizeHandler_StartStop(t *testing.T) {
 	rh.Stop()
 	// Should not panic or deadlock
 }
+
+func TestResizeHandler_DoubleStop(t *testing.T) {
+	rh := NewResizeHandler(
+		func(h, w uint) error { return nil },
+		func() (int, int, error) { return 80, 24, nil },
+	)
+
+	rh.Start()
+	time.Sleep(10 * time.Millisecond)
+	rh.Stop()
+	rh.Stop() // second Stop must not panic
+}

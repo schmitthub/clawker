@@ -45,8 +45,8 @@ func main() {
 
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
-		fmt.Fprintf(f.IOStreams.ErrOut, "\nRun '%s --help' for more information.\n", cmd.CommandPath())
-		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(f.IOStreams.ErrOut, "\nError: %s\n", err)
+		fmt.Fprintf(f.IOStreams.ErrOut, "Run '%s --help' for more information.\n", cmd.CommandPath())
 		pauseForReview(f, noPause)
 		os.Exit(1)
 	}
@@ -80,7 +80,9 @@ func pauseForReview(f *cmdutil.Factory, noPause bool) {
 	// Raw mode: loop until Enter.
 	for {
 		buf := make([]byte, 1)
-		os.Stdin.Read(buf) //nolint:errcheck
+		if _, err := os.Stdin.Read(buf); err != nil {
+			return // EOF or read error
+		}
 		if buf[0] == '\r' || buf[0] == '\n' {
 			return
 		}
@@ -120,7 +122,9 @@ func fawkerLifecycleHook(ios *iostreams.IOStreams) tui.LifecycleHook {
 		// Raw mode: loop until Enter or q.
 		for {
 			buf := make([]byte, 1)
-			os.Stdin.Read(buf) //nolint:errcheck
+			if _, err := os.Stdin.Read(buf); err != nil {
+				return tui.HookResult{Continue: true} // EOF or read error
+			}
 			switch buf[0] {
 			case '\r', '\n':
 				fmt.Fprintf(ios.ErrOut, "\r\n")

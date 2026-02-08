@@ -186,7 +186,7 @@ var scenarioDescriptions = map[string]string{
 	"multi-stage":   "8-step build across 3 named stages (builder, assets, runtime)",
 	"error":         "3-step build where the last step fails with npm error",
 	"large-log":     "Single-step build emitting 50 log lines",
-	"many-steps":    "10-step build exercising sliding window display",
+	"many-steps":    "10-step build exercising per-stage child window display",
 	"internal-only": "3 internal steps with zero visible output",
 }
 
