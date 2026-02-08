@@ -56,9 +56,11 @@ type SetupMountsConfig struct {
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error)
 func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error
+func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error
+func GetGlobalsVolumeMount() mount.Mount
 ```
 
-`SetupMounts` is the main entry point -- combines workspace, git credentials, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- combines workspace, git credentials, globals volume, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
@@ -91,6 +93,19 @@ func GetDockerSocketMount() mount.Mount
 ```
 
 Only available when `security.docker_socket: true`.
+
+## Globals Volume
+
+```go
+const GlobalsPurpose = "globals"
+const GlobalsStagingPath = "/home/claude/.clawker-globals"
+func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error
+func GetGlobalsVolumeMount() mount.Mount
+```
+
+Global volume (`clawker-globals`) persists shared data (credentials) across all projects and agents. Mounted at `GlobalsStagingPath` as a staging path. The entrypoint symlinks `~/.claude/.credentials.json` → staging path so Claude Code writes persist immediately to the global volume.
+
+**Lifecycle**: NOT deleted by `removeAgentVolumes` (label/name filters exclude it). Deleted by `volume prune` (user-confirmed).
 
 ## Constants
 

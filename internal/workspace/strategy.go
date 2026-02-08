@@ -81,18 +81,16 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 // Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error {
-	// Create config volume
 	configVolume := docker.VolumeName(projectName, agentName, "config")
 	configLabels := docker.VolumeLabels(projectName, agentName, "config")
 	if _, err := cli.EnsureVolume(ctx, configVolume, configLabels); err != nil {
-		return fmt.Errorf("failed to create config volume: %w", err)
+		return err
 	}
 
-	// Create history volume
 	historyVolume := docker.VolumeName(projectName, agentName, "history")
 	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
 	if _, err := cli.EnsureVolume(ctx, historyVolume, historyLabels); err != nil {
-		return fmt.Errorf("failed to create history volume: %w", err)
+		return err
 	}
 
 	return nil
@@ -105,5 +103,32 @@ func GetDockerSocketMount() mount.Mount {
 		Source:   "/var/run/docker.sock",
 		Target:   "/var/run/docker.sock",
 		ReadOnly: false,
+	}
+}
+
+const (
+	// GlobalsPurpose is the volume purpose label for the shared globals volume.
+	GlobalsPurpose = "globals"
+	// GlobalsStagingPath is the container mount point for the globals volume.
+	GlobalsStagingPath = "/home/claude/.clawker-globals"
+)
+
+// EnsureGlobalsVolume creates the global shared volume if it doesn't already exist.
+// This volume persists credentials and other shared data across all projects and agents.
+func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error {
+	name := docker.GlobalVolumeName(GlobalsPurpose)
+	labels := docker.GlobalVolumeLabels(GlobalsPurpose)
+	if _, err := cli.EnsureVolume(ctx, name, labels); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetGlobalsVolumeMount returns the mount for the global shared volume.
+func GetGlobalsVolumeMount() mount.Mount {
+	return mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: docker.GlobalVolumeName(GlobalsPurpose),
+		Target: GlobalsStagingPath,
 	}
 }

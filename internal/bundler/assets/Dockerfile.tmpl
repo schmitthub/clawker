@@ -204,9 +204,10 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 
 # Create workspace, config, runtime, and credential directories with proper permissions
 # .gnupg and .ssh are pre-created so socket mounts don't create root-owned directories
-RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /var/run/clawker && \
+# .clawker-globals is pre-created so the global volume mount inherits correct ownership
+RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-globals /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /var/run/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
-    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
+    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-globals /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
 
 # Persist bash history
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \

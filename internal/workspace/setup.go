@@ -102,6 +102,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 	mounts = append(mounts, GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)...)
 
+	// Ensure and mount global shared volume (credentials persistence across agents)
+	if err := EnsureGlobalsVolume(ctx, client); err != nil {
+		return nil, fmt.Errorf("failed to create globals volume: %w", err)
+	}
+	mounts = append(mounts, GetGlobalsVolumeMount())
+
 	// Add docker socket mount if enabled
 	if cfg.Config.Security.DockerSocket {
 		mounts = append(mounts, GetDockerSocketMount())

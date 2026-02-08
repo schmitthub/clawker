@@ -130,6 +130,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
+| `clawker-globals` | Global shared volume for credentials persistence across all projects/agents; mounted at `~/.clawker-globals`, entrypoint symlinks `~/.claude/.credentials.json` to it |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
