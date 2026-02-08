@@ -244,7 +244,7 @@ security:
 1. Firewall enabled, Docker socket disabled by default
 2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
 3. Hierarchical naming: `clawker.project.agent`; labels (`com.clawker.*`) authoritative for filtering
-4. stdout for data, stderr for status
+4. stdout for data, stderr for status/warnings/errors; `--format` flag for machine-readable output; per-scenario stream strategy (see style guide)
 5. Project registry replaces directory walking for resolution
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern

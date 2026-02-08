@@ -13,12 +13,30 @@ fmt.Fprintf(ios.ErrOut, "%s Built image %s\n", cs.SuccessIcon(), cs.Bold(imageTa
 
 ## 2. Stream Conventions
 
-| Stream | Field | Purpose | Examples |
-|--------|-------|---------|----------|
-| **stdout** | `ios.Out` | Data output (scriptable, pipeable) | Tables, JSON, IDs, names |
-| **stderr** | `ios.ErrOut` | Status messages (human-readable) | Warnings, progress, next steps, prompts |
+### Base Rules
 
-**Rule**: If the output could be consumed by `jq`, `grep`, or `awk`, it goes to stdout. Everything else goes to stderr.
+| Stream | Field | Purpose |
+|--------|-------|---------|
+| **stdout** | `ios.Out` | Data output and final results (scriptable, pipeable) |
+| **stderr** | `ios.ErrOut` | Status messages, warnings, errors, diagnostics |
+
+Per output type:
+- **Data** (tables, IDs, JSON, command results) → `ios.Out` (stdout) — always
+- **Status** ("Created container X", "Removed 3 volumes") → `ios.ErrOut` (stderr) — visible to user, not captured by pipes
+- **Errors** → `ios.ErrOut` (stderr) — via `printError()` in Main(), or pre-printed before `SilentError`
+- **Warnings** → `ios.ErrOut` (stderr) — always visible regardless of piping
+- **Next steps** → `ios.ErrOut` (stderr) — guidance/instructional, not machine-consumable
+- **Prompts** → `ios.ErrOut` (stderr) — visible even when stdout is piped
+
+These base rules apply to **static** (non-TUI) output. Live/interactive scenarios have their own rendering strategy — see per-scenario stream rules in Section 3.
+
+### Machine-Readable Output
+
+- `--format` flag controls output format, added per-command when needed
+- Options vary by command: `table` (default), `json`, `TEMPLATE`
+- Not every command needs `--format` — only add when there's a clear scripting use case
+- When `--format` is active, only the formatted data goes to stdout; status/progress still goes to stderr
+- Default output (no `--format`) is the best human-readable scenario for that command
 
 ## 3. The 4 Output Scenarios
 
@@ -33,25 +51,47 @@ fmt.Fprintf(ios.ErrOut, "%s Built image %s\n", cs.SuccessIcon(), cs.Bold(imageTa
 
 ### Scenario 1: Static (Non-Interactive)
 
-Print and done. Status messages, tables, results.
+Print and done. Data, status, results.
+
+**Stream strategy:**
+- Data output (tables, IDs, results) → `ios.Out` (stdout)
+- Status messages, success confirmations → `ios.ErrOut` (stderr)
+- Warnings, next steps → `ios.ErrOut` (stderr)
+- Errors → returned to Main() → `ios.ErrOut` (stderr)
 
 ```go
 func runList(opts *ListOptions) error {
     ios := opts.IOStreams
     cs := ios.ColorScheme()
 
-    // Data output to stdout
+    // Data output to stdout (pipeable)
     tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
     for _, c := range containers {
         tp.AddRow(c.Name, c.Status, c.Image)
     }
     return tp.Render()
 }
+
+func runRemove(opts *RemoveOptions) error {
+    ios := opts.IOStreams
+    cs := ios.ColorScheme()
+
+    // ... perform removal ...
+
+    // Status to stderr
+    fmt.Fprintf(ios.ErrOut, "%s Removed container %s\n", cs.SuccessIcon(), name)
+    return nil
+}
 ```
 
 ### Scenario 2: Static-Interactive
 
 Static output with y/n prompts mid-flow.
+
+**Stream strategy:**
+- Same as Static — data → stdout, status → stderr
+- Prompts render to stderr (visible when stdout is piped)
+- Confirmation results influence what data goes to stdout
 
 ```go
 func runPrune(opts *PruneOptions) error {
@@ -71,6 +111,16 @@ func runPrune(opts *PruneOptions) error {
 ### Scenario 3: Live-Display
 
 No user input, but continuous rendering with layout management.
+
+**Stream strategy (TTY mode):**
+- BubbleTea manages the terminal — live progress renders via the TUI framework
+- After TUI exits, final summary renders as status (stderr)
+- If the command produces capturable data (e.g., image tag), write to stdout separately
+
+**Stream strategy (plain/non-TTY fallback):**
+- Progress lines (`[run]`/`[ok]`/`[fail]`) → `ios.ErrOut` (stderr) — ephemeral status
+- Final summary → `ios.ErrOut` (stderr) — status
+- Capturable data → `ios.Out` (stdout)
 
 ```go
 func runBuild(opts *BuildOptions) error {
@@ -95,6 +145,12 @@ func runBuild(opts *BuildOptions) error {
 ### Scenario 4: Live-Interactive
 
 Full keyboard/mouse input, stateful navigation. Uses `tui.RunProgram`.
+
+**Stream strategy:**
+- BubbleTea owns the full terminal (alternate screen)
+- All rendering managed by the TUI framework
+- Not pipeable — interactive commands require a TTY
+- On exit, any final results → `ios.Out` (stdout)
 
 ```go
 model := newMonitorModel(ios)

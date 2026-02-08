@@ -7,7 +7,7 @@ description: Code style guidelines for the clawker codebase
 ## Logging
 - `zerolog` is for **file logging only** — never for user-visible output
 - File logging to `~/.local/clawker/logs/clawker.log` with rotation (50MB, 7 days, 3 backups)
-- User-visible output uses `fmt.Fprintf` to IOStreams (`ios.ErrOut` for status, `ios.Out` for data)
+- User-visible output uses `fmt.Fprintf` to IOStreams (`ios.ErrOut` for status/warnings, `ios.Out` for data; see per-scenario rules in style guide)
 - `logger.Debug()` / `logger.Warn()` are fine for diagnostic file logs
 - Project/agent context: `logger.SetContext(project, agent)` adds structured fields
 - Never use `logger.Fatal()` in Cobra hooks — return errors instead
@@ -35,7 +35,7 @@ Commands fall into one of four output scenarios. Choose imports accordingly:
 
 | Scenario | Description | Packages | Example |
 |----------|-------------|----------|---------|
-| Non-interactive / static | Print and done. Status messages, tables, results. | `iostreams` + `fmt` | `fmt.Fprintf(ios.ErrOut, "Warning: %s\n", msg)` |
+| Non-interactive / static | Print and done. Data, status, results. | `iostreams` + `fmt` | `tableprinter.New(ios, headers...)` for data, `fmt.Fprintf(ios.ErrOut, ...)` for status |
 | Static-interactive | Static streaming output with y/n prompts mid-flow. | `iostreams` + `prompter` | Config confirmation, `image prune` |
 | Live-display | No user input, but continuous rendering with layout management. | `iostreams` + `tui` | `image build` progress display |
 | Live-interactive | Full keyboard/mouse input, stateful navigation. | `iostreams` + `tui` | `monitor up` |
@@ -59,14 +59,16 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - **Tables**: `tableprinter.New(ios, headers...)` — never raw `tabwriter`
 - **Semantic colors**: `cs.Primary/Success/Warning/Error()` via `ios.ColorScheme()`
 - **Icons**: `cs.SuccessIcon()`, `cs.WarningIcon()`, `cs.FailureIcon()`, `cs.InfoIcon()`
-- **Data output**: stdout only (for scripting, e.g., `ls` table output)
-- **Status messages**: `fmt.Fprintf(ios.ErrOut, ...)` for human-readable stderr output
+- **Data output**: `ios.Out` (stdout) — tables, IDs, JSON, command results
+- **Status messages**: `ios.ErrOut` (stderr) — "Created X", "Removed Y", success confirmations
+- **Warnings**: `ios.ErrOut` (stderr) — always visible regardless of piping
+- **Next steps**: `ios.ErrOut` (stderr) — guidance, not data
 - **Errors**: Return typed errors to Main() for centralized rendering — never print errors directly
   - `return fmt.Errorf("context: %w", err)` — default error
   - `return cmdutil.FlagErrorf("bad flag: %s", val)` — triggers usage display
   - `return cmdutil.SilentError` — error already displayed
-- **Warnings**: Inline `fmt.Fprintf(ios.ErrOut, "%s ...\n", cs.WarningIcon(), msg)` — not errors, not bubbled
-- **Next steps**: Inline numbered guidance with `fmt.Fprintf(ios.ErrOut, ...)`
+- **`--format` flag**: Per-command machine-readable output (`json`, `table`, `TEMPLATE`); formatted data → stdout, status/progress → stderr
+- Stream rules above apply to static output. Live-display and live-interactive scenarios delegate rendering to the TUI layer — see `cli-output-style-guide` memory for per-scenario details
 
 ### Deprecated (do not use in new code)
 - `cmdutil.HandleError`, `cmdutil.PrintError`, `cmdutil.PrintWarning`, `cmdutil.PrintNextSteps`
