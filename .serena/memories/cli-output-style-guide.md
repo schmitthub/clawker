@@ -30,13 +30,40 @@ Per output type:
 
 These base rules apply to **static** (non-TUI) output. Live/interactive scenarios have their own rendering strategy — see per-scenario stream rules in Section 3.
 
-### Machine-Readable Output
+### Machine-Readable Output (Format/Filter Flags)
 
-- `--format` flag controls output format, added per-command when needed
-- Options vary by command: `table` (default), `json`, `TEMPLATE`
-- Not every command needs `--format` — only add when there's a clear scripting use case
-- When `--format` is active, only the formatted data goes to stdout; status/progress still goes to stderr
-- Default output (no `--format`) is the best human-readable scenario for that command
+Format/filter flags are for **static list commands only** (Scenario 1). They produce one-shot tabular data that users pipe, grep, or script against. Do NOT add these to live-display or live-interactive commands — streaming output has its own `--progress` flag.
+
+**When to add format/filter flags:**
+- `* list` / `* ls` commands — `container list`, `image list`, `volume list`, `network list`, `worktree list`
+- Any command whose primary output is a table of resources
+
+**When NOT to add:**
+- `* build`, `* run`, `* start` — these are live-display (Scenario 3) with streaming progress
+- `* inspect`, `* logs` — single-resource detail or streaming logs, not tabular lists
+- `* remove`, `* prune` — action commands, not data queries
+- Live-interactive commands (Scenario 4) — BubbleTea owns the terminal
+
+**Flag registration** (via `cmdutil`):
+- `cmdutil.AddFormatFlags(cmd)` → registers `--format`, `--json`, `-q`/`--quiet` with PreRunE mutual exclusivity
+- `cmdutil.AddFilterFlags(cmd)` → registers repeatable `--filter key=value`
+
+**Output modes:**
+
+| User Flag | Output Mode | Handler |
+|-----------|-------------|---------|
+| _(none)_ | Styled TTY table / plain tabwriter | `opts.TUI.NewTable(headers...)` |
+| `--format table` | Same as default | Same |
+| `--json` or `--format json` | Pretty-printed JSON | `cmdutil.WriteJSON(ios.Out, rows)` |
+| `--format '{{.ID}}'` | Go template, one line per item | `cmdutil.ExecuteTemplate(ios.Out, format, items)` |
+| `--format 'table {{.ID}}\t{{.Size}}'` | Go template through tabwriter | Same (tabwriter-wrapped) |
+| `-q` / `--quiet` | IDs only, one per line | `fmt.Fprintln(ios.Out, id)` |
+
+**Mutual exclusivity** (enforced in PreRunE):
+- `--quiet` vs `--format`/`--json` → `FlagError`
+- `--format` vs `--json` → `FlagError`
+
+See Section 7 for the complete list command wiring pattern.
 
 ## 3. The 4 Output Scenarios
 
@@ -65,7 +92,7 @@ func runList(opts *ListOptions) error {
     cs := ios.ColorScheme()
 
     // Data output to stdout (pipeable)
-    tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
+    tp := opts.TUI.NewTable("NAME", "STATUS", "IMAGE")
     for _, c := range containers {
         tp.AddRow(c.Name, c.Status, c.Image)
     }
@@ -261,42 +288,316 @@ return cmdutil.SilentError
 return fmt.Errorf("failed to start container: %w", err)
 ```
 
-## 7. TablePrinter
+## 7. List Commands: Tables + Format/Filter Flags
 
-`internal/tableprinter` — TTY-aware tabular output to `ios.Out`.
+This section is the canonical recipe for implementing a list command with full format/filter support. It covers: Options struct, flag registration, display row struct, the format dispatch switch, TablePrinter, filters, and testing.
 
-### API
+**Applies to**: Scenario 1 (static) list commands only. See Section 2 for when to use.
+
+### 7.1 Options Struct Pattern
+
+Every list command needs `FormatFlags` and optionally `FilterFlags` on its Options:
 
 ```go
-tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
+type ListOptions struct {
+    IOStreams *iostreams.IOStreams
+    TUI      *tui.TUI
+    Client   func(context.Context) (*docker.Client, error)
+
+    Format *cmdutil.FormatFlags   // --format, --json, --quiet
+    Filter *cmdutil.FilterFlags   // --filter key=value (optional)
+    All    bool                   // command-specific flags
+}
+```
+
+### 7.2 Flag Registration (NewCmd)
+
+Register format/filter flags in the command constructor. They chain PreRunE automatically:
+
+```go
+func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
+    opts := &ListOptions{
+        IOStreams: f.IOStreams,
+        TUI:      f.TUI,
+        Client:   f.Client,
+    }
+
+    cmd := &cobra.Command{
+        Use:     "list",
+        Aliases: []string{"ls"},
+        // ...
+        RunE: func(cmd *cobra.Command, args []string) error {
+            if runF != nil { return runF(cmd.Context(), opts) }
+            return listRun(cmd.Context(), opts)
+        },
+    }
+
+    opts.Format = cmdutil.AddFormatFlags(cmd)   // registers --format, --json, -q/--quiet
+    opts.Filter = cmdutil.AddFilterFlags(cmd)   // registers --filter (repeatable)
+    cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Show all resources")
+    return cmd
+}
+```
+
+### 7.3 Display Row Struct
+
+Define a struct for template/JSON output. JSON tags are lowercase. Field names are what users see in `--format '{{.FieldName}}'`:
+
+```go
+type imageRow struct {
+    Image   string `json:"image"`
+    ID      string `json:"id"`
+    Created string `json:"created"`
+    Size    string `json:"size"`
+}
+```
+
+Build rows from domain objects:
+```go
+func buildRows(items []whail.ImageSummary) []imageRow {
+    var rows []imageRow
+    for _, img := range items {
+        rows = append(rows, imageRow{
+            Image:   img.RepoTags[0],
+            ID:      truncateID(img.ID),
+            Created: formatCreated(img.Created),
+            Size:    formatSize(img.Size),
+        })
+    }
+    return rows
+}
+```
+
+### 7.4 Format Dispatch Switch (listRun)
+
+The run function follows this canonical structure:
+
+```go
+func listRun(ctx context.Context, opts *ListOptions) error {
+    ios := opts.IOStreams
+
+    // 1. Parse and validate filters
+    filters, err := opts.Filter.Parse()
+    if err != nil { return err }
+    if err := cmdutil.ValidateFilterKeys(filters, validFilterKeys); err != nil {
+        return err
+    }
+
+    // 2. Fetch data
+    items, err := fetchItems(ctx, opts)
+    if err != nil { return fmt.Errorf("listing resources: %w", err) }
+
+    // 3. Apply local filters
+    items = applyFilters(items, filters)
+
+    // 4. Handle empty results
+    if len(items) == 0 {
+        fmt.Fprintln(ios.ErrOut, "No resources found.")
+        return nil
+    }
+
+    // 5. Build display rows
+    rows := buildRows(items)
+
+    // 6. Format dispatch
+    switch {
+    case opts.Format.Quiet:
+        for _, item := range items {
+            fmt.Fprintln(ios.Out, item.ID)
+        }
+        return nil
+
+    case opts.Format.IsJSON():
+        return cmdutil.WriteJSON(ios.Out, rows)
+
+    case opts.Format.IsTemplate():
+        return cmdutil.ExecuteTemplate(ios.Out, opts.Format.Template(), cmdutil.ToAny(rows))
+
+    default:
+        tp := opts.TUI.NewTable("NAME", "ID", "STATUS")
+        for _, r := range rows {
+            tp.AddRow(r.Name, r.ID, r.Status)
+        }
+        return tp.Render()
+    }
+}
+
+// cmdutil.ToAny converts typed slice to []any for ExecuteTemplate.
+// Defined in cmdutil/format.go — use instead of local helpers.
+```
+
+**Key rules for the switch:**
+- Quiet first (cheapest path, no row construction needed in theory, but rows are built before switch for simplicity)
+- JSON second (structured data)
+- Template third (user-defined format)
+- Default last (styled table)
+- Empty results handled BEFORE the switch — print to stderr, return nil
+
+### 7.5 TablePrinter API
+
+`internal/tui/table.go` — TTY-aware tabular output to `ios.Out`.
+
+Access via Factory noun: `opts.TUI.NewTable(headers...)`
+
+```go
+tp := opts.TUI.NewTable("NAME", "STATUS", "IMAGE")
 tp.AddRow("web", "running", "nginx:latest")
 tp.AddRow("db", "stopped", "postgres:16")
-if tp.Len() == 0 {
-    fmt.Fprintln(ios.ErrOut, "No containers found")
-    return nil
-}
 return tp.Render()
 ```
 
-### Rendering Modes
+**Rendering modes:**
+- **TTY + color (styled)**: `lipgloss/table` with `StyleFunc`. Muted uppercase headers (`TableHeaderStyle`), brand orange first column (`TablePrimaryColumnStyle`), no borders. Column widths auto-sized by median-based resizer.
+- **Non-TTY / piped (plain)**: `text/tabwriter` with 2-space column gaps, no styling — machine-parseable.
 
-- **TTY + color**: Styled headers (bold + `ColorPrimary`), `─` divider, width-aware columns
-- **Non-TTY / piped**: Plain `text/tabwriter` with 2-space column gaps, no styling
-
-### Anti-Pattern: Raw tabwriter
-
+**Style overrides** (optional, for commands needing custom column colors):
 ```go
-// BAD — loses TTY styling, inconsistent with rest of CLI
-w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
-fmt.Fprintln(w, "NAME\tSTATUS\tIMAGE")
-
-// GOOD — use TablePrinter
-tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
+tp := opts.TUI.NewTable("NAME", "STATUS")
+tp.WithPrimaryStyle(func(s string) string { return cs.Success(s) })
 ```
 
-**Remaining raw tabwriter usages** (8 files, migration needed):
-- `container/list`, `container/top`, `container/stats` (×2)
-- `image/list`, `volume/list`, `network/list`, `worktree/list`
+### 7.6 Filter Implementation
+
+Each list command defines its valid filter keys and matching logic:
+
+```go
+var validFilterKeys = []string{"reference", "status"}
+
+func applyFilters(items []Item, filters []cmdutil.Filter) []Item {
+    if len(filters) == 0 { return items }
+    var result []Item
+    for _, item := range items {
+        if matchesFilters(item, filters) {
+            result = append(result, item)
+        }
+    }
+    return result
+}
+
+func matchesFilters(item Item, filters []cmdutil.Filter) bool {
+    for _, f := range filters {
+        switch f.Key {
+        case "reference":
+            if !matchGlob(item.Name, f.Value) { return false }
+        case "status":
+            if item.Status != f.Value { return false }
+        }
+    }
+    return true  // all filters passed
+}
+```
+
+Glob matching (trailing `*` only, Docker CLI convention):
+```go
+func matchGlob(s, pattern string) bool {
+    if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
+        return strings.HasPrefix(s, prefix)
+    }
+    return s == pattern
+}
+```
+
+### 7.7 Anti-Patterns
+
+```go
+// BAD — raw tabwriter loses TTY styling
+w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
+
+// GOOD — use TablePrinter via TUI Factory noun
+tp := opts.TUI.NewTable("NAME", "STATUS", "IMAGE")
+```
+
+```go
+// BAD — format flags on a streaming command
+opts.Format = cmdutil.AddFormatFlags(cmd) // in image build? NO!
+
+// GOOD — format flags on list commands only
+// Live-display commands use --progress flag instead
+```
+
+```go
+// BAD — quiet mode via separate bool field
+type ListOptions struct { Quiet bool }
+cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "...")
+
+// GOOD — quiet is part of FormatFlags, validated for mutual exclusivity
+opts.Format = cmdutil.AddFormatFlags(cmd)
+// access via opts.Format.Quiet
+```
+
+**Remaining raw tabwriter usages** (7 files, migration needed):
+- `container/list`, `container/top`, `container/stats` (x2)
+- `volume/list`, `network/list`, `worktree/list`
+
+### 7.8 Testing List Commands
+
+**Flag parsing tests** (no Docker, no fakes):
+```go
+func TestNewCmdList_FormatFlags(t *testing.T) {
+    tests := []struct {
+        name    string
+        input   string
+        wantErr string
+    }{
+        {name: "json flag", input: "--json"},
+        {name: "quiet and json exclusive", input: "-q --json", wantErr: "mutually exclusive"},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            tio := iostreams.NewTestIOStreams()
+            f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+            cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error { return nil })
+            argv, _ := shlex.Split(tt.input)
+            cmd.SetArgs(argv)
+            cmd.SetIn(&bytes.Buffer{})
+            cmd.SetOut(&bytes.Buffer{})
+            cmd.SetErr(&bytes.Buffer{})
+            _, err := cmd.ExecuteC()
+            if tt.wantErr != "" {
+                require.Contains(t, err.Error(), tt.wantErr)
+            } else {
+                require.NoError(t, err)
+            }
+        })
+    }
+}
+```
+
+**Rendering tests** (uses dockertest fakes, exercises full listRun):
+```go
+t.Run("json_output", func(t *testing.T) {
+    fake := dockertest.NewFakeClient()
+    fake.SetupImageList(dockertest.ImageSummaryFixture("myapp:latest"))
+    f, tio := testFactory(t, fake)
+    cmd := NewCmdList(f, nil)  // nil runF = real implementation
+    cmd.SetArgs([]string{"--json"})
+    cmd.SetIn(&bytes.Buffer{})
+    cmd.SetOut(tio.OutBuf)
+    cmd.SetErr(tio.ErrBuf)
+    err := cmd.Execute()
+    require.NoError(t, err)
+    assert.Contains(t, tio.OutBuf.String(), `"image": "myapp:latest"`)
+})
+
+t.Run("filter_reference", func(t *testing.T) {
+    fake := dockertest.NewFakeClient()
+    fake.SetupImageList(
+        dockertest.ImageSummaryFixture("clawker-demo:latest"),
+        dockertest.ImageSummaryFixture("node:20-slim"),
+    )
+    f, tio := testFactory(t, fake)
+    cmd := NewCmdList(f, nil)
+    cmd.SetArgs([]string{"--filter", "reference=clawker*"})
+    // ...
+    assert.Contains(t, tio.OutBuf.String(), "clawker-demo:latest")
+    assert.NotContains(t, tio.OutBuf.String(), "node:20-slim")
+})
+```
+
+**Golden file tests** (for table output stability):
+```bash
+GOLDEN_UPDATE=1 go test ./internal/cmd/image/list/... -run TestImageList_Golden -v
+```
 
 ## 8. Prompter
 
@@ -614,7 +915,7 @@ make fawker && ./bin/fawker image build              # default multi-stage
 | `cmdutil.PrintStatus` | 0 | 0 | `if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }` |
 | `cmdutil.OutputJSON` | 0 | 0 | Inline `json.NewEncoder(ios.Out)` with `SetIndent` |
 | `cmdutil.PrintHelpHint` | 0 | 0 | `fmt.Fprintf(ios.ErrOut, "\nRun '%s --help'...\n", cmdPath)` |
-| Raw `tabwriter.NewWriter` | 8 | 8 | `tableprinter.New(ios, headers...)` |
+| Raw `tabwriter.NewWriter` | 7 | 7 | `f.TUI.NewTable(headers...)` |
 | `prompter.PromptForConfirmation` | — | — | `f.Prompter().Confirm(msg, false)` |
 | **Total deprecated** | **135** | **~40** | |
 
@@ -722,14 +1023,14 @@ for _, c := range containers {
 w.Flush()
 
 // AFTER
-tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
+tp := opts.TUI.NewTable("NAME", "STATUS", "IMAGE")
 for _, c := range containers {
     tp.AddRow(c.Name, c.Status, c.Image)
 }
 return tp.Render()
 ```
 
-**Files**: `container/list`, `container/top`, `container/stats` (×2), `image/list`, `volume/list`, `network/list`, `worktree/list`
+**Files**: `container/list`, `container/top`, `container/stats` (×2), `volume/list`, `network/list`, `worktree/list`
 
 ### Migration Recipe: `cmdutil.PrintStatus`
 
@@ -751,13 +1052,11 @@ Zero production usages remain.
 // BEFORE
 return cmdutil.OutputJSON(ios, data)
 
-// AFTER
-enc := json.NewEncoder(ios.Out)
-enc.SetIndent("", "  ")
-return enc.Encode(data)
+// AFTER — use the new centralized function
+return cmdutil.WriteJSON(ios.Out, data)
 ```
 
-Zero production usages remain.
+Replaced by `cmdutil.WriteJSON` in `json.go`. Zero production usages of old `OutputJSON` remain.
 
 ### Migration Recipe: `cmdutil.PrintHelpHint`
 
@@ -808,8 +1107,8 @@ Logger methods (`logger.Debug`, `logger.Warn`, `logger.Error`, `logger.Info`) wr
 // BAD — no TTY-aware styling, inconsistent with rest of CLI
 w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
 
-// GOOD
-tp := tableprinter.New(ios, headers...)
+// GOOD — use TablePrinter via TUI Factory noun
+tp := f.TUI.NewTable(headers...)
 ```
 
 ## 12. Testing Output

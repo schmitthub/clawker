@@ -86,5 +86,26 @@ GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v
 GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v
 ```
 
+## Follow-Up Work
+
+### TablePrinter Migration (Complete)
+**Branch**: `a/presentation-layer-tables`
+**Memory**: `tableprinter-migration`
+
+Replaced `internal/tableprinter/` with `tui.TablePrinter` backed by `bubbles/table`. Migrated `image/list` as first adopter. 7 raw tabwriter commands remain for subsequent PRs. See `tableprinter-migration` memory for full details.
+
+### Format/Filter Flags (Complete + PR Review Fixes Applied)
+**Branch**: `a/presentation-layer-tables`
+
+Reusable `--format`/`--json`/`--quiet`/`--filter` flag system in `cmdutil/`:
+- `format.go` — `Format`, `ParseFormat`, `FormatFlags`, `AddFormatFlags` (PreRunE mutual exclusivity), `ToAny[T any]` generic, convenience delegates on `FormatFlags`
+- `json.go` — `WriteJSON` (replaces deprecated `OutputJSON`, `SetEscapeHTML(false)`)
+- `filter.go` — `Filter`, `ParseFilters`, `ValidateFilterKeys`, `FilterFlags`, `AddFilterFlags`
+- `template.go` — `DefaultFuncMap` (json returns error, title unicode-safe, truncate handles negative), `ExecuteTemplate` (checks Fprintln error)
+
+PR review fixes: `FormatFlags` convenience delegates (`IsJSON()`, `IsTemplate()`, `IsDefault()`, `IsTableTemplate()`, `Template()`) eliminate `opts.Format.Format.IsJSON()` stutter. `cmdutil.ToAny[T any]` replaces per-command `toAny` helpers. `ImageSummary`/`ImageListResult` re-exported through `internal/docker/types.go` — `image list` no longer imports `pkg/whail`.
+
+`image list` migrated as proof-of-concept: JSON, template, table-template, quiet, and filter-by-reference modes. 6 remaining list commands (`container list`, `volume list`, `network list`, `worktree list`, `container top`, `container stats`) need migration in subsequent PRs.
+
 ## IMPORTANT
 Always check with the user before proceeding with any remaining todo item. If all work is done, ask the user if they want to delete this memory.

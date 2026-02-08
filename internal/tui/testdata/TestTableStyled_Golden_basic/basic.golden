@@ -1,0 +1,3 @@
+ [37mNAME[0m                       [37mSTATUS[0m                     [37mIMAGE[0m                    
+ [91mweb[0m                        running                    nginx:latest             
+ [91mdb[0m                         stopped                    postgres:16              
