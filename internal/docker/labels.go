@@ -77,6 +77,15 @@ func VolumeLabels(project, agent, purpose string) map[string]string {
 	return labels
 }
 
+// GlobalVolumeLabels returns labels for a global (non-agent-scoped) volume.
+// Only includes managed and purpose labels — no project or agent.
+func GlobalVolumeLabels(purpose string) map[string]string {
+	return map[string]string{
+		LabelManaged: ManagedLabelValue,
+		LabelPurpose: purpose,
+	}
+}
+
 // ImageLabels returns labels for a built image.
 func ImageLabels(project, version string) map[string]string {
 	labels := map[string]string{

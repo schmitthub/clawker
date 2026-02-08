@@ -466,7 +466,7 @@ func generateLightDockerfile(scripts []string, goSources []string) string {
 	fmt.Fprintf(&sb, "LABEL %s=%s %s=true\n", TestLabel, TestLabelValue, ClawkerManagedLabel)
 	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools gnupg file\n")
 	sb.WriteString("RUN adduser -D -s /bin/bash -h /home/claude claude\n")
-	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
+	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /home/claude/.clawker-globals /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
 
 	if len(scripts) > 0 {
 		sb.WriteString("COPY scripts/ /usr/local/bin/\n")

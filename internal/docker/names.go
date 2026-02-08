@@ -148,6 +148,12 @@ func ImageTagWithHash(project, hash string) string {
 // NetworkName is the name of the clawker network.
 const NetworkName = "clawker-net"
 
+// GlobalVolumeName returns the name for a global (non-agent-scoped) volume.
+// Example: GlobalVolumeName("globals") → "clawker-globals"
+func GlobalVolumeName(purpose string) string {
+	return fmt.Sprintf("%s-%s", NamePrefix, purpose)
+}
+
 // ParseContainerName extracts project and agent from container name.
 // Container name format: clawker.project.agent
 // Returns empty strings and false if the name doesn't match the format.

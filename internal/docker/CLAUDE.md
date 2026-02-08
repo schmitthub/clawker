@@ -66,6 +66,7 @@ func NewPTYHandler() *PTYHandler
 - **3-segment** (with project): `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
 - **2-segment** (empty project): `clawker.agent` (e.g., `clawker.ralph`) — no empty segment
 - **Volumes**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
+- **Global volumes**: `clawker-<purpose>` (e.g., `clawker-globals`) — no project/agent scope
 - **Network**: constant `NetworkName = "clawker-net"`
 
 ## Label Constants
@@ -77,6 +78,7 @@ Engine config constants (for `whail.EngineOptions`): `EngineLabelPrefix` (`com.c
 ## Label Constructors
 
 - `ContainerLabels(project, agent, version, image, workdir)` — managed + agent + version + image + created + workdir; project omitted when empty
+- `GlobalVolumeLabels(purpose)` — managed + purpose only; no project/agent (for global volumes)
 - `VolumeLabels(project, agent, purpose)` — managed + agent + purpose; project omitted when empty
 - `ImageLabels(project, version)` — managed + version + created; project omitted when empty
 - `NetworkLabels()` — managed only
@@ -91,7 +93,8 @@ All return `whail.Filters`.
 
 ## Naming Functions (`names.go`)
 
-- `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — resource name builders
+- `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — agent-scoped resource name builders
+- `GlobalVolumeName(purpose)` → `clawker-<purpose>` — global volume name builder
 - `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
 - `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
 - `ParseContainerName(name)` → `(project, agent string, ok bool)` — parsing utilities

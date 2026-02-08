@@ -107,3 +107,30 @@ func GetDockerSocketMount() mount.Mount {
 		ReadOnly: false,
 	}
 }
+
+const (
+	// GlobalsPurpose is the volume purpose label for the shared globals volume.
+	GlobalsPurpose = "globals"
+	// GlobalsStagingPath is the container mount point for the globals volume.
+	GlobalsStagingPath = "/home/claude/.clawker-globals"
+)
+
+// EnsureGlobalsVolume creates the global shared volume if it doesn't already exist.
+// This volume persists credentials and other shared data across all projects and agents.
+func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error {
+	name := docker.GlobalVolumeName(GlobalsPurpose)
+	labels := docker.GlobalVolumeLabels(GlobalsPurpose)
+	if _, err := cli.EnsureVolume(ctx, name, labels); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetGlobalsVolumeMount returns the mount for the global shared volume.
+func GetGlobalsVolumeMount() mount.Mount {
+	return mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: docker.GlobalVolumeName(GlobalsPurpose),
+		Target: GlobalsStagingPath,
+	}
+}

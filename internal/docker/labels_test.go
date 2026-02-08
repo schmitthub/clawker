@@ -110,6 +110,34 @@ func TestVolumeLabels(t *testing.T) {
 	})
 }
 
+func TestGlobalVolumeLabels(t *testing.T) {
+	labels := GlobalVolumeLabels("globals")
+
+	expected := map[string]string{
+		LabelManaged: ManagedLabelValue,
+		LabelPurpose: "globals",
+	}
+
+	for key, want := range expected {
+		if got := labels[key]; got != want {
+			t.Errorf("labels[%q] = %q, want %q", key, got, want)
+		}
+	}
+
+	// Should NOT include project or agent labels
+	if _, ok := labels[LabelProject]; ok {
+		t.Error("GlobalVolumeLabels should not include LabelProject")
+	}
+	if _, ok := labels[LabelAgent]; ok {
+		t.Error("GlobalVolumeLabels should not include LabelAgent")
+	}
+
+	// Should have exactly 2 labels
+	if got := len(labels); got != 2 {
+		t.Errorf("len(labels) = %d, want 2", got)
+	}
+}
+
 func TestImageLabels(t *testing.T) {
 	t.Run("with project", func(t *testing.T) {
 		labels := ImageLabels("myproject", "1.0.0")

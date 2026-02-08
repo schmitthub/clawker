@@ -514,6 +514,11 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, containerID str
 
 // removeAgentVolumes removes all volumes associated with an agent.
 // Returns an error if any volume removal fails (unless the volume doesn't exist).
+//
+// NOTE: Global volumes (e.g. "clawker-globals") are NOT affected by this function.
+// Label-based lookup filters by project+agent, which global volumes lack.
+// Name fallback only targets "clawker.<project>.<agent>-*" patterns, which don't
+// match the "clawker-<purpose>" naming convention used by global volumes.
 func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, force bool) error {
 	var errs []string
 	removedByLabel := make(map[string]bool)
