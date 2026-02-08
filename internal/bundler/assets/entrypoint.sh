@@ -54,6 +54,9 @@ fi
 CREDS_STAGING="$HOME/.clawker-globals"
 CREDS_FILE=".credentials.json"
 if [ -d "$CREDS_STAGING" ]; then
+    # Restrict staging directory so files created later by Claude Code
+    # are not readable by other users (defense-in-depth)
+    chmod 700 "$CREDS_STAGING"
     migration_ok=true
     # Migrate: if credentials exist locally but not on global volume, copy them
     if [ -f "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -L "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -f "$CREDS_STAGING/$CREDS_FILE" ]; then

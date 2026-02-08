@@ -191,6 +191,7 @@ CREDS_FILE=".credentials.json"
 mkdir -p "$CONFIG_DIR"
 
 if [ -d "$CREDS_STAGING" ]; then
+    chmod 700 "$CREDS_STAGING"
     migration_ok=true
     if [ -f "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -L "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -f "$CREDS_STAGING/$CREDS_FILE" ]; then
         if ! cp "$CONFIG_DIR/$CREDS_FILE" "$CREDS_STAGING/$CREDS_FILE"; then
@@ -344,6 +345,11 @@ fi
 		"symlink should read migrated credentials")
 	assert.Contains(t, output, "is_symlink=true",
 		"credentials file should be a symlink after migration")
+
+	// Verify permissions on migrated credentials (chmod 600 in credentials script)
+	permResult, err := ctr.Exec(ctx, client, "stat", "-c", "%a", "/home/claude/.clawker-globals/.credentials.json")
+	require.NoError(t, err, "failed to check credentials permissions")
+	assert.Contains(t, permResult.Stdout, "600", "migrated credentials should have 600 permissions")
 }
 
 // TestHostOpen_SendsUrlToProxy verifies host-open sends URLs to the proxy
