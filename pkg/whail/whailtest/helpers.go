@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
@@ -240,6 +241,16 @@ type BuildKitCapture struct {
 	CallCount int
 	// Err is the error to return from the fake builder. Defaults to nil.
 	Err error
+	// ProgressEvents are emitted via OnProgress when the fake builder is invoked.
+	// If nil or empty, no progress events are sent.
+	ProgressEvents []whail.BuildProgressEvent
+	// RecordedEvents are emitted with timing delays via OnProgress when the fake
+	// builder is invoked. If non-nil, takes precedence over ProgressEvents.
+	// Use with FakeTimedBuildKitBuilder for realistic replay.
+	RecordedEvents []RecordedBuildEvent
+	// DelayMultiplier scales all RecordedEvent delays. 0 or 1 = no change,
+	// 2 = twice as slow, 0.5 = twice as fast. Applied in FakeTimedBuildKitBuilder.
+	DelayMultiplier float64
 }
 
 // FakeBuildKitBuilder returns a BuildKit builder closure that captures
@@ -255,6 +266,57 @@ func FakeBuildKitBuilder(capture *BuildKitCapture) func(context.Context, whail.I
 	return func(_ context.Context, opts whail.ImageBuildKitOptions) error {
 		capture.Opts = opts
 		capture.CallCount++
+		if opts.OnProgress != nil {
+			for _, event := range capture.ProgressEvents {
+				opts.OnProgress(event)
+			}
+		}
+		return capture.Err
+	}
+}
+
+// FakeTimedBuildKitBuilder returns a BuildKit builder closure that emits events
+// with timing delays. If capture.RecordedEvents is set, events are emitted with
+// their recorded delays. Otherwise, falls back to instant emission of
+// capture.ProgressEvents (same behavior as FakeBuildKitBuilder).
+//
+// Use this for realistic replay of recorded build scenarios:
+//
+//	scenario, _ := whailtest.LoadRecordedScenario("testdata/multi-stage.json")
+//	capture := &whailtest.BuildKitCapture{RecordedEvents: scenario.Events}
+//	engine.BuildKitImageBuilder = whailtest.FakeTimedBuildKitBuilder(capture)
+func FakeTimedBuildKitBuilder(capture *BuildKitCapture) func(context.Context, whail.ImageBuildKitOptions) error {
+	return func(ctx context.Context, opts whail.ImageBuildKitOptions) error {
+		capture.Opts = opts
+		capture.CallCount++
+		if opts.OnProgress == nil {
+			return capture.Err
+		}
+
+		mult := capture.DelayMultiplier
+		if mult <= 0 {
+			mult = 1
+		}
+
+		// Prefer RecordedEvents (timed) over ProgressEvents (instant).
+		if len(capture.RecordedEvents) > 0 {
+			for _, re := range capture.RecordedEvents {
+				if re.DelayMs > 0 {
+					delay := time.Duration(float64(re.Delay()) * mult)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				opts.OnProgress(re.Event)
+			}
+		} else {
+			for _, event := range capture.ProgressEvents {
+				opts.OnProgress(event)
+			}
+		}
+
 		return capture.Err
 	}
 }

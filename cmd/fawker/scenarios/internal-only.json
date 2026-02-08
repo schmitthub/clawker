@@ -1,0 +1,45 @@
+{
+  "name": "internal-only",
+  "description": "3 internal steps with zero visible output",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[internal] load .dockerignore",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[internal] load metadata for docker.io/library/node:20-slim",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

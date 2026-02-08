@@ -1,0 +1,253 @@
+{
+  "name": "multi-stage",
+  "description": "8-step build across 3 named stages (builder, assets, runtime)",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[internal] load metadata for docker.io/library/golang:1.22",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[builder 1/4] FROM golang:1.22 AS builder",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[builder 1/4] FROM golang:1.22 AS builder",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[builder 2/4] COPY go.mod go.sum /src/",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[builder 2/4] COPY go.mod go.sum /src/",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[builder 3/4] RUN go mod download",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[builder 3/4] RUN go mod download",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "go: downloading github.com/example/lib v1.0.0",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[builder 3/4] RUN go mod download",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "StepName": "[builder 4/4] RUN go build -o /bin/app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "StepName": "[builder 4/4] RUN go build -o /bin/app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[assets 1/2] FROM node:20-slim AS assets",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[assets 1/2] FROM node:20-slim AS assets",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+        "StepName": "[assets 2/2] RUN npm run build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+        "StepName": "[assets 2/2] RUN npm run build",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+        "StepName": "[runtime 1/2] FROM alpine:3.19 AS runtime",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+        "StepName": "[runtime 1/2] FROM alpine:3.19 AS runtime",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "StepName": "[runtime 2/2] COPY --from=builder /bin/app /usr/local/bin/",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "StepName": "[runtime 2/2] COPY --from=builder /bin/app /usr/local/bin/",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

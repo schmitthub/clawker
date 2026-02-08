@@ -13,14 +13,15 @@ Heavy command helpers have been extracted to dedicated packages:
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` -- pure struct with closure fields (no methods, no construction logic) |
-| `output.go` | `HandleError`, `PrintError`, `PrintNextSteps`, `PrintWarning`, `PrintStatus`, `OutputJSON`, `PrintHelpHint`, `ExitError` |
+| `output.go` | Deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` |
+| `errors.go` | `ExitError`, `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 9 fields total: 3 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 10 fields total: 4 eager values + 6 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -28,6 +29,7 @@ type Factory struct {
     Version  string
     Commit   string
     IOStreams *iostreams.IOStreams
+    TUI      *tui.TUI
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
     Client       func(context.Context) (*docker.Client, error)
@@ -41,6 +43,7 @@ type Factory struct {
 
 **Field semantics:**
 - `Version`, `Commit`, `IOStreams` -- set eagerly at construction
+- `TUI` -- eager `*tui.TUI` presentation layer noun; commands call `.RunProgress()` on it. Hooks are registered post-construction via `.RegisterHooks()` (pointer sharing ensures commands see hooks registered in PersistentPreRunE)
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
@@ -57,18 +60,38 @@ f := &cmdutil.Factory{
     Version:  "1.0.0",
     Commit:   "abc123",
     IOStreams: tio.IOStreams,
+    TUI:      tui.NewTUI(tio.IOStreams),
 }
 ```
 
-## Error Handling & Output (`output.go`)
+Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands that only use `f.IOStreams` for static output don't need it.
 
-`HandleError(ios, err)` -- format errors for users (duck-typed `FormatUserError()` interface)
-`PrintError(ios, format, args...)` -- print "Error: ..." to stderr
-`PrintWarning(ios, format, args...)` -- print "Warning: ..." to stderr
-`PrintNextSteps(ios, steps...)` -- print numbered next-steps guidance to stderr
-`PrintStatus(ios, quiet, format, args...)` -- print status message (suppressed with --quiet)
-`OutputJSON(ios, data) error` -- marshal to stdout as indented JSON
-`PrintHelpHint(ios, cmdPath)` -- print "Run '<cmd> --help' for more information" to stderr
+## Error Handling & Output (`output.go`, `errors.go`)
+
+### Active Functions
+
+None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorScheme()` directly.
+
+### Deprecated Functions (use gh-style fprintf instead)
+`PrintStatus(ios, quiet, format, args...)` -- **Deprecated**: inline `if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }`
+`OutputJSON(ios, data) error` -- **Deprecated**: inline `json.NewEncoder(ios.Out)` with `SetIndent`
+`PrintHelpHint(ios, cmdPath)` -- **Deprecated**: inline `fmt.Fprintf(ios.ErrOut, "\nRun '%s --help'...\n", cmdPath)`
+`HandleError(ios, err)` -- **Deprecated**: return errors to Main() for centralized rendering
+`PrintError(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)`
+`PrintWarning(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...)`
+`PrintNextSteps(ios, steps...)` -- **Deprecated**: inline next-steps output with `fmt.Fprintf(ios.ErrOut, ...)`
+
+### Error Types (`errors.go`)
+
+```go
+// FlagError triggers usage display in Main()'s centralized error rendering.
+type FlagError struct{ err error }
+func FlagErrorf(format string, args ...any) error
+func FlagErrorWrap(err error) error  // nil-safe: returns nil for nil input
+
+// SilentError signals the error was already displayed — Main() just exits non-zero.
+var SilentError = errors.New("SilentError")
+```
 
 ### ExitError
 

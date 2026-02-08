@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/schmitthub/clawker/internal/term"
 	"github.com/spf13/cobra"
 )
 
@@ -169,9 +168,9 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	}
 
 	// Set up TTY if the container has it and we're interactive
-	var pty *term.PTYHandler
+	var pty *docker.PTYHandler
 	if hasTTY && opts.Interactive {
-		pty = term.NewPTYHandler()
+		pty = docker.NewPTYHandler()
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}

@@ -48,7 +48,7 @@ func NewImageBuilder(apiClient DockerDialer) func(context.Context, whail.ImageBu
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			drainProgress(statusCh, opts.SuppressOutput)
+			drainProgress(statusCh, opts.SuppressOutput, opts.OnProgress)
 		}()
 
 		// Solve returns errors for failed vertices. The drainProgress goroutine logs

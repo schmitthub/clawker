@@ -3,7 +3,7 @@ package iostreams
 import "github.com/charmbracelet/lipgloss"
 
 // Color palette — consistent across all clawker output.
-// These are the canonical color definitions; tui/ will be migrated to import these.
+// These are the canonical color definitions used by all packages via iostreams.
 var (
 	ColorPrimary   = lipgloss.Color("#7D56F4")
 	ColorSecondary = lipgloss.Color("#6C6C6C")
@@ -16,13 +16,14 @@ var (
 
 // Additional colors for components.
 var (
-	ColorInfo     = lipgloss.Color("#87CEEB") // Light sky blue for info
-	ColorDisabled = lipgloss.Color("#4A4A4A") // Dark gray for disabled
-	ColorSelected = lipgloss.Color("#FFD700") // Gold for selection
-	ColorBorder   = lipgloss.Color("#3C3C3C") // Subtle border color
-	ColorAccent   = lipgloss.Color("#FF6B6B") // Accent for emphasis
-	ColorBg       = lipgloss.Color("#1A1A1A") // Dark background
-	ColorBgAlt    = lipgloss.Color("#2A2A2A") // Alternate background
+	ColorInfo        = lipgloss.Color("#87CEEB") // Light sky blue for info
+	ColorDisabled    = lipgloss.Color("#4A4A4A") // Dark gray for disabled
+	ColorSelected    = lipgloss.Color("#FFD700") // Gold for selection
+	ColorBorder      = lipgloss.Color("#3C3C3C") // Subtle border color
+	ColorAccent      = lipgloss.Color("#FF6B6B") // Accent for emphasis
+	ColorBg          = lipgloss.Color("#1A1A1A") // Dark background
+	ColorBgAlt       = lipgloss.Color("#2A2A2A") // Alternate background
+	ColorBrandOrange = lipgloss.Color("#E8714A") // Warm orange accent (Claude Code-inspired)
 )
 
 // Text styles — common text formatting.
@@ -41,8 +42,9 @@ var (
 // Concrete color styles — pure foreground color, no decorations.
 // Used by ColorScheme concrete color methods (Red, Blue, etc.).
 var (
-	BlueStyle = lipgloss.NewStyle().Foreground(ColorPrimary)
-	CyanStyle = lipgloss.NewStyle().Foreground(ColorInfo)
+	BlueStyle        = lipgloss.NewStyle().Foreground(ColorPrimary)
+	CyanStyle        = lipgloss.NewStyle().Foreground(ColorInfo)
+	BrandOrangeStyle = lipgloss.NewStyle().Foreground(ColorBrandOrange)
 )
 
 // Border styles.
@@ -175,6 +177,18 @@ var (
 			Background(ColorMuted).
 			Foreground(lipgloss.Color("#FFFFFF"))
 )
+
+// Table styles.
+var (
+	// TableHeaderStyle for table column headers: bold + primary color, no padding.
+	TableHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+)
+
+// RenderFixedWidth renders text at a fixed width using lipgloss.
+// Used by tableprinter to set column widths without importing lipgloss directly.
+func RenderFixedWidth(s string, width int) string {
+	return lipgloss.NewStyle().Width(width).Render(s)
+}
 
 // DividerStyle for horizontal rules.
 var DividerStyle = lipgloss.NewStyle().

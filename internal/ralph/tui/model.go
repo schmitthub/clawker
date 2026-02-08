@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -58,27 +60,27 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	// Header
-	header := tui.TitleStyle.Render("RALPH DASHBOARD")
+	header := iostreams.TitleStyle.Render("RALPH DASHBOARD")
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
 	// Project info
 	projectLine := fmt.Sprintf("Project: %s", m.project)
-	b.WriteString(tui.MutedStyle.Render(projectLine))
+	b.WriteString(iostreams.MutedStyle.Render(projectLine))
 	b.WriteString("\n\n")
 
 	// Error display
 	if m.err != nil {
-		b.WriteString(tui.ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+		b.WriteString(iostreams.ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
 		b.WriteString("\n\n")
 	}
 
 	// Placeholder for agent list (future phases)
-	b.WriteString(tui.EmptyStateStyle.Render("No agents discovered yet. Agent list will appear here."))
+	b.WriteString(iostreams.EmptyStateStyle.Render("No agents discovered yet. Agent list will appear here."))
 	b.WriteString("\n\n")
 
 	// Help text
-	help := tui.MutedStyle.Render("Press 'q' to quit")
+	help := iostreams.MutedStyle.Render("Press 'q' to quit")
 	b.WriteString(help)
 
 	return b.String()

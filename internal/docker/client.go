@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -113,6 +114,7 @@ type BuildImageOpts struct {
 	NetworkMode     string             // --network
 	BuildKitEnabled bool               // Use BuildKit builder via whail.ImageBuildKit
 	ContextDir      string             // Build context directory (required for BuildKit)
+	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 }
 
 // BuildImage builds a Docker image from a build context.
@@ -134,6 +136,7 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 			Pull:           opts.Pull,
 			SuppressOutput: opts.SuppressOutput,
 			NetworkMode:    opts.NetworkMode,
+			OnProgress:     opts.OnProgress,
 		})
 	}
 
@@ -160,6 +163,9 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 	// Even with SuppressOutput, we must still check for errors
 	if opts.SuppressOutput {
 		return c.processBuildOutputQuiet(resp.Body)
+	}
+	if opts.OnProgress != nil {
+		return c.processBuildOutputWithProgress(resp.Body, opts.OnProgress)
 	}
 	return c.processBuildOutput(resp.Body)
 }
@@ -205,12 +211,7 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 
 		// Log build output (trimmed)
 		if stream := strings.TrimSpace(event.Stream); stream != "" {
-			// Only show step progress in debug mode
-			if strings.HasPrefix(stream, "Step ") {
-				logger.Info().Msg(stream)
-			} else {
-				logger.Debug().Msg(stream)
-			}
+			logger.Debug().Msg(stream)
 		}
 	}
 
@@ -218,7 +219,7 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 		return fmt.Errorf("error reading build output: %w", err)
 	}
 
-	logger.Info().Msg("image build complete")
+	logger.Debug().Msg("image build complete")
 	return nil
 }
 
@@ -257,6 +258,153 @@ func (c *Client) processBuildOutputQuiet(reader io.Reader) error {
 		return fmt.Errorf("error reading build output: %w", err)
 	}
 
+	return nil
+}
+
+// legacyStepRe matches legacy Docker build step lines: "Step N/M : INSTRUCTION args".
+var legacyStepRe = regexp.MustCompile(`^Step (\d+)/(\d+) : (.+)$`)
+
+// processBuildOutputWithProgress processes legacy Docker build output and
+// forwards structured progress events via the callback. Error checking is
+// identical to processBuildOutput.
+func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress whail.BuildProgressFunc) error {
+	scanner := bufio.NewScanner(reader)
+	var parseErrors int
+	var currentStepID string
+	var currentStepIndex int
+	var totalSteps int
+	var currentStepCached bool
+
+	for scanner.Scan() {
+		var event buildEvent
+
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			parseErrors++
+			logger.Debug().
+				Err(err).
+				Str("raw", string(scanner.Bytes())).
+				Msg("failed to parse build output event")
+			if parseErrors > 10 {
+				return fmt.Errorf("build output stream appears corrupted: %d consecutive parse failures", parseErrors)
+			}
+			continue
+		}
+		parseErrors = 0
+
+		if event.Error != "" {
+			if currentStepID != "" {
+				onProgress(whail.BuildProgressEvent{
+					StepID:     currentStepID,
+					StepIndex:  currentStepIndex,
+					TotalSteps: totalSteps,
+					Status:     whail.BuildStepError,
+					Error:      event.Error,
+				})
+			}
+			return fmt.Errorf("build error: %s", event.Error)
+		}
+
+		if event.ErrorDetail.Message != "" {
+			if currentStepID != "" {
+				onProgress(whail.BuildProgressEvent{
+					StepID:     currentStepID,
+					StepIndex:  currentStepIndex,
+					TotalSteps: totalSteps,
+					Status:     whail.BuildStepError,
+					Error:      event.ErrorDetail.Message,
+				})
+			}
+			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
+		}
+
+		stream := strings.TrimSpace(event.Stream)
+		if stream == "" {
+			continue
+		}
+
+		// Check for step header: "Step N/M : INSTRUCTION args"
+		if m := legacyStepRe.FindStringSubmatch(stream); m != nil {
+			stepNum := 0
+			total := 0
+			fmt.Sscanf(m[1], "%d", &stepNum)
+			fmt.Sscanf(m[2], "%d", &total)
+			totalSteps = total
+
+			// Complete previous step if there was one.
+			if currentStepID != "" {
+				status := whail.BuildStepComplete
+				if currentStepCached {
+					status = whail.BuildStepCached
+				}
+				onProgress(whail.BuildProgressEvent{
+					StepID:     currentStepID,
+					StepIndex:  currentStepIndex,
+					TotalSteps: totalSteps,
+					Status:     status,
+					Cached:     currentStepCached,
+				})
+			}
+
+			currentStepIndex = stepNum - 1 // 0-based
+			currentStepID = fmt.Sprintf("step-%d", currentStepIndex)
+			currentStepCached = false
+			stepName := m[3]
+
+			onProgress(whail.BuildProgressEvent{
+				StepID:     currentStepID,
+				StepName:   stepName,
+				StepIndex:  currentStepIndex,
+				TotalSteps: totalSteps,
+				Status:     whail.BuildStepRunning,
+			})
+			continue
+		}
+
+		// Check for cache hit indicator.
+		if strings.HasPrefix(stream, "---> Using cache") && currentStepID != "" {
+			currentStepCached = true
+			onProgress(whail.BuildProgressEvent{
+				StepID:     currentStepID,
+				StepIndex:  currentStepIndex,
+				TotalSteps: totalSteps,
+				Status:     whail.BuildStepCached,
+				Cached:     true,
+			})
+			continue
+		}
+
+		// Regular output line for the current step.
+		if currentStepID != "" && stream != "" {
+			onProgress(whail.BuildProgressEvent{
+				StepID:     currentStepID,
+				StepIndex:  currentStepIndex,
+				TotalSteps: totalSteps,
+				Status:     whail.BuildStepRunning,
+				LogLine:    stream,
+			})
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading build output: %w", err)
+	}
+
+	// Complete the final step.
+	if currentStepID != "" {
+		status := whail.BuildStepComplete
+		if currentStepCached {
+			status = whail.BuildStepCached
+		}
+		onProgress(whail.BuildProgressEvent{
+			StepID:     currentStepID,
+			StepIndex:  currentStepIndex,
+			TotalSteps: totalSteps,
+			Status:     status,
+			Cached:     currentStepCached,
+		})
+	}
+
+	logger.Debug().Msg("image build complete")
 	return nil
 }
 

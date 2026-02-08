@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func TestRenderHeader(t *testing.T) {
@@ -72,7 +74,7 @@ func TestRenderStatus(t *testing.T) {
 }
 
 func TestRenderBadge(t *testing.T) {
-	result := RenderBadge("TEST", func(s string) string { return BadgeStyle.Render(s) })
+	result := RenderBadge("TEST", func(s string) string { return iostreams.BadgeStyle.Render(s) })
 	assert.Contains(t, result, "TEST")
 }
 
@@ -303,7 +305,7 @@ func TestRenderBytes(t *testing.T) {
 }
 
 func TestRenderTag(t *testing.T) {
-	result := RenderTag("production", func(s string) string { return SuccessStyle.Render(s) })
+	result := RenderTag("production", func(s string) string { return iostreams.SuccessStyle.Render(s) })
 	assert.Contains(t, result, "production")
 }
 
@@ -324,7 +326,7 @@ func TestRenderTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := RenderTags(tt.tags, func(s string) string { return BadgeStyle.Render(s) })
+			result := RenderTags(tt.tags, func(s string) string { return iostreams.BadgeStyle.Render(s) })
 			for _, tag := range tt.tags {
 				assert.Contains(t, result, tag)
 			}

@@ -1,0 +1,123 @@
+{
+  "name": "simple",
+  "description": "Basic 3-visible-step build: FROM + RUN + COPY",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[internal] load .dockerignore",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[stage-0 1/3] FROM node:20-slim",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[stage-0 1/3] FROM node:20-slim",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/3] RUN apt-get update \u0026\u0026 apt-get install -y git",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 20,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/3] RUN apt-get update \u0026\u0026 apt-get install -y git",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 0,
+        "LogLine": "Reading package lists...",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/3] RUN apt-get update \u0026\u0026 apt-get install -y git",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[stage-0 3/3] COPY . /app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[stage-0 3/3] COPY . /app",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

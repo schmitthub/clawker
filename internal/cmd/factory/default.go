@@ -14,18 +14,22 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
 // Called exactly once at the CLI entry point (internal/clawker/cmd.go).
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version, commit string) *cmdutil.Factory {
+	ios := ioStreams()
+
 	f := &cmdutil.Factory{
 		Version: version,
 		Commit:  commit,
 
 		Config:       configFunc(),
-		IOStreams:     ioStreams(),
+		IOStreams:     ios,
+		TUI:          tui.NewTUI(ios),
 		HostProxy:    hostProxyFunc(),
 		SocketBridge: socketBridgeFunc(),
 	}

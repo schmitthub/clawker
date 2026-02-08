@@ -52,25 +52,29 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 ```
 ├── cmd/clawker/              # Main CLI binary
+├── cmd/fawker/               # Demo CLI — faked deps, recorded scenarios, no Docker
 ├── internal/
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
-│   ├── cmdutil/               # Factory struct, output utilities, arg validators (lightweight)
+│   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
 │   ├── hostproxy/             # Host proxy for container-to-host communication
 │   │   ├── hostproxytest/    # MockHostProxy for integration tests
 │   │   └── internals/        # Container-side hostproxy client scripts
-│   ├── iostreams/             # Presentation layer: streams, colors, styles, tables, spinners, text/layout/time
+│   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── ralph/                 # Autonomous loop core logic
+│   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
-│   ├── term/                  # PTY/terminal handling
+│   ├── tableprinter/          # Table printing extracted from iostreams (TTY-aware)
+│   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
+│   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
@@ -90,9 +94,22 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 ```bash
 go build -o bin/clawker ./cmd/clawker  # Build CLI
+make fawker                               # Build fawker demo CLI (faked deps, no Docker)
 make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
 ./bin/clawker --debug run @              # Debug logging
 go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
+
+# Fawker demo CLI (visual UAT without Docker)
+./bin/fawker image build                          # Default scenario (multi-stage)
+./bin/fawker image build --scenario error         # Error scenario
+./bin/fawker image build --progress plain         # Plain mode
+./bin/fawker container ls                         # List fake containers
+./bin/fawker image ls                             # List fake images
+
+# Golden file tests
+GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v          # Regenerate JSON testdata
+GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v # Regenerate TUI golden files
+GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v  # Regenerate command golden files
 
 # Docker-required tests (directory separation, no build tags)
 go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration tests
@@ -106,20 +123,31 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
+| `Factory` | Slim DI struct (10 fields: 4 eager + 6 lazy nouns); constructor in cmd/factory |
 | `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `PTYHandler` | Raw terminal mode, bidirectional streaming |
+| `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | Presentation layer: streams, TTY, colors, tables, spinners, progress, messages, renders |
+| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
 | `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
 | `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
+| `text.*` | Pure ANSI-aware text utilities (leaf package): Truncate, PadRight, CountVisibleWidth, StripANSI, etc. |
+| `tableprinter.New` | Table printing: TTY-aware styled headers + tabwriter fallback |
+| `cmdutil.FlagError` | Error type triggering usage display in Main()'s centralized `printError` |
+| `cmdutil.SilentError` | Sentinel error: already displayed, Main() just exits non-zero |
+| `tui.TUI` | Factory noun for presentation layer; owns hooks + delegates to RunProgress. Commands capture `*TUI` eagerly, hooks registered later via `RegisterHooks()` |
+| `tui.RunProgress` | Generic progress display: BubbleTea TTY mode (sliding window) + plain text; domain-agnostic via callbacks |
+| `tui.ProgressStep` | Channel event type for progress display (ID, Name, Status, LogLine, Cached, Error) |
+| `tui.ProgressDisplayConfig` | Configuration with CompletionVerb and callback functions: IsInternal, CleanName, ParseGroup, FormatDuration, OnLifecycle |
+| `tui.LifecycleHook` | Generic hook function type for TUI lifecycle events; threaded via config structs, nil = no-op |
+| `tui.HookResult` | Hook return type: Continue (bool), Message (string), Err (error) — controls post-hook execution flow |
+| `whail.BuildProgressFunc` | Callback type threading build progress events through the options chain |
 | `tui.RunProgram` | Launches BubbleTea programs wired to IOStreams (input/output) |
 | `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
 | `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
@@ -216,15 +244,16 @@ security:
 1. Firewall enabled, Docker socket disabled by default
 2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
 3. Hierarchical naming: `clawker.project.agent`; labels (`com.clawker.*`) authoritative for filtering
-4. stdout for data, stderr for status
+4. stdout for data, stderr for status/warnings/errors; `--format` flag for machine-readable output; per-scenario stream strategy (see style guide)
 5. Project registry replaces directory walking for resolution
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
-10. Presentation layer import boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`. Commands use `f.IOStreams` OR `f.TUI`, never both
-11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` re-exports them via `iostreams.go` shim — no duplicate definitions
+10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
+11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
+13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams
 
 ## Important Gotchas
 

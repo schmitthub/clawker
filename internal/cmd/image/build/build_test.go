@@ -126,9 +126,10 @@ func TestParseBuildArgs(t *testing.T) {
 
 func TestParseKeyValuePairs(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  []string
-		expect map[string]string
+		name          string
+		input         []string
+		expect        map[string]string
+		expectInvalid []string
 	}{
 		{
 			name:   "empty pairs",
@@ -151,22 +152,31 @@ func TestParseKeyValuePairs(t *testing.T) {
 			expect: map[string]string{"key": "val=ue"},
 		},
 		{
-			name:   "key without value is ignored",
-			input:  []string{"key"},
-			expect: map[string]string{},
+			name:          "key without value is invalid",
+			input:         []string{"key"},
+			expect:        map[string]string{},
+			expectInvalid: []string{"key"},
+		},
+		{
+			name:          "mixed valid and invalid",
+			input:         []string{"a=b", "bad", "c=d"},
+			expect:        map[string]string{"a": "b", "c": "d"},
+			expectInvalid: []string{"bad"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseKeyValuePairs(tt.input)
+			result, invalid := parseKeyValuePairs(tt.input)
 
 			if tt.expect == nil {
 				require.Nil(t, result)
+				require.Nil(t, invalid)
 				return
 			}
 
 			require.Equal(t, tt.expect, result)
+			require.Equal(t, tt.expectInvalid, invalid)
 		})
 	}
 }

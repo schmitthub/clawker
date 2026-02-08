@@ -4,6 +4,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/text"
 )
 
 // HelpConfig configures the help bar component.
@@ -80,7 +83,7 @@ func (m HelpModel) ShortHelp() string {
 
 	var parts []string
 	availableWidth := m.width
-	sepWidth := CountVisibleWidth(m.separator)
+	sepWidth := text.CountVisibleWidth(m.separator)
 
 	for _, b := range m.bindings {
 		if !b.Enabled() {
@@ -89,9 +92,9 @@ func (m HelpModel) ShortHelp() string {
 
 		keys := b.Help().Key
 		desc := b.Help().Desc
-		part := HelpKeyStyle.Render(keys) + " " + HelpDescStyle.Render(desc)
+		part := iostreams.HelpKeyStyle.Render(keys) + " " + iostreams.HelpDescStyle.Render(desc)
 
-		partWidth := CountVisibleWidth(keys) + 1 + CountVisibleWidth(desc)
+		partWidth := text.CountVisibleWidth(keys) + 1 + text.CountVisibleWidth(desc)
 		if len(parts) > 0 {
 			partWidth += sepWidth
 		}
@@ -122,7 +125,7 @@ func (m HelpModel) FullHelp() string {
 
 		keys := b.Help().Key
 		desc := b.Help().Desc
-		part := HelpKeyStyle.Render(keys) + " " + HelpDescStyle.Render(desc)
+		part := iostreams.HelpKeyStyle.Render(keys) + " " + iostreams.HelpDescStyle.Render(desc)
 		parts = append(parts, part)
 	}
 
@@ -141,7 +144,7 @@ func RenderHelpBar(bindings []key.Binding, width int) string {
 	}
 
 	separator := " \u2022 " // bullet
-	sepWidth := CountVisibleWidth(separator)
+	sepWidth := text.CountVisibleWidth(separator)
 
 	var parts []string
 	availableWidth := width
@@ -153,9 +156,9 @@ func RenderHelpBar(bindings []key.Binding, width int) string {
 
 		keys := b.Help().Key
 		desc := b.Help().Desc
-		part := HelpKeyStyle.Render(keys) + " " + HelpDescStyle.Render(desc)
+		part := iostreams.HelpKeyStyle.Render(keys) + " " + iostreams.HelpDescStyle.Render(desc)
 
-		partWidth := CountVisibleWidth(keys) + 1 + CountVisibleWidth(desc)
+		partWidth := text.CountVisibleWidth(keys) + 1 + text.CountVisibleWidth(desc)
 		if len(parts) > 0 {
 			partWidth += sepWidth
 		}
@@ -190,10 +193,10 @@ func RenderHelpGrid(bindings []key.Binding, columns, width int) string {
 
 		keys := b.Help().Key
 		desc := b.Help().Desc
-		part := HelpKeyStyle.Render(keys) + " " + HelpDescStyle.Render(desc)
+		part := iostreams.HelpKeyStyle.Render(keys) + " " + iostreams.HelpDescStyle.Render(desc)
 
 		// Pad to column width
-		part = PadRight(part, colWidth)
+		part = text.PadRight(part, colWidth)
 		currentRow = append(currentRow, part)
 
 		if len(currentRow) >= columns || i == len(bindings)-1 {
@@ -242,7 +245,7 @@ func AllBindings() []key.Binding {
 
 // HelpBinding creates a single help binding display.
 func HelpBinding(keys, desc string) string {
-	return HelpKeyStyle.Render(keys) + " " + HelpDescStyle.Render(desc)
+	return iostreams.HelpKeyStyle.Render(keys) + " " + iostreams.HelpDescStyle.Render(desc)
 }
 
 // QuickHelp creates a quick help string from key-description pairs.

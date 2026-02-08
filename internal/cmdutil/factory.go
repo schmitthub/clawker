@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // Factory provides shared dependencies for CLI commands.
@@ -23,9 +24,10 @@ import (
 // Options structs.
 type Factory struct {
 	// Eager (set at construction)
-	Version   string
-	Commit    string
+	Version  string
+	Commit   string
 	IOStreams *iostreams.IOStreams
+	TUI      *tui.TUI
 
 	// Lazy nouns
 	Client     func(context.Context) (*docker.Client, error)

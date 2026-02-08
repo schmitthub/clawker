@@ -1,6 +1,12 @@
 package clawker
 
 import (
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -15,6 +21,8 @@ var (
 
 // Main is the entry point for the clawker CLI.
 // It initializes the Factory, creates the root command, and executes it.
+// Error rendering is centralized here — commands return typed errors
+// rather than printing them directly.
 func Main() int {
 	// Ensure logs are flushed on exit
 	defer logger.CloseFileWriter()
@@ -25,13 +33,52 @@ func Main() int {
 	// Create root command
 	rootCmd := root.NewCmdRoot(f)
 
-	// Execute - use ExecuteC to get the executed command for contextual hint
+	// Silence Cobra's built-in error printing — we handle it in printError.
+	rootCmd.SilenceErrors = true
+
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
-		// Print contextual help hint (Cobra already printed "Error: ...")
-		cmdutil.PrintHelpHint(f.IOStreams, cmd.CommandPath())
+		if !errors.Is(err, cmdutil.SilentError) {
+			printError(f.IOStreams.ErrOut, err, cmd)
+		}
+
+		var exitErr *cmdutil.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.Code
+		}
 		return 1
 	}
 
 	return 0
+}
+
+// userFormattedError is a duck-typed interface for errors that provide
+// rich user-facing output (e.g., Docker errors with context and suggestions).
+type userFormattedError interface {
+	FormatUserError() string
+}
+
+// printError renders an error to the given writer. It dispatches based on
+// error type:
+//   - FlagError: prints the error followed by usage
+//   - userFormattedError: uses rich formatting (e.g., Docker error context)
+//   - default: prints "Error: <message>"
+//
+// A contextual help hint is always appended.
+func printError(out io.Writer, err error, cmd *cobra.Command) {
+	var flagErr *cmdutil.FlagError
+	var ufErr userFormattedError
+
+	switch {
+	case errors.As(err, &flagErr):
+		fmt.Fprintln(out, err)
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, cmd.UsageString())
+	case errors.As(err, &ufErr):
+		fmt.Fprint(out, ufErr.FormatUserError())
+	default:
+		fmt.Fprintf(out, "Error: %s\n", err)
+	}
+
+	fmt.Fprintf(out, "\nRun '%s --help' for more information.\n", cmd.CommandPath())
 }

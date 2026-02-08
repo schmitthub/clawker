@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	cltext "github.com/schmitthub/clawker/internal/text"
 )
 
 // HeaderConfig configures a header component.
@@ -17,19 +18,19 @@ type HeaderConfig struct {
 
 // RenderHeader renders a header with title, optional subtitle, and timestamp.
 func RenderHeader(cfg HeaderConfig) string {
-	title := HeaderTitleStyle.Render(cfg.Title)
+	title := iostreams.HeaderTitleStyle.Render(cfg.Title)
 
 	var parts []string
 	parts = append(parts, title)
 
 	if cfg.Subtitle != "" {
-		parts = append(parts, HeaderSubtitleStyle.Render(cfg.Subtitle))
+		parts = append(parts, iostreams.HeaderSubtitleStyle.Render(cfg.Subtitle))
 	}
 
 	left := strings.Join(parts, " ")
 
 	if cfg.Timestamp != "" {
-		return FlexRow(cfg.Width, left, "", MutedStyle.Render(cfg.Timestamp))
+		return iostreams.FlexRow(cfg.Width, left, "", iostreams.MutedStyle.Render(cfg.Timestamp))
 	}
 
 	return left
@@ -57,13 +58,13 @@ func RenderBadge(text string, render ...func(string) string) string {
 	if len(render) > 0 {
 		return render[0](text)
 	}
-	return BadgeStyle.Render(text)
+	return iostreams.BadgeStyle.Render(text)
 }
 
 // RenderCountBadge renders a count with a label, like "3 tasks".
 func RenderCountBadge(count int, label string) string {
-	countStr := CountStyle.Render(fmt.Sprintf("%d", count))
-	return countStr + " " + MutedStyle.Render(label)
+	countStr := iostreams.CountStyle.Render(fmt.Sprintf("%d", count))
+	return countStr + " " + iostreams.MutedStyle.Render(label)
 }
 
 // ProgressConfig configures a progress indicator.
@@ -79,7 +80,7 @@ type ProgressConfig struct {
 // Otherwise renders "current/total".
 func RenderProgress(cfg ProgressConfig) string {
 	if cfg.Total <= 0 {
-		return MutedStyle.Render("-")
+		return iostreams.MutedStyle.Render("-")
 	}
 
 	if !cfg.ShowBar {
@@ -97,12 +98,12 @@ func RenderProgress(cfg ProgressConfig) string {
 	if cfg.Total > 0 {
 		filled = (cfg.Current * barWidth) / cfg.Total
 	}
-	filled = ClampInt(filled, 0, barWidth)
+	filled = max(0, min(filled, barWidth))
 	empty := barWidth - filled
 
 	bar := "[" +
-		SuccessStyle.Render(strings.Repeat("=", filled)) +
-		MutedStyle.Render(strings.Repeat("-", empty)) +
+		iostreams.SuccessStyle.Render(strings.Repeat("=", filled)) +
+		iostreams.MutedStyle.Render(strings.Repeat("-", empty)) +
 		"]"
 
 	return bar
@@ -113,7 +114,7 @@ func RenderDivider(width int) string {
 	if width <= 0 {
 		return ""
 	}
-	return DividerStyle.Render(strings.Repeat("\u2500", width)) // ─
+	return iostreams.DividerStyle.Render(strings.Repeat("\u2500", width)) // ─
 }
 
 // RenderLabeledDivider renders a divider with a centered label.
@@ -122,7 +123,7 @@ func RenderLabeledDivider(label string, width int) string {
 		return ""
 	}
 
-	labelLen := CountVisibleWidth(label)
+	labelLen := cltext.CountVisibleWidth(label)
 	if labelLen+4 >= width {
 		return RenderDivider(width)
 	}
@@ -133,12 +134,12 @@ func RenderLabeledDivider(label string, width int) string {
 	left := strings.Repeat("\u2500", leftWidth) // ─
 	right := strings.Repeat("\u2500", rightWidth)
 
-	return DividerStyle.Render(left) + " " + MutedStyle.Render(label) + " " + DividerStyle.Render(right)
+	return iostreams.DividerStyle.Render(left) + " " + iostreams.MutedStyle.Render(label) + " " + iostreams.DividerStyle.Render(right)
 }
 
 // RenderEmptyState renders a centered empty state message.
 func RenderEmptyState(message string, width, height int) string {
-	return CenterInRect(EmptyStateStyle.Render(message), width, height)
+	return iostreams.CenterInRect(iostreams.EmptyStateStyle.Render(message), width, height)
 }
 
 // RenderError renders an error message.
@@ -147,9 +148,9 @@ func RenderError(err error, width int) string {
 		return ""
 	}
 
-	errorText := ErrorStyle.Render("\u2717 Error: ") + err.Error()
+	errorText := iostreams.ErrorStyle.Render("\u2717 Error: ") + err.Error()
 	if width > 0 {
-		wrapped := WordWrap(errorText, width)
+		wrapped := cltext.WordWrap(errorText, width)
 		return wrapped
 	}
 	return errorText
@@ -157,7 +158,7 @@ func RenderError(err error, width int) string {
 
 // RenderLabelValue renders a label-value pair.
 func RenderLabelValue(label, value string) string {
-	return LabelStyle.Render(label+":") + " " + ValueStyle.Render(value)
+	return iostreams.LabelStyle.Render(label+":") + " " + iostreams.ValueStyle.Render(value)
 }
 
 // KeyValuePair represents a key-value pair for display.
@@ -175,7 +176,7 @@ func RenderKeyValueTable(pairs []KeyValuePair, width int) string {
 	// Find max key width
 	maxKeyLen := 0
 	for _, p := range pairs {
-		keyLen := CountVisibleWidth(p.Key)
+		keyLen := cltext.CountVisibleWidth(p.Key)
 		if keyLen > maxKeyLen {
 			maxKeyLen = keyLen
 		}
@@ -184,8 +185,8 @@ func RenderKeyValueTable(pairs []KeyValuePair, width int) string {
 	// Render pairs with aligned colons
 	var lines []string
 	for _, p := range pairs {
-		key := LabelStyle.Width(maxKeyLen + 1).Render(p.Key + ":")
-		val := ValueStyle.Render(p.Value)
+		key := iostreams.LabelStyle.Width(maxKeyLen + 1).Render(p.Key + ":")
+		val := iostreams.ValueStyle.Render(p.Value)
 		lines = append(lines, key+" "+val)
 	}
 
@@ -223,7 +224,7 @@ func RenderTable(cfg TableConfig) string {
 	var headerParts []string
 	for i, h := range cfg.Headers {
 		width := colWidths[i]
-		headerParts = append(headerParts, HeaderStyle.Width(width).Render(Truncate(h, width)))
+		headerParts = append(headerParts, iostreams.HeaderStyle.Width(width).Render(cltext.Truncate(h, width)))
 	}
 	lines = append(lines, strings.Join(headerParts, " "))
 
@@ -232,7 +233,7 @@ func RenderTable(cfg TableConfig) string {
 	for _, w := range colWidths {
 		dividerParts = append(dividerParts, strings.Repeat("\u2500", w))
 	}
-	lines = append(lines, DividerStyle.Render(strings.Join(dividerParts, " ")))
+	lines = append(lines, iostreams.DividerStyle.Render(strings.Join(dividerParts, " ")))
 
 	// Render rows
 	for _, row := range cfg.Rows {
@@ -243,7 +244,7 @@ func RenderTable(cfg TableConfig) string {
 			if i < len(row) {
 				val = row[i]
 			}
-			rowParts = append(rowParts, PadRight(Truncate(val, width), width))
+			rowParts = append(rowParts, cltext.PadRight(cltext.Truncate(val, width), width))
 		}
 		lines = append(lines, strings.Join(rowParts, " "))
 	}
@@ -253,11 +254,11 @@ func RenderTable(cfg TableConfig) string {
 
 // RenderPercentage renders a percentage value with appropriate styling.
 func RenderPercentage(value float64) string {
-	style := MutedStyle
+	style := iostreams.MutedStyle
 	if value >= 80 {
-		style = ErrorStyle
+		style = iostreams.ErrorStyle
 	} else if value >= 60 {
-		style = WarningStyle
+		style = iostreams.WarningStyle
 	}
 	return style.Render(fmt.Sprintf("%.1f%%", value))
 }
@@ -288,7 +289,7 @@ func RenderTag(text string, render ...func(string) string) string {
 	if len(render) > 0 {
 		return render[0](text)
 	}
-	return TagStyle.Render(text)
+	return iostreams.TagStyle.Render(text)
 }
 
 // RenderTags renders multiple tags inline.

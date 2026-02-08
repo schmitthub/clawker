@@ -1,0 +1,292 @@
+{
+  "name": "many-steps",
+  "description": "10-step build exercising per-stage child window display",
+  "events": [
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "StepName": "[internal] load build definition from Dockerfile",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 10,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "StepName": "[internal] load .dockerignore",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[stage-0 1/10] RUN step_1",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "StepName": "[stage-0 1/10] RUN step_1",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/10] RUN step_2",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "StepName": "[stage-0 2/10] RUN step_2",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[stage-0 3/10] RUN step_3",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "StepName": "[stage-0 3/10] RUN step_3",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "StepName": "[stage-0 4/10] RUN step_4",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "StepName": "[stage-0 4/10] RUN step_4",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[stage-0 5/10] RUN step_5",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "StepName": "[stage-0 5/10] RUN step_5",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+        "StepName": "[stage-0 6/10] RUN step_6",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+        "StepName": "[stage-0 6/10] RUN step_6",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+        "StepName": "[stage-0 7/10] RUN step_7",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+        "StepName": "[stage-0 7/10] RUN step_7",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "StepName": "[stage-0 8/10] RUN step_8",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "StepName": "[stage-0 8/10] RUN step_8",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
+        "StepName": "[stage-0 9/10] RUN step_9",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
+        "StepName": "[stage-0 9/10] RUN step_9",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 50,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000012",
+        "StepName": "[stage-0 10/10] RUN step_10",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 1,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    },
+    {
+      "delay_ms": 100,
+      "event": {
+        "StepID": "sha256:0000000000000000000000000000000000000000000000000000000000000012",
+        "StepName": "[stage-0 10/10] RUN step_10",
+        "StepIndex": 0,
+        "TotalSteps": 0,
+        "Status": 2,
+        "LogLine": "",
+        "Error": "",
+        "Cached": false
+      }
+    }
+  ]
+}

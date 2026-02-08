@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/term"
+	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/spf13/cobra"
@@ -76,7 +76,7 @@ Version patterns:
 }
 
 func generateRun(ctx context.Context, opts *GenerateOptions) error {
-	ctx, cancel := term.SetupSignalContext(ctx)
+	ctx, cancel := signals.SetupSignalContext(ctx)
 	defer cancel()
 	versions := opts.Versions
 	ios := opts.IOStreams

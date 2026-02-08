@@ -4,6 +4,7 @@ import (
 	"context"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/build"
 	"github.com/moby/moby/api/types/container"
 	dockerimage "github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
@@ -233,6 +234,44 @@ func (f *FakeClient) SetupBuildKit() *BuildKitCapture {
 	capture := &BuildKitCapture{}
 	f.Client.Engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
 	return capture
+}
+
+// SetupBuildKitWithProgress wires a fake BuildKit builder that emits the given
+// progress events via the OnProgress callback. Returns a capture struct for
+// asserting the builder was called with expected options.
+//
+//	events := whailtest.SimpleBuildEvents()
+//	capture := fake.SetupBuildKitWithProgress(events)
+//	// exercise code that calls BuildImage with BuildKitEnabled=true
+//	assert.Equal(t, 1, capture.CallCount)
+func (f *FakeClient) SetupBuildKitWithProgress(events []whail.BuildProgressEvent) *BuildKitCapture {
+	capture := &BuildKitCapture{ProgressEvents: events}
+	f.Client.Engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
+	return capture
+}
+
+// SetupBuildKitWithRecordedProgress wires a fake BuildKit builder that emits
+// recorded events with timing delays. Use with scenarios loaded from JSON
+// testdata files for realistic replay.
+//
+//	scenario, _ := whailtest.LoadRecordedScenario("testdata/multi-stage.json")
+//	capture := fake.SetupBuildKitWithRecordedProgress(scenario.Events)
+func (f *FakeClient) SetupBuildKitWithRecordedProgress(events []whailtest.RecordedBuildEvent) *BuildKitCapture {
+	capture := &BuildKitCapture{RecordedEvents: events}
+	f.Client.Engine.BuildKitImageBuilder = whailtest.FakeTimedBuildKitBuilder(capture)
+	return capture
+}
+
+// SetupPingBuildKit wires PingFn to report BuildKit as the preferred builder.
+// Use this when exercising code paths that call BuildKitEnabled() for detection
+// (e.g. real buildRun in the fawker demo CLI).
+func (f *FakeClient) SetupPingBuildKit() {
+	f.FakeAPI.PingFn = func(_ context.Context, _ client.PingOptions) (client.PingResult, error) {
+		return client.PingResult{
+			BuilderVersion: build.BuilderBuildKit,
+			OSType:         "linux",
+		}, nil
+	}
 }
 
 // BuildKitBuildOpts returns a BuildImageOpts configured for the BuildKit path.

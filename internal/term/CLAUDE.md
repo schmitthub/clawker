@@ -1,12 +1,10 @@
 # Term Package
 
-PTY/terminal handling for interactive container sessions. Manages raw mode, signal handling, resize propagation, and bidirectional I/O streaming.
+Sole gateway to `golang.org/x/term`. Leaf package — stdlib + `x/term` only, zero `internal/` imports.
 
-## Domain: Terminal Capability Detection
+## Domain: Terminal Capability Detection + Raw Mode
 
-**Responsibility**: Detect terminal capabilities from standard environment variables.
-
-This package handles **what the terminal can do** — capability detection from `TERM`, `COLORTERM`, and `NO_COLOR`. It does NOT handle application-level behavior like theme detection or spinner preferences.
+**Responsibility**: Detect terminal capabilities and provide raw mode control. This is the **only** package that imports `golang.org/x/term` — all other packages use `internal/term` for TTY detection, size queries, and raw mode.
 
 | Layer | Package | Responsibility | Env Vars |
 |-------|---------|----------------|----------|
@@ -21,9 +19,7 @@ The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 | File | Purpose |
 |------|---------|
 | `term.go` | `Term` — terminal capability detection (TTY, color, width) |
-| `pty.go` | `PTYHandler` — full terminal session lifecycle |
-| `raw.go` | `RawMode` — low-level termios control, TTY detection |
-| `signal.go` | `SignalHandler`, `ResizeHandler` — SIGTERM/SIGINT/SIGWINCH |
+| `raw.go` | `RawMode` — low-level termios control, TTY detection, terminal size |
 
 ## Term (Terminal Capabilities)
 
@@ -60,33 +56,6 @@ func FromEnv() *Term  // Read capabilities from real system environment
 - **Cascade**: truecolor → 256 → basic (each implies the lower capability)
 - **NO_COLOR**: Standard convention (https://no-color.org/) — if set, overrides all color capability detection
 
-## PTYHandler
-
-Full terminal session lifecycle: raw mode, stream I/O, restore.
-
-```go
-type PTYHandler struct {
-    stdin, stdout, stderr *os.File
-    rawMode               *RawMode
-    mu                    sync.Mutex
-}
-
-func NewPTYHandler() *PTYHandler
-```
-
-### Methods
-
-```go
-(*PTYHandler).Setup() error                                    // Enable raw mode on stdin
-(*PTYHandler).Restore() error                                  // Reset visual state (ANSI) + restore termios
-(*PTYHandler).Stream(ctx, hijacked) error                      // Bidirectional I/O (stdin→conn, conn→stdout)
-(*PTYHandler).StreamWithResize(ctx, hijacked, resizeFunc) error // Stream + resize propagation
-(*PTYHandler).GetSize() (width, height int, err error)
-(*PTYHandler).IsTerminal() bool
-```
-
-Internal: `resetVisualStateUnlocked()` sends ANSI escape sequences (alternate screen, cursor, colors). `isClosedConnectionError()` filters benign connection-closed errors.
-
 ## RawMode
 
 Low-level terminal mode control (termios save/restore).
@@ -112,67 +81,28 @@ func NewRawModeStdin() *RawMode
 (*RawMode).GetSize() (width, height int, err error)
 ```
 
-## SignalHandler
-
-Graceful shutdown via SIGTERM/SIGINT. Calls cancel function and cleanup on signal.
+## Free Functions (x/term Gateway)
 
 ```go
-type SignalHandler struct {
-    sigChan    chan os.Signal
-    cancelFunc context.CancelFunc
-    cleanup    func()
-}
-
-func NewSignalHandler(cancelFunc context.CancelFunc, cleanup func()) *SignalHandler
-
-(*SignalHandler).Start()  // Start signal listener goroutine
-(*SignalHandler).Stop()   // Stop listening, close channel
-```
-
-### Standalone Signal Helpers
-
-```go
-func SetupSignalContext(parent context.Context) (context.Context, context.CancelFunc)  // Context cancelled on SIGTERM/SIGINT
-func WaitForSignal(ctx context.Context, signals ...os.Signal) os.Signal                // Block until signal or ctx done
-```
-
-## ResizeHandler
-
-Terminal resize propagation via SIGWINCH.
-
-```go
-type ResizeHandler struct {
-    sigChan    chan os.Signal
-    resizeFunc func(uint, uint) error
-    getSize    func() (int, int, error)
-    done       chan struct{}
-}
-
-func NewResizeHandler(resizeFunc func(uint, uint) error, getSize func() (int, int, error)) *ResizeHandler
-
-(*ResizeHandler).Start()         // Start SIGWINCH listener goroutine
-(*ResizeHandler).Stop()          // Stop listening
-(*ResizeHandler).TriggerResize() // Manual resize trigger (for +1/-1 trick)
-```
-
-## TTY Detection Functions
-
-```go
-func IsTerminalFd(fd int) bool
-func IsStdinTerminal() bool
-func IsStdoutTerminal() bool
-func GetStdinSize() (width, height int, err error)
+func IsTerminalFd(fd int) bool                              // wraps x/term.IsTerminal
+func IsStdinTerminal() bool                                  // IsTerminalFd(stdin)
+func IsStdoutTerminal() bool                                 // IsTerminalFd(stdout)
+func GetStdinSize() (width, height int, err error)           // GetTerminalSize(stdin)
+func GetTerminalSize(fd int) (width, height int, err error)  // wraps x/term.GetSize
 ```
 
 ## Test Coverage
 
 - `term_test.go` — unit tests for Term struct and FromEnv()
-- `pty_test.go` — unit tests for PTYHandler, RawMode, and TTY detection functions
 
-## Gotchas
+## Import Boundary (Critical)
 
-- **Visual state vs termios**: `Restore()` sends ANSI reset sequences (alternate screen, cursor, colors) _before_ restoring raw/cooked mode. These are separate concerns.
-- **Resize +1/-1 trick**: Resize to `(h+1, w+1)` then actual size forces SIGWINCH for TUI redraw.
-- **os.Exit() skips defers**: Always call `Restore()` explicitly before exit paths.
-- **Ctrl+C in raw mode**: Goes to container, not as SIGINT to host process.
-- **Don't wait on stdin goroutine**: Container exit should not block on `Read()`.
+**`internal/term` is the sole `golang.org/x/term` gateway.** No other package may import `x/term` directly. Use:
+- `term.IsTerminalFd(fd)` instead of `goterm.IsTerminal(fd)`
+- `term.GetTerminalSize(fd)` instead of `goterm.GetSize(fd)`
+- `term.NewRawMode(fd)` for raw mode control
+
+**Consumers**:
+- `internal/iostreams` — uses `FromEnv`, `IsTerminalFd`, `GetTerminalSize`
+- `internal/docker` — uses `RawMode`, `NewRawModeStdin`, `NewRawMode`, `IsTerminalFd`
+- `cmd/fawker` — uses `NewRawModeStdin`

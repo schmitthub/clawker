@@ -20,9 +20,8 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-
-	"github.com/schmitthub/clawker/internal/term"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -388,9 +387,9 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	}
 
 	// Set up TTY if enabled
-	var pty *term.PTYHandler
+	var pty *docker.PTYHandler
 	if containerOpts.TTY && containerOpts.Stdin {
-		pty = term.NewPTYHandler()
+		pty = docker.NewPTYHandler()
 		if err := pty.Setup(); err != nil {
 			return fmt.Errorf("failed to set up terminal: %w", err)
 		}
@@ -485,7 +484,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 			}
 
 			// Monitor for window resize events (SIGWINCH)
-			resizeHandler := term.NewResizeHandler(resizeFunc, pty.GetSize)
+			resizeHandler := signals.NewResizeHandler(resizeFunc, pty.GetSize)
 			resizeHandler.Start()
 			defer resizeHandler.Stop()
 		}

@@ -1,0 +1,22 @@
+━━ Building test-project (test-project:latest)
+[run]  [stage-0 1/10] RUN step_1
+[ok]   [stage-0 1/10] RUN step_1 (0.0s)
+[run]  [stage-0 2/10] RUN step_2
+[ok]   [stage-0 2/10] RUN step_2 (0.0s)
+[run]  [stage-0 3/10] RUN step_3
+[ok]   [stage-0 3/10] RUN step_3 (0.0s)
+[run]  [stage-0 4/10] RUN step_4
+[ok]   [stage-0 4/10] RUN step_4 (0.0s)
+[run]  [stage-0 5/10] RUN step_5
+[ok]   [stage-0 5/10] RUN step_5 (0.0s)
+[run]  [stage-0 6/10] RUN step_6
+[ok]   [stage-0 6/10] RUN step_6 (0.0s)
+[run]  [stage-0 7/10] RUN step_7
+[ok]   [stage-0 7/10] RUN step_7 (0.0s)
+[run]  [stage-0 8/10] RUN step_8
+[ok]   [stage-0 8/10] RUN step_8 (0.0s)
+[run]  [stage-0 9/10] RUN step_9
+[ok]   [stage-0 9/10] RUN step_9 (0.0s)
+[run]  [stage-0 10/10] RUN step_10
+[ok]   [stage-0 10/10] RUN step_10 (0.0s)
+[ok] Built test-project:latest 0.0s

@@ -22,6 +22,9 @@ func TestNew(t *testing.T) {
 	if f.IOStreams == nil {
 		t.Error("expected IOStreams to be non-nil")
 	}
+	if f.TUI == nil {
+		t.Error("expected TUI to be non-nil")
+	}
 }
 
 func TestFactory_Config_Gateway(t *testing.T) {

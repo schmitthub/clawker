@@ -27,7 +27,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Path Helpers (`home.go`)
 
-`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`), `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()` — all return `(string, error)`. `EnsureDir(path) error`.
+`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`), `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()`, `HostProxyPIDFile()`, `HostProxyLogFile()`, `BridgesDir()`, `BridgePIDFile(containerID)` — all return `(string, error)`. `EnsureDir(path) error`.
 
 ## Defaults
 

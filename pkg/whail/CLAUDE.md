@@ -63,7 +63,29 @@ type Engine struct {
 
 `ImageBuild(ctx, reader, opts)`, `ImageBuildKit(ctx, ImageBuildKitOptions)`, `ImageTag(ctx, ImageTagOptions)`, `ImageRemove(ctx, id, opts)`, `ImageList(ctx, opts)`, `ImageInspect(ctx, ref)`, `ImagesPrune(ctx, dangling)`
 
-**`ImageBuildKitOptions`**: `Tags []string`, `ContextDir`, `Dockerfile`, `BuildArgs`, `NoCache`, `Labels`, `Target`, `Pull`, `SuppressOutput`, `NetworkMode`
+**`ImageBuildKitOptions`**: `Tags []string`, `ContextDir`, `Dockerfile`, `BuildArgs`, `NoCache`, `Labels`, `Target`, `Pull`, `SuppressOutput`, `NetworkMode`, `OnProgress BuildProgressFunc`
+
+## Build Progress Types (`types.go`)
+
+```go
+type BuildProgressFunc func(event BuildProgressEvent)
+type BuildProgressEvent struct {
+    StepID, StepName string; StepIndex, TotalSteps int
+    Status BuildStepStatus; LogLine, Error string; Cached bool
+}
+type BuildStepStatus int // BuildStepPending, BuildStepRunning, BuildStepComplete, BuildStepCached, BuildStepError
+```
+
+Defined in `types.go`, used by both `buildkit/` (produces events) and `internal/docker/` (forwards callback). The command layer bridges these events to `tui.RunProgress` display via a channel.
+
+## Build Progress Helpers (`progress.go`)
+
+Domain helpers for build progress display. These live in `whail` (bottom of the DAG) so the generic `tui.RunProgress` can use them as callbacks without importing build-specific logic.
+
+- `IsInternalStep(name string) bool` — true for BuildKit housekeeping vertices (`[internal]` prefix)
+- `CleanStepName(name string) string` — strips `--mount=` flags from RUN commands, collapses whitespace
+- `ParseBuildStage(name string) string` — extracts stage name from `[stage-2 3/7] RUN ...` → `"stage-2"`
+- `FormatBuildDuration(d time.Duration) string` — compact duration: `"4.1s"`, `"1m 12s"`, `"1h 1m"`
 
 ## Copy Operations (3 methods)
 
@@ -106,7 +128,7 @@ Isolated subpackage — only place that imports `moby/buildkit`. Zero dependency
 - `NewBuildKitClient(ctx, DockerDialer)` — creates `*bkclient.Client` (caller must Close)
 - `VerifyConnection(ctx, *bkclient.Client)` — lists workers to verify connectivity (diagnostic only)
 - `toSolveOpt(opts)` — converts `ImageBuildKitOptions` to `bkclient.SolveOpt`; uses "moby" exporter, "dockerfile.v0" frontend. When `NoCache=true`, sets both `no-cache` frontend attribute AND empty `CacheImports` (per moby/buildkit#2409, the attribute alone only verifies cache rather than disabling it)
-- `drainProgress(ch, suppress)` — reads `SolveStatus` channel, logs via zerolog; errors always logged, vertex names at debug level
+- `drainProgress(ch, suppress, onProgress)` — reads `SolveStatus` channel; when `onProgress != nil`, converts vertices to `BuildProgressEvent` with state transition deduplication and forwards log lines (stripping `\r` carriage returns from build tool progress bars); falls back to zerolog when no callback
 
 Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)`
 
@@ -131,7 +153,10 @@ Function-field test doubles for `client.APIClient`. Only `pkg/whail` and `intern
 - **Managed inspect helpers**: `Managed/UnmanagedContainerInspect(id)`, `Managed/UnmanagedVolumeInspect(name)`, `Managed/UnmanagedNetworkInspect(name)`, `Managed/UnmanagedImageInspect(ref)`
 - **Wait helpers**: `FakeContainerWaitOK()`, `FakeContainerWaitExit(code)`
 - **Assertions**: `AssertCalled(t, fake, method)`, `AssertNotCalled(...)`, `AssertCalledN(..., n)`
-- **BuildKit**: `FakeBuildKitBuilder(capture)` with `BuildKitCapture{Opts, CallCount, Err}`
+- **BuildKit**: `FakeBuildKitBuilder(capture)` with `BuildKitCapture{Opts, CallCount, Err, ProgressEvents, RecordedEvents}` — when `ProgressEvents` is set and `OnProgress` callback provided, emits events before returning. `FakeTimedBuildKitBuilder(capture)` — same but sleeps `RecordedEvents[i].Delay()` between events for realistic replay timing
+- **Build Scenarios** (`build_scenarios.go`): Pre-built `[]BuildProgressEvent` sequences matching real BuildKit output patterns. `SimpleBuildEvents()`, `CachedBuildEvents()`, `MultiStageBuildEvents()`, `ErrorBuildEvents()`, `LargeLogOutputEvents()`, `ManyStepsBuildEvents()`, `InternalOnlyEvents()`, `AllBuildScenarios()`. Helper: `StepDigest(n)` for deterministic sha256 digests
+- **Recorded Scenarios** (`recorded_scenario.go`): JSON-serializable event sequences with timing. `RecordedBuildEvent{DelayMs, Event}`, `RecordedBuildScenario{Name, Description, Events}`. Load/save: `LoadRecordedScenario(path)`, `LoadRecordedScenarioFromBytes(data)`, `SaveRecordedScenario(path, scenario)`. Generators: `RecordedScenarioFromEvents(name, desc, events, delay)`, `RecordedScenarioFromEventsWithTiming(...)`. `EventRecorder` wraps a `BuildProgressFunc` to capture wall-clock timing from real builds
+- **Testdata** (`testdata/*.json`): 7 recorded JSON scenarios (simple, cached, multi-stage, error, large-log, many-steps, internal-only) with synthetic timing. Regenerate: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v`
 
 ## Key Invariants
 

@@ -1,0 +1,18 @@
+━━ Building test-project (clawker-test-project:latest)
+[run]  [builder 1/4] FROM golang:1.22 AS builder
+[ok]   [builder 1/4] FROM golang:1.22 AS builder (0.0s)
+[run]  [builder 2/4] COPY go.mod go.sum /src/
+[ok]   [builder 2/4] COPY go.mod go.sum /src/ (0.0s)
+[run]  [builder 3/4] RUN go mod download
+[ok]   [builder 3/4] RUN go mod download (0.0s)
+[run]  [builder 4/4] RUN go build -o /bin/app
+[ok]   [builder 4/4] RUN go build -o /bin/app (0.0s)
+[run]  [assets 1/2] FROM node:20-slim AS assets
+[ok]   [assets 1/2] FROM node:20-slim AS assets (0.0s)
+[run]  [assets 2/2] RUN npm run build
+[ok]   [assets 2/2] RUN npm run build (0.0s)
+[run]  [runtime 1/2] FROM alpine:3.19 AS runtime
+[ok]   [runtime 1/2] FROM alpine:3.19 AS runtime (0.0s)
+[run]  [runtime 2/2] COPY --from=builder /bin/app /usr/local/bin/
+[ok]   [runtime 2/2] COPY --from=builder /bin/app /usr/local/bin/ (0.0s)
+[ok] Built clawker-test-project:latest 0.0s
