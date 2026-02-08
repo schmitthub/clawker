@@ -73,8 +73,70 @@ func TestNewCmdList(t *testing.T) {
 			_, err = cmd.ExecuteC()
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
-			require.Equal(t, tt.wantQuiet, gotOpts.Quiet)
+			require.Equal(t, tt.wantQuiet, gotOpts.Format.Quiet)
 			require.Equal(t, tt.wantAll, gotOpts.All)
+		})
+	}
+}
+
+func TestNewCmdList_FormatFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "json flag",
+			input: "--json",
+		},
+		{
+			name:  "format json",
+			input: "--format json",
+		},
+		{
+			name:  "format template",
+			input: "--format '{{.ID}}'",
+		},
+		{
+			name:    "quiet and json are mutually exclusive",
+			input:   "-q --json",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "quiet and format are mutually exclusive",
+			input:   "-q --format json",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "json and format are mutually exclusive",
+			input:   "--json --format json",
+			wantErr: "mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tio := iostreams.NewTestIOStreams()
+			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+
+			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
+				return nil
+			})
+
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
+			cmd.SetArgs(argv)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+
+			_, err = cmd.ExecuteC()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
@@ -93,6 +155,9 @@ func TestCmdList_Properties(t *testing.T) {
 
 	require.NotNil(t, cmd.Flags().Lookup("quiet"))
 	require.NotNil(t, cmd.Flags().Lookup("all"))
+	require.NotNil(t, cmd.Flags().Lookup("format"))
+	require.NotNil(t, cmd.Flags().Lookup("json"))
+	require.NotNil(t, cmd.Flags().Lookup("filter"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("q"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("a"))
 }

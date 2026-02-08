@@ -215,7 +215,10 @@ func MinimalStartOpts(containerID string) docker.ContainerStartOptions {
 // ImageSummaryFixture returns an ImageSummary with the given repo tag.
 func ImageSummaryFixture(repoTag string) whail.ImageSummary {
 	return whail.ImageSummary{
+		ID:       "sha256:a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890",
 		RepoTags: []string{repoTag},
+		Created:  1700000000,
+		Size:     256 * 1024 * 1024,
 	}
 }
 

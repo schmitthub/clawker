@@ -48,6 +48,10 @@ type (
 	ImageBuildOptions  = whail.ImageBuildOptions
 	ImagePullOptions   = whail.ImagePullOptions
 
+	// Image result types.
+	ImageSummary    = whail.ImageSummary
+	ImageListResult = whail.ImageListResult
+
 	// Volume operation options.
 	VolumeCreateOptions = whail.VolumeCreateOptions
 

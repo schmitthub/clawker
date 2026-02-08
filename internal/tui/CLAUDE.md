@@ -4,7 +4,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 ## Architecture
 
-**Import boundary**: This package does NOT import `lipgloss` directly. Styles and colors are accessed via qualified imports from `internal/iostreams` (e.g., `iostreams.PanelStyle`). Text utilities come from `internal/text` (e.g., `text.Truncate`). The `import_boundary_test.go` enforces the no-lipgloss constraint.
+**Import boundary**: This package does NOT import `lipgloss` or `lipgloss/table` directly. Styles and colors are accessed via qualified imports from `internal/iostreams` (e.g., `iostreams.PanelStyle`). Styled table rendering is delegated to `iostreams.RenderStyledTable`. Text utilities come from `internal/text` (e.g., `text.Truncate`). The `import_boundary_test.go` enforces both constraints.
 
 **Allowed imports**: `bubbletea`, `bubbles/*`, `internal/iostreams`, `internal/text`. The tui package sits one layer above iostreams in the DAG — it adds BubbleTea interactivity on top of iostreams' visual primitives.
 
@@ -26,7 +26,8 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `help.go` | Help bar/grid, binding presets, `QuickHelp` |
 | `program.go` | `RunProgram` helper for running BubbleTea programs with IOStreams |
 | `progress.go` | Generic progress display: BubbleTea TTY mode + plain text mode |
-| `import_boundary_test.go` | Enforces no lipgloss imports in non-test files |
+| `table.go` | `TablePrinter` — TTY-aware tabular output; styled mode via `iostreams.RenderStyledTable` (`lipgloss/table`) |
+| `import_boundary_test.go` | Enforces no lipgloss or lipgloss/table imports in non-test files |
 
 ## Keys (`keys.go`)
 
@@ -252,6 +253,27 @@ func (t *TUI) IOStreams() *iostreams.IOStreams
 
 **Pointer-sharing pattern**: TUI is constructed eagerly in Factory and captured by commands at `NewCmd` time. Hooks are registered later in `PersistentPreRunE` (after flag parsing). Since it's a pointer, commands see the hooks when `RunE` fires. This fixes the `--step` flag bug where hooks were captured eagerly before flag values were resolved.
 
+## TablePrinter (`table.go`)
+
+TTY-aware table rendering for command output. Styled mode delegates to `iostreams.RenderStyledTable` (backed by `lipgloss/table`). Plain mode uses `text/tabwriter`.
+
+```go
+tp := t.NewTable("IMAGE", "ID", "CREATED", "SIZE")
+tp.AddRow("myapp:latest", "a1b2c3d4e5f6", "2 months ago", "256.00MB")
+tp.AddRow("node:20-slim", "b2c3d4e5f678", "3 months ago", "180.00MB")
+err := tp.Render() // writes to ios.Out
+```
+
+**Constructors**: `(*TUI).NewTable(headers ...string) *TablePrinter`
+
+**Methods**: `AddRow(cols ...string)`, `Len() int`, `Render() error`
+
+**Styled mode** (TTY + color): Delegates to `iostreams.RenderStyledTable`, which uses `lipgloss/table` with `StyleFunc` for per-cell styling. Headers are muted uppercase (`TableHeaderStyle`). First column uses brand color (`TablePrimaryColumnStyle`). All borders disabled. Column widths auto-sized by `lipgloss/table`'s median-based resizer to fit terminal width.
+
+**Plain mode** (non-TTY/piped): `text/tabwriter` with 2-space gaps, tab-separated. Machine-friendly output, no ANSI sequences.
+
+**Golden tests**: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run "TestTable.*_Golden" -v`
+
 ## Tests & Limitations
 
 Every file has a corresponding `*_test.go` with `testify/assert`.
@@ -268,3 +290,11 @@ Golden snapshot tests for `RunProgress` in plain mode. Each JSON scenario from `
 Uses inline golden helper (avoids `test/harness` heavy transitive deps). Regenerate: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v`
 
 Golden files: `internal/tui/testdata/TestProgressPlain_Golden_*/*.golden`
+
+### Table Golden Tests (`table_golden_test.go`)
+
+Golden snapshot tests for `TablePrinter` in both plain and styled modes. Tests use `forceColorProfile(t)` (via `lipgloss.SetColorProfile`) to ensure styled output emits ANSI regardless of writer type.
+
+Regenerate: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run "TestTable.*_Golden" -v`
+
+Golden files: `internal/tui/testdata/TestTable{Plain,Styled}_Golden_*/*.golden`

@@ -82,12 +82,18 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 ### Table Output
 
-**Moved to `internal/tableprinter/`** — See `internal/tableprinter/CLAUDE.md` for full API.
+**Public API in `internal/tui/table.go`** — See `internal/tui/CLAUDE.md` for full TablePrinter API.
+
+**Styled rendering in `internal/iostreams/table.go`** — `RenderStyledTable(headers, rows)` uses `lipgloss/table` with `StyleFunc` for per-cell styling. Headers are muted uppercase. First column uses brand color. All borders disabled. Column widths auto-sized to terminal width.
 
 ```go
-tp := tableprinter.New(ios, "NAME", "STATUS", "IMAGE")
+// Command-level API (via TUI Factory noun):
+tp := f.TUI.NewTable("NAME", "STATUS", "IMAGE")
 tp.AddRow("web", "running", "nginx:latest")
 err := tp.Render()  // writes to ios.Out
+
+// Direct rendering (internal to tui package):
+output := ios.RenderStyledTable(headers, rows)
 ```
 
 ## Layout Helpers (`layout.go`)
@@ -117,6 +123,8 @@ Lipgloss-based pure functions for composing visual output:
 | `ColorDisabled` | `#4A4A4A` | Inactive |
 | `ColorBrandOrange` | `#E8714A` | Build progress accent |
 
+**Table styles**: `TableHeaderStyle` (muted foreground, no bold), `TablePrimaryColumnStyle` (brand color foreground). Used by `RenderStyledTable`.
+
 **Status helpers**: `StatusStyle(running)`, `StatusText(running)`, `StatusIndicator(status)` — return lipgloss styles; outside presentation layer use `tui.StatusIndicator`.
 
 ## Gotchas
@@ -135,4 +143,4 @@ Lipgloss-based pure functions for composing visual output:
 
 ## Import Boundary
 
-Canonical source for all visual styling. Can import: `lipgloss`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`. Only `internal/iostreams` imports `lipgloss`.
+Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`.
