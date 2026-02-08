@@ -12,8 +12,9 @@ import (
 type TableStyleFunc func(string) string
 
 // TableStyleOverrides holds optional per-cell style overrides for table rendering.
-// Zero value means "use default". The Header, Primary, and Cell fields replace
-// the corresponding default styles entirely when set.
+// Zero value means "use default". When set, the override function controls visual
+// styling (color, bold, etc.) while consistent cell padding is always applied by
+// the base style.
 type TableStyleOverrides struct {
 	Header  TableStyleFunc // header row cells (default: TableHeaderStyle)
 	Primary TableStyleFunc // first column cells (default: TablePrimaryColumnStyle)

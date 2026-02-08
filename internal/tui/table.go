@@ -98,7 +98,9 @@ func (tp *TablePrinter) renderStyled() error {
 func (tp *TablePrinter) normalizeRow(cols []string) []string {
 	n := len(tp.headers)
 	if len(cols) >= n {
-		return cols[:n]
+		row := make([]string, n)
+		copy(row, cols[:n])
+		return row
 	}
 	row := make([]string, n)
 	copy(row, cols)

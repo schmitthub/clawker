@@ -196,6 +196,24 @@ func TestTablePrinter_WithStyleOverrides(t *testing.T) {
 	assert.Contains(t, output, "[C:running]")
 }
 
+func TestTablePrinter_AddRow_NoSliceAliasing(t *testing.T) {
+	tui, _ := newTestTUI(t)
+	tp := tui.NewTable("NAME", "STATUS", "IMAGE")
+
+	// Pass a slice via spread — normalizeRow must copy, not alias the backing array.
+	cols := []string{"web", "running", "nginx:latest", "extra"}
+	tp.AddRow(cols...)
+
+	// Mutate the original slice after AddRow.
+	cols[0] = "MUTATED"
+	cols[1] = "MUTATED"
+	cols[2] = "MUTATED"
+
+	// The stored row must be unchanged.
+	require.Equal(t, 1, tp.Len())
+	assert.Equal(t, []string{"web", "running", "nginx:latest"}, tp.rows[0])
+}
+
 func TestTablePrinter_WithStyleOverrides_Partial(t *testing.T) {
 	forceColorProfile(t)
 	tui, tio := newTestTUI(t)

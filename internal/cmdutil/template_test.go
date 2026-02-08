@@ -75,6 +75,18 @@ func TestDefaultFuncMap(t *testing.T) {
 		assert.Equal(t, "", fn("hello", -1))
 	})
 
+	t.Run("truncate_multibyte", func(t *testing.T) {
+		fn := fm["truncate"].(func(string, int) string)
+		// "café world" is 10 runes; truncate to 8 runes should give "café ..."
+		assert.Equal(t, "café ...", fn("café world", 8))
+	})
+
+	t.Run("truncate_multibyte_short", func(t *testing.T) {
+		fn := fm["truncate"].(func(string, int) string)
+		// n <= 3 path with multi-byte characters
+		assert.Equal(t, "ñoñ", fn("ñoño", 3))
+	})
+
 	t.Run("all_functions_registered", func(t *testing.T) {
 		expected := []string{"json", "upper", "lower", "title", "split", "join", "truncate"}
 		for _, name := range expected {
