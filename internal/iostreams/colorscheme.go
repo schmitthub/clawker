@@ -104,14 +104,16 @@ func (cs *ColorScheme) Cyanf(format string, a ...any) string {
 	return cs.Cyan(fmt.Sprintf(format, a...))
 }
 
-// BrandOrange returns the string in warm orange (brand accent color).
+// BrandOrange returns the string in the primary brand color.
+// Deprecated: Use Primary instead. Kept for backward compatibility.
 func (cs *ColorScheme) BrandOrange(s string) string {
-	return cs.render(BrandOrangeStyle, s)
+	return cs.Primary(s)
 }
 
-// BrandOrangef returns a formatted string in warm orange.
+// BrandOrangef returns a formatted string in the primary brand color.
+// Deprecated: Use Primaryf instead.
 func (cs *ColorScheme) BrandOrangef(format string, a ...any) string {
-	return cs.BrandOrange(fmt.Sprintf(format, a...))
+	return cs.Primaryf(format, a...)
 }
 
 // Magenta returns the string in magenta (highlight color).

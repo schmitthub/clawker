@@ -37,7 +37,14 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		IOStreams: ios,
 		TUI:      tui.NewTUI(ios),
 		Config: func() *config.Config {
-			return config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
+			cfg := config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
+			tmpDir, err := os.MkdirTemp("", "fawker-settings-*")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "fawker: warning: failed to create temp settings dir: %v\n", err)
+				return cfg
+			}
+			cfg.SetSettingsLoader(config.NewSettingsLoaderForTest(tmpDir))
+			return cfg
 		},
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fawkerClient(scenario)
@@ -45,7 +52,7 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		GitManager:   func() (*git.GitManager, error) { return nil, nil },
 		HostProxy:    func() *hostproxy.Manager { return nil },
 		SocketBridge: func() socketbridge.SocketBridgeManager { return nil },
-		Prompter:     func() *prompter.Prompter { return nil },
+		Prompter:     func() *prompter.Prompter { return prompter.NewPrompter(ios) },
 	}
 
 	return f, &scenario
@@ -75,6 +82,9 @@ func fawkerProject() *config.Project {
 // recorded events for build progress.
 func fawkerClient(scenarioName string) (*docker.Client, error) {
 	fake := dockertest.NewFakeClient()
+
+	// Wire legacy image build as fallback for non-BuildKit paths.
+	fake.SetupLegacyBuild()
 
 	// Wire BuildKit detection so buildRun's BuildKitEnabled() check passes.
 	fake.SetupPingBuildKit()

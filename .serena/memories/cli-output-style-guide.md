@@ -135,6 +135,40 @@ func runPrune(opts *PruneOptions) error {
 }
 ```
 
+### Hybrid Scenario 2+3: Static-Interactive + Live-Display
+
+Some commands combine interactive prompts with live progress display. The `init` command is the canonical example: it prompts the user for choices (Scenario 2), then runs a TUI progress display for the image build (Scenario 3).
+
+**Stream strategy:**
+- Prompts phase: same as Scenario 2 (prompts to stderr, static output to stderr)
+- Progress phase: same as Scenario 3 (TUI manages terminal, summary to stderr)
+- After both phases: static next steps to stderr
+
+```go
+func Run(ctx context.Context, opts *InitOptions) error {
+    prompter := opts.Prompter()
+
+    // Phase 1: Interactive prompts (Scenario 2)
+    idx, err := prompter.Select("Build an initial base image?", options, 0)
+    // ...
+
+    // Phase 2: TUI progress display (Scenario 3)
+    ch := make(chan tui.ProgressStep, 4)
+    go func() {
+        defer close(ch)
+        ch <- tui.ProgressStep{ID: "build", Name: "Building base image", Status: tui.StepRunning}
+        buildErr = client.BuildImage(ctx, buildContext, buildOpts)
+        // ... send StepComplete or StepError ...
+    }()
+    opts.TUI.RunProgress("auto", tui.ProgressDisplayConfig{
+        Title: "Building", Subtitle: tag, CompletionVerb: "Built",
+    }, ch)
+
+    // Phase 3: Static output (next steps to stderr)
+    fmt.Fprintln(ios.ErrOut, "Next Steps:")
+}
+```
+
 ### Scenario 3: Live-Display
 
 No user input, but continuous rendering with layout management.
@@ -203,24 +237,24 @@ Each icon has a `*WithColor(text)` variant that applies the icon's color to the 
 
 Each has a `*f(format, args...)` variant returning a formatted colored string.
 
-| Method | Usage | Hex |
-|--------|-------|-----|
-| `cs.Primary(s)` | Brand, titles | `#7D56F4` |
-| `cs.Secondary(s)` | Supporting text | `#6C6C6C` |
-| `cs.Accent(s)` | Emphasis | `#FF6B6B` |
-| `cs.Success(s)` | Positive outcomes | `#04B575` |
-| `cs.Warning(s)` | Caution | `#FFCC00` |
-| `cs.Error(s)` | Errors | `#FF5F87` |
-| `cs.Info(s)` | Informational | `#87CEEB` |
-| `cs.Muted(s)` | Dimmed/secondary | `#626262` |
-| `cs.Highlight(s)` | Attention | `#AD58B4` |
-| `cs.Disabled(s)` | Inactive | `#4A4A4A` |
+| Method | Usage | Color |
+|--------|-------|-------|
+| `cs.Primary(s)` | Brand, titles | `ColorBurntOrange` (`#E8714A`) |
+| `cs.Secondary(s)` | Supporting text | `ColorDeepSkyBlue` (`#00BFFF`) |
+| `cs.Accent(s)` | Emphasis | `ColorSalmon` (`#FF6B6B`) |
+| `cs.Success(s)` | Positive outcomes | `ColorEmerald` (`#04B575`) |
+| `cs.Warning(s)` | Caution | `ColorAmber` (`#FFCC00`) |
+| `cs.Error(s)` | Errors | `ColorHotPink` (`#FF5F87`) |
+| `cs.Info(s)` | Informational | `ColorSkyBlue` (`#87CEEB`) |
+| `cs.Muted(s)` | Dimmed/secondary | `ColorDimGray` (`#626262`) |
+| `cs.Highlight(s)` | Attention | `ColorOrchid` (`#AD58B4`) |
+| `cs.Disabled(s)` | Inactive | `ColorCharcoal` (`#4A4A4A`) |
 
 ### Concrete Colors
 
 Use semantic colors when possible. Concrete colors for specific design needs:
 
-`cs.Red/Redf`, `cs.Yellow/Yellowf`, `cs.Green/Greenf`, `cs.Blue/Bluef`, `cs.Cyan/Cyanf`, `cs.Magenta/Magentaf`, `cs.BrandOrange/BrandOrangef`
+`cs.Red/Redf`, `cs.Yellow/Yellowf`, `cs.Green/Greenf`, `cs.Blue/Bluef`, `cs.Cyan/Cyanf`, `cs.Magenta/Magentaf`, `cs.BrandOrange/BrandOrangef` (deprecated, delegates to Primary/Primaryf)
 
 ### Text Decorations
 
@@ -447,7 +481,7 @@ return tp.Render()
 ```
 
 **Rendering modes:**
-- **TTY + color (styled)**: `lipgloss/table` with `StyleFunc`. Muted uppercase headers (`TableHeaderStyle`), brand orange first column (`TablePrimaryColumnStyle`), no borders. Column widths auto-sized by median-based resizer.
+- **TTY + color (styled)**: `lipgloss/table` with `StyleFunc`. Muted uppercase headers (`TableHeaderStyle`), primary color first column (`TablePrimaryColumnStyle`), no borders. Column widths auto-sized by median-based resizer.
 - **Non-TTY / piped (plain)**: `text/tabwriter` with 2-space column gaps, no styling — machine-parseable.
 
 **Style overrides** (optional, for commands needing custom column colors):

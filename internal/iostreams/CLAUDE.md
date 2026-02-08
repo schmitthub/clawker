@@ -40,7 +40,7 @@ Embeds `*IOStreams`. Fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`. Setup: `Se
 
 | Category | Methods |
 |----------|---------|
-| Concrete colors | `Red/Redf`, `Yellow/Yellowf`, `Green/Greenf`, `Blue/Bluef`, `Cyan/Cyanf`, `Magenta/Magentaf`, `BrandOrange/BrandOrangef` |
+| Concrete colors | `Red/Redf`, `Yellow/Yellowf`, `Green/Greenf`, `Blue/Bluef`, `Cyan/Cyanf`, `Magenta/Magentaf`, `BrandOrange/BrandOrangef` (deprecated, delegates to Primary/Primaryf) |
 | Semantic colors | `Primary/f`, `Secondary/f`, `Accent/f`, `Success/f`, `Warning/f`, `Error/f`, `Info/f`, `Muted/f`, `Highlight/f`, `Disabled/f` |
 | Text decoration | `Bold/f`, `Italic/f`, `Underline/f`, `Dim/f` |
 | Icons | `SuccessIcon()`, `WarningIcon()`, `FailureIcon()`, `InfoIcon()` + `*WithColor(text)` variants |
@@ -107,23 +107,51 @@ Lipgloss-based pure functions for composing visual output:
 | `FlexRow(width, left, center, right)` | Three-section row with flexible padding |
 | `CenterInRect(content, width, height)` | Center content in a rectangle |
 
-## Color Palette (styles.go)
+## Color System (styles.go)
 
-| Color | Hex | Usage |
-|-------|-----|-------|
-| `ColorPrimary` | `#7D56F4` | Brand, titles |
-| `ColorSuccess` | `#04B575` | Positive |
-| `ColorWarning` | `#FFCC00` | Caution |
-| `ColorError` | `#FF5F87` | Errors |
-| `ColorInfo` | `#87CEEB` | Informational |
-| `ColorMuted` | `#626262` | Dimmed |
-| `ColorHighlight` | `#AD58B4` | Attention |
-| `ColorAccent` | `#FF6B6B` | Emphasis |
-| `ColorSecondary` | `#6C6C6C` | Supporting |
-| `ColorDisabled` | `#4A4A4A` | Inactive |
-| `ColorBrandOrange` | `#E8714A` | Build progress accent |
+### Architecture: Two-layer palette
 
-**Table styles**: `TableHeaderStyle` (muted foreground, no bold), `TablePrimaryColumnStyle` (brand color foreground). Used by `RenderStyledTable`.
+**Layer 1 — Named Colors**: Canonical hex values with X11/CSS names. These never change.
+
+| Name | Hex | Origin |
+|------|-----|--------|
+| `ColorBurntOrange` | `#E8714A` | Warm orange (nearest: X11 Coral) |
+| `ColorDeepSkyBlue` | `#00BFFF` | Exact X11/CSS: DeepSkyBlue |
+| `ColorEmerald` | `#04B575` | Vivid green (nearest: X11 MediumSeaGreen) |
+| `ColorAmber` | `#FFCC00` | Warm yellow (nearest: X11 Gold) |
+| `ColorHotPink` | `#FF5F87` | Bright pink (nearest: X11 HotPink) |
+| `ColorDimGray` | `#626262` | Near X11 DimGray |
+| `ColorOrchid` | `#AD58B4` | Purple-pink (nearest: X11 MediumOrchid) |
+| `ColorSkyBlue` | `#87CEEB` | Exact X11/CSS: SkyBlue |
+| `ColorCharcoal` | `#4A4A4A` | Dark gray |
+| `ColorGold` | `#FFD700` | Exact X11/CSS: Gold |
+| `ColorOnyx` | `#3C3C3C` | Very dark gray |
+| `ColorSalmon` | `#FF6B6B` | Warm pink-red (nearest: X11 Salmon) |
+| `ColorJet` | `#1A1A1A` | Near-black |
+| `ColorGunmetal` | `#2A2A2A` | Dark charcoal |
+| `ColorSilver` | `#A0A0A0` | Muted silver (nearest: X11 DarkGray) |
+
+**Layer 2 — Semantic Theme**: Intent-based aliases referencing Layer 1.
+
+| Semantic | Maps To | Usage |
+|----------|---------|-------|
+| `ColorPrimary` | `ColorBurntOrange` | Brand, titles |
+| `ColorSecondary` | `ColorDeepSkyBlue` | Supporting |
+| `ColorSuccess` | `ColorEmerald` | Positive |
+| `ColorWarning` | `ColorAmber` | Caution |
+| `ColorError` | `ColorHotPink` | Errors |
+| `ColorMuted` | `ColorDimGray` | Dimmed |
+| `ColorHighlight` | `ColorOrchid` | Attention |
+| `ColorInfo` | `ColorSkyBlue` | Informational |
+| `ColorDisabled` | `ColorCharcoal` | Inactive |
+| `ColorSelected` | `ColorGold` | Selection |
+| `ColorBorder` | `ColorOnyx` | Borders |
+| `ColorAccent` | `ColorSalmon` | Emphasis |
+| `ColorBg` | `ColorJet` | Background |
+| `ColorBgAlt` | `ColorGunmetal` | Alt background |
+| `ColorSubtle` | `ColorSilver` | Subdued labels |
+
+**Table styles**: `TableHeaderStyle` (muted foreground, no bold), `TablePrimaryColumnStyle` (`ColorPrimary` foreground). Used by `RenderStyledTable`.
 
 **Status helpers**: `StatusStyle(running)`, `StatusText(running)`, `StatusIndicator(status)` — return lipgloss styles; outside presentation layer use `tui.StatusIndicator`.
 
@@ -134,7 +162,7 @@ Lipgloss-based pure functions for composing visual output:
 - `TestIOStreams`: colors disabled, non-TTY by default
 - Call `StartPager()` before any output
 - `CanPrompt()` false when `neverPrompt` set (CI)
-- `Blue()` = BlueStyle (no bold); `Primary()` = TitleStyle (bold)
+- `Blue()` = BlueStyle (`ColorDeepSkyBlue`, no bold); `Primary()` = TitleStyle (`ColorPrimary` = `ColorBurntOrange`, bold)
 - `tui/` re-exports styles, tokens, text, layout, time via `tui/iostreams.go`
 
 ## Text Utilities

@@ -2,29 +2,45 @@ package iostreams
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette — consistent across all clawker output.
-// These are the canonical color definitions used by all packages via iostreams.
+// ─── Named Colors ─────────────────────────────────────────────────
+// Canonical color values by X11/CSS name (or nearest recognized name).
+// These define the actual colors. They never change.
 var (
-	ColorPrimary   = lipgloss.Color("#7D56F4")
-	ColorSecondary = lipgloss.Color("#6C6C6C")
-	ColorSuccess   = lipgloss.Color("#04B575")
-	ColorWarning   = lipgloss.Color("#FFCC00")
-	ColorError     = lipgloss.Color("#FF5F87")
-	ColorMuted     = lipgloss.Color("#626262")
-	ColorHighlight = lipgloss.Color("#AD58B4")
+	ColorBurntOrange = lipgloss.Color("#E8714A") // Warm orange (nearest: X11 Coral)
+	ColorDeepSkyBlue = lipgloss.Color("#00BFFF") // Exact X11/CSS: DeepSkyBlue
+	ColorEmerald     = lipgloss.Color("#04B575") // Vivid green (nearest: X11 MediumSeaGreen)
+	ColorAmber       = lipgloss.Color("#FFCC00") // Warm yellow (nearest: X11 Gold)
+	ColorHotPink     = lipgloss.Color("#FF5F87") // Bright pink (nearest: X11 HotPink)
+	ColorDimGray     = lipgloss.Color("#626262") // Near X11 DimGray
+	ColorOrchid      = lipgloss.Color("#AD58B4") // Purple-pink (nearest: X11 MediumOrchid)
+	ColorSkyBlue     = lipgloss.Color("#87CEEB") // Exact X11/CSS: SkyBlue
+	ColorCharcoal    = lipgloss.Color("#4A4A4A") // Dark gray
+	ColorGold        = lipgloss.Color("#FFD700") // Exact X11/CSS: Gold
+	ColorOnyx        = lipgloss.Color("#3C3C3C") // Very dark gray
+	ColorSalmon      = lipgloss.Color("#FF6B6B") // Warm pink-red (nearest: X11 Salmon)
+	ColorJet         = lipgloss.Color("#1A1A1A") // Near-black
+	ColorGunmetal    = lipgloss.Color("#2A2A2A") // Dark charcoal
+	ColorSilver      = lipgloss.Color("#A0A0A0") // Muted silver (nearest: X11 DarkGray)
 )
 
-// Additional colors for components.
+// ─── Semantic Theme ───────────────────────────────────────────────
+// Intent-based aliases. Swap the RHS to change the entire color theme.
 var (
-	ColorInfo        = lipgloss.Color("#87CEEB") // Light sky blue for info
-	ColorDisabled    = lipgloss.Color("#4A4A4A") // Dark gray for disabled
-	ColorSelected    = lipgloss.Color("#FFD700") // Gold for selection
-	ColorBorder      = lipgloss.Color("#3C3C3C") // Subtle border color
-	ColorAccent      = lipgloss.Color("#FF6B6B") // Accent for emphasis
-	ColorBg          = lipgloss.Color("#1A1A1A") // Dark background
-	ColorBgAlt       = lipgloss.Color("#2A2A2A") // Alternate background
-	ColorBrandOrange = lipgloss.Color("#E8714A") // Warm orange accent (Claude Code-inspired)
-	ColorSubtle      = lipgloss.Color("#A0A0A0") // Soft silver for subdued labels (table headers)
+	ColorPrimary   = ColorBurntOrange // Brand primary
+	ColorSecondary = ColorDeepSkyBlue // Brand secondary
+	ColorSuccess   = ColorEmerald
+	ColorWarning   = ColorAmber
+	ColorError     = ColorHotPink
+	ColorMuted     = ColorDimGray
+	ColorHighlight = ColorOrchid
+	ColorInfo      = ColorSkyBlue
+	ColorDisabled  = ColorCharcoal
+	ColorSelected  = ColorGold
+	ColorBorder    = ColorOnyx
+	ColorAccent    = ColorSalmon
+	ColorBg        = ColorJet
+	ColorBgAlt     = ColorGunmetal
+	ColorSubtle    = ColorSilver
 )
 
 // Text styles — common text formatting.
@@ -43,9 +59,8 @@ var (
 // Concrete color styles — pure foreground color, no decorations.
 // Used by ColorScheme concrete color methods (Red, Blue, etc.).
 var (
-	BlueStyle        = lipgloss.NewStyle().Foreground(ColorPrimary)
-	CyanStyle        = lipgloss.NewStyle().Foreground(ColorInfo)
-	BrandOrangeStyle = lipgloss.NewStyle().Foreground(ColorBrandOrange)
+	BlueStyle = lipgloss.NewStyle().Foreground(ColorDeepSkyBlue)
+	CyanStyle = lipgloss.NewStyle().Foreground(ColorInfo)
 )
 
 // Border styles.
@@ -185,8 +200,8 @@ var (
 	// Headers are rendered as uppercase by the table renderer for visual distinction.
 	TableHeaderStyle = lipgloss.NewStyle().Foreground(ColorSubtle)
 
-	// TablePrimaryColumnStyle for the first column: brand orange for emphasis.
-	TablePrimaryColumnStyle = lipgloss.NewStyle().Foreground(ColorBrandOrange)
+	// TablePrimaryColumnStyle for the first column: primary brand color for emphasis.
+	TablePrimaryColumnStyle = lipgloss.NewStyle().Foreground(ColorPrimary)
 )
 
 // RenderFixedWidth renders text at a fixed width using lipgloss.

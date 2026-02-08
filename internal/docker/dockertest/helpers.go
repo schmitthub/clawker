@@ -2,6 +2,8 @@ package dockertest
 
 import (
 	"context"
+	"io"
+	"strings"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/build"
@@ -284,6 +286,24 @@ func BuildKitBuildOpts(tag, contextDir string) docker.BuildImageOpts {
 		BuildKitEnabled: true,
 		ContextDir:      contextDir,
 		SuppressOutput:  true,
+	}
+}
+
+// SetupLegacyBuild wires a fake legacy (non-BuildKit) image build that succeeds.
+// Returns an empty build response body. Use this for code paths that call
+// client.BuildImage without BuildKitEnabled (e.g., init command).
+func (f *FakeClient) SetupLegacyBuild() {
+	f.FakeAPI.ImageBuildFn = func(_ context.Context, _ io.Reader, _ client.ImageBuildOptions) (client.ImageBuildResult, error) {
+		return client.ImageBuildResult{
+			Body: io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+}
+
+// SetupLegacyBuildError wires a fake legacy image build that returns the given error.
+func (f *FakeClient) SetupLegacyBuildError(err error) {
+	f.FakeAPI.ImageBuildFn = func(_ context.Context, _ io.Reader, _ client.ImageBuildOptions) (client.ImageBuildResult, error) {
+		return client.ImageBuildResult{}, err
 	}
 }
 

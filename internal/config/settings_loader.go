@@ -53,6 +53,15 @@ func NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error) {
 	return l, nil
 }
 
+// NewSettingsLoaderForTest creates a SettingsLoader pointing at the given directory.
+// Intended for tests and fawker that need to control the settings path without
+// relying on CLAWKER_HOME.
+func NewSettingsLoaderForTest(dir string) *SettingsLoader {
+	return &SettingsLoader{
+		path: filepath.Join(dir, SettingsFileName),
+	}
+}
+
 // Path returns the full path to the global settings file.
 func (l *SettingsLoader) Path() string {
 	return l.path

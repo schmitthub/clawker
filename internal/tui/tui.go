@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/schmitthub/clawker/internal/iostreams"
+import (
+	"fmt"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+)
 
 // TUI provides the interactive presentation layer.
 // Constructed once via Factory; hooks registered separately after construction.
@@ -38,6 +42,26 @@ func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan Prog
 // IOStreams returns the underlying IOStreams for callers that need direct access.
 func (t *TUI) IOStreams() *iostreams.IOStreams {
 	return t.ios
+}
+
+// RunWizard runs a multi-step wizard using the given field definitions.
+// Returns the collected values and whether the wizard was submitted (vs cancelled).
+func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error) {
+	if len(fields) == 0 {
+		return WizardResult{}, fmt.Errorf("wizard requires at least one field")
+	}
+	model := newWizardModel(fields)
+	finalModel, err := RunProgram(t.ios, &model, WithAltScreen(true))
+	if err != nil {
+		return WizardResult{}, err
+	}
+	if wm, ok := finalModel.(*wizardModel); ok {
+		return WizardResult{
+			Values:    wm.values,
+			Submitted: wm.submitted,
+		}, nil
+	}
+	return WizardResult{}, fmt.Errorf("unexpected model type %T from wizard program", finalModel)
 }
 
 // composedHook returns a single LifecycleHook that chains all registered hooks.

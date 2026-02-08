@@ -237,3 +237,9 @@ func (c *Config) ProjectLoader() *Loader {
 func (c *Config) RegistryInitErr() error {
 	return c.registryInitErr
 }
+
+// SetSettingsLoader sets the settings loader for write operations.
+// Used by NewConfigForTest variants and fawker to inject a test-friendly loader.
+func (c *Config) SetSettingsLoader(sl *SettingsLoader) {
+	c.settingsLoader = sl
+}

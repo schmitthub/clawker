@@ -5,6 +5,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/image"
+	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -21,6 +22,7 @@ func newFawkerRoot(f *cmdutil.Factory, scenario *string, noPause *bool, step *bo
 faked dependencies with recorded build scenarios. No Docker required.
 
 Usage:
+  fawker init                                  # Interactive init with prompts
   fawker image build                           # Default scenario (multi-stage)
   fawker image build --scenario error          # Error scenario
   fawker image build --progress plain          # Plain mode
@@ -45,6 +47,7 @@ Usage:
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
+	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 
 	return cmd
 }
