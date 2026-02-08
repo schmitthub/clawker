@@ -24,6 +24,7 @@ var (
 	ColorBg          = lipgloss.Color("#1A1A1A") // Dark background
 	ColorBgAlt       = lipgloss.Color("#2A2A2A") // Alternate background
 	ColorBrandOrange = lipgloss.Color("#E8714A") // Warm orange accent (Claude Code-inspired)
+	ColorSubtle      = lipgloss.Color("#A0A0A0") // Soft silver for subdued labels (table headers)
 )
 
 // Text styles — common text formatting.
@@ -180,12 +181,16 @@ var (
 
 // Table styles.
 var (
-	// TableHeaderStyle for table column headers: bold + primary color, no padding.
-	TableHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
+	// TableHeaderStyle for table column headers: subtle silver foreground, no bold.
+	// Headers are rendered as uppercase by the table renderer for visual distinction.
+	TableHeaderStyle = lipgloss.NewStyle().Foreground(ColorSubtle)
+
+	// TablePrimaryColumnStyle for the first column: brand orange for emphasis.
+	TablePrimaryColumnStyle = lipgloss.NewStyle().Foreground(ColorBrandOrange)
 )
 
 // RenderFixedWidth renders text at a fixed width using lipgloss.
-// Used by tableprinter to set column widths without importing lipgloss directly.
+// Used by tui.TablePrinter to set column widths without importing lipgloss directly.
 func RenderFixedWidth(s string, width int) string {
 	return lipgloss.NewStyle().Width(width).Render(s)
 }

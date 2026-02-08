@@ -56,7 +56,7 @@ cs := ios.ColorScheme()
 fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available")
 ```
 
-- **Tables**: `tableprinter.New(ios, headers...)` — never raw `tabwriter`
+- **Tables**: `f.TUI.NewTable(headers...)` — never raw `tabwriter`
 - **Semantic colors**: `cs.Primary/Success/Warning/Error()` via `ios.ColorScheme()`
 - **Icons**: `cs.SuccessIcon()`, `cs.WarningIcon()`, `cs.FailureIcon()`, `cs.InfoIcon()`
 - **Data output**: `ios.Out` (stdout) — tables, IDs, JSON, command results

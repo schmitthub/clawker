@@ -17,6 +17,10 @@ Heavy command helpers have been extracted to dedicated packages:
 | `errors.go` | `ExitError`, `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
+| `format.go` | `Format`, `ParseFormat`, `FormatFlags`, `AddFormatFlags` -- reusable `--format`/`--json`/`--quiet` flag handling |
+| `json.go` | `WriteJSON` -- pretty-printed JSON output (replaces deprecated `OutputJSON`) |
+| `filter.go` | `Filter`, `ParseFilters`, `ValidateFilterKeys`, `FilterFlags`, `AddFilterFlags` -- reusable `--filter key=value` flag handling |
+| `template.go` | `DefaultFuncMap`, `ExecuteTemplate` -- Go template execution for `--format TEMPLATE` output |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
 
 ## Factory (`factory.go`)
@@ -121,6 +125,118 @@ All return `cobra.PositionalArgs` (except `NoArgs` which is one directly).
 
 All validators include binary name, command path, and usage line in error messages.
 
+## Format Flags (`format.go`)
+
+Reusable `--format`, `--json`, and `-q`/`--quiet` flag handling for list commands. Follows Docker CLI conventions.
+
+```go
+// Mode constants
+const ModeDefault = ""           // default table output
+const ModeTable = "table"        // explicit table
+const ModeJSON = "json"          // JSON output
+const ModeTemplate = "template"  // Go template (e.g. "{{.Name}}")
+const ModeTableTemplate = "table-template"  // table with Go template columns
+
+// Parse a --format value
+f, err := ParseFormat("table {{.Name}}\t{{.ID}}")
+f.IsDefault()       // true for ModeDefault or ModeTable
+f.IsJSON()          // true for ModeJSON
+f.IsTemplate()      // true for ModeTemplate or ModeTableTemplate
+f.IsTableTemplate() // true for ModeTableTemplate only
+f.Template()        // the Go template string
+
+// Register flags on a cobra command (returns pointer populated during PreRunE)
+ff := AddFormatFlags(cmd)
+// After execution: ff.Format, ff.Quiet
+
+// Convenience delegates on FormatFlags (avoid opts.Format.Format.IsJSON() stutter):
+ff.IsJSON()          // delegates to ff.Format.IsJSON()
+ff.IsTemplate()      // delegates to ff.Format.IsTemplate()
+ff.IsDefault()       // delegates to ff.Format.IsDefault()
+ff.IsTableTemplate() // delegates to ff.Format.IsTableTemplate()
+ff.Template()        // returns ff.Format (the Format value itself)
+```
+
+**`AddFormatFlags`** registers `--format`, `--json`, `--quiet` and chains PreRunE validation:
+- `--json` and `--format` are mutually exclusive (FlagError)
+- `--quiet` and `--format`/`--json` are mutually exclusive (FlagError)
+- Preserves any existing PreRunE on the command
+- Uses `cmd.Flags().Changed()` to detect explicitly-set flags
+
+### Generic Slice Conversion
+
+```go
+func ToAny[T any](items []T) []any
+```
+
+Converts a typed slice to `[]any` for `ExecuteTemplate`. Use instead of per-command `toAny` helpers.
+
+## Template Execution (`template.go`)
+
+Go template execution for `--format TEMPLATE` and `--format "table TEMPLATE"` output modes.
+
+```go
+// DefaultFuncMap returns Docker CLI-compatible template functions:
+// json, upper, lower, title, split, join, truncate
+fm := DefaultFuncMap()
+
+// ExecuteTemplate parses and executes a Go template for each item.
+// Table-template mode aligns columns through tabwriter.
+err := ExecuteTemplate(w, format, items)
+```
+
+**Functions in `DefaultFuncMap()`:**
+- `json` — JSON-encode a value; returns `(string, error)` — errors propagate through `template.Execute()`
+- `upper` / `lower` — case conversion
+- `title` — capitalize first rune (unicode-safe via `utf8.DecodeRuneInString`)
+- `split` / `join` — string splitting/joining
+- `truncate` — truncate with "..." ellipsis; negative n returns empty string
+
+**`ExecuteTemplate` behavior:**
+- Plain template (`ModeTemplate`): writes each item directly to writer
+- Table template (`ModeTableTemplate`): wraps writer in tabwriter for column alignment
+- Returns descriptive errors: "invalid template" for parse errors, "template execution failed" for execution errors, "writing output" for write errors
+- Stdlib only: `text/template`, `text/tabwriter`, `encoding/json`, `unicode/utf8`
+
+## JSON Output (`json.go`)
+
+Pretty-printed JSON output for `--json` and `--format json` modes. Replaces deprecated `OutputJSON` from `output.go`.
+
+```go
+func WriteJSON(w io.Writer, data any) error
+```
+
+Writes indented JSON (2-space indent) followed by a newline. HTML escaping is disabled (`SetEscapeHTML(false)`) so values like `<none>:<none>` are written literally, not as `\u003cnone\u003e`. Accepts any JSON-serializable value (structs, slices, maps, nil).
+
+## Filter Flags (`filter.go`)
+
+Reusable `--filter key=value` flag handling for list commands. Supports repeatable `--filter` flags.
+
+```go
+type Filter struct { Key, Value string }
+
+func ParseFilters(raw []string) ([]Filter, error)
+func ValidateFilterKeys(filters []Filter, validKeys []string) error
+
+type FilterFlags struct { raw []string }  // unexported raw field
+func AddFilterFlags(cmd *cobra.Command) *FilterFlags
+func (ff *FilterFlags) Parse() ([]Filter, error)
+```
+
+**`AddFilterFlags`** registers a repeatable `--filter` flag via `StringArrayVar` (not `StringSliceVar`, to handle commas in values).
+
+**`ParseFilters`** splits on first `=` only (values may contain `=`). Empty keys return `FlagError`.
+
+**`ValidateFilterKeys`** checks each filter's key against a command-specific allow list. Returns `FlagError` listing valid keys on mismatch.
+
+**Usage pattern in commands:**
+```go
+opts.Filter = cmdutil.AddFilterFlags(cmd)
+// In run function:
+filters, err := opts.Filter.Parse()
+cmdutil.ValidateFilterKeys(filters, []string{"reference"})
+```
+
 ## Sentinels (`project.go`)
 
 `ErrAborted` -- returned when user cancels an interactive operation
@@ -150,5 +266,10 @@ func ParseWorktreeFlag(value, agentName string) (*WorktreeSpec, error)
 
 ## Tests
 
+- `errors_test.go` -- unit tests for error types
+- `format_test.go` -- unit tests for format parsing, methods, flag registration, validation, PreRunE chaining, FormatFlags convenience delegates, ToAny generic
+- `json_test.go` -- unit tests for WriteJSON (struct, slice, empty, nil, pretty-printed, no HTML escaping)
+- `filter_test.go` -- unit tests for ParseFilters (8 cases), ValidateFilterKeys, AddFilterFlags, FilterFlags.Parse
 - `required_test.go` -- unit tests for argument validators
+- `template_test.go` -- unit tests for DefaultFuncMap (json error propagation, title multibyte, truncate negative), ExecuteTemplate (plain, table, functions, errors, empty, write errors)
 - `worktree_test.go` -- unit tests for worktree flag parsing
