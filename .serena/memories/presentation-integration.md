@@ -2,7 +2,7 @@
 
 ## Branch & Status
 **Branch**: `a/presentation-integration`
-**Latest Commit**: `043f4af` — refactor(term): split into term, docker/pty, signals packages
+**Latest Commit**: `c070f80` — fix: address Copilot PR review findings + dangerous-cmd warning routing
 **Status**: All phases complete. 3202 unit tests pass (count varies with test refactoring). Both clawker and fawker binaries compile.
 
 ## Completed Work (All Done)

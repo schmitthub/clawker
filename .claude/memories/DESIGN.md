@@ -171,36 +171,9 @@ func (e *Engine) IsContainerManaged(ctx context.Context, containerID string) (bo
 
 **Whitelist Approach**
 
-Operations are defined at compile-time via an interface. Only exposed methods are accessible:
+`Engine` is a concrete struct (not an interface) that embeds the Docker `APIClient` and selectively overrides methods with label-injecting wrappers. Only wrapped methods enforce isolation — unwrapped SDK methods remain accessible but are not used by clawker's higher layers.
 
-```go
-type Engine interface {
-    // Exposed operations (label-filterable)
-    ContainerList(ctx context.Context, opts ListOptions) ([]Container, error)
-    ContainerCreate(ctx context.Context, config ContainerConfig) (string, error)
-    ContainerStart(ctx context.Context, id string) error
-    ContainerStop(ctx context.Context, id string, timeout *time.Duration) error
-    ContainerRemove(ctx context.Context, id string, opts RemoveOptions) error
-    ContainerLogs(ctx context.Context, id string, opts LogsOptions) (io.ReadCloser, error)
-
-    VolumeCreate(ctx context.Context, opts VolumeCreateOptions) (Volume, error)
-    VolumeList(ctx context.Context, opts VolumeListOptions) ([]Volume, error)
-    VolumeRemove(ctx context.Context, id string, force bool) error
-
-    NetworkCreate(ctx context.Context, name string, opts NetworkCreateOptions) (string, error)
-    NetworkList(ctx context.Context, opts NetworkListOptions) ([]Network, error)
-    NetworkRemove(ctx context.Context, id string) error
-
-    ImageBuild(ctx context.Context, buildContext io.Reader, opts ImageBuildOptions) (BuildResponse, error)
-    ImagePull(ctx context.Context, ref string, opts ImagePullOptions) (io.ReadCloser, error)
-    ImageList(ctx context.Context, opts ImageListOptions) ([]Image, error)
-    ImageRemove(ctx context.Context, id string, opts ImageRemoveOptions) ([]ImageDeleteResponse, error)
-
-    // NOT exposed: system prune, network disconnect (non-managed), etc.
-}
-```
-
-**Blocked by Omission**: Any Docker SDK method not in this interface is inaccessible. Operations that cannot apply label filters (e.g., `system prune` without filters) are simply not exposed.
+**Blocked by Design**: Clawker's `internal/docker` layer only calls Engine methods that have label enforcement. Operations that cannot apply label filters (e.g., `system prune` without filters) are not called by clawker code.
 
 **Docker API Compatibility**: Minimum supported version defined at compile-time. No feature detection or graceful degradation—fail fast on incompatible versions.
 
@@ -222,7 +195,12 @@ Returns *cmdutil.Factory                      Commands consume
 with all closures wired                       *cmdutil.Factory
 ```
 
-Factory is a pure struct with closure fields — no methods. The constructor in `internal/cmd/factory/default.go` wires all `sync.Once` lazy closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
+Factory is a pure struct with 10 closure/value fields — no methods. 4 eager (set directly), 6 lazy (closures with `sync.Once`):
+
+**Eager**: `Version`, `Commit` (strings), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
+**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() *git.GitManager`), `HostProxy` (`func() *hostproxy.Manager`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+
+The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
 ### 3.4 Dependency Placement Decision Tree
 
@@ -310,7 +288,6 @@ Commands mirror the Docker CLI structure:
 |---------|-------|----------|
 | `clawker <verb>` | Container runtime operations | `run`, `stop`, `build` |
 | `clawker <noun> <verb>` | Resource operations | `container ls`, `volume rm` |
-| `clawker <noun> <verb>` | Multi-agent operations | `swarm start`, `swarm stop` |
 
 ### 4.2 Primary Nouns
 
@@ -320,7 +297,8 @@ All Docker nouns are supported:
 - `volume` - Volume management
 - `network` - Network management
 - `image` - Image management
-- `swarm` - Multi-agent operations (clawker-specific)
+- `project` - Project registry management
+- `worktree` - Git worktree management
 
 ### 4.3 Primary Verbs
 
@@ -466,25 +444,7 @@ This prevents accidental operations on user's non-clawker Docker resources.
 - Many agents can share one image
 - One agent uses one image at a time
 
-### 8.2 Parallel Operations
-
-Multiple containers can start in parallel:
-
-```bash
-clawker swarm start --agents=3  # Start 3 agents concurrently
-```
-
-### 8.3 Bulk Operations via `swarm`
-
-The `swarm` noun handles multi-agent commands:
-
-```bash
-clawker swarm start          # Start all agents for project
-clawker swarm stop           # Stop all agents for project
-clawker swarm status         # Status of all agents
-```
-
-### 8.4 Race Condition Resolution
+### 8.2 Race Condition Resolution
 
 When two processes attempt to create the same agent:
 
@@ -519,13 +479,35 @@ Container images are built with OTEL environment variables pointing to the colle
 
 ### 9.3 Progress Reporting
 
-| Operation Type | Indicator |
-|----------------|-----------|
-| Indeterminate | Spinner |
-| Determinate (image pull) | Progress bar |
-| Streaming (logs) | Partial screen with progress indicators |
+| Operation Type | Indicator | Package |
+|----------------|-----------|---------|
+| Indeterminate (short) | Goroutine spinner | `iostreams` (`StartSpinner`, `RunWithSpinner`) |
+| Determinate (image pull) | Progress bar | `iostreams` (`ProgressBar`) |
+| Multi-step (image build) | Tree display with per-stage child windows | `tui` (`RunProgress`) |
+| Streaming (logs) | Partial screen with progress indicators | `iostreams` |
 
-Verbose mode shows full streaming logs.
+**Tree display** is the primary pattern for multi-step operations. TTY mode renders a BubbleTea sliding-window view; plain mode prints incremental text. Both driven by the same `chan ProgressStep` event channel.
+
+### 9.4 Presentation Layer Patterns
+
+The **4-scenario output model** determines which packages a command imports:
+
+| Scenario | Packages | When to use |
+|----------|----------|-------------|
+| Static | `iostreams` + `fmt` | Print-and-done: lists, inspect, rm |
+| Static-interactive | `iostreams` + `prompter` | Confirmation prompts mid-flow |
+| Live-display | `iostreams` + `tui` | Continuous rendering, no user input |
+| Live-interactive | `iostreams` + `tui` | Full keyboard input, navigation |
+
+**TUI Factory noun** (`*tui.TUI`): Created eagerly by Factory. Commands capture `f.TUI` in their Options struct. Lifecycle hooks are registered later via `RegisterHooks()` — this decouples hook registration from TUI creation.
+
+**Key types**:
+- `tui.TUI` — Factory noun wrapping IOStreams; owns hooks + delegates to `RunProgress`
+- `tui.RunProgress(ctx, ios, ch, cfg)` — Generic progress display (BubbleTea TTY + plain text fallback)
+- `tui.ProgressStep` — Channel event: `{ID, Name, Status, LogLine, Cached, Error}`
+- `tui.ProgressDisplayConfig` — Configuration with `CompletionVerb`, callback functions (`IsInternal`, `CleanName`, `ParseGroup`, `FormatDuration`, `OnLifecycle`)
+- `tui.LifecycleHook` — Generic hook function type; threaded via config, nil = no-op
+- `tui.HookResult` — `{Continue bool, Message string, Err error}` — controls post-hook flow
 
 ## 10. Container Lifecycle
 
@@ -657,3 +639,8 @@ func TestNewCmdStop(t *testing.T) {
 | `github.com/spf13/viper` | Configuration management |
 | `github.com/moby/moby` | Docker SDK |
 | `github.com/rs/zerolog` | Structured logging |
+| `github.com/charmbracelet/bubbletea` | Terminal UI framework (TUI package only) |
+| `github.com/charmbracelet/bubbles` | TUI components — spinner, viewport, key (TUI package only) |
+| `github.com/charmbracelet/lipgloss` | Terminal styling (iostreams package only) |
+| `github.com/go-git/go-git/v6` | Git operations (git package only) |
+| `golang.org/x/term` | Terminal capabilities (term package only) |

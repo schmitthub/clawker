@@ -23,3 +23,7 @@ func NewCmdImage(f *cmdutil.Factory) *cobra.Command
 ```
 
 Parent command only (no RunE). Aggregates subcommands from dedicated packages.
+
+## Build Subcommand (`build/`)
+
+`build/build.go` uses the **live-display** output scenario: `BuildOptions` captures both `IOStreams` and `TUI` (`*tui.TUI`) from Factory. Build progress is displayed via `opts.TUI.RunProgress(ctx, ch, cfg)` which renders a tree display (BubbleTea in TTY, plain text otherwise). BuildKit progress events flow through `whail.BuildProgressFunc` callback → `chan tui.ProgressStep` → TUI renderer.

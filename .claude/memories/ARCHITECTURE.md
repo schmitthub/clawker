@@ -125,7 +125,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 - `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. IOStreams (eager) → 2. WorkDir (lazy closure) → 3. Config gateway (lazy, internal sync.Once) → 4. Client (lazy, reads Config) → 5. HostProxy (lazy) → 6. Prompter (lazy)
+1. IOStreams (eager) → 2. TUI (eager, wraps IOStreams) → 3. Config gateway (lazy, internal sync.Once) → 4. HostProxy (lazy) → 5. SocketBridge (lazy) → 6. Client (lazy, reads Config) → 7. GitManager (lazy, reads Config) → 8. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -165,7 +165,9 @@ User interaction utilities with TTY and CI awareness.
 | Package | Purpose |
 |---------|---------|
 | `internal/workspace` | Bind vs Snapshot strategies for host-container file sharing |
-| `internal/term` | PTY handling for interactive sessions |
+| `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
+| `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
+| `internal/tableprinter` | TTY-aware table printing with styled headers (imports iostreams, text) |
 | `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`) |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
@@ -182,6 +184,28 @@ User interaction utilities with TTY and CI awareness.
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.
+
+**Note:** `cmd/fawker/` is the demo CLI — faked dependencies, recorded scenarios, no Docker required. Used for visual UAT (`make fawker && ./bin/fawker image build`).
+
+### Presentation Layer
+
+Commands follow a **4-scenario output model** — each command picks the simplest scenario that fits:
+
+| Scenario | Description | Packages | Example |
+|----------|-------------|----------|---------|
+| Static | Print and done (data, status, results) | `iostreams` + `fmt` | `container ls`, `volume rm` |
+| Static-interactive | Static output with y/n prompts mid-flow | `iostreams` + `prompter` | `image prune` |
+| Live-display | No user input, continuous rendering with layout | `iostreams` + `tui` | `image build` progress |
+| Live-interactive | Full keyboard/mouse input, stateful navigation | `iostreams` + `tui` | `monitor up` |
+
+**Import boundaries** (enforced by tests):
+- Only `internal/iostreams` imports `lipgloss`
+- Only `internal/tui` imports `bubbletea` and `bubbles`
+- Only `internal/term` imports `golang.org/x/term`
+
+**TUI Factory noun**: Commands access TUI via `f.TUI` (`*tui.TUI`). `NewTUI(ios)` is created eagerly in the factory. Commands call `opts.TUI.RunProgress(...)` for multi-step tree displays, registering lifecycle hooks via `opts.TUI.RegisterHooks(...)`.
+
+See `cli-output-style-guide` Serena memory for full scenario details and rendering specs.
 
 ### internal/hostproxy - Host Proxy Service
 
@@ -334,7 +358,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │
 │                                                                 │
-│  Clawker examples: logger, tui, monitor, docs, git               │
+│  Clawker examples: logger, term, text, signals, monitor, docs, git│
 └────────────────────────────┬────────────────────────────────────┘
                              │ imported by
                              ▼
@@ -349,7 +373,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │                                                                 │
 │  Clawker examples:                                              │
 │    config/ → logger                                             │
-│    iostreams/ → logger, tui                                     │
+│    iostreams/ → logger, term, text                              │
 │    cmdutil/ → type-only imports for Factory struct fields +     │
 │              output helpers via iostreams                        │
 └────────────────────────────┬────────────────────────────────────┘
@@ -363,6 +387,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │                                                                 │
 │  Clawker examples:                                              │
 │    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
+│    tui/ → iostreams, text (+ bubbletea, bubbles)                │
 │    hostproxy/ → logger                                          │
 │    socketbridge/ → config, logger                               │
 │    prompter/ → iostreams                                        │
@@ -379,8 +404,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
-│    term/ → docker, logger                                       │
-│    ralph/ → docker, logger; ralph/tui → tui (leaf)              │
+│    ralph/ → docker, logger; ralph/tui → tui (middle)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
