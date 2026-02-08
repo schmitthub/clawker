@@ -13,8 +13,8 @@ Heavy command helpers have been extracted to dedicated packages:
 | File | Purpose |
 |------|---------|
 | `factory.go` | `Factory` -- pure struct with closure fields (no methods, no construction logic) |
-| `output.go` | `ExitError` + deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` |
-| `errors.go` | `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
+| `output.go` | Deprecated: `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` |
+| `errors.go` | `ExitError`, `FlagError`, `FlagErrorf`, `FlagErrorWrap`, `SilentError` — typed error vocabulary for centralized rendering |
 | `required.go` | `NoArgs`, `ExactArgs`, `RequiresMinArgs`, `RequiresMaxArgs`, `RequiresRangeArgs`, `AgentArgsValidator`, `AgentArgsValidatorExact` |
 | `project.go` | `ErrAborted` sentinel (stdlib only) |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |

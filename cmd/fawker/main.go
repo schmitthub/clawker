@@ -62,7 +62,7 @@ func pauseForReview(f *cmdutil.Factory, noPause bool) {
 		return
 	}
 	cs := f.IOStreams.ColorScheme()
-	fmt.Fprintf(os.Stderr, "\n%s\n", cs.Muted("⏸  Done — press Enter to exit fawker"))
+	fmt.Fprintf(f.IOStreams.ErrOut, "\n%s\n", cs.Muted("⏸  Done — press Enter to exit fawker"))
 
 	raw := term.NewRawModeStdin()
 	if err := raw.Enable(); err != nil {

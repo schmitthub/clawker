@@ -105,6 +105,52 @@ func TestProcessBuildOutputWithProgress_CacheHit(t *testing.T) {
 	assert.True(t, cached, "expected at least one cached step event")
 }
 
+func TestProcessBuildOutputWithProgress_CachedStepTerminalStatus(t *testing.T) {
+	// Verify that a cached step's terminal status is BuildStepCached (not
+	// BuildStepComplete). Before the fix, the step-transition logic
+	// unconditionally emitted BuildStepComplete for the previous step,
+	// overwriting the cached status.
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/3 : FROM node:20-slim\n"},
+		buildEvent{Stream: " ---> Using cache\n"},
+		buildEvent{Stream: "Step 2/3 : RUN apt-get update\n"},
+		buildEvent{Stream: "reading package lists...\n"},
+		buildEvent{Stream: "Step 3/3 : COPY . /app\n"},
+		buildEvent{Stream: " ---> Using cache\n"},
+	)
+
+	collector := &eventCollector{}
+	client := &Client{Engine: clawkerEngine(whailtest.NewFakeAPIClient())}
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	require.NoError(t, err)
+
+	events := collector.all()
+
+	// Collect only terminal events per step (last event for each stepID).
+	terminal := make(map[string]whail.BuildProgressEvent)
+	for _, e := range events {
+		terminal[e.StepID] = e
+	}
+
+	// step-0 (FROM, cached): terminal status must be BuildStepCached.
+	step0 := terminal["step-0"]
+	assert.Equal(t, whail.BuildStepCached, step0.Status,
+		"cached step-0 terminal status should be BuildStepCached, got %v", step0.Status)
+	assert.True(t, step0.Cached, "step-0 Cached field should be true")
+
+	// step-1 (RUN, not cached): terminal status must be BuildStepComplete.
+	step1 := terminal["step-1"]
+	assert.Equal(t, whail.BuildStepComplete, step1.Status,
+		"non-cached step-1 terminal status should be BuildStepComplete, got %v", step1.Status)
+	assert.False(t, step1.Cached, "step-1 Cached field should be false")
+
+	// step-2 (COPY, cached, final step): terminal status must be BuildStepCached.
+	step2 := terminal["step-2"]
+	assert.Equal(t, whail.BuildStepCached, step2.Status,
+		"cached step-2 (final) terminal status should be BuildStepCached, got %v", step2.Status)
+	assert.True(t, step2.Cached, "step-2 Cached field should be true")
+}
+
 func TestProcessBuildOutputWithProgress_Error(t *testing.T) {
 	stream := buildLegacyStream(
 		buildEvent{Stream: "Step 1/2 : FROM node:20-slim\n"},

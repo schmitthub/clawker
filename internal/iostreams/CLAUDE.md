@@ -72,7 +72,7 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 ### Build Progress Display
 
-**Moved to `internal/tui/buildprogress.go`** — See `internal/tui/CLAUDE.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `tui.RunBuildProgress(ios, project, imageTag, mode, eventCh)`.
+**Moved to `internal/tui/progress.go`** — See `internal/tui/CLAUDE.md` for full API. Uses BubbleTea for TTY mode, sequential text for plain mode. Entry point: `(*tui.TUI).RunProgress(ctx, cfg)` via Factory noun.
 
 **Pager**: `SetPager(cmd)`, `GetPager()`, `StartPager()`, `StopPager()`. Precedence: `CLAWKER_PAGER` > `PAGER` > platform default.
 

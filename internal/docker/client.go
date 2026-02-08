@@ -273,6 +273,7 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 	var currentStepID string
 	var currentStepIndex int
 	var totalSteps int
+	var currentStepCached bool
 
 	for scanner.Scan() {
 		var event buildEvent
@@ -331,16 +332,22 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 
 			// Complete previous step if there was one.
 			if currentStepID != "" {
+				status := whail.BuildStepComplete
+				if currentStepCached {
+					status = whail.BuildStepCached
+				}
 				onProgress(whail.BuildProgressEvent{
 					StepID:     currentStepID,
 					StepIndex:  currentStepIndex,
 					TotalSteps: totalSteps,
-					Status:     whail.BuildStepComplete,
+					Status:     status,
+					Cached:     currentStepCached,
 				})
 			}
 
 			currentStepIndex = stepNum - 1 // 0-based
 			currentStepID = fmt.Sprintf("step-%d", currentStepIndex)
+			currentStepCached = false
 			stepName := m[3]
 
 			onProgress(whail.BuildProgressEvent{
@@ -355,6 +362,7 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 
 		// Check for cache hit indicator.
 		if strings.HasPrefix(stream, "---> Using cache") && currentStepID != "" {
+			currentStepCached = true
 			onProgress(whail.BuildProgressEvent{
 				StepID:     currentStepID,
 				StepIndex:  currentStepIndex,
@@ -383,11 +391,16 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 
 	// Complete the final step.
 	if currentStepID != "" {
+		status := whail.BuildStepComplete
+		if currentStepCached {
+			status = whail.BuildStepCached
+		}
 		onProgress(whail.BuildProgressEvent{
 			StepID:     currentStepID,
 			StepIndex:  currentStepIndex,
 			TotalSteps: totalSteps,
-			Status:     whail.BuildStepComplete,
+			Status:     status,
+			Cached:     currentStepCached,
 		})
 	}
 

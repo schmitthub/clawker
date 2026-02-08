@@ -396,7 +396,7 @@ func (v *Validator) validateRunInstruction(idx int, run RunInstruction, fieldPre
 	cmds := []string{run.Cmd, run.Alpine, run.Debian}
 	for _, cmd := range cmds {
 		if cmd != "" {
-			warnIfDangerousCommand(field, cmd)
+			v.warnIfDangerousCommand(field, cmd)
 		}
 	}
 }
@@ -452,7 +452,7 @@ func (v *Validator) validateInjectionLines(field string, lines []string) {
 		}
 
 		// Warn about dangerous patterns
-		warnIfDangerousCommand(lineField, line)
+		v.warnIfDangerousCommand(lineField, line)
 	}
 }
 
@@ -492,13 +492,10 @@ var dangerousPatterns = []struct {
 	{regexp.MustCompile(`rm\s+-rf\s+/[^/\s]`), "recursive deletion from root is dangerous"},
 }
 
-func warnIfDangerousCommand(field, cmd string) {
+func (v *Validator) warnIfDangerousCommand(field, cmd string) {
 	for _, dp := range dangerousPatterns {
 		if dp.pattern.MatchString(cmd) {
-			logger.Warn().
-				Str("field", field).
-				Str("warning", dp.warning).
-				Msg("potentially dangerous command detected in configuration")
+			v.addWarning(field, dp.warning)
 		}
 	}
 }
