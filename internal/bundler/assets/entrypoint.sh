@@ -56,7 +56,9 @@ CREDS_FILE=".credentials.json"
 if [ -d "$CREDS_STAGING" ]; then
     # Restrict staging directory so files created later by Claude Code
     # are not readable by other users (defense-in-depth)
-    chmod 700 "$CREDS_STAGING"
+    if ! chmod 700 "$CREDS_STAGING"; then
+        echo "[clawker] warning: failed to restrict globals directory permissions" >&2
+    fi
     migration_ok=true
     # Migrate: if credentials exist locally but not on global volume, copy them
     if [ -f "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -L "$CONFIG_DIR/$CREDS_FILE" ] && [ ! -f "$CREDS_STAGING/$CREDS_FILE" ]; then
@@ -65,16 +67,21 @@ if [ -d "$CREDS_STAGING" ]; then
             migration_ok=false
         fi
     fi
-    # Replace local file with symlink only if global volume has (or will have) credentials
+    # Replace local file with symlink. Covers: (1) migration succeeded, (2) first-time setup (symlink target created later by Claude Code)
     if [ "$migration_ok" = true ] || [ -f "$CREDS_STAGING/$CREDS_FILE" ]; then
-        rm -f "$CONFIG_DIR/$CREDS_FILE"
-        if ! ln -s "$CREDS_STAGING/$CREDS_FILE" "$CONFIG_DIR/$CREDS_FILE"; then
+        if ln -sf "$CREDS_STAGING/$CREDS_FILE" "$CONFIG_DIR/$CREDS_FILE.tmp" && \
+           mv -f "$CONFIG_DIR/$CREDS_FILE.tmp" "$CONFIG_DIR/$CREDS_FILE"; then
+            : # success
+        else
+            rm -f "$CONFIG_DIR/$CREDS_FILE.tmp"
             emit_error "credentials" "failed to create credentials symlink to global volume"
         fi
     fi
     # Enforce restrictive permissions on credentials
     if [ -f "$CREDS_STAGING/$CREDS_FILE" ]; then
-        chmod 600 "$CREDS_STAGING/$CREDS_FILE"
+        if ! chmod 600 "$CREDS_STAGING/$CREDS_FILE"; then
+            echo "[clawker] warning: failed to restrict credentials permissions" >&2
+        fi
     fi
 fi
 
