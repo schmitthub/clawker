@@ -92,6 +92,21 @@ func newWizardModel(fields []WizardField) wizardModel {
 		confirmFields: make(map[int]ConfirmField),
 	}
 
+	// Validate field definitions (programming errors → panic).
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		if f.ID == "" {
+			panic("WizardField.ID must not be empty")
+		}
+		if seen[f.ID] {
+			panic(fmt.Sprintf("duplicate WizardField.ID: %q", f.ID))
+		}
+		seen[f.ID] = true
+		if f.Kind == FieldSelect && len(f.Options) == 0 {
+			panic(fmt.Sprintf("WizardField %q: FieldSelect requires at least one option", f.ID))
+		}
+	}
+
 	// Create field instances for each WizardField.
 	for i, f := range fields {
 		m.createFieldInstance(i, f)
@@ -101,6 +116,9 @@ func newWizardModel(fields []WizardField) wizardModel {
 	first := m.nextVisibleStep(-1)
 	if first >= 0 {
 		m.currentStep = first
+	} else {
+		// All steps skipped — auto-complete with empty values.
+		m.submitted = true
 	}
 
 	return m
@@ -128,6 +146,8 @@ func (m *wizardModel) createFieldInstance(idx int, f WizardField) {
 		m.textFields[idx] = NewTextField(f.ID, f.Prompt, opts...)
 	case FieldConfirm:
 		m.confirmFields[idx] = NewConfirmField(f.ID, f.Prompt, f.DefaultYes)
+	default:
+		panic(fmt.Sprintf("unsupported WizardFieldKind: %d", f.Kind))
 	}
 }
 
@@ -350,8 +370,9 @@ func (m *wizardModel) currentFieldValue(idx int) string {
 		return m.textFields[idx].Value()
 	case FieldConfirm:
 		return m.confirmFields[idx].Value()
+	default:
+		return ""
 	}
-	return ""
 }
 
 // currentFieldInit returns the Init cmd for the current step's field.
@@ -397,7 +418,7 @@ func (m *wizardModel) currentFieldView() string {
 // ---------------------------------------------------------------------------
 
 // updateAllFieldSizes propagates the terminal dimensions to all field instances.
-// Reserves lines for: stepper (1) + blank (1) + help (1) + blank (1) = 4.
+// Reserves lines for: stepper bar (1) + gap after stepper (1) + gap before help (1) + help bar (1) = 4.
 func (m *wizardModel) updateAllFieldSizes() {
 	fieldHeight := m.height - 4
 	if fieldHeight < 3 {
@@ -479,7 +500,8 @@ func (m *wizardModel) helpBar() string {
 		)
 	case FieldConfirm:
 		return QuickHelp(
-			"\u2190\u2192", "toggle",
+			"←→", "toggle",
+			"y/n", "set",
 			"enter", "confirm",
 			"esc", "back",
 			"ctrl+c", "quit",

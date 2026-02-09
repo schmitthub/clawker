@@ -363,3 +363,46 @@ func TestConfirmField_CtrlC(t *testing.T) {
 	assert.False(t, f.IsConfirmed(), "Ctrl+C should not confirm")
 	require.NotNil(t, cmd, "Ctrl+C should return tea.Quit cmd")
 }
+
+// ---------------------------------------------------------------------------
+// SetSize tests
+// ---------------------------------------------------------------------------
+
+func TestTextField_SetSize_SmallWidth(t *testing.T) {
+	f := NewTextField("name", "Enter name")
+
+	// Width 0 should clamp input width to 1.
+	f = f.SetSize(0, 10)
+	assert.Equal(t, "Enter name", f.Prompt, "prompt should be unchanged")
+
+	// Width 3 results in inputWidth = 3-4 = -1, clamped to 1.
+	f = f.SetSize(3, 10)
+
+	// Width 10 results in inputWidth = 10-4 = 6.
+	f = f.SetSize(10, 10)
+}
+
+func TestSelectField_SetSize(t *testing.T) {
+	f := NewSelectField("test", "Pick one", []FieldOption{
+		{Label: "A", Description: "Option A"},
+		{Label: "B", Description: "Option B"},
+	}, 0)
+
+	f = f.SetSize(60, 20)
+
+	// Value should still be accessible after resize.
+	assert.Equal(t, "A", f.Value())
+	assert.Equal(t, 0, f.SelectedIndex())
+}
+
+func TestConfirmField_SetSize(t *testing.T) {
+	f := NewConfirmField("confirm", "Are you sure?", true)
+
+	// SetSize is a no-op but should not panic.
+	f = f.SetSize(80, 24)
+	f = f.SetSize(0, 0)
+
+	// Value should be unchanged.
+	assert.True(t, f.BoolValue())
+	assert.Equal(t, "yes", f.Value())
+}

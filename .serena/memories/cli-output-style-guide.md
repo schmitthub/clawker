@@ -135,22 +135,25 @@ func runPrune(opts *PruneOptions) error {
 }
 ```
 
-### Hybrid Scenario 2+3: Static-Interactive + Live-Display
+### Hybrid Scenario 3+4: Wizard + Live-Display
 
-Some commands combine interactive prompts with live progress display. The `init` command is the canonical example: it prompts the user for choices (Scenario 2), then runs a TUI progress display for the image build (Scenario 3).
+Some commands combine an interactive wizard (Scenario 4) with live progress display (Scenario 3). The `init` command is the canonical example: it runs a multi-step wizard for user choices, then a TUI progress display for the image build.
 
 **Stream strategy:**
-- Prompts phase: same as Scenario 2 (prompts to stderr, static output to stderr)
+- Wizard phase: BubbleTea owns terminal (alt screen), wizard manages all rendering
 - Progress phase: same as Scenario 3 (TUI manages terminal, summary to stderr)
 - After both phases: static next steps to stderr
 
 ```go
 func Run(ctx context.Context, opts *InitOptions) error {
-    prompter := opts.Prompter()
+    // Phase 1: Interactive wizard (Scenario 4)
+    fields := buildWizardFields()
+    result, err := opts.TUI.RunWizard(fields)
+    if err != nil { return fmt.Errorf("wizard failed: %w", err) }
+    if !result.Submitted { return nil }
 
-    // Phase 1: Interactive prompts (Scenario 2)
-    idx, err := prompter.Select("Build an initial base image?", options, 0)
-    // ...
+    buildImage := result.Values["build"] == "Yes"
+    flavor := result.Values["flavor"]
 
     // Phase 2: TUI progress display (Scenario 3)
     ch := make(chan tui.ProgressStep, 4)
@@ -674,6 +677,52 @@ prompter.PromptForConfirmation(cmd.InOrStdin(), "Continue?")
 // GOOD — uses IOStreams, testable, handles non-interactive
 ok, err := f.Prompter().Confirm("Continue?", false)
 ```
+
+### Wizard (Multi-Step Prompts)
+
+For multi-step forms with back-navigation, use `TUI.RunWizard` instead of chaining multiple `Prompter` calls.
+
+**Key types**: `WizardField` (field spec), `WizardResult` (collected values + submitted flag), `FieldOption` (label + description for select fields), `WizardFieldKind` (`FieldSelect`, `FieldText`, `FieldConfirm`)
+
+**Entry point**: `f.TUI.RunWizard(fields []tui.WizardField) (tui.WizardResult, error)`
+
+**Example** (based on init command):
+
+```go
+fields := []tui.WizardField{
+    {
+        ID: "build", Title: "Build Image", Prompt: "Build an initial base image?",
+        Kind: tui.FieldSelect,
+        Options: []tui.FieldOption{
+            {Label: "Yes", Description: "Recommended"},
+            {Label: "No", Description: "Skip for now"},
+        },
+        DefaultIdx: 0,
+    },
+    {
+        ID: "flavor", Title: "Flavor", Prompt: "Select Linux flavor",
+        Kind: tui.FieldSelect,
+        Options: flavorOptions,
+        SkipIf: func(vals tui.WizardValues) bool { return vals["build"] != "Yes" },
+    },
+    {
+        ID: "confirm", Title: "Submit", Prompt: "Proceed?",
+        Kind: tui.FieldConfirm, DefaultYes: true,
+    },
+}
+
+result, err := opts.TUI.RunWizard(fields)
+if err != nil { return fmt.Errorf("wizard failed: %w", err) }
+if !result.Submitted { return nil } // user cancelled
+
+buildImage := result.Values["build"] == "Yes"   // SelectField returns label
+flavor := result.Values["flavor"]                // label string
+confirmed := result.Values["confirm"] == "yes"   // ConfirmField returns "yes"/"no"
+```
+
+**Reference implementation**: `internal/cmd/init/init.go`
+
+See `prompter-wizard` memory for full architecture, field types, navigation, SkipIf behavior, filterQuit internals, and testing patterns.
 
 ## 9. TUI / Progress Display (Tree Display)
 

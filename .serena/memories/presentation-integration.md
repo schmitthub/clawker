@@ -3,7 +3,7 @@
 ## Branch & Status
 **Branch**: `a/presentation-integration`
 **Latest Commit**: `c070f80` — fix: address Copilot PR review findings + dangerous-cmd warning routing
-**Status**: All phases complete. 3202 unit tests pass (count varies with test refactoring). Both clawker and fawker binaries compile.
+**Status**: All phases complete. All unit tests pass (count varies with test refactoring). Both clawker and fawker binaries compile.
 
 ## Completed Work (All Done)
 
@@ -161,7 +161,7 @@ Applied fixes from code-reviewer, test-analyzer, and silent-failure-hunter audit
 
 **New tests:** `TestWizard_SkipIfReevaluation`, `TestWizard_TextFieldInWizard`, `TestWizard_EmptyFields`
 
-**3427 unit tests pass. Both binaries compile.**
+**All unit tests pass. Both binaries compile.**
 
 ## Follow-Up Work
 

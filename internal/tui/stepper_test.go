@@ -137,3 +137,22 @@ func TestStepperBar_ZeroWidth(t *testing.T) {
 	plain := text.StripANSI(result)
 	assert.Contains(t, plain, "Step", "zero width should not truncate")
 }
+
+func TestStepState_String(t *testing.T) {
+	tests := []struct {
+		state StepState
+		want  string
+	}{
+		{StepPendingState, "pending"},
+		{StepActiveState, "active"},
+		{StepCompleteState, "complete"},
+		{StepSkippedState, "skipped"},
+		{StepState(99), "unknown(99)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.state.String())
+		})
+	}
+}

@@ -165,6 +165,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	settingsLoader := cfg.SettingsLoader()
 	if settingsLoader == nil {
 		// Fallback: create a settings loader directly (e.g. first run, no config loaded yet)
+		logger.Warn().Msg("SettingsLoader not set on Config; creating filesystem loader as fallback")
 		var err error
 		settingsLoader, err = config.NewSettingsLoader()
 		if err != nil {

@@ -22,6 +22,22 @@ const (
 	StepSkippedState
 )
 
+// String returns a human-readable representation of the step state.
+func (s StepState) String() string {
+	switch s {
+	case StepPendingState:
+		return "pending"
+	case StepActiveState:
+		return "active"
+	case StepCompleteState:
+		return "complete"
+	case StepSkippedState:
+		return "skipped"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(s))
+	}
+}
+
 // Step represents a single step in a stepper bar.
 type Step struct {
 	Title string    // Short label for the bar

@@ -35,7 +35,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Config Facade (`config.go`)
 
-Eagerly loads all configuration. Public fields never nil (defaults used when config file not found).
+Eagerly loads all configuration. Project, Settings, and Resolution are never nil (defaults used). Registry may be nil if initialization failed — check RegistryInitErr().
 
 `Config{Project *Project, Settings *Settings, Resolution *Resolution, Registry Registry}`. Constructors: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O). Methods: `SettingsLoader()`, `ProjectLoader()`, `RegistryInitErr()`.
 

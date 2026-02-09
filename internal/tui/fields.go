@@ -12,7 +12,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// FieldOption — shared option type for select fields
+// FieldOption — shared option type for select fields and wizard definitions
 // ---------------------------------------------------------------------------
 
 // FieldOption represents a selectable option with a label and description.
@@ -34,8 +34,6 @@ type SelectField struct {
 	Options   []FieldOption
 	list      ListModel
 	confirmed bool
-	width     int
-	height    int
 }
 
 // NewSelectField creates a new SelectField with the given options.
@@ -64,8 +62,6 @@ func NewSelectField(id, prompt string, options []FieldOption, defaultIdx int) Se
 		Prompt:  prompt,
 		Options: options,
 		list:    list,
-		width:   cfg.Width,
-		height:  cfg.Height,
 	}
 }
 
@@ -97,8 +93,8 @@ func (f SelectField) Update(msg tea.Msg) (SelectField, tea.Cmd) {
 // View renders the select field with prompt and compact option list.
 // Each option shows label and description on one line:
 //
-//	> bookworm     Debian stable (Recommended)
-//	  trixie       Debian testing
+//	  > bookworm     Debian stable (Recommended)
+//	    trixie       Debian testing
 func (f SelectField) View() string {
 	promptStyle := iostreams.PanelTitleStyle
 	selectedStyle := iostreams.ListItemSelectedStyle
@@ -173,8 +169,6 @@ func (f SelectField) IsConfirmed() bool {
 
 // SetSize sets the width and height available for rendering.
 func (f SelectField) SetSize(w, h int) SelectField {
-	f.width = w
-	f.height = h
 	f.list = f.list.SetWidth(w).SetHeight(h)
 	return f
 }
@@ -193,7 +187,6 @@ type TextField struct {
 	required  bool
 	confirmed bool
 	errMsg    string
-	width     int
 }
 
 // TextFieldOption is a functional option for configuring a TextField.
@@ -237,7 +230,6 @@ func NewTextField(id, prompt string, opts ...TextFieldOption) TextField {
 		ID:     id,
 		Prompt: prompt,
 		input:  ti,
-		width:  40,
 	}
 	for _, opt := range opts {
 		opt(&f)
@@ -330,10 +322,13 @@ func (f TextField) Err() string {
 	return f.errMsg
 }
 
-// SetSize sets the width and height available for rendering.
+// SetSize sets the width available for the text input.
 func (f TextField) SetSize(w, h int) TextField {
-	f.width = w
-	f.input.Width = w - 4 // Account for indentation
+	inputWidth := w - 4 // Account for indentation
+	if inputWidth < 1 {
+		inputWidth = 1
+	}
+	f.input.Width = inputWidth
 	return f
 }
 
@@ -347,7 +342,6 @@ type ConfirmField struct {
 	Prompt    string
 	value     bool
 	confirmed bool
-	width     int
 }
 
 // NewConfirmField creates a new ConfirmField with the given default value.
@@ -356,7 +350,6 @@ func NewConfirmField(id, prompt string, defaultYes bool) ConfirmField {
 		ID:     id,
 		Prompt: prompt,
 		value:  defaultYes,
-		width:  40,
 	}
 }
 
@@ -436,8 +429,8 @@ func (f ConfirmField) IsConfirmed() bool {
 	return f.confirmed
 }
 
-// SetSize sets the width and height available for rendering.
+// SetSize satisfies the wizard's updateAllFieldSizes contract.
+// ConfirmField renders at a fixed layout, so width/height are unused.
 func (f ConfirmField) SetSize(w, h int) ConfirmField {
-	f.width = w
 	return f
 }

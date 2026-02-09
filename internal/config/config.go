@@ -241,5 +241,8 @@ func (c *Config) RegistryInitErr() error {
 // SetSettingsLoader sets the settings loader for write operations.
 // Used by NewConfigForTest variants and fawker to inject a test-friendly loader.
 func (c *Config) SetSettingsLoader(sl SettingsLoader) {
+	if sl == nil {
+		panic("SetSettingsLoader: nil loader")
+	}
 	c.settingsLoader = sl
 }

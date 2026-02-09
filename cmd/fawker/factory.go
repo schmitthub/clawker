@@ -133,10 +133,12 @@ func loadEmbeddedScenario(name string) (*whailtest.RecordedBuildScenario, error)
 	}
 
 	// Fallback: try filesystem relative to source (for go run).
-	_, thisFile, _, _ := runtime.Caller(0)
-	fsPath := filepath.Join(filepath.Dir(thisFile), "scenarios", filename)
-	if _, statErr := os.Stat(fsPath); statErr == nil {
-		return whailtest.LoadRecordedScenario(fsPath)
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		fsPath := filepath.Join(filepath.Dir(thisFile), "scenarios", filename)
+		if _, statErr := os.Stat(fsPath); statErr == nil {
+			return whailtest.LoadRecordedScenario(fsPath)
+		}
 	}
 
 	// Fallback: try testdata in whailtest package.
@@ -145,5 +147,5 @@ func loadEmbeddedScenario(name string) (*whailtest.RecordedBuildScenario, error)
 		return whailtest.LoadRecordedScenario(testdataPath)
 	}
 
-	return nil, fmt.Errorf("scenario %q not found (tried embedded, source dir, and testdata)", name)
+	return nil, fmt.Errorf("scenario %q not found (tried embedded, source-relative, and testdata)", name)
 }

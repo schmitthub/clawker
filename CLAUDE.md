@@ -155,6 +155,9 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
 | `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
 | `tui.ViewportModel` | Scrollable content wrapping bubbles/viewport |
+| `tui.WizardField / WizardResult` | Multi-step wizard: field definitions + collected values + submit/cancel; `TUI.RunWizard` |
+| `tui.SelectField / TextField / ConfirmField` | Standalone BubbleTea field models for forms; value semantics |
+| `tui.RenderStepperBar` | Pure render function for horizontal step progress (icons: checkmark, filled circle, empty circle) |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |

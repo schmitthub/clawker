@@ -373,3 +373,68 @@ func TestWizard_EmptyFields(t *testing.T) {
 	assert.Contains(t, err.Error(), "wizard requires at least one field")
 	assert.False(t, result.Submitted)
 }
+
+// ---------------------------------------------------------------------------
+// filterQuit tests
+// ---------------------------------------------------------------------------
+
+func TestFilterQuit(t *testing.T) {
+	t.Run("nil cmd returns nil", func(t *testing.T) {
+		result := filterQuit(nil)
+		assert.Nil(t, result, "filterQuit(nil) should return nil")
+	})
+
+	t.Run("quit cmd is filtered", func(t *testing.T) {
+		quitCmd := tea.Quit
+		result := filterQuit(quitCmd)
+		require.NotNil(t, result, "filterQuit should return a non-nil cmd for quit")
+
+		// The returned cmd should produce nil (quit suppressed).
+		msg := result()
+		assert.Nil(t, msg, "filtered quit cmd should produce nil msg")
+	})
+
+	t.Run("non-quit cmd passes through", func(t *testing.T) {
+		type customMsg struct{ value string }
+		original := func() tea.Msg { return customMsg{value: "hello"} }
+
+		result := filterQuit(original)
+		require.NotNil(t, result, "filterQuit should return a non-nil cmd")
+
+		msg := result()
+		custom, ok := msg.(customMsg)
+		require.True(t, ok, "message should be customMsg type")
+		assert.Equal(t, "hello", custom.value, "message should pass through unchanged")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Wizard validation panic tests
+// ---------------------------------------------------------------------------
+
+func TestWizard_ValidationPanics(t *testing.T) {
+	t.Run("empty field ID", func(t *testing.T) {
+		assert.Panics(t, func() {
+			newWizardModel([]WizardField{
+				{ID: "", Title: "Bad", Prompt: "Bad?", Kind: FieldConfirm},
+			})
+		}, "empty field ID should panic")
+	})
+
+	t.Run("duplicate field IDs", func(t *testing.T) {
+		assert.Panics(t, func() {
+			newWizardModel([]WizardField{
+				{ID: "dup", Title: "First", Prompt: "First?", Kind: FieldConfirm},
+				{ID: "dup", Title: "Second", Prompt: "Second?", Kind: FieldConfirm},
+			})
+		}, "duplicate field IDs should panic")
+	})
+
+	t.Run("select with empty options", func(t *testing.T) {
+		assert.Panics(t, func() {
+			newWizardModel([]WizardField{
+				{ID: "sel", Title: "Pick", Prompt: "Pick one", Kind: FieldSelect, Options: []FieldOption{}},
+			})
+		}, "FieldSelect with empty Options should panic")
+	})
+}
