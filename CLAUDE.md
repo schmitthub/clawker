@@ -161,6 +161,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
+| `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
 | `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
 

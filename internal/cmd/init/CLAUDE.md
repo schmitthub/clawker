@@ -71,8 +71,9 @@ Run()
 3. Saves settings, then builds base image if requested:
    - Generates Dockerfile via `bundler.FlavorToImage` + `bundler.NewProjectGenerator`
    - Builds with `client.BuildImage` (not the deprecated `BuildDefaultImage`)
-   - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step
-4. On build failure: prints error + manual recovery steps (does not return error)
+   - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step; result checked for errors
+4. On progress display error (e.g., Ctrl+C): returns error immediately
+5. On build failure: prints error + manual recovery steps (does not return error)
 5. On build success: updates `settings.DefaultImage` to `docker.DefaultImageTag`
 6. Prints next steps guidance to stderr
 
@@ -92,7 +93,7 @@ Tests use `runF` injection and dockertest fakes. Key patterns:
 - `performSetup()` tested directly for build/no-build/failure scenarios (avoids BubbleTea)
 - `buildWizardFields()` tested for field definitions, SkipIf logic
 - `flavorFieldOptions()` tested for correct conversion from bundler types
-- `config.NewSettingsLoaderForTest(dir)` for isolated settings files
+- `configtest.NewInMemorySettingsLoader()` for in-memory settings (no temp dirs)
 
 ```bash
 go test ./internal/cmd/init/... -v

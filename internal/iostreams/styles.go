@@ -100,7 +100,7 @@ var (
 
 	PanelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary).
+			Foreground(ColorSecondary).
 			Padding(0, 1)
 )
 

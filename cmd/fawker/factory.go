@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -36,16 +38,7 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		Commit:   "fawker",
 		IOStreams: ios,
 		TUI:      tui.NewTUI(ios),
-		Config: func() *config.Config {
-			cfg := config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
-			tmpDir, err := os.MkdirTemp("", "fawker-settings-*")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "fawker: warning: failed to create temp settings dir: %v\n", err)
-				return cfg
-			}
-			cfg.SetSettingsLoader(config.NewSettingsLoaderForTest(tmpDir))
-			return cfg
-		},
+		Config: fawkerConfigFunc(),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fawkerClient(scenario)
 		},
@@ -56,6 +49,22 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 	}
 
 	return f, &scenario
+}
+
+// fawkerConfigFunc returns a lazy Config constructor with sync.Once semantics.
+// Uses InMemorySettingsLoader to avoid temp directory creation and filesystem leaks.
+func fawkerConfigFunc() func() *config.Config {
+	var (
+		once sync.Once
+		cfg  *config.Config
+	)
+	return func() *config.Config {
+		once.Do(func() {
+			cfg = config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
+			cfg.SetSettingsLoader(configtest.NewInMemorySettingsLoader())
+		})
+		return cfg
+	}
 }
 
 // fawkerProject returns a minimal config.Project for the fawker demo.

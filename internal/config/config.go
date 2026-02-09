@@ -29,7 +29,7 @@ type Config struct {
 
 	// Internal loaders for operations that need them
 	projectLoader   *Loader
-	settingsLoader  *SettingsLoader
+	settingsLoader  SettingsLoader
 	registryInitErr error // stored for later diagnostics
 }
 
@@ -222,7 +222,7 @@ func (c *Config) loadSettings() {
 
 // SettingsLoader returns the underlying settings loader for write operations
 // (e.g., saving updated default image). May return nil if settings failed to load.
-func (c *Config) SettingsLoader() *SettingsLoader {
+func (c *Config) SettingsLoader() SettingsLoader {
 	return c.settingsLoader
 }
 
@@ -240,6 +240,6 @@ func (c *Config) RegistryInitErr() error {
 
 // SetSettingsLoader sets the settings loader for write operations.
 // Used by NewConfigForTest variants and fawker to inject a test-friendly loader.
-func (c *Config) SetSettingsLoader(sl *SettingsLoader) {
+func (c *Config) SetSettingsLoader(sl SettingsLoader) {
 	c.settingsLoader = sl
 }

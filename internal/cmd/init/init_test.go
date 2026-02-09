@@ -3,13 +3,12 @@ package init
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -19,14 +18,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testInitOpts builds a default InitOptions for testing, with a temp settings dir.
-// Returns the options and the settings directory path.
-func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, string) {
+// testInitOpts builds a default InitOptions for testing with an in-memory settings loader.
+// Returns the options and the settings loader for verification.
+func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, *configtest.InMemorySettingsLoader) {
 	t.Helper()
-	settingsDir := t.TempDir()
 
+	sl := configtest.NewInMemorySettingsLoader()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
-	cfg.SetSettingsLoader(config.NewSettingsLoaderForTest(settingsDir))
+	cfg.SetSettingsLoader(sl)
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupLegacyBuild()
@@ -37,7 +36,7 @@ func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, str
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
 		Config:   func() *config.Config { return cfg },
 		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
-	}, settingsDir
+	}, sl
 }
 
 // --- NewCmdInit tests ---
@@ -104,27 +103,21 @@ func TestRun_NonInteractive(t *testing.T) {
 
 	output := tio.ErrBuf.String()
 	assert.Contains(t, output, "Setting up clawker user settings...")
-	assert.Contains(t, output, "Created:")
+	assert.Contains(t, output, "Created: (in-memory)")
 	assert.Contains(t, output, "Next Steps:")
 }
 
 func TestRun_NonInteractive_SavesSettings(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 
-	opts, settingsDir := testInitOpts(t, tio)
+	opts, sl := testInitOpts(t, tio)
 	opts.Yes = true
 
 	err := Run(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Verify settings file was created
-	settingsPath := filepath.Join(settingsDir, config.SettingsFileName)
-	_, statErr := os.Stat(settingsPath)
-	require.NoError(t, statErr, "settings file should be created at %s", settingsPath)
-
-	// Load and verify settings
-	loader := config.NewSettingsLoaderForTest(settingsDir)
-	settings, loadErr := loader.Load()
+	// Load and verify settings were saved
+	settings, loadErr := sl.Load()
 	require.NoError(t, loadErr)
 
 	// In non-interactive mode, DefaultImage should remain empty (no build)
@@ -135,34 +128,32 @@ func TestRun_NonInteractive_SavesSettings(t *testing.T) {
 
 func TestPerformSetup_NoBuild(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	opts, settingsDir := testInitOpts(t, tio)
+	opts, sl := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, false, "")
 	require.NoError(t, err)
 
 	output := tio.ErrBuf.String()
 	assert.Contains(t, output, "Setting up clawker user settings...")
-	assert.Contains(t, output, "Created:")
+	assert.Contains(t, output, "Created: (in-memory)")
 	assert.Contains(t, output, "Next Steps:")
 	assert.NotContains(t, output, "Building base image")
 
-	// Settings file should exist with empty DefaultImage
-	loader := config.NewSettingsLoaderForTest(settingsDir)
-	settings, loadErr := loader.Load()
+	// Settings should have empty DefaultImage
+	settings, loadErr := sl.Load()
 	require.NoError(t, loadErr)
 	assert.Empty(t, settings.DefaultImage, "DefaultImage should be empty when build is skipped")
 }
 
 func TestPerformSetup_BuildSuccess(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	opts, settingsDir := testInitOpts(t, tio)
+	opts, sl := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, true, "bookworm")
 	require.NoError(t, err)
 
-	// Verify settings file was updated with DefaultImageTag after build
-	loader := config.NewSettingsLoaderForTest(settingsDir)
-	settings, loadErr := loader.Load()
+	// Verify settings were updated with DefaultImageTag after build
+	settings, loadErr := sl.Load()
 	require.NoError(t, loadErr)
 	assert.Equal(t, docker.DefaultImageTag, settings.DefaultImage,
 		"DefaultImage should be set to DefaultImageTag after successful build")
@@ -171,9 +162,9 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 func TestPerformSetup_BuildFailure(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 
-	settingsDir := t.TempDir()
+	sl := configtest.NewInMemorySettingsLoader()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
-	cfg.SetSettingsLoader(config.NewSettingsLoaderForTest(settingsDir))
+	cfg.SetSettingsLoader(sl)
 
 	// Set up fake client with a build error
 	fake := dockertest.NewFakeClient()
@@ -196,8 +187,7 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 	assert.Contains(t, output, "You can manually build later")
 
 	// Settings should NOT have DefaultImage set after failed build
-	loader := config.NewSettingsLoaderForTest(settingsDir)
-	settings, loadErr := loader.Load()
+	settings, loadErr := sl.Load()
 	require.NoError(t, loadErr)
 	assert.Empty(t, settings.DefaultImage, "DefaultImage should remain empty after build failure")
 }

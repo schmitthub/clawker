@@ -258,11 +258,15 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			}
 		}()
 
-		opts.TUI.RunProgress("auto", tui.ProgressDisplayConfig{
+		result := opts.TUI.RunProgress("auto", tui.ProgressDisplayConfig{
 			Title:          "Building",
 			Subtitle:       docker.DefaultImageTag,
 			CompletionVerb: "Built",
 		}, ch)
+
+		if result.Err != nil {
+			return result.Err
+		}
 
 		if buildErr != nil {
 			fmt.Fprintln(ios.ErrOut)

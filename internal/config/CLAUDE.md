@@ -10,7 +10,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 | `schema.go` | `Project` struct (YAML schema + runtime context) and nested types |
 | `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
 | `settings.go` | `Settings` struct (user-level: `default_image`, `logging`) |
-| `settings_loader.go` | `SettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
+| `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
 | `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
 | `project_runtime.go` | `Project` runtime methods — project context + worktree directory management |
@@ -77,7 +77,13 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ## Settings (`settings.go`, `settings_loader.go`)
 
-`Settings{DefaultImage, Logging LoggingConfig}`. `LoggingConfig{FileEnabled *bool, MaxSizeMB, MaxAgeDays, MaxBackups}`. `NewSettingsLoader(opts...)` with `WithProjectSettingsRoot(path)`. Methods: `Path`, `ProjectSettingsPath`, `Exists`, `Load`, `Save`, `EnsureExists`.
+`Settings{DefaultImage, Logging LoggingConfig}`. `LoggingConfig{FileEnabled *bool, MaxSizeMB, MaxAgeDays, MaxBackups}`.
+
+**Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`. Matches the `Registry`/`InMemoryRegistry` pattern.
+
+**Implementation**: `FileSettingsLoader` (file-based, two-layer hierarchy). `NewSettingsLoader(opts...)` returns `(SettingsLoader, error)`. `NewSettingsLoaderForTest(dir)` returns `*FileSettingsLoader`. Option: `WithProjectSettingsRoot(path)`.
+
+**Config gateway**: `Config.SettingsLoader()` returns `SettingsLoader` (interface). `Config.SetSettingsLoader(sl SettingsLoader)` injects custom loader.
 
 ## Registry (`registry.go`)
 
@@ -119,7 +125,7 @@ Navigation: `registry.Project("key")` → `handle.Get()`, `handle.Exists()`, `ha
 
 ## Test Utilities (`configtest/`)
 
-See `.claude/rules/testing.md` for detailed patterns. Key utilities: `FakeRegistryBuilder` (file-based), `InMemoryRegistryBuilder` (no I/O), `FakeWorktreeFS` (filesystem state control).
+See `.claude/rules/testing.md` for detailed patterns. Key utilities: `FakeRegistryBuilder` (file-based), `InMemoryRegistryBuilder` (no I/O), `FakeWorktreeFS` (filesystem state control), `InMemorySettingsLoader` (no I/O settings).
 
 ## Resolver (`resolver.go`)
 

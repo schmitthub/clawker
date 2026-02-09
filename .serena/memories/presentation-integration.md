@@ -129,8 +129,9 @@ Created three reusable TUI component layers and refactored `init` to use them:
 **Documentation**: Updated `internal/tui/CLAUDE.md` (Field Models, StepperBar, WizardModel sections) and `internal/cmd/init/CLAUDE.md` (wizard architecture)
 
 Supporting changes from Phase 1:
-- `internal/config/config.go` — Added `SetSettingsLoader(sl *SettingsLoader)` method
-- `internal/config/settings_loader.go` — Added `NewSettingsLoaderForTest(dir string) *SettingsLoader`
+- `internal/config/config.go` — `SetSettingsLoader(sl SettingsLoader)` (interface), `SettingsLoader()` returns interface
+- `internal/config/settings_loader.go` — `SettingsLoader` interface + `FileSettingsLoader` struct; `NewSettingsLoaderForTest(dir) *FileSettingsLoader`
+- `internal/config/configtest/inmemory_settings_loader.go` — `InMemorySettingsLoader` (no filesystem I/O)
 - `cmd/fawker/factory.go` — Real prompter, Config with SettingsLoader for temp dir
 - `cmd/fawker/root.go` — Added `initcmd.NewCmdInit(f, nil)` to fawker command tree
 - `pkg/whail/whailtest/fake_client.go` — Added `CloseFn`/`Close()` to `FakeAPIClient`
@@ -147,7 +148,7 @@ Applied fixes from code-reviewer, test-analyzer, and silent-failure-hunter audit
 - `init.go` — user-visible warning on settings save failure (was file-log only)
 - `init.go` — "Setup cancelled." message on wizard cancellation (was silent)
 - `fawkerClient()` — `SetupLegacyBuild()` added (was panicking on nil `ImageBuildFn`)
-- `fawkerFactory()` — `MkdirTemp` error surfaced to stderr (was silently swallowed)
+- `fawkerFactory()` — `MkdirTemp` replaced with `InMemorySettingsLoader` + `sync.Once` (no temp dirs, no filesystem leak)
 - `FakeAPIClient.Close()` — always records call regardless of `CloseFn` (was inconsistent)
 
 **Color system refactor:**
