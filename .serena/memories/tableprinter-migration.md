@@ -5,7 +5,7 @@
 **Status**: Active — lipgloss/table switch complete, all tests pass. Ready for final review and commit.
 
 ## End Goal
-Replace `bubbles/table` (interactive TUI table, overkill for static output) with `lipgloss/table` (purpose-built for static rendering with per-cell `StyleFunc`). Apply style refinements: muted uppercase headers, brand orange first column.
+Replace `bubbles/table` (interactive TUI table, overkill for static output) with `lipgloss/table` (purpose-built for static rendering with per-cell `StyleFunc`). Apply style refinements: muted uppercase headers, primary color first column.
 
 ## What Changed (This Session)
 
@@ -13,14 +13,14 @@ Replace `bubbles/table` (interactive TUI table, overkill for static output) with
 - **New**: `internal/iostreams/table.go` — `(*IOStreams).RenderStyledTable(headers, rows) string`
   - Uses `lipgloss/table` with `StyleFunc` for per-cell styling
   - `table.HeaderRow` → muted uppercase (`TableHeaderStyle`)
-  - `col == 0` → brand orange (`TablePrimaryColumnStyle` using `ColorBrandOrange` `#E8714A`)
+  - `col == 0` → primary color (`TablePrimaryColumnStyle` using `ColorPrimary` = `ColorBurntOrange` `#E8714A`)
   - Default cells → plain with `Padding(0, 1)`
   - All 7 borders disabled, `.Width(termWidth)` for auto column sizing
   - Column widths handled by `lipgloss/table`'s built-in median-based resizer (replaced our manual proportional `calculateWidths`)
 
 ### Style Token Updates: `iostreams/styles.go`
 - `TableHeaderStyle`: Changed from `Bold(true).Foreground(ColorPrimary)` → `Foreground(ColorMuted)` (muted, no bold)
-- **New** `TablePrimaryColumnStyle`: `Foreground(ColorBrandOrange)` (warm orange, not purple)
+- **New** `TablePrimaryColumnStyle`: `Foreground(ColorPrimary)` (= `ColorBurntOrange`, warm orange)
 
 ### Simplified: `tui/table.go`
 - Removed: `bubbles/table` import, `go-runewidth` import, `visibleWidth()`, `calculateWidths()`, `cellPadding`, `minColWidth` constants
@@ -65,7 +65,7 @@ make fawker && ./bin/fawker image ls   # Visual UAT
 1. **`lipgloss/table` for styled mode** — subpackage of `lipgloss` v1.1.0 (already in go.mod). Purpose-built for static table rendering with `StyleFunc` for per-cell styling.
 2. **Architecture: styled rendering in `iostreams`** — `tui/table.go` delegates to `iostreams.RenderStyledTable()`. This keeps `lipgloss/table` inside the `iostreams` import boundary, enforced by `import_boundary_test.go`.
 3. **Content-aware column widths** — `lipgloss/table`'s built-in median-based resizer handles column sizing automatically when `.Width(termWidth)` is set. No manual width calculation needed (simpler than plan's approach of porting `calculateWidths`).
-4. **Brand orange, not purple** — User clarified first column should use `ColorBrandOrange` (`#E8714A`), not `ColorPrimary` (`#7D56F4`).
+4. **Primary = BurntOrange** — Two-layer color system: `ColorPrimary` now maps to `ColorBurntOrange` (`#E8714A`). `TablePrimaryColumnStyle` uses `ColorPrimary`.
 
 ## Remaining TODOs
 - [x] Update style tokens in `iostreams/styles.go`

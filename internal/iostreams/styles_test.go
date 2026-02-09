@@ -11,6 +11,23 @@ func TestColorsAreDefined(t *testing.T) {
 		name  string
 		color string
 	}{
+		// Named colors (Layer 1)
+		{"ColorBurntOrange", string(ColorBurntOrange)},
+		{"ColorDeepSkyBlue", string(ColorDeepSkyBlue)},
+		{"ColorEmerald", string(ColorEmerald)},
+		{"ColorAmber", string(ColorAmber)},
+		{"ColorHotPink", string(ColorHotPink)},
+		{"ColorDimGray", string(ColorDimGray)},
+		{"ColorOrchid", string(ColorOrchid)},
+		{"ColorSkyBlue", string(ColorSkyBlue)},
+		{"ColorCharcoal", string(ColorCharcoal)},
+		{"ColorGold", string(ColorGold)},
+		{"ColorOnyx", string(ColorOnyx)},
+		{"ColorSalmon", string(ColorSalmon)},
+		{"ColorJet", string(ColorJet)},
+		{"ColorGunmetal", string(ColorGunmetal)},
+		{"ColorSilver", string(ColorSilver)},
+		// Semantic theme (Layer 2)
 		{"ColorPrimary", string(ColorPrimary)},
 		{"ColorSecondary", string(ColorSecondary)},
 		{"ColorSuccess", string(ColorSuccess)},
@@ -25,6 +42,7 @@ func TestColorsAreDefined(t *testing.T) {
 		{"ColorAccent", string(ColorAccent)},
 		{"ColorBg", string(ColorBg)},
 		{"ColorBgAlt", string(ColorBgAlt)},
+		{"ColorSubtle", string(ColorSubtle)},
 	}
 
 	for _, tt := range colors {

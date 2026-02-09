@@ -155,12 +155,16 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `tui.PanelModel` | Bordered panel with focus; `PanelGroup` manages multi-panel layouts |
 | `tui.ListModel` | Selectable list with scrolling; `ListItem` interface |
 | `tui.ViewportModel` | Scrollable content wrapping bubbles/viewport |
+| `tui.WizardField / WizardResult` | Multi-step wizard: field definitions + collected values + submit/cancel; `TUI.RunWizard` |
+| `tui.SelectField / TextField / ConfirmField` | Standalone BubbleTea field models for forms; value semantics |
+| `tui.RenderStepperBar` | Pure render function for horizontal step progress (icons: checkmark, filled circle, empty circle) |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
+| `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
 | `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
 

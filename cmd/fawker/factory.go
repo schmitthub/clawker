@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -36,19 +38,33 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		Commit:   "fawker",
 		IOStreams: ios,
 		TUI:      tui.NewTUI(ios),
-		Config: func() *config.Config {
-			return config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
-		},
+		Config: fawkerConfigFunc(),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fawkerClient(scenario)
 		},
 		GitManager:   func() (*git.GitManager, error) { return nil, nil },
 		HostProxy:    func() *hostproxy.Manager { return nil },
 		SocketBridge: func() socketbridge.SocketBridgeManager { return nil },
-		Prompter:     func() *prompter.Prompter { return nil },
+		Prompter:     func() *prompter.Prompter { return prompter.NewPrompter(ios) },
 	}
 
 	return f, &scenario
+}
+
+// fawkerConfigFunc returns a lazy Config constructor with sync.Once semantics.
+// Uses InMemorySettingsLoader to avoid temp directory creation and filesystem leaks.
+func fawkerConfigFunc() func() *config.Config {
+	var (
+		once sync.Once
+		cfg  *config.Config
+	)
+	return func() *config.Config {
+		once.Do(func() {
+			cfg = config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
+			cfg.SetSettingsLoader(configtest.NewInMemorySettingsLoader())
+		})
+		return cfg
+	}
 }
 
 // fawkerProject returns a minimal config.Project for the fawker demo.
@@ -75,6 +91,9 @@ func fawkerProject() *config.Project {
 // recorded events for build progress.
 func fawkerClient(scenarioName string) (*docker.Client, error) {
 	fake := dockertest.NewFakeClient()
+
+	// Wire legacy image build as fallback for non-BuildKit paths.
+	fake.SetupLegacyBuild()
 
 	// Wire BuildKit detection so buildRun's BuildKitEnabled() check passes.
 	fake.SetupPingBuildKit()
@@ -114,10 +133,12 @@ func loadEmbeddedScenario(name string) (*whailtest.RecordedBuildScenario, error)
 	}
 
 	// Fallback: try filesystem relative to source (for go run).
-	_, thisFile, _, _ := runtime.Caller(0)
-	fsPath := filepath.Join(filepath.Dir(thisFile), "scenarios", filename)
-	if _, statErr := os.Stat(fsPath); statErr == nil {
-		return whailtest.LoadRecordedScenario(fsPath)
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		fsPath := filepath.Join(filepath.Dir(thisFile), "scenarios", filename)
+		if _, statErr := os.Stat(fsPath); statErr == nil {
+			return whailtest.LoadRecordedScenario(fsPath)
+		}
 	}
 
 	// Fallback: try testdata in whailtest package.
@@ -126,5 +147,5 @@ func loadEmbeddedScenario(name string) (*whailtest.RecordedBuildScenario, error)
 		return whailtest.LoadRecordedScenario(testdataPath)
 	}
 
-	return nil, fmt.Errorf("scenario %q not found (tried embedded, source dir, and testdata)", name)
+	return nil, fmt.Errorf("scenario %q not found (tried embedded, source-relative, and testdata)", name)
 }

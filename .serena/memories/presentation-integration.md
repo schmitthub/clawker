@@ -3,7 +3,7 @@
 ## Branch & Status
 **Branch**: `a/presentation-integration`
 **Latest Commit**: `c070f80` — fix: address Copilot PR review findings + dangerous-cmd warning routing
-**Status**: All phases complete. 3202 unit tests pass (count varies with test refactoring). Both clawker and fawker binaries compile.
+**Status**: All phases complete. All unit tests pass (count varies with test refactoring). Both clawker and fawker binaries compile.
 
 ## Completed Work (All Done)
 
@@ -85,6 +85,83 @@ GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v
 GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v
 GOLDEN_UPDATE=1 go test ./internal/cmd/image/build/... -run TestBuildProgress_Golden -v
 ```
+
+## Prompter Integration → Wizard Migration (Complete)
+**Branch**: `a/presentation-int-prompter`
+
+### Phase 1: Factory-wired prompter (done)
+Migrated `init` command to use Factory-wired prompter, Config gateway, and TUI progress display.
+
+### Phase 2: Wizard TUI Components + Init Refactoring (done)
+Created three reusable TUI component layers and refactored `init` to use them:
+
+**Layer 1 — Field Models** (`internal/tui/fields.go`):
+- `SelectField` — arrow-key selection wrapping ListModel; label+description compact view
+- `TextField` — text input wrapping `bubbles/textinput` with validation (Required, Validator)
+- `ConfirmField` — yes/no toggle with Left/Right/Tab/y/n keys
+- `FieldOption` — shared {Label, Description} type
+- All use value semantics (setters return copies); each works standalone or in a wizard
+
+**Layer 2 — StepperBar** (`internal/tui/stepper.go`):
+- `StepState` (Pending/Active/Complete/Skipped), `Step` struct
+- `RenderStepperBar(steps, width)` — pure render: ✓/◉/○ icons, skipped hidden, truncation
+
+**Layer 3 — WizardModel** (`internal/tui/wizard.go`):
+- `WizardField`, `WizardFieldKind`, `WizardValues`, `WizardResult` public types
+- `wizardModel` (unexported, pointer receivers for map mutation) — composes fields + stepper
+- Navigation: Enter advances, Esc goes back, SkipIf predicates in both directions
+- `filterQuit` prevents individual fields from quitting the wizard
+- `TUI.RunWizard(fields)` — runs wizard via `RunProgram` with alt screen
+
+**Init command refactoring** (`internal/cmd/init/init.go`):
+- `Run` dispatches to `runInteractive` (wizard) or `runNonInteractive` (--yes path)
+- `runInteractive` uses `TUI.RunWizard(fields)` with 3 wizard fields: build, flavor, confirm
+- `performSetup` is the shared core logic (settings save + optional build) — testable without BubbleTea
+- `buildWizardFields()` returns wizard field definitions with SkipIf for flavor
+- `flavorFieldOptions()` converts `bundler.DefaultFlavorOptions()` to `[]tui.FieldOption`
+
+**Tests**: 37+ new tests across 3 files:
+- `fields_test.go` — 20 tests for all field types (navigation, confirm, validation, view, Ctrl+C)
+- `stepper_test.go` — 9 tests (rendering, skipped hidden, truncation, edge cases)
+- `wizard_test.go` — 8 tests (step navigation, conditional skip, cancel, Ctrl+C, submit values, nav bar, view, window size)
+- `init_test.go` — refactored: `performSetup` direct tests, `buildWizardFields` assertions, `flavorFieldOptions` conversion tests
+
+**Documentation**: Updated `internal/tui/CLAUDE.md` (Field Models, StepperBar, WizardModel sections) and `internal/cmd/init/CLAUDE.md` (wizard architecture)
+
+Supporting changes from Phase 1:
+- `internal/config/config.go` — `SetSettingsLoader(sl SettingsLoader)` (interface), `SettingsLoader()` returns interface
+- `internal/config/settings_loader.go` — `SettingsLoader` interface + `FileSettingsLoader` struct; `NewSettingsLoaderForTest(dir) *FileSettingsLoader`
+- `internal/config/configtest/inmemory_settings_loader.go` — `InMemorySettingsLoader` (no filesystem I/O)
+- `cmd/fawker/factory.go` — Real prompter, Config with SettingsLoader for temp dir
+- `cmd/fawker/root.go` — Added `initcmd.NewCmdInit(f, nil)` to fawker command tree
+- `pkg/whail/whailtest/fake_client.go` — Added `CloseFn`/`Close()` to `FakeAPIClient`
+- `internal/docker/dockertest/helpers.go` — Added `SetupLegacyBuild`/`SetupLegacyBuildError` helpers
+
+### Phase 3: Wizard Wrapup — Review Fixes, Fawker Panic, Color Refresh (done)
+
+Applied fixes from code-reviewer, test-analyzer, and silent-failure-hunter audits:
+
+**Bug fixes:**
+- `filterQuit` — deferred cmd evaluation (was eagerly calling `cmd()` outside BubbleTea runtime)
+- `RunWizard` — explicit error on unexpected model type + empty fields validation
+- `init.go` — early return after build-failure "Next Steps" (was printing duplicate sections)
+- `init.go` — user-visible warning on settings save failure (was file-log only)
+- `init.go` — "Setup cancelled." message on wizard cancellation (was silent)
+- `fawkerClient()` — `SetupLegacyBuild()` added (was panicking on nil `ImageBuildFn`)
+- `fawkerFactory()` — `MkdirTemp` replaced with `InMemorySettingsLoader` + `sync.Once` (no temp dirs, no filesystem leak)
+- `FakeAPIClient.Close()` — always records call regardless of `CloseFn` (was inconsistent)
+
+**Color system refactor:**
+- Two-layer architecture: Layer 1 (15 Named Colors) + Layer 2 (15 Semantic Theme aliases)
+- `ColorPrimary` = `ColorBurntOrange` (#E8714A), `ColorSecondary` = `ColorDeepSkyBlue` (#00BFFF)
+- `ColorBrandOrange` removed (merged into Primary), `BrandOrangeStyle` removed
+- `BlueStyle` now uses `ColorDeepSkyBlue` (actual blue), `TablePrimaryColumnStyle` uses `ColorPrimary`
+- `BrandOrange()/BrandOrangef()` deprecated, delegate to `Primary()/Primaryf()`
+- Stepper uses `TitleStyle`, progress uses `cs.Primary()`
+
+**New tests:** `TestWizard_SkipIfReevaluation`, `TestWizard_TextFieldInWizard`, `TestWizard_EmptyFields`
+
+**All unit tests pass. Both binaries compile.**
 
 ## Follow-Up Work
 

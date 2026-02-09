@@ -475,7 +475,7 @@ func renderProgressHeader(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *
 	title := fmt.Sprintf("  ━━ %s ", cfg.Title)
 	subtitle := fmt.Sprintf(" %s ━━", cfg.Subtitle)
 
-	titleRendered := cs.Bold(cs.BrandOrange(title))
+	titleRendered := cs.Bold(cs.Primary(title))
 	subtitleRendered := cs.Muted(subtitle)
 
 	titleWidth := text.CountVisibleWidth(titleRendered)
@@ -831,7 +831,7 @@ func runProgressPlain(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, event
 	startTime := time.Now()
 
 	// Header.
-	fmt.Fprintf(ios.ErrOut, "%s %s (%s)\n", cs.BrandOrange("━━"), cfg.Title, cfg.Subtitle)
+	fmt.Fprintf(ios.ErrOut, "%s %s (%s)\n", cs.Primary("━━"), cfg.Title, cfg.Subtitle)
 
 	steps := make(map[string]*progressStep)
 	var orderedSteps []*progressStep

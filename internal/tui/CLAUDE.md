@@ -14,7 +14,7 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 | File | Purpose |
 |------|---------|
-| `tui.go` | `TUI` struct — Factory noun, owns hooks + progress display; `NewTUI`, `RegisterHooks`, `RunProgress` |
+| `tui.go` | `TUI` struct — Factory noun, owns hooks + progress display + wizard; `NewTUI`, `RegisterHooks`, `RunProgress`, `RunWizard` |
 | `hooks.go` | `HookResult`, `LifecycleHook` — generic lifecycle hook types for TUI components |
 | `keys.go` | `KeyMap` struct, `DefaultKeyMap()`, `Is*` key matchers |
 | `components.go` | Stateless renders: header, status, badge, progress, table, divider |
@@ -27,6 +27,9 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 | `program.go` | `RunProgram` helper for running BubbleTea programs with IOStreams |
 | `progress.go` | Generic progress display: BubbleTea TTY mode + plain text mode |
 | `table.go` | `TablePrinter` — TTY-aware tabular output; styled mode via `iostreams.RenderStyledTable` (`lipgloss/table`) |
+| `fields.go` | Standalone field models: `SelectField`, `TextField`, `ConfirmField`, `FieldOption` |
+| `stepper.go` | Step progress indicator: `Step`, `StepState`, `RenderStepperBar` |
+| `wizard.go` | Multi-step wizard: `WizardField`, `WizardValues`, `WizardResult`, `wizardModel` |
 | `import_boundary_test.go` | Enforces no lipgloss or lipgloss/table imports in non-test files |
 
 ## Keys (`keys.go`)
@@ -191,7 +194,7 @@ result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
 - `ParseGroup func(string) string` — extract group/stage names (nil = no groups)
 - `FormatDuration func(time.Duration) string` — format step durations (nil = default)
 
-**TTY mode**: BubbleTea model with tree-based stage display. Stages are parent nodes with tree-connected child steps (`├─`/`└─` connectors). Complete/pending/error stages show collapsed (`✓ name ── N steps`). Active stages (with running step) show expanded with inline log lines (`⎿` connector) under the running step. Per-stage child window (MaxVisible) centers on the running step with collapsed header/footer for overflow. High-water mark frame padding prevents BubbleTea inline renderer cursor drift. Pulsing spinner in BrandOrange. Per-step log buffers (LogLines capacity). Ctrl+C handling.
+**TTY mode**: BubbleTea model with tree-based stage display. Stages are parent nodes with tree-connected child steps (`├─`/`└─` connectors). Complete/pending/error stages show collapsed (`✓ name ── N steps`). Active stages (with running step) show expanded with inline log lines (`⎿` connector) under the running step. Per-stage child window (MaxVisible) centers on the running step with collapsed header/footer for overflow. High-water mark frame padding prevents BubbleTea inline renderer cursor drift. Pulsing spinner in Primary color. Per-step log buffers (LogLines capacity). Ctrl+C handling.
 
 **Internal types**: `stageNode` (group with steps), `stageTree` (stages + ungrouped), `progressStep.logBuf` (per-step ring buffer). `buildStageTree()` groups steps by ParseGroup callback. `stageState()` returns aggregate: Error > Running > Complete > Pending.
 
@@ -241,12 +244,14 @@ type TUI struct {
 func NewTUI(ios *iostreams.IOStreams) *TUI
 func (t *TUI) RegisterHooks(hooks ...LifecycleHook)
 func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan ProgressStep) ProgressResult
+func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error)
 func (t *TUI) IOStreams() *iostreams.IOStreams
 ```
 
 - `NewTUI(ios)` -- constructor, binds to IOStreams
 - `RegisterHooks(hooks...)` -- appends lifecycle hooks; hooks fire in registration order
 - `RunProgress(mode, cfg, ch)` -- delegates to package-level `RunProgress()`, injecting composed hooks into `cfg.OnLifecycle` if caller hasn't set one explicitly
+- `RunWizard(fields)` -- runs multi-step wizard via `RunProgram` with alt screen; returns collected values and submit/cancel status
 - `IOStreams()` -- accessor for the underlying IOStreams
 
 **Hook composition**: Multiple hooks are composed into a single `LifecycleHook` that fires in order. First abort (`Continue=false`) or error short-circuits remaining hooks.
@@ -273,6 +278,141 @@ err := tp.Render() // writes to ios.Out
 **Plain mode** (non-TTY/piped): `text/tabwriter` with 2-space gaps, tab-separated. Machine-friendly output, no ANSI sequences.
 
 **Golden tests**: `GOLDEN_UPDATE=1 go test ./internal/tui/... -run "TestTable.*_Golden" -v`
+
+## Field Models (`fields.go`)
+
+Three standalone BubbleTea models for form fields. Each is independently usable without a wizard — commands can use a single `SelectField` for a one-off choice, or compose multiple fields manually. All use value semantics (setters return copies).
+
+### FieldOption
+
+```go
+type FieldOption struct { Label string; Description string }
+```
+
+Shared option type used by `SelectField` and `WizardField`.
+
+### SelectField
+
+Arrow-key selection from a list of options. Wraps `ListModel` for navigation state, renders compact label+description view.
+
+```go
+func NewSelectField(id, prompt string, options []FieldOption, defaultIdx int) SelectField
+func (f SelectField) Init() tea.Cmd
+func (f SelectField) Update(msg tea.Msg) (SelectField, tea.Cmd)
+func (f SelectField) View() string
+func (f SelectField) Value() string          // selected option's Label
+func (f SelectField) SelectedIndex() int
+func (f SelectField) IsConfirmed() bool      // true after Enter
+func (f SelectField) SetSize(w, h int) SelectField
+```
+
+**Keys**: Up/Down (or j/k) navigate, Enter confirms (sends `tea.Quit` for standalone use), Ctrl+C quits without confirming.
+
+### TextField
+
+Text input with optional validation. Wraps `bubbles/textinput`.
+
+```go
+func NewTextField(id, prompt string, opts ...TextFieldOption) TextField
+// Options: WithPlaceholder, WithDefault, WithValidator, WithRequired
+func (f TextField) Init() tea.Cmd         // returns textinput.Blink
+func (f TextField) Update(msg tea.Msg) (TextField, tea.Cmd)
+func (f TextField) View() string
+func (f TextField) Value() string
+func (f TextField) IsConfirmed() bool
+func (f TextField) Err() string           // validation error message
+func (f TextField) SetSize(w, h int) TextField
+```
+
+**Keys**: Type to input, Enter validates + confirms, Ctrl+C quits. Required check runs before custom validator.
+
+### ConfirmField
+
+Yes/No toggle.
+
+```go
+func NewConfirmField(id, prompt string, defaultYes bool) ConfirmField
+func (f ConfirmField) Init() tea.Cmd
+func (f ConfirmField) Update(msg tea.Msg) (ConfirmField, tea.Cmd)
+func (f ConfirmField) View() string
+func (f ConfirmField) Value() string      // "yes" or "no"
+func (f ConfirmField) BoolValue() bool
+func (f ConfirmField) IsConfirmed() bool
+func (f ConfirmField) SetSize(w, h int) ConfirmField
+```
+
+**Keys**: Left/Right/Tab toggle, y/n set directly, Enter confirms, Ctrl+C quits.
+
+## StepperBar (`stepper.go`)
+
+Pure render function for horizontal step progress indicator. Reusable in any multi-phase flow (wizards, deployments, pipelines).
+
+```go
+type StepState int
+const (StepPendingState, StepActiveState, StepCompleteState, StepSkippedState)
+
+type Step struct { Title string; Value string; State StepState }
+
+func RenderStepperBar(steps []Step, width int) string
+```
+
+**Icons**: `✓` (SuccessStyle) complete, `◉` (TitleStyle) active, `○` (MutedStyle) pending. Skipped steps hidden. Separator ` → ` in MutedStyle. Truncates to width.
+
+**Example**: `✓ Build Image: Yes  →  ◉ Flavor  →  ○ Submit`
+
+## WizardModel (`wizard.go`)
+
+Multi-step form composing field models + stepper bar with navigation. Runs in alt screen via `TUI.RunWizard`.
+
+### Public Types
+
+```go
+type WizardFieldKind int // FieldSelect, FieldText, FieldConfirm
+
+type WizardField struct {
+    ID, Title, Prompt string
+    Kind  WizardFieldKind
+    // Select: Options []FieldOption, DefaultIdx int
+    // Text: Placeholder, Default string, Validator func(string) error, Required bool
+    // Confirm: DefaultYes bool
+    SkipIf func(WizardValues) bool  // conditional skip
+}
+
+type WizardValues map[string]string
+type WizardResult struct { Values WizardValues; Submitted bool }
+```
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| Enter | Confirm field → advance to next visible step (submit on last) |
+| Esc | Go back to previous visible step (cancel on first) |
+| Ctrl+C | Cancel wizard |
+| Up/Down | Delegated to current field (SelectField list) |
+| Left/Right | Delegated to current field (ConfirmField toggle) |
+
+`SkipIf` predicates are respected in both forward and backward navigation.
+
+### TUI Integration
+
+```go
+result, err := t.RunWizard(fields)
+// result.Submitted: true if wizard completed, false if cancelled
+// result.Values: map of field ID → string value
+```
+
+Uses `RunProgram(ios, model, WithAltScreen(true))`. Internal `wizardModel` uses pointer receivers (map mutation). `filterQuit` prevents individual fields from terminating the wizard.
+
+### View Layout
+
+```
+  ✓ Build Image: Yes  →  ◉ Flavor  →  ○ Submit     ← StepperBar
+  Select Linux flavor                                 ← Field prompt
+  › bookworm     Debian stable (Recommended)          ← Field body
+    trixie       Debian testing
+  ↑↓ select  enter confirm  esc back  ctrl+c quit    ← QuickHelp
+```
 
 ## Tests & Limitations
 

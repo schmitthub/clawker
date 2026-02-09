@@ -17,34 +17,44 @@ const (
 )
 
 // SettingsLoader handles loading and saving of user settings.
+type SettingsLoader interface {
+	Path() string
+	ProjectSettingsPath() string
+	Exists() bool
+	Load() (*Settings, error)
+	Save(s *Settings) error
+	EnsureExists() (bool, error)
+}
+
+// FileSettingsLoader handles loading and saving of user settings from the filesystem.
 // It supports a two-layer hierarchy:
 //
 //	$CLAWKER_HOME/settings.yaml       (global, lower precedence)
 //	<project-root>/.clawker.settings.yaml  (project override, higher precedence)
-type SettingsLoader struct {
+type FileSettingsLoader struct {
 	path        string // global settings path
 	projectRoot string // optional project root for project-level override
 }
 
-// SettingsLoaderOption configures a SettingsLoader.
-type SettingsLoaderOption func(*SettingsLoader)
+// SettingsLoaderOption configures a FileSettingsLoader.
+type SettingsLoaderOption func(*FileSettingsLoader)
 
 // WithProjectSettingsRoot sets the project root directory for loading
 // project-level .clawker.settings.yaml as an override layer.
 func WithProjectSettingsRoot(projectRoot string) SettingsLoaderOption {
-	return func(l *SettingsLoader) {
+	return func(l *FileSettingsLoader) {
 		l.projectRoot = projectRoot
 	}
 }
 
 // NewSettingsLoader creates a new SettingsLoader.
 // It resolves the global settings path from CLAWKER_HOME or the default location.
-func NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error) {
+func NewSettingsLoader(opts ...SettingsLoaderOption) (SettingsLoader, error) {
 	home, err := ClawkerHome()
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine clawker home: %w", err)
 	}
-	l := &SettingsLoader{
+	l := &FileSettingsLoader{
 		path: filepath.Join(home, SettingsFileName),
 	}
 	for _, opt := range opts {
@@ -53,14 +63,23 @@ func NewSettingsLoader(opts ...SettingsLoaderOption) (*SettingsLoader, error) {
 	return l, nil
 }
 
+// NewSettingsLoaderForTest creates a SettingsLoader pointing at the given directory.
+// Intended for tests and fawker that need to control the settings path without
+// relying on CLAWKER_HOME.
+func NewSettingsLoaderForTest(dir string) *FileSettingsLoader {
+	return &FileSettingsLoader{
+		path: filepath.Join(dir, SettingsFileName),
+	}
+}
+
 // Path returns the full path to the global settings file.
-func (l *SettingsLoader) Path() string {
+func (l *FileSettingsLoader) Path() string {
 	return l.path
 }
 
 // ProjectSettingsPath returns the full path to the project-level settings file,
 // or empty string if no project root is set.
-func (l *SettingsLoader) ProjectSettingsPath() string {
+func (l *FileSettingsLoader) ProjectSettingsPath() string {
 	if l.projectRoot == "" {
 		return ""
 	}
@@ -68,7 +87,7 @@ func (l *SettingsLoader) ProjectSettingsPath() string {
 }
 
 // Exists checks if the global settings file exists.
-func (l *SettingsLoader) Exists() bool {
+func (l *FileSettingsLoader) Exists() bool {
 	_, err := os.Stat(l.path)
 	if err == nil {
 		return true
@@ -82,7 +101,7 @@ func (l *SettingsLoader) Exists() bool {
 // Load reads and parses the settings, merging project-level overrides if present.
 // Loading order: defaults → $CLAWKER_HOME/settings.yaml → <project-root>/.clawker.settings.yaml
 // If the global file doesn't exist, returns default settings (not an error).
-func (l *SettingsLoader) Load() (*Settings, error) {
+func (l *FileSettingsLoader) Load() (*Settings, error) {
 	// Start with global settings
 	settings, err := l.loadFile(l.path)
 	if err != nil {
@@ -108,7 +127,7 @@ func (l *SettingsLoader) Load() (*Settings, error) {
 
 // loadFile reads and parses a single settings file.
 // Returns default settings if the file doesn't exist.
-func (l *SettingsLoader) loadFile(path string) (*Settings, error) {
+func (l *FileSettingsLoader) loadFile(path string) (*Settings, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -154,7 +173,7 @@ func mergeSettings(base, override *Settings) {
 
 // Save writes the settings to the global settings file.
 // Creates the parent directory if it doesn't exist.
-func (l *SettingsLoader) Save(s *Settings) error {
+func (l *FileSettingsLoader) Save(s *Settings) error {
 	dir := filepath.Dir(l.path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create settings directory: %w", err)
@@ -174,7 +193,7 @@ func (l *SettingsLoader) Save(s *Settings) error {
 
 // EnsureExists creates the global settings file if it doesn't exist.
 // Returns true if the file was created, false if it already existed.
-func (l *SettingsLoader) EnsureExists() (bool, error) {
+func (l *FileSettingsLoader) EnsureExists() (bool, error) {
 	if l.Exists() {
 		return false, nil
 	}

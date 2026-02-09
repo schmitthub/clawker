@@ -81,7 +81,8 @@ type FakeAPIClient struct {
 	ImageTagFn     func(ctx context.Context, opts client.ImageTagOptions) (client.ImageTagResult, error)
 
 	// --- System methods ---
-	PingFn func(ctx context.Context, options client.PingOptions) (client.PingResult, error)
+	PingFn  func(ctx context.Context, options client.PingOptions) (client.PingResult, error)
+	CloseFn func() error
 }
 
 // record appends a method name to the call log (thread-safe).
@@ -443,4 +444,15 @@ func (f *FakeAPIClient) Ping(ctx context.Context, options client.PingOptions) (c
 	}
 	f.record("Ping")
 	return f.PingFn(ctx, options)
+}
+
+// Close implements the APIClient Close method.
+// Defaults to a no-op if CloseFn is not set, since the embedded nil *client.Client
+// would panic on Close and most tests don't care about Close behavior.
+func (f *FakeAPIClient) Close() error {
+	f.record("Close")
+	if f.CloseFn != nil {
+		return f.CloseFn()
+	}
+	return nil
 }

@@ -58,7 +58,7 @@ This compounds: each completed node enables all downstream tests.
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
