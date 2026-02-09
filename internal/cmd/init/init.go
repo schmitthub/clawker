@@ -227,7 +227,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 
 		// Use TUI RunProgress for the build
 		ch := make(chan tui.ProgressStep, 4)
-		var buildErr error
+		buildErrCh := make(chan error, 1)
 
 		go func() {
 			defer close(ch)
@@ -236,7 +236,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 				Name: "Building base image (" + selectedFlavor + ")",
 				Status: tui.StepRunning,
 			}
-			buildErr = client.BuildImage(ctx, buildContext, docker.BuildImageOpts{
+			err := client.BuildImage(ctx, buildContext, docker.BuildImageOpts{
 				Tags:            []string{docker.DefaultImageTag},
 				SuppressOutput:  true,
 				Labels: map[string]string{
@@ -245,18 +245,20 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 					"com.clawker.flavor":     selectedFlavor,
 				},
 			})
-			if buildErr != nil {
+			if err != nil {
 				ch <- tui.ProgressStep{
 					ID:     "build",
 					Status: tui.StepError,
-					Error:  buildErr.Error(),
+					Error:  err.Error(),
 				}
+				buildErrCh <- err
 				return
 			}
 			ch <- tui.ProgressStep{
 				ID:     "build",
 				Status: tui.StepComplete,
 			}
+			buildErrCh <- nil
 		}()
 
 		result := opts.TUI.RunProgress("auto", tui.ProgressDisplayConfig{
@@ -269,7 +271,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			return result.Err
 		}
 
-		if buildErr != nil {
+		if buildErr := <-buildErrCh; buildErr != nil {
 			fmt.Fprintln(ios.ErrOut)
 			fmt.Fprintf(ios.ErrOut, "%s Base image build failed: %v\n", cs.FailureIcon(), buildErr)
 			fmt.Fprintln(ios.ErrOut)
