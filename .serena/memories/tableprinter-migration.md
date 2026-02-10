@@ -2,7 +2,7 @@
 
 ## Branch & Status
 **Branch**: `a/presentation-layer-tables`
-**Status**: Active — lipgloss/table switch complete, all tests pass. Ready for final review and commit.
+**Status**: ARCHIVAL REFERENCE — retained until presentation layer rollout is complete. lipgloss/table switch complete, all tests pass.
 
 ## End Goal
 Replace `bubbles/table` (interactive TUI table, overkill for static output) with `lipgloss/table` (purpose-built for static rendering with per-cell `StyleFunc`). Apply style refinements: muted uppercase headers, primary color first column.

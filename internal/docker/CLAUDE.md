@@ -2,10 +2,6 @@
 
 Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, naming conventions, and image building orchestration.
 
-## TODO
-- [ ] Review package boundaries — some output parsing bypasses whail and may belong in command consumers
-- [ ] Consider removing type re-exports; let callers use moby types directly
-
 ## Key Files
 
 | File | Purpose |
@@ -26,40 +22,20 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 
 ## PTYHandler (`pty.go`)
 
-Full terminal session lifecycle for interactive container sessions: raw mode, bidirectional I/O streaming, resize propagation.
-
-```go
-type PTYHandler struct {
-    stdin, stdout, stderr *os.File
-    rawMode               *term.RawMode
-    mu                    sync.Mutex
-}
-
-func NewPTYHandler() *PTYHandler
-```
+Full terminal session lifecycle for interactive container sessions. `NewPTYHandler() *PTYHandler`.
 
 ### Methods
 
-```go
-(*PTYHandler).Setup() error                                    // Enable raw mode on stdin
-(*PTYHandler).Restore() error                                  // Reset visual state (ANSI) + restore termios
-(*PTYHandler).Stream(ctx, hijacked) error                      // Bidirectional I/O (stdin→conn, conn→stdout)
-(*PTYHandler).StreamWithResize(ctx, hijacked, resizeFunc) error // Stream + resize propagation
-(*PTYHandler).GetSize() (width, height int, err error)
-(*PTYHandler).IsTerminal() bool
-```
+| Method | Purpose |
+|--------|---------|
+| `Setup()` | Enable raw mode on stdin |
+| `Restore()` | Reset visual state (ANSI) + restore termios |
+| `Stream(ctx, hijacked)` | Bidirectional I/O (stdin→conn, conn→stdout) |
+| `StreamWithResize(ctx, hijacked, resizeFunc)` | Stream + resize propagation |
+| `GetSize()` | Returns (width, height, err) |
+| `IsTerminal()` | TTY detection |
 
-**Dependencies**: `internal/term` (RawMode), `internal/signals` (ResizeHandler in StreamWithResize).
-
-**Consumers**: container `run`, `start`, `attach`, `exec` commands.
-
-### Gotchas
-
-- **Visual state vs termios**: `Restore()` sends ANSI reset sequences (alternate screen, cursor, colors) _before_ restoring raw/cooked mode. These are separate concerns.
-- **Resize +1/-1 trick**: Resize to `(h+1, w+1)` then actual size forces SIGWINCH for TUI redraw.
-- **os.Exit() skips defers**: Always call `Restore()` explicitly before exit paths.
-- **Ctrl+C in raw mode**: Goes to container, not as SIGINT to host process.
-- **Don't wait on stdin goroutine**: Container exit should not block on `Read()`.
+**Dependencies**: `internal/term` (RawMode), `internal/signals` (ResizeHandler). **Consumers**: container `run`, `start`, `attach`, `exec`.
 
 ## Naming Convention
 
@@ -186,22 +162,7 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 
 ## Environment (`env.go`)
 
-```go
-type RuntimeEnvOpts struct {
-    Project, Agent, WorkspaceMode, WorkspaceSource string  // → CLAWKER_* identity vars
-    Editor, Visual string                                   // defaults to "nano"
-    FirewallEnabled bool; FirewallDomains []string; FirewallOverride bool
-    FirewallIPRangeSources []config.IPRangeSource
-    GPGForwardingEnabled, SSHForwardingEnabled bool         // socket forwarding
-    Is256Color, TrueColor bool                              // terminal capabilities
-    AgentEnv, InstructionEnv map[string]string              // from config
-}
-func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)
-```
-
-Precedence (last wins): base defaults → terminal → agent env → instruction env. Output sorted by key.
-
-**Container env vars:** `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_WORKSPACE_SOURCE` (identity); `CLAWKER_FIREWALL_DOMAINS`, `CLAWKER_FIREWALL_OVERRIDE`, `CLAWKER_FIREWALL_IP_RANGE_SOURCES` (firewall); `CLAWKER_REMOTE_SOCKETS` (socket forwarding, JSON array of `{path, type}`); `SSH_AUTH_SOCK` (set when `SSHForwardingEnabled`, points to `/home/claude/.ssh/agent.sock`)
+`RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars from `RuntimeEnvOpts` (identity, firewall, socket forwarding, terminal caps, agent/instruction env). Precedence (last wins): base defaults → terminal → agent env → instruction env. Output sorted by key. Key env vars: `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_FIREWALL_*`, `CLAWKER_REMOTE_SOCKETS`, `SSH_AUTH_SOCK`.
 
 ## Volume Utilities (`volume.go`)
 
@@ -227,20 +188,10 @@ Standalone: `ParseCPUs(value string) (int64, error)`
 
 ## Type Re-exports (`types.go`)
 
-Re-exports ~37 Docker types from whail for consumer convenience: container options (`ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerCreateOptions`, `SDKContainerCreateOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `ContainerStartOptions`), exec options (`ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`), image options and results (`ImageListOptions`, `ImageRemoveOptions`, `ImageBuildOptions`, `ImagePullOptions`, `ImageSummary`, `ImageListResult`), volume/network options (`VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`, `EnsureNetworkOptions`), copy options (`CopyToContainerOptions`, `CopyFromContainerOptions`), resource management (`Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`), shared types (`Filters`, `Labels`, `HijackedResponse`, `DockerError`), wait conditions (`ContainerWaitCondition`, `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`).
-
-## Patterns
-
-- **Context**: All methods accept `ctx context.Context` as first param. Never store in structs. Use `context.Background()` in deferred cleanup.
-- **ContainerWait**: Returns `nil` response channel for unmanaged containers. Use buffered error channels.
-- **Import rule**: No package imports `pkg/whail` directly except `internal/docker`. No package imports moby client directly except `pkg/whail`.
+Re-exports ~37 Docker types from whail. See `types.go` for the full list. Key groups: container/exec options, image options and results, volume/network options, copy options, resource management, wait conditions.
 
 ## Testing
 
 Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. Use `dockertest.WithConfig(cfg)` to inject a `*config.Config` for image resolution tests. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
 
-**BuildKit setup helpers**:
-- `SetupBuildKit()` — wires fake BuildKit builder, returns `*BuildKitCapture` for assertions
-- `SetupBuildKitWithProgress(events []whail.BuildProgressEvent)` — same as `SetupBuildKit` but also emits the given progress events via `OnProgress` callback. Use with `whailtest.SimpleBuildEvents()` etc. for pipeline testing
-- `SetupBuildKitWithRecordedProgress(events []whailtest.RecordedBuildEvent)` — wires timed replay builder that sleeps between events for realistic simulation. Use with JSON scenarios from `whailtest/testdata/`
-- `SetupPingBuildKit()` — wires `PingFn` to report BuildKit as preferred builder. Required when exercising code paths that call `BuildKitEnabled()` for detection (e.g. fawker demo CLI)
+**BuildKit setup helpers**: `SetupBuildKit()`, `SetupBuildKitWithProgress(events)`, `SetupBuildKitWithRecordedProgress(events)`, `SetupPingBuildKit()` — wire fake BuildKit builders with varying levels of progress event simulation. See `dockertest/helpers.go` for signatures.

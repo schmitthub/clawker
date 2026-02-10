@@ -76,14 +76,7 @@ Commands that use `opts.TUI.RunProgress()` require the `TUI` field. Commands tha
 
 None — all output helpers are deprecated. Use `fmt.Fprintf` with `ios.ColorScheme()` directly.
 
-### Deprecated Functions (use gh-style fprintf instead)
-`PrintStatus(ios, quiet, format, args...)` -- **Deprecated**: inline `if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }`
-`OutputJSON(ios, data) error` -- **Deprecated**: inline `json.NewEncoder(ios.Out)` with `SetIndent`
-`PrintHelpHint(ios, cmdPath)` -- **Deprecated**: inline `fmt.Fprintf(ios.ErrOut, "\nRun '%s --help'...\n", cmdPath)`
-`HandleError(ios, err)` -- **Deprecated**: return errors to Main() for centralized rendering
-`PrintError(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)`
-`PrintWarning(ios, format, args...)` -- **Deprecated**: use `fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...)`
-`PrintNextSteps(ios, steps...)` -- **Deprecated**: inline next-steps output with `fmt.Fprintf(ios.ErrOut, ...)`
+**Deprecated** (`output.go`): `HandleError`, `PrintError`, `PrintWarning`, `PrintNextSteps`, `PrintStatus`, `OutputJSON`, `PrintHelpHint` — use `fmt.Fprintf` with `ios.ColorScheme()` directly.
 
 ### Error Types (`errors.go`)
 
@@ -99,14 +92,7 @@ var SilentError = errors.New("SilentError")
 
 ### ExitError
 
-Type for propagating non-zero container exit codes through Cobra's error chain. Allows deferred cleanup (terminal restore, container removal) to run before `os.Exit()`.
-
-```go
-type ExitError struct { Code int }
-func (e *ExitError) Error() string // "exit status <N>"
-```
-
-Commands return `&ExitError{Code: status}` instead of calling `os.Exit()` directly. The root command's `Execute()` checks for `ExitError` and calls `os.Exit(code)` after all defers have run. Critical because `os.Exit()` does **not** run deferred functions.
+`ExitError{Code int}` — propagates non-zero container exit codes through Cobra. Commands return `&ExitError{Code: status}` instead of `os.Exit()`. Root command extracts the code after all defers run.
 
 ## Argument Validators (`required.go`)
 
@@ -129,74 +115,19 @@ All validators include binary name, command path, and usage line in error messag
 
 Reusable `--format`, `--json`, and `-q`/`--quiet` flag handling for list commands. Follows Docker CLI conventions.
 
-```go
-// Mode constants
-const ModeDefault = ""           // default table output
-const ModeTable = "table"        // explicit table
-const ModeJSON = "json"          // JSON output
-const ModeTemplate = "template"  // Go template (e.g. "{{.Name}}")
-const ModeTableTemplate = "table-template"  // table with Go template columns
+**Mode constants**: `ModeDefault` (`""`), `ModeTable`, `ModeJSON`, `ModeTemplate`, `ModeTableTemplate`
 
-// Parse a --format value
-f, err := ParseFormat("table {{.Name}}\t{{.ID}}")
-f.IsDefault()       // true for ModeDefault or ModeTable
-f.IsJSON()          // true for ModeJSON
-f.IsTemplate()      // true for ModeTemplate or ModeTableTemplate
-f.IsTableTemplate() // true for ModeTableTemplate only
-f.Template()        // the Go template string
+**`Format` type**: `ParseFormat(s) (Format, error)`. Methods: `IsDefault()`, `IsJSON()`, `IsTemplate()`, `IsTableTemplate()`, `Template()`.
 
-// Register flags on a cobra command (returns pointer populated during PreRunE)
-ff := AddFormatFlags(cmd)
-// After execution: ff.Format, ff.Quiet
+**`FormatFlags`**: `AddFormatFlags(cmd) *FormatFlags` — registers `--format`, `--json`, `--quiet` with PreRunE mutual exclusivity validation. Convenience delegates: `ff.IsJSON()`, `ff.IsTemplate()`, `ff.IsDefault()`, `ff.IsTableTemplate()`, `ff.Template()` — avoid `opts.Format.Format.IsJSON()` stutter.
 
-// Convenience delegates on FormatFlags (avoid opts.Format.Format.IsJSON() stutter):
-ff.IsJSON()          // delegates to ff.Format.IsJSON()
-ff.IsTemplate()      // delegates to ff.Format.IsTemplate()
-ff.IsDefault()       // delegates to ff.Format.IsDefault()
-ff.IsTableTemplate() // delegates to ff.Format.IsTableTemplate()
-ff.Template()        // returns ff.Format (the Format value itself)
-```
-
-**`AddFormatFlags`** registers `--format`, `--json`, `--quiet` and chains PreRunE validation:
-- `--json` and `--format` are mutually exclusive (FlagError)
-- `--quiet` and `--format`/`--json` are mutually exclusive (FlagError)
-- Preserves any existing PreRunE on the command
-- Uses `cmd.Flags().Changed()` to detect explicitly-set flags
-
-### Generic Slice Conversion
-
-```go
-func ToAny[T any](items []T) []any
-```
-
-Converts a typed slice to `[]any` for `ExecuteTemplate`. Use instead of per-command `toAny` helpers.
+**`ToAny[T any](items []T) []any`** — generic slice conversion for `ExecuteTemplate`.
 
 ## Template Execution (`template.go`)
 
-Go template execution for `--format TEMPLATE` and `--format "table TEMPLATE"` output modes.
+**`DefaultFuncMap()`** — Docker CLI-compatible template functions: `json` (returns error), `upper`, `lower`, `title` (unicode-safe), `split`, `join`, `truncate` (negative n → empty).
 
-```go
-// DefaultFuncMap returns Docker CLI-compatible template functions:
-// json, upper, lower, title, split, join, truncate
-fm := DefaultFuncMap()
-
-// ExecuteTemplate parses and executes a Go template for each item.
-// Table-template mode aligns columns through tabwriter.
-err := ExecuteTemplate(w, format, items)
-```
-
-**Functions in `DefaultFuncMap()`:**
-- `json` — JSON-encode a value; returns `(string, error)` — errors propagate through `template.Execute()`
-- `upper` / `lower` — case conversion
-- `title` — capitalize first rune (unicode-safe via `utf8.DecodeRuneInString`)
-- `split` / `join` — string splitting/joining
-- `truncate` — truncate with "..." ellipsis; negative n returns empty string
-
-**`ExecuteTemplate` behavior:**
-- Plain template (`ModeTemplate`): writes each item directly to writer
-- Table template (`ModeTableTemplate`): wraps writer in tabwriter for column alignment
-- Returns descriptive errors: "invalid template" for parse errors, "template execution failed" for execution errors, "writing output" for write errors
-- Stdlib only: `text/template`, `text/tabwriter`, `encoding/json`, `unicode/utf8`
+**`ExecuteTemplate(w, format, items)`** — parses and executes Go template per item. Table-template mode uses tabwriter for column alignment. Stdlib only.
 
 ## JSON Output (`json.go`)
 
@@ -264,12 +195,3 @@ func ParseWorktreeFlag(value, agentName string) (*WorktreeSpec, error)
 - Rejects shell metacharacters (`;`, `` ` ``, `$`, etc.) for security
 - Rejects git-special patterns (`.lock` suffix, `..`, `@{`)
 
-## Tests
-
-- `errors_test.go` -- unit tests for error types
-- `format_test.go` -- unit tests for format parsing, methods, flag registration, validation, PreRunE chaining, FormatFlags convenience delegates, ToAny generic
-- `json_test.go` -- unit tests for WriteJSON (struct, slice, empty, nil, pretty-printed, no HTML escaping)
-- `filter_test.go` -- unit tests for ParseFilters (8 cases), ValidateFilterKeys, AddFilterFlags, FilterFlags.Parse
-- `required_test.go` -- unit tests for argument validators
-- `template_test.go` -- unit tests for DefaultFuncMap (json error propagation, title multibyte, truncate negative), ExecuteTemplate (plain, table, functions, errors, empty, write errors)
-- `worktree_test.go` -- unit tests for worktree flag parsing

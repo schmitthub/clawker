@@ -106,6 +106,8 @@ clawker network   [list|inspect|create|remove|prune]
 clawker image     [list|inspect|build|remove|prune]
 ```
 
+**Note**: `internal/cmd/container/shared/` contains domain orchestration logic (container init, onboarding) shared between `run/` and `create/`.
+
 ### internal/cmdutil - CLI Utilities
 
 Shared toolkit importable by all command packages.
@@ -165,6 +167,7 @@ User interaction utilities with TTY and CI awareness.
 | Package | Purpose |
 |---------|---------|
 | `internal/workspace` | Bind vs Snapshot strategies for host-container file sharing |
+| `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume (leaf — config + docker types only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/tableprinter` | TTY-aware table printing with styled headers (imports iostreams, text) |
@@ -388,6 +391,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    bundler/ → config + own subpackages + hostproxy/internals (embed-only leaf) (no docker) │
 │    tui/ → iostreams, text (+ bubbletea, bubbles)                │
+│    containerfs/ → config (leaf — no docker runtime calls)       │
 │    hostproxy/ → logger                                          │
 │    socketbridge/ → config, logger                               │
 │    prompter/ → iostreams                                        │

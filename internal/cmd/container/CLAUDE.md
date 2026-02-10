@@ -8,29 +8,12 @@ Docker CLI-compatible container management commands. Subpackages (`run/`, `creat
 internal/cmd/container/
 ├── container.go        # Parent command, registers subcommands
 ├── opts/               # Shared container flag types (import cycle workaround)
-│   ├── opts.go         # ContainerOptions, AddFlags, BuildConfigs
-│   └── network.go      # NetworkOpt, NetworkAttachmentOpts
-├── shared/             # Shared domain logic used by multiple subcommands
-│   └── containerfs.go  # InitContainerConfig, InjectOnboardingFile (container init orchestration)
+├── shared/             # Shared domain logic (container init orchestration)
 ├── run/                # clawker container run (RunOptions, NewCmdRun)
 ├── create/             # clawker container create (CreateOptions, NewCmdCreate)
 ├── start/              # clawker container start (StartOptions, NewCmdStart)
-├── stop/               # clawker container stop (StopOptions, NewCmdStop)
 ├── exec/               # clawker container exec (ExecOptions, NewCmdExec)
-├── attach/             # clawker container attach (AttachOptions, NewCmdAttach)
-├── logs/               # clawker container logs (LogsOptions, NewCmdLogs)
-├── list/               # clawker container ls (ListOptions, NewCmdList)
-├── inspect/            # clawker container inspect (InspectOptions, NewCmdInspect)
-├── cp/                 # clawker container cp (CpOptions, NewCmdCp)
-├── kill/               # clawker container kill (KillOptions, NewCmdKill)
-├── pause/, unpause/    # PauseOptions/UnpauseOptions, NewCmdPause/NewCmdUnpause
-├── remove/             # clawker container rm (RemoveOptions, NewCmdRemove)
-├── rename/             # clawker container rename (RenameOptions, NewCmdRename)
-├── restart/            # clawker container restart (RestartOptions, NewCmdRestart)
-├── stats/              # clawker container stats (StatsOptions, NewCmdStats)
-├── top/                # clawker container top (TopOptions, NewCmdTop)
-├── update/             # clawker container update (UpdateOptions, NewCmdUpdate)
-└── wait/               # clawker container wait (WaitOptions, NewCmdWait)
+└── ... (stop, attach, logs, list, inspect, cp, kill, pause, unpause, remove, rename, restart, stats, top, update, wait)
 ```
 
 **Import cycle rule**: `container/` imports subcommands, subcommands need shared types. The `opts/` package exists to break the `container -> run -> container` cycle for flag types. The `shared/` package contains domain orchestration logic used by multiple subcommands. Never put shared utilities in the parent package.
@@ -203,12 +186,6 @@ if status != 0 {
     return &cmdutil.ExitError{Code: status}
 }
 ```
-
-## Wait Helper Pattern (`waitForContainerExit`)
-
-Unexported helper in `run/run.go`. Follows Docker CLI's `waitExitOrRemoved` pattern. Wraps the dual-channel `ContainerWait` into a single `<-chan int` status channel.
-
-**Critical**: Use `WaitConditionNextExit` (not `WaitConditionNotRunning`) when waiting is set up before `ContainerStart` -- a "created" container is already not-running, so `WaitConditionNotRunning` returns immediately. Use `WaitConditionRemoved` when `--rm` (auto-remove) is set.
 
 ## Attach-Then-Start Pattern (`run.go` and `start.go`)
 

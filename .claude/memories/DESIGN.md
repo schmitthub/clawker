@@ -407,6 +407,11 @@ Credentials are passed via environment variables:
 
 Note: Environment variables are visible in `docker inspect`. This is accepted for simplicity.
 
+**Container credential injection**: When `claude_code.use_host_auth` is true (default),
+`containerfs.PrepareCredentials()` copies the host's `~/.claude/.credentials.json` into
+the config volume. The `docker.CopyToVolume` two-phase chown ensures UID 1001 ownership.
+This supplements environment variable passing for persistent credential storage.
+
 ### 7.2 Firewall
 
 Firewall configuration is **out of scope** for the core design. Users implement firewall via:
@@ -547,6 +552,26 @@ Restart policies are passed directly to Docker:
 agent:
   restart: unless-stopped
 ```
+
+### 10.4 Container Init
+
+New containers require one-time initialization to inherit the host user's Claude Code
+configuration (settings, plugins, credentials). This avoids manual re-authentication
+and plugin installation on every container creation.
+
+**Config schema** (`config.ClaudeCodeConfig` in `clawker.yaml`):
+- `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
+- `use_host_auth`: Forward host credentials to container. Default: `true`
+
+**Init flow** (orchestrated by `cmd/container/shared/containerfs.go`):
+1. `workspace.EnsureConfigVolumes()` — creates `clawker.<project>.<agent>-config` volume
+2. `containerfs.PrepareClaudeConfig()` — copies host Claude settings + plugins to tar
+3. `containerfs.PrepareCredentials()` — copies host credentials to tar (when `use_host_auth`)
+4. `docker.CopyToVolume()` — writes tar contents to config volume with correct ownership
+5. `shared.InjectOnboardingFile()` — writes `~/.claude.json` marker to skip first-run wizard
+
+**Key packages**: `internal/containerfs` (tar preparation, path rewriting),
+`internal/workspace` (volume lifecycle), `internal/cmd/container/shared` (orchestration)
 
 ## 11. Testing Strategy
 
