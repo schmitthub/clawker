@@ -22,6 +22,8 @@ type (
 	ContainerLogsOptions      = client.ContainerLogsOptions
 	ContainerRemoveOptions    = client.ContainerRemoveOptions
 	SDKContainerCreateOptions = client.ContainerCreateOptions
+	SDKContainerStartOptions  = client.ContainerStartOptions
+	SDKContainerWaitOptions   = client.ContainerWaitOptions
 
 	// Container result types.
 	ContainerInspectOptions = client.ContainerInspectOptions

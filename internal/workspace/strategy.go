@@ -77,23 +77,35 @@ func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
 	}
 }
 
+// ConfigVolumeResult tracks which config volumes were newly created vs pre-existing.
+type ConfigVolumeResult struct {
+	ConfigCreated  bool
+	HistoryCreated bool
+}
+
 // EnsureConfigVolumes creates config and history volumes with proper labels.
 // Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error {
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (*ConfigVolumeResult, error) {
+	result := &ConfigVolumeResult{}
+
 	configVolume := docker.VolumeName(projectName, agentName, "config")
 	configLabels := docker.VolumeLabels(projectName, agentName, "config")
-	if _, err := cli.EnsureVolume(ctx, configVolume, configLabels); err != nil {
-		return err
+	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
+	if err != nil {
+		return nil, err
 	}
+	result.ConfigCreated = created
 
 	historyVolume := docker.VolumeName(projectName, agentName, "history")
 	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
-	if _, err := cli.EnsureVolume(ctx, historyVolume, historyLabels); err != nil {
-		return err
+	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
+	if err != nil {
+		return nil, err
 	}
+	result.HistoryCreated = created
 
-	return nil
+	return result, nil
 }
 
 // GetDockerSocketMount returns the Docker socket mount if enabled
@@ -107,28 +119,31 @@ func GetDockerSocketMount() mount.Mount {
 }
 
 const (
-	// GlobalsPurpose is the volume purpose label for the shared globals volume.
-	GlobalsPurpose = "globals"
-	// GlobalsStagingPath is the container mount point for the globals volume.
-	GlobalsStagingPath = "/home/claude/.clawker-globals"
+	// SharePurpose is the volume purpose label for the shared volume.
+	SharePurpose = "share"
+	// ShareStagingPath is the container mount point for the shared volume.
+	ShareStagingPath = "/home/claude/.clawker-share"
 )
 
-// EnsureGlobalsVolume creates the global shared volume if it doesn't already exist.
-// This volume persists credentials and other shared data across all projects and agents.
-func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error {
-	name := docker.GlobalVolumeName(GlobalsPurpose)
-	labels := docker.GlobalVolumeLabels(GlobalsPurpose)
-	if _, err := cli.EnsureVolume(ctx, name, labels); err != nil {
-		return err
+// EnsureShareVolume creates the global shared volume if it doesn't already exist.
+// This volume provides a read-only shared directory across all projects and agents.
+func EnsureShareDir() (string, error) {
+	sharePath, err := config.ShareDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve share directory: %w", err)
 	}
-	return nil
+	if err := config.EnsureDir(sharePath); err != nil {
+		return "", fmt.Errorf("failed to create share directory: %w", err)
+	}
+	return sharePath, nil
 }
 
-// GetGlobalsVolumeMount returns the mount for the global shared volume.
-func GetGlobalsVolumeMount() mount.Mount {
+// GetShareVolumeMount returns the mount for the global shared volume (read-only).
+func GetShareVolumeMount(hostPath string) mount.Mount {
 	return mount.Mount{
-		Type:   mount.TypeVolume,
-		Source: docker.GlobalVolumeName(GlobalsPurpose),
-		Target: GlobalsStagingPath,
+		Type:     mount.TypeBind,
+		Source:   hostPath,
+		Target:   ShareStagingPath,
+		ReadOnly: true,
 	}
 }

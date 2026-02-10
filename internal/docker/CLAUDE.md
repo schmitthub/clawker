@@ -66,7 +66,7 @@ func NewPTYHandler() *PTYHandler
 - **3-segment** (with project): `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
 - **2-segment** (empty project): `clawker.agent` (e.g., `clawker.ralph`) — no empty segment
 - **Volumes**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
-- **Global volumes**: `clawker-<purpose>` (e.g., `clawker-globals`) — no project/agent scope
+- **Global volumes**: `clawker-<purpose>` (e.g., `clawker-share`) — no project/agent scope
 - **Network**: constant `NetworkName = "clawker-net"`
 
 ## Label Constants
@@ -207,6 +207,15 @@ Precedence (last wins): base defaults → terminal → agent env → instruction
 
 - `(*Client).EnsureVolume(...)`, `(*Client).CopyToVolume(...)` — volume lifecycle
 - `LoadIgnorePatterns(path)` — parses `.clawkerignore` file
+
+### CopyToVolume Ownership Fix
+
+Docker's `CopyToContainer` extracts tar archives as root regardless of tar header UID/GID (`NoLchown=true` server-side). `CopyToVolume` fixes this with a two-phase approach:
+
+1. **Tar headers**: `createTarArchive` sets UID/GID 1001 (defense-in-depth)
+2. **Post-copy chown**: After `CopyToContainer`, starts a busybox temp container that runs `chown -R 1001:1001 <destPath>` on the volume
+
+This ensures files like `.credentials.json` (mode 0600) are readable by the container user (UID 1001).
 
 ## Opts Types (`opts.go`)
 

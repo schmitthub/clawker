@@ -1,7 +1,7 @@
 # Agent Teams Feature: Host Claude Config Forwarding
 
-## Status: Design Phase (WIP) — Foundational Infrastructure Landed
-Last updated: 2026-02-08
+## Status: Design Phase (WIP) — Container Init Feature Landed
+Last updated: 2026-02-09
 
 ## Problem
 
@@ -10,19 +10,23 @@ When clawker creates a container, the container's `~/.claude` directory is backe
 2. Host plugins, commands, skills, settings from being available inside containers without manual re-installation
 3. ~~Credentials from being forwarded~~ **SOLVED** — see Foundational Infrastructure below
 
-## Foundational Infrastructure (Implemented — PR #104)
+## Foundational Infrastructure (Superseded by Container Init Feature)
 
-The `clawker-globals` Docker volume was implemented as the first piece of agent-teams infrastructure. It solves credential sharing immediately and establishes patterns for sharing any host Claude files across containers.
+**NOTE**: The `clawker-globals` volume approach (PR #104) has been **superseded** by the Container Init Feature (branch `a/containerfs-init`). The new approach:
+- Uses one-time `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` at container creation time
+- Copies host config/credentials directly into per-agent config volumes (not a shared global volume)
+- The old globals volume was renamed to `clawker-share` (optional, read-only, gated by `agent.enable_shared_dir: true`)
+- Entrypoint credential symlink section was removed
 
-### What's Implemented
+### What Was Implemented (PR #104, now superseded)
 
-**Global volume for cross-project/cross-agent credential persistence:**
+**Global volume for cross-project/cross-agent credential persistence (OLD APPROACH):**
 
-1. **Volume**: `clawker-globals` — a single Docker volume shared by ALL containers, regardless of project or agent
-2. **Mount point**: `/home/claude/.clawker-globals/` inside every container
-3. **Symlink**: Entrypoint creates `~/.claude/.credentials.json` → `~/.clawker-globals/.credentials.json`
-4. **Migration**: Existing per-agent credentials auto-migrate to global volume on first run
-5. **Error handling**: Guarded `cp`/`ln -s` with `migration_ok` flag, `emit_error` on critical failures, `chmod 600` on credentials
+1. **Volume**: `clawker-globals` — a single Docker volume shared by ALL containers → NOW: `clawker-share` (optional, read-only)
+2. **Mount point**: `/home/claude/.clawker-globals/` inside every container → NOW: `/home/claude/.clawker-share/` (when enabled)
+3. **Symlink**: Entrypoint created `~/.claude/.credentials.json` → `~/.clawker-globals/.credentials.json` → NOW: Removed, credentials injected at creation time
+4. **Migration**: Existed per-agent credentials auto-migrate → NOW: Removed
+5. **Error handling**: Guarded `cp`/`ln -s` with `migration_ok` flag → NOW: Simpler, init runs once at creation
 
 ### Key APIs & Patterns (Reusable for Agent Teams)
 
@@ -345,14 +349,15 @@ The `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var should be injected when for
 
 ## Implementation Sequence
 
-### Phase 0: Global Volume Infrastructure ✅ COMPLETE (PR #104)
-- `internal/docker/names.go` — `GlobalVolumeName(purpose)` naming
-- `internal/docker/labels.go` — `GlobalVolumeLabels(purpose)` labels
-- `internal/workspace/strategy.go` — `EnsureGlobalsVolume()`, `GetGlobalsVolumeMount()`, constants
-- `internal/workspace/setup.go` — wired into `SetupMounts()`
-- `internal/bundler/assets/entrypoint.sh` — credential symlink + migration + error handling + `chmod 600`
-- `test/internals/scripts_test.go` — integration tests (symlink + migration)
-- All unit + integration tests passing
+### Phase 0: Container Init Feature ✅ COMPLETE (branch a/containerfs-init, supersedes PR #104)
+- `internal/containerfs/` — host config preparation (settings, plugins, credentials, onboarding)
+- `internal/cmd/container/opts/init.go` — `InitContainerConfig`, `InjectOnboardingFile` orchestration
+- `internal/config/schema.go` — `ClaudeCodeConfig`, `AgentConfig.ClaudeCode`, `AgentConfig.EnableSharedDir`
+- `internal/workspace/strategy.go` — `EnsureShareVolume()`, `GetShareVolumeMount()` (read-only), `ConfigVolumeResult`
+- `internal/workspace/setup.go` — `SetupMountsResult` with `ConfigVolumeResult`
+- `internal/bundler/assets/entrypoint.sh` — removed credential symlink section
+- `internal/cmd/container/run/run.go` + `create/create.go` — wired init steps
+- All 3510 unit tests passing
 
 ### Phase 1: Config Schema
 - `internal/config/schema.go` — `ClaudeConfigForwarding` struct + methods

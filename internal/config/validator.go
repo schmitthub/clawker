@@ -248,6 +248,21 @@ func (v *Validator) validateAgent(cfg *Project) {
 			v.addError("agent.env", "invalid environment variable name", key)
 		}
 	}
+
+	// Validate Claude Code configuration
+	v.validateClaudeCode(cfg)
+}
+
+// validateClaudeCode validates the agent.claude_code configuration block.
+func (v *Validator) validateClaudeCode(cfg *Project) {
+	if cfg.Agent.ClaudeCode == nil {
+		return
+	}
+
+	strategy := cfg.Agent.ClaudeCode.Config.Strategy
+	if strategy != "" && strategy != "copy" && strategy != "fresh" {
+		v.addError("agent.claude_code.config.strategy", "must be \"copy\", \"fresh\", or empty", strategy)
+	}
 }
 
 func (v *Validator) validateInstructions(cfg *Project) {

@@ -53,14 +53,21 @@ type SetupMountsConfig struct {
     ProjectRootDir string          // Main repo root for worktree .git mounting (empty for non-worktree)
 }
 
-func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error)
+type SetupMountsResult struct {
+    Mounts             []mount.Mount
+    ConfigVolumeResult *ConfigVolumeResult
+}
+
+func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) error
-func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error
-func GetGlobalsVolumeMount() mount.Mount
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (*ConfigVolumeResult, error)
+func EnsureShareDir() (string, error)
+func GetShareVolumeMount(hostPath string) mount.Mount
 ```
 
-`SetupMounts` is the main entry point -- combines workspace, git credentials, globals volume, and Docker socket mounts into a single mount list. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+
+`ConfigVolumeResult` tracks which config volumes were newly created vs pre-existing (`ConfigCreated`, `HistoryCreated` bool fields). Returned by `EnsureConfigVolumes` for use by container init orchestration. When `ConfigCreated` is true, callers should run `opts.InitContainerConfig` to populate the volume.
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
@@ -94,18 +101,22 @@ func GetDockerSocketMount() mount.Mount
 
 Only available when `security.docker_socket: true`.
 
-## Globals Volume
+## Share Directory (Bind Mount)
 
 ```go
-const GlobalsPurpose = "globals"
-const GlobalsStagingPath = "/home/claude/.clawker-globals"
-func EnsureGlobalsVolume(ctx context.Context, cli *docker.Client) error
-func GetGlobalsVolumeMount() mount.Mount
+const SharePurpose = "share"
+const ShareStagingPath = "/home/claude/.clawker-share"
+func EnsureShareDir() (string, error)
+func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
-Global volume (`clawker-globals`) persists shared data (credentials) across all projects and agents. Mounted at `GlobalsStagingPath` as a staging path. The entrypoint symlinks `~/.claude/.credentials.json` → staging path so Claude Code writes persist immediately to the global volume.
+Shared directory provides a read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `ShareStagingPath`. Only mounted when `agent.enable_shared_dir: true` in config (`AgentConfig.SharedDirEnabled()`).
 
-**Lifecycle**: NOT deleted by `removeAgentVolumes` (label/name filters exclude it). Deleted by `volume prune` (user-confirmed).
+`EnsureShareDir` resolves the host path via `config.ShareDir()` and creates it with `config.EnsureDir()` if missing. Returns the host path for `GetShareVolumeMount`. No Docker client needed — purely filesystem.
+
+**Host path**: `$CLAWKER_HOME/.clawker-share` (created during `clawker init`, re-created if missing during mount setup).
+
+**Lifecycle**: Host directory is never deleted by clawker. Users manage contents directly on the host filesystem.
 
 ## Constants
 

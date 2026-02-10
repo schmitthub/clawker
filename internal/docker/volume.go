@@ -56,10 +56,15 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		return fmt.Errorf("failed to create tar archive: %w", err)
 	}
 
-	// Create a temporary container with the volume mounted
+	// Create a temporary container with the volume mounted.
+	// Cmd runs chown after CopyToContainer to fix file ownership:
+	// Docker's CopyToContainer extracts tar archives as root regardless of
+	// tar header UID/GID (NoLchown=true server-side). We keep correct UID/GID
+	// in createTarArchive as defense-in-depth, but the chown is what actually
+	// ensures the container user (UID 1001) can read the files.
 	containerConfig := &container.Config{
 		Image: "busybox:latest",
-		Cmd:   []string{"true"},
+		Cmd:   []string{"chown", "-R", "1001:1001", destPath},
 	}
 
 	hostConfig := &container.HostConfig{
@@ -108,7 +113,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		}
 	}()
 
-	// Copy tar archive to container
+	// Copy tar archive to container (works on created, not-started containers)
 	_, err = c.APIClient.CopyToContainer(
 		ctx,
 		resp.ID,
@@ -119,6 +124,26 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	)
 	if err != nil {
 		return fmt.Errorf("failed to copy to container: %w", err)
+	}
+
+	// Start the container to run chown, fixing file ownership for UID 1001
+	if _, err := c.APIClient.ContainerStart(ctx, resp.ID, whail.SDKContainerStartOptions{}); err != nil {
+		return fmt.Errorf("failed to start chown container: %w", err)
+	}
+
+	// Wait for chown to complete
+	waitResult := c.APIClient.ContainerWait(ctx, resp.ID, whail.SDKContainerWaitOptions{
+		Condition: container.WaitConditionNotRunning,
+	})
+	select {
+	case result := <-waitResult.Result:
+		if result.StatusCode != 0 {
+			return fmt.Errorf("chown failed in temp container with exit code %d", result.StatusCode)
+		}
+	case err := <-waitResult.Error:
+		return fmt.Errorf("failed waiting for chown container: %w", err)
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled waiting for chown: %w", ctx.Err())
 	}
 
 	logger.Info().
@@ -168,6 +193,11 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) err
 
 		// Use relative path in archive
 		header.Name = relPath
+
+		// Ensure container user ownership so files are readable inside container.
+		// TODO: Move container UID/GID to a config package value shared across packages.
+		header.Uid = 1001 // Must match bundler.DefaultUID
+		header.Gid = 1001 // Must match bundler.DefaultGID
 
 		// Handle symlinks
 		if info.Mode()&os.ModeSymlink != 0 {

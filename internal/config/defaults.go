@@ -70,6 +70,15 @@ agent:
   # Environment variables for the agent
   env:
     # NODE_ENV: "development"
+  # Claude Code configuration
+  # claude_code:
+  #   config:
+  #     # "copy" copies host ~/.claude/ config, "fresh" starts clean
+  #     strategy: "fresh"
+  #   # Use host authentication tokens in container
+  #   use_host_auth: true
+  # Enable shared directory (read-only, mounted at ~/.clawker-share)
+  # enable_shared_dir: false
 
 workspace:
   # Container path where your code is mounted

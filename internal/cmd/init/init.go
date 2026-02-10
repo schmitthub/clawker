@@ -201,6 +201,16 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), settingsLoader.Path())
 
+	// Ensure shared directory exists on host for bind-mounting into containers
+	shareDir, err := config.ShareDir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve share directory: %w", err)
+	}
+	if err := config.EnsureDir(shareDir); err != nil {
+		return fmt.Errorf("failed to create share directory: %w", err)
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), shareDir)
+
 	// Build base image with TUI progress display
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)

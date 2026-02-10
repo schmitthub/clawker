@@ -97,23 +97,25 @@ Claude Code securely manages your authentication credentials:
 * **Custom credential scripts**: the [`apiKeyHelper`](/en/settings#available-settings) setting can be configured to run a shell script that returns an API key.
 * **Refresh intervals**: by default, `apiKeyHelper` is called after 5 minutes or on HTTP 401 response. Set `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` environment variable for custom refresh intervals.
 
-## Clawker Global Volume Integration
+## Container Init Feature (replaces Global Volume)
 
-Clawker uses a `clawker-globals` Docker volume to persist Claude Code credentials across all projects and agents.
+Clawker now uses a one-time container init pattern instead of the old `clawker-globals` volume.
 
 ### How it works
-1. `workspace.EnsureGlobalsVolume()` creates the `clawker-globals` volume (labels: `com.clawker.managed=true`, `com.clawker.purpose=globals`)
-2. Volume mounts at `/home/claude/.clawker-globals/` in containers
-3. Entrypoint (`entrypoint.sh`) symlinks `~/.claude/.credentials.json` → `~/.clawker-globals/.credentials.json`
-4. Claude Code writes to the symlink target, persisting credentials to the global volume
-5. Migration: existing per-agent credentials are copied to global volume before symlinking
+1. `workspace.EnsureConfigVolumes()` creates per-agent config/history volumes, returns `ConfigVolumeResult`
+2. If config volume was freshly created (`ConfigCreated: true`), `opts.InitContainerConfig()` runs:
+   - `containerfs.PrepareClaudeConfig()` copies host `~/.claude/` settings (if strategy="copy")
+   - `containerfs.PrepareCredentials()` injects host credentials via keyring or file fallback (if use_host_auth=true)
+   - Both use `CopyToVolume` (busybox init container pattern) to write to the config volume
+3. After `ContainerCreate`, `opts.InjectOnboardingFile()` writes `~/.claude.json` with `{hasCompletedOnboarding: true}` to skip onboarding prompt (if use_host_auth=true)
+4. This is one-time only — existing containers with pre-existing config volumes are not re-initialized
 
 ### Key files
-- `internal/docker/names.go` — `GlobalVolumeName(purpose)` → `clawker-<purpose>`
-- `internal/docker/labels.go` — `GlobalVolumeLabels(purpose)` — managed + purpose only
-- `internal/workspace/strategy.go` — `EnsureGlobalsVolume()`, `GetGlobalsVolumeMount()`
-- `internal/workspace/setup.go` — wired into `SetupMounts()`
-- `internal/bundler/assets/entrypoint.sh` — symlink creation + migration
+- `internal/containerfs/containerfs.go` — host config preparation, credential resolution, onboarding tar
+- `internal/cmd/container/opts/init.go` — `InitContainerConfig`, `InjectOnboardingFile` orchestration
+- `internal/workspace/strategy.go` — `EnsureConfigVolumes()` returns `*ConfigVolumeResult`
+- `internal/workspace/setup.go` — `SetupMounts()` returns `*SetupMountsResult`
+- `internal/config/schema.go` — `ClaudeCodeConfig`, `AgentConfig.ClaudeCode`, `AgentConfig.EnableSharedDir`
 
 ## Keyring Package (`internal/keyring`)
 
