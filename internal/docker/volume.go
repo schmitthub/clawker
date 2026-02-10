@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -143,8 +144,12 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 			logReader, logErr := c.APIClient.ContainerLogs(ctx, resp.ID, whail.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 			if logErr == nil {
 				defer logReader.Close()
-				if logBytes, readErr := io.ReadAll(logReader); readErr == nil && len(logBytes) > 0 {
-					logOutput = string(logBytes)
+				var stdout, stderr bytes.Buffer
+				if _, readErr := stdcopy.StdCopy(&stdout, &stderr, logReader); readErr == nil {
+					combined := stdout.String() + stderr.String()
+					if combined != "" {
+						logOutput = combined
+					}
 				}
 			}
 			if logOutput != "" {

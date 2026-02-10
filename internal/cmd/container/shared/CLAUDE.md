@@ -25,7 +25,7 @@ err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
 // Inject onboarding marker after ContainerCreate, before ContainerStart
 err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
     ContainerID:     containerID,
-    CopyToContainer: makeCopyToContainerFn(client),
+    CopyToContainer: shared.NewCopyToContainerFn(client),
 })
 ```
 

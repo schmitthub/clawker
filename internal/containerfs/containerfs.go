@@ -25,8 +25,11 @@ import (
 func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
+		if err != nil {
 			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is not a directory", dir)
 		}
 		return dir, nil
 	}
@@ -48,7 +51,7 @@ func ResolveHostConfigDir() (string, error) {
 // prepared for container injection. Caller must call cleanup() when done.
 //
 // Handles: settings.json enabledPlugins merge, agents/, skills/, commands/,
-// plugins/ (excluding cache), known_marketplaces.json path fixup, symlink resolution.
+// plugins/ (excluding install-counts-cache.json), known_marketplaces.json path fixup, symlink resolution.
 func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error) {
 	tmpDir, err := os.MkdirTemp("", "clawker-config-*")
 	if err != nil {

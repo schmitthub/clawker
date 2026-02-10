@@ -77,12 +77,12 @@ agent:
     # FOO: bar
   # Claude Code configuration
   claude_code:
+    # Use host authentication tokens in container
+    use_host_auth: true
     config:
       # "copy" copies host ~/.claude/ config, "fresh" starts clean
       strategy: "copy"
-      # Use host authentication tokens in container
-      use_host_auth: true
-    # Enable shared directory (read-only, mounted at ~/.clawker-share)
+  # Enable shared directory (read-only, mounted at ~/.clawker-share)
   enable_shared_dir: true
 
 workspace:

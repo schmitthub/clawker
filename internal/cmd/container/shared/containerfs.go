@@ -32,7 +32,7 @@ type InitConfigOpts struct {
 	// ContainerWorkDir is the workspace directory inside the container (e.g. "/workspace").
 	// Used to rewrite projectPath values in installed_plugins.json.
 	ContainerWorkDir string
-	// ClaudeCode is the claude code configuration. Nil uses defaults (fresh + host auth).
+	// ClaudeCode is the claude code configuration. Nil uses defaults (copy strategy + host auth).
 	ClaudeCode *config.ClaudeCodeConfig
 	// CopyToVolume copies a directory to a Docker volume.
 	// In production, wire this to (*docker.Client).CopyToVolume.

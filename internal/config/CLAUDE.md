@@ -68,7 +68,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 **Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
 
 **Agent/Workspace:** `AgentConfig` (Includes, Env, Memory, Editor, Visual, Shell, ClaudeCode, EnableSharedDir), `WorkspaceConfig` (RemotePath, DefaultMode)
-- `ClaudeCodeConfig`: `UseHostAuthEnabled()` (default: true), `ConfigStrategy()` (default: "fresh")
+- `ClaudeCodeConfig`: `UseHostAuthEnabled()` (default: true), `ConfigStrategy()` (default: "copy")
 - `ClaudeCodeConfigOptions`: Strategy field ("copy" or "fresh")
 - `AgentConfig`: `SharedDirEnabled()` (default: false)
 
