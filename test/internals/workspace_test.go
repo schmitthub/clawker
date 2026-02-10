@@ -88,7 +88,7 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 		Security: config.SecurityConfig{},
 	}
 
-	mounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
 		Config:         cfg,
 		AgentName:      "test-agent",
@@ -104,9 +104,9 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	resolvedMainRepoDir, err := filepath.EvalSymlinks(mainRepoDir)
 	require.NoError(t, err, "should resolve symlinks in main repo dir")
 	mainGitDir := filepath.Join(resolvedMainRepoDir, ".git")
-	for i := range mounts {
-		if mounts[i].Source == mainGitDir {
-			gitDirMount = &mounts[i]
+	for i := range wsResult.Mounts {
+		if wsResult.Mounts[i].Source == mainGitDir {
+			gitDirMount = &wsResult.Mounts[i]
 			break
 		}
 	}
@@ -118,7 +118,7 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	image := harness.BuildLightImage(t, client)
 	ctr := harness.RunContainer(t, client, image,
 		harness.WithCmd("sleep", "infinity"),
-		harness.WithMounts(mounts...),
+		harness.WithMounts(wsResult.Mounts...),
 	)
 
 	// Wait for container to be ready
@@ -187,7 +187,7 @@ func TestWorktreeGitMounts_WithoutProjectRootDir(t *testing.T) {
 		Security: config.SecurityConfig{},
 	}
 
-	mounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
 		Config:         cfg,
 		AgentName:      "test-agent",
@@ -197,10 +197,141 @@ func TestWorktreeGitMounts_WithoutProjectRootDir(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify no .git mount is added (only workspace and config volume mounts)
-	for _, m := range mounts {
+	for _, m := range wsResult.Mounts {
 		assert.NotContains(t, m.Source, ".git",
 			"should not have .git mount when ProjectRootDir is empty, found: %s", m.Source)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Rule: Shared directory mirrors host content into the container
+// ---------------------------------------------------------------------------
+
+// TestSharedDir_MountedWhenEnabled verifies that when enable_shared_dir is true,
+// SetupMounts includes a share volume mount and the directory is accessible
+// inside the container at ~/.clawker-share/.
+func TestSharedDir_MountedWhenEnabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internals test in short mode")
+	}
+	harness.RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+
+	tmpDir := t.TempDir()
+
+	// Use a temp dir for clawker home so EnsureShareDir creates the host directory there
+	clawkerHome := t.TempDir()
+	t.Setenv(config.ClawkerHomeEnv, clawkerHome)
+
+	cfg := &config.Project{
+		Project: "test-project",
+		Workspace: config.WorkspaceConfig{
+			RemotePath:  "/workspace",
+			DefaultMode: "bind",
+		},
+		Agent: config.AgentConfig{
+			EnableSharedDir: boolPtr(true),
+		},
+		Security: config.SecurityConfig{},
+	}
+
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+		ModeOverride: "bind",
+		Config:       cfg,
+		AgentName:    harness.UniqueAgentName(t),
+		WorkDir:      tmpDir,
+	})
+	require.NoError(t, err)
+
+	// Verify mounts include a bind mount targeting ~/.clawker-share
+	var shareMount *mount.Mount
+	for i := range wsResult.Mounts {
+		if wsResult.Mounts[i].Target == workspace.ShareStagingPath {
+			shareMount = &wsResult.Mounts[i]
+			break
+		}
+	}
+	require.NotNil(t, shareMount, "should have share bind mount at %s", workspace.ShareStagingPath)
+	assert.Equal(t, mount.TypeBind, shareMount.Type)
+	assert.True(t, shareMount.ReadOnly, "share mount should be read-only")
+
+	// Source should be the host share directory
+	expectedSource := filepath.Join(clawkerHome, config.ShareSubdir)
+	assert.Equal(t, expectedSource, shareMount.Source, "bind mount source should be host share dir")
+
+	// Verify the host directory was created
+	assert.DirExists(t, expectedSource, "host share directory should exist")
+
+	// Launch container with mounts and verify the directory exists
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCmd("sleep", "infinity"),
+		harness.WithMounts(wsResult.Mounts...),
+	)
+
+	assert.True(t, ctr.DirExists(ctx, client, workspace.ShareStagingPath+"/"),
+		"%s should exist in the container", workspace.ShareStagingPath)
+}
+
+// TestSharedDir_NotMountedWhenDisabled verifies that when enable_shared_dir is
+// false (or unset, the default), SetupMounts does NOT include a share volume
+// mount. The directory itself may exist in the image (pre-created for ownership
+// inheritance) but no volume backs it, so it remains empty.
+func TestSharedDir_NotMountedWhenDisabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internals test in short mode")
+	}
+	harness.RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+
+	tmpDir := t.TempDir()
+
+	cfg := &config.Project{
+		Project: "test-project",
+		Workspace: config.WorkspaceConfig{
+			RemotePath:  "/workspace",
+			DefaultMode: "bind",
+		},
+		Agent: config.AgentConfig{
+			EnableSharedDir: boolPtr(false),
+		},
+		Security: config.SecurityConfig{},
+	}
+
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+		ModeOverride: "bind",
+		Config:       cfg,
+		AgentName:    harness.UniqueAgentName(t),
+		WorkDir:      tmpDir,
+	})
+	require.NoError(t, err)
+
+	// Verify no share mount exists in the returned mount list
+	for _, m := range wsResult.Mounts {
+		assert.NotEqual(t, workspace.ShareStagingPath, m.Target,
+			"should NOT have share mount when enable_shared_dir is false, found: %+v", m)
+	}
+
+	// Launch container and verify the directory is empty (exists from image but no volume)
+	image := harness.BuildLightImage(t, client)
+	ctr := harness.RunContainer(t, client, image,
+		harness.WithCmd("sleep", "infinity"),
+		harness.WithMounts(wsResult.Mounts...),
+	)
+
+	result, err := ctr.Exec(ctx, client, "ls", "-A", workspace.ShareStagingPath+"/")
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Empty(t, strings.TrimSpace(result.Stdout),
+		"%s should be empty when shared dir is disabled", workspace.ShareStagingPath)
 }
 
 // gitResult holds the output from running a git command

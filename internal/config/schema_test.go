@@ -271,3 +271,117 @@ func TestGitCredentialsConfig_CopyGitConfigEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCodeConfig_UseHostAuthEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *ClaudeCodeConfig
+		want   bool
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   true,
+		},
+		{
+			name:   "nil UseHostAuth",
+			config: &ClaudeCodeConfig{UseHostAuth: nil},
+			want:   true,
+		},
+		{
+			name:   "UseHostAuth true",
+			config: &ClaudeCodeConfig{UseHostAuth: boolPtr(true)},
+			want:   true,
+		},
+		{
+			name:   "UseHostAuth false",
+			config: &ClaudeCodeConfig{UseHostAuth: boolPtr(false)},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.UseHostAuthEnabled()
+			if got != tt.want {
+				t.Errorf("UseHostAuthEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeCodeConfig_ConfigStrategy(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *ClaudeCodeConfig
+		want   string
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   "copy",
+		},
+		{
+			name:   "empty strategy",
+			config: &ClaudeCodeConfig{Config: ClaudeCodeConfigOptions{Strategy: ""}},
+			want:   "copy",
+		},
+		{
+			name:   "explicit fresh",
+			config: &ClaudeCodeConfig{Config: ClaudeCodeConfigOptions{Strategy: "fresh"}},
+			want:   "fresh",
+		},
+		{
+			name:   "explicit copy",
+			config: &ClaudeCodeConfig{Config: ClaudeCodeConfigOptions{Strategy: "copy"}},
+			want:   "copy",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.ConfigStrategy()
+			if got != tt.want {
+				t.Errorf("ConfigStrategy() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentConfig_SharedDirEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *AgentConfig
+		want   bool
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   false,
+		},
+		{
+			name:   "nil EnableSharedDir",
+			config: &AgentConfig{EnableSharedDir: nil},
+			want:   false,
+		},
+		{
+			name:   "EnableSharedDir true",
+			config: &AgentConfig{EnableSharedDir: boolPtr(true)},
+			want:   true,
+		},
+		{
+			name:   "EnableSharedDir false",
+			config: &AgentConfig{EnableSharedDir: boolPtr(false)},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.SharedDirEnabled()
+			if got != tt.want {
+				t.Errorf("SharedDirEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -132,11 +132,11 @@ Isolated subpackage — only place that imports `moby/buildkit`. Zero dependency
 
 Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.APIClient)`
 
-## Type Aliases (35 re-exports from Docker SDK)
+## Type Aliases (~36 re-exports from Docker SDK)
 
 `types.go` re-exports SDK types so higher-level packages avoid importing moby directly. Key groups:
 
-- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite)
+- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions`
 - **Exec**: `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`
 - **Copy**: `CopyToContainerOptions`, `CopyFromContainerOptions`
 - **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions`, `ImageTagResult`

@@ -75,6 +75,15 @@ agent:
   # visual: "vim"    # defaults to "nano" if not set
   env:
     # FOO: bar
+  # Claude Code configuration
+  claude_code:
+    # Use host authentication tokens in container
+    use_host_auth: true
+    config:
+      # "copy" copies host ~/.claude/ config, "fresh" starts clean
+      strategy: "copy"
+  # Enable shared directory (read-only, mounted at ~/.clawker-share)
+  enable_shared_dir: true
 
 workspace:
   # Container path where your code is mounted

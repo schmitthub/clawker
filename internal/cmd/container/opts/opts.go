@@ -329,6 +329,8 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	_ = flags.MarkHidden("net-alias")
 }
 
+// TODO: everything below is not strictly "opts" code - it's more like shared container utilities. We need to put into a "shared"/"utils" subpackage or go file.
+
 // MarkMutuallyExclusive marks agent and name flags as mutually exclusive on the command.
 func MarkMutuallyExclusive(cmd *cobra.Command) {
 	cmd.MarkFlagsMutuallyExclusive("agent", "name")
@@ -1375,7 +1377,6 @@ func readLabelFile(filename string) ([]string, error) {
 	}
 	return lines, scanner.Err()
 }
-
 
 // filterSocketMountsForMacOS separates socket file bind mounts from regular mounts.
 // On macOS with Docker Desktop, socket files don't work correctly with the SDK's

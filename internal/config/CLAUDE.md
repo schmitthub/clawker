@@ -22,12 +22,12 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 - **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`)
 - **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`clawker`), `ClawkerNetwork` (`clawker`)
-- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`
+- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`
 - **Modes:** `ModeBind Mode = "bind"`, `ModeSnapshot Mode = "snapshot"` — `ParseMode(s) (Mode, error)`
 
 ## Path Helpers (`home.go`)
 
-`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`), `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()`, `HostProxyPIDFile()`, `HostProxyLogFile()`, `BridgesDir()`, `BridgePIDFile(containerID)` — all return `(string, error)`. `EnsureDir(path) error`.
+`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`), `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()`, `HostProxyPIDFile()`, `HostProxyLogFile()`, `BridgesDir()`, `BridgePIDFile(containerID)`, `ShareDir()` — all return `(string, error)`. `EnsureDir(path) error`.
 
 ## Defaults
 
@@ -37,7 +37,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 Eagerly loads all configuration. Project, Settings, and Resolution are never nil (defaults used). Registry may be nil if initialization failed — check RegistryInitErr().
 
-`Config{Project *Project, Settings *Settings, Resolution *Resolution, Registry Registry}`. Constructors: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O). Methods: `SettingsLoader()`, `ProjectLoader()`, `RegistryInitErr()`.
+`Config{Project *Project, Settings *Settings, Resolution *Resolution, Registry Registry}`. Constructors: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O), `NewConfigForTestWithEntry(project, settings, entry, configDir)` (integration tests — provides ProjectEntry + registry directory for worktree method support). Methods: `SettingsLoader()`, `ProjectLoader()`, `RegistryInitErr()`.
 
 Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → defaults.
 
@@ -67,7 +67,10 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 **Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
 
-**Agent/Workspace:** `AgentConfig` (Includes, Env, Memory, Editor, Visual, Shell), `WorkspaceConfig` (RemotePath, DefaultMode)
+**Agent/Workspace:** `AgentConfig` (Includes, Env, Memory, Editor, Visual, Shell, ClaudeCode, EnableSharedDir), `WorkspaceConfig` (RemotePath, DefaultMode)
+- `ClaudeCodeConfig`: `UseHostAuthEnabled()` (default: true), `ConfigStrategy()` (default: "copy")
+- `ClaudeCodeConfigOptions`: Strategy field ("copy" or "fresh")
+- `AgentConfig`: `SharedDirEnabled()` (default: false)
 
 **Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
 - `FirewallConfig`: `FirewallEnabled()`, `GetFirewallDomains()`, `IsOverrideMode()`, `GetIPRangeSources()`

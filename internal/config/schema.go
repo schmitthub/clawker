@@ -99,14 +99,51 @@ type InjectConfig struct {
 	BeforeEntrypoint   []string `yaml:"before_entrypoint,omitempty" mapstructure:"before_entrypoint"`
 }
 
-// AgentConfig defines Claude agent-specific settings
+// ClaudeCodeConfigOptions controls how Claude Code config is initialized in containers.
+type ClaudeCodeConfigOptions struct {
+	Strategy string `yaml:"strategy" mapstructure:"strategy"` // "copy" or "fresh"
+}
+
+// ClaudeCodeConfig controls Claude Code settings and authentication in containers.
+type ClaudeCodeConfig struct {
+	Config      ClaudeCodeConfigOptions `yaml:"config" mapstructure:"config"`
+	UseHostAuth *bool                   `yaml:"use_host_auth,omitempty" mapstructure:"use_host_auth"`
+}
+
+// AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
-	Includes []string          `yaml:"includes,omitempty" mapstructure:"includes"`
-	Env      map[string]string `yaml:"env,omitempty" mapstructure:"env"`
-	Memory   string            `yaml:"memory,omitempty" mapstructure:"memory"`
-	Editor   string            `yaml:"editor,omitempty" mapstructure:"editor"`
-	Visual   string            `yaml:"visual,omitempty" mapstructure:"visual"`
-	Shell    string            `yaml:"shell,omitempty" mapstructure:"shell"`
+	Includes       []string          `yaml:"includes,omitempty" mapstructure:"includes"`
+	Env            map[string]string `yaml:"env,omitempty" mapstructure:"env"`
+	Memory         string            `yaml:"memory,omitempty" mapstructure:"memory"`
+	Editor         string            `yaml:"editor,omitempty" mapstructure:"editor"`
+	Visual         string            `yaml:"visual,omitempty" mapstructure:"visual"`
+	Shell          string            `yaml:"shell,omitempty" mapstructure:"shell"`
+	ClaudeCode     *ClaudeCodeConfig `yaml:"claude_code,omitempty" mapstructure:"claude_code"`
+	EnableSharedDir *bool            `yaml:"enable_shared_dir,omitempty" mapstructure:"enable_shared_dir"`
+}
+
+// UseHostAuthEnabled returns whether host auth should be used (default: true).
+func (c *ClaudeCodeConfig) UseHostAuthEnabled() bool {
+	if c == nil || c.UseHostAuth == nil {
+		return true
+	}
+	return *c.UseHostAuth
+}
+
+// ConfigStrategy returns the config strategy (default: "copy").
+func (c *ClaudeCodeConfig) ConfigStrategy() string {
+	if c == nil || c.Config.Strategy == "" {
+		return "copy"
+	}
+	return c.Config.Strategy
+}
+
+// SharedDirEnabled returns whether the shared directory should be mounted (default: false).
+func (a *AgentConfig) SharedDirEnabled() bool {
+	if a == nil || a.EnableSharedDir == nil {
+		return false
+	}
+	return *a.EnableSharedDir
 }
 
 // WorkspaceConfig defines workspace mounting behavior

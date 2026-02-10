@@ -12,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -31,7 +32,7 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	GitManager   func() (*git.GitManager, error)
@@ -191,7 +192,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	var projectRootDir string // Set when using worktree, for .git mount
 	if containerOpts.Worktree != "" {
 		// Use git worktree as workspace source
-		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName)
+		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName) // TODO - flag parsing should probably be done in RunE not here
 		if err != nil {
 			return fmt.Errorf("invalid --worktree flag: %w", err)
 		}
@@ -224,7 +225,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// Setup workspace mounts
-	workspaceMounts, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   containerOpts.Mode,
 		Config:         cfg,
 		AgentName:      agentName,
@@ -233,6 +234,22 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+	workspaceMounts := wsResult.Mounts
+
+	// Initialize container config if the config volume was freshly created.
+	// This copies host Claude config and/or credentials into the volume before
+	// the container starts, so the agent inherits host settings on first run.
+	if wsResult.ConfigVolumeResult.ConfigCreated {
+		if err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
+			ProjectName:      cfg.Project,
+			AgentName:        agentName,
+			ContainerWorkDir: cfg.Workspace.RemotePath,
+			ClaudeCode:       cfg.Agent.ClaudeCode,
+			CopyToVolume:     client.CopyToVolume,
+		}); err != nil {
+			return fmt.Errorf("container init: %w", err)
+		}
 	}
 
 	// Enable interactive mode early to suppress INFO logs during TTY sessions.
@@ -341,6 +358,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	containerID := resp.ID
+
+	// Inject onboarding file if host auth is enabled.
+	// Must happen after ContainerCreate and before ContainerStart.
+	// The file marks Claude Code onboarding as complete so the user is not prompted.
+	if cfg.Agent.ClaudeCode.UseHostAuthEnabled() {
+		if err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
+			ContainerID:     containerID,
+			CopyToContainer: shared.NewCopyToContainerFn(client),
+		}); err != nil {
+			return fmt.Errorf("inject onboarding: %w", err)
+		}
+	}
 
 	// Print warnings if any
 	for _, warning := range resp.Warnings {
@@ -641,4 +670,3 @@ func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway
 
 	return nil
 }
-

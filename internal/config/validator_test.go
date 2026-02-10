@@ -852,6 +852,44 @@ func TestValidatorIPRangeSourcesWithOverrideWarning(t *testing.T) {
 	}
 }
 
+func TestValidatorClaudeCodeStrategy(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name     string
+		strategy string
+		wantErr  bool
+	}{
+		{"empty strategy is valid", "", false},
+		{"fresh strategy is valid", "fresh", false},
+		{"copy strategy is valid", "copy", false},
+		{"invalid strategy", "invalid", true},
+		{"another invalid strategy", "sync", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := NewValidator(tmpDir)
+			cfg := DefaultConfig()
+			cfg.Version = "1"
+			cfg.Project = "test-project"
+			cfg.Agent.ClaudeCode = &ClaudeCodeConfig{
+				Config: ClaudeCodeConfigOptions{Strategy: tt.strategy},
+			}
+
+			err := validator.Validate(cfg)
+			hasErr := err != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidatorHelperFunctions(t *testing.T) {
 	t.Run("isValidChown", func(t *testing.T) {
 		tests := []struct {

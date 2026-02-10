@@ -825,6 +825,7 @@ func TestRunRun(t *testing.T) {
 	t.Run("detached mode prints container ID", func(t *testing.T) {
 		fake := dockertest.NewFakeClient()
 		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
 
 		f, tio := testFactory(t, fake)
@@ -870,6 +871,7 @@ func TestRunRun(t *testing.T) {
 	t.Run("container start failure returns error", func(t *testing.T) {
 		fake := dockertest.NewFakeClient()
 		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
 		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
 			return moby.ContainerStartResult{}, fmt.Errorf("port already in use")
 		}
@@ -897,6 +899,7 @@ func TestRunRun(t *testing.T) {
 		fake.SetupImageList()                        // empty — no project image found
 		fake.SetupImageExists("node:20-slim", false) // default image missing
 		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
 
 		tio := iostreams.NewTestIOStreams() // non-interactive

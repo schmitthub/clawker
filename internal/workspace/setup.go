@@ -29,12 +29,21 @@ type SetupMountsConfig struct {
 	ProjectRootDir string
 }
 
+// SetupMountsResult holds the results from setting up workspace mounts.
+type SetupMountsResult struct {
+	// Mounts is the list of mounts to add to the container's HostConfig.
+	Mounts []mount.Mount
+	// ConfigVolumeResult tracks which config volumes were newly created.
+	// Used by container init orchestration to decide whether to copy host config.
+	ConfigVolumeResult ConfigVolumeResult
+}
+
 // SetupMounts prepares workspace mounts for container creation.
 // It handles workspace mode resolution, strategy creation/preparation,
 // config volumes, and docker socket mounting.
 //
-// Returns the mounts to add to the container's HostConfig.
-func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) ([]mount.Mount, error) {
+// Returns a result containing the mounts and config volume creation state.
+func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error) {
 	var mounts []mount.Mount
 
 	// Get host path (working directory)
@@ -96,24 +105,31 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 			Msg("mounting main repo .git for worktree")
 	}
 
-	// Ensure and get config volumes
-	if err := EnsureConfigVolumes(ctx, client, cfg.Config.Project, cfg.AgentName); err != nil {
+	// Ensure config volumes (returns creation state for init orchestration)
+	configResult, err := EnsureConfigVolumes(ctx, client, cfg.Config.Project, cfg.AgentName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
 	mounts = append(mounts, GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)...)
 
-	// Ensure and mount global shared volume (credentials persistence across agents)
-	if err := EnsureGlobalsVolume(ctx, client); err != nil {
-		return nil, fmt.Errorf("failed to create globals volume: %w", err)
+	// Ensure and mount shared directory (if enabled)
+	if cfg.Config.Agent.SharedDirEnabled() {
+		sharePath, err := EnsureShareDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to ensure share directory: %w", err)
+		}
+		mounts = append(mounts, GetShareVolumeMount(sharePath))
 	}
-	mounts = append(mounts, GetGlobalsVolumeMount())
 
 	// Add docker socket mount if enabled
 	if cfg.Config.Security.DockerSocket {
 		mounts = append(mounts, GetDockerSocketMount())
 	}
 
-	return mounts, nil
+	return &SetupMountsResult{
+		Mounts:             mounts,
+		ConfigVolumeResult: configResult,
+	}, nil
 }
 
 // buildWorktreeGitMount creates a bind mount for the main repository's .git directory.

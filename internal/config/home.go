@@ -22,6 +22,7 @@ const (
 	LogsSubdir = "logs"
 	// BridgesSubdir is the subdirectory for socket bridge PID files
 	BridgesSubdir = "bridges"
+	ShareSubdir   = ".clawker-share"
 )
 
 // ClawkerHome returns the clawker home directory.
@@ -103,6 +104,17 @@ func BridgesDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, BridgesSubdir), nil
+}
+
+// ShareDir returns the path to the shared directory for bind-mounting into containers.
+// The directory is at $CLAWKER_HOME/.clawker-share and is mounted read-only at
+// /home/claude/.clawker-share when agent.enable_shared_dir is true.
+func ShareDir() (string, error) {
+	home, err := ClawkerHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ShareSubdir), nil
 }
 
 // BridgePIDFile returns the path to a bridge PID file (~/.local/clawker/bridges/<containerID>.pid)

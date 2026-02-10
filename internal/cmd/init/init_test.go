@@ -23,6 +23,9 @@ import (
 func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, *configtest.InMemorySettingsLoader) {
 	t.Helper()
 
+	// Use temp dir for clawker home so performSetup can create share dir
+	t.Setenv(config.ClawkerHomeEnv, t.TempDir())
+
 	sl := configtest.NewInMemorySettingsLoader()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
 	cfg.SetSettingsLoader(sl)
@@ -143,6 +146,12 @@ func TestPerformSetup_NoBuild(t *testing.T) {
 	settings, loadErr := sl.Load()
 	require.NoError(t, loadErr)
 	assert.Empty(t, settings.DefaultImage, "DefaultImage should be empty when build is skipped")
+
+	// Share directory should have been created
+	shareDir, err := config.ShareDir()
+	require.NoError(t, err)
+	assert.DirExists(t, shareDir, "share directory should be created during init")
+	assert.Contains(t, output, shareDir, "output should mention share directory creation")
 }
 
 func TestPerformSetup_BuildSuccess(t *testing.T) {

@@ -2,47 +2,6 @@
 
 # Claude Code Status Line
 
-# JSON input strucure:
-# {
-#   "session_id": "9e12a865-cb3e-4484-913c-d8fa330d04ba",
-#   "transcript_path": "/Users/andrew/.claude/projects/-Users-andrew-Code-clawker/9e12a865-cb3e-4484-913c-d8fa330d04ba.jsonl",
-#   "cwd": "/Users/andrew/Code/clawker",
-#   "model": {
-#     "id": "claude-opus-4-5-20251101",
-#     "display_name": "Opus 4.5"
-#   },
-#   "workspace": {
-#     "current_dir": "/Users/andrew/Code/clawker",
-#     "project_dir": "/Users/andrew/Code/clawker"
-#   },
-#   "version": "2.1.7",
-#   "output_style": {
-#     "name": "default"
-#   },
-#   "cost": {
-#     "total_cost_usd": 8.342332000000003,
-#     "total_duration_ms": 36549424,
-#     "total_api_duration_ms": 1094625,
-#     "total_lines_added": 0,
-#     "total_lines_removed": 0
-#   },
-#   "context_window": {
-#     "total_input_tokens": 195938,
-#     "total_output_tokens": 43480,
-#     "context_window_size": 200000,
-#     "current_usage": {
-#       "input_tokens": 10,
-#       "output_tokens": 42,
-#       "cache_creation_input_tokens": 76444,
-#       "cache_read_input_tokens": 14391
-#     },
-#     "used_percentage": 45,
-#     "remaining_percentage": 55
-#   },
-#   "exceeds_200k_tokens": false
-# }
-
-
 input=$(cat)
 
 # write input to a temp file for debugging

@@ -465,8 +465,8 @@ func generateLightDockerfile(scripts []string, goSources []string) string {
 	sb.WriteString("FROM alpine:3.21\n")
 	fmt.Fprintf(&sb, "LABEL %s=%s %s=true\n", TestLabel, TestLabelValue, ClawkerManagedLabel)
 	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools gnupg file\n")
-	sb.WriteString("RUN adduser -D -s /bin/bash -h /home/claude claude\n")
-	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /home/claude/.clawker-globals /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
+	sb.WriteString("RUN adduser -D -u 1001 -s /bin/bash -h /home/claude claude\n")
+	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /home/claude/.clawker-share /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
 
 	if len(scripts) > 0 {
 		sb.WriteString("COPY scripts/ /usr/local/bin/\n")
@@ -626,4 +626,96 @@ func StartSocketBridge(t *testing.T, containerID string, cfg SocketBridgeConfig)
 
 	t.Cleanup(stop)
 	return stop, nil
+}
+
+// UniqueAgentName generates a unique agent name suitable for parallel test isolation.
+// Format: "test-<short-test-name>-<timestamp>-<random>"
+func UniqueAgentName(t *testing.T) string {
+	t.Helper()
+	name := t.Name()
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	name = strings.NewReplacer("_", "-", " ", "-").Replace(name)
+	if len(name) > 20 {
+		name = name[:20]
+	}
+	name = strings.ToLower(name)
+	randBytes := make([]byte, 2)
+	_, _ = rand.Read(randBytes)
+	randHex := hex.EncodeToString(randBytes)
+	return fmt.Sprintf("test-%s-%s-%s", name, time.Now().Format("150405"), randHex)
+}
+
+// WithConfigVolume creates a named config volume and returns a ContainerOpt
+// that mounts it at /home/claude/.claude. The volume is cleaned up via t.Cleanup.
+//
+// Use this when you want one-step volume creation + mount. If you create the
+// volume separately (e.g., via EnsureVolume + InitContainerConfig), use
+// WithVolumeMount instead to avoid duplicate creation/cleanup.
+func WithConfigVolume(t *testing.T, dc *docker.Client, project, agent string) ContainerOpt {
+	t.Helper()
+	volumeName := docker.VolumeName(project, agent, "config")
+	ctx := context.Background()
+
+	_, err := dc.EnsureVolume(ctx, volumeName, nil)
+	if err != nil {
+		t.Fatalf("WithConfigVolume: failed to create volume %s: %v", volumeName, err)
+	}
+
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := dc.VolumeRemove(cleanupCtx, volumeName, true); err != nil {
+			t.Logf("WARNING: failed to remove config volume %s: %v", volumeName, err)
+		}
+	})
+
+	return WithMounts(mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: volumeName,
+		Target: "/home/claude/.claude",
+	})
+}
+
+// WithVolumeMount returns a ContainerOpt that mounts an existing volume at the
+// given target path. Unlike WithConfigVolume, it does not create the volume or
+// register cleanup — use when the volume is managed separately (e.g., via
+// EnsureVolume + InitContainerConfig before container start).
+func WithVolumeMount(volumeName, target string) ContainerOpt {
+	return WithMounts(mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: volumeName,
+		Target: target,
+	})
+}
+
+// FileExists checks if a file exists at path inside the container.
+func (c *RunningContainer) FileExists(ctx context.Context, dc *docker.Client, path string) bool {
+	result, err := c.Exec(ctx, dc, "test", "-f", path)
+	if err != nil {
+		return false
+	}
+	return result.ExitCode == 0
+}
+
+// DirExists checks if a directory exists at path inside the container.
+func (c *RunningContainer) DirExists(ctx context.Context, dc *docker.Client, path string) bool {
+	result, err := c.Exec(ctx, dc, "test", "-d", path)
+	if err != nil {
+		return false
+	}
+	return result.ExitCode == 0
+}
+
+// ReadFile reads the content of a file inside the container.
+// Returns the trimmed content and any error from exec or non-zero exit code.
+func (c *RunningContainer) ReadFile(ctx context.Context, dc *docker.Client, path string) (string, error) {
+	result, err := c.Exec(ctx, dc, "cat", path)
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("cat %s failed (exit %d): %s", path, result.ExitCode, result.Stderr)
+	}
+	return strings.TrimSpace(result.Stdout), nil
 }
