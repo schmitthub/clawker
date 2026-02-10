@@ -14,11 +14,13 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
+// TODO: This is implemented wrong. constructors need to be added to accept factory *cmdutil.Factory, we don't pass indivdual deps in options)
+
 // RebuildMissingImageOpts holds options for the rebuild prompt flow.
 // Uses DI closures (like InitConfigOpts) to avoid direct Factory coupling.
 type RebuildMissingImageOpts struct {
 	ImageRef       string
-	IOStreams       *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	TUI            *tui.TUI
 	Prompter       func() *prompter.Prompter
 	SettingsLoader func() config.SettingsLoader

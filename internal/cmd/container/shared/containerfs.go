@@ -134,6 +134,7 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 	return nil
 }
 
+// TODO: This is implemented wrong. constructors need to be added to accept factory *cmdutil.Factory, we don't pass indivdual deps)
 // NewCopyToContainerFn creates a CopyToContainerFn that delegates to the docker client.
 // This is the standard production wiring — use directly instead of writing an inline closure.
 func NewCopyToContainerFn(client *docker.Client) CopyToContainerFn {
