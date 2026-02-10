@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,7 +17,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 )
 
 const (
@@ -28,14 +31,27 @@ const (
 	ClawkerManagedLabel = "com.clawker.managed"
 )
 
-// RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources.
-// It removes stale resources from previous (possibly killed) runs before tests
-// start, and cleans up again after tests complete — including on SIGINT/SIGTERM
-// (e.g. Ctrl+C). Use from TestMain:
+// RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources
+// and host-proxy daemons. It acquires an exclusive file lock to prevent concurrent
+// integration test runs from piling up containers and processes. Stale resources
+// from previous (possibly killed) runs are cleaned before tests start, and again
+// after tests complete — including on SIGINT/SIGTERM (e.g. Ctrl+C). Use from TestMain:
 //
 //	func TestMain(m *testing.M) { os.Exit(harness.RunTestMain(m)) }
 func RunTestMain(m *testing.M) int {
+	// Acquire exclusive lock to prevent concurrent integration test runs
+	// from piling up containers and host-proxy daemons.
+	lockFile, err := acquireTestLock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	defer releaseTestLock(lockFile)
+
 	cleanup := func() {
+		// Always kill host-proxy daemons, even if Docker is unavailable
+		cleanupHostProxy()
+
 		if !isDockerAvailable() {
 			return
 		}
@@ -67,6 +83,45 @@ func RunTestMain(m *testing.M) int {
 	cleanup()
 
 	return code
+}
+
+// acquireTestLock acquires an exclusive file lock to prevent concurrent
+// integration test runs from piling up containers and processes.
+func acquireTestLock() (*os.File, error) {
+	lockDir, err := config.ClawkerHome()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine lock directory: %w", err)
+	}
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return nil, fmt.Errorf("cannot create lock directory: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, "integration-test.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another integration test run is active (lock: %s)", lockPath)
+	}
+	return f, nil
+}
+
+// releaseTestLock releases the exclusive file lock.
+func releaseTestLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
+}
+
+// cleanupHostProxy stops any running host-proxy daemon.
+func cleanupHostProxy() {
+	m := hostproxy.NewManager()
+	if m.IsRunning() {
+		_ = m.StopDaemon()
+	}
 }
 
 // RequireDocker skips the test if Docker is not available.
@@ -103,7 +158,7 @@ func NewTestClient(t *testing.T) *docker.Client {
 	RequireDocker(t)
 
 	ctx := context.Background()
-	c, err := docker.NewClient(ctx, nil)
+	c, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
 	if err != nil {
 		t.Fatalf("failed to create Docker client: %v", err)
 	}

@@ -158,7 +158,7 @@ fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 fake.AssertCalled(t, "ContainerList")
 ```
 
-**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupCopyToContainer`, `SetupVolumeExists`, `SetupNetworkExists`, `SetupBuildKit`
+**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupCopyToContainer`, `SetupVolumeExists`, `SetupVolumeCreate`, `SetupNetworkExists`, `SetupNetworkCreate`, `SetupContainerAttach`, `SetupContainerWait(exitCode)`, `SetupContainerResize`, `SetupContainerRemove`, `SetupBuildKit`
 
 **Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`, `BuildKitBuildOpts`
 

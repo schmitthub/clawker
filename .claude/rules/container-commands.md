@@ -5,7 +5,7 @@ paths: ["internal/cmd/container/**"]
 
 # Container Command Rules
 
-- `@` symbol triggers `client.ResolveImageWithSource(ctx)` for automatic image resolution; interactive rebuild lives in command layer (`handleMissingDefaultImage`)
+- `@` symbol triggers `client.ResolveImageWithSource(ctx)` for automatic image resolution; interactive rebuild lives in `shared/image.go` (`RebuildMissingDefaultImage`)
 - Shared container flags live in `internal/cmd/container/opts/` package (import cycle workaround)
 - Always use `f.Client(ctx)` from Factory — never `docker.NewClient()` directly
 - Do NOT `defer client.Close()` — Factory manages client lifecycle

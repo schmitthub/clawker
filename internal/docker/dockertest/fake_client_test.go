@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
@@ -377,6 +378,143 @@ func TestSetupBuildKit(t *testing.T) {
 		if capture.Opts.Labels[managedKey] != "true" {
 			t.Errorf("expected managed label %q=true, got %q", managedKey, capture.Opts.Labels[managedKey])
 		}
+	})
+}
+
+func TestSetupVolumeCreate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds and returns volume with name", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupVolumeCreate()
+
+		result, err := fake.Client.VolumeCreate(ctx, moby.VolumeCreateOptions{
+			Name: "test-volume",
+		})
+		if err != nil {
+			t.Fatalf("VolumeCreate() error: %v", err)
+		}
+		if result.Volume.Name != "test-volume" {
+			t.Errorf("VolumeCreate() name = %q, want %q", result.Volume.Name, "test-volume")
+		}
+		fake.AssertCalled(t, "VolumeCreate")
+	})
+}
+
+func TestSetupNetworkCreate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds and returns network ID", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupNetworkCreate()
+
+		result, err := fake.Client.NetworkCreate(ctx, "test-net", moby.NetworkCreateOptions{})
+		if err != nil {
+			t.Fatalf("NetworkCreate() error: %v", err)
+		}
+		if result.ID == "" {
+			t.Error("NetworkCreate() returned empty ID")
+		}
+		fake.AssertCalled(t, "NetworkCreate")
+	})
+}
+
+func TestSetupContainerAttach(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns hijacked response that reads EOF", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerAttach()
+
+		containerID := "sha256:fakecontainer1234567890abcdef"
+		result, err := fake.Client.ContainerAttach(ctx, containerID, moby.ContainerAttachOptions{
+			Stream: true,
+			Stdout: true,
+			Stderr: true,
+		})
+		if err != nil {
+			t.Fatalf("ContainerAttach() error: %v", err)
+		}
+		defer result.Close()
+
+		// Server side is closed, so reading should return EOF
+		buf := make([]byte, 1)
+		_, readErr := result.Reader.Read(buf)
+		if readErr == nil {
+			t.Error("expected read error (EOF) from closed pipe, got nil")
+		}
+		fake.AssertCalled(t, "ContainerAttach")
+	})
+}
+
+func TestSetupContainerWait(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns exit code 0", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerWait(0)
+
+		containerID := "sha256:fakecontainer1234567890abcdef"
+		waitResult := fake.Client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
+
+		select {
+		case resp := <-waitResult.Result:
+			if resp.StatusCode != 0 {
+				t.Errorf("ContainerWait() exit code = %d, want 0", resp.StatusCode)
+			}
+		case err := <-waitResult.Error:
+			t.Fatalf("ContainerWait() error: %v", err)
+		}
+		fake.AssertCalled(t, "ContainerWait")
+	})
+
+	t.Run("returns non-zero exit code", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerWait(42)
+
+		containerID := "sha256:fakecontainer1234567890abcdef"
+		waitResult := fake.Client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
+
+		select {
+		case resp := <-waitResult.Result:
+			if resp.StatusCode != 42 {
+				t.Errorf("ContainerWait() exit code = %d, want 42", resp.StatusCode)
+			}
+		case err := <-waitResult.Error:
+			t.Fatalf("ContainerWait() error: %v", err)
+		}
+	})
+}
+
+func TestSetupContainerResize(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds without error", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerResize()
+
+		containerID := "sha256:fakecontainer1234567890abcdef"
+		_, err := fake.Client.ContainerResize(ctx, containerID, 24, 80)
+		if err != nil {
+			t.Fatalf("ContainerResize() error: %v", err)
+		}
+		fake.AssertCalled(t, "ContainerResize")
+	})
+}
+
+func TestSetupContainerRemove(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds without error", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerRemove()
+
+		containerID := "sha256:fakecontainer1234567890abcdef"
+		_, err := fake.Client.ContainerRemove(ctx, containerID, false)
+		if err != nil {
+			t.Fatalf("ContainerRemove() error: %v", err)
+		}
+		fake.AssertCalled(t, "ContainerRemove")
 	})
 }
 

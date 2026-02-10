@@ -23,17 +23,45 @@ import (
 type Client struct {
 	*whail.Engine
 	cfg *config.Config // lazily provides Project() and Settings() for image resolution
+
+	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
+	// Used by fawker/tests to inject fake build behavior.
+	// Follows the same pattern as whail.Engine.BuildKitImageBuilder.
+	BuildDefaultImageFunc BuildDefaultImageFn
 }
 
 // NewClient creates a new clawker Docker client.
 // It configures the whail.Engine with clawker's label prefix and conventions.
-func NewClient(ctx context.Context, cfg *config.Config) (*Client, error) {
-	opts := whail.EngineOptions{
-		LabelPrefix:  EngineLabelPrefix,
-		ManagedLabel: EngineManagedLabel,
+// clientOptions holds configuration for NewClient.
+type clientOptions struct {
+	labels whail.LabelConfig
+}
+
+// ClientOption configures a NewClient call.
+type ClientOption func(*clientOptions)
+
+// WithLabels injects additional labels into the whail engine.
+// Use this to add test labels (e.g., com.clawker.test=true) that propagate
+// to all containers, volumes, and networks created by the client.
+func WithLabels(labels whail.LabelConfig) ClientOption {
+	return func(o *clientOptions) {
+		o.labels = labels
+	}
+}
+
+func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*Client, error) {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
 
-	engine, err := whail.NewWithOptions(ctx, opts)
+	engineOpts := whail.EngineOptions{
+		LabelPrefix:  EngineLabelPrefix,
+		ManagedLabel: EngineManagedLabel,
+		Labels:       o.labels,
+	}
+
+	engine, err := whail.NewWithOptions(ctx, engineOpts)
 	if err != nil {
 		return nil, err
 	}

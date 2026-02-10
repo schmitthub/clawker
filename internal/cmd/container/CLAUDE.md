@@ -95,14 +95,14 @@ When `opts.Image == "@"`, call `client.ResolveImageWithSource(ctx)`:
 if opts.Image == "@" {
     resolvedImage, err := client.ResolveImageWithSource(ctx)
     // nil → no image found; caller prints error + next steps
-    // Source == ImageSourceDefault → verify exists, offer rebuild via handleMissingDefaultImage
+    // Source == ImageSourceDefault → verify exists, offer rebuild via shared.RebuildMissingDefaultImage
     opts.Image = resolvedImage.Reference
 }
 ```
 
 **Resolution order**: 1) Project image with `:latest` tag (by label lookup) -> 2) Merged `default_image` from config/settings.
 
-Interactive rebuild logic (`handleMissingDefaultImage`) lives in each command package (`run/run.go`, `create/create.go`), not in the docker package.
+Interactive rebuild logic lives in `shared/image.go` (`RebuildMissingDefaultImage`). Commands pass `client.BuildDefaultImage` as the build function — the Client method delegates to `BuildDefaultImageFunc` when non-nil (fawker/tests), otherwise runs the real build.
 
 ## Workspace Setup Pattern
 

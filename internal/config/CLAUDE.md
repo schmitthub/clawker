@@ -128,7 +128,7 @@ Navigation: `registry.Project("key")` → `handle.Get()`, `handle.Exists()`, `ha
 
 ## Test Utilities (`configtest/`)
 
-See `.claude/rules/testing.md` for detailed patterns. Key utilities: `FakeRegistryBuilder` (file-based), `InMemoryRegistryBuilder` (no I/O), `FakeWorktreeFS` (filesystem state control), `InMemorySettingsLoader` (no I/O settings).
+See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBuilder` (fluent `*config.Project` builder — pointer-safe, no mutex copy), `FakeRegistryBuilder` (file-based), `InMemoryRegistryBuilder` (no I/O), `FakeWorktreeFS` (filesystem state control), `InMemorySettingsLoader` (no I/O settings). The harness `ConfigBuilder` in `test/harness/builders/` delegates to `configtest.ProjectBuilder`.
 
 ## Resolver (`resolver.go`)
 

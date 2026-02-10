@@ -48,7 +48,9 @@ No build tags needed — directory separation provides test categorization.
 - **Unit tests**: Remain co-located as `*_test.go` in their source packages
 - **Docker availability**: All test/cli, test/internals, and test/agents tests require Docker
 - **Cleanup**: Always use `t.Cleanup()` — never rely on deferred functions
-- **TestMain**: All Docker test packages use `RunTestMain(m)` for pre/post cleanup + SIGINT handling
+- **TestMain**: All Docker test packages use `RunTestMain(m)` for exclusive lock, host-proxy cleanup, Docker resource cleanup + SIGINT handling
+- **Host-proxy**: `SecurityFirewallDisabled()` preset disables host-proxy (`EnableHostProxy: false`); `NewTestFactory` registers `t.Cleanup` to stop any spawned daemon
+- **Concurrency lock**: `RunTestMain` acquires `~/.local/clawker/integration-test.lock` to prevent concurrent integration test runs
 - **Labels**: Test resources use `com.clawker.test=true`; `CleanupTestResources` filters on this label
 - **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup in its own `TestMain`
 
@@ -63,7 +65,7 @@ Key methods: `SetEnv`, `UnsetEnv`, `Chdir`, `ContainerName`, `ImageName`, `Volum
 ### Docker Helpers (docker.go)
 
 ```go
-func RunTestMain(m *testing.M) int               // Wraps testing.M with pre/post cleanup + SIGINT handler
+func RunTestMain(m *testing.M) int               // Wraps testing.M with lock, host-proxy cleanup, Docker cleanup + SIGINT handler
 func RequireDocker(t *testing.T)
 func SkipIfNoDocker(t *testing.T)
 func NewTestClient(t) *docker.Client
@@ -170,7 +172,7 @@ result, err := ctr.Exec(ctx, client, "bash", "/usr/local/bin/init-firewall.sh")
 
 ### Factory Testing (factory.go)
 
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.TestIOStreams)` — fully-wired Factory with IOStreams, Client, Config, HostProxy (no-op for firewall-disabled tests).
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.TestIOStreams)` — fully-wired Factory with IOStreams, Client, Config, HostProxy (registers `t.Cleanup` to stop daemon on test teardown).
 
 ### Content-Addressed Caching (hash.go)
 

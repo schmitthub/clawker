@@ -288,6 +288,9 @@ func TestSecurityConfigPresets(t *testing.T) {
 			verify: func(t *testing.T, cfg config.SecurityConfig) {
 				require.NotNil(t, cfg.Firewall)
 				assert.False(t, cfg.Firewall.Enable)
+				assert.False(t, cfg.DockerSocket)
+				require.NotNil(t, cfg.EnableHostProxy)
+				assert.False(t, *cfg.EnableHostProxy)
 			},
 		},
 		{

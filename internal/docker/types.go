@@ -2,7 +2,11 @@
 // This allows commands to import internal/docker as their single Docker interface.
 package docker
 
-import "github.com/schmitthub/clawker/pkg/whail"
+import (
+	"context"
+
+	"github.com/schmitthub/clawker/pkg/whail"
+)
 
 // Type aliases re-exported from whail.
 // Commands should use these types rather than importing whail directly.
@@ -73,6 +77,13 @@ type (
 	UpdateConfig    = whail.UpdateConfig
 	ContainerUpdateResult = whail.ContainerUpdateResult
 )
+
+// BuildProgressFunc is a callback for reporting build progress events.
+type BuildProgressFunc = whail.BuildProgressFunc
+
+// BuildDefaultImageFn is the function signature for building the default image.
+// Matches (*Client).BuildDefaultImage. Used by shared/image.go for DI.
+type BuildDefaultImageFn func(ctx context.Context, flavor string, onProgress BuildProgressFunc) error
 
 const (
 	// WaitConditionNotRunning is used to wait until a container is not running.

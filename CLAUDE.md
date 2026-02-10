@@ -102,6 +102,9 @@ go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
 ./bin/fawker image build                          # Default scenario (multi-stage)
 ./bin/fawker image build --scenario error         # Error scenario
 ./bin/fawker image build --progress plain         # Plain mode
+./bin/fawker container run -it --agent test @      # Interactive run with init progress tree
+./bin/fawker container run --detach --agent test @ # Detached run with init progress tree
+./bin/fawker container create --agent test @       # Create container (real flow)
 ./bin/fawker container ls                         # List fake containers
 ./bin/fawker image ls                             # List fake images
 

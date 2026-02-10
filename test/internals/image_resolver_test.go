@@ -60,7 +60,7 @@ func setupImageResolverTests(t *testing.T) *imageResolverState {
 	buf.ReadFrom(reader)
 
 	// Create docker.Client for tests (nil config; tests inject config per-case)
-	state.dockerClient, err = docker.NewClient(ctx, nil)
+	state.dockerClient, err = docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}

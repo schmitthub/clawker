@@ -93,8 +93,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Enable interactive mode early to suppress INFO logs during TTY sessions.
@@ -109,8 +108,10 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		hp := opts.HostProxy()
 		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
-			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s Host proxy failed to start. Browser authentication may not work.\n", cs.WarningIcon())
+			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+			fmt.Fprintln(ios.ErrOut, "  1. To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			logger.Debug().Msg("host proxy started successfully")
 		}
@@ -180,8 +181,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	// Attach to container BEFORE starting it
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
 
@@ -193,8 +193,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 		},
 	})
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("starting container: %w", err)
 	}
 
 	// Start socket bridge for GPG/SSH forwarding
@@ -329,8 +328,9 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 			},
 		})
 		if err != nil {
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s Failed to start %s: %v\n", cs.FailureIcon(), name, err)
 			errs = append(errs, fmt.Errorf("failed to start %s: %w", name, err))
-			cmdutil.HandleError(ios, err)
 		} else {
 			// Print container name on success
 			fmt.Fprintln(ios.Out, name)

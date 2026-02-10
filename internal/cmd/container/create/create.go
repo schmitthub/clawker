@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -17,7 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
-
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -28,7 +27,8 @@ import (
 type CreateOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams  *iostreams.IOStreams
+	IOStreams   *iostreams.IOStreams
+	TUI        *tui.TUI
 	Client     func(context.Context) (*docker.Client, error)
 	Config     func() *config.Config
 	GitManager func() (*git.GitManager, error)
@@ -44,12 +44,13 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 	containerOpts := copts.NewContainerOptions()
 	opts := &CreateOptions{
 		ContainerOptions: containerOpts,
-		IOStreams:        f.IOStreams,
-		Client:           f.Client,
-		Config:           f.Config,
-		GitManager:       f.GitManager,
-		HostProxy:        f.HostProxy,
-		Prompter:         f.Prompter,
+		IOStreams:   f.IOStreams,
+		TUI:        f.TUI,
+		Client:     f.Client,
+		Config:     f.Config,
+		GitManager: f.GitManager,
+		HostProxy:  f.HostProxy,
+		Prompter:   f.Prompter,
 	}
 
 	cmd := &cobra.Command{
@@ -123,8 +124,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Resolve image name
@@ -134,14 +134,14 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			return err
 		}
 		if resolvedImage == nil {
-			cmdutil.PrintError(ios, "No image specified and no default image configured")
-			cmdutil.PrintNextSteps(ios,
-				"Specify an image: clawker container create IMAGE",
-				"Set default_image in clawker.yaml",
-				"Set default_image in ~/.local/clawker/settings.yaml",
-				"Build a project image: clawker build",
-			)
-			return fmt.Errorf("no image specified")
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker container create IMAGE")
+			fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
+			fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
+			fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+			return cmdutil.SilentError
 		}
 
 		// For default images, verify the image exists and offer to rebuild if missing
@@ -150,7 +150,15 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			if err != nil {
 				logger.Warn().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
 			} else if !exists {
-				if err := handleMissingDefaultImage(ctx, opts, cfgGateway, resolvedImage.Reference); err != nil {
+				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
+					ImageRef:       resolvedImage.Reference,
+					IOStreams:      ios,
+					TUI:           opts.TUI,
+					Prompter:       opts.Prompter,
+					SettingsLoader: func() config.SettingsLoader { return cfgGateway.SettingsLoader() },
+					BuildImage:     client.BuildDefaultImage,
+					CommandVerb:    "create",
+				}); err != nil {
 					return err
 				}
 			}
@@ -161,8 +169,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// adding a defensive check here in case both --name and --agent end up being set due to regression
 	if containerOpts.Name != "" && containerOpts.Agent != "" && containerOpts.Name != containerOpts.Agent {
-		cmdutil.PrintError(ios, "Cannot use both --name and --agent")
-		return fmt.Errorf("conflicting container naming options")
+		return fmt.Errorf("cannot use both --name and --agent")
 	}
 
 	agentName := containerOpts.GetAgentName()
@@ -240,8 +247,10 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		hp := opts.HostProxy()
 		if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
-			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s Host proxy failed to start. Browser authentication may not work.\n", cs.WarningIcon())
+			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+			fmt.Fprintln(ios.ErrOut, "  1. To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		} else {
 			hostProxyRunning = true
 			// Inject host proxy URL into container environment
@@ -302,8 +311,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	// Build configs using shared function
 	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(opts.flags, workspaceMounts, cfg)
 	if err != nil {
-		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
-		return err
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Build extra labels for clawker metadata
@@ -326,8 +334,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		},
 	})
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("creating container: %w", err)
 	}
 
 	// Inject onboarding file if host auth is enabled.
@@ -349,87 +356,5 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 
 	// Output container ID (short 12-char) to stdout
 	fmt.Fprintln(ios.Out, resp.ID[:12])
-	return nil
-}
-
-// handleMissingDefaultImage prompts the user to rebuild a missing default image.
-// In non-interactive mode, it prints instructions and returns an error.
-func handleMissingDefaultImage(ctx context.Context, opts *CreateOptions, cfgGateway *config.Config, imageRef string) error {
-	ios := opts.IOStreams
-
-	if !ios.IsInteractive() {
-		cmdutil.PrintError(ios, "Default image %q not found", imageRef)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker create IMAGE",
-			"Or build a project image: clawker build",
-		)
-		return fmt.Errorf("default image %q not found", imageRef)
-	}
-
-	// Interactive mode — prompt to rebuild
-	p := opts.Prompter()
-	options := []prompter.SelectOption{
-		{Label: "Yes", Description: "Rebuild the default base image now"},
-		{Label: "No", Description: "Cancel and fix manually"},
-	}
-
-	idx, err := p.Select(
-		fmt.Sprintf("Default image %q not found. Rebuild now?", imageRef),
-		options,
-		0,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to prompt for rebuild: %w", err)
-	}
-
-	if idx != 0 {
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker create IMAGE",
-			"Or build a project image: clawker build",
-		)
-		return fmt.Errorf("default image %q not found", imageRef)
-	}
-
-	// Get flavor selection
-	flavors := intbuild.DefaultFlavorOptions()
-	flavorOptions := make([]prompter.SelectOption, len(flavors))
-	for i, f := range flavors {
-		flavorOptions[i] = prompter.SelectOption{
-			Label:       f.Name,
-			Description: f.Description,
-		}
-	}
-
-	flavorIdx, err := p.Select("Select Linux flavor", flavorOptions, 0)
-	if err != nil {
-		return fmt.Errorf("failed to select flavor: %w", err)
-	}
-
-	selectedFlavor := flavors[flavorIdx].Name
-	fmt.Fprintf(ios.ErrOut, "Building %s...\n", docker.DefaultImageTag)
-
-	if err := docker.BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
-		return fmt.Errorf("failed to rebuild default image: %w", err)
-	}
-
-	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", docker.DefaultImageTag)
-
-	// Persist the default image in settings
-	settingsLoader := cfgGateway.SettingsLoader()
-	if settingsLoader != nil {
-		currentSettings, loadErr := settingsLoader.Load()
-		if loadErr != nil {
-			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
-		} else {
-			currentSettings.DefaultImage = docker.DefaultImageTag
-			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
-				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
-			}
-		}
-	}
-
 	return nil
 }

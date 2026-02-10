@@ -24,13 +24,17 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(ctx context.Context) (*docker.Client, error) {
-			return docker.NewClient(ctx, cfg)
+			return docker.NewClient(ctx, cfg, docker.WithLabels(docker.TestLabelConfig()))
 		},
 		Config: func() *config.Config {
 			return cfg
 		},
 		HostProxy: func() *hostproxy.Manager {
-			return hostproxy.NewManager()
+			mgr := hostproxy.NewManager()
+			t.Cleanup(func() {
+				_ = mgr.StopDaemon()
+			})
+			return mgr
 		},
 		Prompter: func() *prompter.Prompter { return nil },
 	}

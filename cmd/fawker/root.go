@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
 	"github.com/schmitthub/clawker/internal/cmd/network"
@@ -26,6 +25,9 @@ Usage:
   fawker image build                           # Default scenario (multi-stage)
   fawker image build --scenario error          # Error scenario
   fawker image build --progress plain          # Plain mode
+  fawker container run -it --agent test @      # Interactive run with init tree
+  fawker container run --detach --agent test @ # Detached run with init tree
+  fawker container create --agent test @       # Create container
   fawker container ls                          # List fake containers
   fawker image ls                              # List fake images`,
 		SilenceUsage: true,
@@ -44,7 +46,7 @@ Usage:
 
 	// Management commands — same constructors as clawker, different Factory deps.
 	cmd.AddCommand(image.NewCmdImage(f))
-	cmd.AddCommand(container.NewCmdContainer(f))
+	cmd.AddCommand(newFawkerContainerCmd(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))

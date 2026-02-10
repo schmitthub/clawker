@@ -39,6 +39,7 @@ func clawkerEngineOptions() whail.EngineOptions {
 	return whail.EngineOptions{
 		LabelPrefix:  docker.EngineLabelPrefix,
 		ManagedLabel: docker.EngineManagedLabel,
+		Labels:       docker.TestLabelConfig(),
 	}
 }
 

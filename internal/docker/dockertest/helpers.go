@@ -3,6 +3,7 @@ package dockertest
 import (
 	"context"
 	"io"
+	"net"
 	"strings"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
@@ -190,6 +191,65 @@ func (f *FakeClient) SetupNetworkExists(name string, exists bool) {
 			}, nil
 		}
 		return client.NetworkInspectResult{}, notFoundError(networkName)
+	}
+}
+
+// SetupVolumeCreate configures the fake to succeed on VolumeCreate,
+// returning a volume with the requested name and managed labels.
+func (f *FakeClient) SetupVolumeCreate() {
+	f.FakeAPI.VolumeCreateFn = func(_ context.Context, opts client.VolumeCreateOptions) (client.VolumeCreateResult, error) {
+		return client.VolumeCreateResult{
+			Volume: volume.Volume{
+				Name:   opts.Name,
+				Labels: opts.Labels,
+			},
+		}, nil
+	}
+}
+
+// SetupNetworkCreate configures the fake to succeed on NetworkCreate.
+func (f *FakeClient) SetupNetworkCreate() {
+	f.FakeAPI.NetworkCreateFn = func(_ context.Context, name string, _ client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
+		return client.NetworkCreateResult{
+			ID: "net-" + name,
+		}, nil
+	}
+}
+
+// SetupContainerAttach configures the fake to succeed on ContainerAttach,
+// returning a HijackedResponse backed by a net.Pipe. The server side of the
+// pipe is closed immediately, simulating a container that exits right away.
+func (f *FakeClient) SetupContainerAttach() {
+	f.FakeAPI.ContainerAttachFn = func(_ context.Context, _ string, _ client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
+		// net.Pipe creates a synchronous in-memory connection pair.
+		// Close the server side so reads on the client side return EOF.
+		clientConn, serverConn := net.Pipe()
+		serverConn.Close()
+		return client.ContainerAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.raw-stream"),
+		}, nil
+	}
+}
+
+// SetupContainerWait configures the fake to succeed on ContainerWait,
+// returning the given exit code immediately.
+func (f *FakeClient) SetupContainerWait(exitCode int64) {
+	f.FakeAPI.ContainerWaitFn = func(_ context.Context, _ string, _ client.ContainerWaitOptions) client.ContainerWaitResult {
+		return whailtest.FakeContainerWaitExit(exitCode)
+	}
+}
+
+// SetupContainerResize configures the fake to succeed on ContainerResize.
+func (f *FakeClient) SetupContainerResize() {
+	f.FakeAPI.ContainerResizeFn = func(_ context.Context, _ string, _ client.ContainerResizeOptions) (client.ContainerResizeResult, error) {
+		return client.ContainerResizeResult{}, nil
+	}
+}
+
+// SetupContainerRemove configures the fake to succeed on ContainerRemove.
+func (f *FakeClient) SetupContainerRemove() {
+	f.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+		return client.ContainerRemoveResult{}, nil
 	}
 }
 

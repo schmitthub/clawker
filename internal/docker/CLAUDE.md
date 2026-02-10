@@ -10,7 +10,7 @@ Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, nami
 | `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
 | `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
 | `builder.go` | `Builder` — project image building (EnsureImage, Build, BuilderOptions) |
-| `defaults.go` | `DefaultImageTag` constant, `BuildDefaultImage` function |
+| `defaults.go` | `DefaultImageTag` constant, `(*Client).BuildDefaultImage` method |
 | `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
 | `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
 | `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
@@ -81,11 +81,15 @@ Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
 ## Client (`client.go`)
 
 ```go
-func NewClient(ctx context.Context, cfg *config.Config) (*Client, error)
+func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*Client, error)
+
+type ClientOption func(*clientOptions)
+func WithLabels(labels whail.LabelConfig) ClientOption  // inject labels into engine
 
 type Client struct {
     *whail.Engine  // embedded — all whail methods available
     cfg *config.Config // lazily provides Project() and Settings() for image resolution
+    BuildDefaultImageFunc BuildDefaultImageFn // override hook for fawker/tests (nil = real build)
 }
 
 type Container struct {
@@ -147,10 +151,13 @@ Depends on `internal/bundler` for `ProjectGenerator`, `ContentHash`, `CreateBuil
 
 ```go
 const DefaultImageTag = "clawker-default:latest"
-func BuildDefaultImage(ctx context.Context, flavor string) error
+func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgress whail.BuildProgressFunc) error
+func TestLabelConfig() whail.LabelConfig  // returns LabelConfig with com.clawker.test=true as Default
 ```
 
-`BuildDefaultImage` creates Docker client, wires BuildKit, generates Dockerfiles via `bundler.DockerfileManager`, builds with clawker labels. Uses `bundler.NewVersionsManager`, `bundler.NewDockerfileManager`, `bundler.CreateBuildContextFromDir`.
+`BuildDefaultImage` is a Client method that wires BuildKit on the receiver, generates Dockerfiles via `bundler.DockerfileManager`, builds with clawker labels. Uses `bundler.NewVersionsManager`, `bundler.NewDockerfileManager`, `bundler.CreateBuildContextFromDir`. When `Client.BuildDefaultImageFunc` is non-nil, delegates to the override (used by fawker/tests).
+
+`TestLabelConfig` returns a `whail.LabelConfig` with `com.clawker.test=true` as a default label. Used with `WithLabels` in test code so that `CleanupTestResources` can find and remove all test-created containers, volumes, and networks.
 
 ## BuildKit (`buildkit.go`)
 
@@ -195,3 +202,7 @@ Re-exports ~37 Docker types from whail. See `types.go` for the full list. Key gr
 Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. Use `dockertest.WithConfig(cfg)` to inject a `*config.Config` for image resolution tests. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
 
 **BuildKit setup helpers**: `SetupBuildKit()`, `SetupBuildKitWithProgress(events)`, `SetupBuildKitWithRecordedProgress(events)`, `SetupPingBuildKit()` — wire fake BuildKit builders with varying levels of progress event simulation. See `dockertest/helpers.go` for signatures.
+
+**Interactive mode helpers**: `SetupContainerAttach()` (net.Pipe, server-side closed immediately), `SetupContainerWait(exitCode)` (wraps `whailtest.FakeContainerWaitExit`), `SetupContainerResize()` (no-op), `SetupContainerRemove()` (no-op). Used by fawker demo CLI for `container run -it` path.
+
+**Resource creation helpers**: `SetupVolumeCreate()` (returns volume with requested name/labels), `SetupNetworkCreate()` (returns network ID). Used when default inspect handlers indicate resources don't exist.
