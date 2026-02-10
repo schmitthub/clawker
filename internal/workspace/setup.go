@@ -35,7 +35,7 @@ type SetupMountsResult struct {
 	Mounts []mount.Mount
 	// ConfigVolumeResult tracks which config volumes were newly created.
 	// Used by container init orchestration to decide whether to copy host config.
-	ConfigVolumeResult *ConfigVolumeResult
+	ConfigVolumeResult ConfigVolumeResult
 }
 
 // SetupMounts prepares workspace mounts for container creation.

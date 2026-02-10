@@ -32,32 +32,15 @@ func TestResolveHostConfigDir_EnvVar(t *testing.T) {
 }
 
 func TestResolveHostConfigDir_EnvVarMissing(t *testing.T) {
-	// env var points to non-existent dir → should fall through
+	// env var points to non-existent dir → should return error (not fall through)
 	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
 
-	// Also ensure ~/.claude/ doesn't exist for this test
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("get home dir: %v", err)
-	}
-	claudeDir := filepath.Join(home, ".claude")
-	if _, err := os.Stat(claudeDir); err == nil {
-		// ~/.claude/ exists on this machine; we can't remove it,
-		// so just verify it falls back correctly.
-		got, err := ResolveHostConfigDir()
-		if err != nil {
-			t.Fatalf("unexpected error with ~/.claude fallback: %v", err)
-		}
-		if got != claudeDir {
-			t.Errorf("got %q, want %q", got, claudeDir)
-		}
-		return
-	}
-
-	// Neither source exists → expect error
-	_, err = ResolveHostConfigDir()
+	_, err := ResolveHostConfigDir()
 	if err == nil {
-		t.Fatal("expected error, got nil")
+		t.Fatal("expected error when CLAUDE_CONFIG_DIR is set to non-existent path, got nil")
+	}
+	if !strings.Contains(err.Error(), "CLAUDE_CONFIG_DIR is set to") {
+		t.Errorf("error should mention CLAUDE_CONFIG_DIR, got: %v", err)
 	}
 }
 

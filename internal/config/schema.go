@@ -130,10 +130,10 @@ func (c *ClaudeCodeConfig) UseHostAuthEnabled() bool {
 	return *c.UseHostAuth
 }
 
-// ConfigStrategy returns the config strategy (default: "fresh").
+// ConfigStrategy returns the config strategy (default: "copy").
 func (c *ClaudeCodeConfig) ConfigStrategy() string {
 	if c == nil || c.Config.Strategy == "" {
-		return "fresh"
+		return "copy"
 	}
 	return c.Config.Strategy
 }

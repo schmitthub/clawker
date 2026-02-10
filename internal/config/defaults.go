@@ -73,8 +73,8 @@ agent:
   # Claude Code configuration
   # claude_code:
   #   config:
-  #     # "copy" copies host ~/.claude/ config, "fresh" starts clean
-  #     strategy: "fresh"
+  #     # "copy" copies host ~/.claude/ config (default), "fresh" starts clean
+  #     strategy: "copy"
   #   # Use host authentication tokens in container
   #   use_host_auth: true
   # Enable shared directory (read-only, mounted at ~/.clawker-share)

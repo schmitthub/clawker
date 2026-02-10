@@ -46,6 +46,10 @@ type InitConfigOpts struct {
 //  1. If strategy=="copy": prepare host claude config, copy to volume
 //  2. If use_host_auth: prepare credentials, copy to volume
 func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
+	if opts.CopyToVolume == nil {
+		return fmt.Errorf("InitContainerConfig: CopyToVolumeFn is required")
+	}
+
 	claudeCode := opts.ClaudeCode
 
 	// Get config volume name using docker naming convention
@@ -113,6 +117,10 @@ type InjectOnboardingOpts struct {
 // Must be called after ContainerCreate and before ContainerStart.
 // The file marks Claude Code onboarding as complete so the user is not prompted.
 func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error {
+	if opts.CopyToContainer == nil {
+		return fmt.Errorf("InjectOnboardingFile: CopyToContainerFn is required")
+	}
+
 	tar, err := containerfs.PrepareOnboardingTar(containerHomeDir)
 	if err != nil {
 		return fmt.Errorf("failed to prepare onboarding file: %w", err)
@@ -124,4 +132,16 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 
 	logger.Info().Msg("injected onboarding file into container")
 	return nil
+}
+
+// NewCopyToContainerFn creates a CopyToContainerFn that delegates to the docker client.
+// This is the standard production wiring — use directly instead of writing an inline closure.
+func NewCopyToContainerFn(client *docker.Client) CopyToContainerFn {
+	return func(ctx context.Context, containerID, destPath string, content io.Reader) error {
+		_, err := client.CopyToContainer(ctx, containerID, docker.CopyToContainerOptions{
+			DestinationPath: destPath,
+			Content:         content,
+		})
+		return err
+	}
 }

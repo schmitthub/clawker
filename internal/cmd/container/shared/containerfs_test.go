@@ -136,7 +136,7 @@ func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
 }
 
 func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
-	// nil ClaudeCode should use defaults: fresh strategy + host auth enabled
+	// nil ClaudeCode should use defaults: copy strategy + host auth enabled
 	keyring.MockInit()
 	seedTestCredentials(t)
 
@@ -148,15 +148,15 @@ func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
 		ProjectName:      "myapp",
 		AgentName:        "ralph",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode:       nil, // defaults: fresh strategy, use_host_auth true
+		ClaudeCode:       nil, // defaults: copy strategy, use_host_auth true
 		CopyToVolume:     tracker.copyToVolumeFn(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Default is fresh + use_host_auth=true, so should copy credentials only
-	require.Equal(t, 1, tracker.callCount(), "nil ClaudeCode should use defaults (fresh + host auth)")
+	// Default is copy + use_host_auth=true, so should copy config + credentials
+	require.Equal(t, 2, tracker.callCount(), "nil ClaudeCode should use defaults (copy + host auth)")
 }
 
 func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
@@ -180,9 +180,11 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
 
-	require.Equal(t, 1, tracker.callCount())
+	// Default copy strategy + host auth = 2 calls (config + credentials)
+	require.Equal(t, 2, tracker.callCount())
 	// 2-segment: clawker.ralph-config (no project segment)
 	assert.Equal(t, "clawker.ralph-config", tracker.calls()[0].volumeName)
+	assert.Equal(t, "clawker.ralph-config", tracker.calls()[1].volumeName)
 }
 
 func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
@@ -206,7 +208,8 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to copy credentials to volume")
+	// Default copy strategy means config copy fails first
+	assert.Contains(t, err.Error(), "failed to copy claude config to volume")
 }
 
 func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {

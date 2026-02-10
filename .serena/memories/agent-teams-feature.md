@@ -351,9 +351,9 @@ The `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var should be injected when for
 
 ### Phase 0: Container Init Feature ✅ COMPLETE (branch a/containerfs-init, supersedes PR #104)
 - `internal/containerfs/` — host config preparation (settings, plugins, credentials, onboarding)
-- `internal/cmd/container/opts/init.go` — `InitContainerConfig`, `InjectOnboardingFile` orchestration
+- `internal/cmd/container/shared/containerfs.go` — `InitContainerConfig`, `InjectOnboardingFile` orchestration
 - `internal/config/schema.go` — `ClaudeCodeConfig`, `AgentConfig.ClaudeCode`, `AgentConfig.EnableSharedDir`
-- `internal/workspace/strategy.go` — `EnsureShareVolume()`, `GetShareVolumeMount()` (read-only), `ConfigVolumeResult`
+- `internal/workspace/strategy.go` — `EnsureShareDir()`, `GetShareVolumeMount()` (read-only), `ConfigVolumeResult`
 - `internal/workspace/setup.go` — `SetupMountsResult` with `ConfigVolumeResult`
 - `internal/bundler/assets/entrypoint.sh` — removed credential symlink section
 - `internal/cmd/container/run/run.go` + `create/create.go` — wired init steps

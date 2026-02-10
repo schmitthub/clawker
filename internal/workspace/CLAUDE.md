@@ -55,17 +55,17 @@ type SetupMountsConfig struct {
 
 type SetupMountsResult struct {
     Mounts             []mount.Mount
-    ConfigVolumeResult *ConfigVolumeResult
+    ConfigVolumeResult ConfigVolumeResult
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (*ConfigVolumeResult, error)
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
 func EnsureShareDir() (string, error)
 func GetShareVolumeMount(hostPath string) mount.Mount
 ```
 
-`SetupMounts` is the main entry point -- combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 `ConfigVolumeResult` tracks which config volumes were newly created vs pre-existing (`ConfigCreated`, `HistoryCreated` bool fields). Returned by `EnsureConfigVolumes` for use by container init orchestration. When `ConfigCreated` is true, callers should run `opts.InitContainerConfig` to populate the volume.
 

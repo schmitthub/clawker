@@ -319,12 +319,12 @@ func TestClaudeCodeConfig_ConfigStrategy(t *testing.T) {
 		{
 			name:   "nil config",
 			config: nil,
-			want:   "fresh",
+			want:   "copy",
 		},
 		{
 			name:   "empty strategy",
 			config: &ClaudeCodeConfig{Config: ClaudeCodeConfigOptions{Strategy: ""}},
-			want:   "fresh",
+			want:   "copy",
 		},
 		{
 			name:   "explicit fresh",

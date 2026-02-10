@@ -3,13 +3,23 @@ package create
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
+	moby "github.com/moby/moby/client"
+
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -396,4 +406,229 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 		return // Both are empty (nil or [])
 	}
 	require.Equal(t, expected, actual)
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 — Cobra+Factory integration tests
+// ---------------------------------------------------------------------------
+
+// testConfig returns a minimal *config.Project for Tier 2 tests.
+func testConfig() *config.Project {
+	hostProxyDisabled := false
+	return &config.Project{
+		Version: "1",
+		Project: "",
+		Workspace: config.WorkspaceConfig{
+			RemotePath:  "/workspace",
+			DefaultMode: "bind",
+		},
+		Security: config.SecurityConfig{
+			EnableHostProxy: &hostProxyDisabled,
+			Firewall: &config.FirewallConfig{
+				Enable: false,
+			},
+		},
+	}
+}
+
+// testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, fmt.Errorf("GitManager not available in test")
+		},
+		HostProxy: func() *hostproxy.Manager {
+			return hostproxy.NewManager()
+		},
+		Prompter: func() *prompter.Prompter { return nil },
+	}, tio
+}
+
+func TestCreateRun(t *testing.T) {
+	t.Run("basic create prints container ID", func(t *testing.T) {
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdCreate(f, nil)
+
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.NoError(t, err)
+
+		// Create prints 12-char container ID to stdout
+		out := tio.OutBuf.String()
+		require.Contains(t, out, "sha256:fakec")
+		require.Len(t, strings.TrimSpace(out), 12)
+
+		fake.AssertCalled(t, "ContainerCreate")
+	})
+
+	t.Run("config init runs when config volume freshly created", func(t *testing.T) {
+		// Make all volumes report as not existing → EnsureVolume creates them → ConfigCreated=true
+		fake := dockertest.NewFakeClient()
+		fake.SetupVolumeExists("", false)
+		fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
+			return moby.VolumeCreateResult{}, nil
+		}
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+
+		// Point CLAUDE_CONFIG_DIR to a non-existent path so InitContainerConfig fails
+		// (proving it WAS called when ConfigCreated=true).
+		t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-test-dir")
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdCreate(f, nil)
+
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "container init")
+		require.Contains(t, err.Error(), "CLAUDE_CONFIG_DIR")
+
+		// Container should NOT have been created since init failed before ContainerCreate... wait no.
+		// Actually, init runs AFTER workspace setup (which includes ContainerCreate path? No.)
+		// Looking at create.go: SetupMounts → init → ContainerCreate. Init is before create.
+		fake.AssertNotCalled(t, "ContainerCreate")
+	})
+
+	t.Run("config init skipped when config volume exists", func(t *testing.T) {
+		// Default fake: volumes exist → ConfigCreated=false → no init
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdCreate(f, nil)
+
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.NoError(t, err)
+
+		// Container created successfully — no init errors
+		out := tio.OutBuf.String()
+		require.Len(t, strings.TrimSpace(out), 12)
+		fake.AssertCalled(t, "ContainerCreate")
+	})
+
+	t.Run("onboarding injected when use_host_auth enabled", func(t *testing.T) {
+		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
+		// Default fake: volumes exist → ConfigCreated=false → no init
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+
+		copyToContainerCalled := false
+		fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
+			copyToContainerCalled = true
+			return moby.CopyToContainerResult{}, nil
+		}
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdCreate(f, nil)
+
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.NoError(t, err)
+		require.True(t, copyToContainerCalled, "CopyToContainer should be called for onboarding injection")
+		fake.AssertCalled(t, "ContainerCreate")
+	})
+
+	t.Run("onboarding failure returns error", func(t *testing.T) {
+		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
+		// CopyToContainer fails → onboarding error propagates
+		fake := dockertest.NewFakeClient()
+		fake.SetupContainerCreate()
+
+		fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
+			return moby.CopyToContainerResult{}, fmt.Errorf("copy failed: disk full")
+		}
+
+		f, tio := testFactory(t, fake)
+		cmd := NewCmdCreate(f, nil)
+
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "inject onboarding")
+	})
+
+	t.Run("onboarding skipped when use_host_auth disabled", func(t *testing.T) {
+		// Explicitly disable use_host_auth → no onboarding injection
+		cfg := testConfig()
+		useHostAuth := false
+		cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
+			UseHostAuth: &useHostAuth,
+			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
+		}
+
+		fake := dockertest.NewFakeClient(
+			dockertest.WithConfig(config.NewConfigForTest(cfg, config.DefaultSettings())),
+		)
+		fake.SetupContainerCreate()
+		// No CopyToContainer setup — if called, it would panic
+
+		tio := iostreams.NewTestIOStreams()
+		f := &cmdutil.Factory{
+			IOStreams: tio.IOStreams,
+			Client: func(_ context.Context) (*docker.Client, error) {
+				return fake.Client, nil
+			},
+			Config: func() *config.Config {
+				return config.NewConfigForTest(cfg, config.DefaultSettings())
+			},
+			GitManager: func() (*git.GitManager, error) {
+				return nil, fmt.Errorf("GitManager not available in test")
+			},
+			HostProxy: func() *hostproxy.Manager {
+				return hostproxy.NewManager()
+			},
+			Prompter: func() *prompter.Prompter { return nil },
+		}
+
+		cmd := NewCmdCreate(f, nil)
+		cmd.SetArgs([]string{"alpine"})
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetOut(tio.OutBuf)
+		cmd.SetErr(tio.ErrBuf)
+
+		err := cmd.Execute()
+		require.NoError(t, err)
+
+		// Container created successfully without CopyToContainer being called
+		out := tio.OutBuf.String()
+		require.Len(t, strings.TrimSpace(out), 12)
+		fake.AssertCalled(t, "ContainerCreate")
+		fake.AssertNotCalled(t, "CopyToContainer")
+	})
 }

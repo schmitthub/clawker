@@ -86,7 +86,7 @@ func TestEnsureShareDir_Idempotent(t *testing.T) {
 
 func TestConfigVolumeResult(t *testing.T) {
 	// ConfigVolumeResult should exist as a struct with ConfigCreated and HistoryCreated fields.
-	result := &ConfigVolumeResult{}
+	var result ConfigVolumeResult
 
 	// Zero value should be false for both fields.
 	if result.ConfigCreated {

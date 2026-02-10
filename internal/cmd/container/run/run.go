@@ -364,16 +364,10 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// The file marks Claude Code onboarding as complete so the user is not prompted.
 	if cfg.Agent.ClaudeCode.UseHostAuthEnabled() {
 		if err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-			ContainerID: containerID,
-			CopyToContainer: func(ctx context.Context, cID, destPath string, content io.Reader) error {
-				_, err := client.CopyToContainer(ctx, cID, docker.CopyToContainerOptions{
-					DestinationPath: destPath,
-					Content:         content,
-				})
-				return err
-			},
+			ContainerID:     containerID,
+			CopyToContainer: shared.NewCopyToContainerFn(client),
 		}); err != nil {
-			logger.Warn().Err(err).Msg("failed to inject onboarding file")
+			return fmt.Errorf("inject onboarding: %w", err)
 		}
 	}
 

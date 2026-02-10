@@ -86,14 +86,14 @@ type ConfigVolumeResult struct {
 // EnsureConfigVolumes creates config and history volumes with proper labels.
 // Should be called before container creation to ensure volumes have clawker labels.
 // This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (*ConfigVolumeResult, error) {
-	result := &ConfigVolumeResult{}
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error) {
+	var result ConfigVolumeResult
 
 	configVolume := docker.VolumeName(projectName, agentName, "config")
 	configLabels := docker.VolumeLabels(projectName, agentName, "config")
 	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	result.ConfigCreated = created
 
@@ -101,7 +101,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
 	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	result.HistoryCreated = created
 
@@ -125,8 +125,8 @@ const (
 	ShareStagingPath = "/home/claude/.clawker-share"
 )
 
-// EnsureShareVolume creates the global shared volume if it doesn't already exist.
-// This volume provides a read-only shared directory across all projects and agents.
+// EnsureShareDir creates the global shared directory if it doesn't already exist.
+// This directory provides a read-only bind mount across all projects and agents.
 func EnsureShareDir() (string, error) {
 	sharePath, err := config.ShareDir()
 	if err != nil {

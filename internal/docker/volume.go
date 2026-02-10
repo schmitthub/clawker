@@ -64,7 +64,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	// ensures the container user (UID 1001) can read the files.
 	containerConfig := &container.Config{
 		Image: "busybox:latest",
-		Cmd:   []string{"chown", "-R", "1001:1001", destPath},
+		Cmd:   []string{"chown", "-R", "1001:1001", destPath}, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
 	}
 
 	hostConfig := &container.HostConfig{
@@ -138,7 +138,19 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	select {
 	case result := <-waitResult.Result:
 		if result.StatusCode != 0 {
-			return fmt.Errorf("chown failed in temp container with exit code %d", result.StatusCode)
+			// Attempt to fetch logs for diagnostics
+			logOutput := ""
+			logReader, logErr := c.APIClient.ContainerLogs(ctx, resp.ID, whail.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+			if logErr == nil {
+				defer logReader.Close()
+				if logBytes, readErr := io.ReadAll(logReader); readErr == nil && len(logBytes) > 0 {
+					logOutput = string(logBytes)
+				}
+			}
+			if logOutput != "" {
+				return fmt.Errorf("chown failed for volume %s at %s (exit code %d): %s", volumeName, destPath, result.StatusCode, logOutput)
+			}
+			return fmt.Errorf("chown failed for volume %s at %s (exit code %d)", volumeName, destPath, result.StatusCode)
 		}
 	case err := <-waitResult.Error:
 		return fmt.Errorf("failed waiting for chown container: %w", err)
@@ -196,8 +208,8 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) err
 
 		// Ensure container user ownership so files are readable inside container.
 		// TODO: Move container UID/GID to a config package value shared across packages.
-		header.Uid = 1001 // Must match bundler.DefaultUID
-		header.Gid = 1001 // Must match bundler.DefaultGID
+		header.Uid = 1001 // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		header.Gid = 1001 // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
 
 		// Handle symlinks
 		if info.Mode()&os.ModeSymlink != 0 {

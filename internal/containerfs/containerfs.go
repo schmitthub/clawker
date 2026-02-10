@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,10 +24,11 @@ import (
 // Returns error if the directory doesn't exist.
 func ResolveHostConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir, nil
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			return "", fmt.Errorf("CLAUDE_CONFIG_DIR is set to %s but path is invalid: %w", dir, err)
 		}
-		logger.Debug().Str("path", dir).Msg("CLAUDE_CONFIG_DIR set but does not exist, falling back to ~/.claude/")
+		return dir, nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -53,7 +55,11 @@ func PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir strin
 		return "", nil, fmt.Errorf("create staging dir: %w", err)
 	}
 
-	cleanupFn := func() { os.RemoveAll(tmpDir) }
+	cleanupFn := func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			logger.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+		}
+	}
 
 	stagingClaudeDir := filepath.Join(tmpDir, ".claude")
 	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
@@ -92,7 +98,11 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 		return "", nil, fmt.Errorf("create staging dir: %w", err)
 	}
 
-	cleanupFn := func() { os.RemoveAll(tmpDir) }
+	cleanupFn := func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			logger.Debug().Err(err).Str("path", tmpDir).Msg("failed to remove staging dir")
+		}
+	}
 
 	stagingClaudeDir := filepath.Join(tmpDir, ".claude")
 	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
@@ -143,6 +153,8 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 //
 // The tar contains a single file named ".claude.json" — the caller specifies
 // the container home directory as the extraction destination.
+//
+// TODO: containerHomeDir is currently unused — evaluate if needed for custom home paths.
 func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 	content := []byte(`{"hasCompletedOnboarding":true}` + "\n")
 
@@ -153,8 +165,8 @@ func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 		Name:    ".claude.json",
 		Mode:    0o600,
 		Size:    int64(len(content)),
-		Uid:     1001, // Must match bundler.DefaultUID
-		Gid:     1001, // Must match bundler.DefaultGID
+		Uid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Gid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
 		ModTime: time.Now(),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -250,7 +262,7 @@ func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string
 		return fmt.Errorf("create plugins staging dir: %w", err)
 	}
 
-	err = filepath.Walk(resolved, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -267,20 +279,27 @@ func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string
 
 		target := filepath.Join(dst, rel)
 
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-
-		// Resolve symlinks for individual files.
-		realPath := path
-		if info.Mode()&os.ModeSymlink != 0 {
-			realPath, err = filepath.EvalSymlinks(path)
+		// Handle symlinks: resolve and recurse if directory, copy if file.
+		if d.Type()&os.ModeSymlink != 0 {
+			realPath, err := filepath.EvalSymlinks(path)
 			if err != nil {
 				return fmt.Errorf("resolve symlink %s: %w", path, err)
 			}
+			info, err := os.Stat(realPath)
+			if err != nil {
+				return fmt.Errorf("stat symlink target %s: %w", realPath, err)
+			}
+			if info.IsDir() {
+				return copyDir(realPath, target)
+			}
+			return copyFile(realPath, target)
 		}
 
-		return copyFile(realPath, target)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+
+		return copyFile(path, target)
 	})
 	if err != nil {
 		return fmt.Errorf("walk plugins: %w", err)
@@ -292,24 +311,28 @@ func stagePlugins(hostDir, stagingDir, containerHomeDir, containerWorkDir string
 
 	// Rewrite known_marketplaces.json if it exists.
 	mpPath := filepath.Join(dst, "known_marketplaces.json")
-	if _, err := os.Stat(mpPath); err == nil {
+	if _, statErr := os.Stat(mpPath); statErr == nil {
 		if err := rewriteJSONFile(mpPath, []pathRewriteRule{
 			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
 			{key: "installLocation", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
 		}); err != nil {
 			return fmt.Errorf("rewrite known_marketplaces.json: %w", err)
 		}
+	} else if !os.IsNotExist(statErr) {
+		logger.Debug().Err(statErr).Str("path", mpPath).Msg("plugin file stat failed")
 	}
 
 	// Rewrite installed_plugins.json if it exists.
 	ipPath := filepath.Join(dst, "installed_plugins.json")
-	if _, err := os.Stat(ipPath); err == nil {
+	if _, statErr := os.Stat(ipPath); statErr == nil {
 		if err := rewriteJSONFile(ipPath, []pathRewriteRule{
 			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
 			{key: "projectPath", containerPath: containerWorkDir},
 		}); err != nil {
 			return fmt.Errorf("rewrite installed_plugins.json: %w", err)
 		}
+	} else if !os.IsNotExist(statErr) {
+		logger.Debug().Err(statErr).Str("path", ipPath).Msg("plugin file stat failed")
 	}
 
 	return nil
@@ -381,7 +404,7 @@ func rewriteJSONPaths(v any, rules []pathRewriteRule) {
 
 // copyDir recursively copies a directory tree.
 func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, walkErr error) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -393,20 +416,27 @@ func copyDir(src, dst string) error {
 
 		target := filepath.Join(dst, rel)
 
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-
-		// Resolve symlinks for individual files within the walk.
-		realPath := path
-		if info.Mode()&os.ModeSymlink != 0 {
-			realPath, err = filepath.EvalSymlinks(path)
+		// Handle symlinks: resolve and recurse if directory, copy if file.
+		if d.Type()&os.ModeSymlink != 0 {
+			realPath, err := filepath.EvalSymlinks(path)
 			if err != nil {
 				return fmt.Errorf("resolve symlink %s: %w", path, err)
 			}
+			info, err := os.Stat(realPath)
+			if err != nil {
+				return fmt.Errorf("stat symlink target %s: %w", realPath, err)
+			}
+			if info.IsDir() {
+				return copyDir(realPath, target)
+			}
+			return copyFile(realPath, target)
 		}
 
-		return copyFile(realPath, target)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+
+		return copyFile(path, target)
 	})
 }
 

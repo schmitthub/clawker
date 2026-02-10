@@ -6,10 +6,10 @@ Leaf package for preparing host Claude Code configuration for container injectio
 
 | Function | Purpose |
 |----------|---------|
-| `ResolveHostConfigDir()` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default) |
-| `PrepareClaudeConfig(hostDir, containerHome, containerWorkDir)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
-| `PrepareCredentials()` | Stage credentials from keyring or file fallback |
-| `PrepareOnboardingTar()` | Create tar with ~/.claude.json onboarding marker |
+| `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default) |
+| `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
+| `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
+| `PrepareOnboardingTar(containerHomeDir string) (io.Reader, error)` | Create tar with ~/.claude.json onboarding marker |
 
 ## Dependencies
 
