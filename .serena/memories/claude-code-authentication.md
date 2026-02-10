@@ -115,6 +115,32 @@ Clawker uses a `clawker-globals` Docker volume to persist Claude Code credential
 - `internal/workspace/setup.go` — wired into `SetupMounts()`
 - `internal/bundler/assets/entrypoint.sh` — symlink creation + migration
 
+## Keyring Package (`internal/keyring`)
+
+The `keyring` package wraps `zalando/go-keyring` with timeouts and provides a
+service-credential registry pattern for fetching, parsing, and validating OS
+keychain secrets.
+
+### File Layout
+- `keyring.go` — Raw ops (Set/Get/Delete), ErrNotFound, TimeoutError, MockInit
+- `service.go` — Generic pipeline: `ServiceDef[T]`, `getCredential[T]`, sentinels, helpers
+- `claude_code.go` — `ClaudeCodeCredentials` types + `GetClaudeCodeCredentials()`
+- `claude_code_test.go` — Table-driven tests (5 cases, all using MockInit)
+- `CLAUDE.md` — Package docs
+
+### Adding a New Service
+Create `<service>.go` with struct + `ServiceDef[T]` var + public function.
+No registration map — just one file per service.
+
+### Error Types
+- `ErrNotFound` — no keyring entry
+- `ErrEmptyCredential` — entry exists but blank
+- `ErrInvalidSchema` — data doesn't match struct
+- `ErrTokenExpired` — credential past expiry
+- `*TimeoutError` — keyring op timed out
+
+**Status**: No production callers yet. Ready for integration.
+
 ## See also
 
 * [Permissions](/en/permissions): configure what Claude Code can access and do
