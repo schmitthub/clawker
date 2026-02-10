@@ -31,7 +31,7 @@ import (
 type RunOptions struct {
 	*copts.ContainerOptions
 
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	GitManager   func() (*git.GitManager, error)
@@ -191,7 +191,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	var projectRootDir string // Set when using worktree, for .git mount
 	if containerOpts.Worktree != "" {
 		// Use git worktree as workspace source
-		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName)
+		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName) // TODO - flag parsing should probably be done in RunE not here
 		if err != nil {
 			return fmt.Errorf("invalid --worktree flag: %w", err)
 		}
@@ -641,4 +641,3 @@ func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway
 
 	return nil
 }
-
