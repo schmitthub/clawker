@@ -177,6 +177,23 @@ Extracted ~200 lines of duplicated container initialization code from `run.go` a
 
 **Files modified:** `shared/init.go` (new), `run/run.go`, `create/create.go`, `cmd/fawker/container.go`, `cmd/fawker/root.go`, `run/run_test.go`, `create/create_test.go`, `shared/CLAUDE.md`, `container/CLAUDE.md`, CLAUDE.md
 
+### Align `container start` with `run.go` canonical pattern (Complete)
+**Branch**: `a/pres-run-create-start`
+
+Rewrote `start.go` `attachAndStart` to match `run.go` `attachThenStart` ordering:
+- **Before**: Attach → Start container → Socket bridge → I/O goroutines (with `StreamWithResize`)
+- **After**: Attach → Wait channel → I/O goroutines (`Stream`) → Start container → Socket bridge → Resize → Wait
+
+Key changes:
+- Replaced `StreamWithResize` with `Stream` + separate `signals.NewResizeHandler` (resize AFTER start)
+- Added `waitForContainerExit` local helper (wraps dual-channel wait into `<-chan int`, always `WaitConditionNextExit`)
+- I/O goroutines start before `ContainerStart` (prevents kernel pipe buffer stall)
+- Added phase annotations to `startRun` (Phase A: config+Docker, Phase B: start containers)
+- Added `signals` and `container` imports
+- Created `start/CLAUDE.md` documenting pattern
+
+**Files modified:** `start/start.go`, `start/CLAUDE.md` (new)
+
 ### File-Only Logger + Alt Screen (Complete)
 **Branch**: `a/pres-run-create-start`
 
