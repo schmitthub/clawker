@@ -9,7 +9,7 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: dockertest Setup helpers for missing operations | `pending` | — |
+| Task 1: dockertest Setup helpers for missing operations | `complete` | — |
 | Task 2: stop + kill + remove (HandleError + review Tier 2) | `pending` | — |
 | Task 3: pause + unpause + rename + restart (HandleError + Tier 2) | `pending` | — |
 | Task 4: update + wait (HandleError + Tier 2) | `pending` | — |
@@ -25,6 +25,8 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+- **Task 1**: All simple action helpers (Stop, Kill, Pause, Unpause, Rename, Restart, Update) return empty result structs — no recordCall needed since FakeAPIClient methods handle recording internally. `SetupContainerInspect` takes both containerID and Summary to populate State field (needed by remove's stop-before-remove flow). `SetupContainerStats` takes a JSON string param for flexibility; empty string gives minimal default. `SetupContainerLogs` returns plain ReadCloser (non-multiplexed, suitable for TTY logs). 14 new helpers added, all compile clean, 3543 tests pass.
 
 ---
 

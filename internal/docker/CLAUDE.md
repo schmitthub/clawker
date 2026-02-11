@@ -225,3 +225,9 @@ Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-fi
 **Interactive mode helpers**: `SetupContainerAttach()` (net.Pipe, server-side closed immediately), `SetupContainerWait(exitCode)` (wraps `whailtest.FakeContainerWaitExit`), `SetupContainerResize()` (no-op), `SetupContainerRemove()` (no-op). Used by fawker demo CLI for `container run -it` path.
 
 **Resource creation helpers**: `SetupVolumeCreate()` (returns volume with requested name/labels), `SetupNetworkCreate()` (returns network ID). Used when default inspect handlers indicate resources don't exist.
+
+**Container action helpers**: `SetupContainerStop()`, `SetupContainerKill()`, `SetupContainerPause()`, `SetupContainerUnpause()`, `SetupContainerRename()`, `SetupContainerRestart()`, `SetupContainerUpdate()` — all return empty success results. Used by Tier 2 command tests.
+
+**Container data helpers**: `SetupContainerInspect(containerID, summary)` (returns InspectResponse with State from summary), `SetupContainerLogs(logs)` (returns plain ReadCloser), `SetupContainerTop(titles, processes)` (returns process table), `SetupContainerStats(json)` (returns one-shot stats; empty string = minimal default).
+
+**Copy/exec helpers**: `SetupCopyFromContainer()` (returns empty tar stream), `SetupExecCreate(execID)` (returns given exec ID).

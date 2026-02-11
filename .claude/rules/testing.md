@@ -157,7 +157,7 @@ fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
 fake.AssertCalled(t, "ContainerList")
 ```
 
-**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupCopyToContainer`, `SetupVolumeExists`, `SetupVolumeCreate`, `SetupNetworkExists`, `SetupNetworkCreate`, `SetupContainerAttach`, `SetupContainerWait(exitCode)`, `SetupContainerResize`, `SetupContainerRemove`, `SetupBuildKit`
+**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupContainerStop`, `SetupContainerKill`, `SetupContainerPause`, `SetupContainerUnpause`, `SetupContainerRename`, `SetupContainerRestart`, `SetupContainerUpdate`, `SetupContainerInspect(id, summary)`, `SetupContainerLogs(logs)`, `SetupContainerTop(titles, processes)`, `SetupContainerStats(json)`, `SetupCopyToContainer`, `SetupCopyFromContainer`, `SetupExecCreate(execID)`, `SetupVolumeExists`, `SetupVolumeCreate`, `SetupNetworkExists`, `SetupNetworkCreate`, `SetupContainerAttach`, `SetupContainerWait(exitCode)`, `SetupContainerResize`, `SetupContainerRemove`, `SetupBuildKit`
 
 **Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`, `BuildKitBuildOpts`
 

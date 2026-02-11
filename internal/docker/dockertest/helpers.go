@@ -253,6 +253,138 @@ func (f *FakeClient) SetupContainerRemove() {
 	}
 }
 
+// SetupContainerStop configures the fake to succeed on ContainerStop.
+func (f *FakeClient) SetupContainerStop() {
+	f.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
+		return client.ContainerStopResult{}, nil
+	}
+}
+
+// SetupContainerKill configures the fake to succeed on ContainerKill.
+func (f *FakeClient) SetupContainerKill() {
+	f.FakeAPI.ContainerKillFn = func(_ context.Context, _ string, _ client.ContainerKillOptions) (client.ContainerKillResult, error) {
+		return client.ContainerKillResult{}, nil
+	}
+}
+
+// SetupContainerPause configures the fake to succeed on ContainerPause.
+func (f *FakeClient) SetupContainerPause() {
+	f.FakeAPI.ContainerPauseFn = func(_ context.Context, _ string, _ client.ContainerPauseOptions) (client.ContainerPauseResult, error) {
+		return client.ContainerPauseResult{}, nil
+	}
+}
+
+// SetupContainerUnpause configures the fake to succeed on ContainerUnpause.
+func (f *FakeClient) SetupContainerUnpause() {
+	f.FakeAPI.ContainerUnpauseFn = func(_ context.Context, _ string, _ client.ContainerUnpauseOptions) (client.ContainerUnpauseResult, error) {
+		return client.ContainerUnpauseResult{}, nil
+	}
+}
+
+// SetupContainerRename configures the fake to succeed on ContainerRename.
+func (f *FakeClient) SetupContainerRename() {
+	f.FakeAPI.ContainerRenameFn = func(_ context.Context, _ string, _ client.ContainerRenameOptions) (client.ContainerRenameResult, error) {
+		return client.ContainerRenameResult{}, nil
+	}
+}
+
+// SetupContainerRestart configures the fake to succeed on ContainerRestart.
+func (f *FakeClient) SetupContainerRestart() {
+	f.FakeAPI.ContainerRestartFn = func(_ context.Context, _ string, _ client.ContainerRestartOptions) (client.ContainerRestartResult, error) {
+		return client.ContainerRestartResult{}, nil
+	}
+}
+
+// SetupContainerUpdate configures the fake to succeed on ContainerUpdate.
+func (f *FakeClient) SetupContainerUpdate() {
+	f.FakeAPI.ContainerUpdateFn = func(_ context.Context, _ string, _ client.ContainerUpdateOptions) (client.ContainerUpdateResult, error) {
+		return client.ContainerUpdateResult{}, nil
+	}
+}
+
+// SetupContainerInspect configures the fake to return inspect data for the
+// given container ID. Unlike SetupFindContainer (which also wires ContainerList
+// for find-by-name), this only wires ContainerInspect — suitable for commands
+// that already have a container ID and just need inspect data.
+func (f *FakeClient) SetupContainerInspect(containerID string, c container.Summary) {
+	f.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		if id != c.ID && id != containerID {
+			return client.ContainerInspectResult{}, notFoundError(id)
+		}
+		name := containerID
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		return client.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:   c.ID,
+				Name: "/" + name,
+				Config: &container.Config{
+					Image:  c.Image,
+					Labels: c.Labels,
+				},
+				State: &container.State{
+					Status:  c.State,
+					Running: c.State == "running",
+				},
+			},
+		}, nil
+	}
+}
+
+// SetupContainerLogs configures the fake to return the given string as log
+// output. The logs are returned as a plain io.ReadCloser (suitable for
+// non-multiplexed TTY output).
+func (f *FakeClient) SetupContainerLogs(logs string) {
+	f.FakeAPI.ContainerLogsFn = func(_ context.Context, _ string, _ client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
+		return io.NopCloser(strings.NewReader(logs)), nil
+	}
+}
+
+// SetupContainerTop configures the fake to return the given process table.
+func (f *FakeClient) SetupContainerTop(titles []string, processes [][]string) {
+	f.FakeAPI.ContainerTopFn = func(_ context.Context, _ string, _ client.ContainerTopOptions) (client.ContainerTopResult, error) {
+		return client.ContainerTopResult{
+			Titles:    titles,
+			Processes: processes,
+		}, nil
+	}
+}
+
+// SetupContainerStats configures the fake to return a single JSON stats
+// response. The body is a one-shot io.ReadCloser containing the given JSON.
+// Pass an empty string for a minimal default stats response.
+func (f *FakeClient) SetupContainerStats(statsJSON string) {
+	if statsJSON == "" {
+		statsJSON = `{"read":"2024-01-01T00:00:00Z","cpu_stats":{},"memory_stats":{}}`
+	}
+	f.FakeAPI.ContainerStatsFn = func(_ context.Context, _ string, _ client.ContainerStatsOptions) (client.ContainerStatsResult, error) {
+		return client.ContainerStatsResult{
+			Body: io.NopCloser(strings.NewReader(statsJSON)),
+		}, nil
+	}
+}
+
+// SetupCopyFromContainer configures the fake to succeed on CopyFromContainer,
+// returning an empty tar stream.
+func (f *FakeClient) SetupCopyFromContainer() {
+	f.FakeAPI.CopyFromContainerFn = func(_ context.Context, _ string, _ client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+		return client.CopyFromContainerResult{
+			Content: io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+}
+
+// SetupExecCreate configures the fake to succeed on ExecCreate, returning
+// the given exec ID.
+func (f *FakeClient) SetupExecCreate(execID string) {
+	f.FakeAPI.ExecCreateFn = func(_ context.Context, _ string, _ client.ExecCreateOptions) (client.ExecCreateResult, error) {
+		return client.ExecCreateResult{
+			ID: execID,
+		}, nil
+	}
+}
+
 // SetupImageList configures the fake to return the given image summaries
 // from ImageList calls.
 func (f *FakeClient) SetupImageList(summaries ...whail.ImageSummary) {
