@@ -4,21 +4,21 @@ package top
 import (
 	"context"
 	"fmt"
-	"strings"
-	"text/tabwriter"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // TopOptions holds options for the top command.
 type TopOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	TUI      *tui.TUI
+	Client   func(context.Context) (*docker.Client, error)
+	Config   func() *config.Config
 
 	Agent bool
 
@@ -29,8 +29,9 @@ type TopOptions struct {
 func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
 	opts := &TopOptions{
 		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
+		TUI:      f.TUI,
+		Client:   f.Client,
+		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -73,8 +74,6 @@ Container name can be:
 }
 
 func topRun(ctx context.Context, opts *TopOptions) error {
-	ios := opts.IOStreams
-
 	// First arg is container/agent name, rest are ps options
 	containerName := opts.Args[0]
 	psArgs := opts.Args[1:]
@@ -88,8 +87,7 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Find container by name
@@ -104,20 +102,14 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 	// Get top output
 	top, err := client.ContainerTop(ctx, c.ID, psArgs)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("getting processes for container %q: %w", containerName, err)
 	}
 
 	// Print output in table format
-	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
-
-	// Print header
-	fmt.Fprintln(w, strings.Join(top.Titles, "\t"))
-
-	// Print processes
+	tp := opts.TUI.NewTable(top.Titles...)
 	for _, proc := range top.Processes {
-		fmt.Fprintln(w, strings.Join(proc, "\t"))
+		tp.AddRow(proc...)
 	}
 
-	return w.Flush()
+	return tp.Render()
 }
