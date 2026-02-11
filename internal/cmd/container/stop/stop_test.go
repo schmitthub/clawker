@@ -257,6 +257,29 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	fake.AssertCalled(t, "ContainerKill")
 }
 
+func TestStopRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdStop(f, nil)
+	cmd.SetArgs([]string{"mycontainer"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connecting to Docker")
+}
+
 // --- Per-package test helpers ---
 
 func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreams.TestIOStreams) {

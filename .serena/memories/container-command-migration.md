@@ -10,7 +10,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: dockertest Setup helpers for missing operations | `complete` | — |
-| Task 2: stop + kill + remove (HandleError + review Tier 2) | `pending` | — |
+| Task 2: stop + kill + remove (HandleError + review Tier 2) | `complete` | — |
 | Task 3: pause + unpause + rename + restart (HandleError + Tier 2) | `pending` | — |
 | Task 4: update + wait (HandleError + Tier 2) | `pending` | — |
 | Task 5: cp (HandleError + Tier 2) | `pending` | — |
@@ -26,6 +26,7 @@
 
 (Agents append here as they complete tasks)
 
+- **Task 2**: HandleError → fmt.Errorf migration for stop/kill/remove straightforward. All three had identical pattern: single HandleError for Docker connection + `"Error: %v"` in loop. `remove.go` already had `cs` variable (for SuccessIcon), stop and kill needed it added. Kill had no Tier 2 tests — added `testKillFactory` + 3 tests (success, Docker error, container not found). Stop/remove already had testFactory from SocketBridge tests — added Docker connection error test to each. `SetupFindContainer` takes value `container.Summary`, not pointer — for "not found" tests use `SetupContainerList()` with empty args instead. 3548 tests pass (5 new).
 - **Task 1**: All simple action helpers (Stop, Kill, Pause, Unpause, Rename, Restart, Update) return empty result structs — no recordCall needed since FakeAPIClient methods handle recording internally. `SetupContainerInspect` takes both containerID and Summary to populate State field (needed by remove's stop-before-remove flow). `SetupContainerStats` takes a JSON string param for flexibility; empty string gives minimal default. `SetupContainerLogs` returns plain ReadCloser (non-multiplexed, suitable for TTY logs). 14 new helpers added, all compile clean, 3543 tests pass.
 
 ---
