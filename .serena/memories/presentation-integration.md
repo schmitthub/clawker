@@ -163,6 +163,20 @@ Applied fixes from code-reviewer, test-analyzer, and silent-failure-hunter audit
 
 **All unit tests pass. Both binaries compile.**
 
+### Container Init TUI Progress (Complete)
+**Branch**: `a/pres-run-create-start`
+
+Extracted ~200 lines of duplicated container initialization code from `run.go` and `create.go` into `shared/init.go` with TUI progress display.
+
+**Key changes:**
+- `shared.ContainerInitializer` Factory noun — constructed from `*cmdutil.Factory`, `Run()` performs 5-step progress-tracked init
+- Three-phase command structure: Phase A (pre-progress), Phase B (`Initializer.Run()`), Phase C (post-progress)
+- `run.go` and `create.go` refactored: removed ~200 lines each, replaced with `Initializer.Run()` call
+- Fawker `cmd/fawker/container.go` override removed — uses same code path as production
+- 10 new unit tests in `shared/init_test.go`
+
+**Files modified:** `shared/init.go` (new), `run/run.go`, `create/create.go`, `cmd/fawker/container.go`, `cmd/fawker/root.go`, `run/run_test.go`, `create/create_test.go`, `shared/CLAUDE.md`, `container/CLAUDE.md`, CLAUDE.md
+
 ## Follow-Up Work
 
 ### TablePrinter Migration (Complete)

@@ -133,15 +133,14 @@ h := harness.NewHarness(t, harness.WithProject("myproject"),
 ```go
 harness.SkipIfNoDocker(t)                    // Skip if no Docker
 harness.RequireDocker(t)                     // Fail if no Docker
-client := harness.NewTestClient(t)           // whail.Engine with test labels
-rawClient := harness.NewRawDockerClient(t)   // Low-level Docker client
+client := harness.NewTestClient(t)           // *docker.Client with auto test labels
 
 // Container testing
 ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
 result, _ := ctr.Exec(ctx, client, "echo", "hello")
 
-// Wait functions
-harness.WaitForReadyFile(ctx, cli, containerID)
+// Wait functions (all take *docker.Client)
+harness.WaitForReadyFile(ctx, client, containerID)
 harness.WaitForContainerRunning(ctx, cli, name)
 harness.WaitForContainerExit(ctx, cli, containerID)
 harness.WaitForHealthy(ctx, cli, containerID)
@@ -222,9 +221,8 @@ Agent names: include timestamp AND random suffix for parallel safety.
 h := harness.NewHarness(t, harness.WithProject("test"),
     harness.WithConfigBuilder(builders.MinimalValidConfig()))
 
-// Docker clients
+// Docker client (auto-injects com.clawker.test=true + com.clawker.test.name labels)
 client := harness.NewTestClient(t)
-rawClient := harness.NewRawDockerClient(t)
 
 // Factory for integration tests
 f, tio := harness.NewTestFactory(t, h)
@@ -233,11 +231,11 @@ f, tio := harness.NewTestFactory(t, h)
 ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
 result, err := ctr.Exec(ctx, client, "bash", "-c", "echo hello")
 
-// Readiness
-err = harness.WaitForReadyFile(ctx, rawClient, containerID)
-err = harness.WaitForContainerRunning(ctx, rawClient, containerName)
-err = harness.WaitForContainerExit(ctx, rawClient, containerID)
-err = harness.WaitForHealthy(ctx, rawClient, containerID)
+// Readiness (all take *docker.Client)
+err = harness.WaitForReadyFile(ctx, client, containerID)
+err = harness.WaitForContainerRunning(ctx, client, containerName)
+err = harness.WaitForContainerExit(ctx, client, containerID)
+err = harness.WaitForHealthy(ctx, client, containerID)
 
 // Fake Docker for command tests
 fake := dockertest.NewFakeClient()

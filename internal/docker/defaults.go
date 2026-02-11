@@ -106,10 +106,18 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 // TestLabelConfig returns a LabelConfig that adds com.clawker.test=true
 // to all resource types. Use with WithLabels in test code to ensure
 // CleanupTestResources can find and remove test-created resources.
-func TestLabelConfig() whail.LabelConfig {
-	return whail.LabelConfig{
-		Default: map[string]string{
-			LabelPrefix + "test": "true",
-		},
+//
+// When testName is provided (typically t.Name()), the label
+// com.clawker.test.name is also set, enabling per-test resource debugging:
+//
+//	docker ps -a --filter label=com.clawker.test.name=TestMyFunction
+//	docker volume ls --filter label=com.clawker.test.name=TestMyFunction
+func TestLabelConfig(testName ...string) whail.LabelConfig {
+	labels := map[string]string{
+		LabelPrefix + "test": "true",
 	}
+	if len(testName) > 0 && testName[0] != "" {
+		labels[LabelTestName] = testName[0]
+	}
+	return whail.LabelConfig{Default: labels}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/docker"
 )
 
 // Timeout constants for different test scenarios.
@@ -60,7 +61,7 @@ func GetReadyTimeout() time.Duration {
 
 // WaitForReadyFile waits for the ready signal file to exist in the container.
 // Returns nil when the file exists, or an error if timeout is reached or exec fails.
-func WaitForReadyFile(ctx context.Context, cli *client.Client, containerID string) error {
+func WaitForReadyFile(ctx context.Context, cli *docker.Client, containerID string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -90,7 +91,7 @@ func WaitForReadyFile(ctx context.Context, cli *client.Client, containerID strin
 }
 
 // checkFileExists checks if a file exists in a container using exec.
-func checkFileExists(ctx context.Context, cli *client.Client, containerID, path string) (bool, error) {
+func checkFileExists(ctx context.Context, cli *docker.Client, containerID, path string) (bool, error) {
 	execConfig := client.ExecCreateOptions{
 		Cmd:          []string{"test", "-f", path},
 		AttachStdout: false,
@@ -126,7 +127,7 @@ func checkFileExists(ctx context.Context, cli *client.Client, containerID, path 
 // 1. Checks if container is still running - if so, waits for ready file
 // 2. If container already exited with code 0, verifies ready signal in logs
 // This is the appropriate wait function for entrypoint bypass commands.
-func WaitForContainerCompletion(ctx context.Context, cli *client.Client, containerID string) error {
+func WaitForContainerCompletion(ctx context.Context, cli *docker.Client, containerID string) error {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -178,7 +179,7 @@ func WaitForContainerCompletion(ctx context.Context, cli *client.Client, contain
 // WaitForContainerExit waits for a container to exit with code 0.
 // This is a simpler wait function for vanilla containers that don't emit ready signals.
 // Use this for internals tests with alpine:latest or other non-clawker images.
-func WaitForContainerExit(ctx context.Context, cli *client.Client, containerID string) error {
+func WaitForContainerExit(ctx context.Context, cli *docker.Client, containerID string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -209,7 +210,7 @@ func WaitForContainerExit(ctx context.Context, cli *client.Client, containerID s
 
 // WaitForHealthy waits for the container to be healthy using Docker's HEALTHCHECK.
 // Returns nil when healthy, or an error if timeout is reached.
-func WaitForHealthy(ctx context.Context, cli *client.Client, containerID string) error {
+func WaitForHealthy(ctx context.Context, cli *docker.Client, containerID string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -244,7 +245,7 @@ func WaitForHealthy(ctx context.Context, cli *client.Client, containerID string)
 
 // WaitForLogPattern waits for a specific pattern to appear in container logs.
 // Returns nil when the pattern is found, or an error if timeout is reached.
-func WaitForLogPattern(ctx context.Context, cli *client.Client, containerID, pattern string) error {
+func WaitForLogPattern(ctx context.Context, cli *docker.Client, containerID, pattern string) error {
 	compiled, err := regexp.Compile(pattern)
 	if err != nil {
 		return fmt.Errorf("invalid pattern: %w", err)
@@ -309,7 +310,7 @@ func WaitForLogPattern(ctx context.Context, cli *client.Client, containerID, pat
 
 // WaitForReadyLog waits for the ready signal log line.
 // This is a convenience wrapper around WaitForLogPattern.
-func WaitForReadyLog(ctx context.Context, cli *client.Client, containerID string) error {
+func WaitForReadyLog(ctx context.Context, cli *docker.Client, containerID string) error {
 	return WaitForLogPattern(ctx, cli, containerID, regexp.QuoteMeta(ReadyLogPrefix))
 }
 
@@ -335,7 +336,7 @@ func CheckForErrorPattern(logs string) (bool, string) {
 }
 
 // GetContainerLogs retrieves all logs from a container.
-func GetContainerLogs(ctx context.Context, cli *client.Client, containerID string) (string, error) {
+func GetContainerLogs(ctx context.Context, cli *docker.Client, containerID string) (string, error) {
 	logs, err := cli.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -359,7 +360,7 @@ func GetContainerLogs(ctx context.Context, cli *client.Client, containerID strin
 // VerifyProcessRunning checks if a process matching the pattern is running in the container.
 // Uses pgrep -f to search for the pattern in the full command line.
 // Returns nil if process is found, error otherwise.
-func VerifyProcessRunning(ctx context.Context, cli *client.Client, containerID, pattern string) error {
+func VerifyProcessRunning(ctx context.Context, cli *docker.Client, containerID, pattern string) error {
 	execConfig := client.ExecCreateOptions{
 		Cmd:          []string{"pgrep", "-f", pattern},
 		AttachStdout: true,
@@ -406,7 +407,7 @@ func VerifyProcessRunning(ctx context.Context, cli *client.Client, containerID, 
 
 // VerifyClaudeCodeRunning is a convenience wrapper to verify Claude Code is running.
 // Searches for a process with "claude" in the command line.
-func VerifyClaudeCodeRunning(ctx context.Context, cli *client.Client, containerID string) error {
+func VerifyClaudeCodeRunning(ctx context.Context, cli *docker.Client, containerID string) error {
 	return VerifyProcessRunning(ctx, cli, containerID, "claude")
 }
 

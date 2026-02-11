@@ -48,7 +48,6 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 
 	// Ensure cleanup even if test fails
 	client := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), client, "run-interactive-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for run-interactive-test: %v", err)
@@ -115,14 +114,14 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 	readyCh := make(chan error, 1)
 	go func() {
 		// First wait for container to exist and be running
-		if err := harness.WaitForContainerRunning(waitCtx, rawClient, containerName); err != nil {
+		if err := harness.WaitForContainerRunning(waitCtx, client, containerName); err != nil {
 			readyCh <- err
 			return
 		}
 		t.Logf("Container %s is running, waiting for ready file...", containerName)
 
 		// Then wait for the ready file which indicates entrypoint completed
-		readyCh <- harness.WaitForReadyFile(waitCtx, rawClient, containerName)
+		readyCh <- harness.WaitForReadyFile(waitCtx, client, containerName)
 	}()
 
 	// Wait for either ready signal or error
@@ -157,7 +156,7 @@ func TestRunE2E_InteractiveMode(t *testing.T) {
 
 	// Verify Claude Code process is actually running inside the container
 	// This catches issues where the container starts but Claude Code fails to launch
-	err = harness.VerifyClaudeCodeRunning(ctx, rawClient, containerName)
+	err = harness.VerifyClaudeCodeRunning(ctx, client, containerName)
 	require.NoError(t, err, "Claude Code process verification failed - process not found in container")
 	t.Logf("Claude Code process verified running in container %s", containerName)
 
@@ -235,7 +234,6 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 	imageTag := harness.BuildTestImage(t, h, harness.BuildTestImageOptions{SuppressOutput: true})
 
 	client := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), client, "exit-detection-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exit-detection-test: %v", err)
@@ -265,7 +263,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 
 	// Key test: WaitForContainerRunning should either succeed or fail with exit code info
 	// It should NOT timeout silently if the container exited
-	err = harness.WaitForContainerRunning(waitCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(waitCtx, client, containerName)
 
 	if err != nil {
 		// Container exited - verify we got useful exit code info
@@ -276,7 +274,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 			t.Logf("Container exit properly detected: %v", err)
 
 			// Get full diagnostics to verify the utility works
-			diag, diagErr := harness.GetContainerExitDiagnostics(ctx, rawClient, containerName, 50)
+			diag, diagErr := harness.GetContainerExitDiagnostics(ctx, client, containerName, 50)
 			if diagErr == nil {
 				t.Logf("Diagnostics: code=%d, OOM=%v, firewall=%v, hasError=%v",
 					diag.ExitCode, diag.OOMKilled, diag.FirewallFailed, diag.HasClawkerError)
@@ -310,7 +308,7 @@ func TestRunE2E_ContainerExitDetection(t *testing.T) {
 		t.Log("Container started successfully (didn't exit immediately as expected)")
 
 		// Clean up the running container
-		readyErr := harness.WaitForReadyFile(waitCtx, rawClient, containerName)
+		readyErr := harness.WaitForReadyFile(waitCtx, client, containerName)
 		if readyErr != nil {
 			// Container may have exited after WaitForContainerRunning but before ready file
 			t.Logf("Container exited before ready: %v", readyErr)

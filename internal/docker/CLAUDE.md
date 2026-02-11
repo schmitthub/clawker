@@ -47,7 +47,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 
 ## Label Constants
 
-`LabelPrefix` (`com.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`
+`LabelPrefix` (`com.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`
 
 Engine config constants (for `whail.EngineOptions`): `EngineLabelPrefix` (`com.clawker` without trailing dot), `EngineManagedLabel`, `ManagedLabelValue`
 
@@ -90,6 +90,7 @@ type Client struct {
     *whail.Engine  // embedded — all whail methods available
     cfg *config.Config // lazily provides Project() and Settings() for image resolution
     BuildDefaultImageFunc BuildDefaultImageFn // override hook for fawker/tests (nil = real build)
+    ChownImage string // override image for CopyToVolume chown step (default: "busybox:latest")
 }
 
 type Container struct {
@@ -152,12 +153,12 @@ Depends on `internal/bundler` for `ProjectGenerator`, `ContentHash`, `CreateBuil
 ```go
 const DefaultImageTag = "clawker-default:latest"
 func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgress whail.BuildProgressFunc) error
-func TestLabelConfig() whail.LabelConfig  // returns LabelConfig with com.clawker.test=true as Default
+func TestLabelConfig(testName ...string) whail.LabelConfig  // returns LabelConfig with com.clawker.test=true + optional test name
 ```
 
 `BuildDefaultImage` is a Client method that wires BuildKit on the receiver, generates Dockerfiles via `bundler.DockerfileManager`, builds with clawker labels. Uses `bundler.NewVersionsManager`, `bundler.NewDockerfileManager`, `bundler.CreateBuildContextFromDir`. When `Client.BuildDefaultImageFunc` is non-nil, delegates to the override (used by fawker/tests).
 
-`TestLabelConfig` returns a `whail.LabelConfig` with `com.clawker.test=true` as a default label. Used with `WithLabels` in test code so that `CleanupTestResources` can find and remove all test-created containers, volumes, and networks.
+`TestLabelConfig` returns a `whail.LabelConfig` with `com.clawker.test=true` as a default label. When `testName` is provided (typically `t.Name()`), also sets `com.clawker.test.name` for per-test resource debugging. Variadic signature ensures backward compatibility with callers that don't have `*testing.T` (e.g., `dockertest.NewFakeClient`).
 
 ## BuildKit (`buildkit.go`)
 
@@ -181,9 +182,27 @@ Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail
 Docker's `CopyToContainer` extracts tar archives as root regardless of tar header UID/GID (`NoLchown=true` server-side). `CopyToVolume` fixes this with a two-phase approach:
 
 1. **Tar headers**: `createTarArchive` sets UID/GID 1001 (defense-in-depth)
-2. **Post-copy chown**: After `CopyToContainer`, starts a busybox temp container that runs `chown -R 1001:1001 <destPath>` on the volume
+2. **Post-copy chown**: After `CopyToContainer`, starts a temp container that runs `chown -R 1001:1001 <destPath>` on the volume
 
 This ensures files like `.credentials.json` (mode 0600) are readable by the container user (UID 1001).
+
+### CopyToVolume Chown Image
+
+The chown step uses `Client.ChownImage` (default: `"busybox:latest"`). The image existence check uses `imageExistsRaw()` which bypasses the managed label check — appropriate since the chown image may be an external image (busybox from DockerHub) that was never built by clawker.
+
+Tests set `ChownImage` to `harness.TestChownImage` (`"clawker-test-chown:latest"`) — a locally-built labeled image that avoids DockerHub pulls and ensures cleanup via `com.clawker.test=true` label.
+
+### CopyToVolume Temp Container Labels and Naming
+
+`CopyToVolume` uses whail Engine methods (`c.ContainerCreate`, `c.ContainerStart`, etc.) instead of raw SDK calls. This means temp containers automatically inherit managed labels and any configured labels (e.g., `com.clawker.test=true` and `com.clawker.test.name` from `TestLabelConfig`).
+
+Temp containers are named `clawker-copy-<random>` (Docker-style adjective-noun) and carry `com.clawker.purpose=copy-to-volume` for filtering:
+
+```bash
+docker ps -a --filter label=com.clawker.purpose=copy-to-volume --format "{{.Names}}"
+```
+
+Cleanup infrastructure (`CleanupTestResources`) can find and remove leaked temp containers via label filters. The defer cleanup uses `context.WithTimeout(context.Background(), 10*time.Second)` to avoid hanging on unresponsive Docker daemon.
 
 ## Opts Types (`opts.go`)
 

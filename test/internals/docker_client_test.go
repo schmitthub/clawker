@@ -33,7 +33,7 @@ func TestNewClient_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
+	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestListContainersEmpty_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
+	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
+	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -171,7 +171,7 @@ func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
-	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig()))
+	client, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}

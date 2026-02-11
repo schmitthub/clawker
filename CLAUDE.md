@@ -133,6 +133,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
+| `ContainerInitializer` | Factory noun for progress-tracked container init (workspace, config, env, create, start); shared by `run` and `create` commands |
+| `InitParams` / `InitResult` | Input/output types for `ContainerInitializer.Run()` — runtime values and deferred warnings |
 | `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |

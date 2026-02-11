@@ -67,9 +67,28 @@ containerOpts.ValidateFlags()                      // Cross-field validation
 
 Container init orchestration — domain logic shared between `run/` and `create/` subcommands.
 
+### ContainerInitializer (Factory noun)
+
+Progress-tracked container initialization. Both `run` and `create` use `ContainerInitializer.Run()` for the 5-step init flow with TUI progress display.
+
 ```go
 import "github.com/schmitthub/clawker/internal/cmd/container/shared"
 
+// Construct from Factory (wired in NewCmdRun / NewCmdCreate)
+initializer := shared.NewContainerInitializer(f)
+
+// Run with pre-resolved params (after image resolution)
+result, err := initializer.Run(ctx, shared.InitParams{
+    Client: client, Config: cfg, ContainerOptions: containerOpts,
+    Flags: opts.flags, Image: containerOpts.Image,
+    StartAfterCreate: opts.Detach,
+})
+// result.ContainerID, result.AgentName, result.ContainerName, result.Warnings
+```
+
+### Low-level helpers (called by ContainerInitializer internally)
+
+```go
 // One-time claude config init (copy strategy + credentials)
 shared.InitContainerConfig(ctx, shared.InitConfigOpts{...})
 
@@ -78,12 +97,17 @@ shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{...})
 ```
 
 **Exported types in shared/**:
+- `ContainerInitializer` — Factory noun for progress-tracked container init
+- `InitParams` — runtime values: Client, Config, ContainerOptions, Flags, Image, StartAfterCreate
+- `InitResult` — outputs: ContainerID, AgentName, ContainerName, HostProxyRunning, Warnings
 - `InitConfigOpts` — project/agent names, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` (DI for Docker volume copy)
 - `InjectOnboardingOpts` — container ID, `CopyToContainerFn` (DI for Docker container copy)
 - `CopyToVolumeFn` — function type matching `(*docker.Client).CopyToVolume` signature
 - `CopyToContainerFn` — simplified function type for tar-to-container copy
 
 **Exported functions in shared/**:
+- `NewContainerInitializer(f)` — construct from Factory; captures IOStreams, TUI, GitManager, HostProxy
+- `(*ContainerInitializer).Run(ctx, InitParams)` — 5-step progress: workspace, config, env, create, start
 - `InitContainerConfig(ctx, InitConfigOpts)` — one-time claude config init for new containers (copy strategy + credentials)
 - `InjectOnboardingFile(ctx, InjectOnboardingOpts)` — writes `~/.claude.json` onboarding marker to container
 
@@ -106,14 +130,7 @@ Interactive rebuild logic lives in `shared/image.go` (`RebuildMissingDefaultImag
 
 ## Workspace Setup Pattern
 
-```go
-mode, _ := config.ParseMode(opts.Mode)  // CLI flag overrides config default
-strategy, _ := workspace.NewStrategy(mode, workspace.Config{...})
-strategy.Prepare(ctx, client)
-workspaceMounts := strategy.GetMounts()
-workspaceMounts = append(workspaceMounts, workspace.GetConfigVolumeMounts(project, agent)...)
-if cfg.Security.DockerSocket { workspaceMounts = append(workspaceMounts, workspace.GetDockerSocketMount()) }
-```
+Workspace setup is handled internally by `ContainerInitializer.Run()` in the "Prepare workspace" step. It calls `workspace.SetupMounts()` which consolidates mode resolution, strategy creation, volume mounts, and config volume setup.
 
 ## Command Dependency Injection Pattern
 

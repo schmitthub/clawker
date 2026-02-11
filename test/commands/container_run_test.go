@@ -266,19 +266,15 @@ func TestContainerRun_ReadySignalUtilities(t *testing.T) {
 
 	container := containers[0]
 
-	// Wait for ready file with timeout
+	// Wait for ready file with timeout — use dockerClient directly (satisfies client.APIClient)
 	readyCtx, cancel := context.WithTimeout(ctx, harness.BypassCommandTimeout)
 	defer cancel()
 
-	// Get raw Docker client for the utility functions
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
-
-	err = harness.WaitForReadyFile(readyCtx, rawClient, container.ID)
+	err = harness.WaitForReadyFile(readyCtx, client, container.ID)
 	require.NoError(t, err, "ready file was not created")
 
 	// Also verify the ready log pattern
-	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, client, container.ID)
 	require.NoError(t, err, "failed to get container logs")
 	require.Contains(t, logs, harness.ReadyLogPrefix, "expected ready log pattern in output")
 
@@ -376,20 +372,17 @@ func TestContainerRun_ArbitraryCommand(t *testing.T) {
 			require.NotNil(t, container, "container not found for agent %s", agentName)
 
 			// Wait for container to complete (short-lived commands)
-			rawClient := harness.NewRawDockerClient(t)
-			defer rawClient.Close()
-
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
+			err = harness.WaitForContainerExit(readyCtx, client, container.ID)
 			require.NoError(t, err, "container did not complete")
 
 			// Wait a moment for logs to be available
 			time.Sleep(200 * time.Millisecond)
 
 			// Get logs and verify output
-			logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
+			logs, err := harness.GetContainerLogs(ctx, client, container.ID)
 			require.NoError(t, err, "failed to get container logs")
 
 			// Run the test-specific output check
@@ -445,19 +438,16 @@ func TestContainerRun_ArbitraryCommand_EnvVars(t *testing.T) {
 	container := containers[0]
 
 	// Wait for container completion
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
-
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
+	err = harness.WaitForContainerExit(readyCtx, client, container.ID)
 	require.NoError(t, err, "container did not complete")
 
 	time.Sleep(200 * time.Millisecond)
 
 	// Get logs with env output
-	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, client, container.ID)
 	require.NoError(t, err, "failed to get container logs")
 
 	// Verify our custom environment variable was set
@@ -537,18 +527,15 @@ func TestContainerRun_ContainerNameResolution(t *testing.T) {
 	require.Equal(t, agentName, labels["com.clawker.agent"], "agent label mismatch")
 
 	// Wait for container completion and verify output
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
-
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	err = harness.WaitForContainerExit(readyCtx, rawClient, container.ID)
+	err = harness.WaitForContainerExit(readyCtx, client, container.ID)
 	require.NoError(t, err, "container did not complete")
 
 	time.Sleep(200 * time.Millisecond)
 
-	logs, err := harness.GetContainerLogs(ctx, rawClient, container.ID)
+	logs, err := harness.GetContainerLogs(ctx, client, container.ID)
 	require.NoError(t, err)
 	require.Contains(t, logs, "container-name-test-output", "expected echo output in logs")
 }

@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/exec"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -31,8 +31,6 @@ func TestContainerExec_BasicCommands(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exec-test: %v", err)
@@ -43,14 +41,13 @@ func TestContainerExec_BasicCommands(t *testing.T) {
 	agentName := "test-exec-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start a container that stays running
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start a container that stays running via whail (auto-injects labels)
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"}, // Sleep for 5 minutes
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "exec-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -58,13 +55,13 @@ func TestContainerExec_BasicCommands(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create container")
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Define test cases for exec commands
@@ -143,8 +140,6 @@ func TestContainerExec_WithAgent(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-agent-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exec-agent-test: %v", err)
@@ -154,14 +149,13 @@ func TestContainerExec_WithAgent(t *testing.T) {
 	agentName := "test-agent-exec-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start container via whail (auto-injects labels)
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "exec-agent-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -169,13 +163,13 @@ func TestContainerExec_WithAgent(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create container")
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with --agent flag
@@ -210,8 +204,6 @@ func TestContainerExec_EnvFlag(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-env-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exec-env-test: %v", err)
@@ -221,14 +213,13 @@ func TestContainerExec_EnvFlag(t *testing.T) {
 	agentName := "test-exec-env-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start container via whail (auto-injects labels)
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "exec-env-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -236,13 +227,13 @@ func TestContainerExec_EnvFlag(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create container")
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Test exec with -e flag to set environment variable
@@ -279,8 +270,6 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-error-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exec-error-test: %v", err)
@@ -291,25 +280,26 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 		agentName := "test-err-notfound-" + time.Now().Format("150405.000000")
 		containerName := h.ContainerName(agentName)
 
-		// Create and start a container
-		resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		// Create and start a container via whail (auto-injects labels)
+		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: containerName,
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
-				Labels: harness.AddClawkerLabels(map[string]string{
-					harness.TestLabel: harness.TestLabelValue,
-				}, "exec-error-test", agentName),
+				Labels: map[string]string{
+					"com.clawker.project": "exec-error-test",
+					"com.clawker.agent":   agentName,
+				},
 			},
 		})
 		require.NoError(t, err, "failed to create container")
-		_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+		_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 		require.NoError(t, err, "failed to start container")
 
 		// Wait for container to be running
 		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+		err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 		require.NoError(t, err, "container did not start")
 
 		// Try to exec a command that doesn't exist
@@ -333,15 +323,16 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 		agentName := "test-err-stopped-" + time.Now().Format("150405.000000")
 		containerName := h.ContainerName(agentName)
 
-		// Create a container but don't start it
-		_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		// Create a container but don't start it (via whail for labels)
+		_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: containerName,
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
-				Labels: harness.AddClawkerLabels(map[string]string{
-					harness.TestLabel: harness.TestLabelValue,
-				}, "exec-error-test", agentName),
+				Labels: map[string]string{
+					"com.clawker.project": "exec-error-test",
+					"com.clawker.agent":   agentName,
+				},
 			},
 		})
 		require.NoError(t, err, "failed to create container")
@@ -388,8 +379,6 @@ func TestContainerExec_ScriptExecution(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "exec-script-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for exec-script-test: %v", err)
@@ -399,28 +388,29 @@ func TestContainerExec_ScriptExecution(t *testing.T) {
 	agentName := "test-script-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start a container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start a container via whail (auto-injects labels)
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
-			Labels: harness.AddClawkerLabels(map[string]string{
-				harness.TestLabel: harness.TestLabelValue,
-			}, "exec-script-test", agentName),
+			Labels: map[string]string{
+				"com.clawker.project": "exec-script-test",
+				"com.clawker.agent":   agentName,
+			},
 		},
 	})
 	require.NoError(t, err, "failed to create container")
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
-	// Create a test script in the container
+	// Create a test script in the container via exec (same interface on whail)
 	createScriptCmd := []string{"sh", "-c", `cat > /tmp/test-script.sh << 'SCRIPT'
 #!/bin/sh
 echo "script-execution-test-output"
@@ -428,14 +418,14 @@ echo "args: $@"
 SCRIPT
 chmod +x /tmp/test-script.sh`}
 
-	execConfig := client.ExecCreateOptions{
+	execConfig := docker.ExecCreateOptions{
 		Cmd:          createScriptCmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
-	execResp, err := rawClient.ExecCreate(ctx, resp.ID, execConfig)
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, execConfig)
 	require.NoError(t, err)
-	_, err = rawClient.ExecStart(ctx, execResp.ID, client.ExecStartOptions{})
+	_, err = dockerClient.ExecStart(ctx, execResp.ID, docker.ExecStartOptions{})
 	require.NoError(t, err)
 
 	// Give script creation time to complete

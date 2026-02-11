@@ -52,6 +52,7 @@ No build tags needed — directory separation provides test categorization.
 - **Host-proxy**: `SecurityFirewallDisabled()` preset disables host-proxy (`EnableHostProxy: false`); `NewTestFactory` registers `t.Cleanup` to stop any spawned daemon
 - **Concurrency lock**: `RunTestMain` acquires `~/.local/clawker/integration-test.lock` to prevent concurrent integration test runs
 - **Labels**: Test resources use `com.clawker.test=true`; `CleanupTestResources` filters on this label
+- **Test name labels**: `com.clawker.test.name=TestFunctionName` identifies which test created each resource (set via `TestLabelConfig(t.Name())`)
 - **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup in its own `TestMain`
 
 ## Harness API
@@ -69,20 +70,21 @@ func RunTestMain(m *testing.M) int               // Wraps testing.M with lock, h
 func RequireDocker(t *testing.T)
 func SkipIfNoDocker(t *testing.T)
 func NewTestClient(t) *docker.Client
-func NewRawDockerClient(t) *client.Client
+func NewRawDockerClient(t) *client.Client         // Deprecated: use NewTestClient for label injection
 func AddTestLabels(labels map[string]string)      // Adds com.clawker.test=true
-func AddClawkerLabels(labels map[string]string)   // Adds com.clawker.managed=true
+func AddClawkerLabels(labels, project, agent, testName)  // Adds managed + test + test.name labels
 func CleanupTestResources(ctx, cli) error         // Label-filtered removal of containers, volumes, networks, images
 func CleanupProjectResources(ctx, cli, project) error
-func ContainerExists(ctx, cli, name) bool
-func ContainerIsRunning(ctx, cli, name) bool
-func WaitForContainerRunning(ctx, cli, name) error  // Fails fast on container exit
-func VolumeExists(ctx, cli, name) bool
-func NetworkExists(ctx, cli, name) bool
-func GetContainerExitDiagnostics(ctx, cli, id, logLines) (*ContainerExitDiagnostics, error)
+func ContainerExists(ctx, *docker.Client, name) bool
+func ContainerIsRunning(ctx, *docker.Client, name) bool
+func WaitForContainerRunning(ctx, *docker.Client, name) error  // Fails fast on container exit
+func VolumeExists(ctx, *docker.Client, name) bool
+func NetworkExists(ctx, *docker.Client, name) bool
+func GetContainerExitDiagnostics(ctx, *docker.Client, id, logLines) (*ContainerExitDiagnostics, error)
 func StripDockerStreamHeaders(raw []byte) string
 func BuildTestImage(t, h, opts) string            // Full clawker image for e2e/agent tests
-func BuildSimpleTestImage(t, dockerfile, opts) string
+func BuildSimpleTestImage(t, dockerfile, opts) string  // Simple image via docker.Client (whail)
+func BuildTestChownImage(t)                       // Labeled busybox for CopyToVolume (via whail)
 ```
 
 ### Readiness (ready.go)
@@ -102,23 +104,23 @@ ReadyLogPrefix = "[clawker] ready"
 ErrorLogPrefix = "[clawker] error"
 ```
 
-**Wait Functions:**
+**Wait Functions (all take `*docker.Client`):**
 ```go
-func WaitForReadyFile(ctx, cli, containerID) error                        // Primary for clawker agents
-func WaitForContainerExit(ctx, cli, containerID) error                    // Vanilla containers
-func WaitForContainerCompletion(ctx, cli, containerID) error              // Short-lived commands
-func WaitForHealthy(ctx, cli, containerID, checks...) error               // HEALTHCHECK containers
-func WaitForLogPattern(ctx, cli, containerID, pattern) error              // Custom readiness
-func WaitForReadyLog(ctx, cli, containerID) error                         // Log-based ready signal
+func WaitForReadyFile(ctx, *docker.Client, containerID) error             // Primary for clawker agents
+func WaitForContainerExit(ctx, *docker.Client, containerID) error         // Vanilla containers
+func WaitForContainerCompletion(ctx, *docker.Client, containerID) error   // Short-lived commands
+func WaitForHealthy(ctx, *docker.Client, containerID, checks...) error    // HEALTHCHECK containers
+func WaitForLogPattern(ctx, *docker.Client, containerID, pattern) error   // Custom readiness
+func WaitForReadyLog(ctx, *docker.Client, containerID) error              // Log-based ready signal
 func GetReadyTimeout() time.Duration                                       // Auto-detects CI
 ```
 
-**Verification Functions:**
+**Verification Functions (all take `*docker.Client`):**
 ```go
-func VerifyProcessRunning(ctx, cli, containerID, pattern) error    // Error if not running
-func VerifyClaudeCodeRunning(ctx, cli, containerID) error          // Error if not running
+func VerifyProcessRunning(ctx, *docker.Client, containerID, pattern) error // Error if not running
+func VerifyClaudeCodeRunning(ctx, *docker.Client, containerID) error       // Error if not running
 func CheckForErrorPattern(logs string) (bool, string)
-func GetContainerLogs(ctx, cli, containerID) (string, error)
+func GetContainerLogs(ctx, *docker.Client, containerID) (string, error)
 func ParseReadyFile(content string) (*ReadyFileContent, error)
 ```
 
@@ -194,7 +196,32 @@ func CompareGolden(t, testName, actual string) error
 
 ### Constants (docker.go)
 
-`TestLabel = "com.clawker.test"`, `TestLabelValue = "true"`, `ClawkerManagedLabel = "com.clawker.managed"`
+`TestLabel = "com.clawker.test"`, `TestLabelValue = "true"`, `ClawkerManagedLabel = "com.clawker.managed"`, `LabelTestName = "com.clawker.test.name"`
+
+## Debugging Resource Leaks
+
+All test resources carry identifying labels:
+- `com.clawker.test=true` — marks all test resources
+- `com.clawker.test.name=TestFunctionName` — which test created it
+- `com.clawker.purpose=copy-to-volume` — CopyToVolume temp containers
+
+Commands:
+```bash
+# Find resources from a specific test
+docker ps -a --filter label=com.clawker.test.name=TestContainerRun_EntrypointBypass
+docker volume ls --filter label=com.clawker.test.name=TestContainerCreate_AgentNameApplied
+
+# List all test resources with their test names
+docker ps -a --filter label=com.clawker.test=true --format "table {{.Names}}\t{{.Label \"com.clawker.test.name\"}}"
+docker volume ls --filter label=com.clawker.test=true --format "table {{.Name}}\t{{.Label \"com.clawker.test.name\"}}"
+
+# Find CopyToVolume temp containers specifically
+docker ps -a --filter label=com.clawker.purpose=copy-to-volume --format "{{.Names}} {{.Label \"com.clawker.test.name\"}}"
+
+# Clean up all test resources
+docker ps -a --filter label=com.clawker.test=true -q | xargs -r docker rm -f
+docker volume ls --filter label=com.clawker.test=true -q | xargs -r docker volume rm -f
+```
 
 ## Dependencies
 

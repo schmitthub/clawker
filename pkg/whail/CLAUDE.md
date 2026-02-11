@@ -95,9 +95,13 @@ Domain helpers for build progress display. These live in `whail` (bottom of the 
 
 `VolumeCreate(ctx, opts, extraLabels...)`, `VolumeRemove(ctx, id, force)`, `VolumeInspect(ctx, id)`, `VolumeExists(ctx, id)`, `VolumeList(ctx, extraFilters...)`, `VolumeListAll(ctx)`, `IsVolumeManaged(ctx, name)`, `VolumesPrune(ctx, all)`
 
+**Note:** `VolumeExists` delegates to `IsVolumeManaged` — an unmanaged volume with the same name is treated as "not found". This prevents Docker-auto-created unlabeled volumes from short-circuiting `EnsureVolume`.
+
 ## Network Operations (10 methods)
 
 `NetworkCreate(ctx, name, opts, extraLabels...)`, `NetworkRemove(ctx, name)`, `NetworkInspect(ctx, name, opts)`, `NetworkExists(ctx, name)`, `NetworkList(ctx, extraFilters...)`, `EnsureNetwork(ctx, EnsureNetworkOptions)`, `IsNetworkManaged(ctx, name)`, `NetworksPrune(ctx)`, `NetworkConnect(ctx, network, containerID, endpointSettings)`, `NetworkDisconnect(ctx, network, containerID, force)`
+
+**Note:** `NetworkExists` delegates to `IsNetworkManaged` — same pattern as `VolumeExists`.
 
 ## DockerError
 

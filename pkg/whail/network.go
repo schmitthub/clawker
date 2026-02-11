@@ -70,16 +70,12 @@ func (e *Engine) NetworkInspect(ctx context.Context, name string, options client
 	return result, nil
 }
 
-// NetworkExists checks if a network exists.
+// NetworkExists checks if a managed network exists.
+// Delegates to IsNetworkManaged so that unmanaged networks are treated as "not found".
+// This is consistent with NetworkInspect and NetworkRemove which also enforce the
+// managed label.
 func (e *Engine) NetworkExists(ctx context.Context, name string) (bool, error) {
-	_, err := e.APIClient.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
-	if err != nil {
-		if cerrdefs.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return e.IsNetworkManaged(ctx, name)
 }
 
 // NetworkList lists networks matching the filter.

@@ -20,6 +20,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
 )
 
@@ -437,6 +438,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tio := iostreams.NewTestIOStreams()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
+		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -601,6 +603,7 @@ func TestCreateRun(t *testing.T) {
 		tio := iostreams.NewTestIOStreams()
 		f := &cmdutil.Factory{
 			IOStreams: tio.IOStreams,
+			TUI:       tui.NewTUI(tio.IOStreams),
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},

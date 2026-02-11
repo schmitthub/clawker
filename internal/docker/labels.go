@@ -36,6 +36,10 @@ const (
 
 	// LabelPurpose identifies the purpose of a volume.
 	LabelPurpose = LabelPrefix + "purpose"
+
+	// LabelTestName identifies the test function that created a resource.
+	// Set automatically by TestLabelConfig(t.Name()) in integration tests.
+	LabelTestName = LabelPrefix + "test.name"
 )
 
 // EngineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).

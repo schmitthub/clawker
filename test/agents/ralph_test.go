@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/ralph"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -38,9 +38,6 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	)
 	h.Chdir()
 
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
-
 	dockerClient := harness.NewTestClient(t)
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-test"); err != nil {
@@ -52,14 +49,13 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	agentName := "test-ralph-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start container — whail auto-injects managed + test labels
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "ralph-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -67,12 +63,12 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create container")
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err, "container did not start")
 
 	// Create runner with custom store directory
@@ -136,9 +132,6 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 	)
 	h.Chdir()
 
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
-
 	dockerClient := harness.NewTestClient(t)
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-timeout-test"); err != nil {
@@ -149,14 +142,13 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 	agentName := "test-timeout-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create container — whail auto-injects managed + test labels
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "ralph-timeout-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -164,12 +156,12 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err)
 
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, resp.ID)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err)
 
 	store := ralph.NewSessionStore(storeDir)

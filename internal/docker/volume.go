@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -63,9 +64,13 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	// tar header UID/GID (NoLchown=true server-side). We keep correct UID/GID
 	// in createTarArchive as defense-in-depth, but the chown is what actually
 	// ensures the container user (UID 1001) can read the files.
+	chownImg := c.chownImage()
 	containerConfig := &container.Config{
-		Image: "busybox:latest",
+		Image: chownImg,
 		Cmd:   []string{"chown", "-R", "1001:1001", destPath}, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Labels: map[string]string{
+			LabelPurpose: "copy-to-volume",
+		},
 	}
 
 	hostConfig := &container.HostConfig{
@@ -78,17 +83,15 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		},
 	}
 
-	// Pull busybox if needed
-	// TODO: Explore moving temp container creation and cleanup to whail so that
-	// internal/docker doesn't need to use APIClient directly for volume copy operations.
-	exists, err := c.ImageExists(ctx, "busybox:latest")
+	// Pull chown image if needed (uses raw check — image may be external/unmanaged)
+	exists, err := c.imageExistsRaw(ctx, chownImg)
 	if err != nil {
-		return fmt.Errorf("checking for busybox image: %w", err)
+		return fmt.Errorf("checking for chown image %s: %w", chownImg, err)
 	}
 	if !exists {
-		pullResp, err := c.ImagePull(ctx, "busybox:latest", whail.ImagePullOptions{})
+		pullResp, err := c.ImagePull(ctx, chownImg, whail.ImagePullOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to pull busybox: %w", err)
+			return fmt.Errorf("failed to pull chown image %s: %w", chownImg, err)
 		}
 		if _, err := io.Copy(io.Discard, pullResp); err != nil {
 			pullResp.Close()
@@ -97,25 +100,27 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		pullResp.Close()
 	}
 
-	// Create temporary container (bypass whail's label checks for temp container)
-	createOpts := whail.SDKContainerCreateOptions{
+	// Create temporary container via whail Engine (inherits managed labels + any
+	// configured labels like com.clawker.test=true from TestLabelConfig).
+	createOpts := whail.ContainerCreateOptions{
 		Config:     containerConfig,
 		HostConfig: hostConfig,
+		Name:       fmt.Sprintf("clawker-copy-%s", GenerateRandomName()),
 	}
-	resp, err := c.APIClient.ContainerCreate(ctx, createOpts)
+	resp, err := c.ContainerCreate(ctx, createOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create temp container: %w", err)
 	}
 	defer func() {
-		// Use background context since original may be cancelled
-		cleanupCtx := context.Background()
-		if _, err := c.APIClient.ContainerRemove(cleanupCtx, resp.ID, whail.ContainerRemoveOptions{Force: true}); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := c.ContainerRemove(cleanupCtx, resp.ID, true); err != nil {
 			logger.Warn().Err(err).Str("container", resp.ID).Msg("failed to cleanup temp container")
 		}
 	}()
 
 	// Copy tar archive to container (works on created, not-started containers)
-	_, err = c.APIClient.CopyToContainer(
+	_, err = c.CopyToContainer(
 		ctx,
 		resp.ID,
 		whail.CopyToContainerOptions{
@@ -128,20 +133,18 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	}
 
 	// Start the container to run chown, fixing file ownership for UID 1001
-	if _, err := c.APIClient.ContainerStart(ctx, resp.ID, whail.SDKContainerStartOptions{}); err != nil {
+	if _, err := c.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID}); err != nil {
 		return fmt.Errorf("failed to start chown container: %w", err)
 	}
 
 	// Wait for chown to complete
-	waitResult := c.APIClient.ContainerWait(ctx, resp.ID, whail.SDKContainerWaitOptions{
-		Condition: container.WaitConditionNotRunning,
-	})
+	waitResult := c.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case result := <-waitResult.Result:
 		if result.StatusCode != 0 {
 			// Attempt to fetch logs for diagnostics
 			logOutput := ""
-			logReader, logErr := c.APIClient.ContainerLogs(ctx, resp.ID, whail.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+			logReader, logErr := c.ContainerLogs(ctx, resp.ID, whail.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 			if logErr == nil {
 				defer logReader.Close()
 				var stdout, stderr bytes.Buffer

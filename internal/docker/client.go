@@ -28,6 +28,11 @@ type Client struct {
 	// Used by fawker/tests to inject fake build behavior.
 	// Follows the same pattern as whail.Engine.BuildKitImageBuilder.
 	BuildDefaultImageFunc BuildDefaultImageFn
+
+	// ChownImage overrides the image used for CopyToVolume's chown step.
+	// When empty, defaults to "busybox:latest". Tests set this to a locally-built
+	// labeled image to avoid DockerHub pulls and ensure test-label propagation.
+	ChownImage string
 }
 
 // NewClient creates a new clawker Docker client.
@@ -129,19 +134,41 @@ func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error)
 	return true, nil
 }
 
+// imageExistsRaw checks if an image exists locally without the managed label check.
+// Use this for external images (e.g. busybox) that are never clawker-managed.
+func (c *Client) imageExistsRaw(ctx context.Context, ref string) (bool, error) {
+	_, err := c.APIClient.ImageInspect(ctx, ref)
+	if err != nil {
+		if isNotFoundError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// chownImage returns the image used for CopyToVolume's chown step.
+// Defaults to "busybox:latest" when ChownImage is empty.
+func (c *Client) chownImage() string {
+	if c.ChownImage != "" {
+		return c.ChownImage
+	}
+	return "busybox:latest"
+}
+
 // BuildImageOpts contains options for building an image.
 type BuildImageOpts struct {
-	Tags            []string           // -t, --tag (multiple allowed)
-	Dockerfile      string             // -f, --file
-	BuildArgs       map[string]*string // --build-arg KEY=VALUE
-	NoCache         bool               // --no-cache
-	Labels          map[string]string  // --label KEY=VALUE (merged with clawker labels)
-	Target          string             // --target
-	Pull            bool               // --pull (maps to PullParent)
-	SuppressOutput  bool               // -q, --quiet
-	NetworkMode     string             // --network
-	BuildKitEnabled bool               // Use BuildKit builder via whail.ImageBuildKit
-	ContextDir      string             // Build context directory (required for BuildKit)
+	Tags            []string                // -t, --tag (multiple allowed)
+	Dockerfile      string                  // -f, --file
+	BuildArgs       map[string]*string      // --build-arg KEY=VALUE
+	NoCache         bool                    // --no-cache
+	Labels          map[string]string       // --label KEY=VALUE (merged with clawker labels)
+	Target          string                  // --target
+	Pull            bool                    // --pull (maps to PullParent)
+	SuppressOutput  bool                    // -q, --quiet
+	NetworkMode     string                  // --network
+	BuildKitEnabled bool                    // Use BuildKit builder via whail.ImageBuildKit
+	ContextDir      string                  // Build context directory (required for BuildKit)
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 }
 

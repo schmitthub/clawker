@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
 	"github.com/schmitthub/clawker/internal/cmd/network"
@@ -46,7 +47,7 @@ Usage:
 
 	// Management commands — same constructors as clawker, different Factory deps.
 	cmd.AddCommand(image.NewCmdImage(f))
-	cmd.AddCommand(newFawkerContainerCmd(f))
+	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(volume.NewCmdVolume(f))
 	cmd.AddCommand(network.NewCmdNetwork(f))
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
