@@ -12,7 +12,7 @@
 | Task 1: dockertest Setup helpers for missing operations | `complete` | — |
 | Task 2: stop + kill + remove (HandleError + review Tier 2) | `complete` | — |
 | Task 3: pause + unpause + rename + restart (HandleError + Tier 2) | `complete` | — |
-| Task 4: update + wait (HandleError + Tier 2) | `pending` | — |
+| Task 4: update + wait (HandleError + Tier 2) | `complete` | — |
 | Task 5: cp (HandleError + Tier 2) | `pending` | — |
 | Task 6: container list (TablePrinter + format/filter) | `pending` | — |
 | Task 7: inspect + logs (HandleError + output + Tier 2) | `pending` | — |
@@ -28,6 +28,7 @@
 
 - **Task 2**: HandleError → fmt.Errorf migration for stop/kill/remove straightforward. All three had identical pattern: single HandleError for Docker connection + `"Error: %v"` in loop. `remove.go` already had `cs` variable (for SuccessIcon), stop and kill needed it added. Kill had no Tier 2 tests — added `testKillFactory` + 3 tests (success, Docker error, container not found). Stop/remove already had testFactory from SocketBridge tests — added Docker connection error test to each. `SetupFindContainer` takes value `container.Summary`, not pointer — for "not found" tests use `SetupContainerList()` with empty args instead. 3548 tests pass (5 new).
 - **Task 3**: HandleError → fmt.Errorf migration for pause/unpause/rename/restart straightforward. Pause, unpause, restart all have identical multi-container loop pattern. Rename has 2 HandleError calls (Docker connection + ContainerRename API) with no loop. `SetupFindContainer` overrides `ContainerListFn` — do NOT call `SetupContainerList()` afterward or it overwrites the find setup. For partial failure tests, rely on `SetupFindContainer` returning a list with only the known container; the missing container naturally won't be found. Rename's `ContainerRenameFn` signature uses `client.ContainerRenameOptions` and `client.ContainerRenameResult` from moby/moby/client; imported as `mobyclient` in test. Error messages from whail Engine wrap API errors — assertions should match outer fmt.Errorf context, not inner API error text. 16 new tests (4 per package), 3564 total pass.
+- **Task 4**: HandleError → fmt.Errorf migration for update/wait straightforward. Both have identical pattern to pause/unpause/restart: single HandleError for Docker connection + `"Error: %v"` in multi-container loop. Update command needs `--memory` flag in test args (since `nFlag` check may fail without any resource flags). Wait's `ContainerWait` API returns channels (`Result`/`Error`) — `SetupContainerWait(exitCode)` from Task 1 handles this via `whailtest.FakeContainerWaitExit`. Added `TestWaitRun_NonZeroExitCode` to verify exit code propagation (42 → stdout). 9 new tests (4 update + 5 wait), 3573 total pass.
 - **Task 1**: All simple action helpers (Stop, Kill, Pause, Unpause, Rename, Restart, Update) return empty result structs — no recordCall needed since FakeAPIClient methods handle recording internally. `SetupContainerInspect` takes both containerID and Summary to populate State field (needed by remove's stop-before-remove flow). `SetupContainerStats` takes a JSON string param for flexibility; empty string gives minimal default. `SetupContainerLogs` returns plain ReadCloser (non-multiplexed, suitable for TTY logs). 14 new helpers added, all compile clean, 3543 tests pass.
 
 ---
