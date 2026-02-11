@@ -3,11 +3,16 @@ package inspect
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,4 +141,118 @@ func TestCmdInspect_Properties(t *testing.T) {
 
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("s"))
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestInspectRun_HappyPath(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupContainerList(c)
+	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdInspect(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Contains(t, tio.OutBuf.String(), c.ID)
+}
+
+func TestInspectRun_FormatTemplate(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupContainerList(c)
+	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdInspect(f, nil)
+	cmd.SetArgs([]string{"--format", "{{.State.Status}}", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Equal(t, "running\n", tio.OutBuf.String())
+}
+
+func TestInspectRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdInspect(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestInspectRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdInspect(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.nonexistent"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to inspect")
+	assert.Contains(t, tio.ErrBuf.String(), "nonexistent")
+}
+
+func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupContainerList(c)
+	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdInspect(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.nonexistent"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to inspect")
+	// Should still output the successful inspection
+	assert.Contains(t, tio.OutBuf.String(), c.ID)
+	// Should report the failure on stderr
+	assert.Contains(t, tio.ErrBuf.String(), "nonexistent")
 }

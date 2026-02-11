@@ -99,8 +99,7 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Find container by name
