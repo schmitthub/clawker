@@ -238,5 +238,22 @@ PR review fixes: `FormatFlags` convenience delegates (`IsJSON()`, `IsTemplate()`
 
 `image list` migrated as proof-of-concept: JSON, template, table-template, quiet, and filter-by-reference modes. 6 remaining list commands (`container list`, `volume list`, `network list`, `worktree list`, `container top`, `container stats`) need migration in subsequent PRs.
 
+### Container Command Migration (Complete)
+**Branch**: `a/pres-run-create-start`
+**Memory**: `container-command-migration`
+
+Migrated all 17 remaining container commands (beyond `run`, `create`, `start`) to canonical patterns established during presentation integration. 12 tasks total.
+
+**Scope:**
+- 27 `cmdutil.HandleError` calls replaced with `return fmt.Errorf("context: %w", err)`
+- 4 `tabwriter.NewWriter` usages replaced with `opts.TUI.NewTable(headers...)`
+- 2 `StreamWithResize` usages replaced with `pty.Stream` + `signals.NewResizeHandler`
+- All raw `"Error: %v"` output replaced with `cs.FailureIcon()` semantic pattern
+- 14 commands gained new Tier 2 (Cobra+Factory) test suites
+- `container list` fully rewritten with `FormatFlags` + `FilterFlags` + `TablePrinter`
+- 85+ new tests added (3543 to 3628 total)
+
+**Commands migrated (17):** stop, kill, remove, pause, unpause, rename, restart, update, wait, cp, inspect, logs, list, top, stats, attach, exec
+
 ## IMPORTANT
 Always check with the user before proceeding with any remaining todo item. If all work is done, ask the user if they want to delete this memory.

@@ -18,6 +18,71 @@ internal/cmd/container/
 
 **Import cycle rule**: `container/` imports subcommands, subcommands need shared types. The `opts/` package exists to break the `container -> run -> container` cycle for flag types. The `shared/` package contains domain orchestration logic used by multiple subcommands. Never put shared utilities in the parent package.
 
+## Migration Status
+
+All 20 container commands use canonical patterns. No deprecated helpers remain.
+
+| Pattern | Before | After | Commands Affected |
+|---------|--------|-------|-------------------|
+| `cmdutil.HandleError` | 27 calls | 0 — replaced with `return fmt.Errorf("context: %w", err)` | All 17 non-migrated commands |
+| `tabwriter.NewWriter` | 4 usages | 0 — replaced with `opts.TUI.NewTable(headers...)` | list, top, stats |
+| `StreamWithResize` | 2 usages | 0 — replaced with `pty.Stream` + `signals.NewResizeHandler` | attach, exec |
+| `"Error: %v"` raw output | Multiple | 0 — replaced with `cs.FailureIcon()` pattern | Multi-container loop commands |
+| Tier 2 tests | 6 commands | 20 commands — all have Cobra+Factory tests | 14 commands gained Tier 2 tests |
+
+### Canonical Error Handling
+
+```go
+// Docker connection error — return wrapped error to Main() for centralized rendering
+client, err := opts.Client(ctx)
+if err != nil {
+    return fmt.Errorf("connecting to Docker: %w", err)
+}
+
+// Per-item errors in multi-container loops — icon + name + error to stderr
+cs := ios.ColorScheme()
+fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
+```
+
+### Canonical Table Rendering
+
+```go
+// Static table output via TUI Factory noun
+tp := opts.TUI.NewTable("NAME", "STATUS", "IMAGE")
+for _, c := range containers {
+    tp.AddRow(c.Name, c.Status, c.Image)
+}
+return tp.Render()
+```
+
+### Canonical Stream + Resize (attach/exec)
+
+```go
+// Separate I/O from resize — I/O in goroutine, resize after
+streamDone := make(chan error, 1)
+go func() { streamDone <- pty.Stream(ctx, hijacked.HijackedResponse) }()
+if pty.IsTerminal() {
+    w, h, _ := pty.GetSize()
+    resizeFunc(uint(h+1), uint(w+1))  // +1/-1 trick forces SIGWINCH
+    resizeFunc(uint(h), uint(w))
+    rh := signals.NewResizeHandler(resizeFunc, pty.GetSize)
+    rh.Start()
+    defer rh.Stop()
+}
+return <-streamDone
+```
+
+### Format/Filter Flags (list command)
+
+`container list` supports `--format`/`--json`/`-q`/`--filter key=value` via `cmdutil.FormatFlags` and `cmdutil.FilterFlags`. Valid filter keys: `name`, `status`, `agent`. See `internal/cmd/image/list/` for the canonical pattern.
+
+### Per-Command Documentation
+
+- `attach/CLAUDE.md` — Attach-to-running-container pattern, Stream+resize
+- `exec/CLAUDE.md` — Exec credential injection, TTY/non-TTY paths, detach mode
+- `start/CLAUDE.md` — Attach-then-start pattern, waitForContainerExit
+- `shared/CLAUDE.md` — ContainerInitializer, init orchestration
+
 ## Parent Command (`container.go`)
 
 ```go
