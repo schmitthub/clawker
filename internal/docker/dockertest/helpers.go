@@ -385,6 +385,38 @@ func (f *FakeClient) SetupExecCreate(execID string) {
 	}
 }
 
+// SetupExecStart configures the fake to succeed on ExecStart (detach mode).
+func (f *FakeClient) SetupExecStart() {
+	f.FakeAPI.ExecStartFn = func(_ context.Context, _ string, _ client.ExecStartOptions) (client.ExecStartResult, error) {
+		return client.ExecStartResult{}, nil
+	}
+}
+
+// SetupExecAttach configures the fake to return a hijacked connection for ExecAttach.
+// The server side is closed immediately (suitable for non-TTY tests).
+func (f *FakeClient) SetupExecAttach() {
+	f.FakeAPI.ExecAttachFn = func(_ context.Context, _ string, _ client.ExecAttachOptions) (client.ExecAttachResult, error) {
+		// net.Pipe creates a synchronous in-memory connection pair.
+		// Close the server side so reads on the client side return EOF.
+		clientConn, serverConn := net.Pipe()
+		serverConn.Close()
+		return client.ExecAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.raw-stream"),
+		}, nil
+	}
+}
+
+// SetupExecInspect configures the fake to return an ExecInspect result with
+// the given exit code. Running is set to false (exec completed).
+func (f *FakeClient) SetupExecInspect(exitCode int) {
+	f.FakeAPI.ExecInspectFn = func(_ context.Context, _ string, _ client.ExecInspectOptions) (client.ExecInspectResult, error) {
+		return client.ExecInspectResult{
+			ExitCode: exitCode,
+			Running:  false,
+		}, nil
+	}
+}
+
 // SetupImageList configures the fake to return the given image summaries
 // from ImageList calls.
 func (f *FakeClient) SetupImageList(summaries ...whail.ImageSummary) {
