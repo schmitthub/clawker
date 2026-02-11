@@ -38,7 +38,6 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 
 	f := &cmdutil.Factory{
 		Version:  "0.0.0-fawker",
-		Commit:   "fawker",
 		IOStreams: ios,
 		TUI:      tui.NewTUI(ios),
 		Config: configFn,

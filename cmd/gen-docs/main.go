@@ -15,12 +15,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Build-time variables set by ldflags.
-var (
-	Version = "dev"
-	Commit  = "none"
-)
-
 func main() {
 	if err := run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -74,11 +68,11 @@ func run(args []string) error {
 	}
 
 	// Build the command tree
-	f := &cmdutil.Factory{
-		Version: Version,
-		Commit:  Commit,
+	f := &cmdutil.Factory{}
+	rootCmd, err := root.NewCmdRoot(f, "", "")
+	if err != nil {
+		return fmt.Errorf("building command tree: %w", err)
 	}
-	rootCmd := root.NewCmdRoot(f)
 
 	// Generate each requested format
 	if flagMarkdown {

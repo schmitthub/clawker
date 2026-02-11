@@ -21,13 +21,13 @@ The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 
 | File | Purpose |
 |------|---------|
-| `default.go` | `New(version, commit)` — constructs Factory with all lazy closures |
+| `default.go` | `New(version)` — constructs Factory with all lazy closures |
 
 ## Usage
 
 ```go
 // Entry point only (internal/clawker/cmd.go)
-f := factory.New(Version, Commit)
+f := factory.New(build.Version)
 rootCmd := root.NewCmdRoot(f)
 ```
 

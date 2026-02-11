@@ -9,7 +9,7 @@ import (
 
 func TestNewCmdContainer(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdContainer(f)
 
 	// Verify command basics
@@ -43,7 +43,7 @@ func TestNewCmdContainer(t *testing.T) {
 
 func TestNewCmdContainer_Subcommands(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdContainer(f)
 
 	subcommands := cmd.Commands()

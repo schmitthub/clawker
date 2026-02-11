@@ -1,12 +1,10 @@
 package root
 
 import (
-	"fmt"
-
+	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	"github.com/schmitthub/clawker/internal/cmd/config"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	"github.com/schmitthub/clawker/internal/cmd/generate"
-	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
@@ -14,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/ralph"
+	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -23,7 +22,7 @@ import (
 )
 
 // NewCmdRoot creates the root command for the clawker CLI.
-func NewCmdRoot(f *cmdutil.Factory) *cobra.Command {
+func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, error) {
 	var debug bool
 
 	cmd := &cobra.Command{
@@ -41,6 +40,9 @@ Workspace modes:
   --mode=bind          Live sync with host (default)
   --mode=snapshot      Isolated copy in Docker volume`,
 		SilenceUsage: true,
+		Annotations: map[string]string{
+			"versionInfo": versioncmd.Format(version, buildDate),
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize logger with file logging if possible
 			initializeLogger(debug)
@@ -59,7 +61,7 @@ Workspace modes:
 	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
 
 	// Version template
-	cmd.SetVersionTemplate(fmt.Sprintf("clawker %s (commit: %s)\n", f.Version, f.Commit))
+	cmd.SetVersionTemplate(versioncmd.Format(version, buildDate) + "\n")
 
 	// Register top-level aliases (shortcuts to subcommands)
 	registerAliases(cmd, f)
@@ -83,7 +85,10 @@ Workspace modes:
 	cmd.AddCommand(hostproxycmd.NewCmdHostProxy())
 	cmd.AddCommand(bridgecmd.NewCmdBridge())
 
-	return cmd
+	// Add version subcommand
+	cmd.AddCommand(versioncmd.NewCmdVersion(f, version, buildDate))
+
+	return cmd, nil
 }
 
 // initializeLogger sets up the logger with file logging if possible.

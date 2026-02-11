@@ -20,12 +20,11 @@ import (
 // New creates a fully-wired Factory with lazy-initialized dependency closures.
 // Called exactly once at the CLI entry point (internal/clawker/cmd.go).
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
-func New(version, commit string) *cmdutil.Factory {
+func New(version string) *cmdutil.Factory {
 	ios := ioStreams()
 
 	f := &cmdutil.Factory{
 		Version: version,
-		Commit:  commit,
 
 		Config:       configFunc(),
 		IOStreams:     ios,

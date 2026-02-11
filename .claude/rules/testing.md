@@ -211,6 +211,7 @@ Agent names: include timestamp AND random suffix for parallel safety.
 7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
 8. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
 9. **Unit test imports**: Co-located unit tests (`*_test.go` in source packages) should NOT import `test/harness` or heavy test infrastructure. Use standard library + `shlex` + `testify` + `cmdutil` directly. The `test/harness` package transitively pulls in Docker SDK, whail, config, yaml — acceptable for `test/internals/` and `test/agents/` but too heavy for flag-parsing unit tests. Prefer 3-line boilerplate over a convenience helper that drags in the world.
+10. **Factory Version in tests**: Do not set `Version` on `&cmdutil.Factory{}` struct literals in tests — leave it as the zero value. Only `factory.New()` sets version. Tests that need version should use `factory.New("1.0.0")`, not manual struct construction.
 
 ---
 

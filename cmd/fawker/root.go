@@ -35,7 +35,7 @@ Usage:
 		Version:      f.Version,
 	}
 
-	cmd.SetVersionTemplate(fmt.Sprintf("fawker %s (commit: %s)\n", f.Version, f.Commit))
+	cmd.SetVersionTemplate(fmt.Sprintf("fawker %s\n", f.Version))
 
 	// Persistent flags — inherited by subcommands.
 	cmd.PersistentFlags().StringVar(scenario, "scenario", "multi-stage",
