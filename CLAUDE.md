@@ -40,7 +40,7 @@ Finding and fixing greater issues is fun, its more important than the task at ha
 
 ### Workflow Requirements
 
-**Planning**: You MUST adhere to design in `.claude/memories/DESIGN.md` and architecture in `.claude/memories/ARCHITECTURE.md` when planning work. If changes are needed, update those memories accordingly.
+**Planning**: You MUST adhere to design in `.claude/docs/DESIGN.md` and architecture in `.claude/docs/ARCHITECTURE.md` when planning work. If changes are needed, update those docs accordingly.
 **Testing**: You MUST adhere to TDD, writing tests before code changes. All tests must pass before considering a change complete. If a fixture, golden file, interface, mock, fake, or test helper is needed, add it.
 If an integration test is required, add it to the appropriate `test/*/` subpackage. If a new test suite is needed, create it under `test/`.
 **Documentation**: You MUST update README.md, */**CLAUDE.md, and relevant memories after
@@ -183,7 +183,7 @@ Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API 
 
 ## CLI Commands
 
-See `.claude/memories/CLI-VERBS.md` for complete command reference.
+See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`, `version`
 
@@ -301,7 +301,7 @@ security:
 ## Documentation
 
 - `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
-- `.claude/memories/` — On-demand reference docs (architecture, CLI verbs, design)
+- `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
 - `.claude/prds/` — Product requirement documents
 - `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
 - `.serena/memories/` — Active work-in-progress tracking

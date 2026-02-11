@@ -26,7 +26,7 @@ Initializes logger with file logging via `initializeLogger(debug)`.
 ## Registered Commands
 
 - **Top-level:** `init`, `project`, `config`, `monitor`, `generate`, `ralph`, `version`
-- **Management:** `container`, `image`, `volume`, `network`
+- **Management:** `container`, `image`, `volume`, `network`, `worktree`
 
 ## Testing
 

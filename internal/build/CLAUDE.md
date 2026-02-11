@@ -15,6 +15,10 @@ var Version string  // Default "DEV", set via -ldflags
 var Date    string  // Default "", YYYY-MM-DD, set via -ldflags
 ```
 
+### `init()` Fallback
+
+When `Version` is `"DEV"` (no ldflags), `init()` attempts `debug.ReadBuildInfo()` to pick up the module version (set by `go install`). Falls back silently to `"DEV"` when build info is unavailable or reports `"(devel)"` (normal for `go run`/`go build`).
+
 ## Usage
 
 ```go
@@ -28,7 +32,7 @@ fmt.Println(build.Date)    // "" or "2024-06-01"
 
 ```bash
 # Makefile
--X 'github.com/schmitthub/clawker/internal/build.Version=$(CLI_VERSION)'
+-X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)'
 -X 'github.com/schmitthub/clawker/internal/build.Date=$(shell date +%Y-%m-%d)'
 
 # GoReleaser

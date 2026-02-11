@@ -28,7 +28,7 @@ The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 ```go
 // Entry point only (internal/clawker/cmd.go)
 f := factory.New(build.Version)
-rootCmd := root.NewCmdRoot(f)
+rootCmd, err := root.NewCmdRoot(f, build.Version, build.Date)
 ```
 
 **Tests NEVER import this package.** Tests construct minimal Factory structs:

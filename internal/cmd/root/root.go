@@ -60,9 +60,6 @@ Workspace modes:
 	// Global flags
 	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
 
-	// Version template
-	cmd.SetVersionTemplate(versioncmd.Format(version, buildDate) + "\n")
-
 	// Register top-level aliases (shortcuts to subcommands)
 	registerAliases(cmd, f)
 

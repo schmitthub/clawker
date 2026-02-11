@@ -12,8 +12,7 @@ import (
 func NewCmdVersion(f *cmdutil.Factory, version, buildDate string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "version",
-		Short:  "Print the version of clawker",
-		Hidden: false,
+		Hidden: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Fprint(f.IOStreams.Out, cmd.Root().Annotations["versionInfo"])
 		},

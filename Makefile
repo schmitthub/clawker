@@ -1,7 +1,7 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
         fawker \
-        test test-commands test-whail test-internals test-agents test-clawker test-all test-coverage test-clean golden-update
+        test test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -33,7 +33,7 @@ help:
 	@echo "  test                Unit tests only (fast, no Docker)"
 	@echo "  test-commands       Command integration tests (requires Docker)"
 	@echo "  test-internals      Internal integration tests (requires Docker)"
-	@echo "  test-clawker            Clawker workflow tests via testscript (requires Docker)"
+	@echo "  test-acceptance     Clawker acceptance tests via testscript (requires Docker)"
 	@echo "  test-whail          Whail BuildKit integration tests (requires Docker + BuildKit)"
 	@echo "  test-agents         Agent E2E tests (requires Docker)"
 	@echo "  test-all            Run all test suites"
@@ -229,7 +229,7 @@ endif
 	$(TEST_CMD_VERBOSE) -timeout 15m ./test/agents/...
 
 # All test suites
-test-all: test test-commands test-whail test-internals test-clawker test-agents
+test-all: test test-commands test-whail test-internals test-acceptance test-agents
 
 # Unit tests with coverage
 test-coverage:
