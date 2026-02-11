@@ -223,8 +223,9 @@ func TestContainerInitializer_HostProxyFailure(t *testing.T) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
 		hostProxy: func() *hostproxy.Manager {
-			// Manager that will fail EnsureRunning (no real listener)
-			return hostproxy.NewManager()
+			// Use port 0 so EnsureRunning always fails regardless of host state
+			// (no daemon on port 0, startDaemon spawns test binary which exits immediately)
+			return hostproxy.NewManagerWithOptions(0, "")
 		},
 	}
 
