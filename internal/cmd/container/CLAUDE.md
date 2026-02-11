@@ -215,3 +215,5 @@ Interactive container sessions (`-it`) use attach-before-start to avoid missing 
 5. **Wait for exit or detach** -- on stream completion, wait up to 2s for exit status; timeout means Ctrl+P Ctrl+Q detach (container still running)
 
 **Key separation**: I/O streaming (`pty.Stream`) starts pre-start; resize starts post-start. This matches Docker CLI's split between `attachContainer()` and `MonitorTtySize()`.
+
+**Alt screen handoff**: For interactive runs (`-it`), `InitParams.AltScreen=true` renders the init progress display in BubbleTea's alternate screen buffer. When progress finishes, the alt screen clears automatically, giving a clean terminal for the container's TTY session. Detached runs and `create` leave `AltScreen=false` for inline progress.

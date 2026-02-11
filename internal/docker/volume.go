@@ -40,7 +40,7 @@ func (c *Client) EnsureVolume(ctx context.Context, name string, labels map[strin
 		return false, err
 	}
 
-	logger.Info().Str("volume", name).Msg("created volume")
+	logger.Debug().Str("volume", name).Msg("created volume")
 	return true, nil
 }
 
@@ -166,7 +166,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		return fmt.Errorf("context cancelled waiting for chown: %w", ctx.Err())
 	}
 
-	logger.Info().
+	logger.Debug().
 		Str("volume", volumeName).
 		Str("src", srcDir).
 		Msg("copied files to volume")

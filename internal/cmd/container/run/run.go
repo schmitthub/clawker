@@ -189,6 +189,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		Flags:            opts.flags,
 		Image:            containerOpts.Image,
 		StartAfterCreate: opts.Detach,
+		AltScreen:        containerOpts.TTY && containerOpts.Stdin,
 	})
 	if err != nil {
 		return err
@@ -213,12 +214,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 		fmt.Fprintln(ios.Out, initResult.ContainerID[:12])
 		return nil
-	}
-
-	// Enable interactive mode to suppress INFO logs during TTY sessions.
-	if containerOpts.TTY && containerOpts.Stdin {
-		logger.SetInteractiveMode(true)
-		defer logger.SetInteractiveMode(false)
 	}
 
 	return attachThenStart(ctx, client, initResult.ContainerID, opts)

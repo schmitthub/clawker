@@ -177,6 +177,29 @@ Extracted ~200 lines of duplicated container initialization code from `run.go` a
 
 **Files modified:** `shared/init.go` (new), `run/run.go`, `create/create.go`, `cmd/fawker/container.go`, `cmd/fawker/root.go`, `run/run_test.go`, `create/create_test.go`, `shared/CLAUDE.md`, `container/CLAUDE.md`, CLAUDE.md
 
+### File-Only Logger + Alt Screen (Complete)
+**Branch**: `a/pres-run-create-start`
+
+Fixed two presentation issues during `clawker container run -it @`:
+1. Zerolog console writer polluted terminal — removed entirely, zerolog is now file-only
+2. TUI progress persisted when container TTY took over — added alternate screen buffer support
+
+**Fix 1 — File-only zerolog:**
+- `logger.go`: `Init()` → `zerolog.Nop()`, `InitWithFile()` → file writer only (no MultiWriter/ConsoleWriter), deleted `SetInteractiveMode`/`shouldSuppress`/`fileOnlyLog`/`interactiveMode`
+- Removed `SetInteractiveMode` blocks from `run.go`, `start.go`, `exec.go`
+- `logger_test.go`: removed 8 interactive mode tests, added `TestInitWithFile_NoConsoleOutput`
+
+**Fix 2 — Downgrade redundant logs:**
+- `volume.go`: 2× `logger.Info()` → `logger.Debug()` (created volume, copied files)
+- `containerfs.go`: 3× `logger.Info()` → `logger.Debug()` (config copy, credentials, onboarding)
+
+**Fix 3 — Alt screen for interactive progress:**
+- `ProgressDisplayConfig.AltScreen` field added to `tui/progress.go`
+- `InitParams.AltScreen` field added to `shared/init.go`, threaded to `ProgressDisplayConfig`
+- `run.go` sets `AltScreen: containerOpts.TTY && containerOpts.Stdin` for interactive runs
+
+**Files modified:** `logger/logger.go`, `logger/logger_test.go`, `run/run.go`, `start/start.go`, `exec/exec.go`, `docker/volume.go`, `shared/containerfs.go`, `tui/progress.go`, `shared/init.go`, plus 4 CLAUDE.md docs
+
 ## Follow-Up Work
 
 ### TablePrinter Migration (Complete)

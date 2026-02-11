@@ -84,7 +84,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 | Type | Purpose |
 |------|---------|
 | `ContainerInitializer` | Factory noun for progress-tracked container init; captures IOStreams, TUI, GitManager, HostProxy |
-| `InitParams` | Runtime values: Client, Config, ContainerOptions, Flags, Image, StartAfterCreate |
+| `InitParams` | Runtime values: Client, Config, ContainerOptions, Flags, Image, StartAfterCreate, AltScreen |
 | `InitResult` | Outputs: ContainerID, AgentName, ContainerName, HostProxyRunning, Warnings |
 | `CopyToVolumeFn` | Function type matching `(*docker.Client).CopyToVolume` |
 | `CopyToContainerFn` | Simplified function type for tar-to-container copy |

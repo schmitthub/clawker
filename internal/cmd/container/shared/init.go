@@ -47,6 +47,7 @@ type InitParams struct {
 	Flags            *pflag.FlagSet
 	Image            string // resolved image reference
 	StartAfterCreate bool   // true for detached run (adds "Start container" step)
+	AltScreen        bool   // use alternate screen for progress (clears display for clean TTY handoff)
 }
 
 // InitResult holds outputs needed by the post-progress phase.
@@ -74,6 +75,7 @@ func (ci *ContainerInitializer) Run(ctx context.Context, params InitParams) (*In
 		Title:          "Initializing",
 		Subtitle:       params.Config.Project,
 		CompletionVerb: "Ready",
+		AltScreen:      params.AltScreen,
 	}, ch)
 
 	if progressResult.Err != nil {

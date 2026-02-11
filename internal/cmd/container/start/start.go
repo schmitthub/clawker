@@ -96,13 +96,6 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// Enable interactive mode early to suppress INFO logs during TTY sessions.
-	// This prevents host proxy and other startup logs from interfering with the TUI.
-	if opts.Attach && opts.Interactive {
-		logger.SetInteractiveMode(true)
-		defer logger.SetInteractiveMode(false)
-	}
-
 	// Ensure host proxy is running for container-to-host communication (if enabled)
 	if cfg.Security.HostProxyEnabled() {
 		hp := opts.HostProxy()

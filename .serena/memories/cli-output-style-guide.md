@@ -950,6 +950,10 @@ pb.Increment()
 pb.Finish()
 ```
 
+### Prompter Wizard
+
+For multi-step interactive forms see `prompter-wizard` memory.
+
 ### Testing Tree Display
 
 **Golden file tests** (plain mode — deterministic):
@@ -1183,7 +1187,11 @@ logger.Warn().Msg("image not found")
 fmt.Fprintf(ios.ErrOut, "%s Image not found\n", cs.WarningIcon())
 ```
 
-Logger methods (`logger.Debug`, `logger.Warn`, `logger.Error`, `logger.Info`) write to `~/.local/clawker/logs/clawker.log` — they are invisible to the user. Use them for diagnostic file logging only, never for user-facing output. There are 14 command files in `internal/cmd/` that use logger calls — these are valid for diagnostic logging, not user output.
+Logger methods are now purely to write to logfile for developers and users to provide developers:
+* `logger.Debug` write to `~/.local/clawker/logs/clawker.log`. We always write debug logs to file no matter what. the `--debug|-D` flag is for a future feature to additionally print the debug statements to stdout for power users and developers who want to see debug logs in real time, but its not a toggle for whether debug logs get written at all. We want to capture debug logs in the field by default to make it easier to troubleshoot issues that users are having without requiring them to enable debug mode ahead of time.
+* `logger.error` write panics / failures / stacktraces (if available) to `~/.local/clawker/logs/clawker.log`. Concise user facing error messages get returned to Main() and handled. Main() will eventually have a decision tree on how to handle/print errors based on error type with a catchall printError. But currently only the catchall is in existence. if you don't know which error type to choose default to cmdutii.ExitError or ask the user for clarifying questions
+* Existing (`logger.Warn`, `logger.Info`) get converted to using stdout(info)/stderr(warn) with appropriate icons and formatting as per the new guidelines for non-interactive mode, for live interactive modes they get integrated into whatever TUI component is appropriate
+
 
 ### Raw `tabwriter` in Commands
 ```go

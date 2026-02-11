@@ -141,13 +141,6 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 		return fmt.Errorf("container %q is not running", containerName)
 	}
 
-	// Enable interactive mode early to suppress INFO logs during TTY sessions.
-	// This prevents host proxy and other startup logs from interfering with the TUI.
-	if !opts.Detach && opts.TTY && opts.Interactive {
-		logger.SetInteractiveMode(true)
-		defer logger.SetInteractiveMode(false)
-	}
-
 	// Setup git credential forwarding for exec sessions
 	// This enables GPG signing and git credential helpers in exec'd commands
 	cfg := opts.Config().Project

@@ -187,6 +187,7 @@ result := tui.RunProgress(ios, opts.Progress, tui.ProgressDisplayConfig{
 
 **Fields in ProgressDisplayConfig**:
 - `CompletionVerb string` — success summary verb (e.g., "Built", "Deployed"). Default: "Completed"
+- `AltScreen bool` — use alternate screen buffer for TTY mode. When true, progress renders in alt screen and clears on finish for clean handoff (e.g., to container TTY). Only affects `runProgressTTY`. Default: false.
 
 **Callbacks in ProgressDisplayConfig**:
 - `IsInternal func(string) bool` — filter hidden steps (nil = show all)
