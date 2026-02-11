@@ -86,15 +86,15 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
+	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
 		if err := restartContainer(ctx, client, name, opts); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
 			fmt.Fprintln(ios.Out, name)
 		}
