@@ -11,13 +11,10 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	f := New("1.0.0", "abc123")
+	f := New("1.0.0")
 
 	if f.Version != "1.0.0" {
 		t.Errorf("expected version '1.0.0', got '%s'", f.Version)
-	}
-	if f.Commit != "abc123" {
-		t.Errorf("expected commit 'abc123', got '%s'", f.Commit)
 	}
 	if f.IOStreams == nil {
 		t.Error("expected IOStreams to be non-nil")
@@ -28,7 +25,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestFactory_Config_Gateway(t *testing.T) {
-	f := New("1.0.0", "abc123")
+	f := New("1.0.0")
 
 	cfg := f.Config()
 	if cfg == nil {
@@ -41,7 +38,7 @@ func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	// Point CLAWKER_HOME to an empty dir (no registry file)
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
-	f := New("1.0.0", "abc")
+	f := New("1.0.0")
 
 	cfg := f.Config()
 	res := cfg.Resolution
@@ -79,7 +76,7 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 		t.Fatalf("failed to write registry: %v", err)
 	}
 
-	f := New("1.0.0", "abc")
+	f := New("1.0.0")
 
 	cfg := f.Config()
 	res := cfg.Resolution
@@ -95,7 +92,7 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 }
 
 func TestFactory_Client(t *testing.T) {
-	f := New("1.0.0", "abc123")
+	f := New("1.0.0")
 
 	// Client() should be non-nil (it's a closure)
 	if f.Client == nil {
@@ -110,7 +107,7 @@ func TestFactory_Client(t *testing.T) {
 }
 
 func TestFactory_HostProxy(t *testing.T) {
-	f := New("1.0.0", "abc123")
+	f := New("1.0.0")
 
 	if f.HostProxy == nil {
 		t.Fatal("HostProxy should be non-nil")
@@ -123,7 +120,7 @@ func TestFactory_HostProxy(t *testing.T) {
 }
 
 func TestFactory_Prompter(t *testing.T) {
-	f := New("1.0.0", "abc123")
+	f := New("1.0.0")
 
 	if f.Prompter == nil {
 		t.Fatal("Prompter should be non-nil")

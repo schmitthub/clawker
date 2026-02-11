@@ -21,8 +21,8 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/schmitthub/clawker/internal/clawker.Version={{.Version}}
-      - -X github.com/schmitthub/clawker/internal/clawker.Commit={{.ShortCommit}}
+      - -X github.com/schmitthub/clawker/internal/build.Version={{.Version}}
+      - -X github.com/schmitthub/clawker/internal/build.Date={{.Date}}
 
 archives:
   - id: default

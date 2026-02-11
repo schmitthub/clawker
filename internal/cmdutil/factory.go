@@ -24,15 +24,14 @@ import (
 // Options structs.
 type Factory struct {
 	// Eager (set at construction)
-	Version  string
-	Commit   string
+	Version   string
 	IOStreams *iostreams.IOStreams
-	TUI      *tui.TUI
+	TUI       *tui.TUI
 
 	// Lazy nouns
-	Client     func(context.Context) (*docker.Client, error)
-	Config     func() *config.Config
-	GitManager func() (*git.GitManager, error)
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() *hostproxy.Manager
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter

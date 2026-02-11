@@ -40,6 +40,10 @@ dist/
 # Root-level binaries (build output belongs in bin/)
 /clawker
 /fawker
+/callback-forwarder
+/clawker-socket-server
+/clawker-generate
+/gen-docs
 
 # Binaries for programs and plugins
 *.exe
@@ -85,5 +89,3 @@ go.work.sum
 RALPH-TEST.md
 
 .idea/
-**/callback-forwarder
-**/clawker-socket-server

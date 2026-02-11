@@ -195,10 +195,10 @@ Returns *cmdutil.Factory                      Commands consume
 with all closures wired                       *cmdutil.Factory
 ```
 
-Factory is a pure struct with 10 closure/value fields — no methods. 4 eager (set directly), 6 lazy (closures with `sync.Once`):
+Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
 
-**Eager**: `Version`, `Commit` (strings), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() *git.GitManager`), `HostProxy` (`func() *hostproxy.Manager`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
+**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() *hostproxy.Manager`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 

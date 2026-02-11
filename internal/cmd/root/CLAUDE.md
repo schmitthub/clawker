@@ -6,13 +6,13 @@ Root CLI command, global flags, logger initialization, and top-level aliases.
 
 | File | Purpose |
 |------|---------|
-| `root.go` | `NewCmdRoot(f)` — root command with global flags and subcommand registration |
+| `root.go` | `NewCmdRoot(f, version, buildDate)` — root command with global flags and subcommand registration |
 | `aliases.go` | `Alias` type, `registerAliases()`, `topLevelAliases` — top-level command shortcuts |
 
 ## Key Symbols
 
 ```go
-func NewCmdRoot(f *cmdutil.Factory) *cobra.Command
+func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, error)
 ```
 
 ## Global Flags
@@ -25,8 +25,12 @@ Initializes logger with file logging via `initializeLogger(debug)`.
 
 ## Registered Commands
 
-- **Top-level:** `init`, `project`, `config`, `monitor`, `generate`, `ralph`
-- **Management:** `container`, `image`, `volume`, `network`
+- **Top-level:** `init`, `project`, `config`, `monitor`, `generate`, `ralph`, `version`
+- **Management:** `container`, `image`, `volume`, `network`, `worktree`
+
+## Testing
+
+No unit tests for `root.go` — it is straightforward wiring and regressions surface via downstream command tests and `make test`. Tests that need `NewCmdRoot` (e.g., `aliases_test.go`) should pass empty strings for version and date.
 
 ## Aliases
 
@@ -35,6 +39,6 @@ type Alias struct { /* factory for aliasing subcommands to top level */ }
 func registerAliases(root *cobra.Command, f *cmdutil.Factory)
 ```
 
-17 top-level aliases following Docker CLI patterns:
+20 top-level aliases following Docker CLI patterns:
 - **Container shortcuts:** `attach`, `create`, `cp`, `exec`, `kill`, `logs`, `pause`, `ps`, `rename`, `restart`, `rm`, `run`, `start`, `stats`, `stop`, `top`, `unpause`, `wait`
 - **Image shortcuts:** `build`, `rmi`

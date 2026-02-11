@@ -7,17 +7,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-)
-
-// Build-time variables injected via ldflags
-var (
-	Version = "dev"
-	Commit  = "none"
 )
 
 // Main is the entry point for the clawker CLI.
@@ -28,11 +23,18 @@ func Main() int {
 	// Ensure logs are flushed on exit
 	defer logger.CloseFileWriter()
 
-	// Create factory with version info
-	f := factory.New(Version, Commit)
+	buildDate := build.Date
+	buildVersion := build.Version
 
-	// Create root command
-	rootCmd := root.NewCmdRoot(f)
+	// Create factory with version info
+	f := factory.New(buildVersion)
+
+	// Create root command with build metadata
+	rootCmd, err := root.NewCmdRoot(f, buildVersion, buildDate)
+	if err != nil {
+		fmt.Fprintf(f.IOStreams.ErrOut, "failed to create root command: %v\n", err)
+		return 1
+	}
 
 	// Silence Cobra's built-in error printing — we handle it in printError.
 	rootCmd.SilenceErrors = true

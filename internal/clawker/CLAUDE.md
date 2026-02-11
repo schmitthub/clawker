@@ -1,19 +1,16 @@
 # Clawker Package
 
-Application entry point, version metadata, and centralized error rendering.
+Application entry point and centralized error rendering.
 
 ## Exported Symbols
 
 ```go
-var Version string  // Set via -ldflags at build time
-var Commit  string  // Set via -ldflags at build time
-
 func Main() int     // Entry point: builds root command via internal/cmd/root, executes, returns exit code
 ```
 
 ## Usage
 
-Called from `cmd/clawker/main.go`. The `Version` and `Commit` variables are injected by the build system using `-ldflags` and made available to the CLI's `--version` flag.
+Called from `cmd/clawker/main.go`. Build metadata (version, date) lives in `internal/build` — this package reads it at the top of `Main()` and passes the version string to `factory.New()`.
 
 All symbols are in `cmd.go`.
 

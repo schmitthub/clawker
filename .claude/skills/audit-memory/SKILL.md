@@ -16,8 +16,9 @@ Perform a comprehensive documentation health audit across all Claude context fil
 Glob all documentation files and build a summary table:
 
 - `CLAUDE.md` (root)
-- `internal/*/CLAUDE.md` and `pkg/*/CLAUDE.md`
+- `cmd/*/CLAUDE.md`, `internal/*/CLAUDE.md`, `test/*/CLAUDE.md`, and `pkg/*/CLAUDE.md`
 - `.claude/rules/*.md`
+- `.claude/docs/*.md`
 - `.claude/memories/*.md`
 - `.claude/prds/*.md`
 - `.serena/memories/*.md`
@@ -26,8 +27,8 @@ For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** 
 
 Group into categories:
 - **Always-loaded**: root `CLAUDE.md`, `.claude/rules/*.md`
-- **Lazy-loaded**: `internal/*/CLAUDE.md`, `pkg/*/CLAUDE.md`
-- **On-demand**: `.claude/memories/*.md`, `.claude/prds/*.md`
+- **Lazy-loaded**: `cmd/*/CLAUDE.md`, `internal/*/CLAUDE.md`, `test/*/CLAUDE.md`, `pkg/*/CLAUDE.md`
+- **On-demand**: `.claude/docs/*.md`, `.claude/memories/*.md`, `.claude/prds/*.md`
 - **WIP tracking**: `.serena/memories/*.md`
 
 ### 2. Freshness Check
@@ -40,7 +41,7 @@ bash scripts/check-claude-freshness.sh --no-color
 
 ### 3. Symbol Accuracy
 
-For each `internal/*/CLAUDE.md` and `pkg/*/CLAUDE.md`:
+For each `cmd/*/CLAUDE.md`, `internal/*/CLAUDE.md`, `test/*/CLAUDE.md`, and `pkg/*/CLAUDE.md`:
 
 1. Read the file
 2. Extract all backtick-wrapped Go identifiers (pattern: single backtick-wrapped words matching `[A-Z][A-Za-z0-9]*` — exported symbols)
@@ -64,7 +65,14 @@ Read each `.serena/memories/*.md` file and flag:
 - Files containing "COMPLETE", "Status: Complete", "Status: Done", or "DONE" — these track finished work and should be cleaned up
 - Files with no updates in >30 days (check `git log --format=%at -1`)
 
-### 6. Context Budget
+### 6. Architecture and Design Accuracy
+
+1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
+2. For each `.claude/docs/*.md` files:
+   - Check for mentions of outdated components, patterns, or practices
+   - Flag files that likely need updates based on the nature of the changes (e.g., if a major refactor is detected, all architecture/design docs may need review)
+
+### 7. Context Budget
 
 Report totals against budgets:
 
@@ -76,7 +84,7 @@ Report totals against budgets:
 
 Flag any files exceeding their budget.
 
-### 7. Recommendations
+### 8. Recommendations
 
 Output a prioritized action list using these categories:
 

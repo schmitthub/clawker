@@ -10,7 +10,7 @@ import (
 
 func TestNewCmdMonitor(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdMonitor(f)
 
 	if cmd.Use != "monitor" {
@@ -35,7 +35,7 @@ func TestNewCmdMonitor(t *testing.T) {
 
 func TestNewCmdMonitorInit(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdMonitor(f)
 
 	// Find init subcommand
@@ -65,7 +65,7 @@ func TestNewCmdMonitorInit(t *testing.T) {
 
 func TestNewCmdMonitorUp(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdMonitor(f)
 
 	// Find up subcommand
@@ -95,7 +95,7 @@ func TestNewCmdMonitorUp(t *testing.T) {
 
 func TestNewCmdMonitorDown(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdMonitor(f)
 
 	// Find down subcommand
@@ -125,7 +125,7 @@ func TestNewCmdMonitorDown(t *testing.T) {
 
 func TestNewCmdMonitorStatus(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdMonitor(f)
 
 	// Find status subcommand

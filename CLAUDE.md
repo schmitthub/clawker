@@ -40,7 +40,7 @@ Finding and fixing greater issues is fun, its more important than the task at ha
 
 ### Workflow Requirements
 
-**Planning**: You MUST adhere to design in `.claude/memories/DESIGN.md` and architecture in `.claude/memories/ARCHITECTURE.md` when planning work. If changes are needed, update those memories accordingly.
+**Planning**: You MUST adhere to design in `.claude/docs/DESIGN.md` and architecture in `.claude/docs/ARCHITECTURE.md` when planning work. If changes are needed, update those docs accordingly.
 **Testing**: You MUST adhere to TDD, writing tests before code changes. All tests must pass before considering a change complete. If a fixture, golden file, interface, mock, fake, or test helper is needed, add it.
 If an integration test is required, add it to the appropriate `test/*/` subpackage. If a new test suite is needed, create it under `test/`.
 **Documentation**: You MUST update README.md, */**CLAUDE.md, and relevant memories after
@@ -54,9 +54,10 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ├── cmd/clawker/              # Main CLI binary
 ├── cmd/fawker/               # Demo CLI — faked deps, recorded scenarios, no Docker
 ├── internal/
+│   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
-│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, ralph/, worktree/, root/)
+│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, ralph/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
@@ -125,7 +126,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (10 fields: 4 eager + 6 lazy nouns); constructor in cmd/factory |
+| `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
 | `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
@@ -175,15 +176,16 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
 | `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
+| `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
 | `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
 ## CLI Commands
 
-See `.claude/memories/CLI-VERBS.md` for complete command reference.
+See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`, `version`
 
 **Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`), `worktree *`
 
@@ -299,7 +301,7 @@ security:
 ## Documentation
 
 - `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
-- `.claude/memories/` — On-demand reference docs (architecture, CLI verbs, design)
+- `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
 - `.claude/prds/` — Product requirement documents
 - `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
 - `.serena/memories/` — Active work-in-progress tracking

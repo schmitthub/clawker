@@ -5,7 +5,7 @@ paths:
 
 # CLI Testing Guide
 
-> Essential rules and utilities for writing tests. For detailed examples and patterns, see `.claude/memories/TESTING-REFERENCE.md`.
+> Essential rules and utilities for writing tests. For detailed examples and patterns, see `.claude/docs/TESTING-REFERENCE.md`.
 
 ## CRITICAL: All Tests Must Pass
 
@@ -211,6 +211,7 @@ Agent names: include timestamp AND random suffix for parallel safety.
 7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
 8. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
 9. **Unit test imports**: Co-located unit tests (`*_test.go` in source packages) should NOT import `test/harness` or heavy test infrastructure. Use standard library + `shlex` + `testify` + `cmdutil` directly. The `test/harness` package transitively pulls in Docker SDK, whail, config, yaml — acceptable for `test/internals/` and `test/agents/` but too heavy for flag-parsing unit tests. Prefer 3-line boilerplate over a convenience helper that drags in the world.
+10. **Factory construction in tests**: `factory.New()` should only ever be called in `internal/clawker/cmd.go`, except for factory's own tests (`internal/cmd/factory/`). All other tests must create `&cmdutil.Factory{}` struct literals with test doubles (e.g., `iostreams.NewTestIOStreams()`, `tui.NewTUI(tio.IOStreams)`, mock/fake clients, `configtest.InMemorySettingsLoader`, etc.). Do not set `Version` on these struct literals — leave it as the zero value.
 
 ---
 

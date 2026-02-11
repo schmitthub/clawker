@@ -12,25 +12,17 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Build-time variables set by ldflags.
-var (
-	Version = "dev"
-	Commit  = "none"
-)
-
 func main() {
 	// Initialize logger
 	logger.Init()
 
 	f := &cmdutil.Factory{
-		Version:   Version,
 		IOStreams: iostreams.System(),
 	}
 
 	// Create and execute the generate command
 	cmd := generate.NewCmdGenerate(f, nil)
 	cmd.Use = "clawkergenerate" // Override for standalone use
-	cmd.Version = Version
 
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)

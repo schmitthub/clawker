@@ -5,12 +5,14 @@
 Packages that **should** have a CLAUDE.md (contain significant public API):
 
 - `internal/docker/`
+- `internal/containerfs/`
 - `internal/config/`
 - `internal/cmdutil/`
 - `internal/iostreams/`
 - `internal/workspace/`
 - `internal/bundler/`
 - `internal/ralph/`
+- `internal/socketbridge/`
 - `internal/tui/`
 - `internal/term/`
 - `internal/hostproxy/`

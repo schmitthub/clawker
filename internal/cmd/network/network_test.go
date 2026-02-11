@@ -9,7 +9,7 @@ import (
 
 func TestNewCmdNetwork(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdNetwork(f)
 
 	// Verify command basics
@@ -37,7 +37,7 @@ func TestNewCmdNetwork(t *testing.T) {
 
 func TestNewCmdNetwork_Subcommands(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdNetwork(f)
 
 	subcommands := cmd.Commands()

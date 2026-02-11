@@ -9,7 +9,7 @@ import (
 
 func TestNewCmdConfig(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
-	f := &cmdutil.Factory{Version: "1.0.0", Commit: "abc123", IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdConfig(f)
 
 	if cmd.Use != "config" {
