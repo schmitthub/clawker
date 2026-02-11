@@ -78,16 +78,16 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
+	cs := ios.ColorScheme()
 	var errs []error
 	for _, name := range containers {
 		exitCode, err := waitContainer(ctx, client, name)
 		if err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
 			// Print exit code to stdout (for scripting)
 			fmt.Fprintln(ios.Out, exitCode)

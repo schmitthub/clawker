@@ -3,11 +3,16 @@ package update
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -276,4 +281,107 @@ func TestBuildUpdateResources(t *testing.T) {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestUpdateRun_Success(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fake.SetupContainerUpdate()
+
+	f, tio := testUpdateFactory(t, fake)
+
+	cmd := NewCmdUpdate(f, nil)
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	fake.AssertCalled(t, "ContainerUpdate")
+}
+
+func TestUpdateRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdUpdate(f, nil)
+	cmd.SetArgs([]string{"--memory", "512m", "mycontainer"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestUpdateRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — container won't be found
+
+	f, tio := testUpdateFactory(t, fake)
+
+	cmd := NewCmdUpdate(f, nil)
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update")
+	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+}
+
+func TestUpdateRun_PartialFailure(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fake.SetupContainerUpdate()
+
+	f, tio := testUpdateFactory(t, fake)
+
+	cmd := NewCmdUpdate(f, nil)
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update 1 container(s)")
+
+	// First container succeeded
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	// Second container had error
+	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
 }
