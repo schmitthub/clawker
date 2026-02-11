@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"text/tabwriter"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -14,12 +13,14 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // StatsOptions defines the options for the stats command.
 type StatsOptions struct {
 	IOStreams *iostreams.IOStreams
+	TUI      *tui.TUI
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
 
@@ -33,6 +34,7 @@ type StatsOptions struct {
 func NewCmdStats(f *cmdutil.Factory, runF func(context.Context, *StatsOptions) error) *cobra.Command {
 	opts := &StatsOptions{
 		IOStreams: f.IOStreams,
+		TUI:      f.TUI,
 		Client:    f.Client,
 		Config:    f.Config,
 	}
@@ -93,8 +95,7 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// If no containers specified, get all running containers
@@ -129,8 +130,8 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 }
 
 func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StatsOptions) error {
-	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
+	cs := ios.ColorScheme()
+	tp := opts.TUI.NewTable("CONTAINER ID", "NAME", "CPU %", "MEM USAGE / LIMIT", "MEM %", "NET I/O", "BLOCK I/O", "PIDS")
 
 	var errs []error
 	for _, name := range containers {
@@ -138,12 +139,12 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 		c, err := client.FindContainerByName(ctx, name)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to find container %q: %w", name, err))
-			fmt.Fprintf(ios.ErrOut, "Error: failed to find container %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: failed to find container: %v\n", cs.FailureIcon(), name, err)
 			continue
 		}
 		if c == nil {
 			errs = append(errs, fmt.Errorf("container %q not found", name))
-			fmt.Fprintf(ios.ErrOut, "Error: container %q not found\n", name)
+			fmt.Fprintf(ios.ErrOut, "%s %s: container not found\n", cs.FailureIcon(), name)
 			continue
 		}
 
@@ -151,7 +152,7 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 		statsReader, err := client.ContainerStatsOneShot(ctx, c.ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to get stats for %q: %w", name, err))
-			fmt.Fprintf(ios.ErrOut, "Error: failed to get stats for %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: failed to get stats: %v\n", cs.FailureIcon(), name, err)
 			continue
 		}
 
@@ -159,17 +160,17 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 		if err := json.NewDecoder(statsReader.Body).Decode(&stats); err != nil {
 			statsReader.Body.Close()
 			errs = append(errs, fmt.Errorf("failed to decode stats for %q: %w", name, err))
-			fmt.Fprintf(ios.ErrOut, "Error: failed to decode stats for %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: failed to decode stats: %v\n", cs.FailureIcon(), name, err)
 			continue
 		}
 		statsReader.Body.Close()
 
-		// Format and print stats
-		printStats(w, c.ID, name, &stats, opts)
+		// Format and add stats row
+		addStatsRow(tp, c.ID, name, &stats, opts)
 	}
 
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("failed to flush output: %w", err)
+	if err := tp.Render(); err != nil {
+		return fmt.Errorf("failed to render output: %w", err)
 	}
 
 	if len(errs) > 0 {
@@ -179,6 +180,8 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 }
 
 func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containers []string, opts *StatsOptions) error {
+	cs := ios.ColorScheme()
+
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -199,11 +202,11 @@ func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.C
 	for _, name := range containers {
 		c, err := client.FindContainerByName(ctx, name)
 		if err != nil {
-			fmt.Fprintf(ios.ErrOut, "Warning: failed to resolve container %q: %v\n", name, err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: failed to resolve container: %v\n", cs.WarningIcon(), name, err)
 			continue
 		}
 		if c == nil {
-			fmt.Fprintf(ios.ErrOut, "Warning: container %q not found\n", name)
+			fmt.Fprintf(ios.ErrOut, "%s %s: container not found\n", cs.WarningIcon(), name)
 			continue
 		}
 		containerIDs[name] = c.ID
@@ -248,19 +251,10 @@ func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.C
 		}(name, id)
 	}
 
-	// Collect and print stats
-	w := tabwriter.NewWriter(ios.Out, 0, 0, 3, ' ', 0)
-
 	// Track the last stats for each container
 	lastStats := make(map[string]*container.StatsResponse)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-
-	// Print header once
-	fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
-	if err := w.Flush(); err != nil {
-		fmt.Fprintf(ios.ErrOut, "Warning: output flush failed: %v\n", err)
-	}
 
 	for {
 		select {
@@ -268,26 +262,26 @@ func streamStats(ctx context.Context, ios *iostreams.IOStreams, client *docker.C
 			return nil
 		case result := <-results:
 			if result.Err != nil {
-				fmt.Fprintf(ios.ErrOut, "Error: %s: %v\n", result.Name, result.Err)
+				fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), result.Name, result.Err)
 				continue
 			}
 			lastStats[result.Name] = result.Stats
 		case <-ticker.C:
 			// Clear screen and reprint
 			fmt.Fprint(ios.Out, "\033[H\033[2J")
-			fmt.Fprintln(w, "CONTAINER ID\tNAME\tCPU %\tMEM USAGE / LIMIT\tMEM %\tNET I/O\tBLOCK I/O\tPIDS")
+			tp := opts.TUI.NewTable("CONTAINER ID", "NAME", "CPU %", "MEM USAGE / LIMIT", "MEM %", "NET I/O", "BLOCK I/O", "PIDS")
 			for name, stats := range lastStats {
 				id := containerIDs[name]
-				printStats(w, id, name, stats, opts)
+				addStatsRow(tp, id, name, stats, opts)
 			}
-			if err := w.Flush(); err != nil {
-				fmt.Fprintf(ios.ErrOut, "Warning: output flush failed: %v\n", err)
+			if err := tp.Render(); err != nil {
+				fmt.Fprintf(ios.ErrOut, "%s output render failed: %v\n", cs.WarningIcon(), err)
 			}
 		}
 	}
 }
 
-func printStats(w *tabwriter.Writer, id, name string, stats *container.StatsResponse, opts *StatsOptions) {
+func addStatsRow(tp *tui.TablePrinter, id, name string, stats *container.StatsResponse, opts *StatsOptions) {
 	// Format container ID
 	containerID := id
 	if !opts.NoTrunc && len(containerID) > 12 {
@@ -329,8 +323,7 @@ func printStats(w *tabwriter.Writer, id, name string, stats *container.StatsResp
 	// Get PIDs
 	pids := stats.PidsStats.Current
 
-	fmt.Fprintf(w, "%s\t%s\t%.2f%%\t%s\t%.2f%%\t%s\t%s\t%d\n",
-		containerID, name, cpuPercent, memStr, memPercent, netStr, blkStr, pids)
+	tp.AddRow(containerID, name, fmt.Sprintf("%.2f%%", cpuPercent), memStr, fmt.Sprintf("%.2f%%", memPercent), netStr, blkStr, fmt.Sprintf("%d", pids))
 }
 
 func calculateCPUPercent(stats *container.StatsResponse) float64 {

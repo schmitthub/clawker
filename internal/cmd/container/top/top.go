@@ -8,17 +8,15 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // TopOptions holds options for the top command.
 type TopOptions struct {
-	IOStreams *iostreams.IOStreams
-	TUI      *tui.TUI
-	Client   func(context.Context) (*docker.Client, error)
-	Config   func() *config.Config
+	TUI    *tui.TUI
+	Client func(context.Context) (*docker.Client, error)
+	Config func() *config.Config
 
 	Agent bool
 
@@ -28,10 +26,9 @@ type TopOptions struct {
 // NewCmdTop creates a new top command.
 func NewCmdTop(f *cmdutil.Factory, runF func(context.Context, *TopOptions) error) *cobra.Command {
 	opts := &TopOptions{
-		IOStreams: f.IOStreams,
-		TUI:      f.TUI,
-		Client:   f.Client,
-		Config:   f.Config,
+		TUI:    f.TUI,
+		Client: f.Client,
+		Config: f.Config,
 	}
 
 	cmd := &cobra.Command{
