@@ -20,9 +20,9 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Constants
 
-- **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`)
+- **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`), `RegistryFileName` (`projects.yaml`)
 - **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`clawker`), `ClawkerNetwork` (`clawker`)
-- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`
+- **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`, `BridgesSubdir`
 - **Modes:** `ModeBind Mode = "bind"`, `ModeSnapshot Mode = "snapshot"` — `ParseMode(s) (Mode, error)`
 
 ## Path Helpers (`home.go`)
@@ -73,6 +73,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 - `AgentConfig`: `SharedDirEnabled()` (default: false)
 
 **Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
+- `SecurityConfig`: `HostProxyEnabled() bool` (default: true)
 - `FirewallConfig`: `FirewallEnabled()`, `GetFirewallDomains()`, `IsOverrideMode()`, `GetIPRangeSources()`
 - `GitCredentialsConfig`: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `GPGEnabled()`, `CopyGitConfigEnabled()`
 
@@ -81,6 +82,8 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 ## Settings (`settings.go`, `settings_loader.go`)
 
 `Settings{DefaultImage, Logging LoggingConfig}`. `LoggingConfig{FileEnabled *bool, MaxSizeMB, MaxAgeDays, MaxBackups}`.
+
+**LoggingConfig methods**: `IsFileEnabled() bool` (default: true), `GetMaxSizeMB() int` (default: 50), `GetMaxAgeDays() int` (default: 7), `GetMaxBackups() int` (default: 3).
 
 **Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`. Matches the `Registry`/`InMemoryRegistry` pattern.
 
@@ -137,6 +140,8 @@ See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBui
 ## IP Range Sources (`ip_ranges.go`)
 
 `IPRangeSource{Name, URL, JQFilter, Required *bool}`. Built-in: `github`, `google-cloud`, `google`, `cloudflare`, `aws`. `DefaultIPRangeSources()` → `[{Name: "github"}]`; empty in override mode.
+
+**Types**: `BuiltinIPRangeConfig{URL, JQFilter string}`. `BuiltinIPRangeSources map[string]BuiltinIPRangeConfig` — maps source names to pre-configured URL+filter. `IsKnownIPRangeSource(name string) bool` — checks if name is a built-in source.
 
 ## Notes
 

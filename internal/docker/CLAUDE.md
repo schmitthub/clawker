@@ -2,29 +2,9 @@
 
 Clawker-specific Docker middleware wrapping `pkg/whail.Engine` with labels, naming conventions, and image building orchestration.
 
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `pty.go` | `PTYHandler` — terminal session lifecycle for container I/O (raw mode, stream, resize) |
-| `image_resolve.go` | Image resolution chain (Client methods: ResolveImage, ResolveImageWithSource) |
-| `client.go` | `Client` struct wrapping `whail.Engine`, project-aware queries |
-| `builder.go` | `Builder` — project image building (EnsureImage, Build, BuilderOptions) |
-| `defaults.go` | `DefaultImageTag` constant, `(*Client).BuildDefaultImage` method |
-| `labels.go` | Label constants (`com.clawker.*`), label constructors, filter helpers |
-| `names.go` | Resource naming (`clawker.project.agent`), parsing, random name generation |
-| `buildkit.go` | `BuildKitEnabled`, `WireBuildKit`, `Pinger` type alias (delegates to whail) |
-| `env.go` | `RuntimeEnv(opts RuntimeEnvOpts)` — env vars for container creation |
-| `volume.go` | `EnsureVolume`, `CopyToVolume`, `.clawkerignore` support |
-| `opts.go` | Resource limit types implementing `pflag.Value` for CLI flags |
-| `types.go` | Re-exports ~35 Docker types from whail for consumer convenience |
-| `dockertest/` | Test fakes: `NewFakeClient()` with function-field overrides |
-
 ## PTYHandler (`pty.go`)
 
 Full terminal session lifecycle for interactive container sessions. `NewPTYHandler() *PTYHandler`.
-
-### Methods
 
 | Method | Purpose |
 |--------|---------|
@@ -39,195 +19,74 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 
 ## Naming Convention
 
-- **3-segment** (with project): `clawker.project.agent` (e.g., `clawker.myapp.ralph`)
-- **2-segment** (empty project): `clawker.agent` (e.g., `clawker.ralph`) — no empty segment
-- **Volumes**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
-- **Global volumes**: `clawker-<purpose>` (e.g., `clawker-share`) — no project/agent scope
-- **Network**: constant `NetworkName = "clawker-net"`
+- **3-segment** (with project): `clawker.project.agent` — **2-segment** (empty project): `clawker.agent`
+- **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
+- **Global volumes**: `clawker-<purpose>` — **Network**: `NetworkName = "clawker-net"`
 
-## Label Constants
+Functions: `ContainerName`, `VolumeName`, `GlobalVolumeName`, `ContainerNamePrefix`, `ContainerNamesFromAgents`, `ImageTag`, `ImageTagWithHash`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+
+## Labels
 
 `LabelPrefix` (`com.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`
 
-Engine config constants (for `whail.EngineOptions`): `EngineLabelPrefix` (`com.clawker` without trailing dot), `EngineManagedLabel`, `ManagedLabelValue`
+**Constructors**: `ContainerLabels(project, agent, version, image, workdir)`, `GlobalVolumeLabels(purpose)`, `VolumeLabels(project, agent, purpose)`, `ImageLabels(project, version)`, `NetworkLabels()`
 
-## Label Constructors
-
-- `ContainerLabels(project, agent, version, image, workdir)` — managed + agent + version + image + created + workdir; project omitted when empty
-- `GlobalVolumeLabels(purpose)` — managed + purpose only; no project/agent (for global volumes)
-- `VolumeLabels(project, agent, purpose)` — managed + agent + purpose; project omitted when empty
-- `ImageLabels(project, version)` — managed + version + created; project omitted when empty
-- `NetworkLabels()` — managed only
-
-## Filter Functions
-
-- `ClawkerFilter()` — all managed resources (`com.clawker.managed=true`)
-- `ProjectFilter(project)` — managed + project match
-- `AgentFilter(project, agent)` — managed + project + agent match
-
-All return `whail.Filters`.
-
-## Naming Functions (`names.go`)
-
-- `ContainerName(project, agent)`, `VolumeName(project, agent, purpose)` — agent-scoped resource name builders
-- `GlobalVolumeName(purpose)` → `clawker-<purpose>` — global volume name builder
-- `ContainerNamePrefix(project)`, `ContainerNamesFromAgents(project, agents)` — batch/prefix helpers
-- `ImageTag(project)` → `clawker-<project>:latest`, `ImageTagWithHash(project, hash)` → `clawker-<project>:sha-<hash>`
-- `ParseContainerName(name)` → `(project, agent string, ok bool)` — parsing utilities
-- `GenerateRandomName()` — Docker-style adjective-noun pair
-
-Constants: `NamePrefix = "clawker"`, `NetworkName = "clawker-net"`
+**Filters**: `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` — all return `whail.Filters`.
 
 ## Client (`client.go`)
 
 ```go
-func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*Client, error)
-
-type ClientOption func(*clientOptions)
-func WithLabels(labels whail.LabelConfig) ClientOption  // inject labels into engine
-
-type Client struct {
-    *whail.Engine  // embedded — all whail methods available
-    cfg *config.Config // lazily provides Project() and Settings() for image resolution
-    BuildDefaultImageFunc BuildDefaultImageFn // override hook for fawker/tests (nil = real build)
-    ChownImage string // override image for CopyToVolume chown step (default: "busybox:latest")
-}
-
-type Container struct {
-    ID, Name, Project, Agent, Image, Workdir, Status string
-    Created int64
-}
-
-type BuildImageOpts struct {
-    Tags []string; Dockerfile string; BuildArgs map[string]*string
-    NoCache bool; Labels map[string]string; Target string
-    Pull, SuppressOutput bool; NetworkMode string
-    BuildKitEnabled bool                    // Routes to BuildKit when true + ContextDir set
-    ContextDir      string                  // Build context directory (required for BuildKit)
-    OnProgress      whail.BuildProgressFunc // Progress callback for build events
-}
+func NewClient(ctx, cfg, opts ...ClientOption) (*Client, error)
+type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 ```
 
-### Image Resolution (`image_resolve.go`)
+`Client` embeds `*whail.Engine`. Fields: `cfg *config.Config`, `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-- `ImageSource` type — const enum: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceDefault` — indicates where an image reference was resolved from
-- `ResolveDefaultImage(cfg *config.Project, settings *config.Settings) string` — standalone function resolving default image from merged config/settings (project config takes precedence over user settings; returns empty if not configured)
+**Methods**: `Close()`, `SetConfig(cfg)`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, project, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`
 
-### Client Methods
-
-- `Close()` — closes underlying engine
-- `SetConfig(cfg *config.Config)` — sets config gateway (test helper)
-- `ResolveImage(ctx)` — resolves image reference, returns string (empty if none)
-- `ResolveImageWithSource(ctx)` — resolves image with source info (`*ResolvedImage`), returns nil if none
-- `findProjectImage(ctx)` — (unexported) finds project image by label lookup
-- `BuildImage(ctx, buildContext io.Reader, opts BuildImageOpts)` — routes: BuildKit (opts.BuildKitEnabled && opts.ContextDir) or legacy SDK
-- `ImageExists(ctx, imageRef)`, `TagImage(ctx, source, target)` — image helpers
-- `IsMonitoringActive(ctx)` — checks for running monitoring container
-- `ListContainers(ctx, project, allStates)`, `ListContainersByProject(ctx, project, allStates)` — filtered container lists
-- `FindContainerByAgent(ctx, project, agent)` — single container lookup
-- `RemoveContainerWithVolumes(ctx, containerID, force)` — removes container + associated agent volumes
+**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolveDefaultImage(cfg, settings) string`.
 
 ## Builder (`builder.go`)
 
-```go
-func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder
-func (b *Builder) EnsureImage(ctx, imageTag, opts BuilderOptions) error  // Content-addressed: skips if hash matches
-func (b *Builder) Build(ctx, imageTag, opts BuilderOptions) error         // Always build unconditionally
-```
+`NewBuilder(cli, cfg, workDir)`. `EnsureImage(ctx, tag, opts)` — content-addressed (skips if hash matches). `Build(ctx, tag, opts)` — always builds. `BuilderOptions`: `ForceBuild/NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress`.
 
-`EnsureImage` renders Dockerfile, computes `bundler.ContentHash`, checks for existing `sha-<hash>` tag, skips if found. Custom Dockerfiles bypass hashing and always rebuild. `Build` merges image labels (user first, then clawker internal), deduplicates tags via `mergeTags`, routes to BuildKit (filesystem) or legacy (tar stream) path.
+## Default Image (`defaults.go`)
 
-```go
-type BuilderOptions struct {
-    ForceBuild, NoCache, Pull, SuppressOutput, BuildKitEnabled bool
-    Labels map[string]string; Target, NetworkMode string
-    BuildArgs map[string]*string; Tags []string; Dockerfile []byte
-    OnProgress whail.BuildProgressFunc // Forwarded to BuildImageOpts
-}
-```
-
-Depends on `internal/bundler` for `ProjectGenerator`, `ContentHash`, `CreateBuildContextFromDir`.
-
-## Default Image Utilities (`defaults.go`)
-
-```go
-const DefaultImageTag = "clawker-default:latest"
-func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgress whail.BuildProgressFunc) error
-func TestLabelConfig(testName ...string) whail.LabelConfig  // returns LabelConfig with com.clawker.test=true + optional test name
-```
-
-`BuildDefaultImage` is a Client method that wires BuildKit on the receiver, generates Dockerfiles via `bundler.DockerfileManager`, builds with clawker labels. Uses `bundler.NewVersionsManager`, `bundler.NewDockerfileManager`, `bundler.CreateBuildContextFromDir`. When `Client.BuildDefaultImageFunc` is non-nil, delegates to the override (used by fawker/tests).
-
-`TestLabelConfig` returns a `whail.LabelConfig` with `com.clawker.test=true` as a default label. When `testName` is provided (typically `t.Name()`), also sets `com.clawker.test.name` for per-test resource debugging. Variadic signature ensures backward compatibility with callers that don't have `*testing.T` (e.g., `dockertest.NewFakeClient`).
+`DefaultImageTag = "clawker-default:latest"`. `(*Client).BuildDefaultImage(ctx, flavor, onProgress)`. `TestLabelConfig(testName...) whail.LabelConfig`.
 
 ## BuildKit (`buildkit.go`)
 
-- `Pinger` — type alias for `whail.Pinger`
-- `BuildKitEnabled(ctx, Pinger)` — delegates to `whail.BuildKitEnabled` (env var > daemon ping > OS heuristic)
-- `WireBuildKit(c *Client)` — sets `BuildKitImageBuilder` closure on engine; encapsulates `buildkit` subpackage import
-
-Both `Pinger` and `BuildKitEnabled` are deprecated; prefer `whail.Pinger`/`whail.BuildKitEnabled` directly.
+`Pinger` (type alias), `BuildKitEnabled(ctx, Pinger)`, `WireBuildKit(c *Client)`. Both `Pinger` and `BuildKitEnabled` deprecated — prefer `whail.*` directly.
 
 ## Environment (`env.go`)
 
-`RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars from `RuntimeEnvOpts` (identity, firewall, socket forwarding, terminal caps, agent/instruction env). Precedence (last wins): base defaults → terminal → agent env → instruction env. Output sorted by key. Key env vars: `CLAWKER_PROJECT`, `CLAWKER_AGENT`, `CLAWKER_WORKSPACE_MODE`, `CLAWKER_FIREWALL_*`, `CLAWKER_REMOTE_SOCKETS`, `SSH_AUTH_SOCK`.
+`RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars. Precedence: base → terminal → agent env → instruction env. Sorted by key.
 
 ## Volume Utilities (`volume.go`)
 
-- `(*Client).EnsureVolume(...)`, `(*Client).CopyToVolume(...)` — volume lifecycle
-- `LoadIgnorePatterns(path)` — parses `.clawkerignore` file
-
-### CopyToVolume Ownership Fix
-
-Docker's `CopyToContainer` extracts tar archives as root regardless of tar header UID/GID (`NoLchown=true` server-side). `CopyToVolume` fixes this with a two-phase approach:
-
-1. **Tar headers**: `createTarArchive` sets UID/GID 1001 (defense-in-depth)
-2. **Post-copy chown**: After `CopyToContainer`, starts a temp container that runs `chown -R 1001:1001 <destPath>` on the volume
-
-This ensures files like `.credentials.json` (mode 0600) are readable by the container user (UID 1001).
-
-### CopyToVolume Chown Image
-
-The chown step uses `Client.ChownImage` (default: `"busybox:latest"`). The image existence check uses `imageExistsRaw()` which bypasses the managed label check — appropriate since the chown image may be an external image (busybox from DockerHub) that was never built by clawker.
-
-Tests set `ChownImage` to `harness.TestChownImage` (`"clawker-test-chown:latest"`) — a locally-built labeled image that avoids DockerHub pulls and ensures cleanup via `com.clawker.test=true` label.
-
-### CopyToVolume Temp Container Labels and Naming
-
-`CopyToVolume` uses whail Engine methods (`c.ContainerCreate`, `c.ContainerStart`, etc.) instead of raw SDK calls. This means temp containers automatically inherit managed labels and any configured labels (e.g., `com.clawker.test=true` and `com.clawker.test.name` from `TestLabelConfig`).
-
-Temp containers are named `clawker-copy-<random>` (Docker-style adjective-noun) and carry `com.clawker.purpose=copy-to-volume` for filtering:
-
-```bash
-docker ps -a --filter label=com.clawker.purpose=copy-to-volume --format "{{.Names}}"
-```
-
-Cleanup infrastructure (`CleanupTestResources`) can find and remove leaked temp containers via label filters. The defer cleanup uses `context.WithTimeout(context.Background(), 10*time.Second)` to avoid hanging on unresponsive Docker daemon.
+`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`). Tests use `harness.TestChownImage`.
 
 ## Opts Types (`opts.go`)
 
-Resource limit types implementing `pflag.Value`: `MemBytes`, `MemSwapBytes`, `NanoCPUs`
-
-Container option types with `New*`, `Set`, `GetAll`, `Len`: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`
-
-Standalone: `ParseCPUs(value string) (int64, error)`
+`MemBytes`, `MemSwapBytes`, `NanoCPUs` (pflag.Value). Container options: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`. `ParseCPUs(value) (int64, error)`.
 
 ## Type Re-exports (`types.go`)
 
-Re-exports ~37 Docker types from whail. See `types.go` for the full list. Key groups: container/exec options, image options and results, volume/network options, copy options, resource management, wait conditions.
+Re-exports ~37 Docker types from whail. Key groups: container/exec options, image options/results, volume/network options, copy options, resource management, wait conditions.
 
-## Testing
+## Testing (`dockertest/`)
 
-Test fake: `dockertest.NewFakeClient(opts ...FakeClientOption)` with function-field overrides — composes real `*docker.Client` backed by `whailtest.FakeAPIClient`. Use `dockertest.WithConfig(cfg)` to inject a `*config.Config` for image resolution tests. See `.claude/rules/testing.md` and `TESTING-REFERENCE.md` for full patterns.
+`NewFakeClient(opts ...FakeClientOption)` — function-field fake backed by `whailtest.FakeAPIClient`. `WithConfig(cfg)` injects `*config.Config`.
 
-**BuildKit setup helpers**: `SetupBuildKit()`, `SetupBuildKitWithProgress(events)`, `SetupBuildKitWithRecordedProgress(events)`, `SetupPingBuildKit()` — wire fake BuildKit builders with varying levels of progress event simulation. See `dockertest/helpers.go` for signatures.
+**Fixtures**: `ContainerFixture()`, `RunningContainerFixture()`, `ImageSummaryFixture()`, `MinimalCreateOpts()`, `MinimalStartOpts()`, `BuildKitBuildOpts()`
 
-**Interactive mode helpers**: `SetupContainerAttach()` (net.Pipe, server-side closed immediately), `SetupContainerWait(exitCode)` (wraps `whailtest.FakeContainerWaitExit`), `SetupContainerResize()` (no-op), `SetupContainerRemove()` (no-op). Used by fawker demo CLI for `container run -it` path.
+**Assertions**: `AssertCalled(t, method)`, `AssertNotCalled(t, method)`, `AssertCalledN(t, method, n)`, `Reset()`
 
-**Resource creation helpers**: `SetupVolumeCreate()` (returns volume with requested name/labels), `SetupNetworkCreate()` (returns network ID). Used when default inspect handlers indicate resources don't exist.
-
-**Container action helpers**: `SetupContainerStop()`, `SetupContainerKill()`, `SetupContainerPause()`, `SetupContainerUnpause()`, `SetupContainerRename()`, `SetupContainerRestart()`, `SetupContainerUpdate()` — all return empty success results. Used by Tier 2 command tests.
-
-**Container data helpers**: `SetupContainerInspect(containerID, summary)` (returns InspectResponse with State from summary), `SetupContainerLogs(logs)` (returns plain ReadCloser), `SetupContainerTop(titles, processes)` (returns process table), `SetupContainerStats(json)` (returns one-shot stats; empty string = minimal default).
-
-**Copy/exec helpers**: `SetupCopyFromContainer()` (returns empty tar stream), `SetupExecCreate(execID)` (returns given exec ID).
+**Setup helpers** (all on `*FakeClient`):
+- **Container lifecycle**: `SetupContainerCreate/Start/Stop/Kill/Pause/Unpause/Rename/Restart/Update/Remove`
+- **Container I/O**: `SetupContainerResize/Attach/Wait(exitCode)/Inspect(id, summary)/Logs(logs)/Top(titles, processes)/Stats(json)`
+- **Exec**: `SetupExecCreate(execID)/ExecStart/ExecAttach/ExecInspect`
+- **Copy**: `SetupCopyToContainer/CopyFromContainer`
+- **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
+- **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
+- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList`

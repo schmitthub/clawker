@@ -140,10 +140,10 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 
 `types.go` re-exports SDK types so higher-level packages avoid importing moby directly. Key groups:
 
-- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions`
+- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions` (`client.ContainerWaitOptions`)
 - **Exec**: `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`
 - **Copy**: `CopyToContainerOptions`, `CopyFromContainerOptions`
-- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions`, `ImageTagResult`
+- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions` (`client.ImageTagOptions`), `ImageTagResult` (`client.ImageTagResult`)
 - **Volume/Network**: `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`
 - **Other**: `Filters`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
 - **Constants**: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`

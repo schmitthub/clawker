@@ -84,14 +84,17 @@ The bridge daemon subscribes to Docker `die` events for the target container. On
 ## Testing
 
 ```go
-mock := &socketbridgetest.MockManager{
-    EnsureBridgeFn: func(id string, gpg bool) error { return nil },
-}
+mock := socketbridgetest.NewMockManager()
+mock.EnsureBridgeFn = func(id string, gpg bool) error { return nil }
 // Use in Factory:
 f.SocketBridge = func() socketbridge.SocketBridgeManager { return mock }
-// Assert:
-mock.AssertCalledWith(t, "EnsureBridge", containerID, true)
+// Assert (returns bool, no *testing.T):
+assert.True(t, mock.CalledWith("EnsureBridge", containerID))
+// Inspect raw calls:
+// mock.Calls []Call — each Call has Method string and Args []any
 ```
+
+**Call tracking**: `Call` struct (`Method string`, `Args []any`). `MockManager.Calls []Call` records all invocations in order. `CalledWith(method, containerID) bool` checks if a method was called with the given container ID as first arg.
 
 ## Gotchas
 
