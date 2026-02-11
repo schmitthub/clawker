@@ -12,6 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/spf13/cobra"
 )
 
@@ -91,8 +93,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Find container by name
@@ -146,19 +147,45 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	// Attach to container
 	hijacked, err := client.ContainerAttach(ctx, c.ID, attachOpts)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
 
 	// Handle I/O
 	if hasTTY && pty != nil {
-		// Use PTY handler for TTY mode with resize support
+		// TTY mode: Stream for I/O, separate resize handling
 		resizeFunc := func(height, width uint) error {
 			_, err := client.ContainerResize(ctx, c.ID, height, width)
 			return err
 		}
-		return pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc)
+
+		streamDone := make(chan error, 1)
+		go func() {
+			streamDone <- pty.Stream(ctx, hijacked.HijackedResponse)
+		}()
+
+		// Resize immediately — container is already running
+		if pty.IsTerminal() {
+			width, height, err := pty.GetSize()
+			if err != nil {
+				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+			} else {
+				// +1/-1 trick forces SIGWINCH to trigger TUI redraw on re-attach
+				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+				}
+				if err := resizeFunc(uint(height), uint(width)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+				}
+			}
+
+			// Monitor for window resize events (SIGWINCH)
+			resizeHandler := signals.NewResizeHandler(resizeFunc, pty.GetSize)
+			resizeHandler.Start()
+			defer resizeHandler.Stop()
+		}
+
+		return <-streamDone
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
