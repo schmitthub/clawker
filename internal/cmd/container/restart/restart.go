@@ -101,7 +101,7 @@ func restartRun(ctx context.Context, opts *RestartOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to restart %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

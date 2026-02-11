@@ -100,7 +100,9 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Ensure host proxy is running (if enabled)
 	if cfg.Security.HostProxyEnabled() {
 		hp := opts.HostProxy()
-		if err := hp.EnsureRunning(); err != nil {
+		if hp == nil {
+			logger.Debug().Msg("host proxy factory returned nil, skipping")
+		} else if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy server")
 			cs := ios.ColorScheme()
 			fmt.Fprintf(ios.ErrOut, "%s Host proxy failed to start. Browser authentication may not work.\n", cs.WarningIcon())
@@ -290,10 +292,13 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 		// forever. This is necessary because we don't do client-side detach key
 		// detection (Docker CLI uses term.EscapeError for this).
 		select {
-		case status := <-statusCh:
-			logger.Debug().Int("exitCode", status).Msg("container exited")
-			if status != 0 {
-				return &cmdutil.ExitError{Code: status}
+		case wr := <-statusCh:
+			logger.Debug().Int("exitCode", wr.exitCode).Err(wr.err).Msg("container exited")
+			if wr.err != nil {
+				return wr.err
+			}
+			if wr.exitCode != 0 {
+				return &cmdutil.ExitError{Code: wr.exitCode}
 			}
 			return nil
 		case <-time.After(2 * time.Second):
@@ -301,39 +306,48 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 			logger.Debug().Msg("no exit status received after stream ended, assuming detach")
 			return nil
 		}
-	case status := <-statusCh:
-		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
-		if status != 0 {
-			return &cmdutil.ExitError{Code: status}
+	case wr := <-statusCh:
+		logger.Debug().Int("exitCode", wr.exitCode).Err(wr.err).Msg("container exited before stream completed")
+		if wr.err != nil {
+			return wr.err
+		}
+		if wr.exitCode != 0 {
+			return &cmdutil.ExitError{Code: wr.exitCode}
 		}
 		return nil
 	}
 }
 
-// waitForContainerExit wraps ContainerWait into a single status channel.
+// waitResult carries the container exit code and any error from the wait.
+type waitResult struct {
+	exitCode int
+	err      error // non-nil if the wait itself failed (distinct from non-zero exit code)
+}
+
+// waitForContainerExit wraps ContainerWait into a single result channel.
 // Always uses WaitConditionNextExit (start hasn't happened yet, and start
 // command never has autoRemove).
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string) <-chan int {
-	statusCh := make(chan int, 1)
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string) <-chan waitResult {
+	ch := make(chan waitResult, 1)
 	go func() {
-		defer close(statusCh)
-		waitResult := client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
+		defer close(ch)
+		wr := client.ContainerWait(ctx, containerID, container.WaitConditionNextExit)
 		select {
 		case <-ctx.Done():
 			return
-		case result := <-waitResult.Result:
+		case result := <-wr.Result:
 			if result.Error != nil {
 				logger.Error().Str("message", result.Error.Message).Msg("container wait error")
-				statusCh <- 125
+				ch <- waitResult{exitCode: 125, err: fmt.Errorf("container wait error: %s", result.Error.Message)}
 			} else {
-				statusCh <- int(result.StatusCode)
+				ch <- waitResult{exitCode: int(result.StatusCode)}
 			}
-		case err := <-waitResult.Error:
+		case err := <-wr.Error:
 			logger.Error().Err(err).Msg("error waiting for container")
-			statusCh <- 125
+			ch <- waitResult{exitCode: 125, err: fmt.Errorf("waiting for container: %w", err)}
 		}
 	}()
-	return statusCh
+	return ch
 }
 
 // startContainersWithoutAttach starts multiple containers without attaching.
@@ -371,7 +385,7 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to start %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 
 	return nil

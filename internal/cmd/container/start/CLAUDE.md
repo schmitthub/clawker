@@ -38,5 +38,6 @@ Phase B: Start containers (attach or detached)
 ## Testing
 
 - **Tier 1** (flag parsing): `start_test.go` — `TestNewCmdStart`, `TestCmdStart_Properties`
+- **Tier 2** (Cobra+Factory): `start_test.go` — `TestStartRun_Success`, `TestStartRun_MultipleContainers`, `TestStartRun_PartialFailure`, `TestStartRun_DockerConnectionError`, `TestStartRun_NilHostProxy`
 - **Integration**: `test/commands/container_start_test.go` — exercises non-attach path with real Docker
 - **Visual UAT**: attach path tested manually (`clawker container start -ai <name>`)

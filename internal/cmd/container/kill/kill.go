@@ -100,7 +100,7 @@ func killRun(ctx context.Context, opts *KillOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to kill %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

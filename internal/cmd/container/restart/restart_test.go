@@ -230,8 +230,7 @@ func TestRestartRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to restart")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
 }
 
@@ -250,8 +249,7 @@ func TestRestartRun_PartialFailure(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to restart 1 container(s)")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
 	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")

@@ -42,7 +42,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `Client` embeds `*whail.Engine`. Fields: `cfg *config.Config`, `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Methods**: `Close()`, `SetConfig(cfg)`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, project, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`
+**Methods**: `Close()`, `SetConfig(cfg)`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`
 
 **Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolveDefaultImage(cfg, settings) string`.
 

@@ -95,7 +95,7 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to wait for %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

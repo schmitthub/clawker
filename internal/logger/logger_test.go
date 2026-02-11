@@ -12,16 +12,11 @@ import (
 
 func TestInit(t *testing.T) {
 	// Init produces a nop logger (pre-file-logging placeholder)
-	Init(false)
+	Init()
 
 	// Nop logger has Disabled level
 	if Log.GetLevel() != zerolog.Disabled {
-		t.Errorf("Init(false) should produce nop logger (Disabled level), got %v", Log.GetLevel())
-	}
-
-	Init(true)
-	if Log.GetLevel() != zerolog.Disabled {
-		t.Errorf("Init(true) should produce nop logger (Disabled level), got %v", Log.GetLevel())
+		t.Errorf("Init() should produce nop logger (Disabled level), got %v", Log.GetLevel())
 	}
 }
 
@@ -50,7 +45,7 @@ func TestLogFunctions(t *testing.T) {
 }
 
 func TestWithField(t *testing.T) {
-	Init(false)
+	Init()
 
 	logger := WithField("test_key", "test_value")
 
@@ -65,7 +60,7 @@ func TestLoggerReinitialize(t *testing.T) {
 	cfg := &LoggingConfig{MaxSizeMB: 1}
 
 	// Init → nop
-	Init(false)
+	Init()
 	if Log.GetLevel() != zerolog.Disabled {
 		t.Error("Init should produce nop logger")
 	}
@@ -240,7 +235,7 @@ func TestCloseFileWriterWhenNil(t *testing.T) {
 }
 
 func TestSetContext(t *testing.T) {
-	Init(false)
+	Init()
 	defer ClearContext()
 
 	SetContext("myproject", "myagent")
@@ -261,7 +256,7 @@ func TestSetContext(t *testing.T) {
 }
 
 func TestSetContextPartial(t *testing.T) {
-	Init(false)
+	Init()
 	defer ClearContext()
 
 	SetContext("onlyproject", "")

@@ -174,7 +174,7 @@ func showStatsOnce(ctx context.Context, ios *iostreams.IOStreams, client *docker
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to get stats for %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

@@ -145,7 +145,7 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to update %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

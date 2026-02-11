@@ -109,7 +109,7 @@ func (c *LoggingConfig) GetMaxBackups() int {
 // Init initializes the global logger as a nop logger.
 // This is the pre-file-logging placeholder — all log output is discarded
 // until InitWithFile is called with a valid logs directory.
-func Init(debug bool) {
+func Init() {
 	Log = zerolog.Nop()
 }
 

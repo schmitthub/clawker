@@ -167,8 +167,7 @@ func TestUnpauseRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to unpause")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
 }
 
@@ -187,8 +186,7 @@ func TestUnpauseRun_PartialFailure(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to unpause 1 container(s)")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
 	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")

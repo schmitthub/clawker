@@ -91,7 +91,7 @@ func unpauseRun(ctx context.Context, opts *UnpauseOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to unpause %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

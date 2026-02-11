@@ -930,8 +930,7 @@ func TestRunRun(t *testing.T) {
 		cmd.SetErr(tio.ErrBuf)
 
 		err := cmd.Execute()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "not found")
+		require.ErrorIs(t, err, cmdutil.SilentError)
 
 		errOutput := tio.ErrBuf.String()
 		require.Contains(t, errOutput, "node:20-slim")

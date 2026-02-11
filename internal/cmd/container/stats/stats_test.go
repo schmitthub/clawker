@@ -396,8 +396,7 @@ func TestStatsRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get stats for 1 container(s)")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Contains(t, tio.ErrBuf.String(), "nonexistent")
 	assert.Contains(t, tio.ErrBuf.String(), "not found")
 }

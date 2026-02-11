@@ -357,8 +357,7 @@ func TestUpdateRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
 }
 
@@ -377,8 +376,7 @@ func TestUpdateRun_PartialFailure(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update 1 container(s)")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
 	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")

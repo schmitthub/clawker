@@ -25,7 +25,7 @@ All symbols are in `cmd.go`.
 cmd, err := rootCmd.ExecuteC()
 if err != nil {
     if !errors.Is(err, cmdutil.SilentError) {
-        printError(f.IOStreams.ErrOut, err, cmd)
+        printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
     }
     // ExitError propagates container exit codes
     // Default: return 1
@@ -35,7 +35,7 @@ if err != nil {
 **Error type dispatch in `printError()`:**
 - `FlagError` — prints error + command usage string
 - `userFormattedError` (duck-typed `FormatUserError()`) — rich Docker error formatting
-- default — prints `"Error: <message>"`
+- default — prints failure icon + error message (`cs.FailureIcon() + err`)
 - Always appends contextual `"Run '<cmd> --help' for more information"`
 
 **Commands never print their own errors.** They return typed errors that bubble up to Main(). Warnings and next-steps guidance are printed inline by commands using `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()`.

@@ -200,8 +200,7 @@ func TestKillRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to kill")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
 }
 

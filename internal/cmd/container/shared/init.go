@@ -59,16 +59,23 @@ type InitResult struct {
 	Warnings         []string // deferred warnings (can't print during progress)
 }
 
+// initOutcome carries the result from the init goroutine to the caller
+// via a channel, providing explicit synchronization (no shared variables).
+type initOutcome struct {
+	result *InitResult
+	err    error
+}
+
 // Run performs container initialization with TUI progress display.
 // It expects image resolution to have already been completed (pre-progress phase).
 func (ci *ContainerInitializer) Run(ctx context.Context, params InitParams) (*InitResult, error) {
 	ch := make(chan tui.ProgressStep, 32)
-	var result *InitResult
-	var initErr error
+	doneCh := make(chan initOutcome, 1)
 
 	go func() {
 		defer close(ch)
-		result, initErr = ci.runSteps(ctx, params, ch)
+		result, err := ci.runSteps(ctx, params, ch)
+		doneCh <- initOutcome{result: result, err: err}
 	}()
 
 	progressResult := ci.tui.RunProgress("auto", tui.ProgressDisplayConfig{
@@ -78,13 +85,15 @@ func (ci *ContainerInitializer) Run(ctx context.Context, params InitParams) (*In
 		AltScreen:      params.AltScreen,
 	}, ch)
 
+	outcome := <-doneCh // explicit sync — goroutine always sends before close(ch)
+
 	if progressResult.Err != nil {
 		return nil, progressResult.Err
 	}
-	if initErr != nil {
-		return nil, initErr
+	if outcome.err != nil {
+		return nil, outcome.err
 	}
-	return result, nil
+	return outcome.result, nil
 }
 
 // runSteps executes the initialization steps, sending progress events to ch.
@@ -96,7 +105,7 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 	result := &InitResult{}
 
 	// --- Step 1: Prepare workspace ---
-	sendStep(ch, "workspace", "Prepare workspace", tui.StepRunning)
+	sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepRunning)
 
 	agentName := containerOpts.GetAgentName()
 	if agentName == "" {
@@ -107,7 +116,7 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 
 	wd, projectRootDir, err := ci.resolveWorkDir(ctx, containerOpts, cfg, agentName)
 	if err != nil {
-		sendStep(ch, "workspace", "Prepare workspace", tui.StepError)
+		sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepError)
 		return nil, err
 	}
 
@@ -119,15 +128,15 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		ProjectRootDir: projectRootDir,
 	})
 	if err != nil {
-		sendStep(ch, "workspace", "Prepare workspace", tui.StepError)
+		sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepError)
 		return nil, err
 	}
 	workspaceMounts := wsResult.Mounts
-	sendStep(ch, "workspace", "Prepare workspace", tui.StepComplete)
+	sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepComplete)
 
 	// --- Step 2: Initialize config ---
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		sendStep(ch, "config", "Initialize config", tui.StepRunning)
+		sendStep(ctx, ch, "config", "Initialize config", tui.StepRunning)
 		if err := InitContainerConfig(ctx, InitConfigOpts{
 			ProjectName:      cfg.Project,
 			AgentName:        agentName,
@@ -135,16 +144,16 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 			ClaudeCode:       cfg.Agent.ClaudeCode,
 			CopyToVolume:     client.CopyToVolume,
 		}); err != nil {
-			sendStep(ch, "config", "Initialize config", tui.StepError)
+			sendStep(ctx, ch, "config", "Initialize config", tui.StepError)
 			return nil, fmt.Errorf("container init: %w", err)
 		}
-		sendStep(ch, "config", "Initialize config", tui.StepComplete)
+		sendStep(ctx, ch, "config", "Initialize config", tui.StepComplete)
 	} else {
-		sendStep(ch, "config", "Initialize config", tui.StepCached)
+		sendStep(ctx, ch, "config", "Initialize config", tui.StepCached)
 	}
 
 	// --- Step 3: Setup environment ---
-	sendStep(ch, "environment", "Setup environment", tui.StepRunning)
+	sendStep(ctx, ch, "environment", "Setup environment", tui.StepRunning)
 
 	hostProxyRunning := ci.setupHostProxy(cfg, containerOpts, result)
 
@@ -154,23 +163,23 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 
 	runtimeEnv, err := ci.buildRuntimeEnv(cfg, containerOpts, agentName, wd)
 	if err != nil {
-		sendStep(ch, "environment", "Setup environment", tui.StepError)
+		sendStep(ctx, ch, "environment", "Setup environment", tui.StepError)
 		return nil, err
 	}
 	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
-	sendStep(ch, "environment", "Setup environment", tui.StepComplete)
+	sendStep(ctx, ch, "environment", "Setup environment", tui.StepComplete)
 
 	// --- Step 4: Create container ---
-	sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepRunning)
+	sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepRunning)
 
 	if err := containerOpts.ValidateFlags(); err != nil {
-		sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
+		sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
 		return nil, err
 	}
 
 	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(params.Flags, workspaceMounts, cfg)
 	if err != nil {
-		sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
+		sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -190,7 +199,7 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		},
 	})
 	if err != nil {
-		sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
+		sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
 		return nil, fmt.Errorf("creating container: %w", err)
 	}
 	result.ContainerID = resp.ID
@@ -201,7 +210,7 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 			ContainerID:     result.ContainerID,
 			CopyToContainer: NewCopyToContainerFn(client),
 		}); err != nil {
-			sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
+			sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
 			return nil, fmt.Errorf("inject onboarding: %w", err)
 		}
 	}
@@ -210,16 +219,16 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		result.Warnings = append(result.Warnings, "Warning: "+warning)
 	}
 
-	sendStep(ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepComplete)
+	sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepComplete)
 
 	// --- Step 5: Start container (detached mode only) ---
 	if params.StartAfterCreate {
-		sendStep(ch, "start", "Start container", tui.StepRunning)
+		sendStep(ctx, ch, "start", "Start container", tui.StepRunning)
 		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: result.ContainerID}); err != nil {
-			sendStep(ch, "start", "Start container", tui.StepError)
+			sendStep(ctx, ch, "start", "Start container", tui.StepError)
 			return nil, fmt.Errorf("starting container: %w", err)
 		}
-		sendStep(ch, "start", "Start container", tui.StepComplete)
+		sendStep(ctx, ch, "start", "Start container", tui.StepComplete)
 	}
 
 	return result, nil
@@ -329,10 +338,14 @@ func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOp
 }
 
 // sendStep sends a progress step event to the channel.
-func sendStep(ch chan<- tui.ProgressStep, id, name string, status tui.ProgressStepStatus) {
-	ch <- tui.ProgressStep{
+// Uses select with context to avoid blocking forever if the TUI consumer stops reading.
+func sendStep(ctx context.Context, ch chan<- tui.ProgressStep, id, name string, status tui.ProgressStepStatus) {
+	select {
+	case <-ctx.Done():
+	case ch <- tui.ProgressStep{
 		ID:     id,
 		Name:   name,
 		Status: status,
+	}:
 	}
 }

@@ -230,8 +230,7 @@ func TestInspectRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to inspect")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Contains(t, tio.ErrBuf.String(), "nonexistent")
 }
 
@@ -249,8 +248,7 @@ func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to inspect")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	// Should still output the successful inspection
 	assert.Contains(t, tio.OutBuf.String(), c.ID)
 	// Should report the failure on stderr

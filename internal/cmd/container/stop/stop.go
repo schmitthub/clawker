@@ -104,7 +104,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to stop %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

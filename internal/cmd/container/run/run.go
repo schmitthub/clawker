@@ -145,7 +145,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	if containerOpts.Image == "@" {
 		resolvedImage, err := client.ResolveImageWithSource(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolving image: %w", err)
 		}
 		if resolvedImage == nil {
 			cs := ios.ColorScheme()
@@ -161,8 +161,9 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		if resolvedImage.Source == docker.ImageSourceDefault {
 			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
 			if err != nil {
-				logger.Warn().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
-			} else if !exists {
+				return fmt.Errorf("checking if image exists: %w", err)
+			}
+			if !exists {
 				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
 					ImageRef:       resolvedImage.Reference,
 					IOStreams:      ios,

@@ -134,7 +134,7 @@ func inspectRun(ctx context.Context, opts *InspectOptions) error {
 		for _, e := range errs {
 			fmt.Fprintf(ios.ErrOut, "%s %v\n", cs.FailureIcon(), e)
 		}
-		return fmt.Errorf("failed to inspect %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 
 	return nil

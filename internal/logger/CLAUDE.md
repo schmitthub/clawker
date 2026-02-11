@@ -39,7 +39,7 @@ type LoggingConfig struct {
 ## Initialization
 
 ```go
-func Init(debug bool)                                              // Nop logger (pre-file-logging placeholder)
+func Init()                                                        // Nop logger (pre-file-logging placeholder)
 func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error  // File-only logging
 func CloseFileWriter() error                                       // Close file writer (call in defer)
 func GetLogFilePath() string                    // Returns log file path (empty if file logging disabled)

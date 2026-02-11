@@ -50,7 +50,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 
 ### Container Initialization (`init.go`)
 
-Progress-tracked container initialization, shared between `run` and `create`. Extracts ~200 lines of duplicated init code into a single `ContainerInitializer` Factory noun.
+Progress-tracked container initialization, shared between `run` and `create`. Extracts duplicated init code from `run.go` and `create.go` into a single `ContainerInitializer` Factory noun.
 
 ```go
 import "github.com/schmitthub/clawker/internal/cmd/container/shared"
@@ -110,5 +110,6 @@ Imports: `internal/cmd/container/opts`, `internal/cmdutil`, `internal/config`, `
 ## Testing
 
 Unit tests in `shared/init_test.go` — `ContainerInitializer` tests using `dockertest.FakeClient`.
+Unit tests in `shared/image_test.go` — `RebuildMissingDefaultImage` interactive flow, `persistDefaultImageSetting` edge cases, `progressStatus` mapping.
 Unit tests in `shared/containerfs_test.go` — uses mock CopyToVolume/CopyToContainer function trackers.
 Integration tests in `test/internals/containerfs_test.go` — exercises full pipeline with real Docker containers.

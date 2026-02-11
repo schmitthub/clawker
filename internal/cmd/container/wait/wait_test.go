@@ -214,8 +214,7 @@ func TestWaitRun_ContainerNotFound(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to wait")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
 }
 
@@ -234,8 +233,7 @@ func TestWaitRun_PartialFailure(t *testing.T) {
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to wait for 1 container(s)")
+	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded — exit code printed
 	assert.Contains(t, tio.OutBuf.String(), "0")

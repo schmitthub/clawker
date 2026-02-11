@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -14,10 +15,10 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
-// TODO: This is implemented wrong. constructors need to be added to accept factory *cmdutil.Factory, we don't pass indivdual deps in options)
+// TODO: Refactor RebuildMissingImageOpts to match ContainerInitializer's Factory noun
+// pattern — accept *cmdutil.Factory in a constructor instead of individual deps in options.
 
 // RebuildMissingImageOpts holds options for the rebuild prompt flow.
-// Uses DI closures (like InitConfigOpts) to avoid direct Factory coupling.
 type RebuildMissingImageOpts struct {
 	ImageRef       string
 	IOStreams      *iostreams.IOStreams
@@ -38,7 +39,7 @@ func RebuildMissingDefaultImage(ctx context.Context, opts RebuildMissingImageOpt
 	if !ios.IsInteractive() {
 		fmt.Fprintf(ios.ErrOut, "%s Default image %q not found\n", cs.FailureIcon(), opts.ImageRef)
 		printImageNotFoundNextSteps(ios, cs, opts.CommandVerb)
-		return fmt.Errorf("default image %q not found", opts.ImageRef)
+		return cmdutil.SilentError
 	}
 
 	// Interactive mode — prompt to rebuild
@@ -59,7 +60,7 @@ func RebuildMissingDefaultImage(ctx context.Context, opts RebuildMissingImageOpt
 
 	if idx != 0 {
 		printImageNotFoundNextSteps(ios, cs, opts.CommandVerb)
-		return fmt.Errorf("default image %q not found", opts.ImageRef)
+		return cmdutil.SilentError
 	}
 
 	// Get flavor selection
@@ -87,7 +88,9 @@ func RebuildMissingDefaultImage(ctx context.Context, opts RebuildMissingImageOpt
 	fmt.Fprintf(ios.ErrOut, "%s Using image: %s\n", cs.SuccessIcon(), docker.DefaultImageTag)
 
 	// Persist the default image in settings
-	persistDefaultImageSetting(opts.SettingsLoader)
+	if warning := persistDefaultImageSetting(opts.SettingsLoader); warning != "" {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), warning)
+	}
 
 	return nil
 }
@@ -149,6 +152,7 @@ func buildWithTUIProgress(ctx context.Context, opts RebuildMissingImageOpts, fla
 	close(done) // signal OnProgress callback to stop sending
 
 	if result.Err != nil {
+		<-buildErrCh // wait for build goroutine to complete, prevent leak
 		return result.Err
 	}
 	if buildErr := <-buildErrCh; buildErr != nil {
@@ -183,21 +187,24 @@ func printImageNotFoundNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorSc
 }
 
 // persistDefaultImageSetting saves the default image tag in user settings.
-func persistDefaultImageSetting(settingsLoaderFn func() config.SettingsLoader) {
+// Returns a warning message if the setting could not be saved, empty string on success.
+func persistDefaultImageSetting(settingsLoaderFn func() config.SettingsLoader) string {
 	if settingsLoaderFn == nil {
-		return
+		return ""
 	}
 	loader := settingsLoaderFn()
 	if loader == nil {
-		return
+		return ""
 	}
 	currentSettings, loadErr := loader.Load()
 	if loadErr != nil {
 		logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
-		return
+		return fmt.Sprintf("Could not save default image setting: %v", loadErr)
 	}
 	currentSettings.DefaultImage = docker.DefaultImageTag
 	if saveErr := loader.Save(currentSettings); saveErr != nil {
 		logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
+		return fmt.Sprintf("Could not save default image setting: %v", saveErr)
 	}
+	return ""
 }
