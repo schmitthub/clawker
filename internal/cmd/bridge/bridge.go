@@ -55,7 +55,7 @@ func NewCmdBridgeServe() *cobra.Command {
 			}
 
 			// Initialize daemon logger
-			logger.Init(false)
+			logger.Init()
 
 			logger.Info().
 				Str("container", containerID).

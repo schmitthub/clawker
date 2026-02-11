@@ -122,7 +122,7 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	)
 
 	// Wait for container to be ready
-	err = harness.WaitForContainerRunning(ctx, harness.NewRawDockerClient(t), ctr.ID)
+	err = harness.WaitForContainerRunning(ctx, client, ctr.ID)
 	require.NoError(t, err)
 
 	// 4. Exec git commands inside the container

@@ -9,6 +9,8 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +141,80 @@ func TestCmdKill_Properties(t *testing.T) {
 	// Test default signal
 	signal, _ := cmd.Flags().GetString("signal")
 	require.Equal(t, "SIGKILL", signal)
+}
+
+func TestKillRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdKill(f, nil)
+	cmd.SetArgs([]string{"mycontainer"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestKillRun_Success(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fake.SetupContainerKill()
+
+	f, tio := testKillFactory(t, fake)
+
+	cmd := NewCmdKill(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	fake.AssertCalled(t, "ContainerKill")
+}
+
+func TestKillRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — container won't be found
+
+	f, tio := testKillFactory(t, fake)
+
+	cmd := NewCmdKill(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+}
+
+func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
 }

@@ -1,14 +1,20 @@
 # Logger Package
 
-Zerolog-based logging with file output, interactive mode suppression, and project context.
+Zerolog-based file-only logging with project context. Zerolog never writes to the console — user-visible output uses `fmt.Fprintf` to IOStreams (see code style guide).
+
+## Architecture
+
+**File-only**: All log output goes to `~/.local/clawker/logs/clawker.log` via lumberjack rotation. There is no console writer. Before `InitWithFile` is called, the logger is a nop (all output discarded).
+
+**User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See `cli-output-style-guide` memory for per-scenario details.
 
 ## Global State
 
 ```go
-var Log zerolog.Logger  // Global logger instance (console + optional file multi-writer)
+var Log zerolog.Logger  // Global logger instance (file-only; nop before InitWithFile)
 ```
 
-Internal state: `fileWriter` (lumberjack rotator), `fileOnlyLog` (file-only logger), `interactiveMode` (bool, mutex-protected), `logContext` (project/agent fields, mutex-protected).
+Internal state: `fileWriter` (lumberjack rotator), `logContext` (project/agent fields, mutex-protected).
 
 ## LoggingConfig
 
@@ -33,8 +39,8 @@ type LoggingConfig struct {
 ## Initialization
 
 ```go
-func Init(debug bool)                                              // Console-only logging
-func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error  // Console + file logging
+func Init()                                                        // Nop logger (pre-file-logging placeholder)
+func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error  // File-only logging
 func CloseFileWriter() error                                       // Close file writer (call in defer)
 func GetLogFilePath() string                    // Returns log file path (empty if file logging disabled)
 ```
@@ -42,32 +48,32 @@ func GetLogFilePath() string                    // Returns log file path (empty 
 ## Log Level Functions
 
 ```go
-func Debug() *zerolog.Event  // Never suppressed (always emits to console + file)
-func Info() *zerolog.Event   // Suppressed on console in interactive mode
-func Warn() *zerolog.Event   // Suppressed on console in interactive mode
-func Error() *zerolog.Event  // Suppressed on console in interactive mode
+func Debug() *zerolog.Event  // Developer diagnostics (file-only)
+func Info() *zerolog.Event   // Informational (file-only)
+func Warn() *zerolog.Event   // Warnings (file-only)
+func Error() *zerolog.Event  // Errors (file-only)
 func Fatal() *zerolog.Event  // NEVER use in Cobra hooks — return errors instead
 func WithField(key string, value interface{}) zerolog.Logger  // Returns sub-logger with extra field
 ```
 
-All functions call `addContext()` to inject project/agent fields. `shouldSuppress()` checks interactive mode for Info/Warn/Error — when suppressed, events go to file-only logger instead.
+All functions call `addContext()` to inject project/agent fields.
 
-## Context & Mode
+## Context
 
 ```go
-func SetInteractiveMode(enabled bool)           // Suppress console logs (file logs continue)
 func SetContext(project, agent string)           // Add project/agent fields to all log entries
 func ClearContext()                              // Remove project/agent context
 ```
 
 ## Test Coverage
 
-`logger_test.go` — tests for initialization, interactive mode, context fields, log suppression.
+`logger_test.go` — tests for initialization, file-only output, context fields, nop behavior, no-console-output verification.
 
 ## Key Rules
 
 - **Never** use `logger.Fatal()` in Cobra hooks — return errors instead
-- `Debug()` is never suppressed, even in interactive mode
-- File logging continues regardless of interactive mode
+- Zerolog is for **file logging only** — never for user-visible output
+- `logger.Debug()` for developer diagnostics; `logger.Info/Warn/Error()` for file-only structured logs
+- User-visible output uses `fmt.Fprintf` to IOStreams streams
 - Log path: `~/.local/clawker/logs/clawker.log`
 - File rotation via lumberjack: 50MB size, 7 days age, 3 backups (defaults)

@@ -5,25 +5,21 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
-	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/git"
-	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/schmitthub/clawker/internal/workspace"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -33,12 +29,12 @@ type RunOptions struct {
 	*copts.ContainerOptions
 
 	IOStreams    *iostreams.IOStreams
+	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
-	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() *hostproxy.Manager
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter
+	Initializer  *shared.ContainerInitializer
 
 	// Run-specific options
 	Detach bool
@@ -56,12 +52,12 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 	opts := &RunOptions{
 		ContainerOptions: containerOpts,
 		IOStreams:        f.IOStreams,
+		TUI:              f.TUI,
 		Client:           f.Client,
 		Config:           f.Config,
-		GitManager:       f.GitManager,
-		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
+		Initializer:      shared.NewContainerInitializer(f),
 	}
 
 	cmd := &cobra.Command{
@@ -136,41 +132,47 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 	cfgGateway := opts.Config()
-
-	// Get project config
 	cfg := cfgGateway.Project
 
-	// Connect to Docker
+	// --- Phase A: Pre-progress (synchronous) ---
+	// Config + Docker connect + image resolution — may trigger interactive prompts.
+
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// Resolve image name
 	if containerOpts.Image == "@" {
 		resolvedImage, err := client.ResolveImageWithSource(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolving image: %w", err)
 		}
 		if resolvedImage == nil {
-			cmdutil.PrintError(ios, "No image specified and no default image configured")
-			cmdutil.PrintNextSteps(ios,
-				"Specify an image: clawker container run IMAGE",
-				"Set default_image in clawker.yaml",
-				"Set default_image in ~/.local/clawker/settings.yaml",
-				"Build a project image: clawker build",
-			)
-			return fmt.Errorf("no image specified")
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker container run IMAGE")
+			fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
+			fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
+			fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+			return cmdutil.SilentError
 		}
 
-		// For default images, verify the image exists and offer to rebuild if missing
 		if resolvedImage.Source == docker.ImageSourceDefault {
 			exists, err := client.ImageExists(ctx, resolvedImage.Reference)
 			if err != nil {
-				logger.Warn().Err(err).Str("image", resolvedImage.Reference).Msg("failed to check if image exists")
-			} else if !exists {
-				if err := handleMissingDefaultImage(ctx, opts, cfgGateway, resolvedImage.Reference); err != nil {
+				return fmt.Errorf("checking if image exists: %w", err)
+			}
+			if !exists {
+				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
+					ImageRef:       resolvedImage.Reference,
+					IOStreams:      ios,
+					TUI:            opts.TUI,
+					Prompter:       opts.Prompter,
+					SettingsLoader: func() config.SettingsLoader { return cfgGateway.SettingsLoader() },
+					BuildImage:     client.BuildDefaultImage,
+					CommandVerb:    "run",
+				}); err != nil {
 					return err
 				}
 			}
@@ -179,224 +181,43 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		containerOpts.Image = resolvedImage.Reference
 	}
 
-	// Resolve Agent and Container Name
-	agentName := containerOpts.GetAgentName()
-	if agentName == "" {
-		agentName = docker.GenerateRandomName()
-	}
-	opts.AgentName = agentName
-	containerName := docker.ContainerName(cfg.Project, agentName)
+	// --- Phase B: Progress-tracked initialization ---
 
-	// Determine working directory based on --worktree flag
-	var wd string
-	var projectRootDir string // Set when using worktree, for .git mount
-	if containerOpts.Worktree != "" {
-		// Use git worktree as workspace source
-		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, opts.AgentName) // TODO - flag parsing should probably be done in RunE not here
-		if err != nil {
-			return fmt.Errorf("invalid --worktree flag: %w", err)
-		}
-
-		gitMgr, err := opts.GitManager()
-		if err != nil {
-			return fmt.Errorf("cannot use --worktree: %w", err)
-		}
-
-		wd, err = gitMgr.SetupWorktree(cfg, wtSpec.Branch, wtSpec.Base)
-		if err != nil {
-			return fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, opts.AgentName, err)
-		}
-		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
-
-		// Capture project root for mounting .git in container.
-		// Worktrees use a .git file that references the main repo's .git directory.
-		projectRootDir = cfg.RootDir()
-	} else {
-		// Get working directory from project root, or fall back to current directory
-		wd = cfg.RootDir()
-		if wd == "" {
-			// Not in a registered project - use current working directory
-			var wdErr error
-			wd, wdErr = os.Getwd()
-			if wdErr != nil {
-				return fmt.Errorf("failed to get working directory: %w", wdErr)
-			}
-		}
-	}
-
-	// Setup workspace mounts
-	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride:   containerOpts.Mode,
-		Config:         cfg,
-		AgentName:      agentName,
-		WorkDir:        wd,
-		ProjectRootDir: projectRootDir,
+	initResult, err := opts.Initializer.Run(ctx, shared.InitParams{
+		Client:           client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            opts.flags,
+		Image:            containerOpts.Image,
+		StartAfterCreate: opts.Detach,
+		AltScreen:        containerOpts.TTY && containerOpts.Stdin,
 	})
 	if err != nil {
 		return err
 	}
-	workspaceMounts := wsResult.Mounts
 
-	// Initialize container config if the config volume was freshly created.
-	// This copies host Claude config and/or credentials into the volume before
-	// the container starts, so the agent inherits host settings on first run.
-	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
-			ProjectName:      cfg.Project,
-			AgentName:        agentName,
-			ContainerWorkDir: cfg.Workspace.RemotePath,
-			ClaudeCode:       cfg.Agent.ClaudeCode,
-			CopyToVolume:     client.CopyToVolume,
-		}); err != nil {
-			return fmt.Errorf("container init: %w", err)
-		}
+	opts.AgentName = initResult.AgentName
+
+	// --- Phase C: Post-progress ---
+
+	// Print deferred warnings
+	for _, warning := range initResult.Warnings {
+		fmt.Fprintln(ios.ErrOut, warning)
 	}
 
-	// Enable interactive mode early to suppress INFO logs during TTY sessions.
-	// This prevents host proxy and other startup logs from interfering with the TUI.
-	if !opts.Detach && containerOpts.TTY && containerOpts.Stdin {
-		logger.SetInteractiveMode(true)
-		defer logger.SetInteractiveMode(false)
-	}
-
-	// Start host proxy server for container-to-host communication (if enabled)
-	hostProxyRunning := false
-	if cfg.Security.HostProxyEnabled() {
-		hp := opts.HostProxy()
-		if err := hp.EnsureRunning(); err != nil {
-			logger.Warn().Err(err).Msg("failed to start host proxy server")
-			cmdutil.PrintWarning(ios, "Host proxy failed to start. Browser authentication may not work.")
-			cmdutil.PrintNextSteps(ios, "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
-		} else {
-			logger.Debug().Msg("host proxy started successfully")
-			hostProxyRunning = true
-			// Inject host proxy URL into container environment
-			if hp.IsRunning() {
-				envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
-				containerOpts.Env = append(containerOpts.Env, envVar)
-				logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
-			}
-		}
-	} else {
-		logger.Debug().Msg("host proxy disabled by config")
-	}
-
-	// Setup git credential forwarding
-	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
-	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
-	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
-
-	// Resolve workspace mode (CLI flag overrides config default)
-	workspaceMode := containerOpts.Mode
-	if workspaceMode == "" {
-		workspaceMode = cfg.Workspace.DefaultMode
-	}
-
-	// Inject config-derived runtime env vars (editor, firewall, terminal, agent env, instruction env)
-	envOpts := docker.RuntimeEnvOpts{
-		Project:         cfg.Project,
-		Agent:           agentName,
-		WorkspaceMode:   workspaceMode,
-		WorkspaceSource: wd,
-		Editor:          cfg.Agent.Editor,
-		Visual:          cfg.Agent.Visual,
-		Is256Color:      ios.Is256ColorSupported(),
-		TrueColor:       ios.IsTrueColorSupported(),
-		AgentEnv:        cfg.Agent.Env,
-	}
-	if cfg.Security.FirewallEnabled() {
-		envOpts.FirewallEnabled = true
-		envOpts.FirewallDomains = cfg.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
-		envOpts.FirewallOverride = cfg.Security.Firewall.IsOverrideMode()
-		envOpts.FirewallIPRangeSources = cfg.Security.Firewall.GetIPRangeSources()
-	}
-	if cfg.Security.GitCredentials != nil {
-		envOpts.GPGForwardingEnabled = cfg.Security.GitCredentials.GPGEnabled()
-		envOpts.SSHForwardingEnabled = cfg.Security.GitCredentials.GitSSHEnabled()
-	}
-	if cfg.Build.Instructions != nil {
-		envOpts.InstructionEnv = cfg.Build.Instructions.Env
-	}
-	runtimeEnv, err := docker.RuntimeEnv(envOpts)
-	if err != nil {
-		return err
-	}
-	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
-
-	// Validate cross-field constraints before building configs
-	if err := containerOpts.ValidateFlags(); err != nil {
-		return err
-	}
-
-	// Build configs using shared function
-	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(opts.flags, workspaceMounts, cfg)
-	if err != nil {
-		cmdutil.PrintError(ios, "Invalid configuration: %v", err)
-		return err
-	}
-
-	// Build extra labels for clawker metadata
-	extraLabels := map[string]string{
-		docker.LabelProject: cfg.Project,
-	}
-	extraLabels[docker.LabelAgent] = agentName
-
-	// Create container (whail injects managed labels and auto-connects to clawker-net)
-	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
-		Config:           containerConfig,
-		HostConfig:       hostConfig,
-		NetworkingConfig: networkConfig,
-		Name:             containerName,
-		ExtraLabels:      docker.Labels{extraLabels},
-		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
-		},
-	})
-	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
-	}
-
-	containerID := resp.ID
-
-	// Inject onboarding file if host auth is enabled.
-	// Must happen after ContainerCreate and before ContainerStart.
-	// The file marks Claude Code onboarding as complete so the user is not prompted.
-	if cfg.Agent.ClaudeCode.UseHostAuthEnabled() {
-		if err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
-			ContainerID:     containerID,
-			CopyToContainer: shared.NewCopyToContainerFn(client),
-		}); err != nil {
-			return fmt.Errorf("inject onboarding: %w", err)
-		}
-	}
-
-	// Print warnings if any
-	for _, warning := range resp.Warnings {
-		fmt.Fprintln(ios.ErrOut, "Warning:", warning)
-	}
-
-	// If detached, just start and print container ID
 	if opts.Detach {
-		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
-			cmdutil.HandleError(ios, err)
-			return err
-		}
 		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
 		if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
-			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+			if err := opts.SocketBridge().EnsureBridge(initResult.ContainerID, gpgEnabled); err != nil {
 				logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
 			}
 		}
-		fmt.Fprintln(ios.Out, containerID[:12])
+		fmt.Fprintln(ios.Out, initResult.ContainerID[:12])
 		return nil
 	}
 
-	// For non-detached mode, attach BEFORE starting to handle short-lived containers
-	// and containers with --rm that may exit and be removed before we can attach.
-	// See: https://labs.iximiuz.com/tutorials/docker-run-vs-attach-vs-exec
-	return attachThenStart(ctx, client, containerID, opts)
+	return attachThenStart(ctx, client, initResult.ContainerID, opts)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
@@ -432,8 +253,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
 		logger.Debug().Err(err).Msg("container attach failed")
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
 	logger.Debug().Msg("container attach succeeded")
@@ -475,8 +295,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	logger.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		logger.Debug().Err(err).Msg("container start failed")
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("starting container: %w", err)
 	}
 	logger.Debug().Msg("container started successfully")
 
@@ -538,7 +357,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		case status := <-statusCh:
 			logger.Debug().Int("exitCode", status).Msg("container exited")
 			if status != 0 {
-				return fmt.Errorf("container exited with status %d", status)
+				return &cmdutil.ExitError{Code: status}
 			}
 			return nil
 		case <-time.After(2 * time.Second):
@@ -549,7 +368,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	case status := <-statusCh:
 		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
 		if status != 0 {
-			return fmt.Errorf("container exited with status %d", status)
+			return &cmdutil.ExitError{Code: status}
 		}
 		return nil
 	}
@@ -587,86 +406,4 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 		}
 	}()
 	return statusCh
-}
-
-// handleMissingDefaultImage prompts the user to rebuild a missing default image.
-// In non-interactive mode, it prints instructions and returns an error.
-func handleMissingDefaultImage(ctx context.Context, opts *RunOptions, cfgGateway *config.Config, imageRef string) error {
-	ios := opts.IOStreams
-
-	if !ios.IsInteractive() {
-		cmdutil.PrintError(ios, "Default image %q not found", imageRef)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker run IMAGE",
-			"Or build a project image: clawker build",
-		)
-		return fmt.Errorf("default image %q not found", imageRef)
-	}
-
-	// Interactive mode — prompt to rebuild
-	p := opts.Prompter()
-	options := []prompter.SelectOption{
-		{Label: "Yes", Description: "Rebuild the default base image now"},
-		{Label: "No", Description: "Cancel and fix manually"},
-	}
-
-	idx, err := p.Select(
-		fmt.Sprintf("Default image %q not found. Rebuild now?", imageRef),
-		options,
-		0,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to prompt for rebuild: %w", err)
-	}
-
-	if idx != 0 {
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to rebuild the base image",
-			"Or specify an image explicitly: clawker run IMAGE",
-			"Or build a project image: clawker build",
-		)
-		return fmt.Errorf("default image %q not found", imageRef)
-	}
-
-	// Get flavor selection
-	flavors := intbuild.DefaultFlavorOptions()
-	flavorOptions := make([]prompter.SelectOption, len(flavors))
-	for i, f := range flavors {
-		flavorOptions[i] = prompter.SelectOption{
-			Label:       f.Name,
-			Description: f.Description,
-		}
-	}
-
-	flavorIdx, err := p.Select("Select Linux flavor", flavorOptions, 0)
-	if err != nil {
-		return fmt.Errorf("failed to select flavor: %w", err)
-	}
-
-	selectedFlavor := flavors[flavorIdx].Name
-	fmt.Fprintf(ios.ErrOut, "Building %s...\n", docker.DefaultImageTag)
-
-	if err := docker.BuildDefaultImage(ctx, selectedFlavor); err != nil {
-		fmt.Fprintf(ios.ErrOut, "Error: Failed to build image: %v\n", err)
-		return fmt.Errorf("failed to rebuild default image: %w", err)
-	}
-
-	fmt.Fprintf(ios.ErrOut, "Build complete! Using image: %s\n", docker.DefaultImageTag)
-
-	// Persist the default image in settings
-	settingsLoader := cfgGateway.SettingsLoader()
-	if settingsLoader != nil {
-		currentSettings, loadErr := settingsLoader.Load()
-		if loadErr != nil {
-			logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
-		} else {
-			currentSettings.DefaultImage = docker.DefaultImageTag
-			if saveErr := settingsLoader.Save(currentSettings); saveErr != nil {
-				logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
-			}
-		}
-	}
-
-	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,7 +17,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 )
 
 const (
@@ -26,16 +29,31 @@ const (
 	TestLabelValue = "true"
 	// ClawkerManagedLabel is the standard clawker managed label
 	ClawkerManagedLabel = "com.clawker.managed"
+	// LabelTestName is the label key for the originating test function name
+	LabelTestName = "com.clawker.test.name"
 )
 
-// RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources.
-// It removes stale resources from previous (possibly killed) runs before tests
-// start, and cleans up again after tests complete — including on SIGINT/SIGTERM
-// (e.g. Ctrl+C). Use from TestMain:
+// RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources
+// and host-proxy daemons. It acquires an exclusive file lock to prevent concurrent
+// integration test runs from piling up containers and processes. Stale resources
+// from previous (possibly killed) runs are cleaned before tests start, and again
+// after tests complete — including on SIGINT/SIGTERM (e.g. Ctrl+C). Use from TestMain:
 //
 //	func TestMain(m *testing.M) { os.Exit(harness.RunTestMain(m)) }
 func RunTestMain(m *testing.M) int {
+	// Acquire exclusive lock to prevent concurrent integration test runs
+	// from piling up containers and host-proxy daemons.
+	lockFile, err := acquireTestLock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	defer releaseTestLock(lockFile)
+
 	cleanup := func() {
+		// Always kill host-proxy daemons, even if Docker is unavailable
+		cleanupHostProxy()
+
 		if !isDockerAvailable() {
 			return
 		}
@@ -67,6 +85,45 @@ func RunTestMain(m *testing.M) int {
 	cleanup()
 
 	return code
+}
+
+// acquireTestLock acquires an exclusive file lock to prevent concurrent
+// integration test runs from piling up containers and processes.
+func acquireTestLock() (*os.File, error) {
+	lockDir, err := config.ClawkerHome()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine lock directory: %w", err)
+	}
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return nil, fmt.Errorf("cannot create lock directory: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, "integration-test.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another integration test run is active (lock: %s)", lockPath)
+	}
+	return f, nil
+}
+
+// releaseTestLock releases the exclusive file lock.
+func releaseTestLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
+}
+
+// cleanupHostProxy stops any running host-proxy daemon.
+func cleanupHostProxy() {
+	m := hostproxy.NewManager()
+	if m.IsRunning() {
+		_ = m.StopDaemon()
+	}
 }
 
 // RequireDocker skips the test if Docker is not available.
@@ -103,7 +160,7 @@ func NewTestClient(t *testing.T) *docker.Client {
 	RequireDocker(t)
 
 	ctx := context.Background()
-	c, err := docker.NewClient(ctx, nil)
+	c, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
 	if err != nil {
 		t.Fatalf("failed to create Docker client: %v", err)
 	}
@@ -115,9 +172,10 @@ func NewTestClient(t *testing.T) *docker.Client {
 	return c
 }
 
-// NewRawDockerClient creates a raw Docker SDK client for testing.
-// Use this when you need direct SDK access without clawker's label filtering.
-// The client is automatically closed when the test completes.
+// Deprecated: NewRawDockerClient creates a raw Docker SDK client for testing.
+// Prefer NewTestClient which returns *docker.Client with automatic test label injection.
+// This function remains for infrastructure code (e.g., BuildLightImage prune, RunTestMain cleanup)
+// that needs raw SDK access for operations whail overrides with different signatures.
 func NewRawDockerClient(t *testing.T) *client.Client {
 	t.Helper()
 	RequireDocker(t)
@@ -150,11 +208,15 @@ func AddTestLabels(labels map[string]string) map[string]string {
 
 // AddClawkerLabels adds both clawker and test labels to a map.
 // This creates resources that are managed by clawker AND marked for test cleanup.
-func AddClawkerLabels(labels map[string]string, project, agent string) map[string]string {
+// The testName parameter sets com.clawker.test.name for leak tracing.
+func AddClawkerLabels(labels map[string]string, project, agent, testName string) map[string]string {
 	result := AddTestLabels(labels)
 	result[ClawkerManagedLabel] = "true"
 	result["com.clawker.project"] = project
 	result["com.clawker.agent"] = agent
+	if testName != "" {
+		result[LabelTestName] = testName
+	}
 	return result
 }
 
@@ -299,13 +361,13 @@ func CleanupTestResources(ctx context.Context, cli *client.Client) error {
 }
 
 // ContainerExists checks if a container exists by name.
-func ContainerExists(ctx context.Context, cli *client.Client, name string) bool {
+func ContainerExists(ctx context.Context, cli *docker.Client, name string) bool {
 	_, err := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	return err == nil
 }
 
 // ContainerIsRunning checks if a container is running by name.
-func ContainerIsRunning(ctx context.Context, cli *client.Client, name string) bool {
+func ContainerIsRunning(ctx context.Context, cli *docker.Client, name string) bool {
 	info, err := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		return false
@@ -317,7 +379,7 @@ func ContainerIsRunning(ctx context.Context, cli *client.Client, name string) bo
 // Polls every 500ms until the context is cancelled or the container is running.
 // Fails fast with exit code information if the container enters a terminal state
 // (exited or dead) instead of timing out silently.
-func WaitForContainerRunning(ctx context.Context, cli *client.Client, name string) error {
+func WaitForContainerRunning(ctx context.Context, cli *docker.Client, name string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -349,13 +411,13 @@ func WaitForContainerRunning(ctx context.Context, cli *client.Client, name strin
 }
 
 // VolumeExists checks if a volume exists by name.
-func VolumeExists(ctx context.Context, cli *client.Client, name string) bool {
-	_, err := cli.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
+func VolumeExists(ctx context.Context, cli *docker.Client, name string) bool {
+	_, err := cli.VolumeInspect(ctx, name)
 	return err == nil
 }
 
 // NetworkExists checks if a network exists by name.
-func NetworkExists(ctx context.Context, cli *client.Client, name string) bool {
+func NetworkExists(ctx context.Context, cli *docker.Client, name string) bool {
 	_, err := cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 	return err == nil
 }
@@ -376,7 +438,7 @@ type ContainerExitDiagnostics struct {
 
 // GetContainerExitDiagnostics retrieves detailed exit information for a stopped container.
 // logTailLines specifies how many lines from the end of logs to include (0 = all logs).
-func GetContainerExitDiagnostics(ctx context.Context, cli *client.Client, containerID string, logTailLines int) (*ContainerExitDiagnostics, error) {
+func GetContainerExitDiagnostics(ctx context.Context, cli *docker.Client, containerID string, logTailLines int) (*ContainerExitDiagnostics, error) {
 	info, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, err
@@ -407,7 +469,7 @@ func GetContainerExitDiagnostics(ctx context.Context, cli *client.Client, contai
 }
 
 // getContainerLogsTail retrieves container logs with an optional tail limit.
-func getContainerLogsTail(ctx context.Context, cli *client.Client, containerID string, tailLines int) (string, error) {
+func getContainerLogsTail(ctx context.Context, cli *docker.Client, containerID string, tailLines int) (string, error) {
 	opts := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -535,6 +597,8 @@ type BuildSimpleTestImageOptions struct {
 // BuildSimpleTestImage builds a simple test image from a Dockerfile string.
 // This is useful for tests that don't need the full clawker infrastructure (Claude Code, etc.).
 // The image is tagged uniquely and automatically cleaned up when the test completes.
+// Uses docker.Client (wrapping whail.Engine) so the image is built through clawker's
+// label management system and is visible to managed image queries.
 func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestImageOptions) string {
 	t.Helper()
 	RequireDocker(t)
@@ -550,8 +614,8 @@ func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestI
 	}
 	imageTag := fmt.Sprintf("clawker-simple-%s:%s", project, timestamp)
 
-	// Get raw Docker client
-	rawClient := NewRawDockerClient(t)
+	// Use clawker Docker client (wraps whail.Engine) — NOT raw moby client
+	dc := NewTestClient(t)
 
 	// Create tar archive with just the Dockerfile
 	buildCtx, err := createSimpleBuildContext(dockerfile)
@@ -559,49 +623,29 @@ func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestI
 		t.Fatalf("failed to create build context: %v", err)
 	}
 
-	// Build labels
+	// Build labels — managed label is auto-injected by whail, but we add
+	// project label and test label explicitly
 	labels := map[string]string{
-		TestLabel:           TestLabelValue,
-		ClawkerManagedLabel: "true",
+		TestLabel: TestLabelValue,
 	}
 	if opts.Project != "" {
 		labels["com.clawker.project"] = opts.Project
 	}
 
-	// Build options
-	buildOpts := client.ImageBuildOptions{
-		Tags:        []string{imageTag},
-		Dockerfile:  "Dockerfile",
-		NoCache:     opts.NoCache,
-		Labels:      labels,
-		Remove:      true,
-		ForceRemove: true,
-	}
-
 	t.Logf("Building simple test image: %s", imageTag)
-	resp, err := rawClient.ImageBuild(ctx, buildCtx, buildOpts)
-	if err != nil {
+	if err := dc.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
+		Tags:           []string{imageTag},
+		NoCache:        opts.NoCache,
+		Labels:         labels,
+		SuppressOutput: opts.SuppressOutput,
+	}); err != nil {
 		t.Fatalf("failed to build simple test image: %v", err)
 	}
-	defer resp.Body.Close()
 
-	// Process build output
-	if opts.SuppressOutput {
-		// Consume output to allow build to complete
-		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-			t.Fatalf("failed to read build output: %v", err)
-		}
-	} else {
-		// Stream output to test log
-		if _, err := io.Copy(&testLogWriter{t: t}, resp.Body); err != nil {
-			t.Fatalf("failed to read build output: %v", err)
-		}
-	}
-
-	// Register cleanup
+	// Register cleanup — uses the same whail-wrapped client
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
-		if _, err := rawClient.ImageRemove(cleanupCtx, imageTag, client.ImageRemoveOptions{Force: true}); err != nil {
+		if _, err := dc.ImageRemove(cleanupCtx, imageTag, client.ImageRemoveOptions{Force: true}); err != nil {
 			t.Logf("WARNING: failed to cleanup simple test image %s: %v", imageTag, err)
 		}
 	})
@@ -634,12 +678,56 @@ func createSimpleBuildContext(dockerfile string) (io.Reader, error) {
 	return buf, nil
 }
 
-// testLogWriter adapts *testing.T to io.Writer for build output.
-type testLogWriter struct {
-	t *testing.T
-}
+// TestChownImage is the stable tag for the test chown image used by CopyToVolume.
+const TestChownImage = "clawker-test-chown:latest"
 
-func (w *testLogWriter) Write(p []byte) (n int, err error) {
-	w.t.Log(string(p))
-	return len(p), nil
+// BuildTestChownImage builds a minimal busybox-based image with test labels
+// for CopyToVolume operations. Uses docker.Client (wrapping whail.Engine) so
+// the image is built through clawker's label management system — managed labels
+// are auto-injected and the image is visible to managed image queries.
+//
+// The image uses a stable tag (TestChownImage) and is only built if it doesn't
+// already exist, making it safe to call multiple times per test run. The image
+// is NOT cleaned up per-test since it's shared; CleanupTestResources removes
+// it by label.
+func BuildTestChownImage(t *testing.T) {
+	t.Helper()
+	RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// Use clawker Docker client (wraps whail.Engine) — NOT raw moby client
+	dc := NewTestClient(t)
+
+	// Check if already exists — uses whail's managed label check, which is
+	// correct since we build this image through whail (so it has managed labels)
+	exists, err := dc.ImageExists(ctx, TestChownImage)
+	if err != nil {
+		t.Fatalf("failed to check for test chown image: %v", err)
+	}
+	if exists {
+		return // Already built
+	}
+
+	// Build from busybox with test labels
+	// Note: managed label (com.clawker.managed=true) is auto-injected by whail
+	dockerfile := fmt.Sprintf("FROM busybox:latest\nLABEL %s=%s\n",
+		TestLabel, TestLabelValue)
+	buildCtx, err := createSimpleBuildContext(dockerfile)
+	if err != nil {
+		t.Fatalf("failed to create chown image build context: %v", err)
+	}
+
+	if err := dc.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
+		Tags: []string{TestChownImage},
+		Labels: map[string]string{
+			TestLabel: TestLabelValue,
+		},
+		SuppressOutput: true,
+	}); err != nil {
+		t.Fatalf("failed to build test chown image: %v", err)
+	}
+
+	t.Logf("Built test chown image: %s", TestChownImage)
 }

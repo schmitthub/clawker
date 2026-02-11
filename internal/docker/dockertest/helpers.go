@@ -3,6 +3,7 @@ package dockertest
 import (
 	"context"
 	"io"
+	"net"
 	"strings"
 
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
@@ -190,6 +191,229 @@ func (f *FakeClient) SetupNetworkExists(name string, exists bool) {
 			}, nil
 		}
 		return client.NetworkInspectResult{}, notFoundError(networkName)
+	}
+}
+
+// SetupVolumeCreate configures the fake to succeed on VolumeCreate,
+// returning a volume with the requested name and managed labels.
+func (f *FakeClient) SetupVolumeCreate() {
+	f.FakeAPI.VolumeCreateFn = func(_ context.Context, opts client.VolumeCreateOptions) (client.VolumeCreateResult, error) {
+		return client.VolumeCreateResult{
+			Volume: volume.Volume{
+				Name:   opts.Name,
+				Labels: opts.Labels,
+			},
+		}, nil
+	}
+}
+
+// SetupNetworkCreate configures the fake to succeed on NetworkCreate.
+func (f *FakeClient) SetupNetworkCreate() {
+	f.FakeAPI.NetworkCreateFn = func(_ context.Context, name string, _ client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
+		return client.NetworkCreateResult{
+			ID: "net-" + name,
+		}, nil
+	}
+}
+
+// SetupContainerAttach configures the fake to succeed on ContainerAttach,
+// returning a HijackedResponse backed by a net.Pipe. The server side of the
+// pipe is closed immediately, simulating a container that exits right away.
+func (f *FakeClient) SetupContainerAttach() {
+	f.FakeAPI.ContainerAttachFn = func(_ context.Context, _ string, _ client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
+		// net.Pipe creates a synchronous in-memory connection pair.
+		// Close the server side so reads on the client side return EOF.
+		clientConn, serverConn := net.Pipe()
+		serverConn.Close()
+		return client.ContainerAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.raw-stream"),
+		}, nil
+	}
+}
+
+// SetupContainerWait configures the fake to succeed on ContainerWait,
+// returning the given exit code immediately.
+func (f *FakeClient) SetupContainerWait(exitCode int64) {
+	f.FakeAPI.ContainerWaitFn = func(_ context.Context, _ string, _ client.ContainerWaitOptions) client.ContainerWaitResult {
+		return whailtest.FakeContainerWaitExit(exitCode)
+	}
+}
+
+// SetupContainerResize configures the fake to succeed on ContainerResize.
+func (f *FakeClient) SetupContainerResize() {
+	f.FakeAPI.ContainerResizeFn = func(_ context.Context, _ string, _ client.ContainerResizeOptions) (client.ContainerResizeResult, error) {
+		return client.ContainerResizeResult{}, nil
+	}
+}
+
+// SetupContainerRemove configures the fake to succeed on ContainerRemove.
+func (f *FakeClient) SetupContainerRemove() {
+	f.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+		return client.ContainerRemoveResult{}, nil
+	}
+}
+
+// SetupContainerStop configures the fake to succeed on ContainerStop.
+func (f *FakeClient) SetupContainerStop() {
+	f.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
+		return client.ContainerStopResult{}, nil
+	}
+}
+
+// SetupContainerKill configures the fake to succeed on ContainerKill.
+func (f *FakeClient) SetupContainerKill() {
+	f.FakeAPI.ContainerKillFn = func(_ context.Context, _ string, _ client.ContainerKillOptions) (client.ContainerKillResult, error) {
+		return client.ContainerKillResult{}, nil
+	}
+}
+
+// SetupContainerPause configures the fake to succeed on ContainerPause.
+func (f *FakeClient) SetupContainerPause() {
+	f.FakeAPI.ContainerPauseFn = func(_ context.Context, _ string, _ client.ContainerPauseOptions) (client.ContainerPauseResult, error) {
+		return client.ContainerPauseResult{}, nil
+	}
+}
+
+// SetupContainerUnpause configures the fake to succeed on ContainerUnpause.
+func (f *FakeClient) SetupContainerUnpause() {
+	f.FakeAPI.ContainerUnpauseFn = func(_ context.Context, _ string, _ client.ContainerUnpauseOptions) (client.ContainerUnpauseResult, error) {
+		return client.ContainerUnpauseResult{}, nil
+	}
+}
+
+// SetupContainerRename configures the fake to succeed on ContainerRename.
+func (f *FakeClient) SetupContainerRename() {
+	f.FakeAPI.ContainerRenameFn = func(_ context.Context, _ string, _ client.ContainerRenameOptions) (client.ContainerRenameResult, error) {
+		return client.ContainerRenameResult{}, nil
+	}
+}
+
+// SetupContainerRestart configures the fake to succeed on ContainerRestart.
+func (f *FakeClient) SetupContainerRestart() {
+	f.FakeAPI.ContainerRestartFn = func(_ context.Context, _ string, _ client.ContainerRestartOptions) (client.ContainerRestartResult, error) {
+		return client.ContainerRestartResult{}, nil
+	}
+}
+
+// SetupContainerUpdate configures the fake to succeed on ContainerUpdate.
+func (f *FakeClient) SetupContainerUpdate() {
+	f.FakeAPI.ContainerUpdateFn = func(_ context.Context, _ string, _ client.ContainerUpdateOptions) (client.ContainerUpdateResult, error) {
+		return client.ContainerUpdateResult{}, nil
+	}
+}
+
+// SetupContainerInspect configures the fake to return inspect data for the
+// given container ID. Unlike SetupFindContainer (which also wires ContainerList
+// for find-by-name), this only wires ContainerInspect — suitable for commands
+// that already have a container ID and just need inspect data.
+func (f *FakeClient) SetupContainerInspect(containerID string, c container.Summary) {
+	f.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		if id != c.ID && id != containerID {
+			return client.ContainerInspectResult{}, notFoundError(id)
+		}
+		name := containerID
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		return client.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:   c.ID,
+				Name: "/" + name,
+				Config: &container.Config{
+					Image:  c.Image,
+					Labels: c.Labels,
+				},
+				State: &container.State{
+					Status:  c.State,
+					Running: c.State == "running",
+				},
+			},
+		}, nil
+	}
+}
+
+// SetupContainerLogs configures the fake to return the given string as log
+// output. The logs are returned as a plain io.ReadCloser (suitable for
+// non-multiplexed TTY output).
+func (f *FakeClient) SetupContainerLogs(logs string) {
+	f.FakeAPI.ContainerLogsFn = func(_ context.Context, _ string, _ client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
+		return io.NopCloser(strings.NewReader(logs)), nil
+	}
+}
+
+// SetupContainerTop configures the fake to return the given process table.
+func (f *FakeClient) SetupContainerTop(titles []string, processes [][]string) {
+	f.FakeAPI.ContainerTopFn = func(_ context.Context, _ string, _ client.ContainerTopOptions) (client.ContainerTopResult, error) {
+		return client.ContainerTopResult{
+			Titles:    titles,
+			Processes: processes,
+		}, nil
+	}
+}
+
+// SetupContainerStats configures the fake to return a single JSON stats
+// response. The body is a one-shot io.ReadCloser containing the given JSON.
+// Pass an empty string for a minimal default stats response.
+func (f *FakeClient) SetupContainerStats(statsJSON string) {
+	if statsJSON == "" {
+		statsJSON = `{"read":"2024-01-01T00:00:00Z","cpu_stats":{},"memory_stats":{}}`
+	}
+	f.FakeAPI.ContainerStatsFn = func(_ context.Context, _ string, _ client.ContainerStatsOptions) (client.ContainerStatsResult, error) {
+		return client.ContainerStatsResult{
+			Body: io.NopCloser(strings.NewReader(statsJSON)),
+		}, nil
+	}
+}
+
+// SetupCopyFromContainer configures the fake to succeed on CopyFromContainer,
+// returning an empty tar stream.
+func (f *FakeClient) SetupCopyFromContainer() {
+	f.FakeAPI.CopyFromContainerFn = func(_ context.Context, _ string, _ client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+		return client.CopyFromContainerResult{
+			Content: io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+}
+
+// SetupExecCreate configures the fake to succeed on ExecCreate, returning
+// the given exec ID.
+func (f *FakeClient) SetupExecCreate(execID string) {
+	f.FakeAPI.ExecCreateFn = func(_ context.Context, _ string, _ client.ExecCreateOptions) (client.ExecCreateResult, error) {
+		return client.ExecCreateResult{
+			ID: execID,
+		}, nil
+	}
+}
+
+// SetupExecStart configures the fake to succeed on ExecStart (detach mode).
+func (f *FakeClient) SetupExecStart() {
+	f.FakeAPI.ExecStartFn = func(_ context.Context, _ string, _ client.ExecStartOptions) (client.ExecStartResult, error) {
+		return client.ExecStartResult{}, nil
+	}
+}
+
+// SetupExecAttach configures the fake to return a hijacked connection for ExecAttach.
+// The server side is closed immediately (suitable for non-TTY tests).
+func (f *FakeClient) SetupExecAttach() {
+	f.FakeAPI.ExecAttachFn = func(_ context.Context, _ string, _ client.ExecAttachOptions) (client.ExecAttachResult, error) {
+		// net.Pipe creates a synchronous in-memory connection pair.
+		// Close the server side so reads on the client side return EOF.
+		clientConn, serverConn := net.Pipe()
+		serverConn.Close()
+		return client.ExecAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.raw-stream"),
+		}, nil
+	}
+}
+
+// SetupExecInspect configures the fake to return an ExecInspect result with
+// the given exit code. Running is set to false (exec completed).
+func (f *FakeClient) SetupExecInspect(exitCode int) {
+	f.FakeAPI.ExecInspectFn = func(_ context.Context, _ string, _ client.ExecInspectOptions) (client.ExecInspectResult, error) {
+		return client.ExecInspectResult{
+			ExitCode: exitCode,
+			Running:  false,
+		}, nil
 	}
 }
 

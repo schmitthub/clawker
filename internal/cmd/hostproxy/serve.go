@@ -27,7 +27,7 @@ func NewCmdServe() *cobra.Command {
   clawker host-proxy serve --grace-period 2m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize daemon logger (debug mode disabled for background daemon)
-			logger.Init(false)
+			logger.Init()
 
 			logger.Info().
 				Int("port", opts.Port).

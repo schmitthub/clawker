@@ -2,32 +2,20 @@ package logger
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var (
-	// Log is the global logger instance
+	// Log is the global logger instance (file-only; nop before InitWithFile)
 	Log zerolog.Logger
 
 	// fileWriter is the file output for logging (with rotation)
 	fileWriter *lumberjack.Logger
-
-	// fileOnlyLog is a cached logger that writes only to file (no console).
-	// Used in interactive mode to avoid creating a new logger per log event.
-	fileOnlyLog zerolog.Logger
-
-	// interactiveMode controls whether console logs are suppressed.
-	// When true, ALL console logs (INFO, WARN, ERROR) are suppressed to avoid TUI interference.
-	// File logging (if enabled) is NOT affected by interactive mode.
-	interactiveMode bool
-	interactiveMu   sync.RWMutex
 
 	// logContext holds project/agent context for log entries (optional, may be empty)
 	logContext   logContextData
@@ -118,65 +106,26 @@ func (c *LoggingConfig) GetMaxBackups() int {
 	return c.MaxBackups
 }
 
-// SetInteractiveMode enables or disables interactive mode.
-// When enabled, ALL console logs (INFO, WARN, ERROR) are suppressed to avoid
-// interfering with TUI output. Debug and Fatal are never suppressed on console.
-// File logging (if enabled) is NOT affected by interactive mode.
-func SetInteractiveMode(enabled bool) {
-	interactiveMu.Lock()
-	defer interactiveMu.Unlock()
-	interactiveMode = enabled
+// Init initializes the global logger as a nop logger.
+// This is the pre-file-logging placeholder — all log output is discarded
+// until InitWithFile is called with a valid logs directory.
+func Init() {
+	Log = zerolog.Nop()
 }
 
-// Init initializes the global logger with the specified configuration.
-// This initializes console-only logging. Use InitWithFile for file logging.
-func Init(debug bool) {
-	// Use console writer for pretty output
-	var output io.Writer = zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: time.RFC3339,
-		NoColor:    false,
-	}
-
-	// Set log level based on debug flag
-	level := zerolog.InfoLevel
-	if debug {
-		level = zerolog.DebugLevel
-	}
-
-	Log = zerolog.New(output).
-		Level(level).
-		With().
-		Timestamp().
-		Logger()
-}
-
-// InitWithFile initializes the logger with optional file output.
-// File logging captures all logs regardless of interactive mode.
+// InitWithFile initializes the logger with file-only output.
+// Zerolog never writes to the console — user-visible output uses
+// fmt.Fprintf to IOStreams (see code style guide).
 // If logsDir is empty or cfg indicates file logging is disabled,
-// this behaves like Init (console-only).
+// the logger remains a nop.
 func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error {
-	// Set log level based on debug flag
 	level := zerolog.InfoLevel
 	if debug {
 		level = zerolog.DebugLevel
 	}
 
-	// Console writer for human-readable output
-	consoleWriter := zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: time.RFC3339,
-		NoColor:    false,
-	}
-
-	// Check if file logging should be enabled
 	if logsDir == "" || cfg == nil || !cfg.IsFileEnabled() {
-		// Console-only logging
-		Log = zerolog.New(consoleWriter).
-			Level(level).
-			With().
-			Timestamp().
-			Logger()
+		Log = zerolog.Nop()
 		return nil
 	}
 
@@ -197,20 +146,7 @@ func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error {
 		Compress:   false,
 	}
 
-	// Create a cached file-only logger for use in interactive mode.
-	// This avoids allocating a new logger on each suppressed log event.
-	fileOnlyLog = zerolog.New(fileWriter).
-		Level(level).
-		With().
-		Timestamp().
-		Logger()
-
-	// Multi-writer: console + file
-	// Console uses human-readable format, file uses JSON
-	// Interactive mode filtering happens at the log function level (Info, Warn, Error)
-	multi := io.MultiWriter(consoleWriter, fileWriter)
-
-	Log = zerolog.New(multi).
+	Log = zerolog.New(fileWriter).
 		Level(level).
 		With().
 		Timestamp().
@@ -238,59 +174,28 @@ func GetLogFilePath() string {
 	return ""
 }
 
-// shouldSuppress returns true if console logs should be suppressed (interactive mode, non-debug level)
-func shouldSuppress() bool {
-	interactiveMu.RLock()
-	interactive := interactiveMode
-	interactiveMu.RUnlock()
-	return interactive && Log.GetLevel() != zerolog.DebugLevel
-}
-
-// Debug logs a debug message (never suppressed - used for debugging)
+// Debug logs a debug message (developer diagnostics, file-only)
 func Debug() *zerolog.Event {
 	return addContext(Log.Debug())
 }
 
-// Info logs an info message (suppressed on console in interactive mode, still written to file)
+// Info logs an info message (file-only)
 func Info() *zerolog.Event {
-	if shouldSuppress() {
-		// In interactive mode, log to file only (if enabled)
-		if fileWriter != nil {
-			return addContext(fileOnlyLog.Info())
-		}
-		nop := zerolog.Nop()
-		return nop.Info()
-	}
 	return addContext(Log.Info())
 }
 
-// Warn logs a warning message (suppressed on console in interactive mode, still written to file)
+// Warn logs a warning message (file-only)
 func Warn() *zerolog.Event {
-	if shouldSuppress() {
-		// In interactive mode, log to file only (if enabled)
-		if fileWriter != nil {
-			return addContext(fileOnlyLog.Warn())
-		}
-		nop := zerolog.Nop()
-		return nop.Warn()
-	}
 	return addContext(Log.Warn())
 }
 
-// Error logs an error message (suppressed on console in interactive mode, still written to file)
+// Error logs an error message (file-only)
 func Error() *zerolog.Event {
-	if shouldSuppress() {
-		// In interactive mode, log to file only (if enabled)
-		if fileWriter != nil {
-			return addContext(fileOnlyLog.Error())
-		}
-		nop := zerolog.Nop()
-		return nop.Error()
-	}
 	return addContext(Log.Error())
 }
 
-// Fatal logs a fatal message and exits (never suppressed - critical failures)
+// Fatal logs a fatal message and exits (file-only).
+// NEVER use in Cobra hooks — return errors instead.
 func Fatal() *zerolog.Event {
 	return addContext(Log.Fatal())
 }

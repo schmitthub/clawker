@@ -3,11 +3,15 @@ package restart
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/require"
 )
 
@@ -150,4 +154,105 @@ func TestCmdRestart_MultipleContainers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
 	require.Equal(t, []string{"container1", "container2", "container3"}, gotOpts.Containers)
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func testRestartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestRestartRun_Success(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fake.SetupContainerRestart()
+
+	f, tio := testRestartFactory(t, fake)
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	fake.AssertCalled(t, "ContainerRestart")
+}
+
+func TestRestartRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"mycontainer"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestRestartRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — container won't be found
+
+	f, tio := testRestartFactory(t, fake)
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+}
+
+func TestRestartRun_PartialFailure(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture1 := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture1)
+	fake.SetupContainerRestart()
+
+	f, tio := testRestartFactory(t, fake)
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+
+	// First container succeeded
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	// Second container had error
+	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
 }

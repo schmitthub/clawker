@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
@@ -125,27 +126,18 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("failed to find container %q: %w", containerName, err)
 	}
 
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", containerName)
-	}
-
-	// Enable interactive mode early to suppress INFO logs during TTY sessions.
-	// This prevents host proxy and other startup logs from interfering with the TUI.
-	if !opts.Detach && opts.TTY && opts.Interactive {
-		logger.SetInteractiveMode(true)
-		defer logger.SetInteractiveMode(false)
 	}
 
 	// Setup git credential forwarding for exec sessions
@@ -192,15 +184,12 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Create exec instance
 	execResp, err := client.ExecCreate(ctx, c.ID, execConfig)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("creating exec instance: %w", err)
 	}
 
 	execID := execResp.ID
 	if execID == "" {
-		err := fmt.Errorf("exec ID is empty")
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("exec instance returned empty ID")
 	}
 
 	// If detached, just start and return
@@ -210,8 +199,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 			TTY:    opts.TTY,
 		})
 		if err != nil {
-			cmdutil.HandleError(ios, err)
-			return err
+			return fmt.Errorf("starting detached exec: %w", err)
 		}
 		fmt.Fprintln(ios.Out, execID)
 		return nil
@@ -234,14 +222,13 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 
 	hijacked, err := client.ExecAttach(ctx, execID, attachOpts)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("attaching to exec: %w", err)
 	}
 	defer hijacked.Close()
 
 	// Handle I/O
 	if opts.TTY && pty != nil {
-		// Use PTY handler for TTY mode with resize support
+		// TTY mode: Stream for I/O, separate resize handling
 		resizeFunc := func(height, width uint) error {
 			_, err := client.ExecResize(ctx, execID, docker.ExecResizeOptions{
 				Height: height,
@@ -249,7 +236,34 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 			})
 			return err
 		}
-		if err := pty.StreamWithResize(ctx, hijacked.HijackedResponse, resizeFunc); err != nil {
+
+		streamDone := make(chan error, 1)
+		go func() {
+			streamDone <- pty.Stream(ctx, hijacked.HijackedResponse)
+		}()
+
+		// Resize immediately — exec is on a running container
+		if pty.IsTerminal() {
+			width, height, err := pty.GetSize()
+			if err != nil {
+				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+			} else {
+				// +1/-1 trick forces SIGWINCH to trigger TUI redraw
+				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set artificial exec TTY size")
+				}
+				if err := resizeFunc(uint(height), uint(width)); err != nil {
+					logger.Debug().Err(err).Msg("failed to set actual exec TTY size")
+				}
+			}
+
+			// Monitor for window resize events (SIGWINCH)
+			resizeHandler := signals.NewResizeHandler(resizeFunc, pty.GetSize)
+			resizeHandler.Start()
+			defer resizeHandler.Stop()
+		}
+
+		if err := <-streamDone; err != nil {
 			return err
 		}
 		// Check exit code after TTY mode completes

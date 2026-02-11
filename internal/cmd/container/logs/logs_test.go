@@ -3,11 +3,16 @@ package logs
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -172,4 +177,95 @@ func TestCmdLogs_Properties(t *testing.T) {
 	// Test default tail
 	tail, _ := cmd.Flags().GetString("tail")
 	require.Equal(t, "all", tail)
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestLogsRun_HappyPath(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	fake.SetupContainerLogs("line1\nline2\nline3\n")
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdLogs(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Equal(t, "line1\nline2\nline3\n", tio.OutBuf.String())
+}
+
+func TestLogsRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdLogs(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestLogsRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdLogs(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.nonexistent"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestLogsRun_WithTailFlag(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	fake.SetupContainerLogs("last line\n")
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdLogs(f, nil)
+	cmd.SetArgs([]string{"--tail", "1", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Equal(t, "last line\n", tio.OutBuf.String())
 }

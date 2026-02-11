@@ -75,8 +75,7 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	// Find container by name
@@ -90,8 +89,7 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 
 	// Rename the container
 	if _, err := client.ContainerRename(ctx, c.ID, newName); err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("renaming container %q to %q: %w", oldName, newName, err)
 	}
 
 	fmt.Fprintln(ios.Out, newName)

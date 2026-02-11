@@ -58,6 +58,11 @@ type ProgressDisplayConfig struct {
 
 	// Lifecycle hook — called at key moments. nil = no-op.
 	OnLifecycle LifecycleHook
+
+	// AltScreen enables the alternate screen buffer for TTY mode.
+	// When true, progress output is rendered in the alt screen and cleared
+	// when the display finishes — useful for clean handoff to a container TTY.
+	AltScreen bool
 }
 
 // ProgressResult contains the outcome of a progress display.
@@ -778,7 +783,11 @@ func renderTreeSection(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *Pro
 
 func runProgressTTY(ios *iostreams.IOStreams, cfg ProgressDisplayConfig, eventCh <-chan ProgressStep) ProgressResult {
 	model := newProgressModel(ios, cfg, eventCh)
-	finalModel, err := RunProgram(ios, model)
+	var opts []ProgramOption
+	if cfg.AltScreen {
+		opts = append(opts, WithAltScreen(true))
+	}
+	finalModel, err := RunProgram(ios, model, opts...)
 	if err != nil {
 		return ProgressResult{Err: fmt.Errorf("display error: %w", err)}
 	}

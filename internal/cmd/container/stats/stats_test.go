@@ -3,12 +3,18 @@ package stats
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -285,4 +291,128 @@ func TestCalculateCPUPercent(t *testing.T) {
 			require.InDelta(t, tt.expected, result, 0.01)
 		})
 	}
+}
+
+// --- Tier 2 tests (Cobra+Factory, real run function) ---
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+// statsJSON is a realistic stats JSON for testing.
+const statsJSON = `{
+	"read": "2024-01-01T00:00:01Z",
+	"cpu_stats": {
+		"cpu_usage": {"total_usage": 2000000000},
+		"system_cpu_usage": 20000000000,
+		"online_cpus": 4
+	},
+	"precpu_stats": {
+		"cpu_usage": {"total_usage": 1000000000},
+		"system_cpu_usage": 10000000000
+	},
+	"memory_stats": {
+		"usage": 52428800,
+		"limit": 1073741824
+	},
+	"networks": {
+		"eth0": {"rx_bytes": 1024, "tx_bytes": 2048}
+	},
+	"pids_stats": {"current": 5}
+}`
+
+func TestStatsRun_NoStream_HappyPath(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	fake.SetupContainerStats(statsJSON)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdStats(f, nil)
+	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "CONTAINER ID")
+	assert.Contains(t, out, "NAME")
+	assert.Contains(t, out, "CPU %")
+	assert.Contains(t, out, "MEM USAGE / LIMIT")
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	// Memory: 50MB / 1GB
+	assert.Contains(t, out, "50.00MB")
+	// PIDs
+	assert.Contains(t, out, "5")
+}
+
+func TestStatsRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdStats(f, nil)
+	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestStatsRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdStats(f, nil)
+	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.nonexistent"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	assert.Contains(t, tio.ErrBuf.String(), "nonexistent")
+	assert.Contains(t, tio.ErrBuf.String(), "not found")
+}
+
+func TestStatsRun_NoRunningContainers(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — no running containers
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdStats(f, nil)
+	cmd.SetArgs([]string{"--no-stream"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Contains(t, tio.ErrBuf.String(), "No running containers")
 }

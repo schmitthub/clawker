@@ -417,32 +417,34 @@ func BuildLightImage(t *testing.T, dc *docker.Client, _ ...string) string {
 		t.Fatalf("BuildLightImage: failed to create build context: %v", err)
 	}
 
-	// Build via raw Docker SDK ImageBuild (not BuildKit)
-	rawClient := NewRawDockerClient(t)
-
+	// Build via clawker Docker client (wraps whail.Engine) — NOT raw moby client.
+	// Using dc.BuildImage ensures managed labels + test labels are auto-injected
+	// (com.clawker.managed=true, com.clawker.test=true, com.clawker.test.name).
 	labels := map[string]string{
-		TestLabel:           TestLabelValue,
-		ClawkerManagedLabel: "true",
-	}
-
-	buildOpts := client.ImageBuildOptions{
-		Tags:        []string{imageTag},
-		Dockerfile:  "Dockerfile",
-		Labels:      labels,
-		Remove:      true,
-		ForceRemove: true,
+		TestLabel: TestLabelValue,
 	}
 
 	t.Logf("BuildLightImage: building %s with %d scripts", imageTag, len(allScripts))
-	resp, err := rawClient.ImageBuild(ctx, buildCtx, buildOpts)
+	err = dc.BuildImage(ctx, buildCtx, docker.BuildImageOpts{
+		Tags:           []string{imageTag},
+		Labels:         labels,
+		SuppressOutput: true,
+	})
 	if err != nil {
 		t.Fatalf("BuildLightImage: build failed: %v", err)
 	}
-	defer resp.Body.Close()
 
-	// Consume build output
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		t.Fatalf("BuildLightImage: failed to read build output: %v", err)
+	// Prune dangling intermediate images from multi-stage build.
+	// Docker's legacy builder keeps intermediate stage images (Go builder stages)
+	// as dangling images without labels. These are unmanaged build cache artifacts
+	// that won't be cleaned by whail's label-based cleanup.
+	// Uses raw client because whail.ImagesPrune only targets managed images.
+	pruneClient := NewRawDockerClient(t)
+	danglingFilter := client.Filters{}.Add("dangling", "true")
+	if _, err := pruneClient.ImagePrune(ctx, client.ImagePruneOptions{
+		Filters: danglingFilter,
+	}); err != nil {
+		t.Logf("BuildLightImage: WARNING: failed to prune dangling images: %v", err)
 	}
 
 	return imageTag

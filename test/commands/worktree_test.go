@@ -316,7 +316,11 @@ func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory,
 			return gitpkg.NewGitManager(h.ProjectDir)
 		},
 		HostProxy: func() *hostproxy.Manager {
-			return hostproxy.NewManager()
+			mgr := hostproxy.NewManager()
+			t.Cleanup(func() {
+				_ = mgr.StopDaemon()
+			})
+			return mgr
 		},
 		Prompter: func() *prompter.Prompter { return nil },
 	}

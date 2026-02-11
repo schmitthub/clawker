@@ -3,11 +3,16 @@ package exec
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -229,4 +234,155 @@ func TestCmdExec_ArgsParsing(t *testing.T) {
 			require.Equal(t, tt.expectedCmdLen, len(gotOpts.command))
 		})
 	}
+}
+
+// --- Tier 2 Tests (Cobra+Factory) ---
+
+// testConfig returns a config with host proxy disabled and no git credentials
+// to avoid nil pointer issues when HostProxy/SocketBridge functions aren't set.
+func testConfig() *config.Config {
+	hostProxyDisabled := false
+	project := config.DefaultConfig()
+	project.Security.EnableHostProxy = &hostProxyDisabled
+	project.Security.GitCredentials = nil
+	return config.NewConfigForTest(project, nil)
+}
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return testConfig()
+		},
+	}, tio
+}
+
+func TestExecRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return testConfig()
+		},
+	}
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"mycontainer", "ls"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestExecRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — no containers
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"nonexistent", "ls"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestExecRun_ContainerNotRunning(t *testing.T) {
+	// Create a container fixture in "exited" state
+	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
+	// fixture.State is "exited" by default
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "ls"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not running")
+}
+
+func TestExecRun_DetachMode(t *testing.T) {
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	fake.SetupExecCreate("exec-abc123")
+	fake.SetupExecStart()
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"--detach", "clawker.myapp.ralph", "sleep", "100"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Contains(t, tio.OutBuf.String(), "exec-abc123")
+	fake.AssertCalled(t, "ExecCreate")
+	fake.AssertCalled(t, "ExecStart")
+}
+
+func TestExecRun_NonTTYHappyPath(t *testing.T) {
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	fake.SetupExecCreate("exec-xyz789")
+	fake.SetupExecAttach()
+	fake.SetupExecInspect(0) // exit code 0
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "echo", "hello"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	fake.AssertCalled(t, "ExecCreate")
+	fake.AssertCalled(t, "ExecAttach")
+	fake.AssertCalled(t, "ExecInspect")
+}
+
+func TestExecRun_NonZeroExitCode(t *testing.T) {
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	fake.SetupExecCreate("exec-fail")
+	fake.SetupExecAttach()
+	fake.SetupExecInspect(42) // non-zero exit code
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdExec(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "false"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exited with code 42")
 }

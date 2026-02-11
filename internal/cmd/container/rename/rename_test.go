@@ -3,11 +3,16 @@ package rename
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
+	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,4 +103,104 @@ func TestCmdRename_Properties(t *testing.T) {
 	require.NotNil(t, cmd.RunE)
 
 	require.NotNil(t, cmd.Flags().Lookup("agent"))
+}
+
+// --- Tier 2: Cobra+Factory integration tests ---
+
+func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestRenameRun_Success(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fake.SetupContainerRename()
+
+	f, tio := testRenameFactory(t, fake)
+
+	cmd := NewCmdRename(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.newname"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.newname")
+	fake.AssertCalled(t, "ContainerRename")
+}
+
+func TestRenameRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdRename(f, nil)
+	cmd.SetArgs([]string{"oldname", "newname"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestRenameRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — container won't be found
+
+	f, tio := testRenameFactory(t, fake)
+
+	cmd := NewCmdRename(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.newname"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to find container")
+}
+
+func TestRenameRun_RenameAPIError(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	// Set up rename to fail
+	fake.FakeAPI.ContainerRenameFn = func(_ context.Context, _ string, _ mobyclient.ContainerRenameOptions) (mobyclient.ContainerRenameResult, error) {
+		return mobyclient.ContainerRenameResult{}, fmt.Errorf("name already in use")
+	}
+
+	f, tio := testRenameFactory(t, fake)
+
+	cmd := NewCmdRename(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.taken"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "renaming container")
 }

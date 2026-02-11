@@ -50,7 +50,10 @@ type FakeAPIClient struct {
 	ContainerStatPathFn func(ctx context.Context, container string, opts client.ContainerStatPathOptions) (client.ContainerStatPathResult, error)
 
 	// --- Exec methods ---
-	ExecCreateFn func(ctx context.Context, container string, opts client.ExecCreateOptions) (client.ExecCreateResult, error)
+	ExecCreateFn  func(ctx context.Context, container string, opts client.ExecCreateOptions) (client.ExecCreateResult, error)
+	ExecStartFn   func(ctx context.Context, execID string, opts client.ExecStartOptions) (client.ExecStartResult, error)
+	ExecAttachFn  func(ctx context.Context, execID string, opts client.ExecAttachOptions) (client.ExecAttachResult, error)
+	ExecInspectFn func(ctx context.Context, execID string, opts client.ExecInspectOptions) (client.ExecInspectResult, error)
 
 	// --- Copy methods ---
 	CopyToContainerFn   func(ctx context.Context, container string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error)
@@ -266,6 +269,30 @@ func (f *FakeAPIClient) ExecCreate(ctx context.Context, container string, opts c
 	}
 	f.record("ExecCreate")
 	return f.ExecCreateFn(ctx, container, opts)
+}
+
+func (f *FakeAPIClient) ExecStart(ctx context.Context, execID string, opts client.ExecStartOptions) (client.ExecStartResult, error) {
+	if f.ExecStartFn == nil {
+		notImplemented("ExecStart")
+	}
+	f.record("ExecStart")
+	return f.ExecStartFn(ctx, execID, opts)
+}
+
+func (f *FakeAPIClient) ExecAttach(ctx context.Context, execID string, opts client.ExecAttachOptions) (client.ExecAttachResult, error) {
+	if f.ExecAttachFn == nil {
+		notImplemented("ExecAttach")
+	}
+	f.record("ExecAttach")
+	return f.ExecAttachFn(ctx, execID, opts)
+}
+
+func (f *FakeAPIClient) ExecInspect(ctx context.Context, execID string, opts client.ExecInspectOptions) (client.ExecInspectResult, error) {
+	if f.ExecInspectFn == nil {
+		notImplemented("ExecInspect")
+	}
+	f.record("ExecInspect")
+	return f.ExecInspectFn(ctx, execID, opts)
 }
 
 // --- Copy method implementations ---

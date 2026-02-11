@@ -20,7 +20,7 @@ var (
 
 func main() {
 	// Initialize logger
-	logger.Init(false) // Debug mode controlled by --debug flag
+	logger.Init()
 
 	f := &cmdutil.Factory{
 		Version:   Version,

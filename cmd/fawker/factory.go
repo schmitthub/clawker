@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -20,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
 
@@ -32,20 +34,22 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 	scenario := "multi-stage" // default, overridden by --scenario flag
 
 	ios := iostreams.System()
+	configFn := fawkerConfigFunc()
 
 	f := &cmdutil.Factory{
 		Version:  "0.0.0-fawker",
 		Commit:   "fawker",
 		IOStreams: ios,
 		TUI:      tui.NewTUI(ios),
-		Config: fawkerConfigFunc(),
+		Config: configFn,
 		Client: func(_ context.Context) (*docker.Client, error) {
-			return fawkerClient(scenario)
+			// Mirror real factory: inject config into client for image resolution.
+			return fawkerClient(scenario, configFn())
 		},
-		GitManager:   func() (*git.GitManager, error) { return nil, nil },
-		HostProxy:    func() *hostproxy.Manager { return nil },
-		SocketBridge: func() socketbridge.SocketBridgeManager { return nil },
-		Prompter:     func() *prompter.Prompter { return prompter.NewPrompter(ios) },
+		GitManager:        func() (*git.GitManager, error) { return nil, nil },
+		HostProxy:         func() *hostproxy.Manager { return nil },
+		SocketBridge:      func() socketbridge.SocketBridgeManager { return nil },
+		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(ios) },
 	}
 
 	return f, &scenario
@@ -60,7 +64,9 @@ func fawkerConfigFunc() func() *config.Config {
 	)
 	return func() *config.Config {
 		once.Do(func() {
-			cfg = config.NewConfigForTest(fawkerProject(), config.DefaultSettings())
+			settings := config.DefaultSettings()
+			settings.DefaultImage = docker.DefaultImageTag // Triggers rebuild flow on "@"
+			cfg = config.NewConfigForTest(fawkerProject(), settings)
 			cfg.SetSettingsLoader(configtest.NewInMemorySettingsLoader())
 		})
 		return cfg
@@ -69,6 +75,7 @@ func fawkerConfigFunc() func() *config.Config {
 
 // fawkerProject returns a minimal config.Project for the fawker demo.
 func fawkerProject() *config.Project {
+	hostProxyDisabled := false
 	return &config.Project{
 		Version: "1",
 		Project: "fawker-demo",
@@ -83,14 +90,15 @@ func fawkerProject() *config.Project {
 			Firewall: &config.FirewallConfig{
 				Enable: false,
 			},
+			EnableHostProxy: &hostProxyDisabled,
 		},
 	}
 }
 
 // fawkerClient builds a fake Docker client wired with the selected scenario's
 // recorded events for build progress.
-func fawkerClient(scenarioName string) (*docker.Client, error) {
-	fake := dockertest.NewFakeClient()
+func fawkerClient(scenarioName string, cfg *config.Config) (*docker.Client, error) {
+	fake := dockertest.NewFakeClient(dockertest.WithConfig(cfg))
 
 	// Wire legacy image build as fallback for non-BuildKit paths.
 	fake.SetupLegacyBuild()
@@ -113,12 +121,63 @@ func fawkerClient(scenarioName string) (*docker.Client, error) {
 	)
 
 	// Wire image list with demo fixtures.
+	// NOTE: Do NOT include a project image with :latest tag here — findProjectImage
+	// would match it and skip the default image rebuild flow that we want to demo.
+	// Use a version tag instead so image ls shows the image but run @ triggers rebuild.
 	fake.SetupImageList(
-		dockertest.ImageSummaryFixture("clawker-fawker-demo:latest"),
+		dockertest.ImageSummaryFixture("clawker-fawker-demo:sha-abc123"),
 		dockertest.ImageSummaryFixture("node:20-slim"),
 	)
 
+	// Wire ImageExists to return true for default image — skips the interactive
+	// rebuild prompt flow that requires TTY input. The rebuild progress display
+	// will be wired separately when fawker gets its own run orchestration.
+	fake.SetupImageExists(docker.DefaultImageTag, true)
+
+	// Wire container create/start so `fawker container create @` completes after rebuild.
+	fake.SetupContainerCreate()
+	fake.SetupContainerStart()
+
+	// Wire volume/network/copy operations used by the container run/create flow.
+	// Default FakeAPIClient inspect handlers make volumes/networks appear pre-existing,
+	// so EnsureVolume/EnsureNetwork skip creation. CopyToContainer is needed if
+	// InjectOnboardingFile triggers (host auth enabled).
+	fake.SetupCopyToContainer()
+	fake.SetupVolumeCreate()
+	fake.SetupNetworkCreate()
+
+	// Wire interactive mode operations for `fawker container run -it`.
+	// ContainerAttach returns a pipe that immediately closes (simulates instant exit).
+	// ContainerWait returns exit code 0. ContainerResize is a no-op.
+	fake.SetupContainerAttach()
+	fake.SetupContainerWait(0)
+	fake.SetupContainerResize()
+	fake.SetupContainerRemove()
+
+	// Wire BuildDefaultImage override — replays recorded scenario for rebuild flow.
+	fake.Client.BuildDefaultImageFunc = fakeBuildDefaultImage(scenarioName)
+
 	return fake.Client, nil
+}
+
+// fakeBuildDefaultImage returns a fake BuildDefaultImage function that replays
+// recorded build progress events for visual UAT.
+func fakeBuildDefaultImage(scenarioName string) docker.BuildDefaultImageFn {
+	return func(_ context.Context, _ string, onProgress whail.BuildProgressFunc) error {
+		scenarioData, err := loadEmbeddedScenario(scenarioName)
+		if err != nil {
+			return fmt.Errorf("fawker: loading scenario for rebuild: %w", err)
+		}
+
+		for _, recorded := range scenarioData.Events {
+			delay := time.Duration(recorded.DelayMs) * time.Millisecond * 5 // slow for visual review
+			time.Sleep(delay)
+			if onProgress != nil {
+				onProgress(recorded.Event)
+			}
+		}
+		return nil
+	}
 }
 
 // loadEmbeddedScenario loads a recorded scenario from the embedded scenarios/ dir.

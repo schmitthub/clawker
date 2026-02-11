@@ -3,66 +3,81 @@ package list
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+// --- Tier 1: Flag parsing tests ---
+
 func TestNewCmdList(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		output     ListOptions
-		wantErr    bool
-		wantErrMsg string
+		name      string
+		input     string
+		wantQuiet bool
+		wantAll   bool
 	}{
 		{
-			name:   "no flags",
-			input:  "",
-			output: ListOptions{},
+			name:  "no flags",
+			input: "",
 		},
 		{
-			name:   "with all flag",
-			input:  "--all",
-			output: ListOptions{All: true},
+			name:      "quiet flag",
+			input:     "-q",
+			wantQuiet: true,
 		},
 		{
-			name:   "with shorthand all flag",
-			input:  "-a",
-			output: ListOptions{All: true},
+			name:      "quiet flag long",
+			input:     "--quiet",
+			wantQuiet: true,
 		},
 		{
-			name:   "with project flag",
-			input:  "--project myproject",
-			output: ListOptions{Project: "myproject"},
+			name:    "all flag",
+			input:   "-a",
+			wantAll: true,
 		},
 		{
-			name:   "with shorthand project flag",
-			input:  "-p myproject",
-			output: ListOptions{Project: "myproject"},
+			name:    "all flag long",
+			input:   "--all",
+			wantAll: true,
 		},
 		{
-			name:   "with all and project flags",
-			input:  "-a -p myproject",
-			output: ListOptions{All: true, Project: "myproject"},
-		},
-		{
-			name:   "with format flag",
-			input:  "--format '{{.Names}}'",
-			output: ListOptions{Format: "{{.Names}}"},
-		},
-		{
-			name:   "with format and all flags",
-			input:  "-a --format '{{.Name}} {{.Status}}'",
-			output: ListOptions{All: true, Format: "{{.Name}} {{.Status}}"},
+			name:      "both flags",
+			input:     "-q -a",
+			wantQuiet: true,
+			wantAll:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &cmdutil.Factory{}
+			tio := iostreams.NewTestIOStreams()
+			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 			var gotOpts *ListOptions
 			cmd := NewCmdList(f, func(_ context.Context, opts *ListOptions) error {
@@ -70,41 +85,91 @@ func TestNewCmdList(t *testing.T) {
 				return nil
 			})
 
-			// Cobra hack-around for help flag
 			cmd.Flags().BoolP("help", "x", false, "")
 
-			// Parse arguments
-			argv := []string{}
-			if tt.input != "" {
-				argv = splitArgs(tt.input)
-			}
-
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
 			cmd.SetArgs(argv)
 			cmd.SetIn(&bytes.Buffer{})
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 
-			_, err := cmd.ExecuteC()
-			if tt.wantErr {
-				require.Error(t, err)
-				require.EqualError(t, err, tt.wantErrMsg)
-				return
-			}
-
+			_, err = cmd.ExecuteC()
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
-			require.Equal(t, tt.output.All, gotOpts.All)
-			require.Equal(t, tt.output.Project, gotOpts.Project)
-			require.Equal(t, tt.output.Format, gotOpts.Format)
+			require.Equal(t, tt.wantQuiet, gotOpts.Format.Quiet)
+			require.Equal(t, tt.wantAll, gotOpts.All)
+		})
+	}
+}
+
+func TestNewCmdList_FormatFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "json flag",
+			input: "--json",
+		},
+		{
+			name:  "format json",
+			input: "--format json",
+		},
+		{
+			name:  "format template",
+			input: "--format '{{.Name}}'",
+		},
+		{
+			name:    "quiet and json are mutually exclusive",
+			input:   "-q --json",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "quiet and format are mutually exclusive",
+			input:   "-q --format json",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "json and format are mutually exclusive",
+			input:   "--json --format json",
+			wantErr: "mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tio := iostreams.NewTestIOStreams()
+			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+
+			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
+				return nil
+			})
+
+			argv, err := shlex.Split(tt.input)
+			require.NoError(t, err)
+			cmd.SetArgs(argv)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+
+			_, err = cmd.ExecuteC()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
 
 func TestCmdList_Properties(t *testing.T) {
-	f := &cmdutil.Factory{}
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdList(f, nil)
 
-	// Test command basics
 	require.Equal(t, "list", cmd.Use)
 	require.Contains(t, cmd.Aliases, "ls")
 	require.Contains(t, cmd.Aliases, "ps")
@@ -113,15 +178,252 @@ func TestCmdList_Properties(t *testing.T) {
 	require.NotEmpty(t, cmd.Example)
 	require.NotNil(t, cmd.RunE)
 
-	// Test flags exist
+	require.NotNil(t, cmd.Flags().Lookup("quiet"))
 	require.NotNil(t, cmd.Flags().Lookup("all"))
-	require.NotNil(t, cmd.Flags().Lookup("project"))
 	require.NotNil(t, cmd.Flags().Lookup("format"))
-
-	// Test shorthand flags
+	require.NotNil(t, cmd.Flags().Lookup("json"))
+	require.NotNil(t, cmd.Flags().Lookup("filter"))
+	require.NotNil(t, cmd.Flags().Lookup("project"))
+	require.NotNil(t, cmd.Flags().ShorthandLookup("q"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("a"))
 	require.NotNil(t, cmd.Flags().ShorthandLookup("p"))
 }
+
+// --- Tier 2: Integration tests ---
+
+func TestListRun_DefaultTable(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "running")
+	assert.Contains(t, out, "myapp")
+	assert.Contains(t, out, "ralph")
+	fake.AssertCalled(t, "ContainerList")
+}
+
+func TestListRun_JSONOutput(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a", "--json"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, `"name": "clawker.myapp.ralph"`)
+	assert.Contains(t, out, `"status": "running"`)
+	assert.Contains(t, out, `"project": "myapp"`)
+	assert.Contains(t, out, `"agent": "ralph"`)
+}
+
+func TestListRun_QuietMode(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a", "-q"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
+	// Quiet mode: names only, no table headers
+	assert.NotContains(t, out, "STATUS")
+	assert.NotContains(t, out, "PROJECT")
+}
+
+func TestListRun_TemplateOutput(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a", "--format", "{{.Name}} {{.Agent}}"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph ralph")
+}
+
+func TestListRun_FilterByStatus(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.ContainerFixture("myapp", "dev", "alpine:latest"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a", "--filter", "status=running"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.NotContains(t, out, "clawker.myapp.dev")
+}
+
+func TestListRun_FilterByAgent(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a", "--filter", "agent=ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.NotContains(t, out, "clawker.myapp.dev")
+}
+
+func TestListRun_FilterInvalidKey(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList()
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"--filter", "invalid=value"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid filter key")
+}
+
+func TestListRun_EmptyResults(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList()
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-a"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	assert.Empty(t, tio.OutBuf.String())
+	assert.Contains(t, tio.ErrBuf.String(), "No clawker containers found.")
+}
+
+func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList()
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	assert.Contains(t, tio.ErrBuf.String(), "No running clawker containers found. Use -a to show all containers.")
+}
+
+func TestListRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestListRun_ProjectFilter(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(
+		dockertest.RunningContainerFixture("myapp", "ralph"),
+	)
+
+	f, tio := testFactory(t, fake)
+	cmd := NewCmdList(f, nil)
+	cmd.SetArgs([]string{"-p", "myapp"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	out := tio.OutBuf.String()
+	assert.Contains(t, out, "clawker.myapp.ralph")
+	fake.AssertCalled(t, "ContainerList")
+}
+
+// --- Unit tests for helper functions ---
 
 func TestFormatCreatedTime(t *testing.T) {
 	tests := []struct {
@@ -168,7 +470,6 @@ func TestFormatCreatedTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Calculate timestamp for the given duration ago
 			timestamp := time.Now().Unix() - tt.duration
 			result := formatCreatedTime(timestamp)
 			require.Equal(t, tt.expected, result)
@@ -207,35 +508,23 @@ func TestTruncateImage(t *testing.T) {
 	}
 }
 
-// splitArgs splits a command string into arguments.
-func splitArgs(input string) []string {
-	var args []string
-	var current string
-	inQuote := false
-	quoteChar := byte(0)
+func TestMatchGlob(t *testing.T) {
+	tests := []struct {
+		name    string
+		s       string
+		pattern string
+		want    bool
+	}{
+		{"exact match", "ralph", "ralph", true},
+		{"no match", "ralph", "dev", false},
+		{"wildcard prefix", "ralph", "ral*", true},
+		{"wildcard no match", "ralph", "dev*", false},
+		{"wildcard all", "anything", "*", true},
+	}
 
-	for i := 0; i < len(input); i++ {
-		c := input[i]
-		if c == '"' || c == '\'' {
-			if inQuote && c == quoteChar {
-				inQuote = false
-			} else if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else {
-				current += string(c)
-			}
-		} else if c == ' ' && !inQuote {
-			if current != "" {
-				args = append(args, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, matchGlob(tt.s, tt.pattern))
+		})
 	}
-	if current != "" {
-		args = append(args, current)
-	}
-	return args
 }

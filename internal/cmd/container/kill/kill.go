@@ -75,6 +75,7 @@ Container names can be:
 
 func killRun(ctx context.Context, opts *KillOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
 	// Resolve container names
 	containers := opts.Containers
@@ -85,22 +86,21 @@ func killRun(ctx context.Context, opts *KillOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	var errs []error
 	for _, name := range containers {
 		if err := killContainer(ctx, client, name, opts.Signal); err != nil {
 			errs = append(errs, err)
-			fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)
+			fmt.Fprintf(ios.ErrOut, "%s %s: %v\n", cs.FailureIcon(), name, err)
 		} else {
 			fmt.Fprintln(ios.Out, name)
 		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to kill %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 	return nil
 }

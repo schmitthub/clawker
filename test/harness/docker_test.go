@@ -66,18 +66,20 @@ func TestAddTestLabels(t *testing.T) {
 }
 
 func TestAddClawkerLabels(t *testing.T) {
-	result := AddClawkerLabels(nil, "myproject", "myagent")
+	result := AddClawkerLabels(nil, "myproject", "myagent", "TestAddClawkerLabels")
 
 	assert.Equal(t, TestLabelValue, result[TestLabel])
 	assert.Equal(t, "true", result[ClawkerManagedLabel])
 	assert.Equal(t, "myproject", result["com.clawker.project"])
 	assert.Equal(t, "myagent", result["com.clawker.agent"])
+	assert.Equal(t, "TestAddClawkerLabels", result[LabelTestName])
 }
 
 func TestAddClawkerLabels_PreservesExisting(t *testing.T) {
 	input := map[string]string{"custom": "label"}
-	result := AddClawkerLabels(input, "proj", "agent")
+	result := AddClawkerLabels(input, "proj", "agent", "TestAddClawkerLabels_PreservesExisting")
 
 	assert.Equal(t, "label", result["custom"])
 	assert.Equal(t, "true", result[ClawkerManagedLabel])
+	assert.Equal(t, "TestAddClawkerLabels_PreservesExisting", result[LabelTestName])
 }

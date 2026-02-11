@@ -2,34 +2,48 @@ package list
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"text/tabwriter"
-	"text/template"
+	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
+
+var containerListValidFilterKeys = []string{"name", "status", "agent"}
 
 // ListOptions holds options for the list command.
 type ListOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
+	TUI      *tui.TUI
+	Client   func(context.Context) (*docker.Client, error)
 
+	Format  *cmdutil.FormatFlags
+	Filter  *cmdutil.FilterFlags
 	All     bool
 	Project string
-	Format  string
+}
+
+// containerRow is the display/serialization type for format dispatch.
+type containerRow struct {
+	Name    string `json:"name"`
+	Names   string `json:"names"` // Docker CLI compatibility alias
+	Status  string `json:"status"`
+	Project string `json:"project"`
+	Agent   string `json:"agent"`
+	Image   string `json:"image"`
+	Created string `json:"created"`
 }
 
 // NewCmdList creates the container list command.
 func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
 	opts := &ListOptions{
 		IOStreams: f.IOStreams,
-		Client:    f.Client,
+		TUI:      f.TUI,
+		Client:   f.Client,
 	}
 
 	cmd := &cobra.Command{
@@ -51,10 +65,19 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
   clawker container list -p myproject
 
   # List container names only
-  clawker container ls -a --format '{{.Names}}'
+  clawker container ls -q
 
-  # Custom format showing name and status
-  clawker container ls -a --format '{{.Name}} {{.Status}}'`,
+  # Output as JSON
+  clawker container ls --json
+
+  # Custom Go template
+  clawker container ls --format '{{.Name}} {{.Status}}'
+
+  # Filter by status
+  clawker container ls -a --filter status=running
+
+  # Filter by agent name
+  clawker container ls --filter agent=ralph`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -63,9 +86,10 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 		},
 	}
 
+	opts.Format = cmdutil.AddFormatFlags(cmd)
+	opts.Filter = cmdutil.AddFilterFlags(cmd)
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Show all containers (including stopped)")
 	cmd.Flags().StringVarP(&opts.Project, "project", "p", "", "Filter by project name")
-	cmd.Flags().StringVar(&opts.Format, "format", "", "Format output using a Go template")
 
 	return cmd
 }
@@ -73,14 +97,22 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
 func listRun(ctx context.Context, opts *ListOptions) error {
 	ios := opts.IOStreams
 
-	// Connect to Docker
-	client, err := opts.Client(ctx)
+	// Parse and validate filters.
+	filters, err := opts.Filter.Parse()
 	if err != nil {
-		cmdutil.HandleError(ios, err)
+		return err
+	}
+	if err := cmdutil.ValidateFilterKeys(filters, containerListValidFilterKeys); err != nil {
 		return err
 	}
 
-	// List containers
+	// Connect to Docker.
+	client, err := opts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("connecting to Docker: %w", err)
+	}
+
+	// Fetch containers — project flag is a server-side filter via Docker API.
 	var containers []docker.Container
 	if opts.Project != "" {
 		containers, err = client.ListContainersByProject(ctx, opts.Project, opts.All)
@@ -88,9 +120,13 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		containers, err = client.ListContainers(ctx, opts.All)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to list containers: %w", err)
+		return fmt.Errorf("listing containers: %w", err)
 	}
 
+	// Apply local filters.
+	containers = applyContainerFilters(containers, filters)
+
+	// Handle empty results.
 	if len(containers) == 0 {
 		if opts.All {
 			fmt.Fprintln(ios.ErrOut, "No clawker containers found.")
@@ -100,28 +136,87 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return nil
 	}
 
-	// Output with format if specified
-	if opts.Format != "" {
-		return outputFormatted(ios.Out, opts.Format, containers)
+	// Build display rows.
+	rows := buildContainerRows(containers)
+
+	// Format dispatch.
+	switch {
+	case opts.Format.Quiet:
+		for _, c := range containers {
+			fmt.Fprintln(ios.Out, c.Name)
+		}
+		return nil
+
+	case opts.Format.IsJSON():
+		return cmdutil.WriteJSON(ios.Out, rows)
+
+	case opts.Format.IsTemplate():
+		return cmdutil.ExecuteTemplate(ios.Out, opts.Format.Template(), cmdutil.ToAny(rows))
+
+	default:
+		tp := opts.TUI.NewTable("NAME", "STATUS", "PROJECT", "AGENT", "IMAGE", "CREATED")
+		for _, r := range rows {
+			tp.AddRow(r.Name, r.Status, r.Project, r.Agent, r.Image, r.Created)
+		}
+		return tp.Render()
 	}
+}
 
-	// Print table
-	w := tabwriter.NewWriter(ios.Out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tPROJECT\tAGENT\tIMAGE\tCREATED")
-
+func buildContainerRows(containers []docker.Container) []containerRow {
+	rows := make([]containerRow, 0, len(containers))
 	for _, c := range containers {
-		created := formatCreatedTime(c.Created)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			c.Name,
-			c.Status,
-			c.Project,
-			c.Agent,
-			truncateImage(c.Image),
-			created,
-		)
+		rows = append(rows, containerRow{
+			Name:    c.Name,
+			Names:   c.Name, // Docker CLI compatibility
+			Status:  c.Status,
+			Project: c.Project,
+			Agent:   c.Agent,
+			Image:   truncateImage(c.Image),
+			Created: formatCreatedTime(c.Created),
+		})
 	}
+	return rows
+}
 
-	return w.Flush()
+func applyContainerFilters(containers []docker.Container, filters []cmdutil.Filter) []docker.Container {
+	if len(filters) == 0 {
+		return containers
+	}
+	var result []docker.Container
+	for _, c := range containers {
+		if matchesContainerFilters(c, filters) {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+func matchesContainerFilters(c docker.Container, filters []cmdutil.Filter) bool {
+	for _, f := range filters {
+		switch f.Key {
+		case "name":
+			if !matchGlob(c.Name, f.Value) {
+				return false
+			}
+		case "status":
+			if !strings.EqualFold(c.Status, f.Value) {
+				return false
+			}
+		case "agent":
+			if !matchGlob(c.Agent, f.Value) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// matchGlob matches a string against a pattern with optional trailing wildcard.
+func matchGlob(s, pattern string) bool {
+	if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
+		return strings.HasPrefix(s, prefix)
+	}
+	return s == pattern
 }
 
 // formatCreatedTime formats a Unix timestamp into a human-readable relative time.
@@ -160,42 +255,4 @@ func truncateImage(image string) string {
 		return image
 	}
 	return image[:maxLen-3] + "..."
-}
-
-// containerForFormat wraps Container with Docker-compatible field aliases.
-// Docker CLI uses {{.Names}} (plural) while clawker uses {{.Name}} (singular).
-// This wrapper provides both for compatibility.
-type containerForFormat struct {
-	docker.Container
-	Names string // Alias for .Name to match Docker CLI's {{.Names}}
-}
-
-// outputFormatted outputs containers using a Go template format string.
-func outputFormatted(w io.Writer, format string, containers []docker.Container) error {
-	funcMap := template.FuncMap{
-		"json": func(v interface{}) string {
-			b, err := json.Marshal(v)
-			if err != nil {
-				return err.Error()
-			}
-			return string(b)
-		},
-	}
-	tmpl, err := template.New("format").Funcs(funcMap).Parse(format)
-	if err != nil {
-		return fmt.Errorf("invalid format template: %w", err)
-	}
-
-	for _, c := range containers {
-		// Wrap with Docker-compatible aliases
-		wrapper := containerForFormat{
-			Container: c,
-			Names:     c.Name,
-		}
-		if err := tmpl.Execute(w, wrapper); err != nil {
-			return fmt.Errorf("template execution failed: %w", err)
-		}
-		fmt.Fprintln(w)
-	}
-	return nil
 }

@@ -3,10 +3,16 @@ package attach
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/docker/dockertest"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,4 +151,100 @@ func TestCmdAttach_ArgsParsing(t *testing.T) {
 			require.Equal(t, tt.expectedContainer, gotOpts.container)
 		})
 	}
+}
+
+// --- Tier 2 Tests (Cobra+Factory) ---
+
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
+	tio := iostreams.NewTestIOStreams()
+	return &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return fake.Client, nil
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}, tio
+}
+
+func TestAttachRun_DockerConnectionError(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		Client: func(_ context.Context) (*docker.Client, error) {
+			return nil, fmt.Errorf("cannot connect to Docker daemon")
+		},
+		Config: func() *config.Config {
+			return config.NewConfigForTest(nil, nil)
+		},
+	}
+
+	cmd := NewCmdAttach(f, nil)
+	cmd.SetArgs([]string{"mycontainer"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connecting to Docker")
+}
+
+func TestAttachRun_ContainerNotFound(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList() // empty list — no containers
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdAttach(f, nil)
+	cmd.SetArgs([]string{"nonexistent"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAttachRun_ContainerNotRunning(t *testing.T) {
+	// Create a container fixture in "exited" state
+	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
+	// fixture.State is "exited" by default
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	fake.SetupContainerInspect("clawker.myapp.ralph", fixture)
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdAttach(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not running")
+}
+
+func TestAttachRun_NonTTYHappyPath(t *testing.T) {
+	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerList(fixture)
+	fake.SetupContainerInspect("clawker.myapp.ralph", fixture)
+	fake.SetupContainerAttach()
+	f, tio := testFactory(t, fake)
+
+	cmd := NewCmdAttach(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(tio.OutBuf)
+	cmd.SetErr(tio.ErrBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	fake.AssertCalled(t, "ContainerAttach")
 }

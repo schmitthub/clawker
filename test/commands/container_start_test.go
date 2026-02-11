@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmd/container/start"
+	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -29,8 +30,6 @@ func TestContainerStart_BasicStart(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-basic-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for start-basic-test: %v", err)
@@ -40,14 +39,13 @@ func TestContainerStart_BasicStart(t *testing.T) {
 	agentName := "test-start-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create a stopped container (don't start it)
-	_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create a stopped container (don't start it) — whail auto-injects managed + test labels
+	_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "start-basic-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -56,7 +54,7 @@ func TestContainerStart_BasicStart(t *testing.T) {
 	require.NoError(t, err, "failed to create container")
 
 	// Verify container is not running
-	require.False(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should be stopped initially")
+	require.False(t, harness.ContainerIsRunning(ctx, dockerClient, containerName), "container should be stopped initially")
 
 	// Run start command
 	f, ios := harness.NewTestFactory(t, h)
@@ -70,7 +68,7 @@ func TestContainerStart_BasicStart(t *testing.T) {
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, containerName)
 	require.NoError(t, err, "container did not start")
 
 	// Container is now running - verified by WaitForContainerRunning above
@@ -104,8 +102,6 @@ func TestContainerStart_BothPatterns(t *testing.T) {
 			h.Chdir()
 
 			dockerClient := harness.NewTestClient(t)
-			rawClient := harness.NewRawDockerClient(t)
-			defer rawClient.Close()
 			defer func() {
 				if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
 					t.Logf("WARNING: cleanup failed for %s: %v", project, err)
@@ -115,14 +111,13 @@ func TestContainerStart_BothPatterns(t *testing.T) {
 			agentName := "test-pattern-" + time.Now().Format("150405.000000")
 			containerName := h.ContainerName(agentName)
 
-			// Create a stopped container
-			_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+			// Create a stopped container — whail auto-injects managed + test labels
+			_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 				Name: containerName,
 				Config: &container.Config{
 					Image: "alpine:latest",
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						"com.clawker.managed": "true",
 						"com.clawker.project": project,
 						"com.clawker.agent":   agentName,
 					},
@@ -146,7 +141,7 @@ func TestContainerStart_BothPatterns(t *testing.T) {
 			// Wait for container to be running
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
+			err = harness.WaitForContainerRunning(readyCtx, dockerClient, containerName)
 			require.NoError(t, err, "container did not start")
 		})
 	}
@@ -178,8 +173,6 @@ func TestContainerStart_BothImages(t *testing.T) {
 			h.Chdir()
 
 			dockerClient := harness.NewTestClient(t)
-			rawClient := harness.NewRawDockerClient(t)
-			defer rawClient.Close()
 			defer func() {
 				if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
 					t.Logf("WARNING: cleanup failed for %s: %v", project, err)
@@ -190,21 +183,20 @@ func TestContainerStart_BothImages(t *testing.T) {
 			containerName := h.ContainerName(agentName)
 
 			// Pull image if not present
-			reader, pullErr := rawClient.ImagePull(ctx, tt.image, client.ImagePullOptions{})
+			reader, pullErr := dockerClient.ImagePull(ctx, tt.image, docker.ImagePullOptions{})
 			if pullErr == nil {
 				defer reader.Close()
 				_, _ = io.Copy(io.Discard, reader) // Wait for pull to complete
 			}
 			// Ignore pull errors - the create will fail if image truly not available
 
-			// Create a stopped container with specific image
-			_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+			// Create a stopped container with specific image — whail auto-injects managed + test labels
+			_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 				Name: containerName,
 				Config: &container.Config{
 					Image: tt.image,
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						"com.clawker.managed": "true",
 						"com.clawker.project": project,
 						"com.clawker.agent":   agentName,
 					},
@@ -224,7 +216,7 @@ func TestContainerStart_BothImages(t *testing.T) {
 			// Wait for container to be running
 			readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
+			err = harness.WaitForContainerRunning(readyCtx, dockerClient, containerName)
 			require.NoError(t, err, "container did not start for image %s", tt.image)
 		})
 	}
@@ -245,8 +237,6 @@ func TestContainerStart_MultipleContainers(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-multi-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for start-multi-test: %v", err)
@@ -260,16 +250,15 @@ func TestContainerStart_MultipleContainers(t *testing.T) {
 		h.ContainerName("agent3-" + timestamp),
 	}
 
-	// Create 3 stopped containers
+	// Create 3 stopped containers — whail auto-injects managed + test labels
 	for i, name := range containerNames {
 		agentName := "agent" + string(rune('1'+i)) + "-" + timestamp
-		_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: name,
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.managed": "true",
 					"com.clawker.project": "start-multi-test",
 					"com.clawker.agent":   agentName,
 				},
@@ -290,7 +279,7 @@ func TestContainerStart_MultipleContainers(t *testing.T) {
 	// Wait for all containers to be running
 	for _, name := range containerNames {
 		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err = harness.WaitForContainerRunning(readyCtx, rawClient, name)
+		err = harness.WaitForContainerRunning(readyCtx, dockerClient, name)
 		cancel()
 		require.NoError(t, err, "container %s did not start", name)
 	}
@@ -315,8 +304,6 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-running-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for start-running-test: %v", err)
@@ -326,14 +313,13 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 	agentName := "test-running-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
-	// Create and start a container
-	resp, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+	// Create and start a container — whail auto-injects managed + test labels
+	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.managed": "true",
 				"com.clawker.project": "start-running-test",
 				"com.clawker.agent":   agentName,
 			},
@@ -341,13 +327,13 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create container")
 
-	_, err = rawClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
+	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
 	require.NoError(t, err, "failed to start container")
 
 	// Wait for container to be running
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, rawClient, containerName)
+	err = harness.WaitForContainerRunning(readyCtx, dockerClient, containerName)
 	require.NoError(t, err, "container did not start")
 
 	// Try to start it again - should succeed (idempotent)
@@ -360,7 +346,7 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 	require.NoError(t, err, "start command should succeed for already-running container: stderr=%s", ios.ErrBuf.String())
 
 	// Container should still be running
-	require.True(t, harness.ContainerIsRunning(ctx, rawClient, containerName), "container should still be running")
+	require.True(t, harness.ContainerIsRunning(ctx, dockerClient, containerName), "container should still be running")
 }
 
 // TestContainerStart_NonExistent tests that starting a non-existent container returns an error.
@@ -401,8 +387,6 @@ func TestContainerStart_MultipleWithAttach(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	rawClient := harness.NewRawDockerClient(t)
-	defer rawClient.Close()
 	defer func() {
 		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "start-attach-test"); err != nil {
 			t.Logf("WARNING: cleanup failed for start-attach-test: %v", err)
@@ -415,16 +399,15 @@ func TestContainerStart_MultipleWithAttach(t *testing.T) {
 		h.ContainerName("attach2-" + timestamp),
 	}
 
-	// Create 2 stopped containers
+	// Create 2 stopped containers — whail auto-injects managed + test labels
 	for i, name := range containerNames {
 		agentName := "attach" + string(rune('1'+i)) + "-" + timestamp
-		_, err := rawClient.ContainerCreate(ctx, client.ContainerCreateOptions{
+		_, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: name,
 			Config: &container.Config{
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.managed": "true",
 					"com.clawker.project": "start-attach-test",
 					"com.clawker.agent":   agentName,
 				},

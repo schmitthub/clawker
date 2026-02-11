@@ -91,8 +91,7 @@ func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	// Connect to Docker
 	dockerClient, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	var results []docker.ContainerInspectResult
@@ -131,10 +130,11 @@ func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	}
 
 	if len(errs) > 0 {
+		cs := ios.ColorScheme()
 		for _, e := range errs {
-			fmt.Fprintf(ios.ErrOut, "Error: %v\n", e)
+			fmt.Fprintf(ios.ErrOut, "%s %v\n", cs.FailureIcon(), e)
 		}
-		return fmt.Errorf("failed to inspect %d container(s)", len(errs))
+		return cmdutil.SilentError
 	}
 
 	return nil
@@ -151,7 +151,7 @@ func outputJSON(w io.Writer, data any) error {
 // This means templates like '{{.State.Status}}' work as expected.
 func outputFormatted(w io.Writer, format string, results []docker.ContainerInspectResult) error {
 	funcMap := template.FuncMap{
-		"json": func(v interface{}) string {
+		"json": func(v any) string {
 			b, err := json.Marshal(v)
 			if err != nil {
 				return err.Error()

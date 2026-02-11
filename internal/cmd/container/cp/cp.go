@@ -110,8 +110,6 @@ func parseContainerPath(arg string) (string, string, bool) {
 }
 
 func cpRun(ctx context.Context, opts *CpOptions) error {
-	ios := opts.IOStreams
-
 	// Parse source and destination
 	srcContainer, srcPath, srcIsContainer := parseContainerPath(opts.Src)
 	dstContainer, dstPath, dstIsContainer := parseContainerPath(opts.Dst)
@@ -138,17 +136,16 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
 	if srcIsContainer {
-		return copyFromContainer(ctx, ios, client, srcContainer, srcPath, dstPath, opts)
+		return copyFromContainer(ctx, client, srcContainer, srcPath, dstPath, opts)
 	}
-	return copyToContainer(ctx, ios, client, dstContainer, srcPath, dstPath, opts)
+	return copyToContainer(ctx, client, dstContainer, srcPath, dstPath, opts)
 }
 
-func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
+func copyFromContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -161,22 +158,23 @@ func copyFromContainer(ctx context.Context, ios *iostreams.IOStreams, client *do
 	// Get tar archive from container
 	copyResult, err := client.CopyFromContainer(ctx, c.ID, docker.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("copying from container %q: %w", containerName, err)
 	}
 	defer copyResult.Content.Close()
 
 	// If destination is stdout, just copy the tar
 	if dstPath == "-" {
-		_, err := io.Copy(ios.Out, copyResult.Content)
-		return err
+		if _, err := io.Copy(opts.IOStreams.Out, copyResult.Content); err != nil {
+			return fmt.Errorf("streaming from container %q to stdout: %w", containerName, err)
+		}
+		return nil
 	}
 
 	// Extract tar to destination
 	return extractTar(copyResult.Content, dstPath, copyResult.Stat.Name, opts)
 }
 
-func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
+func copyToContainer(ctx context.Context, client *docker.Client, containerName, srcPath, dstPath string, opts *CpOptions) error {
 	// Find container by name
 	c, err := client.FindContainerByName(ctx, containerName)
 	if err != nil {
@@ -190,12 +188,14 @@ func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 	if srcPath == "-" {
 		copyOpts := docker.CopyToContainerOptions{
 			DestinationPath:           dstPath,
-			Content:                   ios.In,
+			Content:                   opts.IOStreams.In,
 			AllowOverwriteDirWithFile: true,
 			CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 		}
-		_, err := client.CopyToContainer(ctx, c.ID, copyOpts)
-		return err
+		if _, err := client.CopyToContainer(ctx, c.ID, copyOpts); err != nil {
+			return fmt.Errorf("copying to container %q: %w", containerName, err)
+		}
+		return nil
 	}
 
 	// Create tar archive from source
@@ -211,11 +211,10 @@ func copyToContainer(ctx context.Context, ios *iostreams.IOStreams, client *dock
 		AllowOverwriteDirWithFile: true,
 		CopyUIDGID:                opts.Archive || opts.CopyUIDGID,
 	}
-	_, err = client.CopyToContainer(ctx, c.ID, copyOpts)
-	if err != nil {
-		cmdutil.HandleError(ios, err)
+	if _, err = client.CopyToContainer(ctx, c.ID, copyOpts); err != nil {
+		return fmt.Errorf("copying to container %q: %w", containerName, err)
 	}
-	return err
+	return nil
 }
 
 // extractTar extracts a tar archive to a local path.

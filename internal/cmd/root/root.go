@@ -93,7 +93,7 @@ func initializeLogger(debug bool) {
 	loader, err := internalconfig.NewSettingsLoader()
 	if err != nil {
 		// Fall back to console-only logging
-		logger.Init(debug)
+		logger.Init()
 		logger.Warn().Err(err).Msg("file logging unavailable: failed to create settings loader")
 		return
 	}
@@ -101,7 +101,7 @@ func initializeLogger(debug bool) {
 	settings, err := loader.Load()
 	if err != nil {
 		// Fall back to console-only logging
-		logger.Init(debug)
+		logger.Init()
 		logger.Warn().Err(err).Msg("file logging unavailable: failed to load settings")
 		return
 	}
@@ -110,7 +110,7 @@ func initializeLogger(debug bool) {
 	logsDir, err := internalconfig.LogsDir()
 	if err != nil {
 		// Fall back to console-only logging
-		logger.Init(debug)
+		logger.Init()
 		logger.Warn().Err(err).Msg("file logging unavailable: failed to get logs directory")
 		return
 	}
@@ -126,7 +126,7 @@ func initializeLogger(debug bool) {
 	// Initialize with file logging
 	if err := logger.InitWithFile(debug, logsDir, logCfg); err != nil {
 		// Fall back to console-only on error
-		logger.Init(debug)
+		logger.Init()
 		logger.Warn().Err(err).Msg("file logging unavailable: failed to initialize file writer")
 	}
 }

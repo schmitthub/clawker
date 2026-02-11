@@ -705,13 +705,24 @@ func TestContainerFs_ConfigSourceResolution(t *testing.T) {
 	})
 
 	t.Run("fails_when_no_config_dir_found", func(t *testing.T) {
-		t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
 		t.Setenv("HOME", t.TempDir())
 
 		_, err := containerfs.ResolveHostConfigDir()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "claude config dir not found",
 			"error should mention config dir not found")
+	})
+
+	t.Run("fails_when_CLAUDE_CONFIG_DIR_path_invalid", func(t *testing.T) {
+		t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-containerfs-test")
+
+		_, err := containerfs.ResolveHostConfigDir()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "CLAUDE_CONFIG_DIR is set to",
+			"error should reference the env var")
+		assert.Contains(t, err.Error(), "path is invalid",
+			"error should indicate path is invalid")
 	})
 }
 

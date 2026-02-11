@@ -76,7 +76,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("failed to copy claude config to volume: %w", err)
 		}
 
-		logger.Info().Msg("copied host claude config to container")
+		logger.Debug().Msg("copied host claude config to container")
 	}
 
 	// Step 2: Copy credentials if use_host_auth is enabled
@@ -98,7 +98,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 			return fmt.Errorf("failed to copy credentials to volume: %w", err)
 		}
 
-		logger.Info().Msg("injected host credentials into container config volume")
+		logger.Debug().Msg("injected host credentials into container config volume")
 	}
 
 	return nil
@@ -130,10 +130,11 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 		return fmt.Errorf("failed to inject onboarding file: %w", err)
 	}
 
-	logger.Info().Msg("injected onboarding file into container")
+	logger.Debug().Msg("injected onboarding file into container")
 	return nil
 }
 
+// TODO: This is implemented wrong. constructors need to be added to accept factory *cmdutil.Factory, we don't pass indivdual deps)
 // NewCopyToContainerFn creates a CopyToContainerFn that delegates to the docker client.
 // This is the standard production wiring — use directly instead of writing an inline closure.
 func NewCopyToContainerFn(client *docker.Client) CopyToContainerFn {

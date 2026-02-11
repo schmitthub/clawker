@@ -3,81 +3,74 @@ package builders
 
 import (
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 )
 
 // ConfigBuilder provides a fluent API for constructing config.Project objects in tests.
-// It ensures type-safety at compile time - config schema changes cause compile errors.
+// It delegates to configtest.ProjectBuilder which stores a pointer internally,
+// avoiding value copies of config.Project (which contains sync.RWMutex).
 type ConfigBuilder struct {
-	cfg config.Project
+	inner *configtest.ProjectBuilder
 }
 
 // NewConfigBuilder creates a new ConfigBuilder with sensible defaults.
 func NewConfigBuilder() *ConfigBuilder {
 	return &ConfigBuilder{
-		cfg: config.Project{
-			Version: "1",
-			Workspace: config.WorkspaceConfig{
-				RemotePath:  "/workspace",
-				DefaultMode: "bind",
-			},
-		},
+		inner: configtest.NewProjectBuilder(),
 	}
 }
 
 // WithVersion sets the config version.
 func (b *ConfigBuilder) WithVersion(version string) *ConfigBuilder {
-	b.cfg.Version = version
+	b.inner.WithVersion(version)
 	return b
 }
 
 // WithProject sets the project name.
 func (b *ConfigBuilder) WithProject(name string) *ConfigBuilder {
-	b.cfg.Project = name
+	b.inner.WithProject(name)
 	return b
 }
 
 // WithDefaultImage sets the default image.
 func (b *ConfigBuilder) WithDefaultImage(image string) *ConfigBuilder {
-	b.cfg.DefaultImage = image
+	b.inner.WithDefaultImage(image)
 	return b
 }
 
 // WithBuild sets the build configuration.
 func (b *ConfigBuilder) WithBuild(build config.BuildConfig) *ConfigBuilder {
-	b.cfg.Build = build
+	b.inner.WithBuild(build)
 	return b
 }
 
 // WithAgent sets the agent configuration.
 func (b *ConfigBuilder) WithAgent(agent config.AgentConfig) *ConfigBuilder {
-	b.cfg.Agent = agent
+	b.inner.WithAgent(agent)
 	return b
 }
 
 // WithWorkspace sets the workspace configuration.
 func (b *ConfigBuilder) WithWorkspace(workspace config.WorkspaceConfig) *ConfigBuilder {
-	b.cfg.Workspace = workspace
+	b.inner.WithWorkspace(workspace)
 	return b
 }
 
 // WithSecurity sets the security configuration.
 func (b *ConfigBuilder) WithSecurity(security config.SecurityConfig) *ConfigBuilder {
-	b.cfg.Security = security
+	b.inner.WithSecurity(security)
 	return b
 }
 
 // Build returns the constructed Config.
 func (b *ConfigBuilder) Build() *config.Project {
-	// Return a copy to prevent mutation
-	cfg := b.cfg
-	return &cfg
+	return b.inner.Build()
 }
 
 // ForTestBaseImage modifies the build config to use a fast test base image.
 // This swaps the image to alpine:latest and clears packages for fast builds.
 func (b *ConfigBuilder) ForTestBaseImage() *ConfigBuilder {
-	b.cfg.Build.Image = "alpine:latest"
-	b.cfg.Build.Packages = nil
+	b.inner.ForTestBaseImage()
 	return b
 }
 
@@ -189,11 +182,13 @@ func SecurityFirewallEnabled() config.SecurityConfig {
 
 // SecurityFirewallDisabled returns a security config with firewall disabled.
 func SecurityFirewallDisabled() config.SecurityConfig {
+	hostProxyDisabled := false
 	return config.SecurityConfig{
 		Firewall: &config.FirewallConfig{
 			Enable: false,
 		},
-		DockerSocket: false,
+		DockerSocket:    false,
+		EnableHostProxy: &hostProxyDisabled,
 	}
 }
 

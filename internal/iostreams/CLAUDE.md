@@ -84,7 +84,9 @@ Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`,
 
 **Public API in `internal/tui/table.go`** — See `internal/tui/CLAUDE.md` for full TablePrinter API.
 
-**Styled rendering in `internal/iostreams/table.go`** — `RenderStyledTable(headers, rows)` uses `lipgloss/table` with `StyleFunc` for per-cell styling. Headers are muted uppercase. First column uses brand color. All borders disabled. Column widths auto-sized to terminal width.
+**Styled rendering in `internal/iostreams/table.go`** — `RenderStyledTable(headers []string, rows [][]string, overrides *TableStyleOverrides) string` uses `lipgloss/table` with `StyleFunc` for per-cell styling. Headers are muted uppercase. First column uses brand color. All borders disabled. Column widths auto-sized to terminal width. Pass `nil` for overrides to use defaults.
+
+**Table types**: `TableStyleFunc` (`func(string) string`) — per-cell style function. `TableStyleOverrides` (`Header`, `Primary`, `Cell` fields, all `TableStyleFunc`) — optional style overrides for header row, first column, and remaining cells.
 
 ```go
 // Command-level API (via TUI Factory noun):
@@ -93,7 +95,7 @@ tp.AddRow("web", "running", "nginx:latest")
 err := tp.Render()  // writes to ios.Out
 
 // Direct rendering (internal to tui package):
-output := ios.RenderStyledTable(headers, rows)
+output := ios.RenderStyledTable(headers, rows, nil)
 ```
 
 ## Layout Helpers (`layout.go`)
@@ -153,7 +155,9 @@ Lipgloss-based pure functions for composing visual output:
 
 **Table styles**: `TableHeaderStyle` (muted foreground, no bold), `TablePrimaryColumnStyle` (`ColorPrimary` foreground). Used by `RenderStyledTable`.
 
-**Status helpers**: `StatusStyle(running)`, `StatusText(running)`, `StatusIndicator(status)` — return lipgloss styles; outside presentation layer use `tui.StatusIndicator`.
+**Status helpers**: `StatusStyle(running)`, `StatusText(running)`, `StatusIndicator(status string) (lipgloss.Style, string)` — return lipgloss style + symbol for a status. Lives in `iostreams` (styles.go), not `tui`.
+
+**Rendering helpers**: `RenderFixedWidth(s string, width int) string` — renders text at fixed width via lipgloss, used by `tui.TablePrinter` to set column widths without importing lipgloss.
 
 ## Gotchas
 

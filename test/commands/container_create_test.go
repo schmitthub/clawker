@@ -46,11 +46,8 @@ func TestContainerCreate_AgentNameApplied(t *testing.T) {
 	agentName := "test-agent-" + time.Now().Format("150405.000000")
 	expectedContainerName := "clawker.create-agent-test." + agentName
 
-	// Create factory pointing to harness project directory
+	// Create factory — uses h.Config so the client carries the correct project
 	f, ios := harness.NewTestFactory(t, h)
-	f.Client = func(ctx context.Context) (*docker.Client, error) {
-		return client, nil
-	}
 
 	// Create and execute the create command with --agent flag
 	cmd := create.NewCmdCreate(f, nil)
@@ -119,9 +116,6 @@ func TestContainerCreate_NameFlagApplied(t *testing.T) {
 	expectedContainerName := "clawker.create-name-test." + agentName
 
 	f, ios := harness.NewTestFactory(t, h)
-	f.Client = func(ctx context.Context) (*docker.Client, error) {
-		return client, nil
-	}
 
 	cmd := create.NewCmdCreate(f, nil)
 	cmd.SetArgs([]string{
@@ -168,9 +162,6 @@ func TestContainerCreate_NoAgentGetsRandomName(t *testing.T) {
 	}()
 
 	f, ios := harness.NewTestFactory(t, h)
-	f.Client = func(ctx context.Context) (*docker.Client, error) {
-		return client, nil
-	}
 
 	// Create without --agent flag
 	cmd := create.NewCmdCreate(f, nil)

@@ -62,16 +62,12 @@ func (e *Engine) VolumeInspect(ctx context.Context, volumeID string) (client.Vol
 	return result, nil
 }
 
-// VolumeExists checks if a volume exists.
+// VolumeExists checks if a managed volume exists.
+// Delegates to IsVolumeManaged so that unmanaged volumes (e.g. Docker-auto-created
+// volumes without labels) are treated as "not found". This is consistent with
+// VolumeInspect and VolumeRemove which also enforce the managed label.
 func (e *Engine) VolumeExists(ctx context.Context, volumeID string) (bool, error) {
-	_, err := e.APIClient.VolumeInspect(ctx, volumeID, client.VolumeInspectOptions{})
-	if err != nil {
-		if cerrdefs.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return e.IsVolumeManaged(ctx, volumeID)
 }
 
 // VolumeList lists volumes matching the filter.

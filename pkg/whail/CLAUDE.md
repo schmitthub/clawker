@@ -95,9 +95,13 @@ Domain helpers for build progress display. These live in `whail` (bottom of the 
 
 `VolumeCreate(ctx, opts, extraLabels...)`, `VolumeRemove(ctx, id, force)`, `VolumeInspect(ctx, id)`, `VolumeExists(ctx, id)`, `VolumeList(ctx, extraFilters...)`, `VolumeListAll(ctx)`, `IsVolumeManaged(ctx, name)`, `VolumesPrune(ctx, all)`
 
+**Note:** `VolumeExists` delegates to `IsVolumeManaged` — an unmanaged volume with the same name is treated as "not found". This prevents Docker-auto-created unlabeled volumes from short-circuiting `EnsureVolume`.
+
 ## Network Operations (10 methods)
 
 `NetworkCreate(ctx, name, opts, extraLabels...)`, `NetworkRemove(ctx, name)`, `NetworkInspect(ctx, name, opts)`, `NetworkExists(ctx, name)`, `NetworkList(ctx, extraFilters...)`, `EnsureNetwork(ctx, EnsureNetworkOptions)`, `IsNetworkManaged(ctx, name)`, `NetworksPrune(ctx)`, `NetworkConnect(ctx, network, containerID, endpointSettings)`, `NetworkDisconnect(ctx, network, containerID, force)`
+
+**Note:** `NetworkExists` delegates to `IsNetworkManaged` — same pattern as `VolumeExists`.
 
 ## DockerError
 
@@ -136,10 +140,10 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 
 `types.go` re-exports SDK types so higher-level packages avoid importing moby directly. Key groups:
 
-- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions`
+- **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions` (`client.ContainerWaitOptions`)
 - **Exec**: `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`
 - **Copy**: `CopyToContainerOptions`, `CopyFromContainerOptions`
-- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions`, `ImageTagResult`
+- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions` (`client.ImageTagOptions`), `ImageTagResult` (`client.ImageTagResult`)
 - **Volume/Network**: `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`
 - **Other**: `Filters`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
 - **Constants**: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`

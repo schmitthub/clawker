@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -39,7 +40,7 @@ func Main() int {
 	cmd, err := rootCmd.ExecuteC()
 	if err != nil {
 		if !errors.Is(err, cmdutil.SilentError) {
-			printError(f.IOStreams.ErrOut, err, cmd)
+			printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
 		}
 
 		var exitErr *cmdutil.ExitError
@@ -62,10 +63,10 @@ type userFormattedError interface {
 // error type:
 //   - FlagError: prints the error followed by usage
 //   - userFormattedError: uses rich formatting (e.g., Docker error context)
-//   - default: prints "Error: <message>"
+//   - default: prints failure icon + error message
 //
 // A contextual help hint is always appended.
-func printError(out io.Writer, err error, cmd *cobra.Command) {
+func printError(out io.Writer, cs *iostreams.ColorScheme, err error, cmd *cobra.Command) {
 	var flagErr *cmdutil.FlagError
 	var ufErr userFormattedError
 
@@ -77,7 +78,7 @@ func printError(out io.Writer, err error, cmd *cobra.Command) {
 	case errors.As(err, &ufErr):
 		fmt.Fprint(out, ufErr.FormatUserError())
 	default:
-		fmt.Fprintf(out, "Error: %s\n", err)
+		fmt.Fprintf(out, "%s %s\n", cs.FailureIcon(), err)
 	}
 
 	fmt.Fprintf(out, "\nRun '%s --help' for more information.\n", cmd.CommandPath())

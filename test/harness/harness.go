@@ -22,7 +22,7 @@ type Harness struct {
 	ConfigDir   string            // Isolated ~/.local/clawker/
 	OriginalEnv map[string]string // For restoration
 	OriginalDir string            // Original working directory
-	Config      *config.Project    // The test config
+	Config      *config.Project   // The test config
 	Project     string            // Project name
 	envKeys     []string          // Keys we've set for cleanup
 	changedDir  bool              // Whether we changed directory
@@ -119,6 +119,7 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	// Container/volume/network names use the slug, so the harness must too.
 	if h.Project != "" {
 		h.Project = config.Slugify(h.Project)
+		h.Config.Project = h.Project // keep config in sync with slugified name
 	}
 
 	// Write clawker.yaml to project directory
