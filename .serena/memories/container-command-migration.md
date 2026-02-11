@@ -36,8 +36,10 @@
 1. Run acceptance criteria for the completed task
 2. Update the Progress Tracker in this memory
 3. Append any key learnings to the Key Learnings section
-4. Present the handoff prompt from the task's Wrap Up section to the user
-5. Wait for the user to start a new conversation with the handoff prompt
+4. Run a single `code-reviewer` subagent to review this task's changes, then fix any findings
+5. Commit all changes from this task with a descriptive commit message
+6. Present the handoff prompt from the task's Wrap Up section to the user
+7. Wait for the user to start a new conversation with the handoff prompt
 
 This ensures each task gets a fresh context window. Each task is designed to be self-contained — the handoff prompt provides all context the next agent needs.
 
@@ -328,7 +330,9 @@ make test  # Full unit test suite
 
 1. Update Progress Tracker: Task 2 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-2 are complete. Begin Task 3: pause + unpause + rename + restart HandleError migration + new Tier 2 tests."
 
@@ -385,7 +389,9 @@ make test
 
 1. Update Progress Tracker: Task 3 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-3 are complete. Begin Task 4: update + wait HandleError migration + Tier 2 tests."
 
@@ -419,7 +425,9 @@ make test
 
 1. Update Progress Tracker: Task 4 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-4 are complete. Begin Task 5: cp HandleError migration + Tier 2 tests."
 
@@ -456,7 +464,9 @@ make test
 
 1. Update Progress Tracker: Task 5 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-5 are complete. Begin Task 6: container list full rewrite with TablePrinter + format/filter flags."
 
@@ -522,7 +532,9 @@ make test
 
 1. Update Progress Tracker: Task 6 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-6 are complete. Begin Task 7: inspect + logs HandleError migration + Tier 2 tests."
 
@@ -560,7 +572,9 @@ make test
 
 1. Update Progress Tracker: Task 7 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-7 are complete. Begin Task 8: top — tabwriter → TablePrinter + Tier 2 tests."
 
@@ -593,7 +607,9 @@ make test
 
 1. Update Progress Tracker: Task 8 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-8 are complete. Begin Task 9: stats — tabwriter + HandleError + Tier 2 tests."
 
@@ -628,7 +644,9 @@ make test
 
 1. Update Progress Tracker: Task 9 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-9 are complete. Begin Task 10: attach — StreamWithResize → canonical pattern + Tier 2 tests."
 
@@ -695,7 +713,9 @@ make test
 
 1. Update Progress Tracker: Task 10 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-10 are complete. Begin Task 11: exec — StreamWithResize → canonical pattern + Tier 2 tests."
 
@@ -783,7 +803,9 @@ go test ./test/commands/... -v -timeout 10m -run TestExec
 
 1. Update Progress Tracker: Task 11 -> `complete`
 2. Append key learnings
-3. **STOP.** Present handoff prompt:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Present handoff prompt:
 
 > **Next agent prompt:** "Continue the container-command-migration initiative. Read the Serena memory `container-command-migration` — Tasks 1-11 are complete. Begin Task 12: Cleanup — verify no deprecated patterns remain, update documentation."
 
@@ -847,6 +869,8 @@ go build ./...     # Everything compiles
 
 1. Update Progress Tracker: Task 12 -> `complete`
 2. Append final key learnings
-3. **STOP.** Inform the user the initiative is complete:
+3. Run a single `code-reviewer` subagent to review only this task's changes. Fix any findings before proceeding.
+4. Commit all changes from this task with a descriptive commit message.
+5. **STOP.** Inform the user the initiative is complete:
 
 > **Initiative complete.** All 17 container commands have been migrated to canonical patterns. 27 HandleError calls removed, 4 tabwriter usages replaced, 2 StreamWithResize usages canonicalized, 14 new Tier 2 test suites added, 3 CLAUDE.md files created/updated. The `container list` command now has full format/filter/TablePrinter support.
