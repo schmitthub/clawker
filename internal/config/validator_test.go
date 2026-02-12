@@ -207,6 +207,127 @@ func TestValidatorValidAgent(t *testing.T) {
 	}
 }
 
+func TestValidatorAgentEnvFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a test env file
+	envFilePath := filepath.Join(tmpDir, "test.env")
+	if err := os.WriteFile(envFilePath, []byte("FOO=bar\n"), 0644); err != nil {
+		t.Fatalf("failed to create env file: %v", err)
+	}
+
+	validator := NewValidator(tmpDir)
+
+	tests := []struct {
+		name    string
+		envFile []string
+		wantErr bool
+	}{
+		{"valid env_file", []string{"./test.env"}, false},
+		{"nonexistent env_file", []string{"./nonexistent.env"}, true},
+		{"absolute path env_file", []string{envFilePath}, false},
+		{"empty env_file list", []string{}, false},
+		{"multiple env_files one missing", []string{"./test.env", "./missing.env"}, true},
+		{"empty string env_file", []string{""}, true},
+		{"whitespace only env_file", []string{"  "}, true},
+		{"directory not file", []string{tmpDir}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Version = "1"
+			cfg.Project = "test-project"
+			cfg.Agent.EnvFile = tt.envFile
+
+			err := validator.Validate(cfg)
+			hasErr := err != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidatorAgentEnvFile_DirectoryErrorMessage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator := NewValidator(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Version = "1"
+	cfg.Project = "test-project"
+	cfg.Agent.EnvFile = []string{tmpDir}
+
+	err = validator.Validate(cfg)
+	if err == nil {
+		t.Fatal("Validate() expected error for directory env_file, got nil")
+	}
+
+	multiErr, ok := err.(*MultiValidationError)
+	if !ok {
+		t.Fatalf("expected *MultiValidationError, got %T", err)
+	}
+
+	found := false
+	for _, e := range multiErr.ValidationErrors() {
+		ve, ok := e.(*ValidationError)
+		if ok && ve.Field == "agent.env_file[0]" && ve.Message == "must be a file, not a directory" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected validation error with message 'must be a file, not a directory', got: %v", err)
+	}
+}
+
+func TestValidatorAgentFromEnv(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator := NewValidator(tmpDir)
+
+	tests := []struct {
+		name    string
+		fromEnv []string
+		wantErr bool
+	}{
+		{"valid from_env names", []string{"ANTHROPIC_API_KEY", "MY_TOKEN"}, false},
+		{"from_env name with space", []string{"BAD NAME"}, true},
+		{"from_env name with equals", []string{"BAD=NAME"}, true},
+		{"from_env name with tab", []string{"BAD\tNAME"}, true},
+		{"empty from_env list", []string{}, false},
+		{"empty string from_env", []string{""}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Version = "1"
+			cfg.Project = "test-project"
+			cfg.Agent.FromEnv = tt.fromEnv
+
+			err := validator.Validate(cfg)
+			hasErr := err != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidatorValidSecurity(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {

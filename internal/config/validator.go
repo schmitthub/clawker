@@ -237,8 +237,38 @@ func (v *Validator) validateAgent(cfg *Project) {
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(v.workDir, includePath)
 		}
-		if _, err := os.Stat(includePath); os.IsNotExist(err) {
-			v.addError(fmt.Sprintf("agent.includes[%d]", i), "file does not exist", include)
+		if _, err := os.Stat(includePath); err != nil {
+			v.addError(fmt.Sprintf("agent.includes[%d]", i), "file not accessible: "+err.Error(), include)
+		}
+	}
+
+	// Validate env_file paths exist (resolve using same logic as ResolveAgentEnv)
+	for i, path := range cfg.Agent.EnvFile {
+		if strings.TrimSpace(path) == "" {
+			v.addError(fmt.Sprintf("agent.env_file[%d]", i), "path must not be empty", path)
+			continue
+		}
+		resolved, err := resolvePath(path, v.workDir)
+		if err != nil {
+			v.addError(fmt.Sprintf("agent.env_file[%d]", i), err.Error(), path)
+			continue
+		}
+		info, statErr := os.Stat(resolved)
+		if statErr != nil {
+			v.addError(fmt.Sprintf("agent.env_file[%d]", i), "file not accessible: "+statErr.Error(), path)
+		} else if info.IsDir() {
+			v.addError(fmt.Sprintf("agent.env_file[%d]", i), "must be a file, not a directory", path)
+		}
+	}
+
+	// Validate from_env variable names
+	for i, name := range cfg.Agent.FromEnv {
+		if name == "" {
+			v.addError(fmt.Sprintf("agent.from_env[%d]", i), "variable name must not be empty", name)
+			continue
+		}
+		if strings.ContainsAny(name, " \t\n=") {
+			v.addError(fmt.Sprintf("agent.from_env[%d]", i), "invalid environment variable name", name)
 		}
 	}
 

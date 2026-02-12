@@ -563,13 +563,15 @@ and plugin installation on every container creation.
 - `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
 - `use_host_auth`: Forward host credentials to container. Default: `true`
 
-**Init flow** (orchestrated by `cmd/container/shared/containerfs.go`):
-1. `workspace.EnsureConfigVolumes()` — creates `clawker.<project>.<agent>-config` volume
-2. `containerfs.PrepareClaudeConfig()` — copies host Claude settings + plugins to tar
-3. `containerfs.PrepareCredentials()` — copies host credentials to tar (when `use_host_auth`)
-4. `docker.CopyToVolume()` — writes tar contents to config volume with correct ownership
-5. `shared.InjectOnboardingFile()` — writes `~/.claude.json` marker to skip first-run wizard
-6. `shared.InjectPostInitScript()` — writes user `post_init` script to container (when configured in `agent.post_init`)
+**Init flow** (orchestrated by `ContainerInitializer.Run()` in `cmd/container/shared/init.go`):
+
+Progress-tracked steps (5-6 depending on config):
+1. **Workspace** — `workspace.SetupMounts()` + `workspace.EnsureConfigVolumes()`
+2. **Config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
+3. **Environment** — `config.ResolveAgentEnv()` merges env_file/from_env/env → `docker.RuntimeEnvOpts` (warnings threaded to `InitResult.Warnings`)
+4. **Create** — `docker.ContainerCreate()` + `InjectOnboardingFile()` (when `use_host_auth`)
+5. **Post-init** (only when `agent.post_init` configured) — `InjectPostInitScript()` writes `~/.clawker/post-init.sh`
+6. **Start** (detached only) — `docker.ContainerStart()`
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),
 `internal/workspace` (volume lifecycle), `internal/cmd/container/shared` (orchestration)

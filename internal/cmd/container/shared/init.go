@@ -163,12 +163,13 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, err := ci.buildRuntimeEnv(cfg, containerOpts, agentName, wd)
+	runtimeEnv, envWarnings, err := ci.buildRuntimeEnv(cfg, containerOpts, agentName, wd)
 	if err != nil {
 		sendStep(ctx, ch, "environment", "Setup environment", tui.StepError)
 		return nil, err
 	}
 	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	result.Warnings = append(result.Warnings, envWarnings...)
 	sendStep(ctx, ch, "environment", "Setup environment", tui.StepComplete)
 
 	// --- Step 4: Create container ---
@@ -319,10 +320,17 @@ func (ci *ContainerInitializer) setupHostProxy(cfg *config.Project, containerOpt
 }
 
 // buildRuntimeEnv constructs container runtime environment variables.
-func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOpts *copts.ContainerOptions, agentName, wd string) ([]string, error) {
+// Returns env vars, warnings (e.g. unset from_env vars), and error.
+func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOpts *copts.ContainerOptions, agentName, wd string) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = cfg.Workspace.DefaultMode
+	}
+
+	// Resolve agent env: merges env_file < from_env < env (static wins)
+	agentEnv, warnings, err := config.ResolveAgentEnv(cfg.Agent, wd)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}
 
 	envOpts := docker.RuntimeEnvOpts{
@@ -335,7 +343,7 @@ func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOp
 		Visual:          cfg.Agent.Visual,
 		Is256Color:      ci.ios.Is256ColorSupported(),
 		TrueColor:       ci.ios.IsTrueColorSupported(),
-		AgentEnv:        cfg.Agent.Env,
+		AgentEnv:        agentEnv,
 	}
 	if cfg.Security.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
@@ -351,7 +359,11 @@ func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOp
 		envOpts.InstructionEnv = cfg.Build.Instructions.Env
 	}
 
-	return docker.RuntimeEnv(envOpts)
+	env, err := docker.RuntimeEnv(envOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return env, warnings, nil
 }
 
 // sendStep sends a progress step event to the channel.
