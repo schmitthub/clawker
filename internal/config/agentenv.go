@@ -69,9 +69,7 @@ func readEnvFile(path string) (map[string]string, error) {
 
 	result := make(map[string]string)
 	scanner := bufio.NewScanner(f)
-	lineNum := 0
 	for scanner.Scan() {
-		lineNum++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -85,9 +83,12 @@ func readEnvFile(path string) (map[string]string, error) {
 		} else {
 			result[key] = ""
 		}
-		logger.Debug().Str("file", path).Int("line", lineNum).Str("key", key).Msg("parsed env entry")
 	}
-	return result, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	logger.Debug().Str("file", path).Int("count", len(result)).Msg("loaded env file")
+	return result, nil
 }
 
 // resolvePath expands a path using standard Unix conventions:

@@ -336,3 +336,9 @@ func TestExpandPath_HomeDirError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no home")
 }
+
+func TestReadEnvFile_Directory(t *testing.T) {
+	dir := t.TempDir()
+	_, err := readEnvFile(dir)
+	require.Error(t, err)
+}

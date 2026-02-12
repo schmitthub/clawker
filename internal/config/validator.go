@@ -253,8 +253,11 @@ func (v *Validator) validateAgent(cfg *Project) {
 			v.addError(fmt.Sprintf("agent.env_file[%d]", i), err.Error(), path)
 			continue
 		}
-		if _, statErr := os.Stat(resolved); statErr != nil {
+		info, statErr := os.Stat(resolved)
+		if statErr != nil {
 			v.addError(fmt.Sprintf("agent.env_file[%d]", i), "file not accessible: "+statErr.Error(), path)
+		} else if info.IsDir() {
+			v.addError(fmt.Sprintf("agent.env_file[%d]", i), "must be a file, not a directory", path)
 		}
 	}
 
