@@ -17,10 +17,12 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
 | `agentenv.go` | `ResolveAgentEnv` — merges env_file, from_env, env into single map with precedence |
+| `identity.go` | Project identity constants: `Domain`, `LabelDomain`, label keys, `ContainerUID`, `ContainerGID` |
 | `ip_ranges.go` | IP range source registry, `GetIPRangeSources()` method |
 
 ## Constants
 
+- **Identity (`identity.go`):** `Domain` (`clawker.dev`), `LabelDomain` (`dev.clawker`) — reverse-DNS for Docker/OCI labels. Label key constants (`LabelPrefix`, `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`, `LabelBaseImage`, `LabelFlavor`, `LabelTest`, `LabelE2ETest`), `ManagedLabelValue` (`"true"`), `EngineLabelPrefix`, `EngineManagedLabel` — canonical source of truth, re-exported by `internal/docker/labels.go`. `ContainerUID` / `ContainerGID` (`1001`) — single source of truth for container user UID/GID, used by bundler, docker, containerfs, and test harness.
 - **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`), `RegistryFileName` (`projects.yaml`)
 - **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`.local/clawker`), `ClawkerNetwork` (`clawker-net`)
 - **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`, `BridgesSubdir`

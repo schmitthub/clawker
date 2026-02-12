@@ -18,7 +18,7 @@
 ┌─────────────────────▼───────────────────────────────────────┐
 │                  internal/docker                             │
 │            (Clawker-specific middleware)                     │
-│         - Label conventions (com.clawker.*)                  │
+│         - Label conventions (dev.clawker.*)                  │
 │         - Naming schemes (clawker.project.agent)             │
 └─────────────────────┬───────────────────────────────────────┘
                       │
@@ -87,7 +87,7 @@ Reusable library with label-based resource isolation. Standalone for use in othe
 Thin layer configuring whail with clawker's conventions.
 
 **Key abstractions:**
-- Labels: `com.clawker.managed`, `com.clawker.project`, `com.clawker.agent`
+- Labels: `dev.clawker.managed`, `dev.clawker.project`, `dev.clawker.agent`
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
 
@@ -463,7 +463,7 @@ AFTER  (clean):  docker/naming.go ──imports──▶ naming/ (standalone lea
 **Container names**: `clawker.project.agent` (3-segment) or `clawker.agent` (2-segment when project is empty)
 **Volume names**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
 
-**Labels** (all `com.clawker.*`):
+**Labels** (all `dev.clawker.*`):
 
 | Label | Purpose |
 |-------|---------|
@@ -478,12 +478,12 @@ AFTER  (clean):  docker/naming.go ──imports──▶ naming/ (standalone lea
 
 **Filtering**: `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` generate Docker filter args.
 
-**Strict ownership**: Clawker refuses to operate on resources without `com.clawker.managed=true`, even with the `clawker.` name prefix.
+**Strict ownership**: Clawker refuses to operate on resources without `dev.clawker.managed=true`, even with the `clawker.` name prefix.
 
 ## Design Principles
 
 1. **All Docker SDK calls go through pkg/whail** - Never bypass this layer
-2. **Labels are authoritative** - `com.clawker.managed=true` determines ownership
+2. **Labels are authoritative** - `dev.clawker.managed=true` determines ownership
 3. **Naming is secondary** - `clawker.*` prefix for readability, not filtering
 4. **stdout for data, stderr for status** - Enables scripting/composability
 5. **User-friendly errors** - All errors include "Next Steps" guidance

@@ -90,8 +90,8 @@ func EmbeddedScripts() []string {
 const (
 	DefaultClaudeCodeVersion = "latest"
 	DefaultUsername          = "claude"
-	DefaultUID               = 1001
-	DefaultGID               = 1001
+	DefaultUID               = config.ContainerUID
+	DefaultGID               = config.ContainerGID
 	DefaultShell             = "/bin/zsh"
 )
 
@@ -249,9 +249,9 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 	return &DockerfileContext{
 		BaseImage:       baseImage,
 		Packages:        []string{}, // Base packages are in template
-		Username:        "claude",
-		UID:             1001,
-		GID:             1001,
+		Username:        DefaultUsername,
+		UID:             DefaultUID,
+		GID:             DefaultGID,
 		Shell:           "/bin/zsh",
 		WorkspacePath:   "/workspace",
 		ClaudeVersion:   version,

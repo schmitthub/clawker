@@ -72,16 +72,16 @@ Three mechanisms identify clawker-managed resources:
 **Key Labels**:
 
 ```
-com.clawker.managed=true
-com.clawker.project=<project-name>   # omitted when project is empty
-com.clawker.agent=<agent-name>
+dev.clawker.managed=true
+dev.clawker.project=<project-name>   # omitted when project is empty
+dev.clawker.agent=<agent-name>
 ```
 
 **Naming Segments**:
 - 3-segment: `clawker.project.agent` (e.g., `clawker.myapp.ralph`) — when project is set
 - 2-segment: `clawker.agent` (e.g., `clawker.ralph`) — when project is empty (orphan project)
 
-**Strict Ownership**: Clawker refuses to operate on resources without `com.clawker.managed=true` label, even if they have the `clawker.` name prefix.
+**Strict Ownership**: Clawker refuses to operate on resources without `dev.clawker.managed=true` label, even if they have the `clawker.` name prefix.
 
 ### Project Registry Lifecycle
 
@@ -427,7 +427,7 @@ The `security.enable_firewall` config option triggers inclusion of a firewall in
 Clawker **refuses** to operate on resources without proper labels:
 
 ```go
-if !hasLabel(container, "com.clawker.managed", "true") {
+if !hasLabel(container, "dev.clawker.managed", "true") {
     return ErrNotManagedResource
 }
 ```

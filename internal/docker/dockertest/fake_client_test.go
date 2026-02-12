@@ -7,6 +7,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 )
 
@@ -129,23 +130,23 @@ func TestFindContainerByAgent(t *testing.T) {
 func TestContainerFixture(t *testing.T) {
 	t.Run("includes clawker labels", func(t *testing.T) {
 		c := dockertest.ContainerFixture("myapp", "ralph", "node:20")
-		if c.Labels["com.clawker.managed"] != "true" {
-			t.Errorf("managed label = %q, want %q", c.Labels["com.clawker.managed"], "true")
+		if c.Labels[docker.LabelManaged] != "true" {
+			t.Errorf("managed label = %q, want %q", c.Labels[docker.LabelManaged], "true")
 		}
-		if c.Labels["com.clawker.project"] != "myapp" {
-			t.Errorf("project label = %q, want %q", c.Labels["com.clawker.project"], "myapp")
+		if c.Labels[docker.LabelProject] != "myapp" {
+			t.Errorf("project label = %q, want %q", c.Labels[docker.LabelProject], "myapp")
 		}
-		if c.Labels["com.clawker.agent"] != "ralph" {
-			t.Errorf("agent label = %q, want %q", c.Labels["com.clawker.agent"], "ralph")
+		if c.Labels[docker.LabelAgent] != "ralph" {
+			t.Errorf("agent label = %q, want %q", c.Labels[docker.LabelAgent], "ralph")
 		}
-		if c.Labels["com.clawker.image"] != "node:20" {
-			t.Errorf("image label = %q, want %q", c.Labels["com.clawker.image"], "node:20")
+		if c.Labels[docker.LabelImage] != "node:20" {
+			t.Errorf("image label = %q, want %q", c.Labels[docker.LabelImage], "node:20")
 		}
 	})
 
 	t.Run("omits project label when empty", func(t *testing.T) {
 		c := dockertest.ContainerFixture("", "ralph", "node:20")
-		if _, hasProject := c.Labels["com.clawker.project"]; hasProject {
+		if _, hasProject := c.Labels[docker.LabelProject]; hasProject {
 			t.Error("expected no project label when project is empty")
 		}
 	})
@@ -374,9 +375,8 @@ func TestSetupBuildKit(t *testing.T) {
 			t.Fatalf("BuildImage() error: %v", err)
 		}
 
-		managedKey := "com.clawker.managed"
-		if capture.Opts.Labels[managedKey] != "true" {
-			t.Errorf("expected managed label %q=true, got %q", managedKey, capture.Opts.Labels[managedKey])
+		if capture.Opts.Labels[docker.LabelManaged] != "true" {
+			t.Errorf("expected managed label %q=true, got %q", docker.LabelManaged, capture.Opts.Labels[docker.LabelManaged])
 		}
 	})
 }

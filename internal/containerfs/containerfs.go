@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/keyring"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -168,8 +169,8 @@ func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 		Name:    ".claude.json",
 		Mode:    0o600,
 		Size:    int64(len(content)),
-		Uid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
-		Gid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Uid:     config.ContainerUID,
+		Gid:     config.ContainerGID,
 		ModTime: time.Now(),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -204,8 +205,8 @@ func PreparePostInitTar(script string) (io.Reader, error) {
 		Typeflag: tar.TypeDir,
 		Name:     ".clawker/",
 		Mode:     0o755,
-		Uid:      1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
-		Gid:      1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Uid:      config.ContainerUID,
+		Gid:      config.ContainerGID,
 		ModTime:  now,
 	}
 	if err := tw.WriteHeader(dirHdr); err != nil {
@@ -217,8 +218,8 @@ func PreparePostInitTar(script string) (io.Reader, error) {
 		Name:    ".clawker/post-init.sh",
 		Mode:    0o755,
 		Size:    int64(len(content)),
-		Uid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
-		Gid:     1001, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Uid:     config.ContainerUID,
+		Gid:     config.ContainerGID,
 		ModTime: now,
 	}
 	if err := tw.WriteHeader(fileHdr); err != nil {

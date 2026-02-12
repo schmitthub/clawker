@@ -222,7 +222,7 @@ Agent names: include timestamp AND random suffix for parallel safety.
 h := harness.NewHarness(t, harness.WithProject("test"),
     harness.WithConfigBuilder(builders.MinimalValidConfig()))
 
-// Docker client (auto-injects com.clawker.test=true + com.clawker.test.name labels)
+// Docker client (auto-injects dev.clawker.test=true + dev.clawker.test.name labels)
 client := harness.NewTestClient(t)
 
 // Factory for integration tests

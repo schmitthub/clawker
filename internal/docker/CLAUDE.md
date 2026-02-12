@@ -27,7 +27,7 @@ Functions: `ContainerName`, `VolumeName`, `GlobalVolumeName`, `ContainerNamePref
 
 ## Labels
 
-`LabelPrefix` (`com.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`
+`LabelPrefix` (`dev.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName` — re-exported from `internal/config/identity.go` (canonical source)
 
 **Constructors**: `ContainerLabels(project, agent, version, image, workdir)`, `GlobalVolumeLabels(purpose)`, `VolumeLabels(project, agent, purpose)`, `ImageLabels(project, version)`, `NetworkLabels()`
 

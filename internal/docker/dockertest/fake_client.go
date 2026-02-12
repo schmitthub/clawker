@@ -34,7 +34,7 @@ import (
 
 // clawkerEngineOptions returns EngineOptions matching docker.NewClient's
 // production configuration so that whail's label injection and filtering
-// uses the same "com.clawker.managed" key as real code.
+// uses the same managed label key as real code.
 func clawkerEngineOptions() whail.EngineOptions {
 	return whail.EngineOptions{
 		LabelPrefix:  docker.EngineLabelPrefix,
@@ -66,8 +66,8 @@ func WithConfig(cfg *config.Config) FakeClientOption {
 }
 
 // NewFakeClient constructs a FakeClient with production-equivalent label
-// configuration. The returned Client.Engine uses clawker's "com.clawker"
-// label prefix, so docker-layer methods (ListContainers, FindContainerByAgent,
+// configuration. The returned Client.Engine uses clawker's label prefix,
+// so docker-layer methods (ListContainers, FindContainerByAgent,
 // etc.) exercise real label filtering logic.
 func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 	fakeAPI := whailtest.NewFakeAPIClient()

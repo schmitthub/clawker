@@ -9,7 +9,7 @@ services:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
     networks:
       - clawker-net
 
@@ -22,7 +22,7 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
     networks:
       - clawker-net
 
@@ -37,7 +37,7 @@ services:
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
     networks:
       - clawker-net
 
@@ -48,7 +48,7 @@ services:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
     networks:
       - clawker-net
 
@@ -67,7 +67,7 @@ services:
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
     networks:
       - clawker-net
 
@@ -76,7 +76,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
-      com.clawker.managed: "true"
+      dev.clawker.managed: "true"
 
 networks:
   clawker-net:

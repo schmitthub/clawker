@@ -46,8 +46,8 @@ func TestContainerStart_BasicStart(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "start-basic-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "start-basic-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -118,8 +118,8 @@ func TestContainerStart_BothPatterns(t *testing.T) {
 					Image: "alpine:latest",
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						"com.clawker.project": project,
-						"com.clawker.agent":   agentName,
+						docker.LabelProject: project,
+						docker.LabelAgent:   agentName,
 					},
 				},
 			})
@@ -197,8 +197,8 @@ func TestContainerStart_BothImages(t *testing.T) {
 					Image: tt.image,
 					Cmd:   []string{"sleep", "300"},
 					Labels: map[string]string{
-						"com.clawker.project": project,
-						"com.clawker.agent":   agentName,
+						docker.LabelProject: project,
+						docker.LabelAgent:   agentName,
 					},
 				},
 			})
@@ -259,8 +259,8 @@ func TestContainerStart_MultipleContainers(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.project": "start-multi-test",
-					"com.clawker.agent":   agentName,
+					docker.LabelProject: "start-multi-test",
+					docker.LabelAgent:   agentName,
 				},
 			},
 		})
@@ -320,8 +320,8 @@ func TestContainerStart_AlreadyRunning(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "start-running-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "start-running-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -408,8 +408,8 @@ func TestContainerStart_MultipleWithAttach(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.project": "start-attach-test",
-					"com.clawker.agent":   agentName,
+					docker.LabelProject: "start-attach-test",
+					docker.LabelAgent:   agentName,
 				},
 			},
 		})

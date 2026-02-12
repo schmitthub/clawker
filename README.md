@@ -857,7 +857,7 @@ security:
 Under the hood, clawker uses **whail** (whale jail) - a reusable Go package that decorates the Docker client with label-based resource isolation.
 
 **What it does:**
-- Applies `com.clawker.managed=true` labels during resource creation
+- Applies `dev.clawker.managed=true` labels during resource creation
 - Injects label filters on list/inspect operations
 - Refuses to operate on resources it didn't create
 

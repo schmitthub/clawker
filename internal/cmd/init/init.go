@@ -250,9 +250,9 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 				Tags:            []string{docker.DefaultImageTag},
 				SuppressOutput:  true,
 				Labels: map[string]string{
-					"com.clawker.managed":    "true",
-					"com.clawker.base-image": "true",
-					"com.clawker.flavor":     selectedFlavor,
+					docker.LabelManaged:   docker.ManagedLabelValue,
+					docker.LabelBaseImage: docker.ManagedLabelValue,
+					docker.LabelFlavor:    selectedFlavor,
 				},
 			})
 			if err != nil {

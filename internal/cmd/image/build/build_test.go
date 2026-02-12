@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,14 +204,14 @@ func TestMergeLabels(t *testing.T) {
 		{
 			name:          "only clawker labels",
 			userLabels:    nil,
-			clawkerLabels: map[string]string{"com.clawker.managed": "true"},
-			expect:        map[string]string{"com.clawker.managed": "true"},
+			clawkerLabels: map[string]string{docker.LabelManaged: "true"},
+			expect:        map[string]string{docker.LabelManaged: "true"},
 		},
 		{
 			name:          "clawker labels override user labels",
-			userLabels:    map[string]string{"com.clawker.managed": "false", "user": "value"},
-			clawkerLabels: map[string]string{"com.clawker.managed": "true"},
-			expect:        map[string]string{"com.clawker.managed": "true", "user": "value"},
+			userLabels:    map[string]string{docker.LabelManaged: "false", "user": "value"},
+			clawkerLabels: map[string]string{docker.LabelManaged: "true"},
+			expect:        map[string]string{docker.LabelManaged: "true", "user": "value"},
 		},
 	}
 

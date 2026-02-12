@@ -23,14 +23,14 @@ import (
 )
 
 const (
-	// TestLabel is the label used to identify test resources
-	TestLabel = "com.clawker.test"
-	// TestLabelValue is the value for the test label
-	TestLabelValue = "true"
-	// ClawkerManagedLabel is the standard clawker managed label
-	ClawkerManagedLabel = "com.clawker.managed"
-	// LabelTestName is the label key for the originating test function name
-	LabelTestName = "com.clawker.test.name"
+	// TestLabel is the label used to identify test resources.
+	TestLabel = docker.LabelTest
+	// TestLabelValue is the value for the test label.
+	TestLabelValue = docker.ManagedLabelValue
+	// ClawkerManagedLabel is the standard clawker managed label.
+	ClawkerManagedLabel = docker.LabelManaged
+	// LabelTestName is the label key for the originating test function name.
+	LabelTestName = docker.LabelTestName
 )
 
 // RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources
@@ -208,12 +208,12 @@ func AddTestLabels(labels map[string]string) map[string]string {
 
 // AddClawkerLabels adds both clawker and test labels to a map.
 // This creates resources that are managed by clawker AND marked for test cleanup.
-// The testName parameter sets com.clawker.test.name for leak tracing.
+// The testName parameter sets the test name label for leak tracing.
 func AddClawkerLabels(labels map[string]string, project, agent, testName string) map[string]string {
 	result := AddTestLabels(labels)
-	result[ClawkerManagedLabel] = "true"
-	result["com.clawker.project"] = project
-	result["com.clawker.agent"] = agent
+	result[ClawkerManagedLabel] = docker.ManagedLabelValue
+	result[docker.LabelProject] = project
+	result[docker.LabelAgent] = agent
 	if testName != "" {
 		result[LabelTestName] = testName
 	}
@@ -226,7 +226,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	var errs []error
 
 	// Stop and remove containers
-	f := client.Filters{}.Add("label", "com.clawker.project="+project)
+	f := client.Filters{}.Add("label", docker.LabelProject+"="+project)
 	containers, err := c.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
@@ -249,7 +249,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	}
 
 	// Remove volumes - VolumeList in whail takes map[string]string not Filters
-	volumes, err := c.VolumeList(ctx, map[string]string{"com.clawker.project": project})
+	volumes, err := c.VolumeList(ctx, map[string]string{docker.LabelProject: project})
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	}
 
 	// Remove networks
-	networks, err := c.NetworkList(ctx, map[string]string{"com.clawker.project": project})
+	networks, err := c.NetworkList(ctx, map[string]string{docker.LabelProject: project})
 	if err != nil {
 		return err
 	}
@@ -554,10 +554,10 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 
 	// Build labels that mark this as a test image
 	labels := map[string]string{
-		TestLabel:              TestLabelValue,
-		ClawkerManagedLabel:    "true",
-		"com.clawker.project":  h.Project,
-		"com.clawker.e2e-test": "true",
+		TestLabel:           TestLabelValue,
+		ClawkerManagedLabel: docker.ManagedLabelValue,
+		docker.LabelProject: h.Project,
+		docker.LabelE2ETest: docker.ManagedLabelValue,
 	}
 
 	// Build the image
@@ -629,7 +629,7 @@ func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestI
 		TestLabel: TestLabelValue,
 	}
 	if opts.Project != "" {
-		labels["com.clawker.project"] = opts.Project
+		labels[docker.LabelProject] = opts.Project
 	}
 
 	t.Logf("Building simple test image: %s", imageTag)
@@ -711,7 +711,7 @@ func BuildTestChownImage(t *testing.T) {
 	}
 
 	// Build from busybox with test labels
-	// Note: managed label (com.clawker.managed=true) is auto-injected by whail
+	// Note: managed label is auto-injected by whail
 	dockerfile := fmt.Sprintf("FROM busybox:latest\nLABEL %s=%s\n",
 		TestLabel, TestLabelValue)
 	buildCtx, err := createSimpleBuildContext(dockerfile)

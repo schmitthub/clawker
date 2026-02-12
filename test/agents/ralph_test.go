@@ -56,8 +56,8 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "ralph-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "ralph-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -149,8 +149,8 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "ralph-timeout-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "ralph-timeout-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})

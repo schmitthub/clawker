@@ -14,7 +14,7 @@ type Engine struct {
 }
 ```
 
-**`EngineOptions`**: `LabelPrefix` (e.g. "com.clawker"), `ManagedLabel` (default: "managed"), `Labels LabelConfig`
+**`EngineOptions`**: `LabelPrefix` (e.g. "dev.clawker"), `ManagedLabel` (default: "managed"), `Labels LabelConfig`
 
 **`const DefaultManagedLabel = "managed"`**
 

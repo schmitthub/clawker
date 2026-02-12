@@ -154,7 +154,7 @@ Users need a dashboard that provides:
 ## Functional Requirements
 
 ### FR1: Agent Discovery
-- Discover containers with labels `com.clawker.project={project}`
+- Discover containers with labels `dev.clawker.project={project}`
 - Filter to agents with session files in `~/.local/clawker/ralph/sessions/`
 - Refresh every 2 seconds
 - Handle containers in all states: running, exited, created

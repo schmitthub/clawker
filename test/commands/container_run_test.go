@@ -201,9 +201,9 @@ func TestContainerRun_Labels(t *testing.T) {
 	labels := info.Container.Config.Labels
 
 	// Check clawker labels are present
-	require.Equal(t, "true", labels["com.clawker.managed"])
-	require.Equal(t, "run-label-test", labels["com.clawker.project"])
-	require.Equal(t, agentName, labels["com.clawker.agent"])
+	require.Equal(t, "true", labels[docker.LabelManaged])
+	require.Equal(t, "run-label-test", labels[docker.LabelProject])
+	require.Equal(t, agentName, labels[docker.LabelAgent])
 
 	// Check custom labels are present
 	require.Equal(t, "testvalue", labels["custom.label"])
@@ -522,9 +522,9 @@ func TestContainerRun_ContainerNameResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	labels := info.Container.Config.Labels
-	require.Equal(t, "true", labels["com.clawker.managed"], "managed label missing")
-	require.Equal(t, "run-name-test", labels["com.clawker.project"], "project label mismatch")
-	require.Equal(t, agentName, labels["com.clawker.agent"], "agent label mismatch")
+	require.Equal(t, "true", labels[docker.LabelManaged], "managed label missing")
+	require.Equal(t, "run-name-test", labels[docker.LabelProject], "project label mismatch")
+	require.Equal(t, agentName, labels[docker.LabelAgent], "agent label mismatch")
 
 	// Wait for container completion and verify output
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

@@ -19,7 +19,7 @@ check_resources() {
 
     # Check for unlabeled clawker volumes (THE ORIGINAL BUG)
     local all_clawker_vols=$(docker volume ls --filter "name=clawker" --format '{{.Name}}' 2>/dev/null)
-    local labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=com.clawker.managed=true" --format '{{.Name}}' 2>/dev/null)
+    local labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=dev.clawker.managed=true" --format '{{.Name}}' 2>/dev/null)
     local unlabeled_count=0
     if [ -n "$all_clawker_vols" ]; then
         for vol in $all_clawker_vols; do
@@ -32,10 +32,10 @@ check_resources() {
         done
     fi
 
-    # Check for containers missing com.clawker.test=true
+    # Check for containers missing dev.clawker.test=true
     # Uses label filter (atomic) then confirms with inspect to avoid TOCTOU race
     local all_clawker_ctrs=$(docker ps -a --filter "name=clawker" --format '{{.ID}}' 2>/dev/null)
-    local test_labeled_ctrs=$(docker ps -a --filter "name=clawker" --filter "label=com.clawker.test=true" --format '{{.ID}}' 2>/dev/null)
+    local test_labeled_ctrs=$(docker ps -a --filter "name=clawker" --filter "label=dev.clawker.test=true" --format '{{.ID}}' 2>/dev/null)
     local containers_no_test=0
     for id in $all_clawker_ctrs; do
         if [ -n "$id" ] && ! echo "$test_labeled_ctrs" | grep -q "^${id}$"; then
@@ -45,8 +45,8 @@ check_resources() {
         fi
     done
 
-    # Check for containers missing com.clawker.test.name
-    local testname_labeled_ctrs=$(docker ps -a --filter "name=clawker" --filter "label=com.clawker.test.name" --format '{{.ID}}' 2>/dev/null)
+    # Check for containers missing dev.clawker.test.name
+    local testname_labeled_ctrs=$(docker ps -a --filter "name=clawker" --filter "label=dev.clawker.test.name" --format '{{.ID}}' 2>/dev/null)
     local containers_no_testname=0
     for id in $all_clawker_ctrs; do
         if [ -n "$id" ] && ! echo "$testname_labeled_ctrs" | grep -q "^${id}$"; then
@@ -62,12 +62,12 @@ check_resources() {
     local vols_no_test=0
     local vols_no_testname=0
     if [ -n "$all_clawker_vols" ]; then
-        local test_labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=com.clawker.test=true" --format '{{.Name}}' 2>/dev/null)
+        local test_labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=dev.clawker.test=true" --format '{{.Name}}' 2>/dev/null)
         for vol in $all_clawker_vols; do
             if ! echo "$test_labeled_vols" | grep -q "^${vol}$"; then
                 # Volume exists but missing test label — verify it still exists before reporting
                 if docker volume inspect "$vol" >/dev/null 2>&1; then
-                    local has_test=$(docker volume inspect "$vol" --format '{{index .Labels "com.clawker.test"}}' 2>/dev/null)
+                    local has_test=$(docker volume inspect "$vol" --format '{{index .Labels "dev.clawker.test"}}' 2>/dev/null)
                     if [ "$has_test" != "true" ]; then
                         vols_no_test=$((vols_no_test + 1))
                         echo "[$timestamp] CRITICAL: Volume missing test label: $vol" | tee -a "$VIOLATION_FILE"
@@ -77,11 +77,11 @@ check_resources() {
             fi
         done
         # Check test.name via the same race-safe pattern
-        local testname_labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=com.clawker.test.name" --format '{{.Name}}' 2>/dev/null)
+        local testname_labeled_vols=$(docker volume ls --filter "name=clawker" --filter "label=dev.clawker.test.name" --format '{{.Name}}' 2>/dev/null)
         for vol in $all_clawker_vols; do
             if ! echo "$testname_labeled_vols" | grep -q "^${vol}$"; then
                 if docker volume inspect "$vol" >/dev/null 2>&1; then
-                    local has_testname=$(docker volume inspect "$vol" --format '{{index .Labels "com.clawker.test.name"}}' 2>/dev/null)
+                    local has_testname=$(docker volume inspect "$vol" --format '{{index .Labels "dev.clawker.test.name"}}' 2>/dev/null)
                     if [ -z "$has_testname" ]; then
                         vols_no_testname=$((vols_no_testname + 1))
                         echo "[$timestamp] CRITICAL: Volume missing test.name label: $vol" | tee -a "$VIOLATION_FILE"
@@ -93,7 +93,7 @@ check_resources() {
 
     # Report any violation inline
     if [ "$containers_no_test" -gt 0 ]; then
-        echo "[$timestamp] VIOLATION: $containers_no_test container(s) missing com.clawker.test=true" | tee -a "$VIOLATION_FILE"
+        echo "[$timestamp] VIOLATION: $containers_no_test container(s) missing dev.clawker.test=true" | tee -a "$VIOLATION_FILE"
         # Log which containers
         for id in $all_clawker_ctrs; do
             if [ -n "$id" ] && ! echo "$test_labeled_ctrs" | grep -q "^${id}$"; then
@@ -105,7 +105,7 @@ check_resources() {
         done
     fi
     if [ "$containers_no_testname" -gt 0 ]; then
-        echo "[$timestamp] VIOLATION: $containers_no_testname container(s) missing com.clawker.test.name" | tee -a "$VIOLATION_FILE"
+        echo "[$timestamp] VIOLATION: $containers_no_testname container(s) missing dev.clawker.test.name" | tee -a "$VIOLATION_FILE"
         for id in $all_clawker_ctrs; do
             if [ -n "$id" ] && ! echo "$testname_labeled_ctrs" | grep -q "^${id}$"; then
                 if docker inspect "$id" >/dev/null 2>&1; then
@@ -116,7 +116,7 @@ check_resources() {
         done
     fi
     if [ "$unlabeled_count" -gt 0 ]; then
-        echo "[$timestamp] VIOLATION: $unlabeled_count volume(s) missing com.clawker.managed=true" | tee -a "$VIOLATION_FILE"
+        echo "[$timestamp] VIOLATION: $unlabeled_count volume(s) missing dev.clawker.managed=true" | tee -a "$VIOLATION_FILE"
     fi
 
     # Summary line

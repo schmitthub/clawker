@@ -262,10 +262,10 @@ security:
 
 1. Firewall enabled, Docker socket disabled by default
 2. `run`/`start` are aliases for `container run` (Docker CLI pattern)
-3. Hierarchical naming: `clawker.project.agent`; labels (`com.clawker.*`) authoritative for filtering
+3. Hierarchical naming: `clawker.project.agent`; labels (`dev.clawker.*`) authoritative for filtering
 4. stdout for data, stderr for status/warnings/errors; `--format` flag for machine-readable output; per-scenario stream strategy (see style guide)
 5. Project registry replaces directory walking for resolution
-6. Empty project → 2-segment names (`clawker.agent`), labels omit `com.clawker.project`
+6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object

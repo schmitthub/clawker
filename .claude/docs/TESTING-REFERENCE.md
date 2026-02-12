@@ -651,7 +651,7 @@ image := harness.BuildLightImage(t, client) // content-addressed, all scripts ba
 ```
 
 `BuildLightImage` auto-discovers ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` and embeds them.
-The Dockerfile includes `LABEL com.clawker.test=true` so intermediates are also catchable by cleanup.
+The Dockerfile includes `LABEL dev.clawker.test=true` so intermediates are also catchable by cleanup.
 Script arg is ignored (kept for API compat) — single cached image shared across all tests.
 
 **Full clawker image** (used by `test/agents/`):
@@ -1063,11 +1063,11 @@ func TestMain(m *testing.M) {
 }
 ```
 
-`CleanupTestResources` filters on `com.clawker.test=true` label — removes containers, volumes, networks, and images (including dangling intermediates via `All: true` + `PruneChildren: true`). User's real clawker images (`com.clawker.managed` only) are never touched.
+`CleanupTestResources` filters on `dev.clawker.test=true` label — removes containers, volumes, networks, and images (including dangling intermediates via `All: true` + `PruneChildren: true`). User's real clawker images (`dev.clawker.managed` only) are never touched.
 
 ### Key Components
 
-**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` baked in. Single cached image shared across all tests. `LABEL com.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
+**BuildLightImage** — Content-addressed Alpine image with ALL `*.sh` scripts from `internal/bundler/assets/` and `internal/hostproxy/internals/` baked in. Single cached image shared across all tests. `LABEL dev.clawker.test=true` embedded in Dockerfile so intermediates carry the label too.
 
 ```go
 client := harness.NewTestClient(t)
@@ -1183,7 +1183,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 
 ### dockertest (Composite Fake) Pattern
 
-- Must use `com.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `com.clawker.managed`; using test labels would cause zero results
+- Must use `dev.clawker` label prefix (not `com.whailtest`) — docker-layer methods like `ListContainers` call `ClawkerFilter()` which filters by `dev.clawker.managed`; using test labels would cause zero results
 - `docker.Client.ImageExists` calls `c.APIClient.ImageInspect` directly (bypasses whail Engine jail) — the `errNotFound` type must satisfy `errdefs.IsNotFound` via `NotFound()` method
 - `FindContainerByName` uses `ContainerList` + `ContainerInspect` — `SetupFindContainer` must configure both Fn fields
 - No import cycles: `internal/docker/dockertest` -> `internal/docker` + `pkg/whail` + `pkg/whail/whailtest` is clean
