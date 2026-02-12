@@ -1,7 +1,7 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
         fawker \
-        test test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -31,6 +31,8 @@ help:
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test                Unit tests only (fast, no Docker)"
+	@echo "  test-unit           Alias for 'test'"
+	@echo "  test-ci             Unit tests with race detector, no cache, coverage (CI mode)"
 	@echo "  test-commands       Command integration tests (requires Docker)"
 	@echo "  test-internals      Internal integration tests (requires Docker)"
 	@echo "  test-acceptance     Clawker acceptance tests via testscript (requires Docker)"
@@ -179,6 +181,9 @@ clawker-clean:
 # Test Targets
 # ============================================================================
 
+# Package list for unit tests (excludes integration test directories)
+UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
+
 # Unit tests only (fast, no Docker)
 # Excludes test/cli, test/internals, test/agents which require Docker
 test:
@@ -186,7 +191,18 @@ test:
 ifndef GOTESTSUM
 	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
 endif
-	$(TEST_CMD) $$(go list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
+	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
+	$(TEST_CMD) $$PKGS
+
+# Alias for unit tests (matches CI naming convention)
+test-unit: test
+
+# CI-mode unit tests: race detector, no caching, coverage
+# Called by .github/workflows/test.yml
+test-ci:
+	@echo "Running unit tests (CI mode: race, no cache, coverage)..."
+	@PKGS="$(UNIT_PKGS)"; if [ -z "$$PKGS" ]; then echo "ERROR: no packages found" >&2; exit 1; fi; \
+	$(GO) test -race -count=1 -coverprofile=coverage.out $$PKGS
 
 # Internal integration tests (requires Docker)
 test-internals:

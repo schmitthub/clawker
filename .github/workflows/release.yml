@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -18,14 +19,35 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate tag is semver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?(\+[a-zA-Z0-9._-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not valid semver (expected vMAJOR.MINOR.PATCH[-prerelease])"
+            exit 1
+          fi
+
+      - name: Validate tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::Tag must point to a commit on the main branch"
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
 
-      - name: Run tests
-        run: go test ./...
+      - name: Verify build
+        run: go build ./cmd/clawker
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
