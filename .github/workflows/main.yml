@@ -10,8 +10,6 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 jobs:
   security:
@@ -19,8 +17,6 @@ jobs:
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
-      security-events: write
-      actions: read
     secrets: inherit
 
   lint:
@@ -28,8 +24,6 @@ jobs:
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
-      security-events: write
-      actions: read
 
   test:
     name: Test
