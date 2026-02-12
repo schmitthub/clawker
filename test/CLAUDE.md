@@ -39,7 +39,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E
 - **Fakes**: `internal/docker/dockertest/`, `pkg/whail/whailtest/`
 - **Cleanup**: Always `t.Cleanup()` — never deferred functions
 - **TestMain**: All Docker test packages use `RunTestMain(m)` for exclusive lock + cleanup + SIGINT
-- **Labels**: `com.clawker.test=true` on all resources; `com.clawker.test.name=TestName` per test
+- **Labels**: `dev.clawker.test=true` on all resources; `dev.clawker.test.name=TestName` per test
 - **Whail labels**: `test/whail/` uses `com.whail.test.managed=true`; self-contained cleanup
 
 ## Harness API
@@ -116,7 +116,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 ## Debugging Resource Leaks
 
-All test resources carry `com.clawker.test=true` + `com.clawker.test.name=TestName`. See `.claude/rules/testing.md` for lookup commands.
+All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestName`. See `.claude/rules/testing.md` for lookup commands.
 
 ## Dependencies
 

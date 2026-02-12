@@ -15,7 +15,7 @@ exec clawker container inspect --format '{{index .Config.Labels "another"}}' --a
 stdout 'label'
 
 # Verify clawker managed labels are still present (precedence)
-exec clawker container inspect --format '{{index .Config.Labels "com.clawker.managed"}}' --agent labels-$RANDOM_STRING
+exec clawker container inspect --format '{{index .Config.Labels "dev.clawker.managed"}}' --agent labels-$RANDOM_STRING
 stdout 'true'
 
 -- clawker.yaml --

@@ -5,13 +5,14 @@ package docker
 import (
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // Clawker label keys for managed resources.
 const (
-	// LabelPrefix is the prefix for all clawker labels.
-	LabelPrefix = "com.clawker."
+	// LabelPrefix is the prefix for all clawker labels (derived from config.LabelDomain).
+	LabelPrefix = config.LabelDomain + "."
 
 	// LabelManaged marks a resource as managed by clawker.
 	LabelManaged = LabelPrefix + "managed"
@@ -40,11 +41,23 @@ const (
 	// LabelTestName identifies the test function that created a resource.
 	// Set automatically by TestLabelConfig(t.Name()) in integration tests.
 	LabelTestName = LabelPrefix + "test.name"
+
+	// LabelBaseImage marks a built image as the base image.
+	LabelBaseImage = LabelPrefix + "base-image"
+
+	// LabelFlavor stores the Linux flavor used for a base image build.
+	LabelFlavor = LabelPrefix + "flavor"
+
+	// LabelTest marks a resource as created by a test.
+	LabelTest = LabelPrefix + "test"
+
+	// LabelE2ETest marks a resource as created by an E2E test.
+	LabelE2ETest = LabelPrefix + "e2e-test"
 )
 
 // EngineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).
 // Use this when configuring the whail Engine; it adds its own dot separator.
-const EngineLabelPrefix = "com.clawker"
+const EngineLabelPrefix = config.LabelDomain
 
 // EngineManagedLabel is the managed label key for whail.EngineOptions.
 const EngineManagedLabel = "managed"

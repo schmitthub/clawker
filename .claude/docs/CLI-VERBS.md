@@ -62,7 +62,7 @@ clawker build --label version=1.0 --label team=backend
 
 **Notes:**
 - User-provided `--label` flags are merged with clawker's managed labels
-- Clawker labels (`com.clawker.*`) take precedence over user labels
+- Clawker labels (`dev.clawker.*`) take precedence over user labels
 - Without `-f/--file`, builds from generated Dockerfile based on clawker.yaml
 
 ---

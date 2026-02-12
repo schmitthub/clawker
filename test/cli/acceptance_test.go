@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/rogpeppe/go-internal/testscript"
 	"github.com/schmitthub/clawker/internal/clawker"
+	"github.com/schmitthub/clawker/internal/docker"
 )
 
 // Environment variables for configuration
@@ -572,7 +573,7 @@ func sharedCmds() map[string]func(ts *testscript.TestScript, neg bool, args []st
 
 			// Remove containers with project label
 			containerFilter := filters.NewArgs()
-			containerFilter.Add("label", fmt.Sprintf("com.clawker.project=%s", project))
+			containerFilter.Add("label", fmt.Sprintf("%s=%s", docker.LabelProject, project))
 			containers, err := cli.ContainerList(ctx, container.ListOptions{
 				All:     true,
 				Filters: containerFilter,
@@ -587,7 +588,7 @@ func sharedCmds() map[string]func(ts *testscript.TestScript, neg bool, args []st
 
 			// Remove volumes with project label
 			volumeFilter := filters.NewArgs()
-			volumeFilter.Add("label", fmt.Sprintf("com.clawker.project=%s", project))
+			volumeFilter.Add("label", fmt.Sprintf("%s=%s", docker.LabelProject, project))
 			volumes, err := cli.VolumeList(ctx, volume.ListOptions{Filters: volumeFilter})
 			if err == nil {
 				for _, v := range volumes.Volumes {
@@ -598,7 +599,7 @@ func sharedCmds() map[string]func(ts *testscript.TestScript, neg bool, args []st
 
 			// Remove networks with project label
 			networkFilter := filters.NewArgs()
-			networkFilter.Add("label", fmt.Sprintf("com.clawker.project=%s", project))
+			networkFilter.Add("label", fmt.Sprintf("%s=%s", docker.LabelProject, project))
 			networks, err := cli.NetworkList(ctx, network.ListOptions{Filters: networkFilter})
 			if err == nil {
 				for _, n := range networks {
@@ -609,7 +610,7 @@ func sharedCmds() map[string]func(ts *testscript.TestScript, neg bool, args []st
 
 			// Remove images with project label
 			imageFilter := filters.NewArgs()
-			imageFilter.Add("label", fmt.Sprintf("com.clawker.project=%s", project))
+			imageFilter.Add("label", fmt.Sprintf("%s=%s", docker.LabelProject, project))
 			images, err := cli.ImageList(ctx, image.ListOptions{Filters: imageFilter})
 			if err == nil {
 				for _, img := range images {

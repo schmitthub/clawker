@@ -1,6 +1,6 @@
 # ContainerFS Package
 
-Leaf package for preparing host Claude Code configuration for container injection.
+Prepares host Claude Code configuration for container injection. Imports `internal/config` for `ContainerUID`/`ContainerGID`.
 
 ## Key Functions
 
@@ -14,7 +14,7 @@ Leaf package for preparing host Claude Code configuration for container injectio
 
 ## Dependencies
 
-Imports: `internal/keyring`, `internal/logger`, stdlib only. No docker imports (leaf package).
+Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. No docker imports.
 
 ## Copy Logic
 

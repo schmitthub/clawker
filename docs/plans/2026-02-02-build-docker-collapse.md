@@ -357,9 +357,9 @@ func BuildDefaultImage(ctx context.Context, flavor string) error {
 		Tags:       []string{DefaultImageTag},
 		Dockerfile: dockerfileName,
 		Labels: map[string]string{
-			"com.clawker.managed":    "true",
-			"com.clawker.base-image": "true",
-			"com.clawker.flavor":     flavor,
+			"dev.clawker.managed":    "true",
+			"dev.clawker.base-image": "true",
+			"dev.clawker.flavor":     flavor,
 		},
 		BuildKitEnabled: buildkitEnabled,
 		ContextDir:      dockerfilesDir,

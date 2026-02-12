@@ -83,9 +83,9 @@ func TestContainerCreate_AgentNameApplied(t *testing.T) {
 	require.NoError(t, err, "failed to inspect container")
 
 	labels := info.Container.Config.Labels
-	require.Equal(t, "true", labels["com.clawker.managed"], "managed label missing")
-	require.Equal(t, "create-agent-test", labels["com.clawker.project"], "project label in inspect mismatch")
-	require.Equal(t, agentName, labels["com.clawker.agent"], "agent label in inspect mismatch")
+	require.Equal(t, "true", labels[docker.LabelManaged], "managed label missing")
+	require.Equal(t, "create-agent-test", labels[docker.LabelProject], "project label in inspect mismatch")
+	require.Equal(t, agentName, labels[docker.LabelAgent], "agent label in inspect mismatch")
 }
 
 // TestContainerCreate_NameFlagApplied tests that the --name flag (alias for --agent)

@@ -15,6 +15,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -63,11 +64,11 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	// Docker's CopyToContainer extracts tar archives as root regardless of
 	// tar header UID/GID (NoLchown=true server-side). We keep correct UID/GID
 	// in createTarArchive as defense-in-depth, but the chown is what actually
-	// ensures the container user (UID 1001) can read the files.
+	// ensures the container user can read the files.
 	chownImg := c.chownImage()
 	containerConfig := &container.Config{
 		Image: chownImg,
-		Cmd:   []string{"chown", "-R", "1001:1001", destPath}, // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		Cmd:   []string{"chown", "-R", fmt.Sprintf("%d:%d", config.ContainerUID, config.ContainerGID), destPath},
 		Labels: map[string]string{
 			LabelPurpose: "copy-to-volume",
 		},
@@ -101,7 +102,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 	}
 
 	// Create temporary container via whail Engine (inherits managed labels + any
-	// configured labels like com.clawker.test=true from TestLabelConfig).
+	// configured labels like test labels from TestLabelConfig).
 	createOpts := whail.ContainerCreateOptions{
 		Config:     containerConfig,
 		HostConfig: hostConfig,
@@ -132,7 +133,7 @@ func (c *Client) CopyToVolume(ctx context.Context, volumeName, srcDir, destPath 
 		return fmt.Errorf("failed to copy to container: %w", err)
 	}
 
-	// Start the container to run chown, fixing file ownership for UID 1001
+	// Start the container to run chown, fixing file ownership for container user
 	if _, err := c.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID}); err != nil {
 		return fmt.Errorf("failed to start chown container: %w", err)
 	}
@@ -215,9 +216,8 @@ func createTarArchive(srcDir string, buf io.Writer, ignorePatterns []string) err
 		header.Name = relPath
 
 		// Ensure container user ownership so files are readable inside container.
-		// TODO: Move container UID/GID to a config package value shared across packages.
-		header.Uid = 1001 // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
-		header.Gid = 1001 // TODO(uid-constants): extract to shared constant — see .serena/memories/uid-gid-constants.md
+		header.Uid = config.ContainerUID
+		header.Gid = config.ContainerGID
 
 		// Handle symlinks
 		if info.Mode()&os.ModeSymlink != 0 {

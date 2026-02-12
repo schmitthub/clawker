@@ -46,7 +46,7 @@ type clientOptions struct {
 type ClientOption func(*clientOptions)
 
 // WithLabels injects additional labels into the whail engine.
-// Use this to add test labels (e.g., com.clawker.test=true) that propagate
+// Use this to add test labels (e.g., dev.clawker.test=true) that propagate
 // to all containers, volumes, and networks created by the client.
 func WithLabels(labels whail.LabelConfig) ClientOption {
 	return func(o *clientOptions) {

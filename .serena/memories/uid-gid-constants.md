@@ -1,6 +1,6 @@
 # UID/GID Constants — Tracking Issue
 
-## Status: Not Started
+## Status: Completed
 
 ## Problem
 Container UID/GID 1001 is hardcoded in multiple packages with "Must match bundler.DefaultUID" comments.
@@ -17,13 +17,8 @@ The canonical source is `internal/bundler/dockerfile.go` (`DefaultUID = 1001`, `
 | `internal/docker/volume.go` | ~199-200 | `createTarArchive` tar headers |
 | `test/harness/client.go` | ~461 | `adduser -u 1001` in test Dockerfile |
 
-## Fix Suggestion
+## Resolution
 
-Option A: Move constants from `bundler` to a shared leaf package (e.g., `internal/config/defaults.go` or new `internal/containeruser/` package).
-
-Option B: Export from bundler and import — but bundler is leaf (no docker import), so docker/volume.go importing bundler would need import cycle check.
-
-Option C: Add to `internal/config` as `ContainerUID`/`ContainerGID` constants — config is already imported by containerfs and docker.
-
-**Recommended:** Option C — `config.ContainerUID` and `config.ContainerGID` in `internal/config/defaults.go`.
-Then update all locations to reference the constants.
+Constants `config.ContainerUID` and `config.ContainerGID` added to `internal/config/identity.go`.
+All locations updated to reference these constants. `bundler.DefaultUID`/`DefaultGID` now alias them.
+TODO comments removed.

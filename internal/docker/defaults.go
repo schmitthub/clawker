@@ -87,9 +87,9 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		Tags:       []string{DefaultImageTag},
 		Dockerfile: dockerfileName,
 		Labels: map[string]string{
-			"com.clawker.managed":    "true",
-			"com.clawker.base-image": "true",
-			"com.clawker.flavor":     flavor,
+			LabelManaged:   ManagedLabelValue,
+			LabelBaseImage: ManagedLabelValue,
+			LabelFlavor:    flavor,
 		},
 		BuildKitEnabled: buildkitEnabled,
 		ContextDir:      dockerfilesDir,
@@ -103,18 +103,18 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 	return nil
 }
 
-// TestLabelConfig returns a LabelConfig that adds com.clawker.test=true
+// TestLabelConfig returns a LabelConfig that adds the test label
 // to all resource types. Use with WithLabels in test code to ensure
 // CleanupTestResources can find and remove test-created resources.
 //
-// When testName is provided (typically t.Name()), the label
-// com.clawker.test.name is also set, enabling per-test resource debugging:
+// When testName is provided (typically t.Name()), the test name label
+// is also set, enabling per-test resource debugging:
 //
-//	docker ps -a --filter label=com.clawker.test.name=TestMyFunction
-//	docker volume ls --filter label=com.clawker.test.name=TestMyFunction
+//	docker ps -a --filter label=dev.clawker.test.name=TestMyFunction
+//	docker volume ls --filter label=dev.clawker.test.name=TestMyFunction
 func TestLabelConfig(testName ...string) whail.LabelConfig {
 	labels := map[string]string{
-		LabelPrefix + "test": "true",
+		LabelTest: ManagedLabelValue,
 	}
 	if len(testName) > 0 && testName[0] != "" {
 		labels[LabelTestName] = testName[0]

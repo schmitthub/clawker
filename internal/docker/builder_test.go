@@ -111,7 +111,7 @@ func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 		Build: config.BuildConfig{
 			Instructions: &config.DockerInstructions{
 				Labels: map[string]string{
-					"com.clawker.project": "attacker-project", // attempt to override
+					LabelProject: "attacker-project", // attempt to override
 					"custom-label":        "custom-value",
 				},
 			},

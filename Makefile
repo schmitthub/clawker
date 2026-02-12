@@ -260,10 +260,10 @@ endif
 # Remove test Docker resources (containers, volumes, networks, images)
 test-clean:
 	@echo "Cleaning test resources..."
-	@docker rm -f $$(docker ps -aq --filter "label=com.clawker.test=true") 2>/dev/null || true
-	@docker volume rm $$(docker volume ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
-	@docker network rm $$(docker network ls -q --filter "label=com.clawker.test=true") 2>/dev/null || true
-	@docker rmi -f $$(docker images -q --filter "label=com.clawker.test=true") 2>/dev/null || true
+	@docker rm -f $$(docker ps -aq --filter "label=dev.clawker.test=true") 2>/dev/null || true
+	@docker volume rm $$(docker volume ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
+	@docker network rm $$(docker network ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
+	@docker rmi -f $$(docker images -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
 
 # Regenerate golden files

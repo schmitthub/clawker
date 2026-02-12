@@ -48,8 +48,8 @@ func TestContainerExec_BasicCommands(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"}, // Sleep for 5 minutes
 			Labels: map[string]string{
-				"com.clawker.project": "exec-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "exec-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -156,8 +156,8 @@ func TestContainerExec_WithAgent(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "exec-agent-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "exec-agent-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -220,8 +220,8 @@ func TestContainerExec_EnvFlag(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "exec-env-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "exec-env-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
@@ -287,8 +287,8 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.project": "exec-error-test",
-					"com.clawker.agent":   agentName,
+					docker.LabelProject: "exec-error-test",
+					docker.LabelAgent:   agentName,
 				},
 			},
 		})
@@ -330,8 +330,8 @@ func TestContainerExec_ErrorCases(t *testing.T) {
 				Image: "alpine:latest",
 				Cmd:   []string{"sleep", "300"},
 				Labels: map[string]string{
-					"com.clawker.project": "exec-error-test",
-					"com.clawker.agent":   agentName,
+					docker.LabelProject: "exec-error-test",
+					docker.LabelAgent:   agentName,
 				},
 			},
 		})
@@ -395,8 +395,8 @@ func TestContainerExec_ScriptExecution(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				"com.clawker.project": "exec-script-test",
-				"com.clawker.agent":   agentName,
+				docker.LabelProject: "exec-script-test",
+				docker.LabelAgent:   agentName,
 			},
 		},
 	})
