@@ -75,11 +75,11 @@ agent:
 
   # Environment variable injection (precedence: env_file < from_env < env)
   # env_file: load KEY=VALUE files (paths support ~, $VAR, relative to project)
-  env_file:
-    - ".env"
+  #    - ".env"
   # from_env: passthrough host env vars by name (unset vars skipped with warning)
   from_env:
-    - GITHUB_AUTH_TOKEN
+    - GH_TOKEN
+    - IDONTEXIST
   # env: static key-value pairs (highest precedence, always win)
   env:
     # FOO: bar
