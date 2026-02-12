@@ -10,7 +10,7 @@
 #   After semgrep step, add:
 #     - name: Upload Semgrep SARIF
 #       if: always() && hashFiles('semgrep.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@v3
+#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
 #       with:
 #         sarif_file: semgrep.sarif
 #         category: semgrep
@@ -18,7 +18,7 @@
 #   After gitleaks step, add:
 #     - name: Upload Gitleaks SARIF
 #       if: always() && hashFiles('results.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@v3
+#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
 #       with:
 #         sarif_file: results.sarif
 #         category: gitleaks
@@ -43,7 +43,7 @@ jobs:
     # go.mod/go.sum — SAST scanning is not useful on dependency changes
     if: (github.actor != 'dependabot[bot]')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Semgrep
         run: semgrep scan --config p/golang --config p/security-audit --error
@@ -53,12 +53,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
@@ -69,9 +69,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: govulncheck
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1
         with:
           go-version-file: go.mod

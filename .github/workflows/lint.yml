@@ -10,7 +10,7 @@
 #   After golangci-lint step, add:
 #     - name: Upload golangci-lint SARIF
 #       if: always() && hashFiles('golangci-lint.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@v3
+#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
 #       with:
 #         sarif_file: golangci-lint.sarif
 #         category: golangci-lint
@@ -29,13 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
         with:
           version: v2.9.0
