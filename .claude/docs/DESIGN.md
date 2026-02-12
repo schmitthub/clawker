@@ -569,6 +569,7 @@ and plugin installation on every container creation.
 3. `containerfs.PrepareCredentials()` — copies host credentials to tar (when `use_host_auth`)
 4. `docker.CopyToVolume()` — writes tar contents to config volume with correct ownership
 5. `shared.InjectOnboardingFile()` — writes `~/.claude.json` marker to skip first-run wizard
+6. `shared.InjectPostInitScript()` — writes user `post_init` script to container (when configured in `agent.post_init`)
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),
 `internal/workspace` (volume lifecycle), `internal/cmd/container/shared` (orchestration)

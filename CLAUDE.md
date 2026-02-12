@@ -139,7 +139,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
-| `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, ClaudeCodeConfig, CopyToVolumeFn (DI) |
+| `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
 | `InjectOnboardingOpts` | Options for `shared.InjectOnboardingFile` — container ID, CopyToContainerFn (DI) |
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
