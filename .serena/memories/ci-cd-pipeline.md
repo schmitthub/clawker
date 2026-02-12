@@ -28,6 +28,13 @@
 - `Lint / golangci-lint`
 - `Test / Unit Tests`
 
+## CI/CD Permission & Compatibility Fixes (PR #112)
+- Added `actions: read` permission to lint.yml, security.yml, pr.yml, main.yml (SARIF upload requires it)
+- Added `pull-requests: read` to security.yml, pr.yml (gitleaks needs PR commits API)
+- Upgraded `golangci/golangci-lint-action@v6` → `@v8` (v6 can't parse golangci-lint v2.x version strings)
+- Replaced `--out-format=colored-line-number,sarif:golangci-lint.sarif` with `--output.sarif.path=golangci-lint.sarif` (v2 removed `--out-format`)
+- `main.yml` intentionally omits `pull-requests: read` (push trigger, no PR API calls)
+
 ## PR Review Fixes Applied
 - SARIF upload guards (`hashFiles()`) on all three upload steps (security.yml, lint.yml)
 - Removed redundant `setup-go` from govulncheck job (action installs Go itself)
