@@ -113,6 +113,8 @@ type ClaudeCodeConfig struct {
 // AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
 	Includes        []string          `yaml:"includes,omitempty" mapstructure:"includes"`
+	EnvFile         []string          `yaml:"env_file,omitempty" mapstructure:"env_file"`
+	FromEnv         []string          `yaml:"from_env,omitempty" mapstructure:"from_env"`
 	Env             map[string]string `yaml:"env,omitempty" mapstructure:"env"`
 	Memory          string            `yaml:"memory,omitempty" mapstructure:"memory"`
 	Editor          string            `yaml:"editor,omitempty" mapstructure:"editor"`

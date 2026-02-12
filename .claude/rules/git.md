@@ -1,3 +1,7 @@
+---
+paths: ["internal/git/**"]
+---
+
 # internal/git Package Rules
 
 ## Tier 1 (Leaf) Package Constraints

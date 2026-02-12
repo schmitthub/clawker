@@ -75,7 +75,9 @@ result, err := initializer.Run(ctx, shared.InitParams{
 - Phase B: Progress-tracked — `Initializer.Run()` with TUI progress display (5 steps)
 - Phase C: Post-progress — print deferred warnings, then detach output or attach-then-start
 
-**Progress steps**: workspace, config (cached if volume exists), environment, container create, post-init (only when `agent.post_init` configured), start (detached only). Step count: 5-6 depending on config.
+**Progress steps**: workspace, config (cached if volume exists), environment (resolves `agent.env_file` + `agent.from_env` + `agent.env` via `config.ResolveAgentEnv`; warnings threaded to `InitResult.Warnings`), container create, post-init (only when `agent.post_init` configured), start (detached only). Step count: 5-6 depending on config.
+
+**`buildRuntimeEnv` signature**: `(cfg, containerOpts, agentName, wd) ([]string, []string, error)` — returns env vars, warnings, error. Warnings from `ResolveAgentEnv` (e.g. unset `from_env` vars) are appended to `InitResult.Warnings`.
 
 **Deferred warnings**: During progress goroutine, TUI owns the terminal — can't print. Warnings collected in `InitResult.Warnings` for Phase C printing.
 
@@ -107,7 +109,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 
 ## Dependencies
 
-Imports: `internal/cmd/container/opts`, `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/iostreams`, `internal/logger`, `internal/tui`, `internal/workspace`
+Imports: `internal/bundler`, `internal/cmd/container/opts`, `internal/cmdutil`, `internal/config`, `internal/containerfs`, `internal/docker`, `internal/git`, `internal/hostproxy`, `internal/iostreams`, `internal/logger`, `internal/prompter`, `internal/tui`, `internal/workspace`, `pkg/whail`
 
 ## Testing
 

@@ -67,7 +67,15 @@ agent:
   includes:
     - "./README.md"
     # - "./.claude/memory.md"
-  # Environment variables for the agent
+  # Load environment variables from files (Docker env-file format)
+  # env_file:
+  #   - ".env"
+  #   - "~/.secrets/api-keys.env"
+  # Pass host environment variables by name (silently skipped if unset)
+  # from_env:
+  #   - "ANTHROPIC_API_KEY"
+  #   - "GITHUB_TOKEN"
+  # Static environment variables for the agent
   env:
     # NODE_ENV: "development"
   # Claude Code configuration

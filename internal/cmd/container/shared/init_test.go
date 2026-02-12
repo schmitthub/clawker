@@ -452,6 +452,63 @@ func TestContainerInitializer_EmptyProject(t *testing.T) {
 	require.Equal(t, "clawker.myagent", result.ContainerName)
 }
 
+func TestContainerInitializer_EnvFileError(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cfg := testConfig()
+	cfg.Agent.EnvFile = []string{"/nonexistent/file.env"}
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	_, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent.env_file")
+	fake.AssertNotCalled(t, "ContainerCreate")
+}
+
+func TestContainerInitializer_FromEnvWarnings(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cfg := testConfig()
+	cfg.Agent.FromEnv = []string{"CLAWKER_NONEXISTENT_VAR_99999"}
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	result, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.Warnings)
+	require.Contains(t, result.Warnings[0], "CLAWKER_NONEXISTENT_VAR_99999")
+}
+
 func TestContainerInitializer_RandomAgentName(t *testing.T) {
 	// No agent specified → random name generated
 	fake := dockertest.NewFakeClient()

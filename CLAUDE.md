@@ -223,7 +223,7 @@ build:
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
-agent: { includes: [], env: {}, post_init: "" }
+agent: { includes: [], env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { remote_path: "/workspace", default_mode: "snapshot" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }

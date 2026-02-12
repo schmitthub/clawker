@@ -70,12 +70,19 @@ agent:
   # includes:
   #   - "./README.md"
     # - "./.claude/memory.md"
-  # Environment variables for the agent
   # editor: "vim"    # defaults to "nano" if not set
   # visual: "vim"    # defaults to "nano" if not set
+
+  # Environment variable injection (precedence: env_file < from_env < env)
+  # env_file: load KEY=VALUE files (paths support ~, $VAR, relative to project)
+  env_file:
+    - ".env"
+  # from_env: passthrough host env vars by name (unset vars skipped with warning)
+  from_env:
+    - GITHUB_AUTH_TOKEN
+  # env: static key-value pairs (highest precedence, always win)
   env:
     # FOO: bar
-  # Claude Code configuration
   claude_code:
     # Use host authentication tokens in container
     use_host_auth: true
