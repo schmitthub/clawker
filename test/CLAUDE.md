@@ -94,9 +94,9 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 `BuildLightImage(t, dc)` — content-addressed Alpine with all scripts. `RunContainer(t, dc, image, opts...)` — auto-cleanup.
 
-**Container opts**: `WithCapAdd(caps...)`, `WithUser(user)`, `WithCmd(cmd...)`, `WithEnv(env...)`, `WithExtraHost(hosts...)`, `WithMounts(mounts...)`, `WithConfigVolume(name)`, `WithVolumeMount(name, path)`
+**Container opts**: `WithCapAdd(caps...)`, `WithUser(user)`, `WithCmd(cmd...)`, `WithEntrypoint(entrypoint...)`, `WithEnv(env...)`, `WithExtraHost(hosts...)`, `WithMounts(mounts...)`, `WithConfigVolume(name)`, `WithVolumeMount(name, path)`
 
-`RunningContainer{ID, Name}` — methods: `Exec(ctx, dc, cmd...)`, `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`. `ExecResult{ExitCode, Stdout, Stderr}` with `CleanOutput()`.
+`RunningContainer{ID, Name}` — methods: `Exec(ctx, dc, cmd...)`, `ExecAsUser(ctx, dc, user, cmd...)`, `WaitForFile(ctx, dc, path, timeout)`, `GetLogs(ctx, dc)`, `FileExists(ctx, dc, path)`, `DirExists(ctx, dc, path)`, `ReadFile(ctx, dc, path)`. `ExecResult{ExitCode, Stdout, Stderr}` with `CleanOutput()`.
 
 ### Factory Testing (factory.go)
 
