@@ -13,6 +13,7 @@ import (
 // Each field maps to a specific env var or category of env vars.
 type RuntimeEnvOpts struct {
 	// Clawker identity (consumed by statusline)
+	Version         string
 	Project         string
 	Agent           string
 	WorkspaceMode   string // "bind" or "snapshot"
@@ -59,6 +60,9 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	}
 	if opts.WorkspaceSource != "" {
 		m["CLAWKER_WORKSPACE_SOURCE"] = opts.WorkspaceSource
+	}
+	if opts.Version != "" {
+		m["CLAWKER_VERSION"] = opts.Version
 	}
 
 	// Base defaults: editor/visual

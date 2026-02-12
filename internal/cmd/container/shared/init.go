@@ -25,6 +25,7 @@ import (
 type ContainerInitializer struct {
 	ios       *iostreams.IOStreams
 	tui       *tui.TUI
+	version   string
 	gitMgr    func() (*git.GitManager, error)
 	hostProxy func() *hostproxy.Manager
 }
@@ -34,6 +35,7 @@ func NewContainerInitializer(f *cmdutil.Factory) *ContainerInitializer {
 	return &ContainerInitializer{
 		ios:       f.IOStreams,
 		tui:       f.TUI,
+		version:   f.Version,
 		gitMgr:    f.GitManager,
 		hostProxy: f.HostProxy,
 	}
@@ -324,6 +326,7 @@ func (ci *ContainerInitializer) buildRuntimeEnv(cfg *config.Project, containerOp
 	}
 
 	envOpts := docker.RuntimeEnvOpts{
+		Version:         ci.version,
 		Project:         cfg.Project,
 		Agent:           agentName,
 		WorkspaceMode:   workspaceMode,
