@@ -23,7 +23,8 @@ import (
 // ContainerFixture builds a container.Summary with proper clawker labels.
 // The container is in "exited" state by default.
 func ContainerFixture(project, agent, image string) container.Summary {
-	name := docker.ContainerName(project, agent)
+	// Test fixtures always use valid literal names — ignore error.
+	name, _ := docker.ContainerName(project, agent)
 	labels := map[string]string{
 		docker.LabelManaged: docker.ManagedLabelValue,
 		docker.LabelAgent:   agent,

@@ -660,10 +660,13 @@ func UniqueAgentName(t *testing.T) string {
 // WithVolumeMount instead to avoid duplicate creation/cleanup.
 func WithConfigVolume(t *testing.T, dc *docker.Client, project, agent string) ContainerOpt {
 	t.Helper()
-	volumeName := docker.VolumeName(project, agent, "config")
+	volumeName, err := docker.VolumeName(project, agent, "config")
+	if err != nil {
+		t.Fatalf("WithConfigVolume: invalid name: %v", err)
+	}
 	ctx := context.Background()
 
-	_, err := dc.EnsureVolume(ctx, volumeName, nil)
+	_, err = dc.EnsureVolume(ctx, volumeName, nil)
 	if err != nil {
 		t.Fatalf("WithConfigVolume: failed to create volume %s: %v", volumeName, err)
 	}

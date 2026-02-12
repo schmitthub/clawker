@@ -118,7 +118,11 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(cfgGateway.Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(cfgGateway.Resolution.ProjectKey, containers)
+		if err != nil {
+			return err
+		}
+		containers = resolved
 	}
 
 	// --- Phase B: Start containers ---

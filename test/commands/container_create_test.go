@@ -190,3 +190,56 @@ func TestContainerCreate_NoAgentGetsRandomName(t *testing.T) {
 	require.Equal(t, expectedPrefix, container.Name,
 		"container name should match clawker.<project>.<generated-agent>")
 }
+
+// TestContainerCreate_InvalidAgentName tests that invalid agent names are rejected
+// before any Docker resources are created. This exercises the full command pipeline:
+// CLI flags → Cobra → ContainerInitializer → docker.ContainerName → ValidateResourceName.
+func TestContainerCreate_InvalidAgentName(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		agent     string
+		flag      string // "--agent" or "--name"
+		errSubstr string
+	}{
+		{"hyphen_start", "--rm", "--agent", "cannot start with a hyphen"},
+		{"dot_start", ".hidden", "--agent", "only [a-zA-Z0-9]"},
+		{"contains_space", "my agent", "--agent", "only [a-zA-Z0-9]"},
+		{"contains_at", "my@agent", "--agent", "only [a-zA-Z0-9]"},
+		{"contains_slash", "my/agent", "--agent", "only [a-zA-Z0-9]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := harness.NewHarness(t,
+				harness.WithConfigBuilder(
+					builders.MinimalValidConfig().
+						WithProject("create-invalid-test").
+						WithSecurity(builders.SecurityFirewallDisabled()),
+				),
+			)
+			h.Chdir()
+
+			client := harness.NewTestClient(t)
+			defer func() {
+				_ = harness.CleanupProjectResources(context.Background(), client, "create-invalid-test")
+			}()
+
+			f, _ := harness.NewTestFactory(t, h)
+			cmd := create.NewCmdCreate(f, nil)
+			cmd.SetArgs([]string{tt.flag, tt.agent, "alpine:latest"})
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid agent name")
+			require.Contains(t, err.Error(), tt.errSubstr)
+
+			// Verify no containers were created — validation should reject before any Docker ops.
+			containers, listErr := client.ListContainersByProject(ctx, "create-invalid-test", true)
+			require.NoError(t, listErr)
+			require.Empty(t, containers, "no containers should exist for invalid name %q", tt.agent)
+		})
+	}
+}

@@ -509,7 +509,10 @@ func (c *Client) ListContainersByProject(ctx context.Context, project string, in
 // Returns the container name, container details, and any error.
 // Returns (name, nil, nil) if container not found.
 func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string) (string, *container.Summary, error) {
-	containerName := ContainerName(project, agent)
+	containerName, err := ContainerName(project, agent)
+	if err != nil {
+		return "", nil, err
+	}
 	ctr, err := c.FindContainerByName(ctx, containerName)
 	if err != nil {
 		// Only treat "not found" as a non-error condition
@@ -602,11 +605,16 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 		}
 	}
 
-	// Fallback: try removing by known volume names (for unlabeled volumes or if list failed)
-	knownVolumes := []string{
-		VolumeName(project, agent, "workspace"),
-		VolumeName(project, agent, "config"),
-		VolumeName(project, agent, "history"),
+	// Fallback: try removing by known volume names (for unlabeled volumes or if list failed).
+	// Names come from Docker labels on existing resources — should always be valid.
+	var knownVolumes []string
+	for _, purpose := range []string{"workspace", "config", "history"} {
+		vn, vnErr := VolumeName(project, agent, purpose)
+		if vnErr != nil {
+			logger.Warn().Err(vnErr).Str("purpose", purpose).Msg("skipping volume cleanup: invalid name")
+			continue
+		}
+		knownVolumes = append(knownVolumes, vn)
 	}
 	for _, volName := range knownVolumes {
 		if removedByLabel[volName] {

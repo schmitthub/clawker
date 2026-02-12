@@ -36,6 +36,9 @@ type SetupMountsResult struct {
 	// ConfigVolumeResult tracks which config volumes were newly created.
 	// Used by container init orchestration to decide whether to copy host config.
 	ConfigVolumeResult ConfigVolumeResult
+	// WorkspaceVolumeName is the name of the workspace volume created during setup.
+	// Non-empty only for snapshot mode. Used for cleanup on init failure.
+	WorkspaceVolumeName string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -90,6 +93,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("failed to prepare workspace: %w", err)
 	}
 
+	// Track workspace volume name for cleanup on init failure (snapshot mode only)
+	var wsVolumeName string
+	if ss, ok := strategy.(*SnapshotStrategy); ok && ss.WasCreated() {
+		wsVolumeName = ss.VolumeName()
+	}
+
 	// Get workspace mount
 	mounts = append(mounts, strategy.GetMounts()...)
 
@@ -110,7 +119,11 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	mounts = append(mounts, GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)...)
+	configMounts, err := GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
+	}
+	mounts = append(mounts, configMounts...)
 
 	// Ensure and mount shared directory (if enabled)
 	if cfg.Config.Agent.SharedDirEnabled() {
@@ -127,8 +140,9 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	return &SetupMountsResult{
-		Mounts:             mounts,
-		ConfigVolumeResult: configResult,
+		Mounts:              mounts,
+		ConfigVolumeResult:  configResult,
+		WorkspaceVolumeName: wsVolumeName,
 	}, nil
 }
 

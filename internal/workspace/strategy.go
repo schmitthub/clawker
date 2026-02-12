@@ -54,27 +54,35 @@ func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) {
 	case config.ModeBind:
 		return NewBindStrategy(cfg), nil
 	case config.ModeSnapshot:
-		return NewSnapshotStrategy(cfg), nil
+		return NewSnapshotStrategy(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported workspace mode: %s", mode)
 	}
 }
 
-// GetConfigVolumeMounts returns mounts for persistent config volumes
-// These are used for both bind and snapshot modes to preserve Claude config
-func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount {
+// GetConfigVolumeMounts returns mounts for persistent config volumes.
+// These are used for both bind and snapshot modes to preserve Claude config.
+func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error) {
+	configVol, err := docker.VolumeName(projectName, agentName, "config")
+	if err != nil {
+		return nil, err
+	}
+	historyVol, err := docker.VolumeName(projectName, agentName, "history")
+	if err != nil {
+		return nil, err
+	}
 	return []mount.Mount{
 		{
 			Type:   mount.TypeVolume,
-			Source: docker.VolumeName(projectName, agentName, "config"),
+			Source: configVol,
 			Target: "/home/claude/.claude",
 		},
 		{
 			Type:   mount.TypeVolume,
-			Source: docker.VolumeName(projectName, agentName, "history"),
+			Source: historyVol,
 			Target: "/commandhistory",
 		},
-	}
+	}, nil
 }
 
 // ConfigVolumeResult tracks which config volumes were newly created vs pre-existing.
@@ -89,7 +97,10 @@ type ConfigVolumeResult struct {
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error) {
 	var result ConfigVolumeResult
 
-	configVolume := docker.VolumeName(projectName, agentName, "config")
+	configVolume, err := docker.VolumeName(projectName, agentName, "config")
+	if err != nil {
+		return result, err
+	}
 	configLabels := docker.VolumeLabels(projectName, agentName, "config")
 	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
 	if err != nil {
@@ -97,7 +108,10 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	}
 	result.ConfigCreated = created
 
-	historyVolume := docker.VolumeName(projectName, agentName, "history")
+	historyVolume, err := docker.VolumeName(projectName, agentName, "history")
+	if err != nil {
+		return result, err
+	}
 	historyLabels := docker.VolumeLabels(projectName, agentName, "history")
 	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
 	if err != nil {

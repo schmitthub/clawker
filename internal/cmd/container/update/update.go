@@ -121,7 +121,11 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
+		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
+		if err != nil {
+			return err
+		}
+		containers = resolved
 	}
 
 	// Connect to Docker

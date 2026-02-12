@@ -85,7 +85,11 @@ func inspectRun(ctx context.Context, opts *InspectOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		if err != nil {
+			return err
+		}
+		containers = resolved
 	}
 
 	// Connect to Docker

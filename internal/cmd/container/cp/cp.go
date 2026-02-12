@@ -117,11 +117,19 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
-			srcContainer = docker.ContainerName(opts.Config().Resolution.ProjectKey, srcContainer)
+			var err error
+			srcContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, srcContainer)
+			if err != nil {
+				return err
+			}
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			dstContainer = docker.ContainerName(opts.Config().Resolution.ProjectKey, dstContainer)
+			var err error
+			dstContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, dstContainer)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

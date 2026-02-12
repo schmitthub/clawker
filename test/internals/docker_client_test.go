@@ -96,7 +96,10 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 
 	project := "clienttest"
 	agent := "lifecycle"
-	containerName := docker.ContainerName(project, agent)
+	containerName, err := docker.ContainerName(project, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Create container using embedded engine methods with our labels
 	labels := docker.ContainerLabels(project, agent, "test", "alpine:latest", "/test")
@@ -186,7 +189,7 @@ func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 		t.Error("FindContainerByAgent() should return nil for non-existent container")
 	}
 	// Name should still be returned even if container doesn't exist
-	expectedName := docker.ContainerName("nonexistent", "container")
+	expectedName, _ := docker.ContainerName("nonexistent", "container")
 	if name != expectedName {
 		t.Errorf("FindContainerByAgent() name = %q, want %q", name, expectedName)
 	}

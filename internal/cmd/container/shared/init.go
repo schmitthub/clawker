@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -28,6 +29,15 @@ type ContainerInitializer struct {
 	version   string
 	gitMgr    func() (*git.GitManager, error)
 	hostProxy func() *hostproxy.Manager
+	// cleanupWarnings collects messages from deferred volume cleanup.
+	// Callers should print these to stderr after Run() returns an error.
+	cleanupWarnings []string
+}
+
+// CleanupWarnings returns any warnings from deferred volume cleanup.
+// Non-empty only when Run() returns an error and cleanup was attempted.
+func (ci *ContainerInitializer) CleanupWarnings() []string {
+	return ci.cleanupWarnings
 }
 
 // NewContainerInitializer creates a ContainerInitializer from the Factory.
@@ -99,12 +109,14 @@ func (ci *ContainerInitializer) Run(ctx context.Context, params InitParams) (*In
 }
 
 // runSteps executes the initialization steps, sending progress events to ch.
-func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams, ch chan<- tui.ProgressStep) (*InitResult, error) {
+// Uses named returns so deferred cleanup can inspect retErr and clean up
+// newly-created volumes on failure.
+func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams, ch chan<- tui.ProgressStep) (result *InitResult, retErr error) {
 	cfg := params.Config
 	containerOpts := params.ContainerOptions
 	client := params.Client
 
-	result := &InitResult{}
+	result = &InitResult{}
 
 	// --- Step 1: Prepare workspace ---
 	sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepRunning)
@@ -114,7 +126,11 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		agentName = docker.GenerateRandomName()
 	}
 	result.AgentName = agentName
-	result.ContainerName = docker.ContainerName(cfg.Project, agentName)
+	containerName, err := docker.ContainerName(cfg.Project, agentName)
+	if err != nil {
+		return nil, err
+	}
+	result.ContainerName = containerName
 
 	wd, projectRootDir, err := ci.resolveWorkDir(ctx, containerOpts, cfg, agentName)
 	if err != nil {
@@ -133,6 +149,54 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepError)
 		return nil, err
 	}
+
+	// Track newly-created volumes for cleanup on failure.
+	// Only volumes created during this init run are tracked — pre-existing volumes
+	// (with user session data) are never touched.
+	var createdVolumes []string
+	if wsResult.ConfigVolumeResult.ConfigCreated {
+		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "config"); vnErr == nil {
+			createdVolumes = append(createdVolumes, vn)
+		}
+	}
+	if wsResult.ConfigVolumeResult.HistoryCreated {
+		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "history"); vnErr == nil {
+			createdVolumes = append(createdVolumes, vn)
+		}
+	}
+	if wsResult.WorkspaceVolumeName != "" {
+		createdVolumes = append(createdVolumes, wsResult.WorkspaceVolumeName)
+	}
+
+	defer func() {
+		if retErr == nil || len(createdVolumes) == 0 {
+			return
+		}
+		// Use background context — parent context may be cancelled.
+		cleanupCtx := context.Background()
+		var cleaned, failed []string
+		for _, vol := range createdVolumes {
+			if _, rmErr := client.VolumeRemove(cleanupCtx, vol, true); rmErr != nil {
+				logger.Warn().Str("volume", vol).Err(rmErr).
+					Msg("failed to clean up volume after init failure")
+				failed = append(failed, vol)
+			} else {
+				logger.Debug().Str("volume", vol).Msg("cleaned up volume after init failure")
+				cleaned = append(cleaned, vol)
+			}
+		}
+		if len(cleaned) > 0 {
+			ci.cleanupWarnings = append(ci.cleanupWarnings,
+				fmt.Sprintf("Cleaned up %d orphaned volume(s)", len(cleaned)))
+		}
+		if len(failed) > 0 {
+			ci.cleanupWarnings = append(ci.cleanupWarnings,
+				fmt.Sprintf("Failed to clean up %d volume(s): %s",
+					len(failed), strings.Join(failed, ", ")),
+				"Run 'clawker volume rm "+strings.Join(failed, " ")+"' to clean up manually")
+		}
+	}()
+
 	workspaceMounts := wsResult.Mounts
 	sendStep(ctx, ch, "workspace", "Prepare workspace", tui.StepComplete)
 
@@ -206,6 +270,10 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		return nil, fmt.Errorf("creating container: %w", err)
 	}
 	result.ContainerID = resp.ID
+
+	// Container created successfully — volumes are now associated with it.
+	// Clear the cleanup list so deferred cleanup won't remove them.
+	createdVolumes = nil
 
 	// Inject onboarding file if host auth is enabled.
 	if cfg.Agent.ClaudeCode.UseHostAuthEnabled() {

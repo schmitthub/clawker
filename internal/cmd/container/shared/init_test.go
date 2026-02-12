@@ -3,11 +3,14 @@ package shared
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/volume"
 	moby "github.com/moby/moby/client"
 
 	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -17,6 +20,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
+
+// testNotFoundError satisfies errdefs.IsNotFound for test fakes.
+type testNotFoundError struct{ msg string }
+
+func (e testNotFoundError) Error() string { return e.msg }
+func (e testNotFoundError) NotFound()     {}
 
 // testInitializer creates a ContainerInitializer with test defaults.
 func testInitializer(ios *iostreams.IOStreams) *ContainerInitializer {
@@ -534,4 +543,192 @@ func TestContainerInitializer_RandomAgentName(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.AgentName, "should have generated a random agent name")
+}
+
+func TestContainerInitializer_CleanupVolumesOnCreateError(t *testing.T) {
+	// When volumes are freshly created and a subsequent init step fails,
+	// deferred cleanup removes newly-created volumes.
+	fake := dockertest.NewFakeClient()
+
+	// Track which volumes have been "created" — allows VolumeInspect to return
+	// "not found" initially (so EnsureVolume creates) then "managed" (so VolumeRemove works).
+	createdVols := map[string]bool{}
+	fake.FakeAPI.VolumeInspectFn = func(_ context.Context, id string, _ moby.VolumeInspectOptions) (moby.VolumeInspectResult, error) {
+		if createdVols[id] {
+			return moby.VolumeInspectResult{
+				Volume: volume.Volume{
+					Name:   id,
+					Labels: map[string]string{docker.LabelManaged: docker.ManagedLabelValue},
+				},
+			}, nil
+		}
+		return moby.VolumeInspectResult{}, testNotFoundError{msg: "No such volume: " + id}
+	}
+	fake.FakeAPI.VolumeCreateFn = func(_ context.Context, opts moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
+		createdVols[opts.Name] = true
+		return moby.VolumeCreateResult{}, nil
+	}
+
+	// VolumeRemove should be called for cleanup
+	var removedVolumes []string
+	fake.FakeAPI.VolumeRemoveFn = func(_ context.Context, volumeID string, _ moby.VolumeRemoveOptions) (moby.VolumeRemoveResult, error) {
+		removedVolumes = append(removedVolumes, volumeID)
+		return moby.VolumeRemoveResult{}, nil
+	}
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test"
+
+	// Config init will fail because CLAUDE_CONFIG_DIR is invalid.
+	// This happens AFTER volumes are created but BEFORE ContainerCreate,
+	// which triggers the deferred cleanup of those newly-created volumes.
+	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
+
+	_, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           testConfig(),
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "container init")
+
+	// Verify volumes were cleaned up
+	require.NotEmpty(t, removedVolumes, "should have cleaned up newly-created volumes")
+	require.NotEmpty(t, ci.CleanupWarnings(), "should have cleanup warnings")
+}
+
+func TestContainerInitializer_NoCleanupForPreExistingVolumes(t *testing.T) {
+	// When volumes already exist (ConfigCreated=false), no cleanup on failure.
+	fake := dockertest.NewFakeClient()
+	// Default: VolumeExists returns true → no volumes created
+
+	// ContainerCreate fails
+	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+		return moby.ContainerCreateResult{}, fmt.Errorf("image not found")
+	}
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test"
+
+	_, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           testConfig(),
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "creating container")
+
+	// No VolumeRemove calls — volumes were pre-existing
+	fake.AssertNotCalled(t, "VolumeRemove")
+	require.Empty(t, ci.CleanupWarnings(), "should have no cleanup warnings")
+}
+
+func TestContainerInitializer_CleanupVolumeRemoveFailure(t *testing.T) {
+	// When volume cleanup fails, the original error is still returned
+	// and cleanup warnings include failure information.
+	fake := dockertest.NewFakeClient()
+
+	// Volumes freshly created — track state so IsVolumeManaged works during cleanup
+	createdVols := map[string]bool{}
+	fake.FakeAPI.VolumeInspectFn = func(_ context.Context, id string, _ moby.VolumeInspectOptions) (moby.VolumeInspectResult, error) {
+		if createdVols[id] {
+			return moby.VolumeInspectResult{
+				Volume: volume.Volume{
+					Name:   id,
+					Labels: map[string]string{docker.LabelManaged: docker.ManagedLabelValue},
+				},
+			}, nil
+		}
+		return moby.VolumeInspectResult{}, testNotFoundError{msg: "No such volume: " + id}
+	}
+	fake.FakeAPI.VolumeCreateFn = func(_ context.Context, opts moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
+		createdVols[opts.Name] = true
+		return moby.VolumeCreateResult{}, nil
+	}
+
+	// VolumeRemove fails during cleanup
+	fake.FakeAPI.VolumeRemoveFn = func(_ context.Context, _ string, _ moby.VolumeRemoveOptions) (moby.VolumeRemoveResult, error) {
+		return moby.VolumeRemoveResult{}, fmt.Errorf("volume in use")
+	}
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test"
+
+	// Config init will fail (triggering cleanup), and VolumeRemove will also fail
+	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
+
+	_, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           testConfig(),
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	// Original error is preserved (not overridden by cleanup failure)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "container init")
+
+	// Warnings should indicate cleanup failure
+	warnings := ci.CleanupWarnings()
+	require.NotEmpty(t, warnings, "should have cleanup failure warnings")
+	foundFailure := false
+	for _, w := range warnings {
+		if strings.Contains(w, "Failed to clean up") {
+			foundFailure = true
+			break
+		}
+	}
+	require.True(t, foundFailure, "warnings should mention cleanup failure: %v", warnings)
+}
+
+func TestContainerInitializer_InvalidAgentName(t *testing.T) {
+	// Invalid agent name is rejected before any volumes are created.
+	fake := dockertest.NewFakeClient()
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "--rm" // Invalid: starts with hyphen
+
+	_, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           testConfig(),
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid agent name")
+
+	// Nothing should have been called — validation happens before Docker API calls
+	fake.AssertNotCalled(t, "VolumeExists")
+	fake.AssertNotCalled(t, "VolumeCreate")
+	fake.AssertNotCalled(t, "ContainerCreate")
+	require.Empty(t, ci.CleanupWarnings())
 }

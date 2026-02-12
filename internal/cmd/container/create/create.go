@@ -173,6 +173,15 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		Image:            containerOpts.Image,
 		StartAfterCreate: false,
 	})
+
+	// Print cleanup warnings to stderr (visible to user regardless of error)
+	if warnings := opts.Initializer.CleanupWarnings(); len(warnings) > 0 {
+		cs := ios.ColorScheme()
+		for _, w := range warnings {
+			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
+		}
+	}
+
 	if err != nil {
 		return err
 	}

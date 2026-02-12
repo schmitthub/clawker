@@ -53,7 +53,10 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 	claudeCode := opts.ClaudeCode
 
 	// Get config volume name using docker naming convention
-	configVolume := docker.VolumeName(opts.ProjectName, opts.AgentName, "config")
+	configVolume, err := docker.VolumeName(opts.ProjectName, opts.AgentName, "config")
+	if err != nil {
+		return err
+	}
 
 	// Step 1: Copy host claude config if strategy is "copy"
 	if claudeCode.ConfigStrategy() == "copy" {

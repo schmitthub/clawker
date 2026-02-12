@@ -81,11 +81,13 @@ result, err := initializer.Run(ctx, shared.InitParams{
 
 **Deferred warnings**: During progress goroutine, TUI owns the terminal — can't print. Warnings collected in `InitResult.Warnings` for Phase C printing.
 
+**Volume cleanup on failure**: `runSteps` uses named return values with a deferred cleanup function. Tracks newly-created volumes (config, history, workspace) in a `createdVolumes` slice. On any error, the deferred function removes only newly-created volumes — pre-existing volumes with user data are never touched. After successful `ContainerCreate`, `createdVolumes` is set to nil (volumes are now associated with the container). Cleanup warnings are surfaced via `CleanupWarnings()` for callers to print to stderr.
+
 ### Types
 
 | Type | Purpose |
 |------|---------|
-| `ContainerInitializer` | Factory noun for progress-tracked container init; captures IOStreams, TUI, GitManager, HostProxy |
+| `ContainerInitializer` | Factory noun for progress-tracked container init; captures IOStreams, TUI, GitManager, HostProxy. Has `CleanupWarnings()` for post-failure cleanup messages |
 | `InitParams` | Runtime values: Client, Config, ContainerOptions, Flags, Image, StartAfterCreate, AltScreen |
 | `InitResult` | Outputs: ContainerID, AgentName, ContainerName, HostProxyRunning, Warnings |
 | `CopyToVolumeFn` | Function type matching `(*docker.Client).CopyToVolume` |
@@ -100,7 +102,8 @@ result, err := initializer.Run(ctx, shared.InitParams{
 | Function | Description |
 |----------|-------------|
 | `NewContainerInitializer(f)` | Construct from Factory — captures eager + lazy deps |
-| `(*ContainerInitializer).Run(ctx, InitParams)` | Progress-tracked init: workspace, config, env, create, start |
+| `(*ContainerInitializer).Run(ctx, InitParams)` | Progress-tracked init: workspace, config, env, create, start. On failure, deferred cleanup removes newly-created volumes |
+| `(*ContainerInitializer).CleanupWarnings()` | Returns cleanup messages from deferred volume cleanup. Non-empty only after `Run()` returns an error |
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
 | `InjectOnboardingFile(ctx, InjectOnboardingOpts)` | Write `~/.claude.json` onboarding marker to a created container |
 | `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |

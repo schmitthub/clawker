@@ -3,8 +3,32 @@ package docker
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 )
+
+// validResourceNameRegex matches Docker's container/volume name rules:
+// starts with alphanumeric, followed by alphanumeric, underscore, period, or hyphen.
+var validResourceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// ValidateResourceName validates that a name is suitable for use in Docker
+// resource names. Matches Docker CLI's container name rules:
+// [a-zA-Z0-9][a-zA-Z0-9_.-]* with a max length of 128.
+func ValidateResourceName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name cannot be empty")
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("name is too long (%d characters, maximum 128)", len(name))
+	}
+	if !validResourceNameRegex.MatchString(name) {
+		if strings.HasPrefix(name, "-") {
+			return fmt.Errorf("invalid name %q: cannot start with a hyphen", name)
+		}
+		return fmt.Errorf("invalid name %q: only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed", name)
+	}
+	return nil
+}
 
 // NamePrefix is used for all clawker resource names.
 const NamePrefix = "clawker"
@@ -93,24 +117,36 @@ func GenerateRandomName() string {
 }
 
 // ContainerName generates container name: clawker.project.agent
-func ContainerName(project, agent string) string {
-	if project == "" {
-		return fmt.Sprintf("%s.%s", NamePrefix, agent)
+// Returns an error if project or agent names contain invalid characters.
+func ContainerName(project, agent string) (string, error) {
+	if err := ValidateResourceName(agent); err != nil {
+		return "", fmt.Errorf("invalid agent name: %w", err)
 	}
-	return fmt.Sprintf("%s.%s.%s", NamePrefix, project, agent)
+	if project != "" {
+		if err := ValidateResourceName(project); err != nil {
+			return "", fmt.Errorf("invalid project name: %w", err)
+		}
+		return fmt.Sprintf("%s.%s.%s", NamePrefix, project, agent), nil
+	}
+	return fmt.Sprintf("%s.%s", NamePrefix, agent), nil
 }
 
 // ContainerNamesFromAgents resolves a slice of agent names to container names.
 // If no agents are provided, returns the input slice unchanged.
-func ContainerNamesFromAgents(project string, agents []string) []string {
+// Returns an error if any agent or the project name is invalid.
+func ContainerNamesFromAgents(project string, agents []string) ([]string, error) {
 	if len(agents) == 0 {
-		return agents
+		return agents, nil
 	}
 	containers := make([]string, len(agents))
 	for i, agent := range agents {
-		containers[i] = ContainerName(project, agent)
+		name, err := ContainerName(project, agent)
+		if err != nil {
+			return nil, err
+		}
+		containers[i] = name
 	}
-	return containers
+	return containers, nil
 }
 
 // ContainerNamePrefix returns prefix for filtering: clawker.project.
@@ -122,11 +158,19 @@ func ContainerNamePrefix(project string) string {
 }
 
 // VolumeName generates volume name: clawker.project.agent-purpose
-func VolumeName(project, agent, purpose string) string {
-	if project == "" {
-		return fmt.Sprintf("%s.%s-%s", NamePrefix, agent, purpose)
+// Returns an error if project or agent names contain invalid characters.
+// The purpose parameter is not validated as it is always a hardcoded internal string.
+func VolumeName(project, agent, purpose string) (string, error) {
+	if err := ValidateResourceName(agent); err != nil {
+		return "", fmt.Errorf("invalid agent name: %w", err)
 	}
-	return fmt.Sprintf("%s.%s.%s-%s", NamePrefix, project, agent, purpose)
+	if project != "" {
+		if err := ValidateResourceName(project); err != nil {
+			return "", fmt.Errorf("invalid project name: %w", err)
+		}
+		return fmt.Sprintf("%s.%s.%s-%s", NamePrefix, project, agent, purpose), nil
+	}
+	return fmt.Sprintf("%s.%s-%s", NamePrefix, agent, purpose), nil
 }
 
 // ImageTag generates image tag: clawker-project:latest

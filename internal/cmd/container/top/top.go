@@ -77,7 +77,10 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, []string{containerName})
+		containers, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, []string{containerName})
+		if err != nil {
+			return err
+		}
 		containerName = containers[0]
 	}
 

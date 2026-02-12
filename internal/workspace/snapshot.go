@@ -17,13 +17,18 @@ type SnapshotStrategy struct {
 	created    bool
 }
 
-// NewSnapshotStrategy creates a new snapshot strategy
-func NewSnapshotStrategy(cfg Config) *SnapshotStrategy {
+// NewSnapshotStrategy creates a new snapshot strategy.
+// Returns an error if the project or agent name is invalid for Docker resource naming.
+func NewSnapshotStrategy(cfg Config) (*SnapshotStrategy, error) {
+	vn, err := docker.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace")
+	if err != nil {
+		return nil, err
+	}
 	return &SnapshotStrategy{
 		config:     cfg,
-		volumeName: docker.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace"),
+		volumeName: vn,
 		created:    false,
-	}
+	}, nil
 }
 
 // Name returns the strategy name

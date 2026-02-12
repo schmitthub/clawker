@@ -112,8 +112,9 @@ func boolPtr(b bool) *bool { return &b }
 // a volume via InitContainerConfig before starting a container.
 func createConfigVolume(t *testing.T, ctx context.Context, client *docker.Client, project, agent string) string {
 	t.Helper()
-	volumeName := docker.VolumeName(project, agent, "config")
-	_, err := client.EnsureVolume(ctx, volumeName, nil)
+	volumeName, err := docker.VolumeName(project, agent, "config")
+	require.NoError(t, err)
+	_, err = client.EnsureVolume(ctx, volumeName, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if _, err := client.VolumeRemove(context.Background(), volumeName, true); err != nil {

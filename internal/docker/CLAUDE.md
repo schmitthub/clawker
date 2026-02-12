@@ -23,7 +23,9 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
 - **Global volumes**: `clawker-<purpose>` — **Network**: `NetworkName = "clawker-net"`
 
-Functions: `ContainerName`, `VolumeName`, `GlobalVolumeName`, `ContainerNamePrefix`, `ContainerNamesFromAgents`, `ImageTag`, `ImageTagWithHash`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `GlobalVolumeName`, `ContainerNamePrefix`, `ImageTag`, `ImageTagWithHash`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+
+**Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, max 128 chars. Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
 
 ## Labels
 
