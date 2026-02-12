@@ -131,6 +131,42 @@ security:
 	}
 }
 
+func TestLoaderLoadPostInitMultiline(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// YAML literal block style (|) — must preserve newlines and content exactly.
+	configContent := `
+version: "1"
+build:
+  image: "node:20-slim"
+agent:
+  post_init: |
+    echo "hello world"
+    npm install -g typescript
+    claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
+`
+	configPath := filepath.Join(tmpDir, ConfigFileName)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	loader := NewLoader(tmpDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("Loader.Load() returned error: %v", err)
+	}
+
+	// YAML literal block (|) preserves newlines, adds trailing newline
+	want := "echo \"hello world\"\nnpm install -g typescript\nclaude mcp add -- npx -y @anthropic-ai/claude-code-mcp\n"
+	if cfg.Agent.PostInit != want {
+		t.Errorf("cfg.Agent.PostInit =\n%q\nwant:\n%q", cfg.Agent.PostInit, want)
+	}
+}
+
 func TestLoaderLoadWithDefaults(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {

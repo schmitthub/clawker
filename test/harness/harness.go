@@ -308,6 +308,14 @@ func (h *Harness) FileExists(relPath string) bool {
 	return err == nil
 }
 
+// ParseYAML unmarshals a YAML string into a value of type T.
+// Generic utility for tests that need to parse YAML config snippets.
+func ParseYAML[T any](yamlStr string) (T, error) {
+	var result T
+	err := yaml.Unmarshal([]byte(yamlStr), &result)
+	return result, err
+}
+
 // UpdateConfig updates the config and rewrites clawker.yaml.
 func (h *Harness) UpdateConfig(fn func(*config.Project)) {
 	h.T.Helper()

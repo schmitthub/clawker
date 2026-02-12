@@ -4,17 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
+	whail "github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,17 +106,6 @@ func seedCredentialsFile(t *testing.T, hostDir string) {
 // boolPtr returns a pointer to a bool value.
 func boolPtr(b bool) *bool { return &b }
 
-// makeCopyToContainerFn wraps the Docker client's CopyToContainer into the
-// simplified CopyToContainerFn signature used by InjectOnboardingFile.
-func makeCopyToContainerFn(client *docker.Client) shared.CopyToContainerFn {
-	return func(ctx context.Context, containerID, destPath string, content io.Reader) error {
-		_, err := client.CopyToContainer(ctx, containerID, docker.CopyToContainerOptions{
-			DestinationPath: destPath,
-			Content:         content,
-		})
-		return err
-	}
-}
 
 // createConfigVolume creates a config volume, registers cleanup, and returns
 // the volume name. This is the standard setup for tests that need to populate
@@ -538,7 +531,7 @@ func TestContainerFs_HostAuth_OnboardingAndCredentials(t *testing.T) {
 		// Inject onboarding via production code path
 		err := shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
 			ContainerID:     ctr.ID,
-			CopyToContainer: makeCopyToContainerFn(client),
+			CopyToContainer: shared.NewCopyToContainerFn(client),
 		})
 		require.NoError(t, err, "InjectOnboardingFile failed")
 
@@ -774,7 +767,7 @@ func TestContainerFs_FullPipeline_CopyStrategy_WithHostAuth(t *testing.T) {
 	// Inject onboarding via production code path
 	err = shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
 		ContainerID:     ctr.ID,
-		CopyToContainer: makeCopyToContainerFn(client),
+		CopyToContainer: shared.NewCopyToContainerFn(client),
 	})
 	require.NoError(t, err, "InjectOnboardingFile failed")
 
@@ -892,7 +885,7 @@ func TestContainerFs_FullPipeline_FreshStrategy_WithHostAuth(t *testing.T) {
 	// Inject onboarding via production code path
 	err = shared.InjectOnboardingFile(ctx, shared.InjectOnboardingOpts{
 		ContainerID:     ctr.ID,
-		CopyToContainer: makeCopyToContainerFn(client),
+		CopyToContainer: shared.NewCopyToContainerFn(client),
 	})
 	require.NoError(t, err, "InjectOnboardingFile failed")
 
@@ -959,6 +952,254 @@ func TestContainerFs_FullPipeline_FreshStrategy_NoHostAuth(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Empty(t, strings.TrimSpace(result.Stdout), ".claude/ should be empty")
+}
+
+// ---------------------------------------------------------------------------
+// Rule: post_init script runs once on first start, skipped on restart
+// ---------------------------------------------------------------------------
+
+func TestContainerFs_AgentPostInit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internals test in short mode")
+	}
+	harness.RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+
+	// Parse post_init from YAML literal block — proves the full YAML multiline
+	// string → config struct → PreparePostInitTar → container execution pipeline.
+	parsedCfg, err := harness.ParseYAML[config.Project](`
+agent:
+  post_init: |
+    echo "line1" >> ~/test.txt
+    echo "line2" >> ~/test.txt
+`)
+	require.NoError(t, err)
+
+	// Wire the YAML-parsed value into a config test double
+	cfg := configtest.NewProjectBuilder().
+		WithProject("test").
+		WithAgent(config.AgentConfig{
+			PostInit: parsedCfg.Agent.PostInit,
+		}).
+		Build()
+
+	agent := harness.UniqueAgentName(t)
+	volumeName := createConfigVolume(t, ctx, client, cfg.Project, agent)
+
+	// Create container manually (not via RunContainer — we need to inject before start)
+	containerName := fmt.Sprintf("clawker-test-postinit-%s", agent)
+	labels := harness.AddTestLabels(map[string]string{
+		harness.ClawkerManagedLabel: "true",
+	})
+
+	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:      image,
+			Entrypoint: []string{"/usr/local/bin/entrypoint.sh"},
+			Cmd:        []string{"sleep", "infinity"},
+			Labels:     labels,
+		},
+		HostConfig: &container.HostConfig{
+			CapAdd: []string{"NET_ADMIN", "NET_RAW"},
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeVolume,
+					Source: volumeName,
+					Target: containerHomeDir + "/.claude",
+				},
+			},
+		},
+		Name: containerName,
+	})
+	require.NoError(t, err, "ContainerCreate failed")
+
+	containerID := createResp.ID
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := client.ContainerStop(cleanupCtx, containerID, nil); err != nil {
+			t.Logf("WARNING: failed to stop container %s: %v", containerName, err)
+		}
+		if _, err := client.ContainerRemove(cleanupCtx, containerID, true); err != nil {
+			t.Logf("WARNING: failed to remove container %s: %v", containerName, err)
+		}
+	})
+
+	// Inject post-init script via production code path, using config's PostInit value
+	err = shared.InjectPostInitScript(ctx, shared.InjectPostInitOpts{
+		ContainerID:     containerID,
+		Script:          cfg.Agent.PostInit,
+		CopyToContainer: shared.NewCopyToContainerFn(client),
+	})
+	require.NoError(t, err, "InjectPostInitScript failed")
+
+	// Start container — entrypoint runs, finds post-init.sh, executes it
+	_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID})
+	require.NoError(t, err, "ContainerStart failed")
+
+	ctr := &harness.RunningContainer{ID: containerID, Name: containerName}
+
+	// Wait for ready file (entrypoint signals readiness after post-init)
+	err = harness.WaitForReadyFile(ctx, client, containerID)
+	if err != nil {
+		logs, logErr := harness.GetContainerLogs(ctx, client, containerID)
+		if logErr != nil {
+			t.Logf("failed to get logs: %v", logErr)
+		} else {
+			t.Logf("container logs:\n%s", logs)
+		}
+		require.NoError(t, err, "container did not become ready")
+	}
+
+	// --- Scenario: Post-init script ran and produced output ---
+	t.Run("post_init_output_created", func(t *testing.T) {
+		result, err := ctr.Exec(ctx, client, "cat", containerHomeDir+"/test.txt")
+		require.NoError(t, err, "reading test.txt")
+		require.Equal(t, 0, result.ExitCode, "cat failed: %s", result.Stderr)
+		assert.Equal(t, "line1\nline2\n", result.Stdout,
+			"test.txt should contain exactly the post-init output")
+	})
+
+	// --- Scenario: Marker file exists on config volume ---
+	t.Run("marker_file_created", func(t *testing.T) {
+		assert.True(t, ctr.FileExists(ctx, client, containerHomeDir+"/.claude/post-initialized"),
+			"post-initialized marker should exist on config volume")
+	})
+
+	// --- Scenario: Restart does NOT re-run post-init ---
+	t.Run("restart_skips_post_init", func(t *testing.T) {
+		// Stop container (exit code 137/SIGKILL is expected from docker stop)
+		_, err := client.ContainerStop(ctx, containerID, nil)
+		require.NoError(t, err, "ContainerStop failed")
+
+		// Poll until container is not running (ignore exit code — stop sends SIGKILL)
+		require.Eventually(t, func() bool {
+			info, inspectErr := client.ContainerInspect(ctx, containerID, docker.ContainerInspectOptions{})
+			return inspectErr == nil && !info.Container.State.Running
+		}, 30*time.Second, 200*time.Millisecond, "container did not stop")
+
+		// Restart
+		_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID})
+		require.NoError(t, err, "ContainerStart (restart) failed")
+
+		// Wait for ready again
+		err = harness.WaitForReadyFile(ctx, client, containerID)
+		require.NoError(t, err, "container did not become ready after restart")
+
+		// Verify test.txt still has exactly the same content (not duplicated)
+		result, err := ctr.Exec(ctx, client, "cat", containerHomeDir+"/test.txt")
+		require.NoError(t, err, "reading test.txt after restart")
+		require.Equal(t, 0, result.ExitCode, "cat failed: %s", result.Stderr)
+		assert.Equal(t, "line1\nline2\n", result.Stdout,
+			"test.txt should NOT have duplicated content after restart")
+
+		// Marker still exists
+		assert.True(t, ctr.FileExists(ctx, client, containerHomeDir+"/.claude/post-initialized"),
+			"post-initialized marker should still exist after restart")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Rule: post_init script failure prevents marker creation and aborts startup
+// ---------------------------------------------------------------------------
+
+func TestContainerFs_AgentPostInit_Failure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internals test in short mode")
+	}
+	harness.RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+
+	agent := harness.UniqueAgentName(t)
+	project := "test"
+	volumeName := createConfigVolume(t, ctx, client, project, agent)
+
+	// Create container with a post-init script that fails
+	containerName := fmt.Sprintf("clawker-test-postinit-fail-%s", agent)
+	labels := harness.AddTestLabels(map[string]string{
+		harness.ClawkerManagedLabel: "true",
+	})
+
+	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:      image,
+			Entrypoint: []string{"/usr/local/bin/entrypoint.sh"},
+			Cmd:        []string{"sleep", "infinity"},
+			Labels:     labels,
+		},
+		HostConfig: &container.HostConfig{
+			CapAdd: []string{"NET_ADMIN", "NET_RAW"},
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeVolume,
+					Source: volumeName,
+					Target: containerHomeDir + "/.claude",
+				},
+			},
+		},
+		Name: containerName,
+	})
+	require.NoError(t, err, "ContainerCreate failed")
+
+	containerID := createResp.ID
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := client.ContainerStop(cleanupCtx, containerID, nil); err != nil {
+			t.Logf("WARNING: failed to stop container %s: %v", containerName, err)
+		}
+		if _, err := client.ContainerRemove(cleanupCtx, containerID, true); err != nil {
+			t.Logf("WARNING: failed to remove container %s: %v", containerName, err)
+		}
+	})
+
+	// Inject a post-init script that fails
+	failScript := "echo 'about to fail'\nexit 1\n"
+	err = shared.InjectPostInitScript(ctx, shared.InjectPostInitOpts{
+		ContainerID:     containerID,
+		Script:          failScript,
+		CopyToContainer: shared.NewCopyToContainerFn(client),
+	})
+	require.NoError(t, err, "InjectPostInitScript failed")
+
+	// Start container — entrypoint runs, post-init fails, container exits
+	_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID})
+	require.NoError(t, err, "ContainerStart failed")
+
+	// Wait for container to exit (post-init failure calls emit_error which exits)
+	err = harness.WaitForContainerExit(ctx, client, containerID)
+	require.NoError(t, err, "container did not exit after post-init failure")
+
+	// --- Scenario: Marker file does NOT exist (script failed) ---
+	t.Run("marker_not_created_on_failure", func(t *testing.T) {
+		// Container has exited, but we can still inspect the volumes.
+		// Start a helper container to check the config volume.
+		helper := harness.RunContainer(t, client, image,
+			harness.WithCmd("sleep", "infinity"),
+			harness.WithVolumeMount(volumeName, containerHomeDir+"/.claude"),
+		)
+		assert.False(t, helper.FileExists(ctx, client, containerHomeDir+"/.claude/post-initialized"),
+			"post-initialized marker should NOT exist when script failed")
+	})
+
+	// --- Scenario: Error log contains script output ---
+	t.Run("error_log_contains_output", func(t *testing.T) {
+		logs, err := harness.GetContainerLogs(ctx, client, containerID)
+		require.NoError(t, err, "failed to get container logs")
+
+		assert.Contains(t, logs, "[clawker] error component=post-init",
+			"logs should contain post-init error")
+		assert.Contains(t, logs, "script failed:",
+			"error should include 'script failed:' prefix")
+	})
 }
 
 // ---------------------------------------------------------------------------

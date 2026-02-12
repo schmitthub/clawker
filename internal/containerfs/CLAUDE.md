@@ -10,6 +10,7 @@ Leaf package for preparing host Claude Code configuration for container injectio
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
 | `PrepareOnboardingTar(containerHomeDir string) (io.Reader, error)` | Create tar with ~/.claude.json onboarding marker |
+| `PreparePostInitTar(script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
 
 ## Dependencies
 
@@ -54,6 +55,12 @@ Each `Prepare*` function returns a temp directory with this layout:
 Returns an `io.Reader` containing a tar archive with:
 ```
 .claude.json         ({"hasCompletedOnboarding": true})
+```
+
+### PreparePostInitTar
+Returns an `io.Reader` containing a tar archive with:
+```
+.clawker/post-init.sh   (#!/bin/bash + set -e + user script, mode 0755)
 ```
 
 ## Credential Resolution Order

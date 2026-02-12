@@ -75,7 +75,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 - Phase B: Progress-tracked — `Initializer.Run()` with TUI progress display (5 steps)
 - Phase C: Post-progress — print deferred warnings, then detach output or attach-then-start
 
-**Progress steps**: workspace, config (cached if volume exists), environment, container create, start (detached only).
+**Progress steps**: workspace, config (cached if volume exists), environment, container create, post-init (only when `agent.post_init` configured), start (detached only). Step count: 5-6 depending on config.
 
 **Deferred warnings**: During progress goroutine, TUI owns the terminal — can't print. Warnings collected in `InitResult.Warnings` for Phase C printing.
 
@@ -90,6 +90,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 | `CopyToContainerFn` | Simplified function type for tar-to-container copy |
 | `InitConfigOpts` | Project/agent names, `ContainerWorkDir`, `*config.ClaudeCodeConfig`, `CopyToVolumeFn` |
 | `InjectOnboardingOpts` | Container ID, `CopyToContainerFn` |
+| `InjectPostInitOpts` | Container ID, Script content, `CopyToContainerFn` — injects `~/.clawker/post-init.sh` |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, SettingsLoader, BuildImage fn, CommandVerb |
 
 ### Functions
@@ -100,6 +101,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 | `(*ContainerInitializer).Run(ctx, InitParams)` | Progress-tracked init: workspace, config, env, create, start |
 | `InitContainerConfig(ctx, InitConfigOpts)` | Copy host Claude config (strategy=copy) and/or credentials (use_host_auth) to config volume |
 | `InjectOnboardingFile(ctx, InjectOnboardingOpts)` | Write `~/.claude.json` onboarding marker to a created container |
+| `InjectPostInitScript(ctx, InjectPostInitOpts)` | Write `~/.clawker/post-init.sh` to a created container; entrypoint runs it once on first start |
 | `RebuildMissingDefaultImage(ctx, RebuildMissingImageOpts)` | Interactive rebuild flow for missing default images with TUI progress |
 | `NewCopyToContainerFn(client *docker.Client) CopyToContainerFn` | Creates a `CopyToContainerFn` closure wrapping `docker.Client.CopyToContainer` |
 

@@ -469,6 +469,8 @@ func generateLightDockerfile(scripts []string, goSources []string) string {
 	sb.WriteString("RUN apk add --no-cache bash curl jq git iptables ipset iproute2 openssh-client openssl coreutils grep sed procps sudo bind-tools gnupg file\n")
 	sb.WriteString("RUN adduser -D -u 1001 -s /bin/bash -h /home/claude claude\n")
 	sb.WriteString("RUN mkdir -p /var/run/clawker /home/claude/.ssh /home/claude/.claude /home/claude/.clawker-share /workspace && chown -R claude:claude /home/claude /var/run/clawker /workspace\n")
+	// Configure NOPASSWD sudo for firewall script (matches production Dockerfile)
+	sb.WriteString("RUN echo 'claude ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh' > /etc/sudoers.d/claude-firewall && chmod 0440 /etc/sudoers.d/claude-firewall\n")
 
 	if len(scripts) > 0 {
 		sb.WriteString("COPY scripts/ /usr/local/bin/\n")

@@ -49,13 +49,14 @@ grep -E '^\s*func \([^)]+\) [A-Z]' *.go | sed 's/.*) \([A-Za-z0-9]*\).*/\1/' | s
 
 From the memory consolidation plan:
 
-| Scope | Budget | Notes |
-|-------|--------|-------|
-| Root CLAUDE.md | ~200 lines | Always loaded |
-| Each `.claude/rules/*.md` | ~50-100 lines | Always loaded for matching paths |
-| Total always-loaded | < 1500 lines | Root + all rules |
+| Scope                       | Budget | Notes |
+|-----------------------------|--------|-------|
+| Root CLAUDE.md              | ~200 lines | Always loaded |
+| Each `.claude/rules/*.md`   | ~50-100 lines | Always loaded for matching paths |
+| Total always-loaded         | < 1500 lines | Root + all rules |
 | Each `internal/*/CLAUDE.md` | < 200 lines | Lazy-loaded per file access |
-| `.claude/memories/*.md` | No hard limit | On-demand only |
+| `.claude/memories/*.md`     | No hard limit | On-demand only |
+| `.claude/docs/*.md`         | No hard limit | On-demand only |
 
 ## Staleness Thresholds
 

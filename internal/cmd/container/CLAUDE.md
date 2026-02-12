@@ -75,9 +75,9 @@ Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFl
 
 Container init orchestration shared between `run/` and `create/`. See `shared/CLAUDE.md` for full API.
 
-**ContainerInitializer**: Factory noun for progress-tracked 5-step init (workspace, config, env, create, start). Both `run` and `create` call `Initializer.Run(ctx, InitParams)`.
+**ContainerInitializer**: Factory noun for progress-tracked 5-6 step init (workspace, config, env, create, post-init if configured, start). Both `run` and `create` call `Initializer.Run(ctx, InitParams)`.
 
-**Types**: `ContainerInitializer`, `InitParams`, `InitResult`, `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `RebuildMissingImageOpts`
+**Types**: `ContainerInitializer`, `InitParams`, `InitResult`, `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
 
 ## Image Resolution (@ Symbol)
 

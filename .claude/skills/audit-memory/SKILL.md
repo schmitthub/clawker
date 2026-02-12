@@ -20,7 +20,6 @@ Glob all documentation files and build a summary table:
 - `.claude/rules/*.md`
 - `.claude/docs/*.md`
 - `.claude/memories/*.md`
-- `.claude/prds/*.md`
 - `.serena/memories/*.md`
 
 For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** (lines × 4).
@@ -28,7 +27,7 @@ For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** 
 Group into categories:
 - **Always-loaded**: root `CLAUDE.md`, `.claude/rules/*.md`
 - **Lazy-loaded**: `cmd/*/CLAUDE.md`, `internal/*/CLAUDE.md`, `test/*/CLAUDE.md`, `pkg/*/CLAUDE.md`
-- **On-demand**: `.claude/docs/*.md`, `.claude/memories/*.md`, `.claude/prds/*.md`
+- **On-demand**: `.claude/docs/*.md`, `.claude/memories/*.md`
 - **WIP tracking**: `.serena/memories/*.md`
 
 ### 2. Freshness Check

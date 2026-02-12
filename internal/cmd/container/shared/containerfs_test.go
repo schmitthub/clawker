@@ -269,6 +269,53 @@ func TestInjectOnboardingFile_CopyError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// InjectPostInitScript tests
+// ---------------------------------------------------------------------------
+
+func TestInjectPostInitScript(t *testing.T) {
+	tracker := &containerCopyTracker{}
+	opts := InjectPostInitOpts{
+		ContainerID:     "abc123",
+		Script:          "npm install -g typescript\n",
+		CopyToContainer: tracker.copyFn(),
+	}
+
+	err := InjectPostInitScript(context.Background(), opts)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, tracker.callCount())
+	call := tracker.calls()[0]
+	assert.Equal(t, "abc123", call.containerID)
+	assert.Equal(t, "/home/claude", call.destPath)
+	assert.NotNil(t, call.content, "tar content should not be nil")
+}
+
+func TestInjectPostInitScript_CopyError(t *testing.T) {
+	opts := InjectPostInitOpts{
+		ContainerID: "abc123",
+		Script:      "echo hello\n",
+		CopyToContainer: func(_ context.Context, _, _ string, _ io.Reader) error {
+			return assert.AnError
+		},
+	}
+
+	err := InjectPostInitScript(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to inject post-init script")
+}
+
+func TestInjectPostInitScript_NilCopyFn(t *testing.T) {
+	opts := InjectPostInitOpts{
+		ContainerID: "abc123",
+		Script:      "echo hello\n",
+	}
+
+	err := InjectPostInitScript(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CopyToContainerFn is required")
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
