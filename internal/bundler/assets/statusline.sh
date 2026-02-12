@@ -100,7 +100,7 @@ if [ "$STYLE" != "null" ] && [ "$STYLE" != "default" ]; then
 fi
 
 # Clawker info
-output=$(printf "${GRAY}Clawker v%s |${NC}" "${CLAWKER_VERSION:-dev}")
+output=$(printf "${GRAY}Clawker %s |${NC}" "${CLAWKER_VERSION:-dev}")
 
 # Version - dim gray
 VERSION=$(get_version)
