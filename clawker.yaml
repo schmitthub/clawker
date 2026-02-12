@@ -84,6 +84,8 @@ agent:
       strategy: "copy"
   # Enable shared directory (read-only, mounted at ~/.clawker-share)
   enable_shared_dir: true
+  post_init: |
+    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
 
 workspace:
   # Container path where your code is mounted
@@ -122,6 +124,7 @@ security:
       - lukechampine.com
       - go.yaml.in
       - cel.dev
+      - files.pythonhosted.org
   # Git credential forwarding
   git_credentials:
     forward_https: true

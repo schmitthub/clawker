@@ -249,6 +249,11 @@ func (v *Validator) validateAgent(cfg *Project) {
 		}
 	}
 
+	// Validate post_init is not whitespace-only
+	if cfg.Agent.PostInit != "" && strings.TrimSpace(cfg.Agent.PostInit) == "" {
+		v.addError("agent.post_init", "must not be empty", "")
+	}
+
 	// Validate Claude Code configuration
 	v.validateClaudeCode(cfg)
 }

@@ -65,6 +65,8 @@ clawker: clawker-build
 clawker-build:
 	@echo "Building $(BINARY_NAME) $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
+	@# Touch embed sources to invalidate Go build cache for embedded assets
+	@touch internal/bundler/dockerfile.go internal/hostproxy/internals/embed.go 2>/dev/null || true
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/clawker
 
 # Build the fawker demo Clawker (faked deps, no Docker required)

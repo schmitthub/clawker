@@ -134,6 +134,38 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 	return nil
 }
 
+// InjectPostInitOpts holds options for post-init script injection.
+type InjectPostInitOpts struct {
+	// ContainerID is the Docker container ID to inject the script into.
+	ContainerID string
+	// Script is the user's post_init content from clawker.yaml.
+	Script string
+	// CopyToContainer copies a tar archive to the container at the given destination path.
+	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
+	CopyToContainer CopyToContainerFn
+}
+
+// InjectPostInitScript writes ~/.clawker/post-init.sh to a created (not started) container.
+// Must be called after ContainerCreate and before ContainerStart.
+// The entrypoint runs this script once on first start and creates a marker to prevent re-runs.
+func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
+	if opts.CopyToContainer == nil {
+		return fmt.Errorf("InjectPostInitScript: CopyToContainerFn is required")
+	}
+
+	tar, err := containerfs.PreparePostInitTar(opts.Script)
+	if err != nil {
+		return fmt.Errorf("failed to prepare post-init script: %w", err)
+	}
+
+	if err := opts.CopyToContainer(ctx, opts.ContainerID, containerHomeDir, tar); err != nil {
+		return fmt.Errorf("failed to inject post-init script: %w", err)
+	}
+
+	logger.Debug().Msg("injected post-init script into container")
+	return nil
+}
+
 // TODO: This is implemented wrong. constructors need to be added to accept factory *cmdutil.Factory, we don't pass indivdual deps)
 // NewCopyToContainerFn creates a CopyToContainerFn that delegates to the docker client.
 // This is the standard production wiring — use directly instead of writing an inline closure.

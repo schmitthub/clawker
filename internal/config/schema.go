@@ -112,14 +112,15 @@ type ClaudeCodeConfig struct {
 
 // AgentConfig defines Claude agent-specific settings.
 type AgentConfig struct {
-	Includes       []string          `yaml:"includes,omitempty" mapstructure:"includes"`
-	Env            map[string]string `yaml:"env,omitempty" mapstructure:"env"`
-	Memory         string            `yaml:"memory,omitempty" mapstructure:"memory"`
-	Editor         string            `yaml:"editor,omitempty" mapstructure:"editor"`
-	Visual         string            `yaml:"visual,omitempty" mapstructure:"visual"`
-	Shell          string            `yaml:"shell,omitempty" mapstructure:"shell"`
-	ClaudeCode     *ClaudeCodeConfig `yaml:"claude_code,omitempty" mapstructure:"claude_code"`
-	EnableSharedDir *bool            `yaml:"enable_shared_dir,omitempty" mapstructure:"enable_shared_dir"`
+	Includes        []string          `yaml:"includes,omitempty" mapstructure:"includes"`
+	Env             map[string]string `yaml:"env,omitempty" mapstructure:"env"`
+	Memory          string            `yaml:"memory,omitempty" mapstructure:"memory"`
+	Editor          string            `yaml:"editor,omitempty" mapstructure:"editor"`
+	Visual          string            `yaml:"visual,omitempty" mapstructure:"visual"`
+	Shell           string            `yaml:"shell,omitempty" mapstructure:"shell"`
+	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty" mapstructure:"claude_code"`
+	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" mapstructure:"enable_shared_dir"`
+	PostInit        string            `yaml:"post_init,omitempty" mapstructure:"post_init"`
 }
 
 // UseHostAuthEnabled returns whether host auth should be used (default: true).

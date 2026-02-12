@@ -50,6 +50,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E
 
 Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/NetworkName`, `ConfigPath`, `WriteFile/ReadFile/FileExists`, `UpdateConfig`
 
+`ParseYAML[T any](yamlStr string) (T, error)` — Generic YAML string parser for test config snippets
+
 ### Docker Helpers (docker.go)
 
 | Function | Purpose |

@@ -313,6 +313,74 @@ func TestContainerInitializer_OnboardingSkippedWhenDisabled(t *testing.T) {
 	fake.AssertNotCalled(t, "CopyToContainer")
 }
 
+func TestContainerInitializer_PostInit(t *testing.T) {
+	// PostInit configured → CopyToContainer called for post-init script injection
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	cfg := testConfig()
+	cfg.Agent.PostInit = "npm install -g typescript\n"
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	result, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	fake.AssertCalled(t, "ContainerCreate")
+	// CopyToContainer should be called — for onboarding + post-init
+	fake.AssertCalled(t, "CopyToContainer")
+	// Verify it was called at least twice (onboarding + post-init)
+	fake.AssertCalledN(t, "CopyToContainer", 2)
+}
+
+func TestContainerInitializer_NoPostInit(t *testing.T) {
+	// No PostInit configured, no host auth → CopyToContainer not called
+	cfg := testConfig()
+	useHostAuth := false
+	cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
+		UseHostAuth: &useHostAuth,
+		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
+	}
+
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	// No CopyToContainer setup — if called, would fail
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+
+	result, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	fake.AssertCalled(t, "ContainerCreate")
+	fake.AssertNotCalled(t, "CopyToContainer")
+}
+
 func TestContainerInitializer_EmptyProject(t *testing.T) {
 	// Empty project → 2-segment container name (clawker.agent)
 	fake := dockertest.NewFakeClient()

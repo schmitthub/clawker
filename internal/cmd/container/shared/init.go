@@ -215,6 +215,18 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		}
 	}
 
+	// Inject post-init script if configured.
+	if cfg.Agent.PostInit != "" {
+		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
+			ContainerID:     result.ContainerID,
+			Script:          cfg.Agent.PostInit,
+			CopyToContainer: NewCopyToContainerFn(client),
+		}); err != nil {
+			sendStep(ctx, ch, "container", fmt.Sprintf("Create container (%s)", result.ContainerName), tui.StepError)
+			return nil, fmt.Errorf("inject post-init script: %w", err)
+		}
+	}
+
 	for _, warning := range resp.Warnings {
 		result.Warnings = append(result.Warnings, "Warning: "+warning)
 	}

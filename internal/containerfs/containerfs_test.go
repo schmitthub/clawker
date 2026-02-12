@@ -539,6 +539,76 @@ func TestPrepareOnboardingTar(t *testing.T) {
 	}
 }
 
+func TestPreparePostInitTar(t *testing.T) {
+	script := "claude mcp add -- npx -y @anthropic-ai/claude-code-mcp\nnpm install -g typescript\n"
+
+	reader, err := PreparePostInitTar(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tr := tar.NewReader(reader)
+
+	// First entry: .clawker/ directory
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatalf("tar next (dir): %v", err)
+	}
+	if hdr.Name != ".clawker/" {
+		t.Errorf("first tar entry name: got %q, want %q", hdr.Name, ".clawker/")
+	}
+	if hdr.Typeflag != tar.TypeDir {
+		t.Errorf("first tar entry type: got %d, want TypeDir (%d)", hdr.Typeflag, tar.TypeDir)
+	}
+	if hdr.Mode != 0o755 {
+		t.Errorf("dir mode: got %#o, want %#o", hdr.Mode, int64(0o755))
+	}
+	if hdr.Uid != 1001 || hdr.Gid != 1001 {
+		t.Errorf("dir uid/gid: got %d/%d, want 1001/1001", hdr.Uid, hdr.Gid)
+	}
+
+	// Second entry: .clawker/post-init.sh file
+	hdr, err = tr.Next()
+	if err != nil {
+		t.Fatalf("tar next (file): %v", err)
+	}
+	if hdr.Name != ".clawker/post-init.sh" {
+		t.Errorf("second tar entry name: got %q, want %q", hdr.Name, ".clawker/post-init.sh")
+	}
+	if hdr.Mode != 0o755 {
+		t.Errorf("file mode: got %#o, want %#o", hdr.Mode, int64(0o755))
+	}
+	if hdr.Uid != 1001 || hdr.Gid != 1001 {
+		t.Errorf("file uid/gid: got %d/%d, want 1001/1001", hdr.Uid, hdr.Gid)
+	}
+	if hdr.ModTime.IsZero() {
+		t.Error("file modtime should not be zero")
+	}
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, tr); err != nil {
+		t.Fatalf("read tar entry: %v", err)
+	}
+
+	content := buf.String()
+	wantPrefix := "#!/bin/bash\nset -e\n"
+	if !strings.HasPrefix(content, wantPrefix) {
+		t.Errorf("script should start with shebang+set-e, got:\n%s", content)
+	}
+	if !strings.Contains(content, "claude mcp add") {
+		t.Error("script should contain user commands")
+	}
+	if !strings.Contains(content, "npm install -g typescript") {
+		t.Error("script should contain user commands")
+	}
+
+	// Should have no more entries
+	_, err = tr.Next()
+	if err != io.EOF {
+		t.Errorf("expected EOF, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------

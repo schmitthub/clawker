@@ -137,10 +137,11 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `ContainerInitializer` | Factory noun for progress-tracked container init (workspace, config, env, create, start); shared by `run` and `create` commands |
 | `InitParams` / `InitResult` | Input/output types for `ContainerInitializer.Run()` — runtime values and deferred warnings |
 | `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
-| `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files |
+| `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, ClaudeCodeConfig, CopyToVolumeFn (DI) |
 | `InjectOnboardingOpts` | Options for `shared.InjectOnboardingFile` — container ID, CopyToContainerFn (DI) |
+| `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
 | `hostproxy.Manager` | Host proxy server for container-to-host actions |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
@@ -222,13 +223,13 @@ build:
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
-agent: { includes: [], env: {} }
+agent: { includes: [], env: {}, post_init: "" }
 workspace: { remote_path: "/workspace", default_mode: "snapshot" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `RalphConfig`
+**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `RalphConfig`
 **Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
 
 ### Firewall IP Range Sources

@@ -97,6 +97,17 @@ KNOWN_HOSTS
 # via docker exec, but known_hosts are still needed for SSH operations
 ssh_setup_known_hosts
 
+# Run post-init script once if it exists and hasn't been run yet
+POST_INIT="$HOME/.clawker/post-init.sh"
+POST_INIT_DONE="$HOME/.claude/post-initialized"
+if [ -x "$POST_INIT" ] && [ ! -f "$POST_INIT_DONE" ]; then
+    echo "[clawker] running post-init"
+    if ! "$POST_INIT"; then
+        emit_error "post-init" "script failed"
+    fi
+    touch "$POST_INIT_DONE"
+fi
+
 # If first argument starts with "-" or isn't a command, prepend "claude"
 if [ "${1#-}" != "${1}" ] || [ -z "$(command -v "${1}" 2>/dev/null)" ]; then
     set -- claude "$@"

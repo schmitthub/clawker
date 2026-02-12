@@ -28,6 +28,9 @@ make test-all                                    # All test suites
 
 No build tags — directory separation only. All Docker tests use `harness.BuildLightImage` + `harness.RunContainer` (dogfooded on `docker.Client`).
 
+## Recent Features
+- **agent.post_init** (2026-02-11): YAML multiline shell script field on AgentConfig. Injected as `~/.clawker/post-init.sh` via `containerfs.PreparePostInitTar` + `shared.InjectPostInitScript`. Entrypoint runs once on first start (marker: `~/.claude/post-initialized`). Skipped on restart.
+
 ## Last Documentation Audit
 Date: 2026-02-03. All 39 doc files fresh. Root CLAUDE.md at 231 lines. IP range sources feature fully documented in config and docker CLAUDE.md files. WIP memories cleaned up after feature completion. One budget violation: hostproxy CLAUDE.md at 227 lines (trimmed).
 

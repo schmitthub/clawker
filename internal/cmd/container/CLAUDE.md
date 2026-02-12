@@ -77,7 +77,7 @@ Container init orchestration shared between `run/` and `create/`. See `shared/CL
 
 **ContainerInitializer**: Factory noun for progress-tracked 5-step init (workspace, config, env, create, start). Both `run` and `create` call `Initializer.Run(ctx, InitParams)`.
 
-**Types**: `ContainerInitializer`, `InitParams`, `InitResult`, `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `RebuildMissingImageOpts`
+**Types**: `ContainerInitializer`, `InitParams`, `InitResult`, `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
 
 ## Image Resolution (@ Symbol)
 

@@ -173,13 +173,16 @@ func TestValidatorValidAgent(t *testing.T) {
 		name     string
 		includes []string
 		env      map[string]string
+		postInit string
 		wantErr  bool
 	}{
-		{"valid include file", []string{"./README.md"}, nil, false},
-		{"nonexistent include file", []string{"./nonexistent.md"}, nil, true},
-		{"valid env vars", nil, map[string]string{"NODE_ENV": "dev"}, false},
-		{"invalid env var name with space", nil, map[string]string{"NODE ENV": "dev"}, true},
-		{"invalid env var name with equals", nil, map[string]string{"NODE=ENV": "dev"}, true},
+		{"valid include file", []string{"./README.md"}, nil, "", false},
+		{"nonexistent include file", []string{"./nonexistent.md"}, nil, "", true},
+		{"valid env vars", nil, map[string]string{"NODE_ENV": "dev"}, "", false},
+		{"invalid env var name with space", nil, map[string]string{"NODE ENV": "dev"}, "", true},
+		{"invalid env var name with equals", nil, map[string]string{"NODE=ENV": "dev"}, "", true},
+		{"valid post_init", nil, nil, "npm install -g typescript\n", false},
+		{"whitespace-only post_init", nil, nil, "   \n\t  ", true},
 	}
 
 	for _, tt := range tests {
@@ -193,6 +196,7 @@ func TestValidatorValidAgent(t *testing.T) {
 			if tt.env != nil {
 				cfg.Agent.Env = tt.env
 			}
+			cfg.Agent.PostInit = tt.postInit
 
 			err := validator.Validate(cfg)
 			hasErr := err != nil
