@@ -37,6 +37,20 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "${artifact}"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+
 changelog:
   sort: asc
   filters:
