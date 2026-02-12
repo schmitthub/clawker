@@ -71,7 +71,7 @@ agent:
   # env_file:
   #   - ".env"
   #   - "~/.secrets/api-keys.env"
-  # Pass host environment variables by name (silently skipped if unset)
+  # Pass host environment variables by name (emits a warning if unset)
   # from_env:
   #   - "ANTHROPIC_API_KEY"
   #   - "GITHUB_TOKEN"
