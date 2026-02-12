@@ -189,7 +189,7 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 	// Use the moby client Filters type
 	f := client.Filters{}
-	f = f.Add("label", config.LabelDomain+".managed=true")
+	f = f.Add("label", config.LabelManaged+"="+config.ManagedLabelValue)
 
 	result, err := d.docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: f,

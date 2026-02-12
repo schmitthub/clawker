@@ -10,60 +10,30 @@ import (
 )
 
 // Clawker label keys for managed resources.
+// Re-exported from internal/config/identity.go — canonical source of truth lives there
+// so lightweight packages can use labels without importing docker's heavy dependency tree.
 const (
-	// LabelPrefix is the prefix for all clawker labels (derived from config.LabelDomain).
-	LabelPrefix = config.LabelDomain + "."
-
-	// LabelManaged marks a resource as managed by clawker.
-	LabelManaged = LabelPrefix + "managed"
-
-	// LabelProject identifies the project name.
-	LabelProject = LabelPrefix + "project"
-
-	// LabelAgent identifies the agent name within a project.
-	LabelAgent = LabelPrefix + "agent"
-
-	// LabelVersion stores the clawker version that created the resource.
-	LabelVersion = LabelPrefix + "version"
-
-	// LabelImage stores the source image tag for containers.
-	LabelImage = LabelPrefix + "image"
-
-	// LabelCreated stores the creation timestamp.
-	LabelCreated = LabelPrefix + "created"
-
-	// LabelWorkdir stores the host working directory.
-	LabelWorkdir = LabelPrefix + "workdir"
-
-	// LabelPurpose identifies the purpose of a volume.
-	LabelPurpose = LabelPrefix + "purpose"
-
-	// LabelTestName identifies the test function that created a resource.
-	// Set automatically by TestLabelConfig(t.Name()) in integration tests.
-	LabelTestName = LabelPrefix + "test.name"
-
-	// LabelBaseImage marks a built image as the base image.
-	LabelBaseImage = LabelPrefix + "base-image"
-
-	// LabelFlavor stores the Linux flavor used for a base image build.
-	LabelFlavor = LabelPrefix + "flavor"
-
-	// LabelTest marks a resource as created by a test.
-	LabelTest = LabelPrefix + "test"
-
-	// LabelE2ETest marks a resource as created by an E2E test.
-	LabelE2ETest = LabelPrefix + "e2e-test"
+	LabelPrefix    = config.LabelPrefix
+	LabelManaged   = config.LabelManaged
+	LabelProject   = config.LabelProject
+	LabelAgent     = config.LabelAgent
+	LabelVersion   = config.LabelVersion
+	LabelImage     = config.LabelImage
+	LabelCreated   = config.LabelCreated
+	LabelWorkdir   = config.LabelWorkdir
+	LabelPurpose   = config.LabelPurpose
+	LabelTestName  = config.LabelTestName
+	LabelBaseImage = config.LabelBaseImage
+	LabelFlavor    = config.LabelFlavor
+	LabelTest      = config.LabelTest
+	LabelE2ETest   = config.LabelE2ETest
 )
 
-// EngineLabelPrefix is the label prefix for whail.EngineOptions (without trailing dot).
-// Use this when configuring the whail Engine; it adds its own dot separator.
-const EngineLabelPrefix = config.LabelDomain
-
-// EngineManagedLabel is the managed label key for whail.EngineOptions.
-const EngineManagedLabel = "managed"
-
-// ManagedLabelValue is the value for the managed label.
-const ManagedLabelValue = "true"
+const (
+	EngineLabelPrefix  = config.EngineLabelPrefix
+	EngineManagedLabel = config.EngineManagedLabel
+	ManagedLabelValue  = config.ManagedLabelValue
+)
 
 // ContainerLabels returns labels for a new container.
 func ContainerLabels(project, agent, version, image, workdir string) map[string]string {
