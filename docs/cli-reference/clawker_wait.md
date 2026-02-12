@@ -1,0 +1,48 @@
+## clawker wait
+
+Block until one or more containers stop, then print their exit codes
+
+### Synopsis
+
+Blocks until one or more clawker containers stop, then prints their exit codes.
+
+When --agent is provided, the container name is resolved as clawker.<project>.<agent>
+using the project from your clawker.yaml configuration.
+
+Container names can be:
+  - Full name: clawker.myproject.myagent
+  - Container ID: abc123...
+
+```
+clawker wait CONTAINER [CONTAINER...] [flags]
+```
+
+### Examples
+
+```
+  # Wait for a container using agent name
+  clawker container wait --agent ralph
+
+  # Wait for a container by full name
+  clawker container wait clawker.myapp.ralph
+
+  # Wait for multiple containers
+  clawker container wait clawker.myapp.ralph clawker.myapp.writer
+```
+
+### Options
+
+```
+      --agent   Use agent name (resolves to clawker.<project>.<agent>)
+  -h, --help    help for wait
+```
+
+### Options inherited from parent commands
+
+```
+  -D, --debug   Enable debug logging
+```
+
+### See also
+
+* [clawker](clawker.md) - Manage Claude Code in secure Docker containers with clawker

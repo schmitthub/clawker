@@ -76,9 +76,9 @@ func run(args []string) error {
 
 	// Generate each requested format
 	if flagMarkdown {
-		dir := filepath.Join(flagDocPath, "markdown")
+		dir := filepath.Join(flagDocPath, "cli-reference")
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create markdown directory: %w", err)
+			return fmt.Errorf("failed to create cli-reference directory: %w", err)
 		}
 
 		var err error
@@ -90,7 +90,7 @@ func run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to generate Markdown documentation: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "Generated Markdown documentation in %s\n", dir)
+		fmt.Fprintf(os.Stderr, "Generated CLI reference documentation in %s\n", dir)
 	}
 
 	if flagManPage {
