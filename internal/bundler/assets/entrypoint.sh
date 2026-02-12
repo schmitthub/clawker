@@ -22,9 +22,9 @@ if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; t
     mkdir -p /tmp/clawker
     echo "${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}" > /tmp/clawker/firewall-ip-range-sources
     echo "${CLAWKER_FIREWALL_DOMAINS:-}" > /tmp/clawker/firewall-domains
-    if ! firewall_output=$(sudo /usr/local/bin/init-firewall.sh 2>&1); then
+    if ! firewall_output=$(sudo /usr/local/bin/init-firewall.sh 2>&1 | head -c 10000); then
         # Sanitize output for JSON safety (remove newlines, escape quotes)
-        sanitized_output=$(echo "$firewall_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 200)
+        sanitized_output=$(printf '%s\n' "$firewall_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 200)
         emit_error "firewall" "initialization failed: $sanitized_output"
     fi
 fi
@@ -104,10 +104,10 @@ POST_INIT="$HOME/.clawker/post-init.sh"
 POST_INIT_DONE="$HOME/.claude/post-initialized"
 if [ -x "$POST_INIT" ] && [ ! -f "$POST_INIT_DONE" ]; then
     echo "[clawker] running post-init"
-    if post_init_output=$("$POST_INIT" 2>&1); then
+    if post_init_output=$("$POST_INIT" 2>&1 | head -c 10000); then
         touch "$POST_INIT_DONE"
     else
-        sanitized_output=$(echo "$post_init_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 500)
+        sanitized_output=$(printf '%s\n' "$post_init_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 500)
         emit_error "post-init" "script failed: $sanitized_output"
     fi
 fi

@@ -75,7 +75,7 @@ result, err := initializer.Run(ctx, shared.InitParams{
 - Phase B: Progress-tracked — `Initializer.Run()` with TUI progress display (5 steps)
 - Phase C: Post-progress — print deferred warnings, then detach output or attach-then-start
 
-**Progress steps**: workspace, config (cached if volume exists), environment, container create, start (detached only).
+**Progress steps**: workspace, config (cached if volume exists), environment, container create, post-init (only when `agent.post_init` configured), start (detached only). Step count: 5-6 depending on config.
 
 **Deferred warnings**: During progress goroutine, TUI owns the terminal — can't print. Warnings collected in `InitResult.Warnings` for Phase C printing.
 
