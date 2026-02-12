@@ -308,6 +308,7 @@ func TestRuntimeEnv_FirewallDisabledNoIPRangeSources(t *testing.T) {
 
 func TestRuntimeEnv_ClawkerIdentity(t *testing.T) {
 	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Version:         "0.5.0",
 		Project:         "myproject",
 		Agent:           "ralph",
 		WorkspaceMode:   "bind",
@@ -315,6 +316,7 @@ func TestRuntimeEnv_ClawkerIdentity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.Contains(t, env, "CLAWKER_VERSION=0.5.0")
 	assert.Contains(t, env, "CLAWKER_PROJECT=myproject")
 	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
@@ -455,4 +457,25 @@ func TestRuntimeEnv_ClawkerIdentityPartial(t *testing.T) {
 	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/tmp/orphaned-dir")
+}
+
+func TestRuntimeEnv_ClawkerVersion(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{Version: "1.2.3"})
+	require.NoError(t, err)
+	assert.Contains(t, env, "CLAWKER_VERSION=1.2.3")
+}
+
+func TestRuntimeEnv_ClawkerVersionDev(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{Version: "DEV"})
+	require.NoError(t, err)
+	assert.Contains(t, env, "CLAWKER_VERSION=DEV")
+}
+
+func TestRuntimeEnv_ClawkerVersionEmpty(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
+	require.NoError(t, err)
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_VERSION="),
+			"should not set CLAWKER_VERSION when empty")
+	}
 }
