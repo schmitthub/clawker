@@ -63,14 +63,6 @@ func WithConfigBuilder(cb *builders.ConfigBuilder) HarnessOption {
 
 // NewHarness creates a new test harness with isolation.
 // The harness automatically cleans up all resources when the test completes.
-// ParseYAML unmarshals a YAML string into a value of type T.
-// Generic utility for tests that need to parse YAML config snippets.
-func ParseYAML[T any](yamlStr string) (T, error) {
-	var result T
-	err := yaml.Unmarshal([]byte(yamlStr), &result)
-	return result, err
-}
-
 func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	t.Helper()
 
@@ -314,6 +306,14 @@ func (h *Harness) FileExists(relPath string) bool {
 	fullPath := filepath.Join(h.ProjectDir, relPath)
 	_, err := os.Stat(fullPath)
 	return err == nil
+}
+
+// ParseYAML unmarshals a YAML string into a value of type T.
+// Generic utility for tests that need to parse YAML config snippets.
+func ParseYAML[T any](yamlStr string) (T, error) {
+	var result T
+	err := yaml.Unmarshal([]byte(yamlStr), &result)
+	return result, err
 }
 
 // UpdateConfig updates the config and rewrites clawker.yaml.

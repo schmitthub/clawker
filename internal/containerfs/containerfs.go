@@ -188,7 +188,11 @@ func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 // PreparePostInitTar creates a tar archive containing a post-init script at .clawker/post-init.sh.
 // The script is prefixed with a bash shebang and set -e, then the user's commands verbatim.
 // The tar is designed for extraction at /home/claude, producing /home/claude/.clawker/post-init.sh.
+// Returns an error if the script is empty or whitespace-only.
 func PreparePostInitTar(script string) (io.Reader, error) {
+	if strings.TrimSpace(script) == "" {
+		return nil, fmt.Errorf("post-init script content is empty")
+	}
 	content := []byte("#!/bin/bash\nset -e\n" + script)
 	now := time.Now()
 

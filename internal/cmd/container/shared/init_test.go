@@ -381,6 +381,46 @@ func TestContainerInitializer_NoPostInit(t *testing.T) {
 	fake.AssertNotCalled(t, "CopyToContainer")
 }
 
+func TestContainerInitializer_PostInitInjectionError(t *testing.T) {
+	// PostInit configured but CopyToContainer fails on the second call (post-init injection).
+	// First call (onboarding) succeeds, second call (post-init) fails.
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+
+	// Custom CopyToContainer: succeed first (onboarding), fail second (post-init)
+	callCount := 0
+	fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
+		callCount++
+		if callCount >= 2 {
+			return moby.CopyToContainerResult{}, fmt.Errorf("simulated copy failure")
+		}
+		return moby.CopyToContainerResult{}, nil
+	}
+
+	cfg := testConfig()
+	cfg.Agent.PostInit = "npm install -g typescript\n"
+
+	tio := iostreams.NewTestIOStreams()
+	ci := testInitializer(tio.IOStreams)
+
+	cmd := testFlags()
+	containerOpts := copts.NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	result, err := ci.Run(context.Background(), InitParams{
+		Client:           fake.Client,
+		Config:           cfg,
+		ContainerOptions: containerOpts,
+		Flags:            cmd.Flags(),
+		Image:            "alpine",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "inject post-init script")
+	require.Nil(t, result)
+}
+
 func TestContainerInitializer_EmptyProject(t *testing.T) {
 	// Empty project → 2-segment container name (clawker.agent)
 	fake := dockertest.NewFakeClient()

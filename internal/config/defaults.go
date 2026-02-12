@@ -80,7 +80,7 @@ agent:
   # Enable shared directory (read-only, mounted at ~/.clawker-share)
   # enable_shared_dir: false
   # Shell commands to run once inside the container after initialization.
-  # Runs before the main process starts. Aborts container startup on failure.
+  # Runs before the main process starts (with set -e). Any failure aborts container startup.
   # post_init: |
   #   claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
   #   npm install -g typescript

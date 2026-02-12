@@ -98,14 +98,18 @@ KNOWN_HOSTS
 ssh_setup_known_hosts
 
 # Run post-init script once if it exists and hasn't been run yet
+# Marker lives on config volume (~/.claude) — persists across container recreations
+# with same config volume. To re-run post-init, delete the marker or the config volume.
 POST_INIT="$HOME/.clawker/post-init.sh"
 POST_INIT_DONE="$HOME/.claude/post-initialized"
 if [ -x "$POST_INIT" ] && [ ! -f "$POST_INIT_DONE" ]; then
     echo "[clawker] running post-init"
-    if ! "$POST_INIT"; then
-        emit_error "post-init" "script failed"
+    if post_init_output=$("$POST_INIT" 2>&1); then
+        touch "$POST_INIT_DONE"
+    else
+        sanitized_output=$(echo "$post_init_output" | tr '\n' ' ' | sed 's/"/\\"/g' | head -c 500)
+        emit_error "post-init" "script failed: $sanitized_output"
     fi
-    touch "$POST_INIT_DONE"
 fi
 
 # If first argument starts with "-" or isn't a command, prepend "claude"

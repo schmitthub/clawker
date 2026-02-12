@@ -1104,6 +1104,105 @@ agent:
 }
 
 // ---------------------------------------------------------------------------
+// Rule: post_init script failure prevents marker creation and aborts startup
+// ---------------------------------------------------------------------------
+
+func TestContainerFs_AgentPostInit_Failure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internals test in short mode")
+	}
+	harness.RequireDocker(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	client := harness.NewTestClient(t)
+	image := harness.BuildLightImage(t, client)
+
+	agent := harness.UniqueAgentName(t)
+	project := "test"
+	volumeName := createConfigVolume(t, ctx, client, project, agent)
+
+	// Create container with a post-init script that fails
+	containerName := fmt.Sprintf("clawker-test-postinit-fail-%s", agent)
+	labels := harness.AddTestLabels(map[string]string{
+		harness.ClawkerManagedLabel: "true",
+	})
+
+	createResp, err := client.ContainerCreate(ctx, whail.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:      image,
+			Entrypoint: []string{"/usr/local/bin/entrypoint.sh"},
+			Cmd:        []string{"sleep", "infinity"},
+			Labels:     labels,
+		},
+		HostConfig: &container.HostConfig{
+			CapAdd: []string{"NET_ADMIN", "NET_RAW"},
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeVolume,
+					Source: volumeName,
+					Target: containerHomeDir + "/.claude",
+				},
+			},
+		},
+		Name: containerName,
+	})
+	require.NoError(t, err, "ContainerCreate failed")
+
+	containerID := createResp.ID
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		if _, err := client.ContainerStop(cleanupCtx, containerID, nil); err != nil {
+			t.Logf("WARNING: failed to stop container %s: %v", containerName, err)
+		}
+		if _, err := client.ContainerRemove(cleanupCtx, containerID, true); err != nil {
+			t.Logf("WARNING: failed to remove container %s: %v", containerName, err)
+		}
+	})
+
+	// Inject a post-init script that fails
+	failScript := "echo 'about to fail'\nexit 1\n"
+	err = shared.InjectPostInitScript(ctx, shared.InjectPostInitOpts{
+		ContainerID:     containerID,
+		Script:          failScript,
+		CopyToContainer: shared.NewCopyToContainerFn(client),
+	})
+	require.NoError(t, err, "InjectPostInitScript failed")
+
+	// Start container — entrypoint runs, post-init fails, container exits
+	_, err = client.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: containerID})
+	require.NoError(t, err, "ContainerStart failed")
+
+	// Wait for container to exit (post-init failure calls emit_error which exits)
+	err = harness.WaitForContainerExit(ctx, client, containerID)
+	require.NoError(t, err, "container did not exit after post-init failure")
+
+	// --- Scenario: Marker file does NOT exist (script failed) ---
+	t.Run("marker_not_created_on_failure", func(t *testing.T) {
+		// Container has exited, but we can still inspect the volumes.
+		// Start a helper container to check the config volume.
+		helper := harness.RunContainer(t, client, image,
+			harness.WithCmd("sleep", "infinity"),
+			harness.WithVolumeMount(volumeName, containerHomeDir+"/.claude"),
+		)
+		assert.False(t, helper.FileExists(ctx, client, containerHomeDir+"/.claude/post-initialized"),
+			"post-initialized marker should NOT exist when script failed")
+	})
+
+	// --- Scenario: Error log contains script output ---
+	t.Run("error_log_contains_output", func(t *testing.T) {
+		logs, err := harness.GetContainerLogs(ctx, client, containerID)
+		require.NoError(t, err, "failed to get container logs")
+
+		assert.Contains(t, logs, "[clawker] error component=post-init",
+			"logs should contain post-init error")
+		assert.Contains(t, logs, "script failed:",
+			"error should include 'script failed:' prefix")
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Helpers for test assertions
 // ---------------------------------------------------------------------------
 

@@ -147,7 +147,8 @@ type InjectPostInitOpts struct {
 
 // InjectPostInitScript writes ~/.clawker/post-init.sh to a created (not started) container.
 // Must be called after ContainerCreate and before ContainerStart.
-// The entrypoint runs this script once on first start and creates a marker to prevent re-runs.
+// The entrypoint is responsible for running this script once on first start and creating
+// a ~/.claude/post-initialized marker to prevent re-runs on restart.
 func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	if opts.CopyToContainer == nil {
 		return fmt.Errorf("InjectPostInitScript: CopyToContainerFn is required")

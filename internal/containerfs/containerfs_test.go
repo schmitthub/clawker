@@ -539,6 +539,22 @@ func TestPrepareOnboardingTar(t *testing.T) {
 	}
 }
 
+func TestPreparePostInitTar_EmptyScript(t *testing.T) {
+	_, err := PreparePostInitTar("")
+	if err == nil {
+		t.Fatal("expected error for empty script")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("error should mention empty: %v", err)
+	}
+
+	// Whitespace-only should also fail
+	_, err = PreparePostInitTar("   \n\t  ")
+	if err == nil {
+		t.Fatal("expected error for whitespace-only script")
+	}
+}
+
 func TestPreparePostInitTar(t *testing.T) {
 	script := "claude mcp add -- npx -y @anthropic-ai/claude-code-mcp\nnpm install -g typescript\n"
 
