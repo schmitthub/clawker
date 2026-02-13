@@ -4,7 +4,7 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "liveNow": false,
@@ -25,32 +25,26 @@
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
       "id": 2,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(claude_code_session_count_total[$__range]))",
+          "expr": "count(count by (session_id) (claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}))",
+          "instant": true,
           "legendFormat": "Sessions",
           "refId": "A"
         }
@@ -76,24 +70,20 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "gridPos": { "h": 4, "w": 4, "x": 3, "y": 1 },
       "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["sum"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(claude_code_cost_usage_USD_total[$__range]))",
+          "expr": "sum(increase(claude_code_cost_usage_USD_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
           "legendFormat": "Cost",
           "refId": "A"
         }
@@ -109,37 +99,31 @@
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "gridPos": { "h": 4, "w": 3, "x": 7, "y": 1 },
       "id": 4,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["sum"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(claude_code_token_usage_tokens_total[$__range]))",
-          "legendFormat": "Tokens",
+          "expr": "sum(increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\", type=\"input\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Total Tokens",
+      "title": "Input Tokens",
       "type": "stat"
     },
     {
@@ -150,43 +134,331 @@
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "blue", "value": null }
-            ]
+            "steps": [{ "color": "orange", "value": null }]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
-      "id": 5,
+      "gridPos": { "h": 4, "w": 3, "x": 10, "y": 1 },
+      "id": 40,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["sum"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(claude_code_lines_of_code_count_total[$__range]))",
-          "legendFormat": "Lines",
+          "expr": "sum(increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\", type=\"output\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Lines of Code Changed",
+      "title": "Output Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "semi-dark-blue", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 13, "y": 1 },
+      "id": 41,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\", type=\"cacheRead\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Read",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 17, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Lines Changed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "purple", "value": null }]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(claude_code_active_time_seconds_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Time",
       "type": "stat"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
-      "id": 6,
+      "id": 20,
+      "panels": [],
+      "title": "Per-Project / Agent",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "id": 21,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, agent) (increase(claude_code_cost_usage_USD_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost by Project / Agent",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "id": 22,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, agent) (increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tokens by Project / Agent",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value #Cost" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #Tokens" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #Sessions" },
+            "properties": [
+              { "id": "displayName", "value": "Sessions" },
+              { "id": "unit", "value": "short" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "id": 23,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "enablePagination": false, "fields": "", "reducer": ["sum"], "show": true },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Value #Cost" }]
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, agent) (increase(claude_code_cost_usage_USD_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Cost"
+        },
+        {
+          "expr": "sum by (project, agent) (increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Tokens"
+        },
+        {
+          "expr": "count by (project, agent) (count by (project, agent, session_id) (claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Sessions"
+        }
+      ],
+      "title": "Sessions by Project / Agent",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 7,
       "panels": [],
       "title": "Cost & Usage",
       "type": "row"
@@ -224,15 +496,15 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
-      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "id": 8,
       "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "single", "sort": "none" }
       },
       "targets": [
         {
-          "expr": "sum by (model) (rate(claude_code_cost_usage_USD_total[5m]))",
+          "expr": "sum by (model) (increase(claude_code_cost_usage_USD_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -273,15 +545,15 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
-      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "id": 9,
       "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "single", "sort": "none" }
       },
       "targets": [
         {
-          "expr": "sum by (type) (rate(claude_code_token_usage_tokens_total[5m]))",
+          "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -291,8 +563,8 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
-      "id": 9,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 10,
       "panels": [],
       "title": "Activity",
       "type": "row"
@@ -330,15 +602,15 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
-      "id": 10,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "id": 11,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "single", "sort": "none" }
       },
       "targets": [
         {
-          "expr": "rate(claude_code_lines_of_code_count_total[5m])",
+          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
           "legendFormat": "Lines Changed",
           "refId": "A"
         }
@@ -356,18 +628,11 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 80,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
             "scaleDistribution": { "type": "linear" },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "mappings": [],
@@ -379,26 +644,35 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
-      "id": 11,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "id": 12,
       "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
       },
       "targets": [
         {
-          "expr": "rate(claude_code_commit_count_total[5m])",
-          "legendFormat": "Commits",
+          "expr": "sum by (project, agent) (increase(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}} commits",
           "refId": "A"
         },
         {
-          "expr": "rate(claude_code_pull_request_count_total[5m])",
-          "legendFormat": "Pull Requests",
+          "expr": "sum by (project, agent) (increase(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}} PRs",
           "refId": "B"
         }
       ],
       "title": "Commits & PRs",
-      "type": "timeseries"
+      "type": "barchart"
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -410,8 +684,8 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
-      "id": 12,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "id": 13,
       "options": {
         "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
         "pieType": "pie",
@@ -420,7 +694,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (decision) (increase(claude_code_code_edit_tool_decision_total[$__range]))",
+          "expr": "sum by (decision) (increase(claude_code_code_edit_tool_decision_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
           "legendFormat": "{{decision}}",
           "refId": "A"
         }
@@ -430,39 +705,121 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
-      "id": 13,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 30,
+      "panels": [],
+      "title": "Session Detail",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value #Cost" },
+            "properties": [
+              { "id": "displayName", "value": "Cost" },
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #Tokens" },
+            "properties": [
+              { "id": "displayName", "value": "Tokens" },
+              { "id": "unit", "value": "short" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #Lines" },
+            "properties": [
+              { "id": "displayName", "value": "Lines" },
+              { "id": "unit", "value": "short" },
+              { "id": "custom.width", "value": 80 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Value #Time" },
+            "properties": [
+              { "id": "displayName", "value": "Active Time" },
+              { "id": "unit", "value": "s" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "id": 31,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "enablePagination": true, "fields": "", "reducer": ["sum"], "show": true },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Cost" }]
+      },
+      "targets": [
+        {
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_cost_usage_USD_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Cost"
+        },
+        {
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Tokens"
+        },
+        {
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Lines"
+        },
+        {
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_active_time_seconds_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "Time"
+        }
+      ],
+      "title": "Session Details",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "id": 14,
       "panels": [],
       "title": "Events",
       "type": "row"
     },
     {
       "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
-      "id": 14,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      },
-      "targets": [
-        {
-          "expr": "{exporter=\"OTLP\"} |= `api_request`",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "API Requests",
-      "type": "logs"
-    },
-    {
-      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
       "id": 15,
       "options": {
         "dedupStrategy": "none",
@@ -476,7 +833,31 @@
       },
       "targets": [
         {
-          "expr": "{exporter=\"OTLP\"} |= `error` or {exporter=\"OTLP\"} |= `api_error`",
+          "expr": "{service_name=\"claude-code\"} |= `api_request` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "API Requests",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "id": 16,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "expr": "{service_name=\"claude-code\"} |= `api_error` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -518,6 +899,60 @@
         "regex": "",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(claude_code_token_usage_tokens_total, project)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Project",
+        "multi": true,
+        "name": "project",
+        "options": [],
+        "query": { "query": "label_values(claude_code_token_usage_tokens_total, project)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Agent",
+        "multi": true,
+        "name": "agent",
+        "options": [],
+        "query": { "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Session",
+        "multi": true,
+        "name": "session_id",
+        "options": [],
+        "query": { "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)", "refId": "StandardVariableQuery" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 2,
+        "type": "query"
       }
     ]
   },

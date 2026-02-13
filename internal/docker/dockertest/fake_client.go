@@ -121,6 +121,13 @@ func NewFakeClient(opts ...FakeClientOption) *FakeClient {
 		}, nil
 	}
 
+	// Default ContainerList returns an empty list.
+	// Without this, IsMonitoringActive (called during every container creation)
+	// would panic on the "not implemented" sentinel in whailtest.
+	fakeAPI.ContainerListFn = func(_ context.Context, _ moby.ContainerListOptions) (moby.ContainerListResult, error) {
+		return moby.ContainerListResult{}, nil
+	}
+
 	// Override whailtest's default ImageInspect to return clawker labels.
 	// Without this, isManagedImage/ImageRemove would see "com.whailtest.managed"
 	// labels and fail management checks.

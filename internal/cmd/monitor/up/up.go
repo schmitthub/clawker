@@ -37,6 +37,7 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Jaeger UI (port 16686)
   - Prometheus (port 9090)
+  - Loki (port 3100)
   - Grafana (port 3000)
 
 The stack connects to the clawker-net Docker network, allowing
@@ -73,10 +74,13 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil.PrintError(ios, "Monitoring stack not initialized")
-		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
-		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
+	if _, err := os.Stat(composePath); err != nil {
+		if os.IsNotExist(err) {
+			cmdutil.PrintError(ios, "Monitoring stack not initialized")
+			cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
+			return fmt.Errorf("compose.yaml not found in %s", monitorDir)
+		}
+		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}
 
 	// Ensure clawker-net network exists (creates with managed labels if needed)
@@ -123,39 +127,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 
-		// Check for running clawker containers that need restart
-		checkRunningContainers(ctx, client, ios)
 	}
 
 	return nil
-}
-
-// checkRunningContainers warns if there are running clawker containers
-// that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams) {
-	cs := ios.ColorScheme()
-	containers, err := client.ListContainers(ctx, false)
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to list running containers")
-		return
-	}
-
-	if len(containers) == 0 {
-		return
-	}
-
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Running containers detected without telemetry:\n", cs.WarningIcon())
-	for _, c := range containers {
-		fmt.Fprintf(ios.ErrOut, "   %s %s\n", cs.Muted("•"), c.Name)
-	}
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "These containers were started before the monitoring stack and")
-	fmt.Fprintln(ios.ErrOut, "won't export telemetry. To enable telemetry, restart them:")
-	fmt.Fprintln(ios.ErrOut)
-	for _, c := range containers {
-		fmt.Fprintf(ios.ErrOut, "   cd /path/to/%s && clawker restart\n", c.Project)
-	}
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "Then run 'clawker start' to start with telemetry enabled.")
 }

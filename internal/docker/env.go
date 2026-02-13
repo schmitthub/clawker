@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 )
@@ -28,6 +29,9 @@ type RuntimeEnvOpts struct {
 	FirewallDomains        []string
 	FirewallOverride       bool
 	FirewallIPRangeSources []config.IPRangeSource
+
+	// Monitoring stack
+	MonitoringActive bool // Whether the monitoring stack (otel-collector) is running
 
 	// Socket forwarding (consumed by socket-forwarder in container)
 	GPGForwardingEnabled bool // Enable GPG agent forwarding
@@ -111,6 +115,28 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			return nil, fmt.Errorf("failed to marshal firewall IP range sources: %w", err)
 		}
 		m["CLAWKER_FIREWALL_IP_RANGE_SOURCES"] = string(ipSourcesBytes)
+	}
+
+	// Telemetry resource attributes for per-project/agent metric segmentation.
+	// The OTEL collector's transform/metrics processor copies these to datapoint
+	// attributes so Prometheus can expose them as metric labels (see otel-config.yaml).
+	var resourceAttrs []string
+	if opts.Project != "" {
+		resourceAttrs = append(resourceAttrs, "project="+opts.Project)
+	}
+	if opts.Agent != "" {
+		resourceAttrs = append(resourceAttrs, "agent="+opts.Agent)
+	}
+	if len(resourceAttrs) > 0 {
+		m["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttrs, ",")
+	}
+
+	// Disable telemetry when monitoring stack is not running.
+	// The Dockerfile sets CLAUDE_CODE_ENABLE_TELEMETRY=1 by default; override it
+	// here so containers don't silently attempt exports to unreachable otel-collector.
+	// Users can still force-enable via agent.env (applied after this).
+	if !opts.MonitoringActive {
+		m["CLAUDE_CODE_ENABLE_TELEMETRY"] = "0"
 	}
 
 	// Socket forwarding (consumed by clawker-socket-server binary inside container)

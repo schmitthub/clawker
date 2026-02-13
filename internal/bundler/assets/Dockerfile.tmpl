@@ -269,6 +269,19 @@ ENV BROWSER=/usr/local/bin/host-open
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV LANG=en_US.UTF-8
+# Telemetry: pre-configured for otel-collector on clawker-net (requires 'clawker monitor up')
+# Disabled at container creation if monitoring stack is not running; override with agent.env
+ENV CLAUDE_CODE_ENABLE_TELEMETRY=1
+ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+ENV OTEL_METRICS_EXPORTER=otlp
+ENV OTEL_LOGS_EXPORTER=otlp
+# Per-signal endpoints (no traces — traces are not exported from containers)
+ENV OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://otel-collector:4318/v1/metrics
+ENV OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-collector:4318/v1/logs
+ENV OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+ENV OTEL_METRICS_INCLUDE_SESSION_ID=true
+ENV OTEL_LOGS_EXPORT_INTERVAL=5000
+ENV OTEL_METRIC_EXPORT_INTERVAL=10000
 
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}

@@ -4,6 +4,7 @@ providers:
     orgId: 1
     folder: 'Clawker'
     type: file
+    allowUpdates: true
     disableDeletion: false
     editable: true
     options:

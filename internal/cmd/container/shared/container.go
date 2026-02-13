@@ -1581,7 +1581,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, err := buildRuntimeEnv(cfg, projectCfg, containerOpts, agentName, wd)
+	runtimeEnv, envWarnings, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd)
 	if err != nil {
 		return nil, err
 	}
@@ -1766,7 +1766,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 // buildRuntimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildRuntimeEnv(cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string) ([]string, []string, error) {
+func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = projectCfg.Workspace.DefaultMode
@@ -1777,17 +1777,21 @@ func buildRuntimeEnv(cfg *CreateContainerConfig, projectCfg *config.Project, con
 		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}
 
+	monitoringActive := cfg.Client.IsMonitoringActive(ctx)
+	logger.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
+
 	envOpts := docker.RuntimeEnvOpts{
-		Version:         cfg.Version,
-		Project:         projectCfg.Project,
-		Agent:           agentName,
-		WorkspaceMode:   workspaceMode,
-		WorkspaceSource: wd,
-		Editor:          projectCfg.Agent.Editor,
-		Visual:          projectCfg.Agent.Visual,
-		Is256Color:      cfg.Is256Color,
-		TrueColor:       cfg.IsTrueColor,
-		AgentEnv:        agentEnv,
+		Version:          cfg.Version,
+		Project:          projectCfg.Project,
+		Agent:            agentName,
+		WorkspaceMode:    workspaceMode,
+		WorkspaceSource:  wd,
+		Editor:           projectCfg.Agent.Editor,
+		Visual:           projectCfg.Agent.Visual,
+		Is256Color:       cfg.Is256Color,
+		TrueColor:        cfg.IsTrueColor,
+		AgentEnv:         agentEnv,
+		MonitoringActive: monitoringActive,
 	}
 	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
 		envOpts.FirewallEnabled = true
