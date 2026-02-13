@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -613,13 +612,16 @@ func (s *Server) handleCallbackCapture(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeCallbackSuccessPage(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(callbackPage("Authentication Complete", callbackSuccessBody)))
+	if _, err := w.Write([]byte(callbackPage("Authentication Complete", callbackSuccessBody))); err != nil {
+		logger.Debug().Err(err).Msg("failed to write callback success page")
+	}
 }
 
 // writeCallbackErrorPage writes an HTML error page for OAuth callbacks.
 func (s *Server) writeCallbackErrorPage(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(callbackPage("Authentication Error",
-		fmt.Sprintf(callbackErrorBodyFmt, html.EscapeString(message)))))
+	if _, err := w.Write([]byte(callbackPage("Authentication Error", callbackErrorBody(message)))); err != nil {
+		logger.Debug().Err(err).Msg("failed to write callback error page")
+	}
 }

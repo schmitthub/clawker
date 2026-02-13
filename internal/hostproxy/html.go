@@ -1,14 +1,17 @@
 package hostproxy
 
-import "fmt"
+import (
+	"fmt"
+	"html"
+)
 
 // ─── Callback page HTML ────────────────────────────────────────────
-//
+
 // callbackPage renders a full HTML document with the shared callback chrome.
 // title sets <title> and body is raw HTML injected inside the centered container.
+// Callers are responsible for escaping any user-supplied content in body.
 //
 // Colors are drawn from the project's semantic theme (internal/iostreams/styles.go).
-
 func callbackPage(title, body string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -22,12 +25,9 @@ func callbackPage(title, body string) string {
 
             /* Semantic theme — mirrors internal/iostreams/styles.go */
             --primary:   #E8714A;  /* ColorBurntOrange */
-            --secondary: #00BFFF;  /* ColorDeepSkyBlue */
             --success:   #04B575;  /* ColorEmerald     */
             --error:     #FF5F87;  /* ColorHotPink     */
-            --muted:     #626262;  /* ColorDimGray     */
             --bg:        #1A1A1A;  /* ColorJet         */
-            --bg-alt:    #2A2A2A;  /* ColorGunmetal    */
             --subtle:    #A0A0A0;  /* ColorSilver      */
         }
 
@@ -81,7 +81,7 @@ func callbackPage(title, body string) string {
         %s
     </div>
 </body>
-</html>`, title, body)
+</html>`, html.EscapeString(title), body)
 }
 
 // ─── Body content ───────────────────────────────────────────────────
@@ -93,3 +93,8 @@ const callbackSuccessBody = `<h1><span class="ok">&#10004;</span> Authentication
 const callbackErrorBodyFmt = `<h1><span class="err">&#10008;</span> Authentication Error</h1>
         <p class="subtitle">&#9646;&#9646; %s</p>
         <div class="brand">clawker</div>`
+
+// callbackErrorBody formats the error body with a safely escaped message.
+func callbackErrorBody(message string) string {
+	return fmt.Sprintf(callbackErrorBodyFmt, html.EscapeString(message))
+}

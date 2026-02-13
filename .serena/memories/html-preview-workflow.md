@@ -5,7 +5,7 @@ When working inside a clawker container, you need to preview HTML files in the h
 The container has `host-open` (BROWSER env) which sends URLs to the host proxy, but:
 - `file://` URLs are rejected by the host proxy (only http/https allowed)
 - Container ports are not published to the host by default
-- `data:` URIs are too large for the host-open script
+- `data:` URIs are rejected by the host proxy (only http/https schemes allowed)
 
 ## Solution: Python HTTP Server + Docker Relay Container
 
