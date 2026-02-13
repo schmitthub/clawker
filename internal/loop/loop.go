@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// LoopResult represents the outcome of running the Ralph loop.
-type LoopResult struct {
+// Result represents the outcome of running the loop.
+type Result struct {
 	// LoopsCompleted is the number of loops that ran.
 	LoopsCompleted int
 
@@ -33,8 +33,8 @@ type LoopResult struct {
 	RateLimitHit bool
 }
 
-// LoopOptions configures the Ralph loop execution.
-type LoopOptions struct {
+// Options configures the loop execution.
+type Options struct {
 	// ContainerName is the full container name (clawker.project.agent).
 	ContainerName string
 
@@ -106,7 +106,7 @@ type LoopOptions struct {
 	OnRateLimitHit func() bool
 }
 
-// Runner executes Ralph loops.
+// Runner executes autonomous loops.
 type Runner struct {
 	client  *docker.Client
 	store   *SessionStore
@@ -140,8 +140,8 @@ func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryS
 	}
 }
 
-// Run executes the Ralph loop until completion, error, or max loops.
-func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
+// Run executes the loop until completion, error, or max loops.
+func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	// Set defaults
 	if opts.MaxLoops <= 0 {
 		opts.MaxLoops = DefaultMaxLoops
@@ -175,7 +175,7 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 	session, expired, err := r.store.LoadSessionWithExpiration(opts.Project, opts.Agent, opts.SessionExpirationHours)
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to load session")
-		return &LoopResult{
+		return &Result{
 			ExitReason: "failed to load session",
 			Error:      fmt.Errorf("failed to load session (use --reset-circuit --all to start fresh): %w", err),
 		}, nil
@@ -192,7 +192,7 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		session = NewSession(opts.Project, opts.Agent, opts.Prompt)
 	}
 	// Record session creation in history and save session immediately
-	// This ensures `ralph status` can see the session before the first loop completes
+	// This ensures `loop status` can see the session before the first loop completes
 	if sessionCreated {
 		if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record session creation in history")
@@ -200,7 +200,7 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		// Save session immediately so status command can see it
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
 			logger.Error().Err(saveErr).Msg("failed to save initial session")
-			return &LoopResult{
+			return &Result{
 				Session:    session,
 				ExitReason: "failed to save initial session",
 				Error:      fmt.Errorf("failed to save initial session: %w", saveErr),
@@ -229,7 +229,7 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 	if opts.ResetCircuit {
 		if err := r.store.DeleteCircuitState(opts.Project, opts.Agent); err != nil {
 			logger.Warn().Err(err).Msg("failed to delete circuit state")
-			return &LoopResult{
+			return &Result{
 				Session:    session,
 				ExitReason: "failed to reset circuit breaker",
 				Error:      fmt.Errorf("failed to reset circuit breaker as requested: %w", err),
@@ -244,14 +244,14 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		circuitState, err := r.store.LoadCircuitState(opts.Project, opts.Agent)
 		if err != nil {
 			logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
-			return &LoopResult{
+			return &Result{
 				Session:    session,
 				ExitReason: "failed to load circuit state",
 				Error:      fmt.Errorf("failed to load circuit state (may be tripped): %w", err),
 			}, nil
 		}
 		if circuitState != nil && circuitState.Tripped {
-			return &LoopResult{
+			return &Result{
 				Session:    session,
 				ExitReason: fmt.Sprintf("circuit already tripped: %s", circuitState.TripReason),
 				Error:      fmt.Errorf("circuit breaker tripped: %s", circuitState.TripReason),
@@ -259,7 +259,7 @@ func (r *Runner) Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)
 		}
 	}
 
-	result := &LoopResult{
+	result := &Result{
 		Session: session,
 	}
 
@@ -326,7 +326,7 @@ mainLoop:
 			Int("loop", loopNum).
 			Int("max_loops", opts.MaxLoops).
 			Str("container", opts.ContainerName).
-			Msg("starting ralph loop")
+			Msg("starting loop iteration")
 
 		// Build command
 		var cmd []string
@@ -416,7 +416,7 @@ mainLoop:
 			Int("exit_code", exitCode).
 			Str("status", status.String()).
 			Err(loopErr).
-			Msg("completed ralph loop")
+			Msg("completed loop iteration")
 
 		// Check for completion using circuit breaker's analysis
 		updateResult := circuit.UpdateWithAnalysis(status, analysis)

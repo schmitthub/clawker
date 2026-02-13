@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"testing"
@@ -109,8 +109,8 @@ func TestHistoryAndSessionConsistencyInvariant(t *testing.T) {
 // it is immediately saved to disk BEFORE the main loop starts.
 //
 // This is a regression test for the bug where session was only saved after
-// the first loop iteration completed, making `ralph status` show "no session"
-// even while ralph was actively running.
+// the first loop iteration completed, making `loop status` show "no session"
+// even while the loop was actively running.
 func TestRunner_SessionSavedOnCreation(t *testing.T) {
 	// This test verifies the FIX is in place:
 	// If Runner properly saves session at startup, this test passes.
@@ -153,7 +153,7 @@ func TestRunner_SessionSavedOnCreation(t *testing.T) {
 // TestRunner_OnLoopStartSessionExists verifies that if OnLoopStart is called,
 // the session file MUST already exist on disk.
 //
-// This ensures `ralph status` works even during the first loop iteration.
+// This ensures `loop status` works even during the first loop iteration.
 func TestRunner_OnLoopStartSessionExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewSessionStore(tmpDir)
@@ -171,7 +171,7 @@ func TestRunner_OnLoopStartSessionExists(t *testing.T) {
 	onLoopStart := func(_ int) {
 		onLoopStartCalled = true
 
-		// This simulates checking session from another process (like ralph status)
+		// This simulates checking session from another process (like loop status)
 		loaded, loadErr := store.LoadSession("proj", "agent")
 		require.NoError(t, loadErr, "should be able to load session during loop")
 		require.NotNil(t, loaded, "session MUST exist when OnLoopStart is called")

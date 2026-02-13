@@ -92,7 +92,7 @@ func TestModel_View_Normal(t *testing.T) {
 	view := model.View()
 
 	// Check that view contains expected elements
-	assert.Contains(t, view, "RALPH DASHBOARD")
+	assert.Contains(t, view, "LOOP DASHBOARD")
 	assert.Contains(t, view, "test-project")
 	assert.Contains(t, view, "Press 'q' to quit")
 }

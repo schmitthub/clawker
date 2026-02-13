@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Session represents the persistent state of a Ralph loop session.
+// Session represents the persistent state of a loop session.
 type Session struct {
 	// Project is the clawker project name.
 	Project string `json:"project"`
@@ -88,7 +88,7 @@ func DefaultSessionStore() (*SessionStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
-	baseDir := filepath.Join(home, ".local", "clawker", "ralph")
+	baseDir := filepath.Join(home, ".local", "clawker", "loop")
 	return NewSessionStore(baseDir), nil
 }
 

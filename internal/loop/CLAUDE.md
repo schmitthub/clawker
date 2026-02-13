@@ -1,17 +1,17 @@
-# Ralph Package
+# Loop Package
 
 Autonomous loop execution for Claude Code agents. Runs Claude Code via non-interactive `docker exec` with circuit breaker protection, session persistence, rate limiting, and history tracking.
 
 ## Architecture
 
-- **Docker exec, not container CMD**: Ralph uses `docker exec` to run Claude, not the container startup CMD
+- **Docker exec, not container CMD**: Loop uses `docker exec` to run Claude, not the container startup CMD
 - **Non-TTY exec**: `Tty: false` for proper stdout/stderr multiplexing via `stdcopy.StdCopy`
-- **Circuit breaker**: Two states only (CLOSED/TRIPPED). Manual reset via `clawker ralph reset`
-- **Session persistence**: JSON files at `~/.local/clawker/ralph/sessions/<project>.<agent>.json`
+- **Circuit breaker**: Two states only (CLOSED/TRIPPED). Manual reset via `clawker loop reset`
+- **Session persistence**: JSON files at `~/.local/clawker/loop/sessions/<project>.<agent>.json`
 
 ## Loop Flow
 
-Load/create session and circuit breaker state. Each iteration: check circuit breaker and rate limiter, build command (`-p <prompt>` first loop, `--continue` subsequent), execute via docker exec with timeout, parse RALPH_STATUS block, check exit conditions (completion/stagnation/rate limit), update circuit breaker and persist state. Exit on completion, circuit trip, max loops, or error.
+Load/create session and circuit breaker state. Each iteration: check circuit breaker and rate limiter, build command (`-p <prompt>` first loop, `--continue` subsequent), execute via docker exec with timeout, parse LOOP_STATUS block, check exit conditions (completion/stagnation/rate limit), update circuit breaker and persist state. Exit on completion, circuit trip, max loops, or error.
 
 ## Critical Patterns
 
@@ -31,8 +31,8 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 
 ### Analyzer (`analyzer.go`)
 
-- `Status` — parsed RALPH_STATUS block: Status (string), TasksCompleted, FilesModified, CompletionIndicators (int), TestsStatus, WorkType, Recommendation (string), ExitSignal (bool)
-- `ParseStatus(output string) *Status` — extracts RALPH_STATUS block, returns nil if not found
+- `Status` — parsed LOOP_STATUS block: Status (string), TasksCompleted, FilesModified, CompletionIndicators (int), TestsStatus, WorkType, Recommendation (string), ExitSignal (bool)
+- `ParseStatus(output string) *Status` — extracts LOOP_STATUS block, returns nil if not found
 - `Status.IsComplete()`, `Status.IsBlocked()`, `Status.HasProgress()`, `Status.IsTestOnly()` — boolean checks
 - `Status.IsCompleteStrict(threshold int) bool` — requires both ExitSignal=true AND CompletionIndicators >= threshold
 - `Status.String()` — human-readable summary
@@ -100,27 +100,27 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 
 ### Runner & Loop (`loop.go`)
 
-- `Runner` — executes Ralph loops. Holds docker.Client, SessionStore, HistoryStore.
+- `Runner` — executes autonomous loops. Holds docker.Client, SessionStore, HistoryStore.
 - `NewRunner(client *docker.Client) (*Runner, error)` — uses default stores
 - `NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner` — explicit DI (testing)
-- `Runner.Run(ctx context.Context, opts LoopOptions) (*LoopResult, error)` — main loop orchestration
+- `Runner.Run(ctx context.Context, opts Options) (*Result, error)` — main loop orchestration
 - `Runner.ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)` — docker exec with output capture
 - `Runner.ResetCircuit(project, agent string) error`, `Runner.ResetSession(project, agent string) error` — reset state
 - `Runner.GetSession(project, agent string) (*Session, error)`, `Runner.GetCircuitState(project, agent string) (*CircuitState, error)` — read state
-- `LoopOptions` — ContainerName, Project, Agent, Prompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
-- `LoopResult` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
+- `Options` — ContainerName, Project, Agent, Prompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
+- `Result` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
 
 ### Monitor (`monitor.go`)
 
 - `Monitor` — real-time progress output. Format*/Print* pairs for each event.
 - `MonitorOptions` — Writer (io.Writer), MaxLoops (int), ShowRateLimit (bool), RateLimiter (*RateLimiter), Verbose (bool)
 - `NewMonitor(opts MonitorOptions) *Monitor` — constructor
-- `Format/Print LoopStart(loopNum)`, `Format/Print LoopProgress(loopNum, *Status, *CircuitBreaker)`, `Format/Print LoopEnd(loopNum, *Status, err, outputSize, elapsed)`, `Format/Print Result(*LoopResult)` — Format returns string, Print writes to opts.Writer
+- `Format/Print LoopStart(loopNum)`, `Format/Print LoopProgress(loopNum, *Status, *CircuitBreaker)`, `Format/Print LoopEnd(loopNum, *Status, err, outputSize, elapsed)`, `Format/Print Result(*Result)` — Format returns string, Print writes to opts.Writer
 - `FormatRateLimitWait(resetTime time.Time) string`, `FormatAPILimitError(isInteractive bool) string` — format-only
 
 ### TUI (`tui/`)
 
-- `Model` — BubbleTea model for ralph monitor dashboard. Implements `tea.Model` (Init, Update, View).
+- `Model` — BubbleTea model for loop monitor dashboard. Implements `tea.Model` (Init, Update, View).
 - `NewModel(project string) Model` — constructor
 - Internal: `errMsg` (unexported) wraps errors for TUI display
 

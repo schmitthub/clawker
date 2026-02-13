@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"crypto/sha256"
@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Status represents the parsed RALPH_STATUS block from Claude's output.
+// Status represents the parsed LOOP_STATUS block from Claude's output.
 type Status struct {
 	// Status is one of: IN_PROGRESS, COMPLETE, BLOCKED
 	Status string
@@ -64,8 +64,8 @@ const (
 )
 
 var (
-	// Match the RALPH_STATUS block boundaries
-	statusBlockRe = regexp.MustCompile(`(?s)---RALPH_STATUS---(.+?)---END_RALPH_STATUS---`)
+	// Match the LOOP_STATUS block boundaries
+	statusBlockRe = regexp.MustCompile(`(?s)---LOOP_STATUS---(.+?)---END_LOOP_STATUS---`)
 
 	// Match individual fields within the block
 	fieldRe = regexp.MustCompile(`(?m)^([A-Z_]+):\s*(.*)$`)
@@ -91,7 +91,7 @@ var (
 	errorPatternRe = regexp.MustCompile(`(?i)(error|exception|failed|failure|cannot|unable|refused|denied|timeout|crash)[\s:]+([^\n]{0,100})`)
 )
 
-// ParseStatus extracts the RALPH_STATUS block from output and parses it.
+// ParseStatus extracts the LOOP_STATUS block from output and parses it.
 // Returns nil if no valid status block is found.
 func ParseStatus(output string) *Status {
 	matches := statusBlockRe.FindStringSubmatch(output)

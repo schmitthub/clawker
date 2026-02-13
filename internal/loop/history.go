@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"encoding/json"
@@ -64,7 +64,7 @@ func DefaultHistoryStore() (*HistoryStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
-	baseDir := filepath.Join(home, ".local", "clawker", "ralph", "history")
+	baseDir := filepath.Join(home, ".local", "clawker", "loop", "history")
 	return NewHistoryStore(baseDir), nil
 }
 

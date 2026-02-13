@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"testing"

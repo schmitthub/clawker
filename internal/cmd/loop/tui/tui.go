@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	ralphtui "github.com/schmitthub/clawker/internal/ralph/tui"
+	looptui "github.com/schmitthub/clawker/internal/loop/tui"
 )
 
 // TUIOptions holds options for the loop tui command.
@@ -59,7 +59,7 @@ func tuiRun(_ context.Context, opts *TUIOptions) error {
 		return fmt.Errorf("project name not set in clawker.yaml")
 	}
 
-	model := ralphtui.NewModel(cfg.Project)
+	model := looptui.NewModel(cfg.Project)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	_, err := p.Run()

@@ -1,5 +1,5 @@
-// Package ralph provides autonomous loop execution for Claude Code agents.
-package ralph
+// Package loop provides autonomous loop execution for Claude Code agents.
+package loop
 
 import "time"
 
@@ -18,7 +18,7 @@ const (
 	DefaultLoopDelaySeconds            = 3  // Seconds to wait between loop iterations
 )
 
-// Config holds Ralph-specific configuration.
+// Config holds loop-specific configuration.
 type Config struct {
 	MaxLoops                   int  `yaml:"max_loops" mapstructure:"max_loops"`
 	StagnationThreshold        int  `yaml:"stagnation_threshold" mapstructure:"stagnation_threshold"`
@@ -34,7 +34,7 @@ type Config struct {
 	SafetyCompletionThreshold  int  `yaml:"safety_completion_threshold" mapstructure:"safety_completion_threshold"`
 }
 
-// DefaultConfig returns the default Ralph configuration.
+// DefaultConfig returns the default loop configuration.
 func DefaultConfig() Config {
 	return Config{
 		MaxLoops:                   DefaultMaxLoops,

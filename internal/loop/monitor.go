@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"fmt"
@@ -25,7 +25,7 @@ type MonitorOptions struct {
 	Verbose bool
 }
 
-// Monitor provides real-time progress output for Ralph loops.
+// Monitor provides real-time progress output for loop iterations.
 type Monitor struct {
 	opts      MonitorOptions
 	startTime time.Time
@@ -121,10 +121,10 @@ func (m *Monitor) FormatLoopEnd(loopNum int, status *Status, err error, outputSi
 }
 
 // FormatResult returns the final result summary.
-func (m *Monitor) FormatResult(result *LoopResult) string {
+func (m *Monitor) FormatResult(result *Result) string {
 	var b strings.Builder
 
-	b.WriteString("\n=== Ralph Loop Complete ===\n")
+	b.WriteString("\n=== Loop Complete ===\n")
 
 	fmt.Fprintf(&b, "Loops: %d\n", result.LoopsCompleted)
 	fmt.Fprintf(&b, "Exit:  %s\n", result.ExitReason)
@@ -190,7 +190,7 @@ func (m *Monitor) PrintLoopEnd(loopNum int, status *Status, err error, outputSiz
 }
 
 // PrintResult writes the final result summary.
-func (m *Monitor) PrintResult(result *LoopResult) {
+func (m *Monitor) PrintResult(result *Result) {
 	if m.opts.Writer != nil {
 		fmt.Fprint(m.opts.Writer, m.FormatResult(result))
 	}

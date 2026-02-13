@@ -10,7 +10,7 @@
 | Phase | Task | Status | Agent |
 |-------|------|--------|-------|
 | 1 | Task 1: Rename ralph → loop (command skeleton) | `complete` | opus |
-| 1 | Task 2: Rename ralph → loop (internal package) | `pending` | — |
+| 1 | Task 2: Rename ralph → loop (internal package) | `complete` | opus |
 | 1 | Task 3: Rename ralph → loop (config, docs, references) | `pending` | — |
 | 2 | Task 4: New command structure (iterate + tasks subcommands) | `pending` | — |
 | 2 | Task 5: Flag definitions and option structs | `pending` | — |
@@ -33,6 +33,15 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 2:**
+- Used `git mv internal/ralph internal/loop` to preserve git history cleanly.
+- Serena `rename_symbol` tool handled `LoopOptions→Options` and `LoopResult→Result` renames across the codebase automatically (2 changes and 1 change respectively).
+- `RALPH_STATUS` → `LOOP_STATUS` was a bulk text replacement across analyzer.go, analyzer_test.go, circuit.go, circuit_test.go (also updated `END_RALPH_STATUS` → `END_LOOP_STATUS` via the same replacement).
+- The TUI model_test.go had a hardcoded "RALPH DASHBOARD" assertion that failed initially — needed to update to "LOOP DASHBOARD".
+- `DefaultSessionStore()` and `DefaultHistoryStore()` now use `~/.local/clawker/loop/` path instead of `~/.local/clawker/ralph/`.
+- `cfg.Ralph` config field references in run.go are intentionally left as-is — they reference the config schema struct field, which is Task 3's responsibility.
+- All 3756 unit tests pass.
 
 **Task 1:**
 - The `internal/cmd/ralph/` package had 4 subcommands: run, status, reset, tui. Each follows the `NewCmd(f, runF)` pattern with test trapdoor.

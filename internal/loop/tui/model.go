@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// Model is the Ralph TUI dashboard model.
+// Model is the loop TUI dashboard model.
 type Model struct {
 	width    int
 	height   int
@@ -19,7 +19,7 @@ type Model struct {
 	err      error
 }
 
-// NewModel creates a new Ralph TUI model.
+// NewModel creates a new loop TUI model.
 func NewModel(project string) Model {
 	return Model{
 		project: project,
@@ -60,7 +60,7 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	// Header
-	header := iostreams.TitleStyle.Render("RALPH DASHBOARD")
+	header := iostreams.TitleStyle.Render("LOOP DASHBOARD")
 	b.WriteString(header)
 	b.WriteString("\n\n")
 

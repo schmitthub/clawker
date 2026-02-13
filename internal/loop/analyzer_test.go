@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"testing"
@@ -16,7 +16,7 @@ func TestParseStatus(t *testing.T) {
 		{
 			name: "complete status block",
 			input: `Some output before
----RALPH_STATUS---
+---LOOP_STATUS---
 STATUS: IN_PROGRESS
 TASKS_COMPLETED_THIS_LOOP: 3
 FILES_MODIFIED: 5
@@ -24,7 +24,7 @@ TESTS_STATUS: PASSING
 WORK_TYPE: IMPLEMENTATION
 EXIT_SIGNAL: false
 RECOMMENDATION: Continue with refactoring
----END_RALPH_STATUS---
+---END_LOOP_STATUS---
 Some output after`,
 			expected: &Status{
 				Status:         "IN_PROGRESS",
@@ -38,11 +38,11 @@ Some output after`,
 		},
 		{
 			name: "exit signal true",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: COMPLETE
 EXIT_SIGNAL: true
 RECOMMENDATION: All tasks completed
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:         "COMPLETE",
 				ExitSignal:     true,
@@ -51,10 +51,10 @@ RECOMMENDATION: All tasks completed
 		},
 		{
 			name: "blocked status",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: BLOCKED
 RECOMMENDATION: Need clarification on requirements
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:         "BLOCKED",
 				Recommendation: "Need clarification on requirements",
@@ -67,7 +67,7 @@ RECOMMENDATION: Need clarification on requirements
 		},
 		{
 			name:     "incomplete status block",
-			input:    "---RALPH_STATUS---\nSTATUS: IN_PROGRESS\n",
+			input:    "---LOOP_STATUS---\nSTATUS: IN_PROGRESS\n",
 			expected: nil,
 		},
 		{
@@ -77,11 +77,11 @@ RECOMMENDATION: Need clarification on requirements
 		},
 		{
 			name: "invalid numeric values parsed as zero",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: IN_PROGRESS
 TASKS_COMPLETED_THIS_LOOP: not_a_number
 FILES_MODIFIED: xyz
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:         "IN_PROGRESS",
 				TasksCompleted: 0, // Invalid value parsed as 0
@@ -90,10 +90,10 @@ FILES_MODIFIED: xyz
 		},
 		{
 			name: "exit signal case variations - TRUE",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: COMPLETE
 EXIT_SIGNAL: TRUE
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:     "COMPLETE",
 				ExitSignal: true,
@@ -101,10 +101,10 @@ EXIT_SIGNAL: TRUE
 		},
 		{
 			name: "exit signal case variations - True",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: COMPLETE
 EXIT_SIGNAL: True
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:     "COMPLETE",
 				ExitSignal: true,
@@ -112,10 +112,10 @@ EXIT_SIGNAL: True
 		},
 		{
 			name: "exit signal anything else is false",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: IN_PROGRESS
 EXIT_SIGNAL: yes
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:     "IN_PROGRESS",
 				ExitSignal: false,
@@ -123,15 +123,15 @@ EXIT_SIGNAL: yes
 		},
 		{
 			name: "multiple status blocks - first wins",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS: IN_PROGRESS
 TASKS_COMPLETED_THIS_LOOP: 5
----END_RALPH_STATUS---
+---END_LOOP_STATUS---
 Some other output
----RALPH_STATUS---
+---LOOP_STATUS---
 STATUS: COMPLETE
 TASKS_COMPLETED_THIS_LOOP: 10
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:         "IN_PROGRESS",
 				TasksCompleted: 5,
@@ -139,10 +139,10 @@ TASKS_COMPLETED_THIS_LOOP: 10
 		},
 		{
 			name: "whitespace handling in values",
-			input: `---RALPH_STATUS---
+			input: `---LOOP_STATUS---
 STATUS:   BLOCKED
 RECOMMENDATION:   Need more info
----END_RALPH_STATUS---`,
+---END_LOOP_STATUS---`,
 			expected: &Status{
 				Status:         "BLOCKED",
 				Recommendation: "Need more info",
@@ -535,14 +535,14 @@ func TestExtractErrorSignature(t *testing.T) {
 
 func TestAnalyzeOutput(t *testing.T) {
 	output := `Some output here
----RALPH_STATUS---
+---LOOP_STATUS---
 STATUS: IN_PROGRESS
 TASKS_COMPLETED_THIS_LOOP: 2
 FILES_MODIFIED: 3
 WORK_TYPE: TESTING
 EXIT_SIGNAL: false
 RECOMMENDATION: Continue testing
----END_RALPH_STATUS---
+---END_LOOP_STATUS---
 Error: test failed assertion
 All tasks complete.`
 

@@ -7,7 +7,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/ralph"
+	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/cobra"
 )
 
@@ -66,7 +66,7 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	cfg := opts.Config().Project
 
 	// Get session store
-	store, err := ralph.DefaultSessionStore()
+	store, err := loop.DefaultSessionStore()
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
 		return err

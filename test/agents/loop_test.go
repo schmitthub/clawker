@@ -9,30 +9,30 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/ralph"
+	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
 
-// TestRalphIntegration_SessionCreatedImmediately verifies that when ralph run
+// TestLoopIntegration_SessionCreatedImmediately verifies that when loop run
 // starts, the session file is created immediately before the first exec completes.
 // This was a bug where the session was only saved after the first loop finished,
-// causing "ralph status" to show "No session found" during long-running loops.
-func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
+// causing "loop status" to show "No session found" during long-running loops.
+func TestLoopIntegration_SessionCreatedImmediately(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	// Setup temp directories for session store
 	tempDir := t.TempDir()
-	storeDir := filepath.Join(tempDir, "ralph")
+	storeDir := filepath.Join(tempDir, "loop")
 
 	// Create a harness for test container
 	h := harness.NewHarness(t,
 		harness.WithConfigBuilder(
 			builders.MinimalValidConfig().
-				WithProject("ralph-test").
+				WithProject("loop-test").
 				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
@@ -40,13 +40,13 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 
 	dockerClient := harness.NewTestClient(t)
 	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-test"); err != nil {
-			t.Logf("WARNING: cleanup failed for ralph-test: %v", err)
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "loop-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for loop-test: %v", err)
 		}
 	}()
 
 	// Generate unique container name
-	agentName := "test-ralph-" + time.Now().Format("150405.000000")
+	agentName := "test-loop-" + time.Now().Format("150405.000000")
 	containerName := h.ContainerName(agentName)
 
 	// Create and start container — whail auto-injects managed + test labels
@@ -56,7 +56,7 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "ralph-test",
+				docker.LabelProject: "loop-test",
 				docker.LabelAgent:   agentName,
 			},
 		},
@@ -72,21 +72,21 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	require.NoError(t, err, "container did not start")
 
 	// Create runner with custom store directory
-	store := ralph.NewSessionStore(storeDir)
-	history := ralph.NewHistoryStore(storeDir)
+	store := loop.NewSessionStore(storeDir)
+	history := loop.NewHistoryStore(storeDir)
 	wrappedClient := &docker.Client{Engine: dockerClient.Engine}
-	runner := ralph.NewRunnerWith(wrappedClient, store, history)
+	runner := loop.NewRunnerWith(wrappedClient, store, history)
 
 	// Channel to signal when Run has started
 	runStarted := make(chan struct{})
 
-	// Run ralph in a goroutine
+	// Run loop in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
 		close(runStarted)
-		_, err := runner.Run(ctx, ralph.LoopOptions{
+		_, err := runner.Run(ctx, loop.Options{
 			ContainerName: containerName,
-			Project:       "ralph-test",
+			Project:       "loop-test",
 			Agent:         agentName,
 			Prompt:        "echo hello", // Simple command that exits quickly
 			MaxLoops:      1,
@@ -102,31 +102,31 @@ func TestRalphIntegration_SessionCreatedImmediately(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify session file exists BEFORE the exec could complete
-	sessionPath := filepath.Join(storeDir, "sessions", "ralph-test."+agentName+".json")
+	sessionPath := filepath.Join(storeDir, "sessions", "loop-test."+agentName+".json")
 	_, err = os.Stat(sessionPath)
 	require.NoError(t, err, "session file should exist immediately after Run starts")
 
 	// Verify we can load the session
-	session, err := store.LoadSession("ralph-test", agentName)
+	session, err := store.LoadSession("loop-test", agentName)
 	require.NoError(t, err, "should be able to load session")
 	require.NotNil(t, session, "session should not be nil")
-	require.Equal(t, "ralph-test", session.Project)
+	require.Equal(t, "loop-test", session.Project)
 	require.Equal(t, agentName, session.Agent)
 }
 
-// TestRalphIntegration_ExecCaptureTimeout verifies that the ExecCapture function
+// TestLoopIntegration_ExecCaptureTimeout verifies that the ExecCapture function
 // properly respects context cancellation and doesn't hang forever.
-func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
+func TestLoopIntegration_ExecCaptureTimeout(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	tempDir := t.TempDir()
-	storeDir := filepath.Join(tempDir, "ralph")
+	storeDir := filepath.Join(tempDir, "loop")
 
 	h := harness.NewHarness(t,
 		harness.WithConfigBuilder(
 			builders.MinimalValidConfig().
-				WithProject("ralph-timeout-test").
+				WithProject("loop-timeout-test").
 				WithSecurity(builders.SecurityFirewallDisabled()),
 		),
 	)
@@ -134,8 +134,8 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 
 	dockerClient := harness.NewTestClient(t)
 	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "ralph-timeout-test"); err != nil {
-			t.Logf("WARNING: cleanup failed for ralph-timeout-test: %v", err)
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "loop-timeout-test"); err != nil {
+			t.Logf("WARNING: cleanup failed for loop-timeout-test: %v", err)
 		}
 	}()
 
@@ -149,7 +149,7 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: "ralph-timeout-test",
+				docker.LabelProject: "loop-timeout-test",
 				docker.LabelAgent:   agentName,
 			},
 		},
@@ -164,10 +164,10 @@ func TestRalphIntegration_ExecCaptureTimeout(t *testing.T) {
 	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
 	require.NoError(t, err)
 
-	store := ralph.NewSessionStore(storeDir)
-	history := ralph.NewHistoryStore(storeDir)
+	store := loop.NewSessionStore(storeDir)
+	history := loop.NewHistoryStore(storeDir)
 	wrappedClient := &docker.Client{Engine: dockerClient.Engine}
-	runner := ralph.NewRunnerWith(wrappedClient, store, history)
+	runner := loop.NewRunnerWith(wrappedClient, store, history)
 
 	// Test that ExecCapture with a short timeout doesn't hang
 	execCtx, execCancel := context.WithTimeout(ctx, 2*time.Second)

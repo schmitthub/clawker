@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/ralph"
+	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/cobra"
 )
 
@@ -103,22 +103,22 @@ The container must already be running. Use 'clawker start' first.`,
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "Agent name (required)")
 	cmd.Flags().StringVarP(&opts.Prompt, "prompt", "p", "", "Initial prompt for the first loop")
 	cmd.Flags().StringVar(&opts.PromptFile, "prompt-file", "", "File containing the initial prompt")
-	cmd.Flags().IntVar(&opts.MaxLoops, "max-loops", ralph.DefaultMaxLoops, "Maximum number of loops")
-	cmd.Flags().IntVar(&opts.StagnationThreshold, "stagnation-threshold", ralph.DefaultStagnationThreshold, "Loops without progress before circuit trips")
-	cmd.Flags().DurationVar(&opts.Timeout, "timeout", time.Duration(ralph.DefaultTimeoutMinutes)*time.Minute, "Timeout per loop iteration")
+	cmd.Flags().IntVar(&opts.MaxLoops, "max-loops", loop.DefaultMaxLoops, "Maximum number of loops")
+	cmd.Flags().IntVar(&opts.StagnationThreshold, "stagnation-threshold", loop.DefaultStagnationThreshold, "Loops without progress before circuit trips")
+	cmd.Flags().DurationVar(&opts.Timeout, "timeout", time.Duration(loop.DefaultTimeoutMinutes)*time.Minute, "Timeout per loop iteration")
 	cmd.Flags().BoolVar(&opts.ResetCircuit, "reset-circuit", false, "Reset circuit breaker before starting")
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress progress output")
 	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output result as JSON")
 
 	// New flags
-	cmd.Flags().IntVar(&opts.CallsPerHour, "calls", ralph.DefaultCallsPerHour, "Rate limit: max calls per hour (0 to disable)")
+	cmd.Flags().IntVar(&opts.CallsPerHour, "calls", loop.DefaultCallsPerHour, "Rate limit: max calls per hour (0 to disable)")
 	cmd.Flags().BoolVar(&opts.Monitor, "monitor", false, "Enable live monitoring output")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().BoolVar(&opts.UseStrictCompletion, "strict-completion", false, "Require both EXIT_SIGNAL and completion indicators")
-	cmd.Flags().IntVar(&opts.SameErrorThreshold, "same-error-threshold", ralph.DefaultSameErrorThreshold, "Same error repetitions before circuit trips")
-	cmd.Flags().IntVar(&opts.OutputDeclineThreshold, "output-decline-threshold", ralph.DefaultOutputDeclineThreshold, "Output decline percentage that triggers trip")
-	cmd.Flags().IntVar(&opts.MaxConsecutiveTestLoops, "max-test-loops", ralph.DefaultMaxConsecutiveTestLoops, "Consecutive test-only loops before circuit trips")
-	cmd.Flags().IntVar(&opts.LoopDelaySeconds, "loop-delay", ralph.DefaultLoopDelaySeconds, "Seconds to wait between loop iterations")
+	cmd.Flags().IntVar(&opts.SameErrorThreshold, "same-error-threshold", loop.DefaultSameErrorThreshold, "Same error repetitions before circuit trips")
+	cmd.Flags().IntVar(&opts.OutputDeclineThreshold, "output-decline-threshold", loop.DefaultOutputDeclineThreshold, "Output decline percentage that triggers trip")
+	cmd.Flags().IntVar(&opts.MaxConsecutiveTestLoops, "max-test-loops", loop.DefaultMaxConsecutiveTestLoops, "Consecutive test-only loops before circuit trips")
+	cmd.Flags().IntVar(&opts.LoopDelaySeconds, "loop-delay", loop.DefaultLoopDelaySeconds, "Seconds to wait between loop iterations")
 	cmd.Flags().BoolVar(&opts.SkipPermissions, "skip-permissions", false, "Pass --dangerously-skip-permissions to claude")
 
 	_ = cmd.MarkFlagRequired("agent")
@@ -149,28 +149,28 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	// Apply config defaults if CLI flags use default values
 	if cfg.Ralph != nil {
-		if opts.MaxLoops == ralph.DefaultMaxLoops && cfg.Ralph.MaxLoops > 0 {
+		if opts.MaxLoops == loop.DefaultMaxLoops && cfg.Ralph.MaxLoops > 0 {
 			opts.MaxLoops = cfg.Ralph.MaxLoops
 		}
-		if opts.StagnationThreshold == ralph.DefaultStagnationThreshold && cfg.Ralph.StagnationThreshold > 0 {
+		if opts.StagnationThreshold == loop.DefaultStagnationThreshold && cfg.Ralph.StagnationThreshold > 0 {
 			opts.StagnationThreshold = cfg.Ralph.StagnationThreshold
 		}
-		if opts.Timeout == time.Duration(ralph.DefaultTimeoutMinutes)*time.Minute && cfg.Ralph.TimeoutMinutes > 0 {
+		if opts.Timeout == time.Duration(loop.DefaultTimeoutMinutes)*time.Minute && cfg.Ralph.TimeoutMinutes > 0 {
 			opts.Timeout = time.Duration(cfg.Ralph.TimeoutMinutes) * time.Minute
 		}
-		if opts.CallsPerHour == ralph.DefaultCallsPerHour && cfg.Ralph.CallsPerHour > 0 {
+		if opts.CallsPerHour == loop.DefaultCallsPerHour && cfg.Ralph.CallsPerHour > 0 {
 			opts.CallsPerHour = cfg.Ralph.CallsPerHour
 		}
-		if opts.SameErrorThreshold == ralph.DefaultSameErrorThreshold && cfg.Ralph.SameErrorThreshold > 0 {
+		if opts.SameErrorThreshold == loop.DefaultSameErrorThreshold && cfg.Ralph.SameErrorThreshold > 0 {
 			opts.SameErrorThreshold = cfg.Ralph.SameErrorThreshold
 		}
-		if opts.OutputDeclineThreshold == ralph.DefaultOutputDeclineThreshold && cfg.Ralph.OutputDeclineThreshold > 0 {
+		if opts.OutputDeclineThreshold == loop.DefaultOutputDeclineThreshold && cfg.Ralph.OutputDeclineThreshold > 0 {
 			opts.OutputDeclineThreshold = cfg.Ralph.OutputDeclineThreshold
 		}
-		if opts.MaxConsecutiveTestLoops == ralph.DefaultMaxConsecutiveTestLoops && cfg.Ralph.MaxConsecutiveTestLoops > 0 {
+		if opts.MaxConsecutiveTestLoops == loop.DefaultMaxConsecutiveTestLoops && cfg.Ralph.MaxConsecutiveTestLoops > 0 {
 			opts.MaxConsecutiveTestLoops = cfg.Ralph.MaxConsecutiveTestLoops
 		}
-		if opts.LoopDelaySeconds == ralph.DefaultLoopDelaySeconds && cfg.Ralph.LoopDelaySeconds > 0 {
+		if opts.LoopDelaySeconds == loop.DefaultLoopDelaySeconds && cfg.Ralph.LoopDelaySeconds > 0 {
 			opts.LoopDelaySeconds = cfg.Ralph.LoopDelaySeconds
 		}
 		// Boolean flags: config overrides false (default) only
@@ -208,7 +208,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// Create runner
-	runner, err := ralph.NewRunner(client)
+	runner, err := loop.NewRunner(client)
 	if err != nil {
 		cmdutil.PrintError(ios, "Failed to create runner: %v", err)
 		return err
@@ -216,11 +216,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	// Set up callbacks for progress output
 	var onLoopStart func(int)
-	var onLoopEnd func(int, *ralph.Status, error)
-	var monitor *ralph.Monitor
+	var onLoopEnd func(int, *loop.Status, error)
+	var monitor *loop.Monitor
 
 	if opts.Monitor && !opts.Quiet && !opts.JSON {
-		monitor = ralph.NewMonitor(ralph.MonitorOptions{
+		monitor = loop.NewMonitor(loop.MonitorOptions{
 			Writer:        ios.ErrOut,
 			MaxLoops:      opts.MaxLoops,
 			ShowRateLimit: opts.CallsPerHour > 0,
@@ -230,7 +230,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		onLoopStart = func(loopNum int) {
 			fmt.Fprintf(ios.ErrOut, "Loop %d/%d starting...\n", loopNum, opts.MaxLoops)
 		}
-		onLoopEnd = func(loopNum int, status *ralph.Status, err error) {
+		onLoopEnd = func(loopNum int, status *loop.Status, err error) {
 			if err != nil {
 				fmt.Fprintf(ios.ErrOut, "Loop %d: error: %v\n", loopNum, err)
 			} else if status != nil {
@@ -265,7 +265,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		Msg("starting loop")
 
 	// Run the loop
-	result, err := runner.Run(ctx, ralph.LoopOptions{
+	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:           containerName,
 		Project:                 cfg.Project,
 		Agent:                   opts.Agent,
@@ -289,7 +289,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	})
 	// Ensure result is never nil to avoid nil pointer dereference below
 	if result == nil {
-		result = &ralph.LoopResult{Error: err}
+		result = &loop.Result{Error: err}
 	}
 	if err != nil {
 		// Error is already logged by the runner

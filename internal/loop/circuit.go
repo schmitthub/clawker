@@ -1,11 +1,11 @@
-package ralph
+package loop
 
 import (
 	"fmt"
 	"sync"
 )
 
-// CircuitBreaker detects stagnation in Ralph loops.
+// CircuitBreaker detects stagnation in loop iterations.
 // It tracks consecutive loops without progress and trips when
 // the threshold is exceeded. It also tracks same-error sequences,
 // output decline, and consecutive test-only loops.
@@ -170,7 +170,7 @@ func (cb *CircuitBreaker) UpdateWithAnalysis(status *Status, analysis *AnalysisR
 		cb.noProgressCount++
 		if cb.noProgressCount >= cb.threshold {
 			cb.tripped = true
-			cb.tripReason = fmt.Sprintf("no RALPH_STATUS block for %d consecutive loops", cb.noProgressCount)
+			cb.tripReason = fmt.Sprintf("no LOOP_STATUS block for %d consecutive loops", cb.noProgressCount)
 			return UpdateResult{Tripped: true, Reason: cb.tripReason}
 		}
 		return UpdateResult{}

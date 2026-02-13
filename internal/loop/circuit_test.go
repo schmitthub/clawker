@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"testing"
@@ -70,7 +70,7 @@ func TestCircuitBreaker_Update_NilStatus(t *testing.T) {
 	// Second nil status - should trip
 	tripped, reason := cb.Update(nil)
 	assert.True(t, tripped)
-	assert.Contains(t, reason, "no RALPH_STATUS block")
+	assert.Contains(t, reason, "no LOOP_STATUS block")
 }
 
 func TestCircuitBreaker_Update_Blocked(t *testing.T) {
