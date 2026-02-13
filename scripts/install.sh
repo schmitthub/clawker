@@ -20,7 +20,6 @@ GITHUB_RELEASES="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases"
 # ── Defaults ─────────────────────────────────────────────────────────────────
 VERSION="${CLAWKER_VERSION:-}"
 INSTALL_DIR="${CLAWKER_INSTALL_DIR:-/usr/local/bin}"
-NO_COLOR="${NO_COLOR:-false}"
 
 # ── Parse flags ──────────────────────────────────────────────────────────────
 usage() {
@@ -38,7 +37,7 @@ Options:
 Environment variables:
   CLAWKER_VERSION       Same as --version
   CLAWKER_INSTALL_DIR   Same as --dir
-  NO_COLOR              Same as --no-color (any non-empty value)
+  NO_COLOR              Same as --no-color (when set to any value, including empty)
 EOF
     exit 0
 }
@@ -78,7 +77,7 @@ done
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 # In curl|bash, stdin/stdout are the pipe. Check stderr (fd 2) for TTY.
-if [[ "$NO_COLOR" != "false" ]] || [[ ! -t 2 ]]; then
+if [[ -n "${NO_COLOR+x}" ]] || [[ ! -t 2 ]]; then
     RED="" GREEN="" YELLOW="" CYAN="" BOLD="" RESET=""
 else
     RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[0;33m' CYAN='\033[0;36m'
@@ -95,10 +94,10 @@ error()   { msg "${RED}${BOLD}error:${RESET} $*"; }
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
-TMPDIR=""
+WORK_DIR=""
 cleanup() {
-    if [[ -n "$TMPDIR" ]] && [[ -d "$TMPDIR" ]]; then
-        rm -rf "$TMPDIR"
+    if [[ -n "$WORK_DIR" ]] && [[ -d "$WORK_DIR" ]]; then
+        rm -rf "$WORK_DIR"
     fi
 }
 trap cleanup EXIT INT TERM
@@ -292,10 +291,10 @@ main() {
     local checksums_url="${GITHUB_RELEASES}/download/${version_tag}/checksums.txt"
 
     # Create temp directory
-    TMPDIR=$(mktemp -d)
+    WORK_DIR=$(mktemp -d)
 
-    local archive_path="${TMPDIR}/${archive_name}"
-    local checksums_path="${TMPDIR}/checksums.txt"
+    local archive_path="${WORK_DIR}/${archive_name}"
+    local checksums_path="${WORK_DIR}/checksums.txt"
 
     # Download archive
     info "Downloading ${archive_name}..."
@@ -318,9 +317,9 @@ main() {
 
     # Extract
     info "Extracting..."
-    tar -xzf "$archive_path" -C "$TMPDIR"
+    tar -xzf "$archive_path" -C "$WORK_DIR"
 
-    if [[ ! -f "${TMPDIR}/${BINARY_NAME}" ]]; then
+    if [[ ! -f "${WORK_DIR}/${BINARY_NAME}" ]]; then
         error "Expected binary '${BINARY_NAME}' not found in archive."
         exit 1
     fi
@@ -337,7 +336,7 @@ main() {
         fi
     fi
 
-    if ! install -m 755 "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null; then
+    if ! install -m 755 "${WORK_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null; then
         error "Permission denied writing to ${INSTALL_DIR}"
         msg "Try with sudo or use a writable directory:"
         msg "  sudo bash install.sh --dir ${INSTALL_DIR}"

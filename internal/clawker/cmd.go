@@ -34,11 +34,13 @@ func Main() int {
 	f := factory.New(buildVersion)
 
 	// Start background update check with cancellable context.
-	// Pattern from gh CLI: goroutine + unbuffered channel + blocking read.
+	// Pattern from gh CLI: goroutine + buffered channel + blocking read.
 	// Context cancellation aborts the HTTP request when the command finishes first.
+	// Buffered(1) so the goroutine can send and exit even if Main() returns
+	// early (e.g. root command creation fails) without reading from the channel.
 	updateCtx, updateCancel := context.WithCancel(context.Background())
 	defer updateCancel()
-	updateMessageChan := make(chan *update.CheckResult)
+	updateMessageChan := make(chan *update.CheckResult, 1)
 	go func() {
 		rel, err := checkForUpdate(updateCtx, buildVersion)
 		if err != nil {

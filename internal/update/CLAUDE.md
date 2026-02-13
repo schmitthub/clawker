@@ -48,8 +48,8 @@ func CheckForUpdate(ctx context.Context, stateFilePath, currentVersion, repo str
 1. Call `ShouldCheckForUpdate` — return `(nil, nil)` if suppressed
 2. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s timeout, context-aware)
 3. Parse `tag_name` and `html_url` from JSON response
-4. Compare versions using numeric semver (strip `v` prefix, split on `.`)
-5. Write cache file atomically (write to `.tmp`, rename) as YAML
+4. Compare versions using numeric semver (strip `v` prefix, split on `.`); unparseable versions conservatively return "not newer"
+5. Write cache file atomically (write to `.tmp`, rename) as YAML — errors silently discarded (best-effort caching)
 6. Return `(*CheckResult, nil)` if newer, `(nil, nil)` otherwise
 7. On any error: return `(nil, error)` — caller decides how to handle
 
@@ -64,7 +64,7 @@ when the CLI command finishes before the update check completes.
 Wired into `internal/clawker/cmd.go:Main()` following the gh CLI pattern:
 
 - `context.WithCancel` creates a cancellable context for the HTTP request
-- Unbuffered channel (`make(chan *update.CheckResult)`) — goroutine sends exactly once
+- Buffered(1) channel (`make(chan *update.CheckResult, 1)`) — goroutine sends exactly once; buffer prevents leak on early return
 - Blocking read (`<-updateMessageChan`) after command completes — never skips the result
 - `updateCancel()` called after `ExecuteC()` — aborts in-flight HTTP if still running
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
@@ -74,6 +74,7 @@ Cache file: `~/.local/clawker/update-state.yaml`
 ## Testing
 
 `update_test.go` uses `net/http/httptest` to mock the GitHub API. Tests cover:
-suppression conditions, newer/same/older versions, API errors, context cancellation,
-cache round-trip, YAML format verification, v-prefix handling, and the goroutine channel
-pattern. The test helper `checkForUpdateWithURL` injects the test server URL.
+suppression conditions, newer/same/older versions, unparseable version fallback, API errors,
+malformed JSON, empty tag_name, corrupted state file, context cancellation, cache round-trip,
+YAML format verification, v-prefix handling, and the goroutine channel pattern.
+The test helper `checkForUpdateWithURL` injects the test server URL.

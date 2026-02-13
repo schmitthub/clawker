@@ -45,11 +45,7 @@ func TestShouldCheckForUpdate_Suppressed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clean env
-			for _, key := range []string{"CLAWKER_NO_UPDATE_NOTIFIER", "CI"} {
-				t.Setenv(key, "")
-				os.Unsetenv(key)
-			}
+			clearUpdateEnv(t)
 			for k, v := range tt.envVars {
 				t.Setenv(k, v)
 			}
@@ -285,6 +281,12 @@ func TestIsNewer(t *testing.T) {
 		{"0.2.0", "0.1.3", true},
 		{"0.1.4", "0.1.3", true},
 		{"0.1.3", "0.1.3", false},
+		// Unparseable versions — fallback returns false (don't claim newer)
+		{"invalid", "1.0.0", false},
+		{"1.0.0", "invalid", false},
+		{"invalid", "invalid", false},
+		{"foo", "bar", false},
+		{"nightly", "1.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -400,13 +402,74 @@ func TestCheckForUpdate_GoroutineChannelPattern(t *testing.T) {
 	}
 }
 
+func TestCheckForUpdate_MalformedJSON(t *testing.T) {
+	clearUpdateEnv(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not json at all"))
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	release, err := fetchLatestReleaseFromURL(ctx, srv.URL)
+	if err == nil {
+		t.Error("expected error on malformed JSON, got nil")
+	}
+	if release != nil {
+		t.Errorf("expected nil release, got %+v", release)
+	}
+}
+
+func TestCheckForUpdate_EmptyTagName(t *testing.T) {
+	clearUpdateEnv(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(githubRelease{TagName: "", HTMLURL: "https://example.com"})
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	release, err := fetchLatestReleaseFromURL(ctx, srv.URL)
+	if err == nil {
+		t.Error("expected error on empty tag_name, got nil")
+	}
+	if release != nil {
+		t.Errorf("expected nil release, got %+v", release)
+	}
+	if err != nil && !strings.Contains(err.Error(), "empty tag_name") {
+		t.Errorf("expected error to mention 'empty tag_name', got: %v", err)
+	}
+}
+
+func TestShouldCheckForUpdate_CorruptedStateFile(t *testing.T) {
+	clearUpdateEnv(t)
+
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "state.yaml")
+	if err := os.WriteFile(stateFile, []byte("not: valid: yaml: [[["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupted cache should be treated as stale — allow the check to proceed
+	got := ShouldCheckForUpdate(stateFile, "1.0.0")
+	if !got {
+		t.Error("ShouldCheckForUpdate() = false, want true (corrupted state file should be treated as stale)")
+	}
+}
+
 // --- test helpers ---
 
 // clearUpdateEnv unsets env vars that suppress update checks.
+// Uses manual save/restore instead of t.Setenv to properly unset (not empty) vars.
 func clearUpdateEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"CLAWKER_NO_UPDATE_NOTIFIER", "CI"} {
-		t.Setenv(key, "")
+		if orig, ok := os.LookupEnv(key); ok {
+			t.Cleanup(func() { os.Setenv(key, orig) })
+		} else {
+			t.Cleanup(func() { os.Unsetenv(key) })
+		}
 		os.Unsetenv(key)
 	}
 }

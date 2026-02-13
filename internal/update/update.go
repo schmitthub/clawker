@@ -161,8 +161,8 @@ func isNewer(latest, current string) bool {
 	currentParts := parseSemver(current)
 
 	if latestParts == nil || currentParts == nil {
-		// Fall back to string comparison if parsing fails
-		return latest != current
+		// Can't determine ordering — don't claim newer
+		return false
 	}
 
 	for i := range 3 {
@@ -176,7 +176,7 @@ func isNewer(latest, current string) bool {
 	return false
 }
 
-// parseSemver parses "MAJOR.MINOR.PATCH" into [3]int.
+// parseSemver parses "MAJOR.MINOR.PATCH" into a 3-element []int.
 // Returns nil if parsing fails.
 func parseSemver(v string) []int {
 	// Strip any pre-release suffix (e.g. "1.2.3-beta.1" → "1.2.3")

@@ -16,11 +16,12 @@ All symbols are in `cmd.go`.
 
 ## Background Update Check
 
-`Main()` spawns a background goroutine following the gh CLI pattern: `context.WithCancel` + unbuffered channel + blocking read.
+`Main()` spawns a background goroutine following the gh CLI pattern: `context.WithCancel` + buffered(1) channel + blocking read.
 
 - Goroutine calls `checkForUpdate(ctx, buildVersion)` which wraps `update.CheckForUpdate`
 - Context cancellation aborts the HTTP request when the command finishes first
-- After `ExecuteC()`, `updateCancel()` is called — goroutine sends `nil` promptly if still in-flight
+- Buffered(1) channel prevents goroutine leak if `Main()` returns early (e.g. root command creation fails)
+- After `ExecuteC()`, `updateCancel()` is called — if the goroutine is still blocked on HTTP, cancellation aborts it
 - Blocking read (`<-updateMessageChan`) — goroutine always sends exactly once
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 - `printUpdateNotification()` prints to stderr only if result is non-nil and stderr is a TTY
