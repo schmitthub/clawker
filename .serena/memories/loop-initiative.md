@@ -16,8 +16,8 @@
 | 2 | Task 5: Flag definitions and option structs | `complete` | opus |
 | 2 | Task 6: Unit tests for command layer | `complete` | opus |
 | 3 | Task 7: claude -p execution engine | `complete` | opus |
-| 3 | Task 8: stream-json parser | `pending` | — |
-| 3 | Task 9: LOOP_STATUS block (rename + integration) | `pending` | — |
+| 3 | Task 8: stream-json parser | `complete` | opus |
+| 3 | Task 9: LOOP_STATUS block (rename + integration) | `complete` | opus |
 | 4 | Task 10: Hook injection system | `pending` | — |
 | 4 | Task 11: Default hook set + user override mechanism | `pending` | — |
 | 5 | Task 12: Container lifecycle integration | `pending` | — |
@@ -33,6 +33,31 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 9:**
+- RALPH_STATUS → LOOP_STATUS rename was already completed in Task 2. Task 9 focused on integration: system prompt, stream-aware analysis, and options wiring.
+- Created `internal/loop/prompt.go` with `LoopStatusInstructions` constant — the default `--append-system-prompt` content that instructs the agent to output a structured LOOP_STATUS block. Contains a parseable example block; `TestLoopStatusInstructions_ExampleIsParseable` is a contract test ensuring the prompt stays in sync with `ParseStatus()`.
+- `BuildSystemPrompt(additional string) string` — combines default LOOP_STATUS instructions with optional user instructions (from `--append-system-prompt` flag). Empty additional returns default only; non-empty appended after double newline with whitespace trimmed.
+- Created `AnalyzeStreamResult(text string, result *ResultEvent) *AnalysisResult` — stream-json analysis path. Combines text analysis (ParseStatus, completion indicators, error signature, rate limit detection) with ResultEvent metadata. Maps `error_max_budget_usd` subtype to `RateLimitHit`. Captures `NumTurns`, `TotalCostUSD`, `DurationMS` from ResultEvent.
+- Added three new fields to `AnalysisResult`: `NumTurns` (int), `TotalCostUSD` (float64), `DurationMS` (int). Zero when using `AnalyzeOutput` (raw stdout path). Populated only by `AnalyzeStreamResult`.
+- Added `SystemPrompt` field to `loop.Options` — built by `BuildSystemPrompt()` which is called in `BuildRunnerOptions()`. Not yet consumed in `Runner.Run()` (the runner still builds claude commands without `--append-system-prompt`). Will be wired when the runner is refactored to use `claude -p` with structured output.
+- `BuildRunnerOptions` now calls `loop.BuildSystemPrompt(loopOpts.AppendSystemPrompt)` to map the CLI `--append-system-prompt` flag through to `opts.SystemPrompt`.
+- `TestAnalyzeStreamResult_CompatibleWithCircuitBreaker` verifies that stream-analyzed output feeds correctly into the circuit breaker's `UpdateWithAnalysis` method — the key integration point.
+- Code reviewer found zero issues.
+- Test count: 3851 → 3873 (+22 net). 9 new in prompt_test.go, 11 new in analyzer_test.go (AnalyzeStreamResult), 2 new in resolve_test.go (SystemPrompt wiring). All pass.
+
+**Task 8:**
+- Created `internal/loop/stream.go` — NDJSON parser for Claude Code's `--output-format stream-json` format. Defines Go types for all event kinds (system, assistant, user, result) plus content block types (text, tool_use, tool_result, thinking).
+- `ParseStream(ctx, r, handler)` reads line-by-line, dispatches typed events via `StreamHandler` callbacks (OnSystem, OnAssistant, OnUser, OnResult — all optional), returns final `ResultEvent`. Malformed lines and unknown event types silently skipped for forward compatibility; malformed result events return error since they're terminal.
+- `AssistantMessage` struct with `ExtractText()` (concatenates text blocks) and `ToolUseBlocks()` helpers. `ContentBlock` uses `json.RawMessage` for polymorphic `Input` (tool_use) and `Content` (tool_result) fields.
+- `ContentBlock.ToolResultText()` handles both string and array-of-blocks forms of tool result content, with raw JSON fallback.
+- `TextAccumulator` — convenience handler that collects assistant text + tool call count. Wired via `NewTextAccumulator()` which returns `(*TextAccumulator, *StreamHandler)`. Integrates directly with existing `AnalyzeOutput()` for LOOP_STATUS parsing.
+- `ResultEvent` tracks success/error via Subtype field with helpers: `IsSuccess()`, `CombinedText()`. Error subtypes: `error_max_turns`, `error_during_execution`, `error_max_budget_usd`.
+- `TokenUsage.Total()` nil-safe (returns 0 for nil receiver). Doc comment clarifies that cache tokens are not added separately because Anthropic API's `input_tokens` already accounts for cache reads.
+- Scanner buffer: 64KB initial, 10MB max (handles large tool results from file reads/search results).
+- No `stream_event` (token-level) support yet — only message-level events. Token streaming requires `--include-partial-messages` flag and will be added in Phase 6 if TUI needs real-time text display.
+- Code reviewer found 3 issues: (1) `TokenUsage.Total()` nil pointer risk — fixed with nil guard, (2) `Total()` semantics unclear re cache tokens — fixed with doc comment, (3) empty Errors array on error result — added test to document behavior.
+- Test count: 3798 → 3851 (+53 net). 43 new tests in stream_test.go (20 ParseStream + 23 helper/constant tests). All pass.
 
 **Task 6:**
 - Modernized `status.go`: removed deprecated `cmdutil.PrintError` (3 calls) and `cmdutil.PrintNextSteps` (1 call). Errors now use `return fmt.Errorf("context: %w", err)` for centralized rendering. Next-steps output uses `cs.InfoIcon()` inline. Replaced manual `json.MarshalIndent` with `cmdutil.WriteJSON`. Removed `encoding/json` import.

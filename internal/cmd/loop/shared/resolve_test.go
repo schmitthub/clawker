@@ -247,6 +247,32 @@ func TestBuildRunnerOptions_NilFlags(t *testing.T) {
 	assert.Equal(t, 5, opts.StagnationThreshold)
 }
 
+func TestBuildRunnerOptions_SystemPromptDefault(t *testing.T) {
+	loopOpts := NewLoopOptions()
+	// AppendSystemPrompt is empty (default)
+
+	cmd := newTestCmd()
+	opts := BuildRunnerOptions(loopOpts, "proj", "dev", "clawker.proj.dev", "test", cmd.Flags(), nil)
+
+	// Default system prompt should contain LOOP_STATUS instructions
+	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
+	assert.Contains(t, opts.SystemPrompt, "---END_LOOP_STATUS---")
+	assert.Equal(t, loop.BuildSystemPrompt(""), opts.SystemPrompt)
+}
+
+func TestBuildRunnerOptions_SystemPromptWithAdditional(t *testing.T) {
+	loopOpts := NewLoopOptions()
+	loopOpts.AppendSystemPrompt = "Always run tests before marking complete."
+
+	cmd := newTestCmd()
+	opts := BuildRunnerOptions(loopOpts, "proj", "dev", "clawker.proj.dev", "test", cmd.Flags(), nil)
+
+	// Should have both default and additional instructions
+	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
+	assert.Contains(t, opts.SystemPrompt, "Always run tests before marking complete.")
+	assert.Equal(t, loop.BuildSystemPrompt("Always run tests before marking complete."), opts.SystemPrompt)
+}
+
 func TestBuildRunnerOptions_SkipPermissionsBoolean(t *testing.T) {
 	loopOpts := NewLoopOptions()
 	// SkipPermissions defaults to false

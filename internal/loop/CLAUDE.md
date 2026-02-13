@@ -36,12 +36,18 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 - `Status.IsComplete()`, `Status.IsBlocked()`, `Status.HasProgress()`, `Status.IsTestOnly()` — boolean checks
 - `Status.IsCompleteStrict(threshold int) bool` — requires both ExitSignal=true AND CompletionIndicators >= threshold
 - `Status.String()` — human-readable summary
-- `AnalysisResult` — full output analysis: Status (*Status), RateLimitHit (bool), ErrorSignature (string), OutputSize, CompletionCount (int)
-- `AnalyzeOutput(output string) *AnalysisResult` — combines ParseStatus + rate limit + error + completion detection
+- `AnalysisResult` — full output analysis: Status (*Status), RateLimitHit (bool), ErrorSignature (string), OutputSize, CompletionCount (int), NumTurns, DurationMS (int), TotalCostUSD (float64). Stream metadata fields are zero when using `AnalyzeOutput`.
+- `AnalyzeOutput(output string) *AnalysisResult` — combines ParseStatus + rate limit + error + completion detection (raw stdout path)
+- `AnalyzeStreamResult(text string, result *ResultEvent) *AnalysisResult` — stream-json path: combines text analysis (from TextAccumulator) with ResultEvent metadata. Maps `error_max_budget_usd` subtype to RateLimitHit. Captures NumTurns, TotalCostUSD, DurationMS from ResultEvent.
 - `CountCompletionIndicators(output string) int`, `DetectRateLimitError(output string) bool`, `ExtractErrorSignature(output string) string` — individual analysis functions
 - Status constants: `StatusPending` ("IN_PROGRESS"), `StatusComplete` ("COMPLETE"), `StatusBlocked` ("BLOCKED")
 - Test status constants: `TestsPassing`, `TestsFailing`, `TestsNotRun`
 - Work type constants: `WorkTypeImplementation`, `WorkTypeTesting`, `WorkTypeDocumentation`, `WorkTypeRefactoring`
+
+### System Prompt (`prompt.go`)
+
+- `LoopStatusInstructions` — default system prompt constant instructing the agent to output a LOOP_STATUS block. Contains a parseable example block (validated by tests). Documents all fields, valid values, and rules.
+- `BuildSystemPrompt(additional string) string` — combines `LoopStatusInstructions` with optional user-provided instructions (from `--append-system-prompt`). Returns default only when additional is empty; separates with double newline otherwise.
 
 ### Circuit Breaker (`circuit.go`)
 
@@ -107,7 +113,7 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 - `Runner.ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)` — docker exec with output capture
 - `Runner.ResetCircuit(project, agent string) error`, `Runner.ResetSession(project, agent string) error` — reset state
 - `Runner.GetSession(project, agent string) (*Session, error)`, `Runner.GetCircuitState(project, agent string) (*CircuitState, error)` — read state
-- `Options` — ContainerName, Project, Agent, Prompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
+- `Options` — ContainerName, Project, Agent, Prompt, SystemPrompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
 - `Result` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
 
 ### Stream Parser (`stream.go`)
@@ -168,4 +174,4 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, ratelimit, session, stream, tui/model.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, prompt, ratelimit, session, stream, tui/model.

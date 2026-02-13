@@ -104,6 +104,7 @@ func BuildRunnerOptions(
 		CompletionThreshold:    loopOpts.CompletionThreshold,
 		UseStrictCompletion:    loopOpts.StrictCompletion,
 		SkipPermissions:        loopOpts.SkipPermissions,
+		SystemPrompt:           loop.BuildSystemPrompt(loopOpts.AppendSystemPrompt),
 		CallsPerHour:           loopOpts.CallsPerHour,
 		ResetCircuit:           loopOpts.ResetCircuit,
 		Verbose:                loopOpts.Verbose,

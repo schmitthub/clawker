@@ -89,6 +89,11 @@ type Options struct {
 	// SkipPermissions passes --dangerously-skip-permissions to claude.
 	SkipPermissions bool
 
+	// SystemPrompt is the full system prompt appended via --append-system-prompt.
+	// Built by BuildSystemPrompt() which combines the default LOOP_STATUS
+	// instructions with any user-provided additional instructions.
+	SystemPrompt string
+
 	// Monitor is the optional monitor for live output.
 	Monitor *Monitor
 

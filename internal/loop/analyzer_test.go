@@ -557,3 +557,189 @@ All tasks complete.`
 	assert.Greater(t, result.OutputSize, 0)
 	assert.Equal(t, 1, result.CompletionCount) // "All tasks complete" matches
 }
+
+// --- AnalyzeStreamResult tests ---
+
+func TestAnalyzeStreamResult_BasicParsing(t *testing.T) {
+	text := `I've fixed three tests and modified 2 files.
+
+---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 3
+FILES_MODIFIED: 2
+TESTS_STATUS: PASSING
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: false
+RECOMMENDATION: Continue with remaining tests
+---END_LOOP_STATUS---`
+
+	result := AnalyzeStreamResult(text, nil)
+
+	require.NotNil(t, result)
+	require.NotNil(t, result.Status)
+	assert.Equal(t, "IN_PROGRESS", result.Status.Status)
+	assert.Equal(t, 3, result.Status.TasksCompleted)
+	assert.Equal(t, 2, result.Status.FilesModified)
+	assert.Equal(t, "PASSING", result.Status.TestsStatus)
+	assert.False(t, result.RateLimitHit)
+	assert.Greater(t, result.OutputSize, 0)
+}
+
+func TestAnalyzeStreamResult_WithSuccessResult(t *testing.T) {
+	text := `All tasks complete, project ready.
+
+---LOOP_STATUS---
+STATUS: COMPLETE
+EXIT_SIGNAL: true
+RECOMMENDATION: All done
+---END_LOOP_STATUS---`
+
+	resultEvent := &ResultEvent{
+		Subtype:   ResultSubtypeSuccess,
+		NumTurns:  5,
+		IsError:   false,
+		Result:    "Done",
+	}
+
+	analysis := AnalyzeStreamResult(text, resultEvent)
+
+	require.NotNil(t, analysis)
+	require.NotNil(t, analysis.Status)
+	assert.True(t, analysis.Status.IsComplete())
+	assert.False(t, analysis.RateLimitHit)
+	assert.Equal(t, 3, analysis.CompletionCount) // "All tasks complete" + "project ready" + "all done" (from RECOMMENDATION)
+}
+
+func TestAnalyzeStreamResult_NilResultEvent(t *testing.T) {
+	text := `---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 1
+---END_LOOP_STATUS---`
+
+	analysis := AnalyzeStreamResult(text, nil)
+
+	require.NotNil(t, analysis)
+	require.NotNil(t, analysis.Status)
+	assert.Equal(t, "IN_PROGRESS", analysis.Status.Status)
+	assert.False(t, analysis.RateLimitHit)
+}
+
+func TestAnalyzeStreamResult_RateLimitFromText(t *testing.T) {
+	text := `Error: You have exceeded your rate limit. Please try again later.`
+
+	analysis := AnalyzeStreamResult(text, nil)
+
+	assert.True(t, analysis.RateLimitHit)
+}
+
+func TestAnalyzeStreamResult_RateLimitFromResultEvent(t *testing.T) {
+	text := `Working on the task...
+
+---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 0
+---END_LOOP_STATUS---`
+
+	resultEvent := &ResultEvent{
+		Subtype: ResultSubtypeErrorMaxBudget,
+		IsError: true,
+	}
+
+	analysis := AnalyzeStreamResult(text, resultEvent)
+
+	assert.True(t, analysis.RateLimitHit)
+}
+
+func TestAnalyzeStreamResult_NoRateLimitForOtherErrors(t *testing.T) {
+	text := `Working on the task...`
+
+	resultEvent := &ResultEvent{
+		Subtype: ResultSubtypeErrorDuringExecution,
+		IsError: true,
+	}
+
+	analysis := AnalyzeStreamResult(text, resultEvent)
+
+	assert.False(t, analysis.RateLimitHit)
+}
+
+func TestAnalyzeStreamResult_NoStatusBlock(t *testing.T) {
+	text := `I made some changes but forgot to output the status block.`
+
+	analysis := AnalyzeStreamResult(text, nil)
+
+	require.NotNil(t, analysis)
+	assert.Nil(t, analysis.Status)
+	assert.Equal(t, len(text), analysis.OutputSize)
+}
+
+func TestAnalyzeStreamResult_ErrorSignatureExtracted(t *testing.T) {
+	text := `Error: file not found
+---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 0
+EXIT_SIGNAL: false
+---END_LOOP_STATUS---`
+
+	analysis := AnalyzeStreamResult(text, nil)
+
+	assert.NotEmpty(t, analysis.ErrorSignature)
+}
+
+func TestAnalyzeStreamResult_CompletionIndicators(t *testing.T) {
+	text := `All tasks complete. The implementation is complete and the project is finished.
+
+---LOOP_STATUS---
+STATUS: COMPLETE
+EXIT_SIGNAL: true
+RECOMMENDATION: All done
+---END_LOOP_STATUS---`
+
+	analysis := AnalyzeStreamResult(text, nil)
+
+	assert.Greater(t, analysis.CompletionCount, 0)
+}
+
+func TestAnalyzeStreamResult_CompatibleWithCircuitBreaker(t *testing.T) {
+	// Verify that AnalyzeStreamResult produces AnalysisResult compatible with
+	// the circuit breaker's UpdateWithAnalysis method
+	text := `---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 1
+FILES_MODIFIED: 2
+WORK_TYPE: IMPLEMENTATION
+EXIT_SIGNAL: false
+---END_LOOP_STATUS---`
+
+	analysis := AnalyzeStreamResult(text, &ResultEvent{
+		Subtype: ResultSubtypeSuccess,
+	})
+
+	cb := NewCircuitBreaker(3)
+	result := cb.UpdateWithAnalysis(analysis.Status, analysis)
+
+	assert.False(t, result.Tripped)
+	assert.False(t, result.IsComplete)
+	assert.Equal(t, 0, cb.NoProgressCount()) // Had progress
+}
+
+func TestAnalyzeStreamResult_ResultEventTurnsAndCost(t *testing.T) {
+	text := `---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 0
+---END_LOOP_STATUS---`
+
+	resultEvent := &ResultEvent{
+		Subtype:      ResultSubtypeSuccess,
+		NumTurns:     12,
+		TotalCostUSD: 0.15,
+		DurationMS:   30000,
+	}
+
+	analysis := AnalyzeStreamResult(text, resultEvent)
+
+	// ResultEvent metadata is captured in the analysis
+	assert.Equal(t, 12, analysis.NumTurns)
+	assert.InDelta(t, 0.15, analysis.TotalCostUSD, 0.001)
+	assert.Equal(t, 30000, analysis.DurationMS)
+}

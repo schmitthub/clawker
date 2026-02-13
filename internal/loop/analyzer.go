@@ -270,6 +270,11 @@ type AnalysisResult struct {
 	ErrorSignature  string
 	OutputSize      int
 	CompletionCount int
+
+	// Stream metadata (populated by AnalyzeStreamResult, zero when using AnalyzeOutput).
+	NumTurns     int
+	TotalCostUSD float64
+	DurationMS   int
 }
 
 // AnalyzeOutput performs full analysis of a loop's output.
@@ -281,4 +286,35 @@ func AnalyzeOutput(output string) *AnalysisResult {
 		OutputSize:      len(output),
 		CompletionCount: CountCompletionIndicators(output),
 	}
+}
+
+// AnalyzeStreamResult produces an AnalysisResult by combining text analysis
+// (from TextAccumulator output) with stream ResultEvent metadata.
+// Use this instead of AnalyzeOutput when processing --output-format stream-json output.
+//
+// The text parameter should contain the concatenated assistant text from
+// TextAccumulator.Text(). The result parameter is the terminal ResultEvent
+// from ParseStream (may be nil if the stream ended prematurely).
+func AnalyzeStreamResult(text string, result *ResultEvent) *AnalysisResult {
+	analysis := &AnalysisResult{
+		Status:          ParseStatus(text),
+		CompletionCount: CountCompletionIndicators(text),
+		ErrorSignature:  ExtractErrorSignature(text),
+		OutputSize:      len(text),
+		RateLimitHit:    DetectRateLimitError(text),
+	}
+
+	if result != nil {
+		// Budget exhaustion is a form of rate limiting
+		if !analysis.RateLimitHit && result.Subtype == ResultSubtypeErrorMaxBudget {
+			analysis.RateLimitHit = true
+		}
+
+		// Capture stream metadata for monitoring and diagnostics
+		analysis.NumTurns = result.NumTurns
+		analysis.TotalCostUSD = result.TotalCostUSD
+		analysis.DurationMS = result.DurationMS
+	}
+
+	return analysis
 }
