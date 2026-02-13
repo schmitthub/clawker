@@ -229,11 +229,46 @@ Run an agent loop with a repeated prompt.
 clawker loop iterate [flags]
 ```
 
-Each iteration starts a fresh Claude session (no conversation context carried
-forward). The agent only sees the current codebase state from previous runs.
-Container lifecycle is managed automatically.
+Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
+A new container is created, hooks are injected, and the container is automatically
+cleaned up when the loop exits. Each iteration starts a fresh Claude session
+(no conversation context carried forward). The agent only sees the current
+codebase state from previous runs.
 
-**Flags:** (to be defined in Task 5)
+**Prompt flags** (mutually exclusive, one required):
+
+| Flag | Shorthand | Type | Description |
+|------|-----------|------|-------------|
+| `--prompt` | `-p` | string | Prompt to repeat each iteration |
+| `--prompt-file` | | string | Path to file containing the prompt |
+
+**Shared loop flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--max-loops` | | int | 50 | Maximum number of iterations |
+| `--stagnation-threshold` | | int | 3 | Iterations without progress before circuit breaker trips |
+| `--timeout` | | int | 15 | Per-iteration timeout in minutes |
+| `--loop-delay` | | int | 3 | Seconds to wait between iterations |
+| `--same-error-threshold` | | int | 5 | Consecutive identical errors before circuit breaker trips |
+| `--output-decline-threshold` | | int | 70 | Output size decline percentage before circuit breaker trips |
+| `--max-test-loops` | | int | 3 | Consecutive test-only iterations before circuit breaker trips |
+| `--safety-completion-threshold` | | int | 5 | Iterations with completion indicators but no exit signal before trip |
+| `--completion-threshold` | | int | 2 | Completion indicators required for strict completion |
+| `--strict-completion` | | bool | false | Require both exit signal and completion indicators |
+| `--skip-permissions` | | bool | false | Allow all tools without prompting |
+| `--calls-per-hour` | | int | 100 | API call rate limit per hour (0 to disable) |
+| `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
+| `--hooks-file` | | string | | Path to hook configuration file (overrides default hooks) |
+| `--append-system-prompt` | | string | | Additional system prompt instructions appended to the LOOP_STATUS default |
+| `--worktree` | | string | | Run in a git worktree (branch[:base] spec) |
+| `--image` | | string | | Override container image |
+| `--verbose` | `-v` | bool | false | Stream all agent output in real time |
+| `--json` | | bool | false | Output result as JSON |
+| `--quiet` | `-q` | bool | false | Suppress output (errors only) |
+| `--format` | | string | | Output format (json, template) |
+
+**Note:** `--verbose`, `--json`, `--quiet`, and `--format` are mutually exclusive.
 
 **Examples:**
 ```bash
@@ -245,6 +280,18 @@ clawker loop iterate --prompt-file task.md
 
 # Run with custom loop limits
 clawker loop iterate --prompt "Refactor auth module" --max-loops 100
+
+# Run in verbose mode (stream agent output)
+clawker loop iterate --prompt "Add tests" --verbose
+
+# Run with JSON output
+clawker loop iterate --prompt "Fix bugs" --json
+
+# Override the default hooks
+clawker loop iterate --prompt "Build feature" --hooks-file hooks.json
+
+# Run in a git worktree for isolation
+clawker loop iterate --prompt "Refactor" --worktree feature/refactor
 ```
 
 **Exit conditions:**
@@ -252,6 +299,8 @@ clawker loop iterate --prompt "Refactor auth module" --max-loops 100
 - Circuit breaker trips (stagnation, same error, output decline)
 - Maximum iterations reached
 - Timeout hit
+
+**Default output:** TUI dashboard (when stderr is a TTY). Press `q`/`Esc` to detach to minimal text output; `Ctrl+C` to stop the loop. Non-TTY defaults to text monitor output.
 
 ---
 
@@ -264,11 +313,23 @@ Run an agent loop driven by a task file.
 clawker loop tasks [flags]
 ```
 
-Each iteration, the agent reads the task file, picks an open task, completes
-it, and marks it done. Clawker manages the loop — the agent LLM handles task
-selection and completion. Container lifecycle is managed automatically.
+Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
+A new container is created, hooks are injected, and the container is automatically
+cleaned up when the loop exits. Each iteration, the agent reads the task file,
+picks an open task, completes it, and marks it done. Clawker manages the loop —
+the agent LLM handles task selection and completion.
 
-**Flags:** (to be defined in Task 5)
+**Task flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--tasks` | string | | Path to task file (required) |
+| `--task-prompt` | string | | Custom task prompt template (inline) |
+| `--task-prompt-file` | string | | Path to custom task prompt template file |
+
+**Note:** `--task-prompt` and `--task-prompt-file` are mutually exclusive. Both are optional — a default template is used if neither is provided. The template may include `%s` as a placeholder for the task file contents; if absent, tasks are appended.
+
+**Shared loop flags:** Same as `loop iterate` (see table above).
 
 **Examples:**
 ```bash
@@ -277,6 +338,12 @@ clawker loop tasks --tasks todo.md
 
 # Run with a custom task prompt template
 clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
+
+# Run with inline task prompt
+clawker loop tasks --tasks todo.md --task-prompt "Complete the next task from: %s"
+
+# Run with verbose output
+clawker loop tasks --tasks todo.md --verbose
 ```
 
 **Exit conditions:**
@@ -284,6 +351,8 @@ clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
 - Circuit breaker trips (stagnation, same error, output decline)
 - Maximum iterations reached
 - Timeout hit
+
+**Default output:** Same as `loop iterate` — TUI dashboard with detach support.
 
 ---
 

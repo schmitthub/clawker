@@ -179,7 +179,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
 | `internal/prompter` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
-| `internal/loop/tui` | Loop-specific TUI dashboard (uses `internal/tui` components) |
+| `internal/tui` (loopdash.go) | Loop TUI dashboard model (uses `internal/tui` components, follows import boundary) |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
@@ -408,7 +408,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
-│    loop/ → docker, logger; loop/tui → tui (middle)            │
+│    loop/ → docker, logger                                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

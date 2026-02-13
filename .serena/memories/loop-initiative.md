@@ -28,7 +28,7 @@
 | 6 | Task 17: Output mode switching (verbose, json, quiet) | `complete` | opus |
 | 7 | Task 18: Config migration (ralph: → loop:) | `complete` | opus |
 | 7 | Task 19: Integration tests | `complete` | opus |
-| 7 | Task 20: Documentation update (CLAUDE.md, CLI-VERBS, memories) | `pending` | — |
+| 7 | Task 20: Documentation update (CLAUDE.md, CLI-VERBS, memories) | `complete` | opus |
 
 ## Key Learnings
 
@@ -114,6 +114,15 @@
 - No backward compatibility logic needed — pre-release project with zero users (per CLAUDE.md mantra).
 - Code reviewer found zero issues above threshold.
 - Test count: 3977 → 4009 (+32 net). 26 new config tests (schema getters, validator loop, YAML round-trip), 6 new resolve tests (ApplyLoopConfigDefaults). All pass.
+
+**Task 20:**
+- Updated `.claude/docs/CLI-VERBS.md` with complete flag tables for `loop iterate` and `loop tasks` — replaced placeholder "(to be defined in Task 5)" with actual flags from `shared/options.go`. Added prompt flags, shared loop flags, task-specific flags, examples, and output mode notes.
+- Updated `.claude/docs/ARCHITECTURE.md` to remove deleted `internal/loop/tui` references — the dashboard moved to `internal/tui/loopdash.go` following the import boundary rule. Updated package DAG composite tier.
+- Root `CLAUDE.md` was already current — config section had `hooks_file` and `append_system_prompt`, repository structure was accurate, key concepts table correct.
+- `internal/loop/CLAUDE.md` and `internal/cmd/loop/CLAUDE.md` were already comprehensive (updated incrementally during Tasks 5-19).
+- Updated `project-overview` Serena memory with loop overhaul summary.
+- No remaining `ralph` references outside `archive/` (intentionally preserved as historical) and `loop-initiative.md` (historical tracking).
+- Freshness check: all CLAUDE.md files current. All 4009 tests pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.
