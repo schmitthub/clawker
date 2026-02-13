@@ -651,7 +651,7 @@
         "barWidth": 0.7,
         "groupWidth": 0.7,
         "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "orientation": "horizontal",
+        "orientation": "vertical",
         "showValue": "auto",
         "stacking": "normal",
         "tooltip": { "mode": "single", "sort": "none" },
@@ -659,16 +659,33 @@
       },
       "targets": [
         {
-          "expr": "sum by (project, agent) (max by (project, agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range])))",
+          "expr": "label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"Commits\", \"\", \"\") or label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"PRs\", \"\", \"\")",
+          "format": "table",
           "instant": true,
-          "legendFormat": "{{project}}/{{agent}} commits",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true }
+          }
         },
         {
-          "expr": "sum by (project, agent) (max by (project, agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range])))",
-          "instant": true,
-          "legendFormat": "{{project}}/{{agent}} PRs",
-          "refId": "B"
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "agent",
+            "rowField": "type",
+            "valueField": "Value",
+            "emptyValue": "0"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "type\\agent": " " }
+          }
         }
       ],
       "title": "Commits & PRs",
