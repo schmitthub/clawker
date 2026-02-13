@@ -31,12 +31,17 @@ Finding and fixing greater issues is fun, its more important than the task at ha
    - `think_about_whether_you_are_done` after task
    - `write_memory`, `edit_memory`, `delete_memory` to update memories with current status before completion
 
-2. **Context7** - Library/API docs without explicit requests:
+2. **Context7** - When I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
    - `resolve-library-id` first, then `get-library-docs`
    - For: Docker SDK, spf13/cobra, spf13/viper, rs/zerolog, gopkg.in/yaml.v3
 
+3. **deepwiki** - Always use deepwiki MCP for documentation about GitHub repositories, never go to the web for it. Use the following commands:
+   - read_wiki_structure - Get a list of documentation topics for a GitHub repository
+   - read_wiki_contents - View documentation about a GitHub repository
+   - ask_question - Ask any question about a GitHub repository and get an AI-powered, context-grounded response
+
 3. **ripgrep** - Use `ripgrep` instead of `grep`
-4. **exa-search** - When making web searches use `web_search_exa`
+
 
 ### Workflow Requirements
 
