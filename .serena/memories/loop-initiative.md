@@ -11,8 +11,8 @@
 |-------|------|--------|-------|
 | 1 | Task 1: Rename ralph → loop (command skeleton) | `complete` | opus |
 | 1 | Task 2: Rename ralph → loop (internal package) | `complete` | opus |
-| 1 | Task 3: Rename ralph → loop (config, docs, references) | `complete` | opus |
-| 2 | Task 4: New command structure (iterate + tasks subcommands) | `pending` | — |
+| 1 | Task 3: Rename ralph → loop (config, docs, references) | `complete` (a2980b0) | opus |
+| 2 | Task 4: New command structure (iterate + tasks subcommands) | `complete` | opus |
 | 2 | Task 5: Flag definitions and option structs | `pending` | — |
 | 2 | Task 6: Unit tests for command layer | `pending` | — |
 | 3 | Task 7: claude -p execution engine | `pending` | — |
@@ -33,6 +33,18 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 4:**
+- The previous agent had already created stub files for `iterate/iterate.go` and `tasks/tasks.go` with proper `NewCmd(f, runF)` pattern and stub `RunE` implementations.
+- Updated `loop.go` to import iterate+tasks and remove run+tui imports. Updated Long description and Example to reflect the two loop strategies.
+- Updated `loop_test.go` to verify 4 subcommands: iterate, tasks, status, reset (replacing run and tui).
+- Deleted `internal/cmd/loop/run/` and `internal/cmd/loop/tui/` directories entirely (rm -rf).
+- The `tui/tui.go` package had an import boundary violation (importing `bubbletea` directly + `internal/loop/tui`) — this violation is now removed by deleting the package.
+- Regenerated `docs/cli-reference/` via `go run ./cmd/gen-docs` — deleted stale `clawker_loop_run.md` and `clawker_loop_tui.md` first.
+- Updated CLAUDE.md top-level shortcuts reference from `loop run/status/reset` to `loop iterate/tasks/status/reset`.
+- Status and reset commands still use deprecated helpers (`cmdutil.PrintError`, `cmdutil.PrintNextSteps`, `cmdutil.HandleError`) — these will be modernized in later tasks.
+- Test count dropped from 3756 to 3747 due to removing run_test.go (4 tests) and tui_test.go (1 test) from the old packages.
+- All 3747 unit tests pass.
 
 **Task 3:**
 - Used Serena `rename_symbol` for `RalphConfig` → `LoopConfig` (3 changes) and `Project/Ralph` → `Project/Loop` (4 changes) — handled type rename and field rename across all callers automatically.

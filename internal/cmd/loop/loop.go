@@ -2,10 +2,10 @@
 package loop
 
 import (
+	"github.com/schmitthub/clawker/internal/cmd/loop/iterate"
 	"github.com/schmitthub/clawker/internal/cmd/loop/reset"
-	"github.com/schmitthub/clawker/internal/cmd/loop/run"
 	"github.com/schmitthub/clawker/internal/cmd/loop/status"
-	"github.com/schmitthub/clawker/internal/cmd/loop/tui"
+	"github.com/schmitthub/clawker/internal/cmd/loop/tasks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -20,16 +20,23 @@ func NewCmdLoop(f *cmdutil.Factory) *cobra.Command {
 The loop command automates Claude Code execution: Claude runs repeatedly
 until signaling completion via a LOOP_STATUS block in its output.
 
-The agent must be configured to output a LOOP_STATUS block in its responses.
-See the documentation for the expected format.
+Two loop strategies are available:
+  iterate  Same prompt repeated fresh each invocation
+  tasks    Agent reads a task file, picks an open task, does it, marks it done
+
+Container lifecycle is managed automatically — a container is created at the
+start of each loop and destroyed on completion.
 
 Available commands:
-  run     Start the autonomous loop
-  status  Show current session status
-  reset   Reset the circuit breaker
-  tui     Launch interactive dashboard`,
-		Example: `  # Start a loop with an initial prompt
-  clawker loop run --agent dev --prompt "Fix all failing tests"
+  iterate  Run an agent loop with a repeated prompt
+  tasks    Run an agent loop driven by a task file
+  status   Show current session status
+  reset    Reset the circuit breaker`,
+		Example: `  # Run a loop with a repeated prompt
+  clawker loop iterate --prompt "Fix all failing tests"
+
+  # Run a task-driven loop
+  clawker loop tasks --tasks todo.md
 
   # Check the status of a loop session
   clawker loop status --agent dev
@@ -38,10 +45,10 @@ Available commands:
   clawker loop reset --agent dev`,
 	}
 
-	cmd.AddCommand(run.NewCmdRun(f, nil))
+	cmd.AddCommand(iterate.NewCmdIterate(f, nil))
+	cmd.AddCommand(tasks.NewCmdTasks(f, nil))
 	cmd.AddCommand(status.NewCmdStatus(f, nil))
 	cmd.AddCommand(reset.NewCmdReset(f, nil))
-	cmd.AddCommand(tui.NewCmdTUI(f, nil))
 
 	return cmd
 }

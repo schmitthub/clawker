@@ -9,20 +9,27 @@ Commands for running Claude Code agents in autonomous loops.
 The loop command automates Claude Code execution: Claude runs repeatedly
 until signaling completion via a LOOP_STATUS block in its output.
 
-The agent must be configured to output a LOOP_STATUS block in its responses.
-See the documentation for the expected format.
+Two loop strategies are available:
+  iterate  Same prompt repeated fresh each invocation
+  tasks    Agent reads a task file, picks an open task, does it, marks it done
+
+Container lifecycle is managed automatically — a container is created at the
+start of each loop and destroyed on completion.
 
 Available commands:
-  run     Start the autonomous loop
-  status  Show current session status
-  reset   Reset the circuit breaker
-  tui     Launch interactive dashboard
+  iterate  Run an agent loop with a repeated prompt
+  tasks    Run an agent loop driven by a task file
+  status   Show current session status
+  reset    Reset the circuit breaker
 
 ### Examples
 
 ```
-  # Start a loop with an initial prompt
-  clawker loop run --agent dev --prompt "Fix all failing tests"
+  # Run a loop with a repeated prompt
+  clawker loop iterate --prompt "Fix all failing tests"
+
+  # Run a task-driven loop
+  clawker loop tasks --tasks todo.md
 
   # Check the status of a loop session
   clawker loop status --agent dev
@@ -33,10 +40,10 @@ Available commands:
 
 ### Subcommands
 
+* [clawker loop iterate](clawker_loop_iterate.md) - Run an agent loop with a repeated prompt
 * [clawker loop reset](clawker_loop_reset.md) - Reset the circuit breaker for an agent
-* [clawker loop run](clawker_loop_run.md) - Start an autonomous Claude Code loop
 * [clawker loop status](clawker_loop_status.md) - Show current loop session status
-* [clawker loop tui](clawker_loop_tui.md) - Launch interactive TUI dashboard
+* [clawker loop tasks](clawker_loop_tasks.md) - Run an agent loop driven by a task file
 
 ### Options
 

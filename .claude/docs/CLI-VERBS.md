@@ -220,78 +220,70 @@ clawker start [flags]
 
 Run Claude Code in autonomous loops with circuit breaker protection.
 
-### `clawker loop run`
+### `clawker loop iterate`
 
-Start an autonomous Claude Code loop.
+Run an agent loop with a repeated prompt.
 
 **Usage:**
 ```bash
-clawker loop run --agent NAME [flags]
+clawker loop iterate [flags]
 ```
 
-Runs Claude Code repeatedly with `--continue` until completion or stagnation.
-The agent must output a LOOP_STATUS block for progress tracking.
+Each iteration starts a fresh Claude session (no conversation context carried
+forward). The agent only sees the current codebase state from previous runs.
+Container lifecycle is managed automatically.
 
-**Flags:**
-
-| Flag | Shorthand | Type | Default | Description |
-|------|-----------|------|---------|-------------|
-| `--agent` | | string | | Agent name (required) |
-| `--prompt` | `-p` | string | | Initial prompt for the first loop |
-| `--prompt-file` | | string | | File containing the initial prompt |
-| `--max-loops` | | int | 50 | Maximum number of loops |
-| `--stagnation-threshold` | | int | 3 | Loops without progress before circuit trips |
-| `--timeout` | | duration | 15m | Timeout per loop iteration |
-| `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
-| `--quiet` | `-q` | bool | false | Suppress progress output |
-| `--json` | | bool | false | Output result as JSON |
-| `--calls` | | int | 100 | Rate limit: max calls per hour (0 to disable) |
-| `--monitor` | | bool | false | Enable live monitoring output |
-| `--verbose` | `-v` | bool | false | Enable verbose output |
-| `--strict-completion` | | bool | false | Require both EXIT_SIGNAL and completion indicators |
-| `--same-error-threshold` | | int | 5 | Same error repetitions before circuit trips |
-| `--output-decline-threshold` | | int | 70 | Output decline percentage that triggers trip |
-| `--max-test-loops` | | int | 3 | Consecutive test-only loops before circuit trips |
-| `--loop-delay` | | int | 3 | Seconds to wait between loop iterations |
-| `--skip-permissions` | | bool | false | Pass --dangerously-skip-permissions to claude |
+**Flags:** (to be defined in Task 5)
 
 **Examples:**
 ```bash
-# Start with an initial prompt
-clawker loop run --agent dev --prompt "Fix all failing tests"
+# Run a loop with a prompt
+clawker loop iterate --prompt "Fix all failing tests"
 
-# Start from a prompt file
-clawker loop run --agent dev --prompt-file task.md
+# Run with a prompt from a file
+clawker loop iterate --prompt-file task.md
 
-# Continue an existing session
-clawker loop run --agent dev
-
-# Reset circuit breaker and retry
-clawker loop run --agent dev --reset-circuit
-
-# Run with custom limits
-clawker loop run --agent dev --max-loops 100 --stagnation-threshold 5
-
-# Run with live monitoring
-clawker loop run --agent dev --monitor
-
-# Run with rate limiting (5 calls per hour)
-clawker loop run --agent dev --calls 5
-
-# Run with verbose output
-clawker loop run --agent dev -v
-
-# Run in YOLO mode (skip all permission prompts)
-clawker loop run --agent dev --skip-permissions
+# Run with custom loop limits
+clawker loop iterate --prompt "Refactor auth module" --max-loops 100
 ```
 
 **Exit conditions:**
-- Claude signals `EXIT_SIGNAL: true` with sufficient completion indicators (strict mode)
-- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE` (default mode)
-- Circuit breaker trips (no progress, same error, output decline, or test loops)
-- Maximum loops reached
-- Error during execution
-- Claude's API rate limit hit
+- Claude signals completion via a LOOP_STATUS block
+- Circuit breaker trips (stagnation, same error, output decline)
+- Maximum iterations reached
+- Timeout hit
+
+---
+
+### `clawker loop tasks`
+
+Run an agent loop driven by a task file.
+
+**Usage:**
+```bash
+clawker loop tasks [flags]
+```
+
+Each iteration, the agent reads the task file, picks an open task, completes
+it, and marks it done. Clawker manages the loop — the agent LLM handles task
+selection and completion. Container lifecycle is managed automatically.
+
+**Flags:** (to be defined in Task 5)
+
+**Examples:**
+```bash
+# Run a task-driven loop
+clawker loop tasks --tasks todo.md
+
+# Run with a custom task prompt template
+clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
+```
+
+**Exit conditions:**
+- All tasks completed (agent signals via LOOP_STATUS)
+- Circuit breaker trips (stagnation, same error, output decline)
+- Maximum iterations reached
+- Timeout hit
 
 ---
 
@@ -347,27 +339,6 @@ clawker loop reset --agent dev
 # Reset everything (circuit and session)
 clawker loop reset --agent dev --all
 ```
-
----
-
-### `clawker loop tui`
-
-Launch an interactive TUI dashboard for monitoring loop agents.
-
-**Usage:**
-```bash
-clawker loop tui
-```
-
-Provides a real-time terminal interface for monitoring all loop agents in the current project. Features include live agent discovery, status updates, and log streaming.
-
-**Examples:**
-```bash
-# Launch TUI for current project
-clawker loop tui
-```
-
-**Note:** Must be run from a directory containing `clawker.yaml`.
 
 ---
 

@@ -23,22 +23,22 @@ func TestNewCmdLoop(t *testing.T) {
 	subCmds := cmd.Commands()
 	require.Len(t, subCmds, 4)
 
-	var runCmd, statusCmd, resetCmd, tuiCmd *cobra.Command
+	var iterateCmd, tasksCmd, statusCmd, resetCmd *cobra.Command
 	for _, sub := range subCmds {
 		switch sub.Use {
-		case "run":
-			runCmd = sub
+		case "iterate":
+			iterateCmd = sub
+		case "tasks":
+			tasksCmd = sub
 		case "status":
 			statusCmd = sub
 		case "reset":
 			resetCmd = sub
-		case "tui":
-			tuiCmd = sub
 		}
 	}
 
-	require.NotNil(t, runCmd, "run subcommand should exist")
+	require.NotNil(t, iterateCmd, "iterate subcommand should exist")
+	require.NotNil(t, tasksCmd, "tasks subcommand should exist")
 	require.NotNil(t, statusCmd, "status subcommand should exist")
 	require.NotNil(t, resetCmd, "reset subcommand should exist")
-	require.NotNil(t, tuiCmd, "tui subcommand should exist")
 }
