@@ -62,7 +62,7 @@ HEADER
     # Output is sorted by license name then module name for deterministic output.
     echo "$RAW" \
         | awk -F',' '$1 != "" && $3 != "" { print $3 "\t" $1 }' \
-        | sort -t$'\t' -k1,1 -k2,2 \
+        | LC_ALL=C sort -t$'\t' -k1,1 -k2,2 \
         | awk -F'\t' -v col="$COL_WIDTH" '
             BEGIN { prev = "" }
             {

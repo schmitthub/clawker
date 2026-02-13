@@ -25,9 +25,9 @@ github.com/docker/go-connections                                               A
 github.com/docker/go-units                                                     Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0
 github.com/go-git/go-git/v6                                                    Apache-2.0
-github.com/golang/groupcache/lru                                               Apache-2.0
 github.com/go-logr/logr                                                        Apache-2.0
 github.com/go-logr/stdr                                                        Apache-2.0
+github.com/golang/groupcache/lru                                               Apache-2.0
 github.com/google/shlex                                                        Apache-2.0
 github.com/in-toto/in-toto-golang/in_toto                                      Apache-2.0
 github.com/klauspost/compress                                                  Apache-2.0
@@ -44,9 +44,6 @@ github.com/pjbgf/sha1cd                                                        A
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/afero                                                         Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
-google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
-google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
-google.golang.org/grpc                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   Apache-2.0
@@ -57,6 +54,9 @@ go.opentelemetry.io/otel/metric                                                A
 go.opentelemetry.io/otel/sdk                                                   Apache-2.0
 go.opentelemetry.io/otel/trace                                                 Apache-2.0
 go.opentelemetry.io/proto/otlp                                                 Apache-2.0
+google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
+google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
+google.golang.org/grpc                                                         Apache-2.0
 gopkg.in/ini.v1                                                                Apache-2.0
 
 ================================================================================
@@ -73,11 +73,12 @@ github.com/russross/blackfriday/v2                                             B
 BSD-3-Clause
 ================================================================================
 
+github.com/ProtonMail/go-crypto                                                BSD-3-Clause
 github.com/atotto/clipboard                                                    BSD-3-Clause
 github.com/cloudflare/circl                                                    BSD-3-Clause
 github.com/fsnotify/fsnotify                                                   BSD-3-Clause
-github.com/gofrs/flock                                                         BSD-3-Clause
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
+github.com/gofrs/flock                                                         BSD-3-Clause
 github.com/gogo/protobuf/proto                                                 BSD-3-Clause
 github.com/golang/protobuf/ptypes                                              BSD-3-Clause
 github.com/google/go-cmp/cmp                                                   BSD-3-Clause
@@ -86,7 +87,6 @@ github.com/grpc-ecosystem/grpc-gateway/v2                                      B
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
 github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
-github.com/ProtonMail/go-crypto                                                BSD-3-Clause
 github.com/sagikazarmark/slog-shim                                             BSD-3-Clause
 github.com/spf13/pflag                                                         BSD-3-Clause
 golang.org/x/crypto                                                            BSD-3-Clause
