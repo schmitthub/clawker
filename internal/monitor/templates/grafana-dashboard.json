@@ -833,7 +833,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_request` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
+          "expr": "{service_name=\"claude-code\"} |= `api_request` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
