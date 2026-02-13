@@ -80,6 +80,7 @@ agent:
   from_env:
     - GH_TOKEN
     - IDONTEXIST
+    - CONTEXT7_API_KEY
   # env: static key-value pairs (highest precedence, always win)
   env:
     # FOO: bar
@@ -93,6 +94,8 @@ agent:
   enable_shared_dir: true
   post_init: |
     claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 
 workspace:
   # Container path where your code is mounted
@@ -132,6 +135,9 @@ security:
       - go.yaml.in
       - cel.dev
       - files.pythonhosted.org
+      - code.claude.com
+      - mcp.deepwiki.com
+      - mcp.context7.com
   # Git credential forwarding
   git_credentials:
     forward_https: true
