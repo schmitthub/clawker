@@ -95,6 +95,28 @@ Multi-step progress display — BubbleTea for TTY, sequential text for plain. Ze
 
 Threaded via config structs (e.g., `ProgressDisplayConfig.OnLifecycle`). Nil = no-op. Fires AFTER BubbleTea exits, BEFORE summary. Abort without error/message produces default error.
 
+## Loop Dashboard (`loopdash.go`)
+
+Real-time BubbleTea dashboard for `loop iterate` and `loop tasks` commands. Follows the same channel-reading pattern as `progressModel`.
+
+**Event types**: `LoopDashEventKind` (`LoopDashEventStart/IterStart/IterEnd/Output/RateLimit/Complete`)
+
+**LoopDashEvent**: Channel event with Kind, Iteration, MaxIterations, AgentName, Project, StatusText, TasksCompleted, FilesModified, TestsStatus, ExitSignal, CircuitProgress/Threshold/Tripped, RateRemaining/RateLimit, IterDuration, ExitReason, Error, TotalTasks, TotalFiles, OutputChunk.
+
+**LoopDashboardConfig**: AgentName, Project, MaxLoops.
+
+**LoopDashboardResult**: Err (display error), Detached (user pressed q/Esc — loop continues), Interrupted (user pressed Ctrl+C — stop loop).
+
+**Entry point**: `RunLoopDashboard(ios, cfg, ch)` — creates model, runs BubbleTea, returns result.
+
+**Layout**: Header bar → info line (agent/project/elapsed) → counters (iteration/circuit/rate) → status section → activity log (newest first, last 10) → help line (`q detach  ctrl+c stop`).
+
+**Key bindings**: `q`/`Esc` = detach (exit TUI, loop continues with minimal text output in `RunLoop`). `Ctrl+C` = interrupt (cancel the runner context, exit process). This intentionally does NOT use the shared `IsQuit` matcher because detach and interrupt have different semantics.
+
+**Activity log**: Ring buffer of `activityEntry` (max 10). Running entries show `● [Loop N] Running...`, completed entries show `✓ [Loop N] STATUS — tasks, files (duration)`.
+
+**Model pattern**: Same as `progressModel` — `Init()` returns `waitForLoopEvent(ch)`, `Update()` processes `loopDashEventMsg` then dispatches next wait, `loopDashChannelClosedMsg` triggers `tea.Quit`. High-water mark for stable frame height.
+
 ## TUI Struct (`tui.go`)
 
 Factory noun for presentation layer. Commands receive eagerly; hooks registered post-construction via pointer sharing.
@@ -103,6 +125,7 @@ Factory noun for presentation layer. Commands receive eagerly; hooks registered 
 func NewTUI(ios *iostreams.IOStreams) *TUI
 func (t *TUI) RegisterHooks(hooks ...LifecycleHook)
 func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan ProgressStep) ProgressResult
+func (t *TUI) RunLoopDashboard(cfg LoopDashboardConfig, ch <-chan LoopDashEvent) LoopDashboardResult
 func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error)
 func (t *TUI) IOStreams() *iostreams.IOStreams
 ```

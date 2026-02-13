@@ -23,8 +23,8 @@
 | 5 | Task 12: Container lifecycle integration | `complete` | opus |
 | 5 | Task 13: Auto agent naming | `complete` | opus |
 | 5 | Task 14: Session concurrency detection + worktree support | `complete` | opus |
-| 6 | Task 15: TUI dashboard (default view) | `pending` | — |
-| 6 | Task 16: TUI detach → minimal mode | `pending` | — |
+| 6 | Task 15: TUI dashboard (default view) | `complete` | opus |
+| 6 | Task 16: TUI detach → minimal mode | `complete` | opus |
 | 6 | Task 17: Output mode switching (verbose, json, quiet) | `pending` | — |
 | 7 | Task 18: Config migration (ralph: → loop:) | `pending` | — |
 | 7 | Task 19: Integration tests | `pending` | — |
@@ -67,6 +67,27 @@
 - **Interactive test timing pitfall**: `tio.SetInteractive(true)` must be called *before* `CheckConcurrency` runs (not inside the `Prompter()` closure), because `IsInteractive()` is checked before `Prompter()` is called. Moving setup outside the closure fixed the test failures.
 - Worktree auto-generation on concurrency prompt: when user selects "Use a worktree" but hasn't set `--worktree`, code calls `cmdutil.ParseWorktreeFlag("", opts.Agent)` to generate a branch name, then sets `opts.Worktree = spec.Branch`.
 - Test count: 3910 → 3923 (+13 net). 5 new session tests, 8 new concurrency tests. All pass.
+
+**Task 15:**
+- Created `internal/tui/loopdash.go` (529 lines) with BubbleTea dashboard model for loop commands. Channel-based event consumption following same pattern as `progressModel`. Events: Start, IterStart, IterEnd, Output, RateLimit, Complete. Layout: header bar → info line → counters → status section → activity log (ring buffer, max 10, newest first) → help line.
+- Created `internal/cmd/loop/shared/dashboard.go` with `RunLoop` orchestrator (output mode selection), `WireLoopDashboard` (runner callback → channel bridge), and `sendEvent` (non-blocking send). `RunLoop` consolidates output mode logic shared by iterate and tasks commands.
+- Deleted `internal/loop/tui/` (messages.go, model.go, model_test.go) — old stub that violated the import boundary rule by importing bubbletea directly. Dashboard now lives in `internal/tui/` where it belongs.
+- Added `RunLoopDashboard` method to `tui.TUI` struct — Factory noun pattern for commands to access dashboard via `f.TUI`.
+- **Architecture decisions**: (1) Dashboard is in `internal/tui/` not `internal/loop/tui/` — respects import boundary (only `internal/tui` imports bubbletea). (2) `RunLoop` in `shared/dashboard.go` handles both TUI and non-TUI paths, replacing duplicate output mode code in iterate/tasks. (3) Runner runs in goroutine, TUI blocks main thread, channel close signals completion.
+- Both `iterateRun` and `tasksRun` significantly simplified — duplicate output mode logic replaced by single `shared.RunLoop` call.
+- Test count: 3923 → 3957 (+34 net). 23 new in loopdash_test.go, 10 new in dashboard_test.go. All pass.
+
+**Task 16:**
+- Split key handling in dashboard: `q`/`Esc` = detach (exit TUI, loop continues in foreground with minimal text output), `Ctrl+C` = interrupt (cancel runner context, exit process). Previously both were treated as "interrupted" via shared `IsQuit` matcher.
+- Added `Detached bool` to `LoopDashboardResult` alongside existing `Interrupted bool`. The TUI model tracks both `detached` and `interrupted` states separately.
+- Created `drainLoopEventsAsText(w, cs, ch)` — consumes events from the dashboard channel and renders as minimal status lines (`● [Loop N] Running...`, `✓ [Loop N] STATUS — tasks, files (duration)`). Output and Start events are silently ignored in minimal mode. RateLimit and Complete events rendered with appropriate icons.
+- **Detach flow in `RunLoop`**: TUI exits with `Detached: true` → print transition message → `drainLoopEventsAsText` blocks until channel closed → runner goroutine has finished → read result/runErr safely.
+- **Interrupt flow in `RunLoop`**: TUI exits with `Interrupted: true` → `runCancel()` cancels the runner context → `for range ch` drains to unblock goroutine → return `SilentError`.
+- **Concurrency safety**: Uses `context.WithCancel` to wrap the runner's context. The happens-before chain is guaranteed: goroutine writes result/runErr → `close(ch)` (deferred) → main goroutine finishes range loop → reads result/runErr. Channel close provides the synchronization point.
+- `formatMinimalDuration` duplicates `formatElapsed` from loopdash.go — acceptable because they live in different packages (`shared` vs `tui`) and the TUI import boundary prevents `shared` from importing `tui` helpers.
+- Updated help line from `"q quit"` to `"q detach  ctrl+c stop"`.
+- Code reviewer found zero issues above threshold.
+- Test count: 3957 → 3969 (+12 net). 3 updated key-handling tests (detach q, detach esc, interrupt ctrl+c), 11 new drain/format tests. All pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.

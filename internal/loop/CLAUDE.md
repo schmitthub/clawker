@@ -199,12 +199,8 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 - `GenerateAgentName() string` — creates a unique agent name for loop sessions. Format: `loop-<adjective>-<noun>` using Docker-style random names via `docker.GenerateRandomName()`. Always valid Docker resource names.
 - `loopAgentPrefix` (unexported const) — `"loop"`, prepended to all auto-generated names.
 
-### TUI (`tui/`)
-
-- `Model` — BubbleTea model for loop monitor dashboard. Implements `tea.Model` (Init, Update, View).
-- `NewModel(project string) Model` — constructor
-- Internal: `errMsg` (unexported) wraps errors for TUI display
-
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, naming, prompt, ratelimit, session, stream, tui/model.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, naming, prompt, ratelimit, session, stream.
+
+Note: The loop TUI dashboard model has been moved to `internal/tui/loopdash.go` (following the import boundary rule — only `internal/tui` imports bubbletea). The old `internal/loop/tui/` stub was deleted.

@@ -12,6 +12,7 @@ Autonomous Claude Code loops — repeated execution with circuit breaker protect
 | `shared/result.go` | `ResultOutput`, `NewResultOutput`, `WriteResult` — result output formatting |
 | `shared/lifecycle.go` | `SetupLoopContainer`, `InjectLoopHooks` — container lifecycle + hook injection |
 | `shared/concurrency.go` | `CheckConcurrency` — detect concurrent sessions, prompt for worktree |
+| `shared/dashboard.go` | `WireLoopDashboard` — bridge Runner callbacks to TUI dashboard channel |
 | `iterate/iterate.go` | `NewCmdIterate(f, runF)` — repeated-prompt loop |
 | `tasks/tasks.go` | `NewCmdTasks(f, runF)` — task-file-driven loop |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show session status |
@@ -62,6 +63,23 @@ Prompt resolution and option building helpers:
 
 **Config override pattern**: For each configurable field, if the CLI flag was not explicitly set (`!flags.Changed(flagName)`) and the config value is non-zero/true, the config value wins. Explicit CLI flags always take precedence.
 
+## Shared Dashboard (`shared/dashboard.go`)
+
+Output mode selection, event bridge, and TUI detach handling for loop commands:
+
+- `RunLoopConfig` — all inputs for `RunLoop`: Ctx, Runner, RunnerOpts, TUI, IOStreams, Setup, Format, Verbose, CommandName
+- `RunLoop(cfg RunLoopConfig) (*loop.Result, error)` — consolidated loop execution with output mode selection. If stderr is a TTY and not verbose/quiet/json, uses TUI dashboard; otherwise falls back to text Monitor. Shared by iterate and tasks commands. Handles three TUI exit paths: normal completion, detach (q/Esc), and interrupt (Ctrl+C).
+- `WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Does NOT close the channel — the caller's goroutine does that.
+- `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines (`● [Loop N] Running...`, `✓ [Loop N] STATUS — tasks, files (duration)`). Returns when the channel is closed (runner finished).
+- `formatMinimalDuration(d time.Duration) string` — formats duration for minimal text output.
+- `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine.
+
+**TUI detach flow**: When the user presses q/Esc in the TUI, `RunLoop` prints a transition message and calls `drainLoopEventsAsText` to continue consuming events as minimal text. The runner goroutine keeps running — the channel close signals completion. Ctrl+C cancels the runner context (via `context.WithCancel`) and drains the channel to let the goroutine exit cleanly.
+
+**Concurrency model**: The runner goroutine writes `result`/`runErr`, then `close(ch)` (deferred). The main goroutine reads from `ch` until closed, then reads `result`/`runErr`. The channel close provides the happens-before guarantee.
+
+**Session totals**: Accumulated across iterations (TasksCompleted, FilesModified) and sent on each `IterEnd` event as TotalTasks/TotalFiles.
+
 ## Shared Result (`shared/result.go`)
 
 Result output formatting:
@@ -97,13 +115,17 @@ Session concurrency detection using Docker container labels:
 
 Embeds `*shared.LoopOptions`. Adds `--prompt` / `-p` / `--prompt-file` (mutually exclusive, one required), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: IOStreams, TUI, Client, Config, GitManager, HostProxy, SocketBridge, Prompter, Version.
 
-**Run flow**: ResolvePrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolvePrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → RunLoop (output mode selection + detach handling) → WriteResult → cleanup (deferred).
+
+**Output mode selection**: Delegated to `shared.RunLoop`. If stderr is a TTY and not verbose/quiet/json, uses the TUI dashboard. Otherwise falls back to the text Monitor. When the user presses q/Esc in the TUI, the loop continues in the foreground with minimal text output (detach mode).
 
 ## TasksOptions
 
 Embeds `*shared.LoopOptions`. Adds `--tasks` (required), `--task-prompt` / `--task-prompt-file` (mutually exclusive, optional), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: same as IterateOptions.
 
-**Run flow**: ResolveTasksPrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolveTasksPrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → RunLoop (output mode selection + detach handling) → WriteResult → cleanup (deferred).
+
+**Output mode selection**: Same as IterateOptions — TTY dashboard (with detach support) vs text Monitor.
 
 ## Loop Strategies
 
@@ -114,4 +136,4 @@ Loop commands handle full container lifecycle: create → hooks → start → lo
 
 ## Testing
 
-Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags, defaults, all-flags round-trip, output mode combinations, verbose exclusivity, no-agent-flag rejection, agent-empty-at-parse verification, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides, workDir mapping). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Tests in `shared/concurrency_test.go` cover concurrency detection (no containers, different workdir, same workdir non-interactive warning, same workdir interactive with all 3 actions, Docker list error, multiple running containers). Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.
+Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags, defaults, all-flags round-trip, output mode combinations, verbose exclusivity, no-agent-flag rejection, agent-empty-at-parse verification, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides, workDir mapping). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Tests in `shared/concurrency_test.go` cover concurrency detection (no containers, different workdir, same workdir non-interactive warning, same workdir interactive with all 3 actions, Docker list error, multiple running containers). Tests in `shared/dashboard_test.go` cover WireLoopDashboard (start event, callback wiring, OnLoopStart/OnLoopEnd events, nil status, total accumulation, output forwarding, error propagation, full channel non-blocking), drainLoopEventsAsText (iter start/end, error, no status, rate limit, complete, complete with error, multiple events, ignored output events), and formatMinimalDuration. Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.

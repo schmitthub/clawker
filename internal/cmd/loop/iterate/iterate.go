@@ -129,7 +129,6 @@ The loop exits when:
 
 func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	ios := opts.IOStreams
-	cs := ios.ColorScheme()
 
 	// 1. Resolve prompt
 	prompt, err := shared.ResolvePrompt(opts.Prompt, opts.PromptFile)
@@ -211,38 +210,29 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		opts.flags, cfgGateway.Project.Loop,
 	)
 
-	// 7. Set up monitor
-	monitor := loop.NewMonitor(loop.MonitorOptions{
-		Writer:   ios.ErrOut,
-		MaxLoops: runnerOpts.MaxLoops,
-		Verbose:  opts.Verbose,
+	// 7. Run loop with appropriate output mode (TUI dashboard or text monitor)
+	result, err := shared.RunLoop(shared.RunLoopConfig{
+		Ctx:         ctx,
+		Runner:      runner,
+		RunnerOpts:  runnerOpts,
+		TUI:         opts.TUI,
+		IOStreams:    ios,
+		Setup:       setup,
+		Format:      opts.Format,
+		Verbose:     opts.Verbose,
+		CommandName: "iterate",
 	})
-	runnerOpts.Monitor = monitor
-
-	// 8. If verbose, stream output chunks to stderr
-	if opts.Verbose {
-		runnerOpts.OnOutput = func(chunk []byte) {
-			_, _ = ios.ErrOut.Write(chunk)
-		}
-	}
-
-	// 9. Print start message
-	fmt.Fprintf(ios.ErrOut, "%s Starting loop iterate for %s.%s (%d max loops)\n",
-		cs.InfoIcon(), setup.Project, setup.AgentName, runnerOpts.MaxLoops)
-
-	// 10. Run the loop
-	result, err := runner.Run(ctx, runnerOpts)
 	if err != nil {
 		return err
 	}
 
-	// 11. Write result
+	// 8. Write result
 	if writeErr := shared.WriteResult(ios.Out, ios.ErrOut, result, opts.Format); writeErr != nil {
 		return writeErr
 	}
 
-	// 12. If loop ended with error, return SilentError (monitor already displayed it)
-	if result.Error != nil {
+	// 9. If loop ended with error, return SilentError (monitor/dashboard already displayed it)
+	if result != nil && result.Error != nil {
 		return cmdutil.SilentError
 	}
 
