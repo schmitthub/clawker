@@ -58,7 +58,7 @@ func TestNewCmdTasks(t *testing.T) {
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md"})
+	cmd.SetArgs([]string{"--tasks", "todo.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -77,7 +77,7 @@ func TestNewCmdTasks_RequiresTasksFlag(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev"})
+	cmd.SetArgs([]string{})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -96,7 +96,7 @@ func TestNewCmdTasks_TaskPrompt(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md", "--task-prompt", "Pick highest priority"})
+	cmd.SetArgs([]string{"--tasks", "todo.md", "--task-prompt", "Pick highest priority"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -117,7 +117,7 @@ func TestNewCmdTasks_TaskPromptFile(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md", "--task-prompt-file", "instructions.md"})
+	cmd.SetArgs([]string{"--tasks", "todo.md", "--task-prompt-file", "instructions.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -136,7 +136,7 @@ func TestNewCmdTasks_TaskPromptMutuallyExclusive(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md", "--task-prompt", "inline", "--task-prompt-file", "file.md"})
+	cmd.SetArgs([]string{"--tasks", "todo.md", "--task-prompt", "inline", "--task-prompt-file", "file.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -155,7 +155,7 @@ func TestNewCmdTasks_SharedFlagDefaults(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md"})
+	cmd.SetArgs([]string{"--tasks", "todo.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -186,6 +186,7 @@ func TestNewCmdTasks_SharedFlagDefaults(t *testing.T) {
 	// Optional fields
 	assert.Empty(t, gotOpts.HooksFile)
 	assert.Empty(t, gotOpts.AppendSystemPrompt)
+	assert.Empty(t, gotOpts.Agent, "Agent should be empty at flag-parse time (set in run function)")
 	assert.Empty(t, gotOpts.Worktree)
 	assert.Empty(t, gotOpts.Image)
 	assert.Empty(t, gotOpts.TaskPrompt)
@@ -206,7 +207,6 @@ func TestNewCmdTasks_AllFlags(t *testing.T) {
 	})
 
 	cmd.SetArgs([]string{
-		"--agent", "myagent",
 		"--tasks", "backlog.md",
 		"--task-prompt", "Do the highest priority task",
 		"--max-loops", "100",
@@ -236,7 +236,6 @@ func TestNewCmdTasks_AllFlags(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
 
-	assert.Equal(t, "myagent", gotOpts.Agent)
 	assert.Equal(t, "backlog.md", gotOpts.TasksFile)
 	assert.Equal(t, "Do the highest priority task", gotOpts.TaskPrompt)
 	assert.Equal(t, 100, gotOpts.MaxLoops)
@@ -268,7 +267,7 @@ func TestNewCmdTasks_JSONOutput(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md", "--json"})
+	cmd.SetArgs([]string{"--tasks", "todo.md", "--json"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -286,15 +285,15 @@ func TestNewCmdTasks_VerboseExclusivity(t *testing.T) {
 	}{
 		{
 			name: "verbose and json",
-			args: []string{"--agent", "dev", "--tasks", "todo.md", "--verbose", "--json"},
+			args: []string{"--tasks", "todo.md", "--verbose", "--json"},
 		},
 		{
 			name: "verbose and quiet",
-			args: []string{"--agent", "dev", "--tasks", "todo.md", "--verbose", "--quiet"},
+			args: []string{"--tasks", "todo.md", "--verbose", "--quiet"},
 		},
 		{
 			name: "verbose and format",
-			args: []string{"--agent", "dev", "--tasks", "todo.md", "--verbose", "--format", "json"},
+			args: []string{"--tasks", "todo.md", "--verbose", "--format", "json"},
 		},
 	}
 
@@ -317,30 +316,31 @@ func TestNewCmdTasks_VerboseExclusivity(t *testing.T) {
 	}
 }
 
-func TestNewCmdTasks_AgentFlag(t *testing.T) {
+func TestNewCmdTasks_NoAgentFlag(t *testing.T) {
+	// The --agent flag is not accepted on tasks (agent names are auto-generated).
 	f, tio := testFactory(t)
 
-	var gotOpts *TasksOptions
-	cmd := NewCmdTasks(f, func(_ context.Context, opts *TasksOptions) error {
-		gotOpts = opts
+	cmd := NewCmdTasks(f, func(_ context.Context, _ *TasksOptions) error {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "myagent", "--tasks", "todo.md"})
+	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
 
 	err := cmd.Execute()
-	require.NoError(t, err)
-	require.NotNil(t, gotOpts)
-	assert.Equal(t, "myagent", gotOpts.Agent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown flag: --agent")
 }
 
-func TestNewCmdTasks_AgentRequired(t *testing.T) {
+func TestNewCmdTasks_AgentEmptyAtFlagParse(t *testing.T) {
+	// Agent is not set by flags — it's populated programmatically in the run function.
 	f, tio := testFactory(t)
 
-	cmd := NewCmdTasks(f, func(_ context.Context, _ *TasksOptions) error {
+	var gotOpts *TasksOptions
+	cmd := NewCmdTasks(f, func(_ context.Context, opts *TasksOptions) error {
+		gotOpts = opts
 		return nil
 	})
 
@@ -350,8 +350,9 @@ func TestNewCmdTasks_AgentRequired(t *testing.T) {
 	cmd.SetErr(tio.ErrOut)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `required flag(s) "agent" not set`)
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	assert.Empty(t, gotOpts.Agent, "Agent should be empty at flag-parse time")
 }
 
 func TestNewCmdTasks_RealRunNeedsDocker(t *testing.T) {
@@ -364,7 +365,7 @@ func TestNewCmdTasks_RealRunNeedsDocker(t *testing.T) {
 	f, tio := testFactoryWithConfig(t)
 
 	cmd := NewCmdTasks(f, nil)
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", tasksPath})
+	cmd.SetArgs([]string{"--tasks", tasksPath})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -383,7 +384,7 @@ func TestNewCmdTasks_FactoryDIWiring(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md"})
+	cmd.SetArgs([]string{"--tasks", "todo.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -409,7 +410,7 @@ func TestNewCmdTasks_FlagsCaptured(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--tasks", "todo.md", "--max-loops", "75"})
+	cmd.SetArgs([]string{"--tasks", "todo.md", "--max-loops", "75"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)

@@ -34,7 +34,9 @@ type LoopOptions struct {
 	// System prompt
 	AppendSystemPrompt string
 
-	// Container
+	// Container — Agent is set programmatically by iterate/tasks run functions
+	// (auto-generated via loop.GenerateAgentName), not exposed as a CLI flag.
+	// Status and reset commands register their own --agent flag independently.
 	Agent    string
 	Worktree string
 	Image    string
@@ -94,9 +96,7 @@ func AddLoopFlags(cmd *cobra.Command, opts *LoopOptions) {
 	flags.StringVar(&opts.AppendSystemPrompt, "append-system-prompt", "",
 		"Additional system prompt instructions appended to the LOOP_STATUS default")
 
-	// Container
-	flags.StringVar(&opts.Agent, "agent", "",
-		"Agent name (identifies container and session)")
+	// Container — Agent is set programmatically (not a CLI flag for iterate/tasks)
 	flags.StringVar(&opts.Worktree, "worktree", "",
 		"Run in a git worktree (optional branch[:base] spec, empty for auto-generated)")
 	flags.StringVar(&opts.Image, "image", "",

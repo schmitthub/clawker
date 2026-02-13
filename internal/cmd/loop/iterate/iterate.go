@@ -68,10 +68,11 @@ func NewCmdIterate(f *cmdutil.Factory, runF func(context.Context, *IterateOption
 		Short: "Run an agent loop with a repeated prompt",
 		Long: `Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
 
-A new container is created for the loop session, hooks are injected, and the
-container is automatically cleaned up when the loop exits. Each iteration starts
-a fresh Claude session (no conversation context carried forward). The agent only
-sees the current codebase state from previous runs.
+Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
+A new container is created, hooks are injected, and the container is automatically
+cleaned up when the loop exits. Each iteration starts a fresh Claude session
+(no conversation context carried forward). The agent only sees the current
+codebase state from previous runs.
 
 The loop exits when:
   - Claude signals completion via a LOOP_STATUS block
@@ -79,25 +80,25 @@ The loop exits when:
   - Maximum iterations reached
   - A timeout is hit`,
 		Example: `  # Run a loop with a prompt
-  clawker loop iterate --agent dev --prompt "Fix all failing tests"
+  clawker loop iterate --prompt "Fix all failing tests"
 
   # Run with a prompt from a file
-  clawker loop iterate --agent dev --prompt-file task.md
+  clawker loop iterate --prompt-file task.md
 
   # Run with custom loop limits
-  clawker loop iterate --agent dev --prompt "Refactor auth module" --max-loops 100
+  clawker loop iterate --prompt "Refactor auth module" --max-loops 100
 
   # Stream all agent output in real time
-  clawker loop iterate --agent dev --prompt "Add tests" --verbose
+  clawker loop iterate --prompt "Add tests" --verbose
 
   # Run in a git worktree for isolation
-  clawker loop iterate --agent dev --prompt "Refactor auth" --worktree feature/auth
+  clawker loop iterate --prompt "Refactor auth" --worktree feature/auth
 
   # Use a specific image
-  clawker loop iterate --agent dev --prompt "Fix tests" --image node:20-slim
+  clawker loop iterate --prompt "Fix tests" --image node:20-slim
 
   # Output final result as JSON
-  clawker loop iterate --agent dev --prompt "Fix tests" --json`,
+  clawker loop iterate --prompt "Fix tests" --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.flags = cmd.Flags()
 			if runF != nil {
@@ -118,7 +119,6 @@ The loop exits when:
 	opts.Format = cmdutil.AddFormatFlags(cmd)
 
 	// Requirements and mutual exclusivity
-	_ = cmd.MarkFlagRequired("agent")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.MarkFlagsOneRequired("prompt", "prompt-file")
 	shared.MarkVerboseExclusive(cmd)
@@ -136,7 +136,10 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		return err
 	}
 
-	// 2. Get config and Docker client
+	// 2. Auto-generate agent name for this loop session
+	opts.Agent = loop.GenerateAgentName()
+
+	// 3. Get config and Docker client
 	cfgGateway := opts.Config()
 
 	client, err := opts.Client(ctx)
@@ -144,7 +147,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// 3. Create and start container with hooks
+	// 4. Create and start container with hooks
 	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
 		Client:       client,
 		Config:       cfgGateway,
@@ -161,19 +164,19 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	}
 	defer cleanup()
 
-	// 4. Create runner
+	// 5. Create runner
 	runner, err := loop.NewRunner(client)
 	if err != nil {
 		return fmt.Errorf("creating loop runner: %w", err)
 	}
 
-	// 5. Build runner options
+	// 6. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
 		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt,
 		opts.flags, cfgGateway.Project.Loop,
 	)
 
-	// 6. Set up monitor
+	// 7. Set up monitor
 	monitor := loop.NewMonitor(loop.MonitorOptions{
 		Writer:   ios.ErrOut,
 		MaxLoops: runnerOpts.MaxLoops,
@@ -181,29 +184,29 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	})
 	runnerOpts.Monitor = monitor
 
-	// 7. If verbose, stream output chunks to stderr
+	// 8. If verbose, stream output chunks to stderr
 	if opts.Verbose {
 		runnerOpts.OnOutput = func(chunk []byte) {
 			_, _ = ios.ErrOut.Write(chunk)
 		}
 	}
 
-	// 8. Print start message
+	// 9. Print start message
 	fmt.Fprintf(ios.ErrOut, "%s Starting loop iterate for %s.%s (%d max loops)\n",
 		cs.InfoIcon(), setup.Project, setup.AgentName, runnerOpts.MaxLoops)
 
-	// 9. Run the loop
+	// 10. Run the loop
 	result, err := runner.Run(ctx, runnerOpts)
 	if err != nil {
 		return err
 	}
 
-	// 10. Write result
+	// 11. Write result
 	if writeErr := shared.WriteResult(ios.Out, ios.ErrOut, result, opts.Format); writeErr != nil {
 		return writeErr
 	}
 
-	// 11. If loop ended with error, return SilentError (monitor already displayed it)
+	// 12. If loop ended with error, return SilentError (monitor already displayed it)
 	if result.Error != nil {
 		return cmdutil.SilentError
 	}

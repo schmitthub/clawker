@@ -6,10 +6,11 @@ Run an agent loop with a repeated prompt
 
 Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
 
-A new container is created for the loop session, hooks are injected, and the
-container is automatically cleaned up when the loop exits. Each iteration starts
-a fresh Claude session (no conversation context carried forward). The agent only
-sees the current codebase state from previous runs.
+Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
+A new container is created, hooks are injected, and the container is automatically
+cleaned up when the loop exits. Each iteration starts a fresh Claude session
+(no conversation context carried forward). The agent only sees the current
+codebase state from previous runs.
 
 The loop exits when:
   - Claude signals completion via a LOOP_STATUS block
@@ -25,31 +26,30 @@ clawker loop iterate [flags]
 
 ```
   # Run a loop with a prompt
-  clawker loop iterate --agent dev --prompt "Fix all failing tests"
+  clawker loop iterate --prompt "Fix all failing tests"
 
   # Run with a prompt from a file
-  clawker loop iterate --agent dev --prompt-file task.md
+  clawker loop iterate --prompt-file task.md
 
   # Run with custom loop limits
-  clawker loop iterate --agent dev --prompt "Refactor auth module" --max-loops 100
+  clawker loop iterate --prompt "Refactor auth module" --max-loops 100
 
   # Stream all agent output in real time
-  clawker loop iterate --agent dev --prompt "Add tests" --verbose
+  clawker loop iterate --prompt "Add tests" --verbose
 
   # Run in a git worktree for isolation
-  clawker loop iterate --agent dev --prompt "Refactor auth" --worktree feature/auth
+  clawker loop iterate --prompt "Refactor auth" --worktree feature/auth
 
   # Use a specific image
-  clawker loop iterate --agent dev --prompt "Fix tests" --image node:20-slim
+  clawker loop iterate --prompt "Fix tests" --image node:20-slim
 
   # Output final result as JSON
-  clawker loop iterate --agent dev --prompt "Fix tests" --json
+  clawker loop iterate --prompt "Fix tests" --json
 ```
 
 ### Options
 
 ```
-      --agent string                      Agent name (identifies container and session)
       --append-system-prompt string       Additional system prompt instructions appended to the LOOP_STATUS default
       --calls-per-hour int                API call rate limit per hour (0 to disable) (default 100)
       --completion-threshold int          Completion indicators required for strict completion (default 2)

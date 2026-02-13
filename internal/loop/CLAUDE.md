@@ -193,6 +193,11 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 - `Format/Print LoopStart(loopNum)`, `Format/Print LoopProgress(loopNum, *Status, *CircuitBreaker)`, `Format/Print LoopEnd(loopNum, *Status, err, outputSize, elapsed)`, `Format/Print Result(*Result)` — Format returns string, Print writes to opts.Writer
 - `FormatRateLimitWait(resetTime time.Time) string`, `FormatAPILimitError(isInteractive bool) string` — format-only
 
+### Naming (`naming.go`)
+
+- `GenerateAgentName() string` — creates a unique agent name for loop sessions. Format: `loop-<adjective>-<noun>` using Docker-style random names via `docker.GenerateRandomName()`. Always valid Docker resource names.
+- `loopAgentPrefix` (unexported const) — `"loop"`, prepended to all auto-generated names.
+
 ### TUI (`tui/`)
 
 - `Model` — BubbleTea model for loop monitor dashboard. Implements `tea.Model` (Init, Update, View).
@@ -201,4 +206,4 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, prompt, ratelimit, session, stream, tui/model.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, naming, prompt, ratelimit, session, stream, tui/model.

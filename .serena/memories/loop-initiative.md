@@ -21,7 +21,7 @@
 | 4 | Task 10: Hook injection system (types, defaults, resolution, serialization) | `complete` (1e2b961) | opus |
 | 4 | Task 11: Default hook set + user override mechanism | `merged into Task 10` | — |
 | 5 | Task 12: Container lifecycle integration | `complete` | opus |
-| 5 | Task 13: Auto agent naming | `pending` | — |
+| 5 | Task 13: Auto agent naming | `complete` | opus |
 | 5 | Task 14: Session concurrency detection + worktree support | `pending` | — |
 | 6 | Task 15: TUI dashboard (default view) | `pending` | — |
 | 6 | Task 16: TUI detach → minimal mode | `pending` | — |
@@ -46,6 +46,15 @@
 - **containerID[:12] pitfall**: Test IDs like "abc123" are shorter than 12 chars, causing slice bounds panic. Added length guard before truncation.
 - Code reviewer found zero issues above threshold.
 - Test count: 3894 → 3906 (+12 net). 10 new in lifecycle_test.go, 1 new DI wiring test in iterate_test.go, 1 new DI wiring test in tasks_test.go. All pass.
+
+**Task 13:**
+- Created `internal/loop/naming.go` (13 lines) with `GenerateAgentName()` — produces `loop-<adjective>-<noun>` names using `docker.GenerateRandomName()`. Reuses the existing Docker-style word lists (~100 adjectives × ~200 nouns = ~20,000 combinations) without code duplication.
+- **Design decision**: Reused `docker.GenerateRandomName()` rather than duplicating word lists. `internal/loop` already imports `internal/docker` (for `NewRunner`), so no new dependency introduced.
+- **Naming format**: `loop-brave-turing` style — memorable, human-readable, valid Docker resource names. The `loop-` prefix clearly identifies these as auto-generated loop session agents vs user-named agents.
+- **Flag removal**: Removed `--agent` CLI flag from `AddLoopFlags()` while keeping the `Agent` field on `LoopOptions` as a programmatically-set field. The `iterateRun`/`tasksRun` functions set `opts.Agent = loop.GenerateAgentName()` before calling `SetupLoopContainer`. This is the least-disruptive approach — `SetupLoopContainer` reads `cfg.LoopOpts.Agent` unchanged.
+- **Status/reset unaffected**: These commands register their own `--agent` flag independently on their own options structs — they don't use `AddLoopFlags`. Users reference auto-generated names (displayed in output) when using `loop status --agent loop-brave-turing`.
+- **Test changes**: Removed `TestAgentFlag` and `TestAgentRequired` from iterate and tasks (replaced with `TestNoAgentFlag` and `TestAgentEmptyAtFlagParse`). All test args stripped of `--agent dev`. Net change: -4 old tests + 8 new tests = +4 net.
+- Test count: 3906 → 3910 (+4 net). All pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.

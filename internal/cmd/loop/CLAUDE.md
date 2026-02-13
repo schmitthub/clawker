@@ -18,8 +18,8 @@ Autonomous Claude Code loops — repeated execution with circuit breaker protect
 
 ## Subcommands
 
-- `loop iterate --agent <name> --prompt "..." | --prompt-file <path>` — run an agent loop with a repeated prompt
-- `loop tasks --agent <name> --tasks <file> [--task-prompt "..." | --task-prompt-file <path>]` — run an agent loop driven by a task file
+- `loop iterate --prompt "..." | --prompt-file <path>` — run an agent loop with a repeated prompt (agent name auto-generated)
+- `loop tasks --tasks <file> [--task-prompt "..." | --task-prompt-file <path>]` — run an agent loop driven by a task file (agent name auto-generated)
 - `loop status --agent <name>` — show session status
 - `loop reset --agent <name>` — reset circuit breaker after stagnation
 
@@ -46,10 +46,10 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages. C
 | Execution | `--skip-permissions`, `--calls-per-hour`, `--reset-circuit` |
 | Hooks | `--hooks-file` |
 | System prompt | `--append-system-prompt` |
-| Container | `--agent` (required), `--worktree`, `--image` |
+| Container | `--worktree`, `--image` |
 | Output | `-v`/`--verbose` (plus `FormatFlags` for `--json`/`--quiet`/`--format`) |
 
-**Flag registration**: `AddLoopFlags(cmd, opts)` registers shared flags. Call before `AddFormatFlags`. `MarkVerboseExclusive(cmd)` marks `--verbose` as mutually exclusive with `--json`/`--quiet`/`--format`. Flag defaults use `loop.Default*` constants as single source of truth. `--agent` is registered in `AddLoopFlags` but marked required in each subcommand.
+**Flag registration**: `AddLoopFlags(cmd, opts)` registers shared flags. Call before `AddFormatFlags`. `MarkVerboseExclusive(cmd)` marks `--verbose` as mutually exclusive with `--json`/`--quiet`/`--format`. Flag defaults use `loop.Default*` constants as single source of truth. The `Agent` field on `LoopOptions` is set programmatically by run functions via `loop.GenerateAgentName()` — not exposed as a CLI flag on iterate/tasks. Status and reset register their own `--agent` flag independently.
 
 ## Shared Resolve (`shared/resolve.go`)
 
@@ -86,13 +86,13 @@ Container lifecycle management for loop commands:
 
 Embeds `*shared.LoopOptions`. Adds `--prompt` / `-p` / `--prompt-file` (mutually exclusive, one required), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: IOStreams, TUI, Client, Config, GitManager, HostProxy, SocketBridge, Prompter, Version.
 
-**Run flow**: ResolvePrompt → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolvePrompt → GenerateAgentName → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
 
 ## TasksOptions
 
 Embeds `*shared.LoopOptions`. Adds `--tasks` (required), `--task-prompt` / `--task-prompt-file` (mutually exclusive, optional), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: same as IterateOptions.
 
-**Run flow**: ResolveTasksPrompt → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolveTasksPrompt → GenerateAgentName → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
 
 ## Loop Strategies
 
@@ -103,4 +103,4 @@ Loop commands handle full container lifecycle: create → hooks → start → lo
 
 ## Testing
 
-Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags (including `--agent`), defaults, all-flags round-trip, output mode combinations, verbose exclusivity, agent flag wiring, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.
+Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags, defaults, all-flags round-trip, output mode combinations, verbose exclusivity, no-agent-flag rejection, agent-empty-at-parse verification, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.

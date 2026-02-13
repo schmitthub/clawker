@@ -6,10 +6,11 @@ Run an agent loop driven by a task file
 
 Run Claude Code in an autonomous loop driven by a task file.
 
-A new container is created for the loop session, hooks are injected, and the
-container is automatically cleaned up when the loop exits. Each iteration, the
-agent reads the task file, picks an open task, completes it, and marks it done.
-Clawker manages the loop — the agent LLM handles task selection and completion.
+Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
+A new container is created, hooks are injected, and the container is automatically
+cleaned up when the loop exits. Each iteration, the agent reads the task file,
+picks an open task, completes it, and marks it done. Clawker manages the loop —
+the agent LLM handles task selection and completion.
 
 The loop exits when:
   - All tasks are completed (agent signals via LOOP_STATUS)
@@ -25,28 +26,27 @@ clawker loop tasks [flags]
 
 ```
   # Run a task-driven loop
-  clawker loop tasks --agent dev --tasks todo.md
+  clawker loop tasks --tasks todo.md
 
   # Run with a custom task prompt template
-  clawker loop tasks --agent dev --tasks todo.md --task-prompt-file instructions.md
+  clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
 
   # Run with a custom inline task prompt
-  clawker loop tasks --agent dev --tasks backlog.md --task-prompt "Pick the highest priority task"
+  clawker loop tasks --tasks backlog.md --task-prompt "Pick the highest priority task"
 
   # Use a specific image
-  clawker loop tasks --agent dev --tasks todo.md --image node:20-slim
+  clawker loop tasks --tasks todo.md --image node:20-slim
 
   # Stream all agent output in real time
-  clawker loop tasks --agent dev --tasks todo.md --verbose
+  clawker loop tasks --tasks todo.md --verbose
 
   # Output final result as JSON
-  clawker loop tasks --agent dev --tasks todo.md --json
+  clawker loop tasks --tasks todo.md --json
 ```
 
 ### Options
 
 ```
-      --agent string                      Agent name (identifies container and session)
       --append-system-prompt string       Additional system prompt instructions appended to the LOOP_STATUS default
       --calls-per-hour int                API call rate limit per hour (0 to disable) (default 100)
       --completion-threshold int          Completion indicators required for strict completion (default 2)

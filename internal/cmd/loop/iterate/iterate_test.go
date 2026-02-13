@@ -56,7 +56,7 @@ func TestNewCmdIterate(t *testing.T) {
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "Fix tests"})
+	cmd.SetArgs([]string{"--prompt", "Fix tests"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -77,7 +77,7 @@ func TestNewCmdIterate_PromptShorthand(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "-p", "Short prompt"})
+	cmd.SetArgs([]string{"-p", "Short prompt"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -97,7 +97,7 @@ func TestNewCmdIterate_PromptFile(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt-file", "task.md"})
+	cmd.SetArgs([]string{"--prompt-file", "task.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -116,7 +116,7 @@ func TestNewCmdIterate_PromptAndPromptFileMutuallyExclusive(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test", "--prompt-file", "file.md"})
+	cmd.SetArgs([]string{"--prompt", "test", "--prompt-file", "file.md"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -133,7 +133,7 @@ func TestNewCmdIterate_RequiresPromptOrPromptFile(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev"})
+	cmd.SetArgs([]string{})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -152,7 +152,7 @@ func TestNewCmdIterate_SharedFlagDefaults(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test"})
+	cmd.SetArgs([]string{"--prompt", "test"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -183,6 +183,7 @@ func TestNewCmdIterate_SharedFlagDefaults(t *testing.T) {
 	// Hooks, system prompt, container defaults
 	assert.Empty(t, gotOpts.HooksFile)
 	assert.Empty(t, gotOpts.AppendSystemPrompt)
+	assert.Empty(t, gotOpts.Agent, "Agent should be empty at flag-parse time (set in run function)")
 	assert.Empty(t, gotOpts.Worktree)
 	assert.Empty(t, gotOpts.Image)
 
@@ -201,7 +202,6 @@ func TestNewCmdIterate_AllFlags(t *testing.T) {
 	})
 
 	cmd.SetArgs([]string{
-		"--agent", "myagent",
 		"--prompt", "Do everything",
 		"--max-loops", "100",
 		"--stagnation-threshold", "5",
@@ -230,7 +230,6 @@ func TestNewCmdIterate_AllFlags(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
 
-	assert.Equal(t, "myagent", gotOpts.Agent)
 	assert.Equal(t, "Do everything", gotOpts.Prompt)
 	assert.Equal(t, 100, gotOpts.MaxLoops)
 	assert.Equal(t, 5, gotOpts.StagnationThreshold)
@@ -261,7 +260,7 @@ func TestNewCmdIterate_JSONOutput(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test", "--json"})
+	cmd.SetArgs([]string{"--prompt", "test", "--json"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -281,7 +280,7 @@ func TestNewCmdIterate_QuietOutput(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test", "--quiet"})
+	cmd.SetArgs([]string{"--prompt", "test", "--quiet"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -299,15 +298,15 @@ func TestNewCmdIterate_VerboseExclusivity(t *testing.T) {
 	}{
 		{
 			name: "verbose and json",
-			args: []string{"--agent", "dev", "--prompt", "test", "--verbose", "--json"},
+			args: []string{"--prompt", "test", "--verbose", "--json"},
 		},
 		{
 			name: "verbose and quiet",
-			args: []string{"--agent", "dev", "--prompt", "test", "--verbose", "--quiet"},
+			args: []string{"--prompt", "test", "--verbose", "--quiet"},
 		},
 		{
 			name: "verbose and format",
-			args: []string{"--agent", "dev", "--prompt", "test", "--verbose", "--format", "json"},
+			args: []string{"--prompt", "test", "--verbose", "--format", "json"},
 		},
 	}
 
@@ -330,30 +329,31 @@ func TestNewCmdIterate_VerboseExclusivity(t *testing.T) {
 	}
 }
 
-func TestNewCmdIterate_AgentFlag(t *testing.T) {
+func TestNewCmdIterate_NoAgentFlag(t *testing.T) {
+	// The --agent flag is not accepted on iterate (agent names are auto-generated).
 	f, tio := testFactory(t)
 
-	var gotOpts *IterateOptions
-	cmd := NewCmdIterate(f, func(_ context.Context, opts *IterateOptions) error {
-		gotOpts = opts
+	cmd := NewCmdIterate(f, func(_ context.Context, _ *IterateOptions) error {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "myagent", "--prompt", "test"})
+	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
 
 	err := cmd.Execute()
-	require.NoError(t, err)
-	require.NotNil(t, gotOpts)
-	assert.Equal(t, "myagent", gotOpts.Agent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown flag: --agent")
 }
 
-func TestNewCmdIterate_AgentRequired(t *testing.T) {
+func TestNewCmdIterate_AgentEmptyAtFlagParse(t *testing.T) {
+	// Agent is not set by flags — it's populated programmatically in the run function.
 	f, tio := testFactory(t)
 
-	cmd := NewCmdIterate(f, func(_ context.Context, _ *IterateOptions) error {
+	var gotOpts *IterateOptions
+	cmd := NewCmdIterate(f, func(_ context.Context, opts *IterateOptions) error {
+		gotOpts = opts
 		return nil
 	})
 
@@ -363,8 +363,9 @@ func TestNewCmdIterate_AgentRequired(t *testing.T) {
 	cmd.SetErr(tio.ErrOut)
 
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `required flag(s) "agent" not set`)
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	assert.Empty(t, gotOpts.Agent, "Agent should be empty at flag-parse time")
 }
 
 func TestNewCmdIterate_RealRunNeedsDocker(t *testing.T) {
@@ -373,7 +374,7 @@ func TestNewCmdIterate_RealRunNeedsDocker(t *testing.T) {
 	f, tio := testFactoryWithConfig(t)
 
 	cmd := NewCmdIterate(f, nil)
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test"})
+	cmd.SetArgs([]string{"--prompt", "test"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -392,7 +393,7 @@ func TestNewCmdIterate_FactoryDIWiring(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test"})
+	cmd.SetArgs([]string{"--prompt", "test"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
@@ -420,7 +421,7 @@ func TestNewCmdIterate_FlagsCaptured(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test", "--max-loops", "75"})
+	cmd.SetArgs([]string{"--prompt", "test", "--max-loops", "75"})
 	cmd.SetIn(tio.In)
 	cmd.SetOut(tio.Out)
 	cmd.SetErr(tio.ErrOut)
