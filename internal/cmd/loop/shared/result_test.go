@@ -100,6 +100,24 @@ func TestWriteResult_JSON(t *testing.T) {
 	assert.Equal(t, "agent signaled completion", parsed.ExitReason)
 }
 
+func TestWriteResult_Default(t *testing.T) {
+	result := &loop.Result{
+		LoopsCompleted: 5,
+		ExitReason:     "agent signaled completion",
+		Session:        &loop.Session{},
+	}
+
+	var stdout, stderr bytes.Buffer
+	format := &cmdutil.FormatFlags{} // default mode
+
+	err := WriteResult(&stdout, &stderr, result, format)
+	require.NoError(t, err)
+
+	// Default mode returns nil and writes nothing — the Monitor handles the summary.
+	assert.Empty(t, stdout.String(), "default mode should write nothing to stdout")
+	assert.Empty(t, stderr.String(), "default mode should write nothing to stderr")
+}
+
 func TestWriteResult_Quiet(t *testing.T) {
 	result := &loop.Result{
 		LoopsCompleted: 5,

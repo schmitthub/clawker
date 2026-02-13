@@ -25,7 +25,7 @@
 | 5 | Task 14: Session concurrency detection + worktree support | `complete` | opus |
 | 6 | Task 15: TUI dashboard (default view) | `complete` | opus |
 | 6 | Task 16: TUI detach → minimal mode | `complete` | opus |
-| 6 | Task 17: Output mode switching (verbose, json, quiet) | `pending` | — |
+| 6 | Task 17: Output mode switching (verbose, json, quiet) | `complete` | opus |
 | 7 | Task 18: Config migration (ralph: → loop:) | `pending` | — |
 | 7 | Task 19: Integration tests | `pending` | — |
 | 7 | Task 20: Documentation update (CLAUDE.md, CLI-VERBS, memories) | `pending` | — |
@@ -88,6 +88,13 @@
 - Updated help line from `"q quit"` to `"q detach  ctrl+c stop"`.
 - Code reviewer found zero issues above threshold.
 - Test count: 3957 → 3969 (+12 net). 3 updated key-handling tests (detach q, detach esc, interrupt ctrl+c), 11 new drain/format tests. All pass.
+
+**Task 17:**
+- Added `showProgress` guard in `RunLoop`'s non-TUI branch: `showProgress := !cfg.Format.Quiet && !cfg.Format.IsJSON()`. Monitor creation and "Starting loop..." message only appear when `showProgress` is true. This ensures `--quiet` and `--json` modes produce clean output with no progress noise on stderr.
+- The change was minimal (3 lines added, existing code indented) because the Runner already handles `opts.Monitor == nil` gracefully — all Monitor print calls in `loop.go` are guarded by `if opts.Monitor != nil`.
+- **Testing technique**: Used a pre-cancelled context (`context.WithCancel` + immediate `cancel()`) to make `Runner.Run` exit immediately on the first loop iteration without needing Docker. This avoids the need for `dockertest.NewFakeClient` in unit tests. Key gotcha: `MaxLoops=0` doesn't skip the loop — `Runner.Run` defaults `MaxLoops <= 0` to `DefaultMaxLoops` (50).
+- Added `TestWriteResult_Default` confirming default mode returns nil and writes nothing (Monitor handles summary display).
+- Test count: 3969 → 3977 (+8 net). 6 new mode selection tests, 1 new result test, 1 test import update. All pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.

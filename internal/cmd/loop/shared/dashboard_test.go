@@ -2,13 +2,16 @@ package shared
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -385,6 +388,87 @@ func TestDrainLoopEventsAsText_IgnoresOutputEvents(t *testing.T) {
 // ---------------------------------------------------------------------------
 // formatMinimalDuration tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// RunLoop mode selection tests
+// ---------------------------------------------------------------------------
+
+// TestRunLoop_ModeSelection verifies that the correct output mode is selected
+// for each combination of TTY status and format flags. It uses MaxLoops=0 so
+// the runner returns immediately without needing Docker.
+//
+// TTY default (TUI mode) is NOT tested here — it enters the BubbleTea branch
+// which requires a real terminal. TUI behavior is covered by dashboard model tests.
+func TestRunLoop_ModeSelection(t *testing.T) {
+	tests := []struct {
+		name         string
+		tty          bool
+		verbose      bool
+		json         bool
+		quiet        bool
+		wantStartMsg bool // "Starting loop" printed to stderr
+	}{
+		// TTY modes (non-TUI paths — TUI default skipped)
+		{"TTY verbose", true, true, false, false, true},
+		{"TTY json", true, false, true, false, false},
+		{"TTY quiet", true, false, false, true, false},
+		// Non-TTY modes
+		{"non-TTY default", false, false, false, false, true},
+		{"non-TTY json", false, false, true, false, false},
+		{"non-TTY quiet", false, false, false, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp stores for the Runner.
+			// Use a pre-cancelled context so Run exits immediately on the first
+			// loop iteration without needing Docker.
+			tmpDir := t.TempDir()
+			store := loop.NewSessionStore(filepath.Join(tmpDir, "sessions"))
+			history := loop.NewHistoryStore(filepath.Join(tmpDir, "history"))
+			runner := loop.NewRunnerWith(nil, store, history)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // pre-cancel so Run exits immediately
+
+			tio := iostreams.NewTestIOStreams()
+			tio.SetInteractive(tt.tty)
+
+			format := &cmdutil.FormatFlags{Quiet: tt.quiet}
+			if tt.json {
+				format.Format, _ = cmdutil.ParseFormat("json")
+			}
+
+			cfg := RunLoopConfig{
+				Ctx:    ctx,
+				Runner: runner,
+				RunnerOpts: loop.Options{
+					MaxLoops:      1,
+					Project:       "testproj",
+					Agent:         "testagent",
+					ContainerName: "clawker.testproj.testagent",
+				},
+				TUI:         tui.NewTUI(tio.IOStreams),
+				IOStreams:    tio.IOStreams,
+				Setup:       &LoopContainerResult{AgentName: "testagent", Project: "testproj"},
+				Format:      format,
+				Verbose:     tt.verbose,
+				CommandName: "iterate",
+			}
+
+			result, err := RunLoop(cfg)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			stderr := tio.ErrBuf.String()
+			if tt.wantStartMsg {
+				assert.Contains(t, stderr, "Starting loop", "expected start message in stderr")
+			} else {
+				assert.NotContains(t, stderr, "Starting loop", "expected no start message in stderr")
+			}
+		})
+	}
+}
 
 func TestFormatMinimalDuration(t *testing.T) {
 	tests := []struct {

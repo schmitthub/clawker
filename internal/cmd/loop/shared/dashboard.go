@@ -89,21 +89,26 @@ func RunLoop(cfg RunLoopConfig) (*loop.Result, error) {
 			return nil, runErr
 		}
 	} else {
-		monitor := loop.NewMonitor(loop.MonitorOptions{
-			Writer:   ios.ErrOut,
-			MaxLoops: runnerOpts.MaxLoops,
-			Verbose:  cfg.Verbose,
-		})
-		runnerOpts.Monitor = monitor
+		// Quiet and JSON modes suppress progress output — only final result matters.
+		showProgress := !cfg.Format.Quiet && !cfg.Format.IsJSON()
+
+		if showProgress {
+			monitor := loop.NewMonitor(loop.MonitorOptions{
+				Writer:   ios.ErrOut,
+				MaxLoops: runnerOpts.MaxLoops,
+				Verbose:  cfg.Verbose,
+			})
+			runnerOpts.Monitor = monitor
+
+			fmt.Fprintf(ios.ErrOut, "%s Starting loop %s for %s.%s (%d max loops)\n",
+				cs.InfoIcon(), cfg.CommandName, cfg.Setup.Project, cfg.Setup.AgentName, runnerOpts.MaxLoops)
+		}
 
 		if cfg.Verbose {
 			runnerOpts.OnOutput = func(chunk []byte) {
 				_, _ = io.WriteString(ios.ErrOut, string(chunk))
 			}
 		}
-
-		fmt.Fprintf(ios.ErrOut, "%s Starting loop %s for %s.%s (%d max loops)\n",
-			cs.InfoIcon(), cfg.CommandName, cfg.Setup.Project, cfg.Setup.AgentName, runnerOpts.MaxLoops)
 
 		var runErr error
 		result, runErr = cfg.Runner.Run(cfg.Ctx, runnerOpts)
