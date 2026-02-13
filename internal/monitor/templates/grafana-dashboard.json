@@ -659,13 +659,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (project, agent) (increase(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum by (project, agent) (max by (project, agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range])))",
           "instant": true,
           "legendFormat": "{{project}}/{{agent}} commits",
           "refId": "A"
         },
         {
-          "expr": "sum by (project, agent) (increase(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum by (project, agent) (max by (project, agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range])))",
           "instant": true,
           "legendFormat": "{{project}}/{{agent}} PRs",
           "refId": "B"
