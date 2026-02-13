@@ -215,8 +215,9 @@ process.stdin.on('end', () => {
     );
     process.exit(2);
 
-  } catch (_) {
-    // JSON parse error or unexpected issue — allow stop
+  } catch (e) {
+    // Unexpected error (TypeError, EPERM, etc.) — log and allow stop
+    process.stderr.write('stop-check.js: unexpected error: ' + e.message + '\n');
     process.exit(0);
   }
 });
@@ -232,8 +233,9 @@ function findTranscript(claudeDir, sessionId) {
         return candidate;
       }
     }
-  } catch (_) {
+  } catch (e) {
     // Directory doesn't exist or isn't readable
+    process.stderr.write('stop-check.js: cannot read claude dir: ' + e.message + '\n');
   }
   return null;
 }

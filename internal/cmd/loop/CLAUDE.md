@@ -74,11 +74,11 @@ Output mode selection, event bridge, and TUI detach handling for loop commands:
 - `RunLoopConfig` — all inputs for `RunLoop`: Runner, RunnerOpts, TUI, IOStreams, Setup, Format, Verbose, CommandName
 - `RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error)` — consolidated loop execution with output mode selection. Context passed as first parameter (not stored in struct). If stderr is a TTY and not verbose/quiet/json, uses TUI dashboard; otherwise falls back to text Monitor (verbose/non-TTY default) or silent execution (quiet/json). Shared by iterate and tasks commands. Handles three TUI exit paths: normal completion, detach (q/Esc), and interrupt (Ctrl+C).
 - `WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Does NOT close the channel — the caller's goroutine does that.
-- `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines (`● [Loop N] Running...`, `✓ [Loop N] STATUS — tasks, files (duration)`). Returns when the channel is closed (runner finished).
+- `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines using semantic icon methods (`cs.InfoIcon()`, `cs.SuccessIcon()`, `cs.FailureIcon()`, `cs.WarningIcon()`). Returns when the channel is closed (runner finished).
 - `formatMinimalDuration(d time.Duration) string` — formats duration for minimal text output.
 - `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine. Dropped events are logged via `logger.Warn`.
 
-**TUI detach flow**: When the user presses q/Esc in the TUI, `RunLoop` prints a transition message and calls `drainLoopEventsAsText` to continue consuming events as minimal text. The runner goroutine keeps running — the channel close signals completion. Ctrl+C cancels the runner context (via `context.WithCancel`) and drains the channel to let the goroutine exit cleanly.
+**TUI detach flow**: When the user presses q/Esc in the TUI, `RunLoop` prints a transition message and calls `drainLoopEventsAsText` to continue consuming events as minimal text. The runner goroutine keeps running — the channel close signals completion. Ctrl+C cancels the runner context (via `context.WithCancel`) and drains the channel to let the goroutine exit cleanly. Dashboard errors also cancel the runner and drain the channel to prevent goroutine leaks.
 
 **Concurrency model**: The runner goroutine writes `result`/`runErr`, then `close(ch)` (deferred). The main goroutine reads from `ch` until closed, then reads `result`/`runErr`. The channel close provides the happens-before guarantee.
 
@@ -103,7 +103,7 @@ Container lifecycle management for loop commands:
 - `SetupLoopContainer(ctx, cfg) (*LoopContainerResult, func(), error)` — creates container via `container/shared.CreateContainer`, injects hooks, starts container, returns cleanup function
 - `InjectLoopHooks(ctx, containerID, hooksFile, copyFn) error` — resolves hooks (default or custom), writes settings.json + hook scripts to container
 
-**Container lifecycle flow**: Image resolution → CreateContainer (with spinner) → InjectLoopHooks (settings.json + scripts) → ContainerStart → SocketBridge setup. Cleanup function (deferred) stops and removes container with 30s timeout using `context.Background()`.
+**Container lifecycle flow**: Image resolution → CreateContainer (with spinner) → InjectLoopHooks (settings.json + scripts) → ContainerStart → SocketBridge setup. Cleanup function (deferred) stops and removes container with 30s timeout using `context.Background()`. Socket bridge failures and cleanup failures are logged to file AND surfaced to stderr so users see them.
 
 **Hook injection**: Writes `settings.json` to `/home/claude/.claude/` with hook config (overwrites any existing settings). Hook scripts (e.g., stop-check.js) written to absolute paths in container. Custom hooks (`--hooks-file`) replace defaults entirely with no script files.
 

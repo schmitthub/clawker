@@ -264,7 +264,8 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 			Type EventType `json:"type"`
 		}
 		if err := json.Unmarshal(line, &envelope); err != nil {
-			continue // skip malformed lines
+			logger.Debug().Err(err).Int("line_len", len(line)).Msg("skipping malformed stream line")
+			continue
 		}
 
 		switch envelope.Type {

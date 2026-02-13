@@ -177,6 +177,8 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		defer cancel()
 		if err := cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true); err != nil {
 			logger.Warn().Err(err).Str("container", containerName).Msg("failed to clean up loop container")
+			fmt.Fprintf(ios.ErrOut, "%s Failed to clean up container %s: %v\n",
+				cs.WarningIcon(), containerName, err)
 		} else {
 			logger.Debug().Str("container", containerName).Msg("cleaned up loop container")
 		}
@@ -205,6 +207,8 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
 		if err := cfg.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 			logger.Warn().Err(err).Msg("failed to start socket bridge for loop container")
+			fmt.Fprintf(ios.ErrOut, "%s Socket bridge failed: %v (GPG/SSH forwarding may not work)\n",
+				cs.WarningIcon(), err)
 		}
 	}
 

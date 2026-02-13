@@ -61,6 +61,9 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 			MaxLoops:  runnerOpts.MaxLoops,
 		}, ch)
 		if dashResult.Err != nil {
+			runCancel()
+			for range ch {
+			}
 			return nil, fmt.Errorf("dashboard error: %w", dashResult.Err)
 		}
 
@@ -128,12 +131,12 @@ func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui
 	for ev := range ch {
 		switch ev.Kind {
 		case tui.LoopDashEventIterStart:
-			fmt.Fprintf(w, "%s [Loop %d] Running...\n", cs.Muted("●"), ev.Iteration)
+			fmt.Fprintf(w, "%s [Loop %d] Running...\n", cs.InfoIcon(), ev.Iteration)
 
 		case tui.LoopDashEventIterEnd:
-			icon := cs.Green("✓")
+			icon := cs.SuccessIcon()
 			if ev.Error != nil {
-				icon = cs.Error("✗")
+				icon = cs.FailureIcon()
 			}
 
 			detail := ""
@@ -154,11 +157,11 @@ func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui
 			fmt.Fprintf(w, "%s [Loop %d] %s%s%s\n", icon, ev.Iteration, statusText, detail, durStr)
 
 		case tui.LoopDashEventRateLimit:
-			fmt.Fprintf(w, "%s Rate limit: %d/%d remaining\n", cs.Warning("⚠"), ev.RateRemaining, ev.RateLimit)
+			fmt.Fprintf(w, "%s Rate limit: %d/%d remaining\n", cs.WarningIcon(), ev.RateRemaining, ev.RateLimit)
 
 		case tui.LoopDashEventComplete:
 			if ev.Error != nil {
-				fmt.Fprintf(w, "%s Loop ended: %s (%s)\n", cs.Error("✗"), ev.ExitReason, ev.Error)
+				fmt.Fprintf(w, "%s Loop ended: %s (%s)\n", cs.FailureIcon(), ev.ExitReason, ev.Error)
 			} else if ev.ExitReason != "" {
 				fmt.Fprintf(w, "%s Loop completed: %s\n", cs.InfoIcon(), ev.ExitReason)
 			}

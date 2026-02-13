@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/docker/docker/pkg/stdcopy"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/build"
 	"github.com/moby/moby/api/types/container"
@@ -413,6 +414,25 @@ func (f *FakeClient) SetupExecAttach() {
 		serverConn.Close()
 		return client.ExecAttachResult{
 			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.raw-stream"),
+		}, nil
+	}
+}
+
+// SetupExecAttachWithOutput configures the fake to return a hijacked connection
+// for ExecAttach that writes the given data as stdcopy-framed stdout.
+// This allows ExecCapture (which uses stdcopy.StdCopy) to demultiplex
+// the output correctly. The server side is closed after writing, so the
+// client side reads the data then gets EOF.
+func (f *FakeClient) SetupExecAttachWithOutput(data string) {
+	f.FakeAPI.ExecAttachFn = func(_ context.Context, _ string, _ client.ExecAttachOptions) (client.ExecAttachResult, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			w := stdcopy.NewStdWriter(serverConn, stdcopy.Stdout)
+			_, _ = w.Write([]byte(data))
+		}()
+		return client.ExecAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
 		}, nil
 	}
 }

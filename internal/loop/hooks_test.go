@@ -207,6 +207,17 @@ func TestStopCheckScript_ContainsExpectedPatterns(t *testing.T) {
 		"stop script must read hook input from stdin")
 }
 
+func TestStopCheckScript_CatchBlocksLogErrors(t *testing.T) {
+	files := DefaultHookFiles()
+	script := string(files[StopCheckScriptPath])
+
+	assert.Contains(t, script, "stop-check.js: unexpected error:",
+		"outermost catch must log errors to stderr before exiting")
+
+	assert.Contains(t, script, "stop-check.js: cannot read claude dir:",
+		"findTranscript catch must log directory access errors to stderr")
+}
+
 func TestStopCheckScript_HasSelfDefenseTimeout(t *testing.T) {
 	files := DefaultHookFiles()
 	script := string(files[StopCheckScriptPath])

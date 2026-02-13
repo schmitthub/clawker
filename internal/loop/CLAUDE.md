@@ -71,7 +71,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 - `HookConfig.MarshalSettingsJSON() ([]byte, error)` — serializes as `{"hooks": {...}}` for Claude Code settings.json
 
 **Default hooks behavior:**
-- **Stop hook**: Command type running `node /tmp/clawker-hooks/stop-check.js`. The Node.js script reads hook input from stdin, checks `stop_hook_active` for recursion prevention, finds the session transcript, checks last 10 lines for `---LOOP_STATUS---` markers. Exit 0 = allow stop, exit 2 = block (Claude retries with error message).
+- **Stop hook**: Command type running `node /tmp/clawker-hooks/stop-check.js`. The Node.js script reads hook input from stdin, checks `stop_hook_active` for recursion prevention, finds the session transcript, checks last 10 lines for `---LOOP_STATUS---` markers. Exit 0 = allow stop, exit 2 = block (Claude retries with error message). Error catch blocks write diagnostic messages to stderr before exiting/returning.
 - **SessionStart/compact hook**: Command type with echo. Matcher "compact" fires only on context compaction. Outputs LOOP_STATUS reminder text that Claude Code injects as context.
 
 **Override mechanism:** `--hooks-file` flag provides a JSON file that completely replaces default hooks (no merging). Custom hooks do not require DefaultHookFiles().
@@ -181,7 +181,7 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 - `TokenUsage.Total() int` — input + output tokens (nil-safe)
 
 **Design decisions:**
-- Malformed lines and unknown event types silently skipped (forward compatibility)
+- Malformed lines logged via `logger.Debug` and skipped (forward compatibility — unknown event types are expected)
 - Malformed known event types (system/assistant/user) are logged via `logger.Warn` and skipped (observable but non-fatal)
 - Malformed result events return error (terminal event corruption is critical)
 - Scanner buffer: 64KB initial, 10MB max (handles large tool results)
@@ -202,6 +202,6 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, naming, prompt, ratelimit, session, stream.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, naming, prompt, ratelimit, runner, session, stream. `runner_test.go` (package `loop_test`) tests Runner.Run() orchestration using `dockertest.FakeClient` + `SetupExecAttachWithOutput` for stdcopy-framed output.
 
 Note: The loop TUI dashboard model has been moved to `internal/tui/loopdash.go` (following the import boundary rule — only `internal/tui` imports bubbletea). The old `internal/loop/tui/` stub was deleted.
