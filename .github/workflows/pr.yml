@@ -33,3 +33,15 @@ jobs:
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
+
+  licenses:
+    name: Licenses
+    uses: ./.github/workflows/licenses.yml
+    permissions:
+      contents: read
+
+  docs:
+    name: Docs
+    uses: ./.github/workflows/docs.yml
+    permissions:
+      contents: read

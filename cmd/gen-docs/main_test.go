@@ -34,7 +34,7 @@ func TestRun(t *testing.T) {
 	require.Contains(t, string(manContent), `\fBclawker container run`)
 
 	// Verify markdown with Jekyll front matter
-	mdContent, err := os.ReadFile(filepath.Join(dir, "markdown", "clawker_container_run.md"))
+	mdContent, err := os.ReadFile(filepath.Join(dir, "cli-reference", "clawker_container_run.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(mdContent), "## clawker container run")
 	require.Contains(t, string(mdContent), "layout: manual")
@@ -92,7 +92,7 @@ func TestRunAllFormats(t *testing.T) {
 		dir      string
 		fileGlob string
 	}{
-		{"markdown", "*.md"},
+		{"cli-reference", "*.md"},
 		{"man", "*.1"},
 		{"yaml", "*.yaml"},
 		{"rst", "*.rst"},
@@ -193,13 +193,13 @@ func TestRunMarkdownOnly(t *testing.T) {
 	err := run(args)
 	require.NoError(t, err)
 
-	// Verify markdown directory was created
-	markdownDir := filepath.Join(dir, "markdown")
-	_, err = os.Stat(markdownDir)
-	require.NoError(t, err, "markdown directory should exist")
+	// Verify cli-reference directory was created
+	cliRefDir := filepath.Join(dir, "cli-reference")
+	_, err = os.Stat(cliRefDir)
+	require.NoError(t, err, "cli-reference directory should exist")
 
 	// Verify at least the root command file was created
-	rootFile := filepath.Join(markdownDir, "clawker.md")
+	rootFile := filepath.Join(cliRefDir, "clawker.md")
 	_, err = os.Stat(rootFile)
 	require.NoError(t, err, "clawker.md should exist")
 
@@ -225,7 +225,7 @@ func TestRunJekyllWebsite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify Jekyll front matter in generated files
-	rootFile := filepath.Join(dir, "markdown", "clawker.md")
+	rootFile := filepath.Join(dir, "cli-reference", "clawker.md")
 	content, err := os.ReadFile(rootFile)
 	require.NoError(t, err)
 

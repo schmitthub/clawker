@@ -1,0 +1,153 @@
+Clawker
+Copyright (c) 2026 Andrew J Schmitt
+
+This product includes software developed by third parties.
+Below is a list of third-party dependencies and their licenses.
+
+Generated from go.mod using go-licenses.
+
+================================================================================
+Apache-2.0
+================================================================================
+
+github.com/containerd/containerd/api/services/content/v1                       Apache-2.0
+github.com/containerd/containerd/v2                                            Apache-2.0
+github.com/containerd/continuity/sysx                                          Apache-2.0
+github.com/containerd/errdefs                                                  Apache-2.0
+github.com/containerd/errdefs/pkg                                              Apache-2.0
+github.com/containerd/log                                                      Apache-2.0
+github.com/containerd/platforms                                                Apache-2.0
+github.com/containerd/ttrpc                                                    Apache-2.0
+github.com/containerd/typeurl/v2                                               Apache-2.0
+github.com/distribution/reference                                              Apache-2.0
+github.com/docker/docker/pkg/stdcopy                                           Apache-2.0
+github.com/docker/go-connections                                               Apache-2.0
+github.com/docker/go-units                                                     Apache-2.0
+github.com/go-git/go-billy/v6                                                  Apache-2.0
+github.com/go-git/go-git/v6                                                    Apache-2.0
+github.com/go-logr/logr                                                        Apache-2.0
+github.com/go-logr/stdr                                                        Apache-2.0
+github.com/golang/groupcache/lru                                               Apache-2.0
+github.com/google/shlex                                                        Apache-2.0
+github.com/in-toto/in-toto-golang/in_toto                                      Apache-2.0
+github.com/klauspost/compress                                                  Apache-2.0
+github.com/moby/buildkit                                                       Apache-2.0
+github.com/moby/docker-image-spec/specs-go/v1                                  Apache-2.0
+github.com/moby/locker                                                         Apache-2.0
+github.com/moby/moby/api                                                       Apache-2.0
+github.com/moby/moby/client                                                    Apache-2.0
+github.com/moby/patternmatcher                                                 Apache-2.0
+github.com/moby/sys/signal                                                     Apache-2.0
+github.com/opencontainers/go-digest                                            Apache-2.0
+github.com/opencontainers/image-spec/specs-go                                  Apache-2.0
+github.com/pjbgf/sha1cd                                                        Apache-2.0
+github.com/shibumi/go-pathspec                                                 Apache-2.0
+github.com/spf13/afero                                                         Apache-2.0
+github.com/spf13/cobra                                                         Apache-2.0
+go.opentelemetry.io/auto/sdk                                                   Apache-2.0
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    Apache-2.0
+go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   Apache-2.0
+go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp                  Apache-2.0
+go.opentelemetry.io/otel                                                       Apache-2.0
+go.opentelemetry.io/otel/exporters/otlp/otlptrace                              Apache-2.0
+go.opentelemetry.io/otel/metric                                                Apache-2.0
+go.opentelemetry.io/otel/sdk                                                   Apache-2.0
+go.opentelemetry.io/otel/trace                                                 Apache-2.0
+go.opentelemetry.io/proto/otlp                                                 Apache-2.0
+google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
+google.golang.org/genproto/googleapis/rpc/status                               Apache-2.0
+google.golang.org/grpc                                                         Apache-2.0
+gopkg.in/ini.v1                                                                Apache-2.0
+
+================================================================================
+BSD-2-Clause
+================================================================================
+
+github.com/emirpasic/gods                                                      BSD-2-Clause
+github.com/godbus/dbus/v5                                                      BSD-2-Clause
+github.com/magiconair/properties                                               BSD-2-Clause
+github.com/pkg/errors                                                          BSD-2-Clause
+github.com/russross/blackfriday/v2                                             BSD-2-Clause
+
+================================================================================
+BSD-3-Clause
+================================================================================
+
+github.com/ProtonMail/go-crypto                                                BSD-3-Clause
+github.com/atotto/clipboard                                                    BSD-3-Clause
+github.com/cloudflare/circl                                                    BSD-3-Clause
+github.com/fsnotify/fsnotify                                                   BSD-3-Clause
+github.com/go-git/gcfg/v2                                                      BSD-3-Clause
+github.com/gofrs/flock                                                         BSD-3-Clause
+github.com/gogo/protobuf/proto                                                 BSD-3-Clause
+github.com/golang/protobuf/ptypes                                              BSD-3-Clause
+github.com/google/go-cmp/cmp                                                   BSD-3-Clause
+github.com/google/uuid                                                         BSD-3-Clause
+github.com/grpc-ecosystem/grpc-gateway/v2                                      BSD-3-Clause
+github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
+github.com/planetscale/vtprotobuf                                              BSD-3-Clause
+github.com/pmezard/go-difflib/difflib                                          BSD-3-Clause
+github.com/sagikazarmark/slog-shim                                             BSD-3-Clause
+github.com/spf13/pflag                                                         BSD-3-Clause
+golang.org/x/crypto                                                            BSD-3-Clause
+golang.org/x/net                                                               BSD-3-Clause
+golang.org/x/sync                                                              BSD-3-Clause
+golang.org/x/sys                                                               BSD-3-Clause
+golang.org/x/term                                                              BSD-3-Clause
+golang.org/x/text                                                              BSD-3-Clause
+google.golang.org/protobuf                                                     BSD-3-Clause
+
+================================================================================
+ISC
+================================================================================
+
+github.com/davecgh/go-spew/spew                                                ISC
+
+================================================================================
+MIT
+================================================================================
+
+github.com/aymanbagabas/go-osc52/v2                                            MIT
+github.com/cespare/xxhash/v2                                                   MIT
+github.com/charmbracelet/bubbles                                               MIT
+github.com/charmbracelet/bubbletea                                             MIT
+github.com/charmbracelet/colorprofile                                          MIT
+github.com/charmbracelet/lipgloss                                              MIT
+github.com/charmbracelet/x/ansi                                                MIT
+github.com/charmbracelet/x/cellbuf                                             MIT
+github.com/charmbracelet/x/term                                                MIT
+github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
+github.com/felixge/httpsnoop                                                   MIT
+github.com/kevinburke/ssh_config                                               MIT
+github.com/klauspost/compress/zstd/internal/xxhash                             MIT
+github.com/klauspost/cpuid/v2                                                  MIT
+github.com/lucasb-eyer/go-colorful                                             MIT
+github.com/mattn/go-colorable                                                  MIT
+github.com/mattn/go-isatty                                                     MIT
+github.com/mattn/go-runewidth                                                  MIT
+github.com/mitchellh/mapstructure                                              MIT
+github.com/muesli/ansi                                                         MIT
+github.com/muesli/cancelreader                                                 MIT
+github.com/muesli/termenv                                                      MIT
+github.com/pelletier/go-toml/v2                                                MIT
+github.com/rivo/uniseg                                                         MIT
+github.com/rs/zerolog                                                          MIT
+github.com/secure-systems-lab/go-securesystemslib                              MIT
+github.com/sergi/go-diff/diffmatchpatch                                        MIT
+github.com/sirupsen/logrus                                                     MIT
+github.com/spf13/cast                                                          MIT
+github.com/spf13/viper                                                         MIT
+github.com/stretchr/testify                                                    MIT
+github.com/subosito/gotenv                                                     MIT
+github.com/tonistiigi/fsutil                                                   MIT
+github.com/xo/terminfo                                                         MIT
+github.com/zalando/go-keyring                                                  MIT
+gopkg.in/natefinch/lumberjack.v2                                               MIT
+gopkg.in/yaml.v3                                                               MIT
+
+================================================================================
+MPL-2.0
+================================================================================
+
+github.com/cyphar/filepath-securejoin                                          MPL-2.0
+github.com/hashicorp/hcl                                                       MPL-2.0

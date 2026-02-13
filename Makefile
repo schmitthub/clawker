@@ -1,7 +1,9 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
         fawker \
-        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update \
+        licenses licenses-check \
+        docs docs-check
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -52,6 +54,14 @@ help:
 	@echo "  clawker-staticcheck     Run staticcheck on Clawker code"
 	@echo "  clawker-install         Install Clawker to GOPATH/bin"
 	@echo "  clawker-clean           Remove Clawker build artifacts"
+	@echo ""
+	@echo "License targets:"
+	@echo "  licenses            Generate NOTICE file from go-licenses"
+	@echo "  licenses-check      Check NOTICE is up to date (CI)"
+	@echo ""
+	@echo "Docs targets:"
+	@echo "  docs                Generate CLI reference docs"
+	@echo "  docs-check          Check CLI docs are up to date (CI)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
@@ -270,4 +280,48 @@ test-clean:
 golden-update:
 	@echo "Regenerating golden files..."
 	GOLDEN_UPDATE=1 $(TEST_CMD) ./...
+
+# ============================================================================
+# License Targets
+# ============================================================================
+
+# Generate NOTICE file with third-party license attributions
+licenses:
+	@echo "Generating NOTICE file..."
+	bash scripts/gen-notice.sh
+
+# Check NOTICE file is up to date (used by CI)
+licenses-check:
+	@echo "Checking NOTICE freshness..."
+	@bash scripts/gen-notice.sh
+	@if ! git diff --quiet NOTICE; then \
+		echo "" >&2; \
+		echo "ERROR: NOTICE is out of date. Run 'make licenses' and commit." >&2; \
+		echo "" >&2; \
+		git diff NOTICE; \
+		exit 1; \
+	fi
+	@echo "NOTICE is up to date."
+
+# ============================================================================
+# Docs Targets
+# ============================================================================
+
+# Generate CLI reference docs
+docs:
+	@echo "Generating CLI reference docs..."
+	$(GO) run ./cmd/gen-docs --doc-path docs --markdown
+
+# Check CLI docs are up to date (used by CI)
+docs-check:
+	@echo "Checking CLI docs freshness..."
+	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown
+	@if ! git diff --quiet docs/cli-reference/; then \
+		echo "" >&2; \
+		echo "ERROR: CLI docs are out of date. Run 'make docs' and commit." >&2; \
+		echo "" >&2; \
+		git diff --stat docs/cli-reference/; \
+		exit 1; \
+	fi
+	@echo "CLI docs are up to date."
 
