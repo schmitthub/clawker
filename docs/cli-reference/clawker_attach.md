@@ -24,16 +24,16 @@ clawker attach CONTAINER [flags]
 
 ```
   # Attach to a container using agent name
-  clawker container attach --agent ralph
+  clawker container attach --agent dev
 
   # Attach to a container by full name
-  clawker container attach clawker.myapp.ralph
+  clawker container attach clawker.myapp.dev
 
   # Attach without stdin (output only)
-  clawker container attach --no-stdin --agent ralph
+  clawker container attach --no-stdin --agent dev
 
   # Attach with custom detach keys
-  clawker container attach --detach-keys="ctrl-c" --agent ralph
+  clawker container attach --detach-keys="ctrl-c" --agent dev
 ```
 
 ### Options

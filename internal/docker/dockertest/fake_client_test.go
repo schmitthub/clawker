@@ -38,7 +38,7 @@ func TestListContainers(t *testing.T) {
 
 	t.Run("returns containers from SetupContainerList", func(t *testing.T) {
 		fake := dockertest.NewFakeClient()
-		fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+		fixture := dockertest.RunningContainerFixture("myapp", "dev")
 		fake.SetupContainerList(fixture)
 
 		containers, err := fake.Client.ListContainers(ctx, true)
@@ -51,8 +51,8 @@ func TestListContainers(t *testing.T) {
 		if containers[0].Project != "myapp" {
 			t.Errorf("containers[0].Project = %q, want %q", containers[0].Project, "myapp")
 		}
-		if containers[0].Agent != "ralph" {
-			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "ralph")
+		if containers[0].Agent != "dev" {
+			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "dev")
 		}
 		if containers[0].Status != "running" {
 			t.Errorf("containers[0].Status = %q, want %q", containers[0].Status, "running")
@@ -75,7 +75,7 @@ func TestListContainers(t *testing.T) {
 	t.Run("returns multiple containers", func(t *testing.T) {
 		fake := dockertest.NewFakeClient()
 		fake.SetupContainerList(
-			dockertest.RunningContainerFixture("myapp", "ralph"),
+			dockertest.RunningContainerFixture("myapp", "dev"),
 			dockertest.ContainerFixture("myapp", "dev", "alpine:latest"),
 		)
 
@@ -86,8 +86,8 @@ func TestListContainers(t *testing.T) {
 		if len(containers) != 2 {
 			t.Fatalf("ListContainers() returned %d containers, want 2", len(containers))
 		}
-		if containers[0].Agent != "ralph" {
-			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "ralph")
+		if containers[0].Agent != "dev" {
+			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "dev")
 		}
 		if containers[1].Agent != "dev" {
 			t.Errorf("containers[1].Agent = %q, want %q", containers[1].Agent, "dev")
@@ -108,15 +108,15 @@ func TestFindContainerByAgent(t *testing.T) {
 
 	t.Run("finds container with matching fixture", func(t *testing.T) {
 		fake := dockertest.NewFakeClient()
-		fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-		fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+		fixture := dockertest.RunningContainerFixture("myapp", "dev")
+		fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
-		name, ctr, err := fake.Client.FindContainerByAgent(ctx, "myapp", "ralph")
+		name, ctr, err := fake.Client.FindContainerByAgent(ctx, "myapp", "dev")
 		if err != nil {
 			t.Fatalf("FindContainerByAgent() error: %v", err)
 		}
-		if name != "clawker.myapp.ralph" {
-			t.Errorf("name = %q, want %q", name, "clawker.myapp.ralph")
+		if name != "clawker.myapp.dev" {
+			t.Errorf("name = %q, want %q", name, "clawker.myapp.dev")
 		}
 		if ctr == nil {
 			t.Fatal("FindContainerByAgent() returned nil container")
@@ -129,15 +129,15 @@ func TestFindContainerByAgent(t *testing.T) {
 
 func TestContainerFixture(t *testing.T) {
 	t.Run("includes clawker labels", func(t *testing.T) {
-		c := dockertest.ContainerFixture("myapp", "ralph", "node:20")
+		c := dockertest.ContainerFixture("myapp", "dev", "node:20")
 		if c.Labels[docker.LabelManaged] != "true" {
 			t.Errorf("managed label = %q, want %q", c.Labels[docker.LabelManaged], "true")
 		}
 		if c.Labels[docker.LabelProject] != "myapp" {
 			t.Errorf("project label = %q, want %q", c.Labels[docker.LabelProject], "myapp")
 		}
-		if c.Labels[docker.LabelAgent] != "ralph" {
-			t.Errorf("agent label = %q, want %q", c.Labels[docker.LabelAgent], "ralph")
+		if c.Labels[docker.LabelAgent] != "dev" {
+			t.Errorf("agent label = %q, want %q", c.Labels[docker.LabelAgent], "dev")
 		}
 		if c.Labels[docker.LabelImage] != "node:20" {
 			t.Errorf("image label = %q, want %q", c.Labels[docker.LabelImage], "node:20")
@@ -145,14 +145,14 @@ func TestContainerFixture(t *testing.T) {
 	})
 
 	t.Run("omits project label when empty", func(t *testing.T) {
-		c := dockertest.ContainerFixture("", "ralph", "node:20")
+		c := dockertest.ContainerFixture("", "dev", "node:20")
 		if _, hasProject := c.Labels[docker.LabelProject]; hasProject {
 			t.Error("expected no project label when project is empty")
 		}
 	})
 
 	t.Run("defaults to exited state", func(t *testing.T) {
-		c := dockertest.ContainerFixture("myapp", "ralph", "node:20")
+		c := dockertest.ContainerFixture("myapp", "dev", "node:20")
 		if string(c.State) != "exited" {
 			t.Errorf("State = %q, want %q", c.State, "exited")
 		}
@@ -161,7 +161,7 @@ func TestContainerFixture(t *testing.T) {
 
 func TestRunningContainerFixture(t *testing.T) {
 	t.Run("is in running state", func(t *testing.T) {
-		c := dockertest.RunningContainerFixture("myapp", "ralph")
+		c := dockertest.RunningContainerFixture("myapp", "dev")
 		if string(c.State) != "running" {
 			t.Errorf("State = %q, want %q", c.State, "running")
 		}

@@ -24,7 +24,7 @@ make test-all                                    # All test suites
 2. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
 3. **Commands** (`test/commands/`): Command integration tests (container create/exec/run/start)
 4. **Internals** (`test/internals/`): Container scripts/services (firewall, SSH, entrypoint)
-5. **Agents** (`test/agents/`): Full agent lifecycle, ralph tests
+5. **Agents** (`test/agents/`): Full agent lifecycle, loop tests
 
 No build tags — directory separation only. All Docker tests use `harness.BuildLightImage` + `harness.RunContainer` (dogfooded on `docker.Client`).
 

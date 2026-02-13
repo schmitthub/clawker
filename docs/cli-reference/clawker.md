@@ -30,12 +30,12 @@ Workspace modes:
 * [clawker init](clawker_init.md) - Initialize clawker user settings
 * [clawker kill](clawker_kill.md) - Kill one or more running containers
 * [clawker logs](clawker_logs.md) - Fetch the logs of a container
+* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
 * [clawker monitor](clawker_monitor.md) - Manage local observability stack
 * [clawker network](clawker_network.md) - Manage networks
 * [clawker pause](clawker_pause.md) - Pause all processes within one or more containers
 * [clawker project](clawker_project.md) - Manage clawker projects
 * [clawker ps](clawker_ps.md) - List containers
-* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
 * [clawker rename](clawker_rename.md) - Rename a container
 * [clawker restart](clawker_restart.md) - Restart one or more containers
 * [clawker rm](clawker_rm.md) - Remove one or more containers

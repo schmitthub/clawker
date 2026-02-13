@@ -25,10 +25,10 @@ configuration, and command history between container runs.`,
   clawker volume ls
 
   # Remove a volume
-  clawker volume rm clawker.myapp.ralph-workspace
+  clawker volume rm clawker.myapp.dev-workspace
 
   # Inspect a volume
-  clawker volume inspect clawker.myapp.ralph-workspace`,
+  clawker volume inspect clawker.myapp.dev-workspace`,
 		// No RunE - this is a parent command
 	}
 

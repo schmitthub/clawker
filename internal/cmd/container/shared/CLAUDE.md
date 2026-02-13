@@ -65,7 +65,7 @@ import "github.com/schmitthub/clawker/internal/cmd/container/shared"
 // Copy host config and/or credentials to config volume
 err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     ProjectName:      "myapp",
-    AgentName:        "ralph",
+    AgentName:        "dev",
     ContainerWorkDir: cfg.Workspace.RemotePath,
     ClaudeCode:       cfg.Agent.ClaudeCode,
     CopyToVolume:     client.CopyToVolume,

@@ -77,7 +77,7 @@ Note: Use 'clawker monitor status' for monitoring stack containers.`,
   clawker container ls -a --filter status=running
 
   # Filter by agent name
-  clawker container ls --filter agent=ralph`,
+  clawker container ls --filter agent=dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)

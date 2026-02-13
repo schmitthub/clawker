@@ -310,7 +310,7 @@ func TestRuntimeEnv_ClawkerIdentity(t *testing.T) {
 	env, err := RuntimeEnv(RuntimeEnvOpts{
 		Version:         "0.5.0",
 		Project:         "myproject",
-		Agent:           "ralph",
+		Agent:           "dev",
 		WorkspaceMode:   "bind",
 		WorkspaceSource: "/home/user/myproject",
 	})
@@ -318,7 +318,7 @@ func TestRuntimeEnv_ClawkerIdentity(t *testing.T) {
 
 	assert.Contains(t, env, "CLAWKER_VERSION=0.5.0")
 	assert.Contains(t, env, "CLAWKER_PROJECT=myproject")
-	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
+	assert.Contains(t, env, "CLAWKER_AGENT=dev")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/home/user/myproject")
 }
@@ -441,7 +441,7 @@ func TestRuntimeEnv_NoForwardingNoSocketVars(t *testing.T) {
 func TestRuntimeEnv_ClawkerIdentityPartial(t *testing.T) {
 	// Partial identity (e.g., orphaned project with no project name)
 	env, err := RuntimeEnv(RuntimeEnvOpts{
-		Agent:           "ralph",
+		Agent:           "dev",
 		WorkspaceMode:   "bind",
 		WorkspaceSource: "/tmp/orphaned-dir",
 	})
@@ -454,7 +454,7 @@ func TestRuntimeEnv_ClawkerIdentityPartial(t *testing.T) {
 	}
 
 	// Should have agent, mode, and source
-	assert.Contains(t, env, "CLAWKER_AGENT=ralph")
+	assert.Contains(t, env, "CLAWKER_AGENT=dev")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_MODE=bind")
 	assert.Contains(t, env, "CLAWKER_WORKSPACE_SOURCE=/tmp/orphaned-dir")
 }

@@ -12,7 +12,7 @@ func TestValidateResourceName(t *testing.T) {
 		errMsg  string // substring expected in error message
 	}{
 		// Valid names
-		{"ralph", false, ""},
+		{"dev", false, ""},
 		{"my-agent", false, ""},
 		{"agent_1", false, ""},
 		{"Agent.2", false, ""},
@@ -87,7 +87,7 @@ func TestContainerName(t *testing.T) {
 		{"myproject", "myagent", "clawker.myproject.myagent", false},
 		{"test", "agent1", "clawker.test.agent1", false},
 		{"backend", "worker", "clawker.backend.worker", false},
-		{"", "ralph", "clawker.ralph", false},
+		{"", "dev", "clawker.dev", false},
 
 		// Error cases
 		{"myproject", "--rm", "", true},
@@ -126,8 +126,8 @@ func TestContainerNamesFromAgents(t *testing.T) {
 		{
 			name:    "multiple agents with project",
 			project: "myproject",
-			agents:  []string{"ralph", "worker"},
-			want:    []string{"clawker.myproject.ralph", "clawker.myproject.worker"},
+			agents:  []string{"dev", "worker"},
+			want:    []string{"clawker.myproject.dev", "clawker.myproject.worker"},
 		},
 		{
 			name:    "empty agents slice",
@@ -144,13 +144,13 @@ func TestContainerNamesFromAgents(t *testing.T) {
 		{
 			name:    "empty project gives 2-segment names",
 			project: "",
-			agents:  []string{"ralph", "worker"},
-			want:    []string{"clawker.ralph", "clawker.worker"},
+			agents:  []string{"dev", "worker"},
+			want:    []string{"clawker.dev", "clawker.worker"},
 		},
 		{
 			name:    "invalid agent name returns error",
 			project: "myproject",
-			agents:  []string{"ralph", "--rm"},
+			agents:  []string{"dev", "--rm"},
 			wantErr: true,
 		},
 	}
@@ -211,7 +211,7 @@ func TestVolumeName(t *testing.T) {
 		{"myproject", "myagent", "workspace", "clawker.myproject.myagent-workspace", false},
 		{"test", "agent1", "config", "clawker.test.agent1-config", false},
 		{"backend", "worker", "history", "clawker.backend.worker-history", false},
-		{"", "ralph", "workspace", "clawker.ralph-workspace", false},
+		{"", "dev", "workspace", "clawker.dev-workspace", false},
 
 		// Error cases
 		{"myproject", "--rm", "config", "", true},
@@ -294,8 +294,8 @@ func TestParseContainerName(t *testing.T) {
 		{"/clawker.backend.worker", "backend", "worker", true}, // Docker adds leading slash
 
 		// Valid 2-segment orphan names
-		{"clawker.ralph", "", "ralph", true},
-		{"/clawker.ralph", "", "ralph", true}, // Docker adds leading slash
+		{"clawker.dev", "", "dev", true},
+		{"/clawker.dev", "", "dev", true}, // Docker adds leading slash
 
 		// Invalid names
 		{"invalid", "", "", false},

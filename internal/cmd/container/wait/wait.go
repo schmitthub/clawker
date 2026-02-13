@@ -43,13 +43,13 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Wait for a container using agent name
-  clawker container wait --agent ralph
+  clawker container wait --agent dev
 
   # Wait for a container by full name
-  clawker container wait clawker.myapp.ralph
+  clawker container wait clawker.myapp.dev
 
   # Wait for multiple containers
-  clawker container wait clawker.myapp.ralph clawker.myapp.writer`,
+  clawker container wait clawker.myapp.dev clawker.myapp.writer`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args

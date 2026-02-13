@@ -28,61 +28,61 @@ func TestNewCmdLogs(t *testing.T) {
 		{
 			name:   "single container",
 			input:  "",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Tail: "all"},
 		},
 		{
 			name:   "with follow flag",
 			input:  "--follow",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Follow: true, Tail: "all"},
 		},
 		{
 			name:   "with shorthand follow flag",
 			input:  "-f",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Follow: true, Tail: "all"},
 		},
 		{
 			name:   "with timestamps flag",
 			input:  "--timestamps",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Timestamps: true, Tail: "all"},
 		},
 		{
 			name:   "with shorthand timestamps flag",
 			input:  "-t",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Timestamps: true, Tail: "all"},
 		},
 		{
 			name:   "with tail flag",
 			input:  "--tail 50",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Tail: "50"},
 		},
 		{
 			name:   "with since flag",
 			input:  "--since 2024-01-01T00:00:00Z",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Since: "2024-01-01T00:00:00Z", Tail: "all"},
 		},
 		{
 			name:   "with until flag",
 			input:  "--until 2024-01-02T00:00:00Z",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Until: "2024-01-02T00:00:00Z", Tail: "all"},
 		},
 		{
 			name:   "with details flag",
 			input:  "--details",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: LogsOptions{Details: true, Tail: "all"},
 		},
 		{
 			name:   "with agent flag",
 			input:  "--agent",
-			args:   []string{"ralph"},
+			args:   []string{"dev"},
 			output: LogsOptions{Agent: true, Tail: "all"},
 		},
 		{
@@ -95,7 +95,7 @@ func TestNewCmdLogs(t *testing.T) {
 		{
 			name:       "too many containers",
 			input:      "",
-			args:       []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+			args:       []string{"clawker.myapp.dev", "clawker.myapp.writer"},
 			wantErr:    true,
 			wantErrMsg: "accepts 1 arg(s), received 2",
 		},
@@ -197,13 +197,13 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestLogsRun_HappyPath(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("line1\nline2\nline3\n")
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdLogs(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -226,7 +226,7 @@ func TestLogsRun_DockerConnectionError(t *testing.T) {
 	}
 
 	cmd := NewCmdLogs(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -254,13 +254,13 @@ func TestLogsRun_ContainerNotFound(t *testing.T) {
 
 func TestLogsRun_WithTailFlag(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerLogs("last line\n")
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdLogs(f, nil)
-	cmd.SetArgs([]string{"--tail", "1", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--tail", "1", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

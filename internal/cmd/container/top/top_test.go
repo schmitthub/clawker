@@ -49,15 +49,15 @@ func TestNewCmdTop(t *testing.T) {
 		},
 		{
 			name:      "with agent flag",
-			input:     "--agent ralph",
+			input:     "--agent dev",
 			wantAgent: true,
-			wantArgs:  []string{"ralph"},
+			wantArgs:  []string{"dev"},
 		},
 		{
 			name:      "with agent flag and ps args",
-			input:     "--agent ralph aux",
+			input:     "--agent dev aux",
 			wantAgent: true,
-			wantArgs:  []string{"ralph", "aux"},
+			wantArgs:  []string{"dev", "aux"},
 		},
 	}
 
@@ -205,8 +205,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestTopRun_HappyPath(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerTop(
 		[]string{"PID", "USER", "TIME", "COMMAND"},
 		[][]string{
@@ -217,7 +217,7 @@ func TestTopRun_HappyPath(t *testing.T) {
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdTop(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -247,7 +247,7 @@ func TestTopRun_DockerConnectionError(t *testing.T) {
 	}
 
 	cmd := NewCmdTop(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

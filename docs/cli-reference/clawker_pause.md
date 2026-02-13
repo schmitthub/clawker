@@ -23,13 +23,13 @@ clawker pause [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ```
   # Pause a container using agent name
-  clawker container pause --agent ralph
+  clawker container pause --agent dev
 
   # Pause a container by full name
-  clawker container pause clawker.myapp.ralph
+  clawker container pause clawker.myapp.dev
 
   # Pause multiple containers
-  clawker container pause clawker.myapp.ralph clawker.myapp.writer
+  clawker container pause clawker.myapp.dev clawker.myapp.writer
 ```
 
 ### Options

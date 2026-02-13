@@ -43,10 +43,10 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Rename a container using agent name
-  clawker container rename --agent ralph clawker.myapp.newname
+  clawker container rename --agent dev clawker.myapp.newname
 
   # Rename a container by full name
-  clawker container rename clawker.myapp.ralph clawker.myapp.newname`,
+  clawker container rename clawker.myapp.dev clawker.myapp.newname`,
 		Args: cmdutil.RequiresMinArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.container = args[0]

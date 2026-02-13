@@ -30,10 +30,10 @@ func TestParseContainers(t *testing.T) {
 			in: []container.Summary{
 				{
 					ID:    "abc123",
-					Names: []string{"/clawker.myapp.ralph"},
+					Names: []string{"/clawker.myapp.dev"},
 					Labels: map[string]string{
 						LabelProject: "myapp",
-						LabelAgent:   "ralph",
+						LabelAgent:   "dev",
 						LabelImage:   "node:20",
 						LabelWorkdir: "/workspace",
 					},
@@ -44,9 +44,9 @@ func TestParseContainers(t *testing.T) {
 			want: []Container{
 				{
 					ID:      "abc123",
-					Name:    "clawker.myapp.ralph",
+					Name:    "clawker.myapp.dev",
 					Project: "myapp",
-					Agent:   "ralph",
+					Agent:   "dev",
 					Image:   "node:20",
 					Workdir: "/workspace",
 					Status:  "running",

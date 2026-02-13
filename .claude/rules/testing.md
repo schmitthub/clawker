@@ -74,7 +74,7 @@ This compounds: each completed node enables all downstream tests.
 | Commands | `test/commands/` | Yes | Command integration (container create/exec/run/start) |
 | Internals | `test/internals/` | Yes | Container scripts/services (firewall, SSH, entrypoint) |
 | Whail | `test/whail/` | Yes (+ BuildKit) | BuildKit integration, engine-level image builds |
-| Agents | `test/agents/` | Yes | Full clawker images, ralph, agent lifecycle tests |
+| Agents | `test/agents/` | Yes | Full clawker images, loop, agent lifecycle tests |
 | Harness | `test/harness/` | No | Builders, fixtures, golden file utils, helpers |
 
 No build tags — directory separation only.
@@ -153,7 +153,7 @@ Use `dockertest.NewFakeClient` instead of gomock. Composes a real `*docker.Clien
 
 ```go
 fake := dockertest.NewFakeClient()
-fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
+fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "dev"))
 fake.AssertCalled(t, "ContainerList")
 ```
 

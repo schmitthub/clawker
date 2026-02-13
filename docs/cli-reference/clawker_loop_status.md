@@ -1,10 +1,10 @@
-## clawker ralph status
+## clawker loop status
 
-Show current ralph session status
+Show current loop session status
 
 ### Synopsis
 
-Display the current status of a ralph session for an agent.
+Display the current status of a loop session for an agent.
 
 Shows information about:
   - Session state (started, updated, loops completed)
@@ -12,17 +12,17 @@ Shows information about:
   - Cumulative statistics (tasks completed, files modified)
 
 ```
-clawker ralph status [flags]
+clawker loop status [flags]
 ```
 
 ### Examples
 
 ```
   # Show status for an agent
-  clawker ralph status --agent dev
+  clawker loop status --agent dev
 
   # Output as JSON
-  clawker ralph status --agent dev --json
+  clawker loop status --agent dev --json
 ```
 
 ### Options
@@ -41,4 +41,4 @@ clawker ralph status [flags]
 
 ### See also
 
-* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops

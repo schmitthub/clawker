@@ -79,7 +79,7 @@ Import all lower tiers. Imported by commands only.
 
 - `docker` — Clawker middleware wrapping whail Engine with labels/naming
 - `workspace` — Bind vs Snapshot strategies
-- `ralph` — Autonomous loop engine with circuit breaker
+- `dev` — Autonomous loop engine with circuit breaker
 
 ### Import Rules
 
@@ -146,7 +146,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
 | `tui.RunProgress` | `internal/tui` | Generic progress display (BubbleTea TTY + plain text) |
 | `hostproxy.HostProxyService` | `internal/hostproxy` | Interface for host proxy operations; `Manager` is concrete impl |
-| `ralph.Runner` | `internal/ralph` | Autonomous loop orchestrator with circuit breaker |
+| `loop.Runner` | `internal/loop` | Autonomous loop orchestrator with circuit breaker |
 
 ## Container Naming and Labels
 

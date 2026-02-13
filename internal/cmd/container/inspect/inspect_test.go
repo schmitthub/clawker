@@ -30,47 +30,47 @@ func TestNewCmdInspect(t *testing.T) {
 	}{
 		{
 			name:           "single container",
-			args:           []string{"clawker.myapp.ralph"},
-			wantContainers: []string{"clawker.myapp.ralph"},
+			args:           []string{"clawker.myapp.dev"},
+			wantContainers: []string{"clawker.myapp.dev"},
 		},
 		{
 			name:           "multiple containers",
-			args:           []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			wantContainers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+			args:           []string{"clawker.myapp.dev", "clawker.myapp.writer"},
+			wantContainers: []string{"clawker.myapp.dev", "clawker.myapp.writer"},
 		},
 		{
 			name:           "with format flag",
 			input:          "--format {{.State.Status}}",
-			args:           []string{"clawker.myapp.ralph"},
-			wantContainers: []string{"clawker.myapp.ralph"},
+			args:           []string{"clawker.myapp.dev"},
+			wantContainers: []string{"clawker.myapp.dev"},
 			wantFormat:     "{{.State.Status}}",
 		},
 		{
 			name:           "with shorthand format flag",
 			input:          "-f {{.State.Status}}",
-			args:           []string{"clawker.myapp.ralph"},
-			wantContainers: []string{"clawker.myapp.ralph"},
+			args:           []string{"clawker.myapp.dev"},
+			wantContainers: []string{"clawker.myapp.dev"},
 			wantFormat:     "{{.State.Status}}",
 		},
 		{
 			name:           "with size flag",
 			input:          "--size",
-			args:           []string{"clawker.myapp.ralph"},
-			wantContainers: []string{"clawker.myapp.ralph"},
+			args:           []string{"clawker.myapp.dev"},
+			wantContainers: []string{"clawker.myapp.dev"},
 			wantSize:       true,
 		},
 		{
 			name:           "with shorthand size flag",
 			input:          "-s",
-			args:           []string{"clawker.myapp.ralph"},
-			wantContainers: []string{"clawker.myapp.ralph"},
+			args:           []string{"clawker.myapp.dev"},
+			wantContainers: []string{"clawker.myapp.dev"},
 			wantSize:       true,
 		},
 		{
 			name:           "with agent flag",
 			input:          "--agent",
-			args:           []string{"ralph"},
-			wantContainers: []string{"ralph"},
+			args:           []string{"dev"},
+			wantContainers: []string{"dev"},
 			wantAgent:      true,
 		},
 		{
@@ -161,13 +161,13 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestInspectRun_HappyPath(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
-	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+	fake.SetupContainerInspect("clawker.myapp.dev", c)
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdInspect(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -179,13 +179,13 @@ func TestInspectRun_HappyPath(t *testing.T) {
 
 func TestInspectRun_FormatTemplate(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
-	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+	fake.SetupContainerInspect("clawker.myapp.dev", c)
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdInspect(f, nil)
-	cmd.SetArgs([]string{"--format", "{{.State.Status}}", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--format", "{{.State.Status}}", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -208,7 +208,7 @@ func TestInspectRun_DockerConnectionError(t *testing.T) {
 	}
 
 	cmd := NewCmdInspect(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -236,13 +236,13 @@ func TestInspectRun_ContainerNotFound(t *testing.T) {
 
 func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
+	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
-	fake.SetupContainerInspect("clawker.myapp.ralph", c)
+	fake.SetupContainerInspect("clawker.myapp.dev", c)
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdInspect(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.nonexistent"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.nonexistent"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

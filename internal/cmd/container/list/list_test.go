@@ -194,7 +194,7 @@ func TestCmdList_Properties(t *testing.T) {
 func TestListRun_DefaultTable(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -208,17 +208,17 @@ func TestListRun_DefaultTable(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
 	assert.Contains(t, out, "running")
 	assert.Contains(t, out, "myapp")
-	assert.Contains(t, out, "ralph")
+	assert.Contains(t, out, "dev")
 	fake.AssertCalled(t, "ContainerList")
 }
 
 func TestListRun_JSONOutput(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -232,16 +232,16 @@ func TestListRun_JSONOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, `"name": "clawker.myapp.ralph"`)
+	assert.Contains(t, out, `"name": "clawker.myapp.dev"`)
 	assert.Contains(t, out, `"status": "running"`)
 	assert.Contains(t, out, `"project": "myapp"`)
-	assert.Contains(t, out, `"agent": "ralph"`)
+	assert.Contains(t, out, `"agent": "dev"`)
 }
 
 func TestListRun_QuietMode(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
@@ -256,7 +256,7 @@ func TestListRun_QuietMode(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
 	assert.Contains(t, out, "clawker.myapp.dev")
 	// Quiet mode: names only, no table headers
 	assert.NotContains(t, out, "STATUS")
@@ -266,7 +266,7 @@ func TestListRun_QuietMode(t *testing.T) {
 func TestListRun_TemplateOutput(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -280,14 +280,14 @@ func TestListRun_TemplateOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph ralph")
+	assert.Contains(t, out, "clawker.myapp.dev dev")
 }
 
 func TestListRun_FilterByStatus(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
-		dockertest.ContainerFixture("myapp", "dev", "alpine:latest"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
+		dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -301,20 +301,20 @@ func TestListRun_FilterByStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
-	assert.NotContains(t, out, "clawker.myapp.dev")
+	assert.Contains(t, out, "clawker.myapp.dev")
+	assert.NotContains(t, out, "clawker.myapp.worker")
 }
 
 func TestListRun_FilterByAgent(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
 		dockertest.RunningContainerFixture("myapp", "dev"),
+		dockertest.RunningContainerFixture("myapp", "worker"),
 	)
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdList(f, nil)
-	cmd.SetArgs([]string{"-a", "--filter", "agent=ralph"})
+	cmd.SetArgs([]string{"-a", "--filter", "agent=dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -323,8 +323,8 @@ func TestListRun_FilterByAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
-	assert.NotContains(t, out, "clawker.myapp.dev")
+	assert.Contains(t, out, "clawker.myapp.dev")
+	assert.NotContains(t, out, "clawker.myapp.worker")
 }
 
 func TestListRun_FilterInvalidKey(t *testing.T) {
@@ -405,7 +405,7 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 func TestListRun_ProjectFilter(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("myapp", "ralph"),
+		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -419,7 +419,7 @@ func TestListRun_ProjectFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerList")
 }
 
@@ -515,10 +515,10 @@ func TestMatchGlob(t *testing.T) {
 		pattern string
 		want    bool
 	}{
-		{"exact match", "ralph", "ralph", true},
-		{"no match", "ralph", "dev", false},
-		{"wildcard prefix", "ralph", "ral*", true},
-		{"wildcard no match", "ralph", "dev*", false},
+		{"exact match", "dev", "dev", true},
+		{"no match", "dev", "worker", false},
+		{"wildcard prefix", "dev", "de*", true},
+		{"wildcard no match", "dev", "work*", false},
 		{"wildcard all", "anything", "*", true},
 	}
 

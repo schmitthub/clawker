@@ -76,12 +76,12 @@ func TestNewCmdExec(t *testing.T) {
 		},
 		{
 			name:     "with agent flag",
-			input:    "--agent ralph ls",
+			input:    "--agent dev ls",
 			wantOpts: ExecOptions{Agent: true},
 		},
 		{
 			name:     "agent with interactive and tty",
-			input:    "-it --agent ralph /bin/bash",
+			input:    "-it --agent dev /bin/bash",
 			wantOpts: ExecOptions{Agent: true, Interactive: true, TTY: true},
 		},
 		{
@@ -303,7 +303,7 @@ func TestExecRun_ContainerNotFound(t *testing.T) {
 
 func TestExecRun_ContainerNotRunning(t *testing.T) {
 	// Create a container fixture in "exited" state
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
 	fake := dockertest.NewFakeClient()
@@ -311,7 +311,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "ls"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "ls"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -322,7 +322,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 }
 
 func TestExecRun_DetachMode(t *testing.T) {
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(fixture)
@@ -331,7 +331,7 @@ func TestExecRun_DetachMode(t *testing.T) {
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
-	cmd.SetArgs([]string{"--detach", "clawker.myapp.ralph", "sleep", "100"})
+	cmd.SetArgs([]string{"--detach", "clawker.myapp.dev", "sleep", "100"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -344,7 +344,7 @@ func TestExecRun_DetachMode(t *testing.T) {
 }
 
 func TestExecRun_NonTTYHappyPath(t *testing.T) {
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(fixture)
@@ -354,7 +354,7 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "echo", "hello"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "echo", "hello"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -367,7 +367,7 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 }
 
 func TestExecRun_NonZeroExitCode(t *testing.T) {
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(fixture)
@@ -377,7 +377,7 @@ func TestExecRun_NonZeroExitCode(t *testing.T) {
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdExec(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "false"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "false"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

@@ -201,9 +201,9 @@ func TestRenderError(t *testing.T) {
 }
 
 func TestRenderLabelValue(t *testing.T) {
-	result := RenderLabelValue("Name", "Ralph")
+	result := RenderLabelValue("Name", "Alice")
 	assert.Contains(t, result, "Name")
-	assert.Contains(t, result, "Ralph")
+	assert.Contains(t, result, "Alice")
 }
 
 func TestRenderKeyValueTable(t *testing.T) {
@@ -215,7 +215,7 @@ func TestRenderKeyValueTable(t *testing.T) {
 		{
 			name: "simple",
 			pairs: []KeyValuePair{
-				{Key: "Name", Value: "Ralph"},
+				{Key: "Name", Value: "Alice"},
 				{Key: "Status", Value: "Running"},
 			},
 			width: 40,

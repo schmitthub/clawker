@@ -1,9 +1,9 @@
-# Test ralph status when no session exists
+# Test loop status when no session exists
 # Verifies: status command handles missing session gracefully
 
-# Run ralph status - no session should exist
-exec clawker ralph status --agent testdev
-stderr 'No ralph session found'
+# Run loop status - no session should exist
+exec clawker loop status --agent testdev
+stderr 'No loop session found'
 
 -- clawker.yaml --
 version: "1"

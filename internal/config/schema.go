@@ -19,7 +19,7 @@ type Project struct {
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
-	Ralph        *RalphConfig    `yaml:"ralph,omitempty" mapstructure:"ralph"`
+	Loop        *LoopConfig    `yaml:"loop,omitempty" mapstructure:"loop"`
 
 	// Runtime context (not persisted, injected after loading)
 	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
@@ -309,8 +309,8 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 	return *g.ForwardGPG
 }
 
-// RalphConfig defines configuration for autonomous ralph loops.
-type RalphConfig struct {
+// LoopConfig defines configuration for autonomous agent loops.
+type LoopConfig struct {
 	MaxLoops                  int  `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
 	StagnationThreshold       int  `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
 	TimeoutMinutes            int  `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
@@ -326,7 +326,7 @@ type RalphConfig struct {
 }
 
 // GetMaxLoops returns the max loops with default fallback.
-func (r *RalphConfig) GetMaxLoops() int {
+func (r *LoopConfig) GetMaxLoops() int {
 	if r == nil || r.MaxLoops <= 0 {
 		return 50
 	}
@@ -334,7 +334,7 @@ func (r *RalphConfig) GetMaxLoops() int {
 }
 
 // GetStagnationThreshold returns the stagnation threshold with default fallback.
-func (r *RalphConfig) GetStagnationThreshold() int {
+func (r *LoopConfig) GetStagnationThreshold() int {
 	if r == nil || r.StagnationThreshold <= 0 {
 		return 3
 	}
@@ -342,7 +342,7 @@ func (r *RalphConfig) GetStagnationThreshold() int {
 }
 
 // GetTimeoutMinutes returns the timeout in minutes with default fallback.
-func (r *RalphConfig) GetTimeoutMinutes() int {
+func (r *LoopConfig) GetTimeoutMinutes() int {
 	if r == nil || r.TimeoutMinutes <= 0 {
 		return 15
 	}

@@ -44,13 +44,13 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Pause a container using agent name
-  clawker container pause --agent ralph
+  clawker container pause --agent dev
 
   # Pause a container by full name
-  clawker container pause clawker.myapp.ralph
+  clawker container pause clawker.myapp.dev
 
   # Pause multiple containers
-  clawker container pause clawker.myapp.ralph clawker.myapp.writer`,
+  clawker container pause clawker.myapp.dev clawker.myapp.writer`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args

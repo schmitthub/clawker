@@ -29,7 +29,7 @@ A project is defined by `clawker.yaml` and registered in the project registry (`
 
 An agent is a named container instance. One project can have multiple agents, each running in its own isolated container.
 
-**Naming convention**: `clawker.<project>.<agent>` (e.g., `clawker.myapp.ralph`)
+**Naming convention**: `clawker.<project>.<agent>` (e.g., `clawker.myapp.dev`)
 
 ### Resource Identification
 
@@ -90,7 +90,7 @@ Commands mirror Docker's CLI structure:
 | `clawker <verb>` | `run`, `stop`, `build` |
 | `clawker <noun> <verb>` | `container ls`, `volume rm`, `image build` |
 
-Top-level shortcuts: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `ralph *`, `version`
+Top-level shortcuts: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `loop *`, `version`
 
 Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`
 

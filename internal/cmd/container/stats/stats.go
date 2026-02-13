@@ -56,16 +56,16 @@ Container names can be:
   clawker container stats
 
   # Show stats using agent name
-  clawker container stats --agent ralph
+  clawker container stats --agent dev
 
   # Show stats for specific containers
-  clawker container stats clawker.myapp.ralph clawker.myapp.writer
+  clawker container stats clawker.myapp.dev clawker.myapp.writer
 
   # Show stats once (no streaming)
   clawker container stats --no-stream
 
   # Show stats once for a specific container
-  clawker container stats --no-stream --agent ralph`,
+  clawker container stats --no-stream --agent dev`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args

@@ -63,16 +63,16 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Update memory limit using agent name
-  clawker container update --memory 512m --agent ralph
+  clawker container update --memory 512m --agent dev
 
   # Update memory limit by full name
-  clawker container update --memory 512m clawker.myapp.ralph
+  clawker container update --memory 512m clawker.myapp.dev
 
   # Update CPU limit
-  clawker container update --cpus 2 --agent ralph
+  clawker container update --cpus 2 --agent dev
 
   # Update multiple resources
-  clawker container update --cpus 1.5 --memory 1g --agent ralph
+  clawker container update --cpus 1.5 --memory 1g --agent dev
 
   # Update multiple containers
   clawker container update --memory 256m container1 container2`,

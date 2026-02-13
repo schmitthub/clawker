@@ -28,19 +28,19 @@ clawker container remove [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ```
   # Remove a container using agent name
-  clawker container remove --agent ralph
+  clawker container remove --agent dev
 
   # Remove a stopped container by full name
-  clawker container remove clawker.myapp.ralph
+  clawker container remove clawker.myapp.dev
 
   # Remove multiple containers
-  clawker container rm clawker.myapp.ralph clawker.myapp.writer
+  clawker container rm clawker.myapp.dev clawker.myapp.writer
 
   # Force remove a running container
-  clawker container remove --force --agent ralph
+  clawker container remove --force --agent dev
 
   # Remove container and its volumes
-  clawker container remove --volumes --agent ralph
+  clawker container remove --volumes --agent dev
 ```
 
 ### Options

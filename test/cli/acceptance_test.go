@@ -739,8 +739,8 @@ func TestImage(t *testing.T) {
 	runTestCategory(t, "image")
 }
 
-func TestRalph(t *testing.T) {
-	runTestCategory(t, "ralph")
+func TestLoop(t *testing.T) {
+	runTestCategory(t, "loop")
 }
 
 func TestProject(t *testing.T) {

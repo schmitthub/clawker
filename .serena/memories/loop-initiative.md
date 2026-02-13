@@ -11,7 +11,7 @@
 |-------|------|--------|-------|
 | 1 | Task 1: Rename ralph → loop (command skeleton) | `complete` | opus |
 | 1 | Task 2: Rename ralph → loop (internal package) | `complete` | opus |
-| 1 | Task 3: Rename ralph → loop (config, docs, references) | `pending` | — |
+| 1 | Task 3: Rename ralph → loop (config, docs, references) | `complete` | opus |
 | 2 | Task 4: New command structure (iterate + tasks subcommands) | `pending` | — |
 | 2 | Task 5: Flag definitions and option structs | `pending` | — |
 | 2 | Task 6: Unit tests for command layer | `pending` | — |
@@ -33,6 +33,20 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 3:**
+- Used Serena `rename_symbol` for `RalphConfig` → `LoopConfig` (3 changes) and `Project/Ralph` → `Project/Loop` (4 changes) — handled type rename and field rename across all callers automatically.
+- Yaml/mapstructure tags required manual edit since rename_symbol only renames the Go symbol, not struct tag content.
+- `WithRalph` → `WithLoop` method rename was manual (not in symbol index) — only 1 caller in `project_builder_test.go`.
+- Bulk sed `s/ralph/dev/g` on Go files replaced ~400 occurrences of "ralph" used as test agent name across 53 files. This caused 6 test failures in `container/list` where tests relied on "ralph" and "dev" being *distinct* agents for filter testing. Fixed by using "worker" as the contrasting agent name.
+- CLI help `Example` strings in ~20 command files updated (ralph → dev as agent name).
+- `TestRalph` → `TestLoop` and `runTestCategory(t, "ralph")` → `runTestCategory(t, "loop")` in CLI acceptance tests.
+- Moved `test/cli/testdata/ralph/` → `test/cli/testdata/loop/` via `git mv`, updated txtar file content (ralph → loop for commands).
+- Regenerated `docs/cli-reference/` via `go run ./cmd/gen-docs` after deleting old `clawker_ralph_*` files.
+- Renamed `.claude/memories/RALPH-TUI-PRD.md` → `LOOP-TUI-PRD.md` and `RALPH-DESIGN.md` → `LOOP-DESIGN.md`.
+- Updated 15+ markdown files (CLAUDE.md, CLI-VERBS.md, ARCHITECTURE.md, config/CLAUDE.md, etc.) with systematic sed passes.
+- Archive files (`archive/`) intentionally left unchanged — they represent historical documentation.
+- All 3756 unit tests pass.
 
 **Task 2:**
 - Used `git mv internal/ralph internal/loop` to preserve git history cleanly.

@@ -70,10 +70,10 @@ func newTestContainerCmd() *cobra.Command {
 		Short: "Start a container",
 		Long:  "Start one or more stopped containers.",
 		Example: `  # Start by name
-  clawker container start clawker.myproject.ralph
+  clawker container start clawker.myproject.dev
 
   # Start by agent name
-  clawker container start --agent ralph`,
+  clawker container start --agent dev`,
 	}
 	startCmd.Flags().String("agent", "", "Agent name shortcut")
 	containerCmd.AddCommand(startCmd)

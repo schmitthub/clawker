@@ -43,7 +43,7 @@ clawker ps [OPTIONS] [flags]
   clawker container ls -a --filter status=running
 
   # Filter by agent name
-  clawker container ls --filter agent=ralph
+  clawker container ls --filter agent=dev
 ```
 
 ### Options

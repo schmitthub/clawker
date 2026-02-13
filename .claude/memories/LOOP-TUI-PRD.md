@@ -1,23 +1,23 @@
-# Ralph TUI Dashboard - Product Requirements Document
+# Loop TUI Dashboard - Product Requirements Document
 
 ## Overview
 
 ### Product Name
-Ralph TUI Dashboard
+Loop TUI Dashboard
 
 ### Purpose
-Provide a rich terminal-based user interface for monitoring and controlling ralph autonomous loops, enabling users to observe multiple agents simultaneously, stream logs in real-time, and perform basic control operations without leaving the terminal.
+Provide a rich terminal-based user interface for monitoring and controlling loop autonomous loops, enabling users to observe multiple agents simultaneously, stream logs in real-time, and perform basic control operations without leaving the terminal.
 
 ### Target Users
 - Developers using clawker to run Claude Code agents
-- Users running multiple ralph agents in parallel
+- Users running multiple loop agents in parallel
 - Teams that need visibility into autonomous loop execution
 
 ---
 
 ## Problem Statement
 
-Currently, ralph provides only text-based output via `--monitor` flag, which:
+Currently, loop provides only text-based output via `--monitor` flag, which:
 1. Only shows one agent at a time
 2. Requires scrolling through text output to understand state
 3. Offers no way to switch between agents without stopping
@@ -35,24 +35,24 @@ Users need a dashboard that provides:
 ## Goals & Success Metrics
 
 ### Primary Goals
-1. **Visibility**: Users can see all ralph agents for their project in one view
+1. **Visibility**: Users can see all loop agents for their project in one view
 2. **Real-time monitoring**: Users can stream logs from any agent without affecting it
 3. **Operational control**: Users can perform basic actions (stop, reset) from the TUI
-4. **Independence**: TUI works standalone, not tied to ralph run lifecycle
+4. **Independence**: TUI works standalone, not tied to loop run lifecycle
 
 ### Success Metrics
-- User can discover all running ralph agents within 2 seconds
+- User can discover all running loop agents within 2 seconds
 - Log streaming latency < 2 seconds
 - TUI renders correctly on terminals 80x24 and larger
-- 100% of existing ralph functionality remains working
+- 100% of existing loop functionality remains working
 
 ---
 
 ## Scope
 
 ### In Scope (MVP)
-- `clawker ralph tui` standalone command
-- `clawker ralph run --tui` integrated mode
+- `clawker loop tui` standalone command
+- `clawker loop run --tui` integrated mode
 - Multi-agent list view with session state
 - Agent detail view with full session/circuit info
 - Real-time log streaming (read-only)
@@ -76,7 +76,7 @@ Users need a dashboard that provides:
 ## User Stories
 
 ### US1: Monitor Running Agents
-**As a** developer running multiple ralph agents
+**As a** developer running multiple loop agents
 **I want to** see all agents and their status in one view
 **So that** I can quickly understand what's happening across my project
 
@@ -135,7 +135,7 @@ Users need a dashboard that provides:
 **So that** I can monitor agents I didn't start from this terminal
 
 **Acceptance Criteria:**
-- `clawker ralph tui` works without running ralph first
+- `clawker loop tui` works without running loop first
 - Discovers agents started by any method
 - Quitting TUI doesn't affect running agents
 
@@ -145,7 +145,7 @@ Users need a dashboard that provides:
 **So that** I can immediately monitor the agent I'm starting
 
 **Acceptance Criteria:**
-- `clawker ralph run --agent dev --tui` starts agent then launches TUI
+- `clawker loop run --agent dev --tui` starts agent then launches TUI
 - Agent appears in TUI within 2 seconds
 - TUI shows all project agents, not just the one started
 
@@ -155,13 +155,13 @@ Users need a dashboard that provides:
 
 ### FR1: Agent Discovery
 - Discover containers with labels `dev.clawker.project={project}`
-- Filter to agents with session files in `~/.local/clawker/ralph/sessions/`
+- Filter to agents with session files in `~/.local/clawker/loop/sessions/`
 - Refresh every 2 seconds
 - Handle containers in all states: running, exited, created
 
 ### FR2: Session/Circuit Loading
-- Load session from `~/.local/clawker/ralph/sessions/{project}.{agent}.json`
-- Load circuit from `~/.local/clawker/ralph/circuit/{project}.{agent}.json`
+- Load session from `~/.local/clawker/loop/sessions/{project}.{agent}.json`
+- Load circuit from `~/.local/clawker/loop/circuit/{project}.{agent}.json`
 - Handle missing files gracefully (show "no session")
 - Display all session fields: loops, tasks, files, status, error
 
@@ -216,7 +216,7 @@ Users need a dashboard that provides:
 - < 2000 lines of new code
 - Unit tests for components
 - Follows existing clawker code style
-- Uses existing docker.Client, ralph.SessionStore
+- Uses existing docker.Client, loop.SessionStore
 
 ---
 
@@ -230,7 +230,7 @@ github.com/charmbracelet/lipgloss v0.10.0
 
 ### Package Structure
 ```
-internal/ralph/tui/
+internal/loop/tui/
 ├── model.go          # Root Bubbletea model
 ├── messages.go       # Message types
 ├── commands.go       # Async commands
@@ -256,15 +256,15 @@ internal/ralph/tui/
 
 ```
 ╭─────────────────────────────────────────────────────────────────────────╮
-│  🤖 RALPH DASHBOARD (myapp)                                  12:34:56  │
+│  🤖 LOOP DASHBOARD (myapp)                                  12:34:56  │
 ╰─────────────────────────────────────────────────────────────────────────╯
  Agents                              Status
  ─────────────────────────────────────────────────────────────────────────
- > ralph        [running]   3 loops   5 tasks   Circuit: 1/3
+ > loop        [running]   3 loops   5 tasks   Circuit: 1/3
    worker       [running]   1 loop    0 tasks   Circuit: 0/3
    sandbox      [stopped]   -         -         -
 
- Session Details (ralph)
+ Session Details (loop)
  ─────────────────────────────────────────────────────────────────────────
    Started:     2 hours ago
    Last Status: IN_PROGRESS
@@ -306,7 +306,7 @@ internal/ralph/tui/
 ### Phase 1: Foundation (Day 1-2)
 - Dependencies, package structure
 - Basic Bubbletea model
-- `clawker ralph tui` command
+- `clawker loop tui` command
 - Empty TUI that quits with q
 
 ### Phase 2: Agent Discovery (Day 3-4)
@@ -330,7 +330,7 @@ internal/ralph/tui/
 - Error display
 
 ### Phase 6: Integration (Day 9)
-- `--tui` flag on `ralph run`
+- `--tui` flag on `loop run`
 - Background runner with foreground TUI
 
 ### Phase 7: Actions (Day 10)
@@ -361,7 +361,7 @@ internal/ralph/tui/
 
 | Question | Decision |
 |----------|----------|
-| Command name | `clawker ralph tui` |
+| Command name | `clawker loop tui` |
 | Attach mode | Read-only log streaming |
 | New labels needed | No, use existing + session files |
 | Multi-project support | No, current project only |
@@ -372,7 +372,7 @@ internal/ralph/tui/
 ## Acceptance Criteria Summary
 
 The feature is complete when:
-1. ✅ `clawker ralph tui` launches dashboard showing all project agents
+1. ✅ `clawker loop tui` launches dashboard showing all project agents
 2. ✅ Agent list shows name, state, loops, tasks, circuit status
 3. ✅ User can navigate with keyboard (j/k, Enter, Esc)
 4. ✅ User can view agent details with full session/circuit info
@@ -381,7 +381,7 @@ The feature is complete when:
 7. ✅ User can stop agents with confirmation
 8. ✅ User can reset circuits with confirmation
 9. ✅ TUI handles terminal resize gracefully
-10. ✅ `clawker ralph run --tui` launches TUI after starting agent
+10. ✅ `clawker loop run --tui` launches TUI after starting agent
 11. ✅ Quitting TUI doesn't affect running agents
 12. ✅ All existing tests pass
 13. ✅ Documentation updated (README, CLI-VERBS)
@@ -391,5 +391,5 @@ The feature is complete when:
 ## Related Documents
 
 - **Plan File**: `/Users/andrew/.claude/plans/synchronous-bubbling-teacup.md`
-- **Memory**: `ralph_bubbletea_tui_implementation`
-- **Existing Design**: `ralph_command_implementation` memory (Phase 2 section)
+- **Memory**: `loop_bubbletea_tui_implementation`
+- **Existing Design**: `loop_command_implementation` memory (Phase 2 section)

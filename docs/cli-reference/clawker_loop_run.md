@@ -1,4 +1,4 @@
-## clawker ralph run
+## clawker loop run
 
 Start an autonomous Claude Code loop
 
@@ -7,7 +7,7 @@ Start an autonomous Claude Code loop
 Run Claude Code in an autonomous loop until completion or stagnation.
 
 The agent will run Claude Code repeatedly with --continue, parsing each
-iteration's output for a RALPH_STATUS block. The loop exits when:
+iteration's output for a LOOP_STATUS block. The loop exits when:
 
   - Claude signals EXIT_SIGNAL: true with sufficient completion indicators
   - The circuit breaker trips (no progress, same error, output decline)
@@ -18,38 +18,38 @@ iteration's output for a RALPH_STATUS block. The loop exits when:
 The container must already be running. Use 'clawker start' first.
 
 ```
-clawker ralph run [flags]
+clawker loop run [flags]
 ```
 
 ### Examples
 
 ```
   # Start with an initial prompt
-  clawker ralph run --agent dev --prompt "Fix all failing tests"
+  clawker loop run --agent dev --prompt "Fix all failing tests"
 
   # Start with a prompt from a file
-  clawker ralph run --agent dev --prompt-file task.md
+  clawker loop run --agent dev --prompt-file task.md
 
   # Continue an existing session
-  clawker ralph run --agent dev
+  clawker loop run --agent dev
 
   # Reset circuit breaker and retry
-  clawker ralph run --agent dev --reset-circuit
+  clawker loop run --agent dev --reset-circuit
 
   # Run with custom limits
-  clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+  clawker loop run --agent dev --max-loops 100 --stagnation-threshold 5
 
   # Run with live monitoring
-  clawker ralph run --agent dev --monitor
+  clawker loop run --agent dev --monitor
 
   # Run with rate limiting (5 calls per hour)
-  clawker ralph run --agent dev --calls 5
+  clawker loop run --agent dev --calls 5
 
   # Run with verbose output
-  clawker ralph run --agent dev -v
+  clawker loop run --agent dev -v
 
   # Run in YOLO mode (skip all permission prompts)
-  clawker ralph run --agent dev --skip-permissions
+  clawker loop run --agent dev --skip-permissions
 ```
 
 ### Options
@@ -84,4 +84,4 @@ clawker ralph run [flags]
 
 ### See also
 
-* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops

@@ -1,12 +1,12 @@
-## clawker ralph tui
+## clawker loop tui
 
 Launch interactive TUI dashboard
 
 ### Synopsis
 
-Launch an interactive terminal dashboard for monitoring ralph agents.
+Launch an interactive terminal dashboard for monitoring loop agents.
 
-The TUI provides a real-time view of all ralph agents in the current project,
+The TUI provides a real-time view of all loop agents in the current project,
 including their status, loop progress, and recent log output.
 
 Features:
@@ -16,14 +16,14 @@ Features:
   - Session history and statistics
 
 ```
-clawker ralph tui [flags]
+clawker loop tui [flags]
 ```
 
 ### Examples
 
 ```
   # Launch TUI for current project
-  clawker ralph tui
+  clawker loop tui
 ```
 
 ### Options
@@ -40,4 +40,4 @@ clawker ralph tui [flags]
 
 ### See also
 
-* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops

@@ -180,9 +180,9 @@ func TestNewCmdCreate(t *testing.T) {
 		},
 		{
 			name:  "flags only as command with -- separator",
-			input: "-it --rm --agent ralph --",
+			input: "-it --rm --agent dev --",
 			args:  []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
-			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Agent: "ralph", Image: "--allow-dangerously-skip-permissions", Command: []string{"-p", "Fix bugs"}},
+			want:  wantOpts{TTY: true, Stdin: true, AutoRemove: true, Agent: "dev", Image: "--allow-dangerously-skip-permissions", Command: []string{"-p", "Fix bugs"}},
 		},
 		{
 			name:  "arg starting with dash treated as image after -- separator",

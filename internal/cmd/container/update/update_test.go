@@ -110,8 +110,8 @@ func TestNewCmdUpdate(t *testing.T) {
 		},
 		{
 			name:           "with agent flag",
-			input:          "--agent ralph",
-			wantContainers: []string{"ralph"},
+			input:          "--agent dev",
+			wantContainers: []string{"dev"},
 			wantAgent:      true,
 		},
 		{
@@ -302,14 +302,14 @@ func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 
 func TestUpdateRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()
 
 	f, tio := testUpdateFactory(t, fake)
 
 	cmd := NewCmdUpdate(f, nil)
-	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -317,7 +317,7 @@ func TestUpdateRun_Success(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerUpdate")
 }
 
@@ -351,26 +351,26 @@ func TestUpdateRun_ContainerNotFound(t *testing.T) {
 	f, tio := testUpdateFactory(t, fake)
 
 	cmd := NewCmdUpdate(f, nil)
-	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
 }
 
 func TestUpdateRun_PartialFailure(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()
 
 	f, tio := testUpdateFactory(t, fake)
 
 	cmd := NewCmdUpdate(f, nil)
-	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetArgs([]string{"--memory", "512m", "clawker.myapp.dev", "clawker.myapp.missing"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -379,7 +379,7 @@ func TestUpdateRun_PartialFailure(t *testing.T) {
 	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	// Second container had error
 	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
 }

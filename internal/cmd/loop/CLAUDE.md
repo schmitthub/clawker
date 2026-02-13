@@ -21,4 +21,4 @@ Autonomous Claude Code loops — repeated execution with circuit breaker protect
 func NewCmdLoop(f *cmdutil.Factory) *cobra.Command
 ```
 
-Parent command only (no RunE). Aggregates subcommands from dedicated packages. Circuit breaker logic (max loops, stagnation threshold, timeouts) is configurable in `clawker.yaml` under the `ralph` key (will be renamed to `loop` in Task 3). Agent signals completion via `RALPH_STATUS` block in output (will be renamed to `LOOP_STATUS` in Task 9).
+Parent command only (no RunE). Aggregates subcommands from dedicated packages. Circuit breaker logic (max loops, stagnation threshold, timeouts) is configurable in `clawker.yaml` under the `loop` key. Agent signals completion via `LOOP_STATUS` block in output.

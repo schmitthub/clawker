@@ -67,17 +67,17 @@ func TestNewCmdStats(t *testing.T) {
 		},
 		{
 			name:      "with agent flag",
-			input:     "--agent ralph",
+			input:     "--agent dev",
 			wantAgent: true,
-			wantArgs:  []string{"ralph"},
+			wantArgs:  []string{"dev"},
 			needRes:   true,
 		},
 		{
 			name:       "with agent and no-stream flags",
-			input:      "--agent ralph --no-stream",
+			input:      "--agent dev --no-stream",
 			wantAgent:  true,
 			wantStream: true,
-			wantArgs:   []string{"ralph"},
+			wantArgs:   []string{"dev"},
 			needRes:    true,
 		},
 	}
@@ -334,13 +334,13 @@ const statsJSON = `{
 
 func TestStatsRun_NoStream_HappyPath(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	c := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", c)
+	c := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerStats(statsJSON)
 
 	f, tio := testFactory(t, fake)
 	cmd := NewCmdStats(f, nil)
-	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -353,7 +353,7 @@ func TestStatsRun_NoStream_HappyPath(t *testing.T) {
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "CPU %")
 	assert.Contains(t, out, "MEM USAGE / LIMIT")
-	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
 	// Memory: 50MB / 1GB
 	assert.Contains(t, out, "50.00MB")
 	// PIDs
@@ -374,7 +374,7 @@ func TestStatsRun_DockerConnectionError(t *testing.T) {
 	}
 
 	cmd := NewCmdStats(f, nil)
-	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--no-stream", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

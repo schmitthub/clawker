@@ -179,7 +179,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
 | `internal/prompter` | Interactive prompts (String, Confirm, Select) |
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
-| `internal/ralph/tui` | Ralph-specific TUI dashboard (uses `internal/tui` components) |
+| `internal/loop/tui` | Loop-specific TUI dashboard (uses `internal/tui` components) |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
@@ -227,16 +227,16 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
 - SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
-### internal/ralph - Autonomous Loop Engine
+### internal/loop - Autonomous Loop Engine
 
-Runs Claude Code in non-interactive Docker exec with circuit breaker protection. See `internal/ralph/CLAUDE.md` for implementation details.
+Runs Claude Code in non-interactive Docker exec with circuit breaker protection. See `internal/loop/CLAUDE.md` for implementation details.
 
 **Core types:**
 - `Runner` - Main loop orchestrator
 - `CircuitBreaker` - CLOSED/TRIPPED with multiple trip conditions
 - `Session` / `SessionStore` - Persistent session state
 - `RateLimiter` - Sliding window rate limiting
-- `Analyzer` - RALPH_STATUS parser and completion detection
+- `Analyzer` - LOOP_STATUS parser and completion detection
 
 ## Command Dependency Injection Pattern
 
@@ -408,7 +408,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
-│    ralph/ → docker, logger; ralph/tui → tui (middle)            │
+│    loop/ → docker, logger; loop/tui → tui (middle)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -420,8 +420,8 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
   ✓  middle → foundation           bundler imports config
   ✓  composite → middle            docker imports bundler
   ✓  composite → foundation        docker imports config
-  ✓  composite → leaf              ralph imports logger
-  ✓  composite → own children      ralph imports ralph/tui
+  ✓  composite → leaf              loop imports logger
+  ✓  composite → own children      loop imports loop/tui
 
   ✗  leaf → foundation             logger must never import config
   ✗  leaf → leaf (sibling)         leaves have zero internal imports

@@ -13,7 +13,7 @@ go test -run ^TestContainer$ ./test/cli/... -v
 go test -run ^TestVolume$ ./test/cli/... -v
 go test -run ^TestNetwork$ ./test/cli/... -v
 go test -run ^TestImage$ ./test/cli/... -v
-go test -run ^TestRalph$ ./test/cli/... -v
+go test -run ^TestLoop$ ./test/cli/... -v
 go test -run ^TestProject$ ./test/cli/... -v
 go test -run ^TestRoot$ ./test/cli/... -v
 
@@ -38,7 +38,7 @@ test/cli/
     ├── volume/                  # Volume management tests
     ├── network/                 # Network management tests
     ├── image/                   # Image management tests
-    ├── ralph/                   # Ralph autonomous loop tests
+    ├── loop/                   # Loop autonomous loop tests
     ├── project/                 # Project init tests
     └── root/                    # Root-level command tests
 ```
@@ -321,7 +321,7 @@ Key considerations:
 | Volume | 3 | Create, list, inspect, remove |
 | Network | 3 | Create, list, inspect, remove |
 | Image | 4 | Build, list, inspect, prune |
-| Ralph | 3 | Status, reset, JSON output |
+| Loop | 3 | Status, reset, JSON output |
 | Project | 2 | Project init, force overwrite |
 | Root | 2 | User init, build |
 

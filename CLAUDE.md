@@ -62,7 +62,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── build/                 # Build-time metadata (version, date) — leaf, stdlib only
 │   ├── bundler/               # Dockerfile generation, content hashing, semver, npm registry (leaf — no docker import)
 │   ├── clawker/               # Main application lifecycle
-│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, ralph/, worktree/, root/)
+│   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
@@ -75,7 +75,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
-│   ├── ralph/                 # Autonomous loop core logic
+│   ├── loop/                  # Autonomous loop core logic
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
@@ -193,11 +193,11 @@ Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API 
 
 See `.claude/docs/CLI-VERBS.md` for complete command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `ralph run/status/reset`, `version`
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `config check`, `monitor *`, `generate`, `loop run/status/reset`, `version`
 
 **Management commands**: `container *`, `volume *`, `network *`, `image *`, `project *` (incl. `project register`), `worktree *`
 
-Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.ralph`) matching Docker's interface.
+Commands use positional arguments for resource names (e.g., `clawker container stop clawker.myapp.dev`) matching Docker's interface.
 
 ## Configuration
 
@@ -233,10 +233,10 @@ build:
 agent: { includes: [], env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { remote_path: "/workspace", default_mode: "snapshot" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
-ralph: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
+loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `RalphConfig`
+**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `LoopConfig`
 **Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
 
 ### Firewall IP Range Sources
@@ -295,7 +295,7 @@ security:
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
 - `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
-- Empty projects generate 2-segment names (`clawker.ralph`), not 3 (`clawker..ralph`)
+- Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
 - Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 
 ## Context Management (Critical)

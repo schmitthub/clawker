@@ -216,21 +216,21 @@ clawker start [flags]
 
 ---
 
-## Autonomous Loops (`clawker ralph`)
+## Autonomous Loops (`clawker loop`)
 
-Run Claude Code in autonomous loops using the "Ralph Wiggum" technique.
+Run Claude Code in autonomous loops with circuit breaker protection.
 
-### `clawker ralph run`
+### `clawker loop run`
 
 Start an autonomous Claude Code loop.
 
 **Usage:**
 ```bash
-clawker ralph run --agent NAME [flags]
+clawker loop run --agent NAME [flags]
 ```
 
 Runs Claude Code repeatedly with `--continue` until completion or stagnation.
-The agent must output a RALPH_STATUS block for progress tracking.
+The agent must output a LOOP_STATUS block for progress tracking.
 
 **Flags:**
 
@@ -258,31 +258,31 @@ The agent must output a RALPH_STATUS block for progress tracking.
 **Examples:**
 ```bash
 # Start with an initial prompt
-clawker ralph run --agent dev --prompt "Fix all failing tests"
+clawker loop run --agent dev --prompt "Fix all failing tests"
 
 # Start from a prompt file
-clawker ralph run --agent dev --prompt-file task.md
+clawker loop run --agent dev --prompt-file task.md
 
 # Continue an existing session
-clawker ralph run --agent dev
+clawker loop run --agent dev
 
 # Reset circuit breaker and retry
-clawker ralph run --agent dev --reset-circuit
+clawker loop run --agent dev --reset-circuit
 
 # Run with custom limits
-clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+clawker loop run --agent dev --max-loops 100 --stagnation-threshold 5
 
 # Run with live monitoring
-clawker ralph run --agent dev --monitor
+clawker loop run --agent dev --monitor
 
 # Run with rate limiting (5 calls per hour)
-clawker ralph run --agent dev --calls 5
+clawker loop run --agent dev --calls 5
 
 # Run with verbose output
-clawker ralph run --agent dev -v
+clawker loop run --agent dev -v
 
 # Run in YOLO mode (skip all permission prompts)
-clawker ralph run --agent dev --skip-permissions
+clawker loop run --agent dev --skip-permissions
 ```
 
 **Exit conditions:**
@@ -295,13 +295,13 @@ clawker ralph run --agent dev --skip-permissions
 
 ---
 
-### `clawker ralph status`
+### `clawker loop status`
 
-Show current ralph session status.
+Show current loop session status.
 
 **Usage:**
 ```bash
-clawker ralph status --agent NAME [flags]
+clawker loop status --agent NAME [flags]
 ```
 
 **Flags:**
@@ -314,21 +314,21 @@ clawker ralph status --agent NAME [flags]
 **Examples:**
 ```bash
 # Show status
-clawker ralph status --agent dev
+clawker loop status --agent dev
 
 # Output as JSON
-clawker ralph status --agent dev --json
+clawker loop status --agent dev --json
 ```
 
 ---
 
-### `clawker ralph reset`
+### `clawker loop reset`
 
 Reset the circuit breaker for an agent.
 
 **Usage:**
 ```bash
-clawker ralph reset --agent NAME [flags]
+clawker loop reset --agent NAME [flags]
 ```
 
 **Flags:**
@@ -342,41 +342,41 @@ clawker ralph reset --agent NAME [flags]
 **Examples:**
 ```bash
 # Reset circuit breaker only
-clawker ralph reset --agent dev
+clawker loop reset --agent dev
 
 # Reset everything (circuit and session)
-clawker ralph reset --agent dev --all
+clawker loop reset --agent dev --all
 ```
 
 ---
 
-### `clawker ralph tui`
+### `clawker loop tui`
 
-Launch an interactive TUI dashboard for monitoring ralph agents.
+Launch an interactive TUI dashboard for monitoring loop agents.
 
 **Usage:**
 ```bash
-clawker ralph tui
+clawker loop tui
 ```
 
-Provides a real-time terminal interface for monitoring all ralph agents in the current project. Features include live agent discovery, status updates, and log streaming.
+Provides a real-time terminal interface for monitoring all loop agents in the current project. Features include live agent discovery, status updates, and log streaming.
 
 **Examples:**
 ```bash
 # Launch TUI for current project
-clawker ralph tui
+clawker loop tui
 ```
 
 **Note:** Must be run from a directory containing `clawker.yaml`.
 
 ---
 
-### RALPH_STATUS Block Format
+### LOOP_STATUS Block Format
 
 Claude must output this block for progress tracking:
 
 ```
----RALPH_STATUS---
+---LOOP_STATUS---
 STATUS: IN_PROGRESS | COMPLETE | BLOCKED
 TASKS_COMPLETED_THIS_LOOP: <number>
 FILES_MODIFIED: <number>
@@ -384,7 +384,7 @@ TESTS_STATUS: PASSING | FAILING | NOT_RUN
 WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
 EXIT_SIGNAL: false | true
 RECOMMENDATION: <one line>
----END_RALPH_STATUS---
+---END_LOOP_STATUS---
 ```
 
 Add instructions to your project's CLAUDE.md to have the agent output this block.
@@ -550,7 +550,7 @@ clawker run -it @
 
 # Works with all run/create flags:
 clawker run -it --rm @
-clawker run -it --agent ralph @
+clawker run -it --agent dev @
 clawker container create --agent sandbox @
 
 # When using with Claude Code flags, @ stops clawker's flag parsing:
@@ -612,22 +612,22 @@ When `--agent` is provided, the container name is resolved as `clawker.<project>
 
 ```bash
 # Instead of:
-clawker container stop clawker.myproject.ralph
+clawker container stop clawker.myproject.dev
 
 # You can use:
-clawker container stop --agent ralph
+clawker container stop --agent dev
 
 # View logs
-clawker container logs --agent ralph --follow
+clawker container logs --agent dev --follow
 
 # Copy files: :PATH uses the --agent flag value
-clawker container cp --agent ralph :/app/config.json ./config.json
+clawker container cp --agent dev :/app/config.json ./config.json
 
 # Copy files: name:PATH resolves name as agent (overrides --agent)
-clawker container cp --agent ralph writer:/app/output.txt ./output.txt
+clawker container cp --agent dev writer:/app/output.txt ./output.txt
 
 # Rename (only NEW_NAME required with --agent)
-clawker container rename --agent ralph clawker.myproject.newname
+clawker container rename --agent dev clawker.myproject.newname
 ```
 
 **Mutual exclusivity:**
@@ -886,10 +886,10 @@ clawker container ls -a --format '{{.Names}}'
 clawker container ls -a --format '{{.Name}} {{.Status}}'
 
 # Get container state
-clawker container inspect --agent ralph --format '{{.State.Status}}'
+clawker container inspect --agent dev --format '{{.State.Status}}'
 
 # Get container IP
-clawker container inspect --agent ralph --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+clawker container inspect --agent dev --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 ```
 
 ---
@@ -925,10 +925,10 @@ When using `--agent`, you must also specify the `@` symbol to auto-resolve the i
 
 ```bash
 # Standard pattern: --agent with @ for image resolution
-clawker run -it --rm --agent ralph @
+clawker run -it --rm --agent dev @
 
 # Pass flags to Claude Code after @ and --
-clawker run -it --rm --agent ralph @ -- --dangerously-skip-permissions -p "Fix bugs"
+clawker run -it --rm --agent dev @ -- --dangerously-skip-permissions -p "Fix bugs"
 ```
 
 **Flag conflict: `-p`**
@@ -940,7 +940,7 @@ Clawker uses `-p` as shorthand for `--publish` (port mapping), while Claude Code
 clawker run -it --rm -p "Fix bugs"  # ERROR: invalid port format
 
 # Correct: Use @ for image, -- to separate, then Claude's -p
-clawker run -it --rm --agent ralph @ -- -p "Fix bugs"
+clawker run -it --rm --agent dev @ -- -p "Fix bugs"
 
 # Also works with explicit image name
 clawker run -it --rm clawker-myapp:latest -- -p "Fix bugs"

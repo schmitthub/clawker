@@ -1,8 +1,8 @@
-# Test ralph status --json output
+# Test loop status --json output
 # Verifies: JSON output format when no session exists
 
-# Run ralph status with --json flag
-exec clawker ralph status --agent testdev --json
+# Run loop status with --json flag
+exec clawker loop status --agent testdev --json
 stdout '{"exists": false}'
 
 -- clawker.yaml --

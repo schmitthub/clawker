@@ -22,4 +22,4 @@ Volume management for persistent workspace data and state.
 func NewCmdVolume(f *cmdutil.Factory) *cobra.Command
 ```
 
-Parent command only (no RunE). Aggregates subcommands from dedicated packages. Volumes persist workspace data (snapshot mode), configuration, and command history. Naming: `clawker.project.agent-purpose` (e.g., `clawker.myapp.ralph-workspace`).
+Parent command only (no RunE). Aggregates subcommands from dedicated packages. Volumes persist workspace data (snapshot mode), configuration, and command history. Naming: `clawker.project.agent-purpose` (e.g., `clawker.myapp.dev-workspace`).

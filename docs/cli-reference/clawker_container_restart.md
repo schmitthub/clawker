@@ -24,16 +24,16 @@ clawker container restart [CONTAINER...] [flags]
 
 ```
   # Restart a container using agent name
-  clawker container restart --agent ralph
+  clawker container restart --agent dev
 
   # Restart a container by full name (10s timeout)
-  clawker container restart clawker.myapp.ralph
+  clawker container restart clawker.myapp.dev
 
   # Restart multiple containers
-  clawker container restart clawker.myapp.ralph clawker.myapp.writer
+  clawker container restart clawker.myapp.dev clawker.myapp.writer
 
   # Restart with a custom timeout (20 seconds)
-  clawker container restart --time 20 --agent ralph
+  clawker container restart --time 20 --agent dev
 ```
 
 ### Options

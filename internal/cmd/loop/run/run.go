@@ -148,33 +148,33 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// Apply config defaults if CLI flags use default values
-	if cfg.Ralph != nil {
-		if opts.MaxLoops == loop.DefaultMaxLoops && cfg.Ralph.MaxLoops > 0 {
-			opts.MaxLoops = cfg.Ralph.MaxLoops
+	if cfg.Loop != nil {
+		if opts.MaxLoops == loop.DefaultMaxLoops && cfg.Loop.MaxLoops > 0 {
+			opts.MaxLoops = cfg.Loop.MaxLoops
 		}
-		if opts.StagnationThreshold == loop.DefaultStagnationThreshold && cfg.Ralph.StagnationThreshold > 0 {
-			opts.StagnationThreshold = cfg.Ralph.StagnationThreshold
+		if opts.StagnationThreshold == loop.DefaultStagnationThreshold && cfg.Loop.StagnationThreshold > 0 {
+			opts.StagnationThreshold = cfg.Loop.StagnationThreshold
 		}
-		if opts.Timeout == time.Duration(loop.DefaultTimeoutMinutes)*time.Minute && cfg.Ralph.TimeoutMinutes > 0 {
-			opts.Timeout = time.Duration(cfg.Ralph.TimeoutMinutes) * time.Minute
+		if opts.Timeout == time.Duration(loop.DefaultTimeoutMinutes)*time.Minute && cfg.Loop.TimeoutMinutes > 0 {
+			opts.Timeout = time.Duration(cfg.Loop.TimeoutMinutes) * time.Minute
 		}
-		if opts.CallsPerHour == loop.DefaultCallsPerHour && cfg.Ralph.CallsPerHour > 0 {
-			opts.CallsPerHour = cfg.Ralph.CallsPerHour
+		if opts.CallsPerHour == loop.DefaultCallsPerHour && cfg.Loop.CallsPerHour > 0 {
+			opts.CallsPerHour = cfg.Loop.CallsPerHour
 		}
-		if opts.SameErrorThreshold == loop.DefaultSameErrorThreshold && cfg.Ralph.SameErrorThreshold > 0 {
-			opts.SameErrorThreshold = cfg.Ralph.SameErrorThreshold
+		if opts.SameErrorThreshold == loop.DefaultSameErrorThreshold && cfg.Loop.SameErrorThreshold > 0 {
+			opts.SameErrorThreshold = cfg.Loop.SameErrorThreshold
 		}
-		if opts.OutputDeclineThreshold == loop.DefaultOutputDeclineThreshold && cfg.Ralph.OutputDeclineThreshold > 0 {
-			opts.OutputDeclineThreshold = cfg.Ralph.OutputDeclineThreshold
+		if opts.OutputDeclineThreshold == loop.DefaultOutputDeclineThreshold && cfg.Loop.OutputDeclineThreshold > 0 {
+			opts.OutputDeclineThreshold = cfg.Loop.OutputDeclineThreshold
 		}
-		if opts.MaxConsecutiveTestLoops == loop.DefaultMaxConsecutiveTestLoops && cfg.Ralph.MaxConsecutiveTestLoops > 0 {
-			opts.MaxConsecutiveTestLoops = cfg.Ralph.MaxConsecutiveTestLoops
+		if opts.MaxConsecutiveTestLoops == loop.DefaultMaxConsecutiveTestLoops && cfg.Loop.MaxConsecutiveTestLoops > 0 {
+			opts.MaxConsecutiveTestLoops = cfg.Loop.MaxConsecutiveTestLoops
 		}
-		if opts.LoopDelaySeconds == loop.DefaultLoopDelaySeconds && cfg.Ralph.LoopDelaySeconds > 0 {
-			opts.LoopDelaySeconds = cfg.Ralph.LoopDelaySeconds
+		if opts.LoopDelaySeconds == loop.DefaultLoopDelaySeconds && cfg.Loop.LoopDelaySeconds > 0 {
+			opts.LoopDelaySeconds = cfg.Loop.LoopDelaySeconds
 		}
 		// Boolean flags: config overrides false (default) only
-		if !opts.SkipPermissions && cfg.Ralph.SkipPermissions {
+		if !opts.SkipPermissions && cfg.Loop.SkipPermissions {
 			opts.SkipPermissions = true
 		}
 	}

@@ -55,22 +55,22 @@ as agent names (clawker.<project>.<agent>).
 Container path format: CONTAINER:PATH
 Local path format: PATH`,
 		Example: `  # Copy file from container using agent name
-  clawker container cp --agent ralph:/app/config.json ./config.json
+  clawker container cp --agent dev:/app/config.json ./config.json
 
   # Copy file to container using agent name
-  clawker container cp --agent ./config.json ralph:/app/config.json
+  clawker container cp --agent ./config.json dev:/app/config.json
 
   # Copy file from container by full name
-  clawker container cp clawker.myapp.ralph:/app/config.json ./config.json
+  clawker container cp clawker.myapp.dev:/app/config.json ./config.json
 
   # Copy file from local to container
-  clawker container cp ./config.json clawker.myapp.ralph:/app/config.json
+  clawker container cp ./config.json clawker.myapp.dev:/app/config.json
 
   # Copy directory from container to local
-  clawker container cp --agent ralph:/app/logs ./logs
+  clawker container cp --agent dev:/app/logs ./logs
 
   # Stream tar from container to stdout
-  clawker container cp --agent ralph:/app - > backup.tar`,
+  clawker container cp --agent dev:/app - > backup.tar`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Src = args[0]

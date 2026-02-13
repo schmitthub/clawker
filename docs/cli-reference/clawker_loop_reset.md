@@ -1,10 +1,10 @@
-## clawker ralph reset
+## clawker loop reset
 
 Reset the circuit breaker for an agent
 
 ### Synopsis
 
-Reset the circuit breaker to allow ralph loops to continue.
+Reset the circuit breaker to allow loops to continue.
 
 The circuit breaker trips when an agent shows no progress for multiple
 consecutive loops. Use this command to reset it and retry.
@@ -13,17 +13,17 @@ By default, only the circuit breaker is reset. Use --all to also clear
 the session history.
 
 ```
-clawker ralph reset [flags]
+clawker loop reset [flags]
 ```
 
 ### Examples
 
 ```
   # Reset circuit breaker only
-  clawker ralph reset --agent dev
+  clawker loop reset --agent dev
 
   # Reset everything (circuit and session)
-  clawker ralph reset --agent dev --all
+  clawker loop reset --agent dev --all
 ```
 
 ### Options
@@ -43,4 +43,4 @@ clawker ralph reset [flags]
 
 ### See also
 
-* [clawker ralph](clawker_ralph.md) - Run Claude Code in autonomous loops
+* [clawker loop](clawker_loop.md) - Run Claude Code in autonomous loops
