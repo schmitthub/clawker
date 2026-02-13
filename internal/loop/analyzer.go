@@ -89,6 +89,11 @@ var (
 
 	// Error patterns to extract for signature
 	errorPatternRe = regexp.MustCompile(`(?i)(error|exception|failed|failure|cannot|unable|refused|denied|timeout|crash)[\s:]+([^\n]{0,100})`)
+
+	// Normalization regexes for error message comparison
+	lineNumRe   = regexp.MustCompile(`:\d+|line\s+\d+`)
+	timestampRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}`)
+	addrRe      = regexp.MustCompile(`0x[0-9a-fA-F]+`)
 )
 
 // ParseStatus extracts the LOOP_STATUS block from output and parses it.
@@ -245,21 +250,10 @@ func ExtractErrorSignature(output string) string {
 // normalizeErrorMessage removes variable parts from error messages
 // to allow comparison of "same" errors.
 func normalizeErrorMessage(msg string) string {
-	// Remove line numbers like ":123" or "line 45"
-	lineNumRe := regexp.MustCompile(`:\d+|line\s+\d+`)
 	msg = lineNumRe.ReplaceAllString(msg, "")
-
-	// Remove timestamps
-	timestampRe := regexp.MustCompile(`\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}`)
 	msg = timestampRe.ReplaceAllString(msg, "")
-
-	// Remove hex addresses
-	addrRe := regexp.MustCompile(`0x[0-9a-fA-F]+`)
 	msg = addrRe.ReplaceAllString(msg, "")
-
-	// Collapse whitespace
 	msg = strings.Join(strings.Fields(msg), " ")
-
 	return msg
 }
 

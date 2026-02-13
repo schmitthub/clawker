@@ -8,13 +8,13 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // RunLoopConfig holds all inputs for RunLoop.
 type RunLoopConfig struct {
-	Ctx         context.Context
 	Runner      *loop.Runner
 	RunnerOpts  loop.Options
 	TUI         *tui.TUI
@@ -33,7 +33,7 @@ type RunLoopConfig struct {
 //   - Press q/Esc to detach — the TUI exits and output switches to minimal text mode
 //     while the loop continues running in the foreground.
 //   - Press Ctrl+C to interrupt — the loop is cancelled and the process exits.
-func RunLoop(cfg RunLoopConfig) (*loop.Result, error) {
+func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 	ios := cfg.IOStreams
 	cs := ios.ColorScheme()
 	useTUI := ios.IsStderrTTY() && !cfg.Verbose && !cfg.Format.Quiet && !cfg.Format.IsJSON()
@@ -43,7 +43,7 @@ func RunLoop(cfg RunLoopConfig) (*loop.Result, error) {
 
 	if useTUI {
 		// Wrap context so we can cancel the runner on Ctrl+C
-		runCtx, runCancel := context.WithCancel(cfg.Ctx)
+		runCtx, runCancel := context.WithCancel(ctx)
 		defer runCancel()
 
 		ch := make(chan tui.LoopDashEvent, 16)
@@ -111,7 +111,7 @@ func RunLoop(cfg RunLoopConfig) (*loop.Result, error) {
 		}
 
 		var runErr error
-		result, runErr = cfg.Runner.Run(cfg.Ctx, runnerOpts)
+		result, runErr = cfg.Runner.Run(ctx, runnerOpts)
 		if runErr != nil {
 			return nil, runErr
 		}
@@ -248,10 +248,11 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 
 // sendEvent sends an event on the channel without blocking. If the channel is
 // full, the event is dropped to prevent deadlocking the runner goroutine.
+// Dropped events are logged as warnings for observability.
 func sendEvent(ch chan<- tui.LoopDashEvent, ev tui.LoopDashEvent) {
 	select {
 	case ch <- ev:
 	default:
-		// Channel full — drop event rather than blocking the runner
+		logger.Warn().Int("event_kind", int(ev.Kind)).Msg("dashboard event dropped: channel full")
 	}
 }

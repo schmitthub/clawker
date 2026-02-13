@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // Session represents the persistent state of a loop session.
@@ -192,11 +194,13 @@ func (s *SessionStore) ListSessions(project string) ([]*Session, error) {
 	for _, path := range matches {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			continue // skip unreadable files
+			logger.Warn().Err(readErr).Str("path", path).Msg("skipping unreadable session file")
+			continue
 		}
 		var sess Session
 		if jsonErr := json.Unmarshal(data, &sess); jsonErr != nil {
-			continue // skip malformed files
+			logger.Warn().Err(jsonErr).Str("path", path).Msg("skipping malformed session file")
+			continue
 		}
 		if sess.Project == project {
 			sessions = append(sessions, &sess)

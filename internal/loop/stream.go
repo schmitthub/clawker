@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // EventType discriminates top-level stream-json events.
@@ -269,6 +271,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeSystem:
 			var event SystemEvent
 			if err := json.Unmarshal(line, &event); err != nil {
+				logger.Warn().Err(err).Str("type", "system").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnSystem != nil {
@@ -278,6 +281,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeAssistant:
 			var event AssistantEvent
 			if err := json.Unmarshal(line, &event); err != nil {
+				logger.Warn().Err(err).Str("type", "assistant").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnAssistant != nil {
@@ -287,6 +291,7 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 		case EventTypeUser:
 			var event UserEvent
 			if err := json.Unmarshal(line, &event); err != nil {
+				logger.Warn().Err(err).Str("type", "user").Msg("failed to parse known stream event")
 				continue
 			}
 			if handler != nil && handler.OnUser != nil {

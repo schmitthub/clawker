@@ -120,36 +120,37 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 		return cmdutil.WriteJSON(ios.Out, output)
 	}
 
-	// Human-readable output
-	fmt.Fprintf(ios.ErrOut, "Loop status for %s.%s\n\n", cfg.Project, opts.Agent)
+	// Human-readable output — primary data goes to stdout
+	fmt.Fprintf(ios.Out, "Loop status for %s.%s\n\n", cfg.Project, opts.Agent)
 
 	if session != nil {
-		fmt.Fprintf(ios.ErrOut, "Session:\n")
-		fmt.Fprintf(ios.ErrOut, "  Started: %s\n", session.StartedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(ios.ErrOut, "  Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(ios.ErrOut, "  Loops completed: %d\n", session.LoopsCompleted)
-		fmt.Fprintf(ios.ErrOut, "  Current status: %s\n", session.Status)
-		fmt.Fprintf(ios.ErrOut, "  Total tasks: %d\n", session.TotalTasksCompleted)
-		fmt.Fprintf(ios.ErrOut, "  Total files: %d\n", session.TotalFilesModified)
+		fmt.Fprintf(ios.Out, "Session:\n")
+		fmt.Fprintf(ios.Out, "  Started: %s\n", session.StartedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(ios.Out, "  Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(ios.Out, "  Loops completed: %d\n", session.LoopsCompleted)
+		fmt.Fprintf(ios.Out, "  Current status: %s\n", session.Status)
+		fmt.Fprintf(ios.Out, "  Total tasks: %d\n", session.TotalTasksCompleted)
+		fmt.Fprintf(ios.Out, "  Total files: %d\n", session.TotalFilesModified)
 		if session.LastError != "" {
-			fmt.Fprintf(ios.ErrOut, "  Last error: %s\n", session.LastError)
+			fmt.Fprintf(ios.Out, "  Last error: %s\n", session.LastError)
 		}
-		fmt.Fprintf(ios.ErrOut, "\n")
+		fmt.Fprintf(ios.Out, "\n")
 	}
 
 	if circuitState != nil {
-		fmt.Fprintf(ios.ErrOut, "Circuit breaker:\n")
+		fmt.Fprintf(ios.Out, "Circuit breaker:\n")
 		if circuitState.Tripped {
-			fmt.Fprintf(ios.ErrOut, "  Status: TRIPPED\n")
-			fmt.Fprintf(ios.ErrOut, "  Reason: %s\n", circuitState.TripReason)
+			fmt.Fprintf(ios.Out, "  Status: TRIPPED\n")
+			fmt.Fprintf(ios.Out, "  Reason: %s\n", circuitState.TripReason)
 			if circuitState.TrippedAt != nil {
-				fmt.Fprintf(ios.ErrOut, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(ios.Out, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
 			}
+			// Next steps guidance goes to stderr
 			fmt.Fprintf(ios.ErrOut, "\n%s Reset the circuit: clawker loop reset --agent %s\n",
 				cs.InfoIcon(), opts.Agent)
 		} else {
-			fmt.Fprintf(ios.ErrOut, "  Status: OK\n")
-			fmt.Fprintf(ios.ErrOut, "  No-progress count: %d\n", circuitState.NoProgressCount)
+			fmt.Fprintf(ios.Out, "  Status: OK\n")
+			fmt.Fprintf(ios.Out, "  No-progress count: %d\n", circuitState.NoProgressCount)
 		}
 	}
 

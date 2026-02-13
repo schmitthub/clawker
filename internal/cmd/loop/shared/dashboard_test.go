@@ -440,7 +440,6 @@ func TestRunLoop_ModeSelection(t *testing.T) {
 			}
 
 			cfg := RunLoopConfig{
-				Ctx:    ctx,
 				Runner: runner,
 				RunnerOpts: loop.Options{
 					MaxLoops:      1,
@@ -456,7 +455,7 @@ func TestRunLoop_ModeSelection(t *testing.T) {
 				CommandName: "iterate",
 			}
 
-			result, err := RunLoop(cfg)
+			result, err := RunLoop(ctx, cfg)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 

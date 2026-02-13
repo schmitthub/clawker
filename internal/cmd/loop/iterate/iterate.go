@@ -214,8 +214,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	)
 
 	// 7. Run loop with appropriate output mode (TUI dashboard or text monitor)
-	result, err := shared.RunLoop(shared.RunLoopConfig{
-		Ctx:         ctx,
+	result, err := shared.RunLoop(ctx, shared.RunLoopConfig{
 		Runner:      runner,
 		RunnerOpts:  runnerOpts,
 		TUI:         opts.TUI,

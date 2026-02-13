@@ -350,6 +350,9 @@ mainLoop:
 		if opts.SkipPermissions {
 			cmd = append(cmd, "--dangerously-skip-permissions")
 		}
+		if opts.SystemPrompt != "" {
+			cmd = append(cmd, "--append-system-prompt", opts.SystemPrompt)
+		}
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
@@ -492,12 +495,18 @@ mainLoop:
 			opts.Monitor.PrintLoopProgress(loopNum, status, circuit)
 		}
 
-		// Brief pause between loops
+		// Brief pause between loops (context-aware so Ctrl+C is responsive)
 		loopDelay := time.Duration(opts.LoopDelaySeconds) * time.Second
 		if loopDelay <= 0 {
 			loopDelay = time.Duration(DefaultLoopDelaySeconds) * time.Second
 		}
-		time.Sleep(loopDelay)
+		select {
+		case <-ctx.Done():
+			result.ExitReason = "context cancelled"
+			result.Error = ctx.Err()
+			break mainLoop
+		case <-time.After(loopDelay):
+		}
 	}
 
 	// Check if we hit max loops
@@ -588,7 +597,7 @@ func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []st
 		return stdout.String(), -1, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	// Log stderr separately if non-empty (Fix #5: don't silently merge)
+	// Log stderr separately, then append to output for analysis
 	output := stdout.String()
 	if stderr.Len() > 0 {
 		logger.Debug().Str("stderr", stderr.String()).Msg("claude stderr output")

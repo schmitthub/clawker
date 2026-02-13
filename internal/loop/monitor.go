@@ -54,7 +54,7 @@ func (m *Monitor) FormatLoopStart(loopNum int) string {
 }
 
 // FormatLoopProgress returns the progress line for monitor mode.
-// Format: [Loop 3/50] IN_PROGRESS | Tasks: 2 | Files: 5 | Rate: 97/100 | Circuit: CLOSED
+// Format: [Loop 3/50] IN_PROGRESS | Tasks: 2 | Files: 5 | Rate: 97/100 | Circuit: 0/3
 func (m *Monitor) FormatLoopProgress(loopNum int, status *Status, circuit *CircuitBreaker) string {
 	var parts []string
 

@@ -117,7 +117,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 - `SessionStore` — manages session and circuit persistence to JSON files
 - `NewSessionStore(baseDir string)`, `DefaultSessionStore() (*SessionStore, error)` — constructors
 - `Load/Save/Delete Session(project, agent)` and `Load/Save/Delete CircuitState(project, agent)` — CRUD operations
-- `ListSessions(project string) ([]*Session, error)` — returns all sessions for a project (malformed files silently skipped)
+- `ListSessions(project string) ([]*Session, error)` — returns all sessions for a project (malformed files skipped with logger.Warn)
 - `LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)` — loads session, auto-deletes if expired (returns nil + expired=true)
 
 ### History (`history.go`)
@@ -182,6 +182,7 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 
 **Design decisions:**
 - Malformed lines and unknown event types silently skipped (forward compatibility)
+- Malformed known event types (system/assistant/user) are logged via `logger.Warn` and skipped (observable but non-fatal)
 - Malformed result events return error (terminal event corruption is critical)
 - Scanner buffer: 64KB initial, 10MB max (handles large tool results)
 - No `stream_event` (token-level) support yet — only message-level events. Token streaming requires `--include-partial-messages` flag and will be added if TUI needs real-time text display.
