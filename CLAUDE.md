@@ -40,7 +40,7 @@ Finding and fixing greater issues is fun, its more important than the task at ha
    - read_wiki_contents - View documentation about a GitHub repository
    - ask_question - Ask any question about a GitHub repository and get an AI-powered, context-grounded response
 
-3. **ripgrep** - Use `ripgrep` instead of `grep`
+4. **github mcp** - Use github's mcp for repository-specific information like PR status, issues, code search, and commit history. Use the following commands:
 
 
 ### Workflow Requirements
