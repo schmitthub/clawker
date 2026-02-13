@@ -11,6 +11,7 @@ Autonomous Claude Code loops — repeated execution with circuit breaker protect
 | `shared/resolve.go` | `ResolvePrompt`, `ResolveTasksPrompt`, `BuildRunnerOptions` — prompt resolution + option building |
 | `shared/result.go` | `ResultOutput`, `NewResultOutput`, `WriteResult` — result output formatting |
 | `shared/lifecycle.go` | `SetupLoopContainer`, `InjectLoopHooks` — container lifecycle + hook injection |
+| `shared/concurrency.go` | `CheckConcurrency` — detect concurrent sessions, prompt for worktree |
 | `iterate/iterate.go` | `NewCmdIterate(f, runF)` — repeated-prompt loop |
 | `tasks/tasks.go` | `NewCmdTasks(f, runF)` — task-file-driven loop |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show session status |
@@ -74,7 +75,7 @@ Result output formatting:
 Container lifecycle management for loop commands:
 
 - `LoopContainerConfig` — all inputs: Client, Config, LoopOpts, Flags, Version, GitManager, HostProxy, SocketBridge, IOStreams
-- `LoopContainerResult` — outputs: ContainerID, ContainerName, AgentName, Project
+- `LoopContainerResult` — outputs: ContainerID, ContainerName, AgentName, Project, WorkDir
 - `SetupLoopContainer(ctx, cfg) (*LoopContainerResult, func(), error)` — creates container via `container/shared.CreateContainer`, injects hooks, starts container, returns cleanup function
 - `InjectLoopHooks(ctx, containerID, hooksFile, copyFn) error` — resolves hooks (default or custom), writes settings.json + hook scripts to container
 
@@ -82,17 +83,27 @@ Container lifecycle management for loop commands:
 
 **Hook injection**: Writes `settings.json` to `/home/claude/.claude/` with hook config (overwrites any existing settings). Hook scripts (e.g., stop-check.js) written to absolute paths in container. Custom hooks (`--hooks-file`) replace defaults entirely with no script files.
 
+## Shared Concurrency (`shared/concurrency.go`)
+
+Session concurrency detection using Docker container labels:
+
+- `ConcurrencyAction` — int const: `ActionProceed`, `ActionWorktree`, `ActionAbort`
+- `ConcurrencyCheckConfig` — Client, Project, WorkDir, IOStreams, Prompter
+- `CheckConcurrency(ctx, cfg) (ConcurrencyAction, error)` — lists running containers for the project, filters by workdir match. If conflict found: non-interactive → warn and proceed; interactive → prompt with 3 choices (worktree/proceed/abort)
+
+**Detection method**: Uses `docker.Client.ListContainersByProject()` with `includeAll=false` (running only). Compares `Container.Workdir` label against current working directory. Docker labels are ground truth — no stale session file risk.
+
 ## IterateOptions
 
 Embeds `*shared.LoopOptions`. Adds `--prompt` / `-p` / `--prompt-file` (mutually exclusive, one required), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: IOStreams, TUI, Client, Config, GitManager, HostProxy, SocketBridge, Prompter, Version.
 
-**Run flow**: ResolvePrompt → GenerateAgentName → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolvePrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
 
 ## TasksOptions
 
 Embeds `*shared.LoopOptions`. Adds `--tasks` (required), `--task-prompt` / `--task-prompt-file` (mutually exclusive, optional), `FormatFlags`, and captured `flags *pflag.FlagSet`. Factory DI: same as IterateOptions.
 
-**Run flow**: ResolveTasksPrompt → GenerateAgentName → Config → Docker Client → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
+**Run flow**: ResolveTasksPrompt → GenerateAgentName → Config → Docker Client → CheckConcurrency → SetupLoopContainer → NewRunner → BuildRunnerOptions → NewMonitor → Runner.Run → WriteResult → cleanup (deferred).
 
 ## Loop Strategies
 
@@ -103,4 +114,4 @@ Loop commands handle full container lifecycle: create → hooks → start → lo
 
 ## Testing
 
-Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags, defaults, all-flags round-trip, output mode combinations, verbose exclusivity, no-agent-flag rejection, agent-empty-at-parse verification, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.
+Tests in `iterate/iterate_test.go` and `tasks/tasks_test.go` cover flag parsing, mutual exclusivity, required flags, defaults, all-flags round-trip, output mode combinations, verbose exclusivity, no-agent-flag rejection, agent-empty-at-parse verification, Factory DI wiring (HostProxy, SocketBridge, Version), real-run Docker dependency check, and flags capture. Tests in `shared/resolve_test.go` cover prompt resolution (inline, file, empty, not found), tasks prompt resolution (default template, custom inline/file, placeholder substitution), and BuildRunnerOptions (basic mapping, config overrides, explicit flag wins, nil safety, boolean overrides, workDir mapping). Tests in `shared/result_test.go` cover ResultOutput mapping, JSON output, and quiet output. Tests in `shared/lifecycle_test.go` cover hook injection (default hooks, custom hooks file, invalid hooks file, copy failures), settings.json tar building (content, ownership), and hook files tar building (content, directories, permissions). Tests in `shared/concurrency_test.go` cover concurrency detection (no containers, different workdir, same workdir non-interactive warning, same workdir interactive with all 3 actions, Docker list error, multiple running containers). Per-package `testFactory`/`testFactoryWithConfig` helpers using `&cmdutil.Factory{}` struct literals with test doubles.

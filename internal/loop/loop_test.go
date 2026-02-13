@@ -27,7 +27,7 @@ func TestSessionCreationMirrorsLoopStartup(t *testing.T) {
 	// 4. for loop { ... }
 	// 5. store.SaveSession(session)                    <- only here, too late!
 
-	session := NewSession("test-project", "test-agent", "test prompt")
+	session := NewSession("test-project", "test-agent", "test prompt", "")
 	err := history.AddSessionEntry("test-project", "test-agent", "created", StatusPending, "", 0)
 	require.NoError(t, err)
 	// NOTE: store.SaveSession(session) is NOT called - this is the bug
@@ -71,7 +71,7 @@ func TestHistoryAndSessionConsistencyInvariant(t *testing.T) {
 	history := NewHistoryStore(tmpDir)
 
 	// Simulate current loop.go buggy behavior: history written, session not saved
-	_ = NewSession("proj", "agent", "prompt")
+	_ = NewSession("proj", "agent", "prompt", "")
 	err := history.AddSessionEntry("proj", "agent", "created", StatusPending, "", 0)
 	require.NoError(t, err)
 
@@ -125,7 +125,7 @@ func TestRunner_SessionSavedOnCreation(t *testing.T) {
 	// 2. Add history entry
 	// 3. Save session to disk  <-- THIS WAS MISSING
 
-	session := NewSession("test-proj", "test-agent", "initial prompt")
+	session := NewSession("test-proj", "test-agent", "initial prompt", "")
 
 	// Record in history (like loop.go does)
 	err := history.AddSessionEntry("test-proj", "test-agent", "created", StatusPending, "", 0)
@@ -160,7 +160,7 @@ func TestRunner_OnLoopStartSessionExists(t *testing.T) {
 	history := NewHistoryStore(tmpDir)
 
 	// Simulate proper startup sequence (the fix)
-	session := NewSession("proj", "agent", "prompt")
+	session := NewSession("proj", "agent", "prompt", "")
 	err := history.AddSessionEntry("proj", "agent", "created", StatusPending, "", 0)
 	require.NoError(t, err)
 	err = store.SaveSession(session)

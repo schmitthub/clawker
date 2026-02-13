@@ -66,6 +66,13 @@ func (f *FakeClient) SetupContainerList(containers ...container.Summary) {
 	}
 }
 
+// SetupContainerListError configures the fake to return an error from ContainerList calls.
+func (f *FakeClient) SetupContainerListError(err error) {
+	f.FakeAPI.ContainerListFn = func(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
+		return client.ContainerListResult{}, err
+	}
+}
+
 // SetupFindContainer configures the fake so that FindContainerByAgent
 // returns the given container when the matching name is inspected.
 // It sets up ContainerInspect to return managed inspect data plus a

@@ -109,14 +109,15 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 
 ### Session & Store (`session.go`)
 
-- `Session` — persistent loop state: Project, Agent, Status, InitialPrompt, LastError (string), StartedAt, UpdatedAt (time.Time), LoopsCompleted, NoProgressCount, TotalTasksCompleted, TotalFilesModified (int), RateLimitState (*RateLimitState)
-- `NewSession(project, agent, prompt string) *Session` — constructor
+- `Session` — persistent loop state: Project, Agent, WorkDir, Status, InitialPrompt, LastError (string), StartedAt, UpdatedAt (time.Time), LoopsCompleted, NoProgressCount, TotalTasksCompleted, TotalFilesModified (int), RateLimitState (*RateLimitState)
+- `NewSession(project, agent, prompt, workDir string) *Session` — constructor
 - `Session.IsExpired(hours int) bool`, `Session.Age() time.Duration` — expiration checks
 - `Session.Update(status *Status, loopErr error)` — updates counters after a loop
 - `CircuitState` — persistent circuit state: Project, Agent, TripReason (string), NoProgressCount (int), Tripped (bool), TrippedAt (*time.Time), UpdatedAt (time.Time)
 - `SessionStore` — manages session and circuit persistence to JSON files
 - `NewSessionStore(baseDir string)`, `DefaultSessionStore() (*SessionStore, error)` — constructors
 - `Load/Save/Delete Session(project, agent)` and `Load/Save/Delete CircuitState(project, agent)` — CRUD operations
+- `ListSessions(project string) ([]*Session, error)` — returns all sessions for a project (malformed files silently skipped)
 - `LoadSessionWithExpiration(project, agent string, expirationHours int) (*Session, bool, error)` — loads session, auto-deletes if expired (returns nil + expired=true)
 
 ### History (`history.go`)
@@ -140,7 +141,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 - `Runner.ExecCapture(ctx context.Context, containerName string, cmd []string, onOutput func([]byte)) (string, int, error)` — docker exec with output capture
 - `Runner.ResetCircuit(project, agent string) error`, `Runner.ResetSession(project, agent string) error` — reset state
 - `Runner.GetSession(project, agent string) (*Session, error)`, `Runner.GetCircuitState(project, agent string) (*CircuitState, error)` — read state
-- `Options` — ContainerName, Project, Agent, Prompt, SystemPrompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
+- `Options` — ContainerName, Project, Agent, Prompt, SystemPrompt, WorkDir (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
 - `Result` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
 
 ### Stream Parser (`stream.go`)

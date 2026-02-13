@@ -16,7 +16,7 @@ func TestSessionStore_SaveLoadSession(t *testing.T) {
 	store := NewSessionStore(tmpDir)
 
 	// Create session
-	session := NewSession("test-project", "test-agent", "Fix the bug")
+	session := NewSession("test-project", "test-agent", "Fix the bug", "")
 	session.LoopsCompleted = 5
 	session.TotalTasksCompleted = 10
 	session.TotalFilesModified = 3
@@ -53,7 +53,7 @@ func TestSessionStore_DeleteSession(t *testing.T) {
 	store := NewSessionStore(tmpDir)
 
 	// Save a session
-	session := NewSession("test-project", "test-agent", "")
+	session := NewSession("test-project", "test-agent", "", "")
 	err := store.SaveSession(session)
 	require.NoError(t, err)
 
@@ -136,7 +136,7 @@ func TestSessionStore_DeleteCircuitState(t *testing.T) {
 
 func TestNewSession(t *testing.T) {
 	before := time.Now()
-	session := NewSession("myproject", "myagent", "Do the thing")
+	session := NewSession("myproject", "myagent", "Do the thing", "")
 	after := time.Now()
 
 	assert.Equal(t, "myproject", session.Project)
@@ -148,7 +148,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSession_Update(t *testing.T) {
-	session := NewSession("project", "agent", "")
+	session := NewSession("project", "agent", "", "")
 
 	// Update with progress
 	status := &Status{
@@ -185,7 +185,7 @@ func TestSessionStore_DirectoryCreation(t *testing.T) {
 	deepDir := filepath.Join(tmpDir, "deep", "nested", "path")
 	store := NewSessionStore(deepDir)
 
-	session := NewSession("project", "agent", "")
+	session := NewSession("project", "agent", "", "")
 	err := store.SaveSession(session)
 	require.NoError(t, err)
 
@@ -193,4 +193,90 @@ func TestSessionStore_DirectoryCreation(t *testing.T) {
 	sessionDir := filepath.Join(deepDir, "sessions")
 	_, err = os.Stat(sessionDir)
 	require.NoError(t, err)
+}
+
+func TestSession_WorkDir_Persistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSessionStore(tmpDir)
+
+	session := NewSession("proj", "agent", "do stuff", "/home/user/myproject")
+	assert.Equal(t, "/home/user/myproject", session.WorkDir)
+
+	err := store.SaveSession(session)
+	require.NoError(t, err)
+
+	loaded, err := store.LoadSession("proj", "agent")
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	assert.Equal(t, "/home/user/myproject", loaded.WorkDir)
+}
+
+func TestListSessions_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSessionStore(tmpDir)
+
+	sessions, err := store.ListSessions("nonexistent")
+	require.NoError(t, err)
+	assert.Empty(t, sessions)
+}
+
+func TestListSessions_Multiple(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSessionStore(tmpDir)
+
+	s1 := NewSession("myproj", "agent1", "p1", "/workspace/a")
+	s2 := NewSession("myproj", "agent2", "p2", "/workspace/b")
+	require.NoError(t, store.SaveSession(s1))
+	require.NoError(t, store.SaveSession(s2))
+
+	sessions, err := store.ListSessions("myproj")
+	require.NoError(t, err)
+	assert.Len(t, sessions, 2)
+
+	// Verify both sessions are returned (order not guaranteed)
+	agents := map[string]string{}
+	for _, s := range sessions {
+		agents[s.Agent] = s.WorkDir
+	}
+	assert.Equal(t, "/workspace/a", agents["agent1"])
+	assert.Equal(t, "/workspace/b", agents["agent2"])
+}
+
+func TestListSessions_FiltersProject(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSessionStore(tmpDir)
+
+	s1 := NewSession("projA", "agent1", "p1", "/a")
+	s2 := NewSession("projB", "agent1", "p2", "/b")
+	require.NoError(t, store.SaveSession(s1))
+	require.NoError(t, store.SaveSession(s2))
+
+	sessionsA, err := store.ListSessions("projA")
+	require.NoError(t, err)
+	assert.Len(t, sessionsA, 1)
+	assert.Equal(t, "projA", sessionsA[0].Project)
+
+	sessionsB, err := store.ListSessions("projB")
+	require.NoError(t, err)
+	assert.Len(t, sessionsB, 1)
+	assert.Equal(t, "projB", sessionsB[0].Project)
+}
+
+func TestListSessions_MalformedSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSessionStore(tmpDir)
+
+	// Save a valid session
+	s1 := NewSession("proj", "good", "p1", "/workspace")
+	require.NoError(t, store.SaveSession(s1))
+
+	// Write a malformed file matching the glob pattern
+	sessDir := filepath.Join(tmpDir, "sessions")
+	err := os.WriteFile(filepath.Join(sessDir, "proj.bad.json"), []byte("not json"), 0o644)
+	require.NoError(t, err)
+
+	sessions, err := store.ListSessions("proj")
+	require.NoError(t, err)
+	assert.Len(t, sessions, 1)
+	assert.Equal(t, "good", sessions[0].Agent)
 }

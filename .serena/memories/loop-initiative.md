@@ -22,7 +22,7 @@
 | 4 | Task 11: Default hook set + user override mechanism | `merged into Task 10` | — |
 | 5 | Task 12: Container lifecycle integration | `complete` | opus |
 | 5 | Task 13: Auto agent naming | `complete` | opus |
-| 5 | Task 14: Session concurrency detection + worktree support | `pending` | — |
+| 5 | Task 14: Session concurrency detection + worktree support | `complete` | opus |
 | 6 | Task 15: TUI dashboard (default view) | `pending` | — |
 | 6 | Task 16: TUI detach → minimal mode | `pending` | — |
 | 6 | Task 17: Output mode switching (verbose, json, quiet) | `pending` | — |
@@ -55,6 +55,18 @@
 - **Status/reset unaffected**: These commands register their own `--agent` flag independently on their own options structs — they don't use `AddLoopFlags`. Users reference auto-generated names (displayed in output) when using `loop status --agent loop-brave-turing`.
 - **Test changes**: Removed `TestAgentFlag` and `TestAgentRequired` from iterate and tasks (replaced with `TestNoAgentFlag` and `TestAgentEmptyAtFlagParse`). All test args stripped of `--agent dev`. Net change: -4 old tests + 8 new tests = +4 net.
 - Test count: 3906 → 3910 (+4 net). All pass.
+
+**Task 14:**
+- Created `internal/cmd/loop/shared/concurrency.go` (67 lines) with Docker label-based concurrency detection. `CheckConcurrency` lists running containers for the project, filters by `Workdir` label matching the current working directory. Non-interactive: warns to stderr and proceeds. Interactive: prompts with 3 choices (worktree/proceed/abort) via `prompter.Select`.
+- **Architecture decision**: Concurrency detection uses Docker container labels as ground truth rather than session files. Container labels are reliable — session files can be stale if a process crashes. The `LabelWorkdir` label on containers is the single source of truth for which host directory a container was started against.
+- **Critical fix from code review**: `LabelWorkdir` was never set on containers during `CreateContainer()` — the `extraLabels` map only had `LabelProject` and `LabelAgent`. Added `docker.LabelWorkdir: wd` to the map. Without this, `c.Workdir` would always be empty and the concurrency check would silently pass.
+- **Path consistency fix from code review**: The concurrency check originally used `filepath.Abs(".")` (CWD) but `resolveWorkDir` in `CreateContainer` uses `cfg.RootDir()` (project root from registry), falling back to `os.Getwd()`. Running from a subdirectory would cause a mismatch. Fixed by using the same resolution logic: `cfgGateway.Project.RootDir()` with `os.Getwd()` fallback.
+- Added `WorkDir string` to `Session` struct (json:"work_dir,omitempty"), `ListSessions(project)` method using `filepath.Glob`, `sessionsDir()` helper.
+- Propagated `WorkDir` through the stack: `CreateContainerResult.WorkDir` → `LoopContainerResult.WorkDir` → `loop.Options.WorkDir` → `Session.WorkDir`. Also added `workDir` parameter to `BuildRunnerOptions`.
+- Added `SetupContainerListError(err)` to `dockertest.FakeClient` helpers — needed for testing Docker list failures.
+- **Interactive test timing pitfall**: `tio.SetInteractive(true)` must be called *before* `CheckConcurrency` runs (not inside the `Prompter()` closure), because `IsInteractive()` is checked before `Prompter()` is called. Moving setup outside the closure fixed the test failures.
+- Worktree auto-generation on concurrency prompt: when user selects "Use a worktree" but hasn't set `--worktree`, code calls `cmdutil.ParseWorktreeFlag("", opts.Agent)` to generate a branch name, then sets `opts.Worktree = spec.Branch`.
+- Test count: 3910 → 3923 (+13 net). 5 new session tests, 8 new concurrency tests. All pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.

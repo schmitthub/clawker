@@ -4,6 +4,7 @@ package iterate
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -147,6 +148,40 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
+	// 3.5. Check for concurrent sessions in the same directory
+	// Use the project root (same as resolveWorkDir in CreateContainer) so that
+	// the concurrency check matches the LabelWorkdir stored on containers.
+	workDir := cfgGateway.Project.RootDir()
+	if workDir == "" {
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolving working directory: %w", err)
+		}
+	}
+
+	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
+		Client:   client,
+		Project:  cfgGateway.Project.Project,
+		WorkDir:  workDir,
+		IOStreams: ios,
+		Prompter: opts.Prompter,
+	})
+	if err != nil {
+		return err
+	}
+	switch action {
+	case shared.ActionWorktree:
+		if opts.Worktree == "" {
+			spec, specErr := cmdutil.ParseWorktreeFlag("", opts.Agent)
+			if specErr != nil {
+				return fmt.Errorf("generating worktree name: %w", specErr)
+			}
+			opts.Worktree = spec.Branch
+		}
+	case shared.ActionAbort:
+		return cmdutil.SilentError
+	}
+
 	// 4. Create and start container with hooks
 	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
 		Client:       client,
@@ -172,7 +207,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	// 6. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt,
+		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
 		opts.flags, cfgGateway.Project.Loop,
 	)
 

@@ -97,6 +97,9 @@ type Options struct {
 	// Monitor is the optional monitor for live output.
 	Monitor *Monitor
 
+	// WorkDir is the host working directory for this session.
+	WorkDir string
+
 	// Verbose enables verbose logging.
 	Verbose bool
 
@@ -197,7 +200,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	sessionCreated := session == nil
 	if session == nil {
-		session = NewSession(opts.Project, opts.Agent, opts.Prompt)
+		session = NewSession(opts.Project, opts.Agent, opts.Prompt, opts.WorkDir)
 	}
 	// Record session creation in history and save session immediately
 	// This ensures `loop status` can see the session before the first loop completes

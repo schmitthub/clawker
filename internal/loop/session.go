@@ -16,6 +16,9 @@ type Session struct {
 	// Agent is the agent name.
 	Agent string `json:"agent"`
 
+	// WorkDir is the host working directory for this session.
+	WorkDir string `json:"work_dir,omitempty"`
+
 	// StartedAt is when the session started.
 	StartedAt time.Time `json:"started_at"`
 
@@ -92,9 +95,14 @@ func DefaultSessionStore() (*SessionStore, error) {
 	return NewSessionStore(baseDir), nil
 }
 
+// sessionsDir returns the path for the sessions directory.
+func (s *SessionStore) sessionsDir() string {
+	return filepath.Join(s.baseDir, "sessions")
+}
+
 // sessionPath returns the path for a session file.
 func (s *SessionStore) sessionPath(project, agent string) string {
-	return filepath.Join(s.baseDir, "sessions", fmt.Sprintf("%s.%s.json", project, agent))
+	return filepath.Join(s.sessionsDir(), fmt.Sprintf("%s.%s.json", project, agent))
 }
 
 // circuitPath returns the path for a circuit breaker state file.
@@ -171,6 +179,32 @@ func (s *SessionStore) DeleteSession(project, agent string) error {
 	return nil
 }
 
+// ListSessions returns all sessions for a given project.
+// Malformed session files are silently skipped.
+func (s *SessionStore) ListSessions(project string) ([]*Session, error) {
+	pattern := filepath.Join(s.sessionsDir(), project+".*.json")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob sessions: %w", err)
+	}
+
+	var sessions []*Session
+	for _, path := range matches {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue // skip unreadable files
+		}
+		var sess Session
+		if jsonErr := json.Unmarshal(data, &sess); jsonErr != nil {
+			continue // skip malformed files
+		}
+		if sess.Project == project {
+			sessions = append(sessions, &sess)
+		}
+	}
+	return sessions, nil
+}
+
 // LoadCircuitState loads circuit breaker state from disk.
 // Returns nil if no state exists.
 func (s *SessionStore) LoadCircuitState(project, agent string) (*CircuitState, error) {
@@ -219,11 +253,12 @@ func (s *SessionStore) DeleteCircuitState(project, agent string) error {
 }
 
 // NewSession creates a new session.
-func NewSession(project, agent, prompt string) *Session {
+func NewSession(project, agent, prompt, workDir string) *Session {
 	now := time.Now()
 	return &Session{
 		Project:       project,
 		Agent:         agent,
+		WorkDir:       workDir,
 		StartedAt:     now,
 		UpdatedAt:     now,
 		Status:        StatusPending,

@@ -67,6 +67,9 @@ type LoopContainerResult struct {
 
 	// Project is the project name.
 	Project string
+
+	// WorkDir is the host working directory for this session.
+	WorkDir string
 }
 
 // SetupLoopContainer creates, configures, and starts a container for loop execution.
@@ -210,6 +213,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		ContainerName: containerName,
 		AgentName:     agentName,
 		Project:       projectCfg.Project,
+		WorkDir:       o.result.WorkDir,
 	}, cleanup, nil
 }
 

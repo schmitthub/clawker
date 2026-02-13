@@ -84,7 +84,7 @@ func ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, e
 // Config overrides are applied for any flags the user did not explicitly set.
 func BuildRunnerOptions(
 	loopOpts *LoopOptions,
-	project, agent, containerName, prompt string,
+	project, agent, containerName, prompt, workDir string,
 	flags *pflag.FlagSet,
 	loopCfg *config.LoopConfig,
 ) loop.Options {
@@ -93,6 +93,7 @@ func BuildRunnerOptions(
 		Project:                project,
 		Agent:                  agent,
 		Prompt:                 prompt,
+		WorkDir:                workDir,
 		MaxLoops:               loopOpts.MaxLoops,
 		StagnationThreshold:    loopOpts.StagnationThreshold,
 		Timeout:                time.Duration(loopOpts.TimeoutMinutes) * time.Minute,
