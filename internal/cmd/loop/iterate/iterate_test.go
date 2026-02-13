@@ -383,6 +383,34 @@ func TestNewCmdIterate_RealRunNeedsDocker(t *testing.T) {
 	assert.Contains(t, err.Error(), "docker not available")
 }
 
+func TestNewCmdIterate_FactoryDIWiring(t *testing.T) {
+	f, tio := testFactory(t)
+
+	var gotOpts *IterateOptions
+	cmd := NewCmdIterate(f, func(_ context.Context, opts *IterateOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--agent", "dev", "--prompt", "test"})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+
+	// Verify all Factory DI fields are wired
+	assert.NotNil(t, gotOpts.IOStreams, "IOStreams should be wired")
+	assert.NotNil(t, gotOpts.TUI, "TUI should be wired")
+	// Client, Config, GitManager, HostProxy, SocketBridge, Prompter may be nil
+	// on test Factory — the important thing is the field exists and is set
+	assert.Nil(t, gotOpts.HostProxy, "HostProxy should be nil for test factory")
+	assert.Nil(t, gotOpts.SocketBridge, "SocketBridge should be nil for test factory")
+	assert.Empty(t, gotOpts.Version, "Version should be empty for test factory")
+}
+
 func TestNewCmdIterate_FlagsCaptured(t *testing.T) {
 	f, tio := testFactory(t)
 

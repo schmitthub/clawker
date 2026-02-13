@@ -13,9 +13,11 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -24,12 +26,15 @@ type TasksOptions struct {
 	*shared.LoopOptions
 
 	// Factory DI
-	IOStreams   *iostreams.IOStreams
-	TUI        *tui.TUI
-	Client     func(context.Context) (*docker.Client, error)
-	Config     func() *config.Config
-	GitManager func() (*git.GitManager, error)
-	Prompter   func() *prompter.Prompter
+	IOStreams     *iostreams.IOStreams
+	TUI          *tui.TUI
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() *config.Config
+	GitManager   func() (*git.GitManager, error)
+	HostProxy    func() hostproxy.HostProxyService
+	SocketBridge func() socketbridge.SocketBridgeManager
+	Prompter     func() *prompter.Prompter
+	Version      string
 
 	// Task file (required)
 	TasksFile string
@@ -49,13 +54,16 @@ type TasksOptions struct {
 func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) error) *cobra.Command {
 	loopOpts := shared.NewLoopOptions()
 	opts := &TasksOptions{
-		LoopOptions: loopOpts,
-		IOStreams:   f.IOStreams,
-		TUI:        f.TUI,
-		Client:     f.Client,
-		Config:     f.Config,
-		GitManager: f.GitManager,
-		Prompter:   f.Prompter,
+		LoopOptions:  loopOpts,
+		IOStreams:    f.IOStreams,
+		TUI:         f.TUI,
+		Client:      f.Client,
+		Config:      f.Config,
+		GitManager:  f.GitManager,
+		HostProxy:   f.HostProxy,
+		SocketBridge: f.SocketBridge,
+		Prompter:    f.Prompter,
+		Version:     f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -63,18 +71,16 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 		Short: "Run an agent loop driven by a task file",
 		Long: `Run Claude Code in an autonomous loop driven by a task file.
 
-Each iteration, the agent reads the task file, picks an open task, completes
-it, and marks it done. Clawker manages the loop — the agent LLM handles task
-selection and completion.
+A new container is created for the loop session, hooks are injected, and the
+container is automatically cleaned up when the loop exits. Each iteration, the
+agent reads the task file, picks an open task, completes it, and marks it done.
+Clawker manages the loop — the agent LLM handles task selection and completion.
 
 The loop exits when:
   - All tasks are completed (agent signals via LOOP_STATUS)
   - The circuit breaker trips (stagnation, same error, output decline)
   - Maximum iterations reached
-  - A timeout is hit
-
-The container must exist and be running before starting the loop. Create one
-with: clawker container create --agent <name>`,
+  - A timeout is hit`,
 		Example: `  # Run a task-driven loop
   clawker loop tasks --agent dev --tasks todo.md
 
@@ -83,6 +89,9 @@ with: clawker container create --agent <name>`,
 
   # Run with a custom inline task prompt
   clawker loop tasks --agent dev --tasks backlog.md --task-prompt "Pick the highest priority task"
+
+  # Use a specific image
+  clawker loop tasks --agent dev --tasks todo.md --image node:20-slim
 
   # Stream all agent output in real time
   clawker loop tasks --agent dev --tasks todo.md --verbose
@@ -132,42 +141,44 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		return err
 	}
 
-	// 2. Get config
-	cfg := opts.Config()
-	project := cfg.Project.Project
-	agent := opts.Agent
+	// 2. Get config and Docker client
+	cfgGateway := opts.Config()
 
-	// 3. Get Docker client
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to Docker: %w", err)
 	}
 
-	// 4. Verify container exists and is running
-	containerName, ctr, err := client.FindContainerByAgent(ctx, project, agent)
+	// 3. Create and start container with hooks
+	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
+		Client:       client,
+		Config:       cfgGateway,
+		LoopOpts:     opts.LoopOptions,
+		Flags:        opts.flags,
+		Version:      opts.Version,
+		GitManager:   opts.GitManager,
+		HostProxy:    opts.HostProxy,
+		SocketBridge: opts.SocketBridge,
+		IOStreams:     ios,
+	})
 	if err != nil {
-		return fmt.Errorf("looking up container: %w", err)
+		return err
 	}
-	if ctr == nil {
-		return fmt.Errorf("container %q not found — create it first with: clawker container create --agent %s", containerName, agent)
-	}
-	if ctr.State != "running" {
-		return fmt.Errorf("container %q is not running (state: %s) — start it with: clawker container start %s", containerName, ctr.State, containerName)
-	}
+	defer cleanup()
 
-	// 5. Create runner
+	// 4. Create runner
 	runner, err := loop.NewRunner(client)
 	if err != nil {
 		return fmt.Errorf("creating loop runner: %w", err)
 	}
 
-	// 6. Build runner options
+	// 5. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, project, agent, containerName, prompt,
-		opts.flags, cfg.Project.Loop,
+		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt,
+		opts.flags, cfgGateway.Project.Loop,
 	)
 
-	// 7. Set up monitor
+	// 6. Set up monitor
 	monitor := loop.NewMonitor(loop.MonitorOptions{
 		Writer:   ios.ErrOut,
 		MaxLoops: runnerOpts.MaxLoops,
@@ -175,29 +186,29 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	})
 	runnerOpts.Monitor = monitor
 
-	// 8. If verbose, stream output chunks to stderr
+	// 7. If verbose, stream output chunks to stderr
 	if opts.Verbose {
 		runnerOpts.OnOutput = func(chunk []byte) {
 			_, _ = ios.ErrOut.Write(chunk)
 		}
 	}
 
-	// 9. Print start message
+	// 8. Print start message
 	fmt.Fprintf(ios.ErrOut, "%s Starting loop tasks for %s.%s (%d max loops)\n",
-		cs.InfoIcon(), project, agent, runnerOpts.MaxLoops)
+		cs.InfoIcon(), setup.Project, setup.AgentName, runnerOpts.MaxLoops)
 
-	// 10. Run the loop
+	// 9. Run the loop
 	result, err := runner.Run(ctx, runnerOpts)
 	if err != nil {
 		return err
 	}
 
-	// 11. Write result
+	// 10. Write result
 	if writeErr := shared.WriteResult(ios.Out, ios.ErrOut, result, opts.Format); writeErr != nil {
 		return writeErr
 	}
 
-	// 12. If loop ended with error, return SilentError (monitor already displayed it)
+	// 11. If loop ended with error, return SilentError (monitor already displayed it)
 	if result.Error != nil {
 		return cmdutil.SilentError
 	}

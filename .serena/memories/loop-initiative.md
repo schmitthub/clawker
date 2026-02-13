@@ -18,9 +18,9 @@
 | 3 | Task 7: claude -p execution engine | `complete` | opus |
 | 3 | Task 8: stream-json parser | `complete` | opus |
 | 3 | Task 9: LOOP_STATUS block (rename + integration) | `complete` | opus |
-| 4 | Task 10: Hook injection system | `pending` | — |
-| 4 | Task 11: Default hook set + user override mechanism | `pending` | — |
-| 5 | Task 12: Container lifecycle integration | `pending` | — |
+| 4 | Task 10: Hook injection system (types, defaults, resolution, serialization) | `complete` (1e2b961) | opus |
+| 4 | Task 11: Default hook set + user override mechanism | `merged into Task 10` | — |
+| 5 | Task 12: Container lifecycle integration | `complete` | opus |
 | 5 | Task 13: Auto agent naming | `pending` | — |
 | 5 | Task 14: Session concurrency detection + worktree support | `pending` | — |
 | 6 | Task 15: TUI dashboard (default view) | `pending` | — |
@@ -33,6 +33,30 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 12:**
+- Created `internal/cmd/loop/shared/lifecycle.go` (270 lines) with `SetupLoopContainer` orchestrator and `InjectLoopHooks` for hook injection into containers.
+- **Architecture decision**: `lifecycle.go` lives in `internal/cmd/loop/shared/` (not `internal/loop/`) because it imports `internal/cmd/container/shared` for `CreateContainer()`. This is a cross-command-package import but justified since the container shared package provides the container creation primitives that the loop lifecycle consumes.
+- **Container lifecycle flow**: Image resolution → `container/shared.CreateContainer` (with spinner) → `InjectLoopHooks` (settings.json + hook scripts to container) → `ContainerStart` → SocketBridge setup. Cleanup function (deferred) calls `RemoveContainerWithVolumes` with 30s timeout using `context.Background()`.
+- **Hook injection design**: `InjectLoopHooks` writes two things to the container: (1) `settings.json` with `{"hooks": {...}}` to `/home/claude/.claude/` via tar+CopyToContainer, (2) hook script files to absolute paths via tar+CopyToContainer to `/`. Default hooks get both; custom hooks (`--hooks-file`) only get settings.json (no script files). Settings.json overwrites any existing file — acceptable since loop containers are ephemeral.
+- **Tar archive building**: `buildSettingsTar` sets UID/GID to `config.ContainerUID`/`config.ContainerGID` (1001:1001) matching the container user. Hook scripts get root ownership (they're in `/tmp`). File paths in tars are relative (leading `/` stripped) since Docker's CopyToContainer extracts relative to destPath.
+- Added `HostProxy`, `SocketBridge`, and `Version` fields to both `IterateOptions` and `TasksOptions`, wired from Factory in constructors. These are needed by `CreateContainerConfig`.
+- **Long description update**: Removed "container must exist and be running" text, replaced with "a new container is created for the loop session, hooks are injected, and the container is automatically cleaned up".
+- **Run flow simplification**: Both `iterateRun` and `tasksRun` reduced from 12 steps to 11 steps. Steps 2-4 (get config, get Docker, verify container) replaced by single `SetupLoopContainer` call. The duplicate steps 4-11 between iterate/tasks remain — extraction noted for future work when the commands diverge enough.
+- **containerID[:12] pitfall**: Test IDs like "abc123" are shorter than 12 chars, causing slice bounds panic. Added length guard before truncation.
+- Code reviewer found zero issues above threshold.
+- Test count: 3894 → 3906 (+12 net). 10 new in lifecycle_test.go, 1 new DI wiring test in iterate_test.go, 1 new DI wiring test in tasks_test.go. All pass.
+
+**Task 10:**
+- Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.
+- Created `internal/loop/hooks.go` (237 lines) with three types (`HookHandler`, `HookMatcherGroup`, `HookConfig`), 10 constants (5 event names, 3 handler types, 2 script paths), 4 functions (`DefaultHooks`, `DefaultHookFiles`, `ResolveHooks`, `MarshalSettingsJSON`), and an embedded Node.js stop-check script.
+- **Stop hook**: Node.js script at `/tmp/clawker-hooks/stop-check.js`. Reads hook input JSON from stdin, checks `stop_hook_active` for recursion prevention, finds the session transcript JSONL via `session_id`, reads only the last 64KB (tail-read for large transcripts), checks last 10 JSONL lines for `---LOOP_STATUS---` markers. Exit 0 = allow stop, exit 2 = block with descriptive stderr message. Has 5-second self-defense `setTimeout` and 10-second handler Timeout to prevent hangs.
+- **SessionStart/compact hook**: `printf '%s\n'` command with shell-quoted `compactReminderText`. Fires only on context compaction (matcher: "compact"). Outputs a reminder about LOOP_STATUS requirements that Claude Code injects as context.
+- **Key design decision**: `ResolveHooks(hooksFile)` returns `(HookConfig, map[string][]byte, error)` — the second return is hook script files. Default hooks return `DefaultHookFiles()` (stop-check.js); custom hooks return nil files (users manage their own scripts). This cleanly separates the "what hooks to configure" from "what scripts to inject" concerns.
+- **`echo %q` pitfall**: Go's `%q` verb produces Go-style escaped strings where `\n` becomes literal backslash-n in shell context. Fixed by using `printf '%s\n'` with proper `shellQuote()` helper that handles single-quote escaping.
+- **Code review fixes applied**: (1) `echo %q` → `printf '%s\n'` with shellQuote for correct multiline output, (2) full-file readFileSync → tail-read of last 64KB for large transcripts, (3) added 5s self-defense setTimeout + 10s handler Timeout to prevent stop-hook hangs.
+- `TestDefaultHookFiles_StopScriptIsValidJS` uses `exec.LookPath("node")` + `node --check` for syntax validation. Gracefully skips when node isn't available.
+- Test count: 3873 → 3894 (+21 net). 22 new tests in hooks_test.go. All pass.
 
 **Task 9:**
 - RALPH_STATUS → LOOP_STATUS rename was already completed in Task 2. Task 9 focused on integration: system prompt, stream-aware analysis, and options wiring.
