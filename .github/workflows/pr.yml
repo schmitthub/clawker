@@ -39,3 +39,9 @@ jobs:
     uses: ./.github/workflows/licenses.yml
     permissions:
       contents: read
+
+  docs:
+    name: Docs
+    uses: ./.github/workflows/docs.yml
+    permissions:
+      contents: read
