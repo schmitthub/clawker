@@ -1,9 +1,11 @@
 package clawker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -11,8 +13,10 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/update"
 )
 
 // Main is the entry point for the clawker CLI.
@@ -29,6 +33,22 @@ func Main() int {
 	// Create factory with version info
 	f := factory.New(buildVersion)
 
+	// Start background update check with cancellable context.
+	// Pattern from gh CLI: goroutine + buffered channel + blocking read.
+	// Context cancellation aborts the HTTP request when the command finishes first.
+	// Buffered(1) so the goroutine can send and exit even if Main() returns
+	// early (e.g. root command creation fails) without reading from the channel.
+	updateCtx, updateCancel := context.WithCancel(context.Background())
+	defer updateCancel()
+	updateMessageChan := make(chan *update.CheckResult, 1)
+	go func() {
+		rel, err := checkForUpdate(updateCtx, buildVersion)
+		if err != nil {
+			logger.Debug().Err(err).Msg("update check failed")
+		}
+		updateMessageChan <- rel
+	}()
+
 	// Create root command with build metadata
 	rootCmd, err := root.NewCmdRoot(f, buildVersion, buildDate)
 	if err != nil {
@@ -40,10 +60,18 @@ func Main() int {
 	rootCmd.SilenceErrors = true
 
 	cmd, err := rootCmd.ExecuteC()
+
+	// Cancel the update context — if the goroutine is still running,
+	// the HTTP request will be aborted and it will send nil promptly.
+	updateCancel()
+
 	if err != nil {
 		if !errors.Is(err, cmdutil.SilentError) {
 			printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
 		}
+
+		// Blocking read — goroutine always sends exactly once
+		printUpdateNotification(f.IOStreams, <-updateMessageChan)
 
 		var exitErr *cmdutil.ExitError
 		if errors.As(err, &exitErr) {
@@ -52,7 +80,51 @@ func Main() int {
 		return 1
 	}
 
+	// Blocking read — goroutine always sends exactly once
+	printUpdateNotification(f.IOStreams, <-updateMessageChan)
+
 	return 0
+}
+
+// checkForUpdate wraps update.CheckForUpdate with state file resolution.
+// Returns (nil, nil) if the state path can't be determined.
+func checkForUpdate(ctx context.Context, currentVersion string) (*update.CheckResult, error) {
+	stateFile := updateStatePath()
+	if stateFile == "" {
+		return nil, nil
+	}
+	return update.CheckForUpdate(ctx, stateFile, currentVersion, "schmitthub/clawker")
+}
+
+// printUpdateNotification prints a version upgrade notification to stderr
+// if a newer version is available. Only shown on interactive terminals.
+func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResult) {
+	if result == nil {
+		return
+	}
+	if !ios.IsStderrTTY() {
+		return
+	}
+
+	cs := ios.ColorScheme()
+	fmt.Fprintf(ios.ErrOut, "\n%s A new release of clawker is available: %s → %s\n",
+		cs.InfoIcon(),
+		cs.Cyan(result.CurrentVersion),
+		cs.Cyan(result.LatestVersion))
+	fmt.Fprintf(ios.ErrOut, "%s To upgrade: %s\n",
+		cs.InfoIcon(),
+		cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
+	fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.InfoIcon(), result.ReleaseURL)
+}
+
+// updateStatePath returns the path to the update state cache file.
+// Returns empty string if the clawker home directory cannot be determined.
+func updateStatePath() string {
+	home, err := config.ClawkerHome()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "update-state.yaml")
 }
 
 // userFormattedError is a duck-typed interface for errors that provide

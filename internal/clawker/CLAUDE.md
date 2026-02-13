@@ -1,6 +1,6 @@
 # Clawker Package
 
-Application entry point and centralized error rendering.
+Application entry point, centralized error rendering, and background update notification.
 
 ## Exported Symbols
 
@@ -14,19 +14,38 @@ Called from `cmd/clawker/main.go`. Build metadata (version, date) lives in `inte
 
 All symbols are in `cmd.go`.
 
+## Background Update Check
+
+`Main()` spawns a background goroutine following the gh CLI pattern: `context.WithCancel` + buffered(1) channel + blocking read.
+
+- Goroutine calls `checkForUpdate(ctx, buildVersion)` which wraps `update.CheckForUpdate`
+- Context cancellation aborts the HTTP request when the command finishes first
+- Buffered(1) channel prevents goroutine leak if `Main()` returns early (e.g. root command creation fails)
+- After `ExecuteC()`, `updateCancel()` is called — if the goroutine is still blocked on HTTP, cancellation aborts it
+- Blocking read (`<-updateMessageChan`) — goroutine always sends exactly once
+- Errors logged via `logger.Debug().Err(err)` (always to file log)
+- `printUpdateNotification()` prints to stderr only if result is non-nil and stderr is a TTY
+
+Cache file: `~/.local/clawker/update-state.yaml` (via `updateStatePath()`).
+
+Suppressed when: `CLAWKER_NO_UPDATE_NOTIFIER` set, `CI` set, version is `"DEV"`, or cache is < 24h old.
+
 ## Centralized Error Rendering
 
 `Main()` uses `rootCmd.ExecuteC()` to capture both the error and the triggering command, then dispatches to `printError()`:
 
 ```go
 cmd, err := rootCmd.ExecuteC()
+updateCancel() // Abort in-flight HTTP if still running
 if err != nil {
     if !errors.Is(err, cmdutil.SilentError) {
         printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
     }
+    printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
     // ExitError propagates container exit codes
     // Default: return 1
 }
+printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
 ```
 
 **Error type dispatch in `printError()`:**

@@ -81,6 +81,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
 │   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)
+│   ├── update/                # Background update checker — GitHub releases API, 24h cached notifications (foundation — no internal imports)
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/
 │   └── whail/                 # Reusable Docker engine with label-based isolation
@@ -92,12 +93,19 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── commands/              # Command integration tests (Docker)
 │   ├── internals/             # Container scripts/services tests (Docker)
 │   └── agents/                # Full agent E2E tests (Docker)
+├── scripts/
+│   ├── install.sh             # curl|bash installer (downloads pre-built binary from GitHub releases)
+│   └── check-claude-freshness.sh  # CLAUDE.md staleness checker
 └── templates/                 # clawker.yaml scaffolding
 ```
 
 ## Build Commands
 
 ```bash
+# Install pre-built binary (no Go required)
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
+bash scripts/install.sh --version v0.1.3 --dir $HOME/.local/bin  # Pin version + custom dir
+
 go build -o bin/clawker ./cmd/clawker  # Build CLI
 make fawker                               # Build fawker demo CLI (faked deps, no Docker)
 make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
@@ -178,6 +186,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `tui.RenderStepperBar` | Pure render function for horizontal step progress (icons: checkmark, filled circle, empty circle) |
 | `prompter.Prompter` | Interactive prompts with TTY/CI awareness |
 | `BuildKitImageBuilder` | Closure field on `whail.Engine` — label enforcement + delegation to `buildkit/` subpackage |
+| `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
+| `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
 | `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
