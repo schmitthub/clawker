@@ -79,7 +79,7 @@ Import all lower tiers. Imported by commands only.
 
 - `docker` — Clawker middleware wrapping whail Engine with labels/naming
 - `workspace` — Bind vs Snapshot strategies
-- `dev` — Autonomous loop engine with circuit breaker
+- `loop` — Autonomous loop engine with circuit breaker
 
 ### Import Rules
 

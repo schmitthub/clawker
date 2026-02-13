@@ -45,7 +45,7 @@ The system uses a modular architecture with reusable components in the `lib/` di
   - **Session management**: `store_session_id()`, `get_last_session_id()`, `should_resume_session()`
   - Automatic session persistence to `.loop/.claude_session_id` file with 24-hour expiration
   - Session lifecycle: `get_session_id()`, `reset_session()`, `log_session_transition()`, `init_session_tracking()`
-  - Session history tracked in `.loop/.dev_session_history` (last 50 transitions)
+  - Session history tracked in `.loop/.loop_session_history` (last 50 transitions)
   - Session auto-reset on: circuit breaker open, manual interrupt, project completion
   - Detects test-only loops and stuck error patterns
   - Two-stage error filtering to eliminate false positives
@@ -439,9 +439,9 @@ bats tests/unit/test_cli_parsing.bats
 
 ### Session Lifecycle Management (v0.9.7)
 - Added complete session lifecycle management with automatic reset triggers:
-  - `get_session_id()` - Retrieves current session from `.dev_session`
+  - `get_session_id()` - Retrieves current session from `.loop_session`
   - `reset_session(reason)` - Clears session with reason logging
-  - `log_session_transition()` - Records transitions to `.dev_session_history`
+  - `log_session_transition()` - Records transitions to `.loop_session_history`
   - `init_session_tracking()` - Initializes session file with validation
 - Session auto-reset integration points:
   - Circuit breaker open events (stagnation detection)

@@ -17,7 +17,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
 ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
 │ git, logger │     │ bundler     │     │ docker,     │     │ cmd/*       │
 │ iostreams   │     │             │     │ workspace,  │     │             │
-│ config      │     │             │     │ dev       │     │             │
+│ config      │     │             │     │ loop      │     │             │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
        │                                       │                   │
        ▼                                       ▼                   ▼

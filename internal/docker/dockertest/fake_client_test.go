@@ -76,7 +76,7 @@ func TestListContainers(t *testing.T) {
 		fake := dockertest.NewFakeClient()
 		fake.SetupContainerList(
 			dockertest.RunningContainerFixture("myapp", "dev"),
-			dockertest.ContainerFixture("myapp", "dev", "alpine:latest"),
+			dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
 		)
 
 		containers, err := fake.Client.ListContainers(ctx, true)
@@ -89,8 +89,8 @@ func TestListContainers(t *testing.T) {
 		if containers[0].Agent != "dev" {
 			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "dev")
 		}
-		if containers[1].Agent != "dev" {
-			t.Errorf("containers[1].Agent = %q, want %q", containers[1].Agent, "dev")
+		if containers[1].Agent != "worker" {
+			t.Errorf("containers[1].Agent = %q, want %q", containers[1].Agent, "worker")
 		}
 	})
 

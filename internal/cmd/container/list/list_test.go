@@ -242,7 +242,7 @@ func TestListRun_QuietMode(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
-		dockertest.RunningContainerFixture("myapp", "dev"),
+		dockertest.RunningContainerFixture("myapp", "worker"),
 	)
 
 	f, tio := testFactory(t, fake)
@@ -257,7 +257,7 @@ func TestListRun_QuietMode(t *testing.T) {
 
 	out := tio.OutBuf.String()
 	assert.Contains(t, out, "clawker.myapp.dev")
-	assert.Contains(t, out, "clawker.myapp.dev")
+	assert.Contains(t, out, "clawker.myapp.worker")
 	// Quiet mode: names only, no table headers
 	assert.NotContains(t, out, "STATUS")
 	assert.NotContains(t, out, "PROJECT")
