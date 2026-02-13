@@ -110,6 +110,48 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 - `Options` — ContainerName, Project, Agent, Prompt (string), MaxLoops, StagnationThreshold, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), Timeout (time.Duration), ResetCircuit, UseStrictCompletion, SkipPermissions, Verbose (bool), Monitor (*Monitor), OnLoopStart/OnLoopEnd/OnOutput/OnRateLimitHit (callbacks)
 - `Result` — LoopsCompleted (int), FinalStatus (*Status), ExitReason (string), Session (*Session), Error (error), RateLimitHit (bool)
 
+### Stream Parser (`stream.go`)
+
+NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line-by-line, dispatches typed events via callbacks, returns the final `ResultEvent`.
+
+**Event types** (top-level `type` field):
+- `EventTypeSystem` ("system") — session init or compact boundary
+- `EventTypeAssistant` ("assistant") — complete assistant message with content blocks
+- `EventTypeUser` ("user") — tool result messages
+- `EventTypeResult` ("result") — terminal event with duration, cost, usage stats
+
+**Content block types** (within `AssistantMessage.Content`):
+- `ContentTypeText` ("text") — text output
+- `ContentTypeToolUse` ("tool_use") — tool invocation (id, name, input)
+- `ContentTypeToolResult` ("tool_result") — tool execution result
+- `ContentTypeThinking` ("thinking") — extended thinking content
+
+**Key types:**
+- `SystemEvent` — Type, Subtype (init/compact_boundary), SessionID, Model, Tools, CWD, PermissionMode, CompactMetadata
+- `AssistantEvent` — Type, SessionID, ParentToolUseID (*string), Message (AssistantMessage)
+- `AssistantMessage` — ID, Role, Model, StopReason, Content ([]ContentBlock), Usage (*TokenUsage)
+- `UserEvent` — Type, SessionID, ParentToolUseID (*string), Message (UserEventMessage)
+- `ContentBlock` — Type + polymorphic fields: Text, ID/Name/Input (tool_use), ToolUseID/Content/IsError (tool_result), Thinking
+- `TokenUsage` — InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens
+- `ResultEvent` — Type, Subtype (success/error_*), SessionID, IsError, DurationMS, DurationAPIMS, NumTurns, TotalCostUSD, Usage, Result (success), Errors (error)
+- `StreamHandler` — OnSystem, OnAssistant, OnUser, OnResult callbacks (all optional, nil = no-op)
+- `TextAccumulator` — convenience handler that collects assistant text + tool call count
+
+**Key functions/methods:**
+- `ParseStream(ctx, r io.Reader, handler *StreamHandler) (*ResultEvent, error)` — main parser; returns final result or error
+- `NewTextAccumulator() (*TextAccumulator, *StreamHandler)` — creates accumulator + wired handler
+- `AssistantMessage.ExtractText() string` — concatenated text from all text content blocks
+- `AssistantMessage.ToolUseBlocks() []ContentBlock` — all tool_use blocks
+- `ContentBlock.ToolResultText() string` — tool result content as string (handles string and array forms)
+- `ResultEvent.IsSuccess() bool`, `ResultEvent.CombinedText() string` — result helpers
+- `TokenUsage.Total() int` — input + output tokens (nil-safe)
+
+**Design decisions:**
+- Malformed lines and unknown event types silently skipped (forward compatibility)
+- Malformed result events return error (terminal event corruption is critical)
+- Scanner buffer: 64KB initial, 10MB max (handles large tool results)
+- No `stream_event` (token-level) support yet — only message-level events. Token streaming requires `--include-partial-messages` flag and will be added if TUI needs real-time text display.
+
 ### Monitor (`monitor.go`)
 
 - `Monitor` — real-time progress output. Format*/Print* pairs for each event.
@@ -126,4 +168,4 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, ratelimit, session, tui/model.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, ratelimit, session, stream, tui/model.
