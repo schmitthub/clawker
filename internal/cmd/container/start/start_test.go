@@ -319,7 +319,7 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 		Config: func() *config.Config {
 			return config.NewConfigForTest(nil, nil)
 		},
-		HostProxy: func() *hostproxy.Manager { return nil },
+		HostProxy: func() hostproxy.HostProxyService { return nil },
 	}
 
 	cmd := NewCmdStart(f, nil)

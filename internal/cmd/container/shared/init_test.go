@@ -9,14 +9,12 @@ import (
 	"github.com/moby/moby/api/types/volume"
 	moby "github.com/moby/moby/client"
 
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/tui"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -26,20 +24,6 @@ type testNotFoundError struct{ msg string }
 
 func (e testNotFoundError) Error() string { return e.msg }
 func (e testNotFoundError) NotFound()     {}
-
-// testInitializer creates a ContainerInitializer with test defaults.
-func testInitializer(ios *iostreams.IOStreams) *ContainerInitializer {
-	return &ContainerInitializer{
-		ios: ios,
-		tui: tui.NewTUI(ios),
-		gitMgr: func() (*git.GitManager, error) {
-			return nil, fmt.Errorf("GitManager not available in test")
-		},
-		hostProxy: func() *hostproxy.Manager {
-			return hostproxy.NewManager()
-		},
-	}
-}
 
 // testConfig returns a minimal *config.Project for init tests.
 func testConfig() *config.Project {
@@ -62,33 +46,40 @@ func testConfig() *config.Project {
 
 // testFlags returns a FlagSet from a minimal cobra command with container flags registered.
 func testFlags() *cobra.Command {
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	cmd := &cobra.Command{Use: "test"}
-	copts.AddFlags(cmd.Flags(), containerOpts)
+	AddFlags(cmd.Flags(), containerOpts)
 	return cmd
 }
 
-func TestContainerInitializer_HappyPath(t *testing.T) {
+// testCreateConfig builds a CreateContainerConfig with test defaults.
+func testCreateConfig(fake *dockertest.FakeClient, cfg *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
+	return &CreateContainerConfig{
+		Client:  fake.Client,
+		Config:  cfg,
+		Options: containerOpts,
+		Flags:   cmd.Flags(),
+		GitManager: func() (*git.GitManager, error) {
+			return nil, fmt.Errorf("GitManager not available in test")
+		},
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewMockManager()
+		},
+	}
+}
+
+func TestCreateContainer_HappyPath(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-		StartAfterCreate: false,
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -98,90 +89,44 @@ func TestContainerInitializer_HappyPath(t *testing.T) {
 	fake.AssertCalled(t, "ContainerCreate")
 }
 
-func TestContainerInitializer_StartAfterCreate(t *testing.T) {
-	fake := dockertest.NewFakeClient()
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-	fake.SetupContainerStart()
-
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
-	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "worker"
-
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-		StartAfterCreate: true,
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotEmpty(t, result.ContainerID)
-	fake.AssertCalled(t, "ContainerCreate")
-	fake.AssertCalled(t, "ContainerStart")
-}
-
-func TestContainerInitializer_ContainerCreateError(t *testing.T) {
+func TestCreateContainer_ContainerCreateError(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 		return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
 	}
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "creating container")
 	require.Nil(t, result)
 }
 
-func TestContainerInitializer_ConfigCached(t *testing.T) {
+func TestCreateContainer_ConfigCached(t *testing.T) {
 	// Default fake: volumes exist → ConfigCreated=false → config step is cached
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.ContainerID)
 }
 
-func TestContainerInitializer_ConfigFresh(t *testing.T) {
+func TestCreateContainer_ConfigFresh(t *testing.T) {
 	// Volumes don't exist → EnsureVolume creates → ConfigCreated=true → init runs
 	fake := dockertest.NewFakeClient()
 	fake.SetupVolumeExists("", false)
@@ -195,26 +140,18 @@ func TestContainerInitializer_ConfigFresh(t *testing.T) {
 	// (proving it WAS called when ConfigCreated=true)
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-init-test-dir")
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "container init")
 }
 
-func TestContainerInitializer_HostProxyFailure(t *testing.T) {
+func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	// Host proxy enabled in config, but proxy manager fails — non-fatal, continues with warning
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
@@ -224,31 +161,32 @@ func TestContainerInitializer_HostProxyFailure(t *testing.T) {
 	hostProxyEnabled := true
 	cfg.Security.EnableHostProxy = &hostProxyEnabled
 
-	tio := iostreams.NewTestIOStreams()
-	ci := &ContainerInitializer{
-		ios: tio.IOStreams,
-		tui: tui.NewTUI(tio.IOStreams),
-		gitMgr: func() (*git.GitManager, error) {
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+
+	ccfg := &CreateContainerConfig{
+		Client:  fake.Client,
+		Config:  cfg,
+		Options: containerOpts,
+		Flags:   cmd.Flags(),
+		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
-		hostProxy: func() *hostproxy.Manager {
-			// Use port 0 so EnsureRunning always fails regardless of host state
-			// (no daemon on port 0, startDaemon spawns test binary which exits immediately)
-			return hostproxy.NewManagerWithOptions(0, "")
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewFailingMockManager(fmt.Errorf("mock host proxy failure"))
 		},
 	}
 
-	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
-	containerOpts.Image = "alpine"
+	// Collect events to check for warnings
+	events := make(chan CreateContainerEvent, 64)
+	go func() {
+		for range events {
+		}
+	}()
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(), ccfg, events)
+	close(events)
 
 	// Should succeed despite host proxy failure (non-fatal)
 	require.NoError(t, err)
@@ -257,38 +195,7 @@ func TestContainerInitializer_HostProxyFailure(t *testing.T) {
 	require.NotEmpty(t, result.ContainerID)
 }
 
-func TestContainerInitializer_ContainerStartError(t *testing.T) {
-	fake := dockertest.NewFakeClient()
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-	fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
-		return moby.ContainerStartResult{}, fmt.Errorf("port already in use")
-	}
-
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
-	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "test"
-
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-		StartAfterCreate: true,
-	})
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "starting container")
-	require.Nil(t, result)
-	fake.AssertCalled(t, "ContainerCreate")
-}
-
-func TestContainerInitializer_OnboardingSkippedWhenDisabled(t *testing.T) {
+func TestCreateContainer_OnboardingSkippedWhenDisabled(t *testing.T) {
 	// UseHostAuth=false → no onboarding injection → CopyToContainer not called
 	cfg := testConfig()
 	useHostAuth := false
@@ -301,20 +208,12 @@ func TestContainerInitializer_OnboardingSkippedWhenDisabled(t *testing.T) {
 	fake.SetupContainerCreate()
 	// No CopyToContainer setup — if called, would panic
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -322,7 +221,7 @@ func TestContainerInitializer_OnboardingSkippedWhenDisabled(t *testing.T) {
 	fake.AssertNotCalled(t, "CopyToContainer")
 }
 
-func TestContainerInitializer_PostInit(t *testing.T) {
+func TestCreateContainer_PostInit(t *testing.T) {
 	// PostInit configured → CopyToContainer called for post-init script injection
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
@@ -331,21 +230,13 @@ func TestContainerInitializer_PostInit(t *testing.T) {
 	cfg := testConfig()
 	cfg.Agent.PostInit = "npm install -g typescript\n"
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -356,7 +247,7 @@ func TestContainerInitializer_PostInit(t *testing.T) {
 	fake.AssertCalledN(t, "CopyToContainer", 2)
 }
 
-func TestContainerInitializer_NoPostInit(t *testing.T) {
+func TestCreateContainer_NoPostInit(t *testing.T) {
 	// No PostInit configured, no host auth → CopyToContainer not called
 	cfg := testConfig()
 	useHostAuth := false
@@ -369,20 +260,12 @@ func TestContainerInitializer_NoPostInit(t *testing.T) {
 	fake.SetupContainerCreate()
 	// No CopyToContainer setup — if called, would fail
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -390,11 +273,12 @@ func TestContainerInitializer_NoPostInit(t *testing.T) {
 	fake.AssertNotCalled(t, "CopyToContainer")
 }
 
-func TestContainerInitializer_PostInitInjectionError(t *testing.T) {
+func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 	// PostInit configured but CopyToContainer fails on the second call (post-init injection).
 	// First call (onboarding) succeeds, second call (post-init) fails.
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
+	fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
 	// Custom CopyToContainer: succeed first (onboarding), fail second (post-init)
 	callCount := 0
@@ -409,28 +293,20 @@ func TestContainerInitializer_PostInitInjectionError(t *testing.T) {
 	cfg := testConfig()
 	cfg.Agent.PostInit = "npm install -g typescript\n"
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "inject post-init script")
 	require.Nil(t, result)
 }
 
-func TestContainerInitializer_EmptyProject(t *testing.T) {
+func TestCreateContainer_EmptyProject(t *testing.T) {
 	// Empty project → 2-segment container name (clawker.agent)
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
@@ -439,21 +315,13 @@ func TestContainerInitializer_EmptyProject(t *testing.T) {
 	cfg := testConfig()
 	cfg.Project = "" // empty project
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "myagent"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -461,91 +329,91 @@ func TestContainerInitializer_EmptyProject(t *testing.T) {
 	require.Equal(t, "clawker.myagent", result.ContainerName)
 }
 
-func TestContainerInitializer_EnvFileError(t *testing.T) {
+func TestCreateContainer_EnvFileError(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
-
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
 
 	cfg := testConfig()
 	cfg.Agent.EnvFile = []string{"/nonexistent/file.env"}
 
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent.env_file")
 	fake.AssertNotCalled(t, "ContainerCreate")
 }
 
-func TestContainerInitializer_FromEnvWarnings(t *testing.T) {
+func TestCreateContainer_FromEnvWarnings(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
-
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
 
 	cfg := testConfig()
 	cfg.Agent.FromEnv = []string{"CLAWKER_NONEXISTENT_VAR_99999"}
 
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test-agent"
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	// Collect events to check for warnings
+	events := make(chan CreateContainerEvent, 64)
+	var warnings []string
+	eventsDone := make(chan struct{})
+	go func() {
+		defer close(eventsDone)
+		for ev := range events {
+			if ev.Type == MessageWarning {
+				warnings = append(warnings, ev.Message)
+			}
+		}
+	}()
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), events)
+	close(events)
+	<-eventsDone
+
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotEmpty(t, result.Warnings)
-	require.Contains(t, result.Warnings[0], "CLAWKER_NONEXISTENT_VAR_99999")
+	require.NotEmpty(t, warnings)
+	foundEnvWarning := false
+	for _, w := range warnings {
+		if strings.Contains(w, "CLAWKER_NONEXISTENT_VAR_99999") {
+			foundEnvWarning = true
+			break
+		}
+	}
+	require.True(t, foundEnvWarning, "expected warning about CLAWKER_NONEXISTENT_VAR_99999, got: %v", warnings)
 }
 
-func TestContainerInitializer_RandomAgentName(t *testing.T) {
+func TestCreateContainer_RandomAgentName(t *testing.T) {
 	// No agent specified → random name generated
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	// No agent or name set
 
-	result, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.AgentName, "should have generated a random agent name")
 }
 
-func TestContainerInitializer_CleanupVolumesOnCreateError(t *testing.T) {
+func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	// When volumes are freshly created and a subsequent init step fails,
 	// deferred cleanup removes newly-created volumes.
 	fake := dockertest.NewFakeClient()
@@ -576,11 +444,8 @@ func TestContainerInitializer_CleanupVolumesOnCreateError(t *testing.T) {
 		return moby.VolumeRemoveResult{}, nil
 	}
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test"
 
@@ -589,23 +454,17 @@ func TestContainerInitializer_CleanupVolumesOnCreateError(t *testing.T) {
 	// which triggers the deferred cleanup of those newly-created volumes.
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "container init")
 
 	// Verify volumes were cleaned up
 	require.NotEmpty(t, removedVolumes, "should have cleaned up newly-created volumes")
-	require.NotEmpty(t, ci.CleanupWarnings(), "should have cleanup warnings")
 }
 
-func TestContainerInitializer_NoCleanupForPreExistingVolumes(t *testing.T) {
+func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 	// When volumes already exist (ConfigCreated=false), no cleanup on failure.
 	fake := dockertest.NewFakeClient()
 	// Default: VolumeExists returns true → no volumes created
@@ -615,33 +474,23 @@ func TestContainerInitializer_NoCleanupForPreExistingVolumes(t *testing.T) {
 		return moby.ContainerCreateResult{}, fmt.Errorf("image not found")
 	}
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test"
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "creating container")
 
 	// No VolumeRemove calls — volumes were pre-existing
 	fake.AssertNotCalled(t, "VolumeRemove")
-	require.Empty(t, ci.CleanupWarnings(), "should have no cleanup warnings")
 }
 
-func TestContainerInitializer_CleanupVolumeRemoveFailure(t *testing.T) {
-	// When volume cleanup fails, the original error is still returned
-	// and cleanup warnings include failure information.
+func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
+	// When volume cleanup fails, the original error is still returned.
 	fake := dockertest.NewFakeClient()
 
 	// Volumes freshly created — track state so IsVolumeManaged works during cleanup
@@ -667,61 +516,33 @@ func TestContainerInitializer_CleanupVolumeRemoveFailure(t *testing.T) {
 		return moby.VolumeRemoveResult{}, fmt.Errorf("volume in use")
 	}
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "test"
 
 	// Config init will fail (triggering cleanup), and VolumeRemove will also fail
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	// Original error is preserved (not overridden by cleanup failure)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "container init")
-
-	// Warnings should indicate cleanup failure
-	warnings := ci.CleanupWarnings()
-	require.NotEmpty(t, warnings, "should have cleanup failure warnings")
-	foundFailure := false
-	for _, w := range warnings {
-		if strings.Contains(w, "Failed to clean up") {
-			foundFailure = true
-			break
-		}
-	}
-	require.True(t, foundFailure, "warnings should mention cleanup failure: %v", warnings)
 }
 
-func TestContainerInitializer_InvalidAgentName(t *testing.T) {
+func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	// Invalid agent name is rejected before any volumes are created.
 	fake := dockertest.NewFakeClient()
 
-	tio := iostreams.NewTestIOStreams()
-	ci := testInitializer(tio.IOStreams)
-
 	cmd := testFlags()
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := NewContainerOptions()
 	containerOpts.Image = "alpine"
 	containerOpts.Agent = "--rm" // Invalid: starts with hyphen
 
-	_, err := ci.Run(context.Background(), InitParams{
-		Client:           fake.Client,
-		Config:           testConfig(),
-		ContainerOptions: containerOpts,
-		Flags:            cmd.Flags(),
-		Image:            "alpine",
-	})
+	_, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid agent name")
@@ -730,5 +551,122 @@ func TestContainerInitializer_InvalidAgentName(t *testing.T) {
 	fake.AssertNotCalled(t, "VolumeExists")
 	fake.AssertNotCalled(t, "VolumeCreate")
 	fake.AssertNotCalled(t, "ContainerCreate")
-	require.Empty(t, ci.CleanupWarnings())
+}
+
+func TestCreateContainer_DisableFirewall(t *testing.T) {
+	// When DisableFirewall=true, firewall env vars should NOT be set
+	// even when the config has firewall enabled.
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+	containerOpts.DisableFirewall = true
+
+	cfg := testConfig()
+	cfg.Security.Firewall = &config.FirewallConfig{
+		Enable:          true,
+		OverrideDomains: []string{"example.com"},
+	}
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify no firewall env vars were injected
+	for _, e := range containerOpts.Env {
+		require.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS",
+			"firewall env var should not be set when DisableFirewall=true")
+	}
+	fake.AssertCalled(t, "ContainerCreate")
+}
+
+func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
+	// When DisableFirewall=false (default), firewall env vars should be set
+	// when the config has firewall enabled.
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	cfg := testConfig()
+	cfg.Security.Firewall = &config.FirewallConfig{
+		Enable:          true,
+		OverrideDomains: []string{"example.com"},
+	}
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify firewall env vars were injected (firewall enabled, not disabled)
+	var firewallFound bool
+	for _, e := range containerOpts.Env {
+		if strings.HasPrefix(e, "CLAWKER_FIREWALL_DOMAINS=") {
+			firewallFound = true
+			break
+		}
+	}
+	require.True(t, firewallFound,
+		"firewall env var should be set when DisableFirewall=false and config has firewall enabled")
+}
+
+func TestCreateContainer_EventsSequence(t *testing.T) {
+	// Verify events are sent in expected order with expected steps.
+	fake := dockertest.NewFakeClient()
+	fake.SetupContainerCreate()
+	fake.SetupCopyToContainer()
+
+	cmd := testFlags()
+	containerOpts := NewContainerOptions()
+	containerOpts.Image = "alpine"
+	containerOpts.Agent = "test-agent"
+
+	events := make(chan CreateContainerEvent, 64)
+	var collected []CreateContainerEvent
+	eventsDone := make(chan struct{})
+	go func() {
+		defer close(eventsDone)
+		for ev := range events {
+			collected = append(collected, ev)
+		}
+	}()
+
+	result, err := CreateContainer(context.Background(),
+		testCreateConfig(fake, testConfig(), containerOpts, cmd), events)
+	close(events)
+	<-eventsDone
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify we got events for all major steps
+	steps := make(map[string]bool)
+	for _, ev := range collected {
+		steps[ev.Step] = true
+	}
+	require.True(t, steps["workspace"], "should have workspace events")
+	require.True(t, steps["config"], "should have config events")
+	require.True(t, steps["environment"], "should have environment events")
+	require.True(t, steps["container"], "should have container events")
+
+	// Verify first event is workspace running
+	require.Equal(t, "workspace", collected[0].Step)
+	require.Equal(t, StepRunning, collected[0].Status)
+
+	// Verify last event is container complete
+	last := collected[len(collected)-1]
+	require.Equal(t, "container", last.Step)
+	require.Equal(t, StepComplete, last.Status)
 }

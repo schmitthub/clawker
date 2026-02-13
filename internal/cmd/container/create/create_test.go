@@ -11,13 +11,14 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -310,53 +311,53 @@ func TestCmdCreate_MutuallyExclusiveFlags(t *testing.T) {
 func TestBuildConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    *copts.ContainerOptions
+		opts    *shared.ContainerOptions
 		wantErr bool
 	}{
 		{
 			name: "basic config",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with tty and stdin",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				TTY:     true,
 				Stdin:   true,
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with command",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Command: []string{"echo", "hello"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with env vars",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with labels",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Labels:  []string{"foo=bar", "baz"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with network",
-			opts: func() *copts.ContainerOptions {
-				o := copts.NewContainerOptions()
+			opts: func() *shared.ContainerOptions {
+				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.NetMode.Set("mynet")
 				return o
@@ -448,8 +449,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
-		HostProxy: func() *hostproxy.Manager {
-			return hostproxy.NewManager()
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return nil },
 	}, tio
@@ -567,6 +568,7 @@ func TestCreateRun(t *testing.T) {
 		// CopyToContainer fails → onboarding error propagates
 		fake := dockertest.NewFakeClient()
 		fake.SetupContainerCreate()
+		fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
 		fake.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ moby.CopyToContainerOptions) (moby.CopyToContainerResult, error) {
 			return moby.CopyToContainerResult{}, fmt.Errorf("copy failed: disk full")
@@ -613,8 +615,8 @@ func TestCreateRun(t *testing.T) {
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")
 			},
-			HostProxy: func() *hostproxy.Manager {
-				return hostproxy.NewManager()
+			HostProxy: func() hostproxy.HostProxyService {
+				return hostproxytest.NewMockManager()
 			},
 			Prompter: func() *prompter.Prompter { return nil },
 		}

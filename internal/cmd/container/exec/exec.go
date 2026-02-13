@@ -7,7 +7,7 @@ import (
 	"io"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -25,7 +25,7 @@ type ExecOptions struct {
 	IOStreams     *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
-	HostProxy    func() *hostproxy.Manager
+	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
@@ -165,7 +165,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 
 	// Ensure socket bridge is running for GPG/SSH forwarding
 	// The bridge may already be running from a prior run/start command
-	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
 			logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")

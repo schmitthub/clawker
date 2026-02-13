@@ -1,16 +1,12 @@
-// Package opts provides shared options and utilities for container commands.
-// This package exists to avoid import cycles - subcommands (run/, create/) need to
-// share container option types and functions, but the parent package (container/)
-// imports all subcommands. Go doesn't allow A importing B that imports A.
-//
-// Architectural note: Subpackages under internal/cmd/<noun>/ are typically for
-// subcommands only. This package is an exception - it exists solely because of
-// Go's import cycle constraint. The types here are CLI flag types, not API types.
-package opts
+// Package shared provides domain logic and shared options for container commands.
+// Container option types live here alongside domain orchestration, avoiding the need
+// for a separate opts/ package to break import cycles.
+package shared
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -27,8 +23,13 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -126,10 +127,11 @@ type ContainerOptions struct {
 	DeviceCgroupRules []string          // Device cgroup rules
 
 	// Security
-	CapAdd      []string // Add Linux capabilities
-	CapDrop     []string // Drop Linux capabilities
-	Privileged  bool     // Give extended privileges to container
-	SecurityOpt []string // Security options (e.g., seccomp, apparmor, label)
+	CapAdd          []string // Add Linux capabilities
+	CapDrop         []string // Drop Linux capabilities
+	Privileged      bool     // Give extended privileges to container
+	SecurityOpt     []string // Security options (e.g., seccomp, apparmor, label)
+	DisableFirewall bool     // Override project config: disable firewall
 
 	// Health check
 	HealthCmd           string        // Command to run to check health
@@ -209,6 +211,7 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringArrayVar(&opts.EnvFile, "env-file", nil, "Read in a file of environment variables")
 	flags.StringArrayVarP(&opts.Volumes, "volume", "v", nil, "Bind mount a volume")
 	flags.VarP(opts.Publish, "publish", "p", "Publish container port(s) to host")
+	flags.StringVar(&opts.Workdir, "workdir", "", "Override container working directory")
 	flags.StringVarP(&opts.User, "user", "u", "", "Username or UID")
 	flags.StringVar(&opts.Entrypoint, "entrypoint", "", "Overwrite the default ENTRYPOINT")
 	flags.BoolVarP(&opts.TTY, "tty", "t", false, "Allocate a pseudo-TTY")
@@ -288,6 +291,7 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringArrayVar(&opts.CapDrop, "cap-drop", nil, "Drop Linux capabilities")
 	flags.BoolVar(&opts.Privileged, "privileged", false, "Give extended privileges to this container")
 	flags.StringArrayVar(&opts.SecurityOpt, "security-opt", nil, "Security options")
+	flags.BoolVar(&opts.DisableFirewall, "disable-firewall", false, "Disable container firewall regardless of project config")
 
 	// Health check flags
 	flags.StringVar(&opts.HealthCmd, "health-cmd", "", "Command to run to check health")
@@ -328,8 +332,6 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerOptions) {
 	flags.StringArrayVar(&opts.Aliases, "net-alias", nil, "Add network-scoped alias for the container")
 	_ = flags.MarkHidden("net-alias")
 }
-
-// TODO: everything below is not strictly "opts" code - it's more like shared container utilities. We need to put into a "shared"/"utils" subpackage or go file.
 
 // MarkMutuallyExclusive marks agent and name flags as mutually exclusive on the command.
 func MarkMutuallyExclusive(cmd *cobra.Command) {
@@ -1416,4 +1418,400 @@ func filterSocketMountsForMacOS(mounts []mount.Mount) (filteredMounts []mount.Mo
 	}
 
 	return filteredMounts, socketBinds
+}
+
+// -----------------------------------------------------------------------------
+// CreateContainer — channel-based container creation with event streaming
+// -----------------------------------------------------------------------------
+
+// StepStatus represents the lifecycle state of a creation step.
+type StepStatus int
+
+const (
+	StepRunning  StepStatus = iota // Step in progress
+	StepComplete                    // Step finished successfully
+	StepCached                      // Step skipped (already done)
+)
+
+// MessageType classifies the severity of a step message.
+type MessageType int
+
+const (
+	MessageInfo    MessageType = iota // Informational substep update
+	MessageWarning                     // Non-fatal issue
+)
+
+// CreateContainerEvent is sent on the events channel during CreateContainer.
+// Callers use these to drive spinners, collect warnings, etc.
+type CreateContainerEvent struct {
+	Step    string      // "workspace", "config", "environment", "container"
+	Status  StepStatus  // Step lifecycle state
+	Message string      // User-facing text
+	Type    MessageType // Info or Warning
+}
+
+// CreateContainerConfig holds all inputs for CreateContainer.
+type CreateContainerConfig struct {
+	Client     *docker.Client
+	Config     *config.Project
+	Options    *ContainerOptions
+	Flags      *pflag.FlagSet
+	Version    string
+	GitManager func() (*git.GitManager, error)
+	HostProxy  func() hostproxy.HostProxyService
+	Is256Color bool
+	IsTrueColor bool
+}
+
+// CreateContainerResult holds the outputs of CreateContainer.
+type CreateContainerResult struct {
+	ContainerID      string
+	AgentName        string
+	ContainerName    string
+	HostProxyRunning bool
+}
+
+// CreateContainer is the single entry point for container creation, shared by
+// run and create commands. It performs workspace setup, config initialization,
+// environment resolution, Docker container creation, and post-create injection.
+//
+// Progress is communicated via the events channel (nil for silent mode).
+// Developer diagnostics go to zerolog. Callers own all terminal output.
+//
+// Uses named return retErr so deferred volume cleanup can inspect the error.
+func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events chan<- CreateContainerEvent) (_ *CreateContainerResult, retErr error) {
+	projectCfg := cfg.Config
+	containerOpts := cfg.Options
+	client := cfg.Client
+
+	// --- Step 1: Prepare workspace ---
+	sendInfo(ctx, events, "workspace", "Preparing workspace")
+
+	agentName := containerOpts.GetAgentName()
+	if agentName == "" {
+		agentName = docker.GenerateRandomName()
+	}
+	containerName, err := docker.ContainerName(projectCfg.Project, agentName)
+	if err != nil {
+		return nil, err
+	}
+
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, projectCfg, agentName, cfg.GitManager)
+	if err != nil {
+		return nil, err
+	}
+
+	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
+		ModeOverride:   containerOpts.Mode,
+		Config:         projectCfg,
+		AgentName:      agentName,
+		WorkDir:        wd,
+		ProjectRootDir: projectRootDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Track newly-created volumes for cleanup on failure.
+	// Only volumes created during this call are tracked — pre-existing volumes
+	// (with user session data) are never touched.
+	var createdVolumes []string
+	if wsResult.ConfigVolumeResult.ConfigCreated {
+		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "config"); vnErr != nil {
+			logger.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
+			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
+		} else {
+			createdVolumes = append(createdVolumes, vn)
+		}
+	}
+	if wsResult.ConfigVolumeResult.HistoryCreated {
+		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "history"); vnErr != nil {
+			logger.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
+			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
+		} else {
+			createdVolumes = append(createdVolumes, vn)
+		}
+	}
+	if wsResult.WorkspaceVolumeName != "" {
+		createdVolumes = append(createdVolumes, wsResult.WorkspaceVolumeName)
+	}
+
+	defer func() {
+		if retErr == nil || len(createdVolumes) == 0 {
+			return
+		}
+		cleanupCtx := context.Background()
+		for _, vol := range createdVolumes {
+			if _, rmErr := client.VolumeRemove(cleanupCtx, vol, true); rmErr != nil {
+				logger.Warn().Str("volume", vol).Err(rmErr).
+					Msg("failed to clean up volume after init failure")
+				sendWarning(ctx, events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, rmErr))
+			} else {
+				logger.Debug().Str("volume", vol).Msg("cleaned up volume after init failure")
+			}
+		}
+	}()
+
+	workspaceMounts := wsResult.Mounts
+	sendComplete(ctx, events, "workspace", "Workspace ready")
+
+	// --- Step 2: Initialize config ---
+	if wsResult.ConfigVolumeResult.ConfigCreated {
+		sendInfo(ctx, events, "config", "Initializing config")
+		if err := InitContainerConfig(ctx, InitConfigOpts{
+			ProjectName:      projectCfg.Project,
+			AgentName:        agentName,
+			ContainerWorkDir: projectCfg.Workspace.RemotePath,
+			ClaudeCode:       projectCfg.Agent.ClaudeCode,
+			CopyToVolume:     client.CopyToVolume,
+		}); err != nil {
+			return nil, fmt.Errorf("container init: %w", err)
+		}
+		sendComplete(ctx, events, "config", "Config initialized")
+	} else {
+		sendCached(ctx, events, "config", "Config volume cached")
+	}
+
+	// --- Step 3: Setup environment ---
+	sendInfo(ctx, events, "environment", "Setting up environment")
+
+	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, cfg.HostProxy)
+
+	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning)
+	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
+	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
+
+	runtimeEnv, envWarnings, err := buildRuntimeEnv(cfg, projectCfg, containerOpts, agentName, wd)
+	if err != nil {
+		return nil, err
+	}
+	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	for _, w := range envWarnings {
+		sendWarning(ctx, events, "environment", w)
+	}
+	sendComplete(ctx, events, "environment", "Environment ready")
+
+	// --- Step 4: Create container ---
+	sendInfo(ctx, events, "container", fmt.Sprintf("Creating container (%s)", containerName))
+
+	if err := containerOpts.ValidateFlags(); err != nil {
+		return nil, fmt.Errorf("validating container flags: %w", err)
+	}
+
+	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(
+		cfg.Flags, workspaceMounts, projectCfg)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	extraLabels := map[string]string{
+		docker.LabelProject: projectCfg.Project,
+		docker.LabelAgent:   agentName,
+	}
+
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
+		Config:           containerConfig,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkConfig,
+		Name:             containerName,
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
+			Name: docker.NetworkName,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating container: %w", err)
+	}
+
+	// Container created — volumes are now associated with it.
+	// Clear cleanup list so deferred cleanup won't remove them.
+	createdVolumes = nil
+
+	// Inject onboarding + post-init files.
+	copyFn := NewCopyToContainerFn(client)
+
+	if projectCfg.Agent.ClaudeCode.UseHostAuthEnabled() {
+		sendInfo(ctx, events, "container", "Injecting onboarding config")
+		if err := InjectOnboardingFile(ctx, InjectOnboardingOpts{
+			ContainerID:     resp.ID,
+			CopyToContainer: copyFn,
+		}); err != nil {
+			cleanupCtx := context.Background()
+			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
+				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
+					Msg("failed to clean up container after injection failure")
+				return nil, fmt.Errorf("inject onboarding: %w (also failed to clean up container %s: %v)", err, resp.ID, rmErr)
+			}
+			return nil, fmt.Errorf("inject onboarding: %w", err)
+		}
+	}
+
+	if projectCfg.Agent.PostInit != "" {
+		sendInfo(ctx, events, "container", "Injecting post-init script")
+		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
+			ContainerID:     resp.ID,
+			Script:          projectCfg.Agent.PostInit,
+			CopyToContainer: copyFn,
+		}); err != nil {
+			cleanupCtx := context.Background()
+			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
+				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
+					Msg("failed to clean up container after injection failure")
+				return nil, fmt.Errorf("inject post-init script: %w (also failed to clean up container %s: %v)", err, resp.ID, rmErr)
+			}
+			return nil, fmt.Errorf("inject post-init script: %w", err)
+		}
+	}
+
+	sendComplete(ctx, events, "container", "Container created")
+
+	return &CreateContainerResult{
+		ContainerID:      resp.ID,
+		AgentName:        agentName,
+		ContainerName:    containerName,
+		HostProxyRunning: hostProxyRunning,
+	}, nil
+}
+
+// --- Event helpers ---
+
+func sendEvent(ctx context.Context, ch chan<- CreateContainerEvent, step string, status StepStatus, msgType MessageType, msg string) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- CreateContainerEvent{Step: step, Status: status, Type: msgType, Message: msg}:
+	case <-ctx.Done():
+	}
+}
+
+func sendInfo(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
+	sendEvent(ctx, ch, step, StepRunning, MessageInfo, msg)
+}
+
+func sendWarning(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
+	sendEvent(ctx, ch, step, StepRunning, MessageWarning, msg)
+}
+
+func sendComplete(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
+	sendEvent(ctx, ch, step, StepComplete, MessageInfo, msg)
+}
+
+func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
+	sendEvent(ctx, ch, step, StepCached, MessageInfo, msg)
+}
+
+// --- Internal helpers (absorbed from init.go) ---
+
+// resolveWorkDir determines the working directory for the container.
+func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *config.Project, agentName string, gitMgr func() (*git.GitManager, error)) (wd string, projectRootDir string, err error) {
+	if containerOpts.Worktree != "" {
+		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid --worktree flag: %w", err)
+		}
+
+		gm, err := gitMgr()
+		if err != nil {
+			return "", "", fmt.Errorf("cannot use --worktree: %w", err)
+		}
+
+		wd, err = gm.SetupWorktree(cfg, wtSpec.Branch, wtSpec.Base)
+		if err != nil {
+			return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
+		}
+		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
+		return wd, cfg.RootDir(), nil
+	}
+
+	wd = cfg.RootDir()
+	if wd == "" {
+		wd, err = os.Getwd()
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get working directory: %w", err)
+		}
+	}
+	return wd, "", nil
+}
+
+// setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
+func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerOptions, hostProxyFn func() hostproxy.HostProxyService) bool {
+	if !cfg.Security.HostProxyEnabled() {
+		logger.Debug().Msg("host proxy disabled by config")
+		return false
+	}
+
+	if hostProxyFn == nil {
+		return false
+	}
+
+	hp := hostProxyFn()
+	if hp == nil {
+		return false
+	}
+
+	sendInfo(ctx, events, "environment", "Configuring host proxy")
+
+	if err := hp.EnsureRunning(); err != nil {
+		logger.Warn().Err(err).Msg("failed to start host proxy server")
+		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
+		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
+		return false
+	}
+
+	logger.Debug().Msg("host proxy started successfully")
+
+	if hp.IsRunning() {
+		envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
+		containerOpts.Env = append(containerOpts.Env, envVar)
+		logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
+	}
+
+	return true
+}
+
+// buildRuntimeEnv constructs container runtime environment variables.
+// Returns env vars, warnings (e.g. unset from_env vars), and error.
+func buildRuntimeEnv(cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string) ([]string, []string, error) {
+	workspaceMode := containerOpts.Mode
+	if workspaceMode == "" {
+		workspaceMode = projectCfg.Workspace.DefaultMode
+	}
+
+	agentEnv, warnings, err := config.ResolveAgentEnv(projectCfg.Agent, wd)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
+	}
+
+	envOpts := docker.RuntimeEnvOpts{
+		Version:         cfg.Version,
+		Project:         projectCfg.Project,
+		Agent:           agentName,
+		WorkspaceMode:   workspaceMode,
+		WorkspaceSource: wd,
+		Editor:          projectCfg.Agent.Editor,
+		Visual:          projectCfg.Agent.Visual,
+		Is256Color:      cfg.Is256Color,
+		TrueColor:       cfg.IsTrueColor,
+		AgentEnv:        agentEnv,
+	}
+	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
+		envOpts.FirewallEnabled = true
+		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
+		envOpts.FirewallOverride = projectCfg.Security.Firewall.IsOverrideMode()
+		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.GetIPRangeSources()
+	}
+	if projectCfg.Security.GitCredentials != nil {
+		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()
+		envOpts.SSHForwardingEnabled = projectCfg.Security.GitCredentials.GitSSHEnabled()
+	}
+	if projectCfg.Build.Instructions != nil {
+		envOpts.InstructionEnv = projectCfg.Build.Instructions.Env
+	}
+
+	env, err := docker.RuntimeEnv(envOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return env, warnings, nil
 }

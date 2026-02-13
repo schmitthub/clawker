@@ -22,7 +22,7 @@ type AttachOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
-	HostProxy func() *hostproxy.Manager
+	HostProxy func() hostproxy.HostProxyService
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
 	NoStdin    bool

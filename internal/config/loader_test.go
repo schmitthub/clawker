@@ -3,8 +3,31 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// clearClawkerEnv unsets all CLAWKER_* environment variables for the duration
+// of the test, restoring them afterward. This prevents Viper's AutomaticEnv()
+// from picking up container-injected env vars (e.g. CLAWKER_VERSION,
+// CLAWKER_AGENT) that override YAML values under test.
+func clearClawkerEnv(t *testing.T) {
+	t.Helper()
+	saved := map[string]string{}
+	for _, kv := range os.Environ() {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(key, "CLAWKER_") {
+			continue
+		}
+		saved[key] = os.Getenv(key)
+		os.Unsetenv(key)
+	}
+	t.Cleanup(func() {
+		for k, v := range saved {
+			os.Setenv(k, v)
+		}
+	})
+}
 
 func TestNewLoader(t *testing.T) {
 	loader := NewLoader("/test/path")
@@ -61,6 +84,7 @@ func TestLoaderExists(t *testing.T) {
 }
 
 func TestLoaderLoadMissingFile(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -80,6 +104,7 @@ func TestLoaderLoadMissingFile(t *testing.T) {
 }
 
 func TestLoaderLoadValidConfig(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -132,6 +157,7 @@ security:
 }
 
 func TestLoaderLoadPostInitMultiline(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -168,6 +194,7 @@ agent:
 }
 
 func TestLoaderLoadWithDefaults(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -204,6 +231,7 @@ version: "1"
 }
 
 func TestLoaderLoadWithProjectKey(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -229,6 +257,7 @@ func TestLoaderLoadWithProjectKey(t *testing.T) {
 }
 
 func TestLoaderLoadWithUserDefaults(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -280,6 +309,7 @@ build:
 }
 
 func TestLoaderLoadUserOnlyConfig(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -315,6 +345,7 @@ build:
 }
 
 func TestLoaderLoadWithProjectRoot(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -350,6 +381,7 @@ build:
 }
 
 func TestLoaderLoadInvalidYAML(t *testing.T) {
+	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)

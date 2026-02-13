@@ -134,15 +134,17 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
-| `ContainerInitializer` | Factory noun for progress-tracked container init (workspace, config, env, create, start); shared by `run` and `create` commands |
-| `InitParams` / `InitResult` | Input/output types for `ContainerInitializer.Run()` — runtime values and deferred warnings |
+| `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
+| `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
+| `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
 | `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
 | `InjectOnboardingOpts` | Options for `shared.InjectOnboardingFile` — container ID, CopyToContainerFn (DI) |
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
-| `hostproxy.Manager` | Host proxy server for container-to-host actions |
+| `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
+| `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
@@ -284,7 +286,7 @@ security:
 - Terminal visual state (alternate screen, cursor visibility, colors) must be reset separately from termios mode — `term.Restore()` sends escape sequences before restoring raw/cooked mode
 - Terminal resize +1/-1 trick: Resize to (height+1, width+1) then actual size to force SIGWINCH for TUI redraw
 - CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
-- Go import cycles: `internal/cmd/container/opts/` exists because parent imports subcommands and subcommands need shared types
+- Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
 - `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`

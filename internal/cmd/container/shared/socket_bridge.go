@@ -1,4 +1,4 @@
-package opts
+package shared
 
 import "github.com/schmitthub/clawker/internal/config"
 

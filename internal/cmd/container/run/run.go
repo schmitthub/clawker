@@ -9,11 +9,12 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -26,15 +27,17 @@ import (
 
 // RunOptions holds options for the run command.
 type RunOptions struct {
-	*copts.ContainerOptions
+	*shared.ContainerOptions
 
-	IOStreams    *iostreams.IOStreams
+	IOStreams     *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
+	GitManager   func() (*git.GitManager, error)
+	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter
-	Initializer  *shared.ContainerInitializer
+	Version      string
 
 	// Run-specific options
 	Detach bool
@@ -48,16 +51,18 @@ type RunOptions struct {
 
 // NewCmdRun creates a new container run command.
 func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error) *cobra.Command {
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := shared.NewContainerOptions()
 	opts := &RunOptions{
 		ContainerOptions: containerOpts,
 		IOStreams:        f.IOStreams,
 		TUI:              f.TUI,
 		Client:           f.Client,
 		Config:           f.Config,
+		GitManager:       f.GitManager,
+		HostProxy:        f.HostProxy,
 		SocketBridge:     f.SocketBridge,
 		Prompter:         f.Prompter,
-		Initializer:      shared.NewContainerInitializer(f),
+		Version:          f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -110,8 +115,8 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	}
 
 	// Add shared container flags
-	copts.AddFlags(cmd.Flags(), containerOpts)
-	copts.MarkMutuallyExclusive(cmd)
+	shared.AddFlags(cmd.Flags(), containerOpts)
+	shared.MarkMutuallyExclusive(cmd)
 
 	// Run-specific flags
 	// Note: NOT using -d shorthand as it conflicts with global --debug flag
@@ -181,52 +186,73 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		containerOpts.Image = resolvedImage.Reference
 	}
 
-	// --- Phase B: Progress-tracked initialization ---
+	// --- Phase B: Create container with spinner ---
 
-	initResult, err := opts.Initializer.Run(ctx, shared.InitParams{
-		Client:           client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            opts.flags,
-		Image:            containerOpts.Image,
-		StartAfterCreate: opts.Detach,
-		AltScreen:        containerOpts.TTY && containerOpts.Stdin,
-	})
+	events := make(chan shared.CreateContainerEvent, 16)
+	type outcome struct {
+		result *shared.CreateContainerResult
+		err    error
+	}
+	done := make(chan outcome, 1)
 
-	// Print cleanup warnings to stderr (visible to user regardless of error)
-	if warnings := opts.Initializer.CleanupWarnings(); len(warnings) > 0 {
-		cs := ios.ColorScheme()
-		for _, w := range warnings {
-			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
+	go func() {
+		defer close(events)
+		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
+			Client:      client,
+			Config:      cfg,
+			Options:     containerOpts,
+			Flags:       opts.flags,
+			Version:     opts.Version,
+			GitManager:  opts.GitManager,
+			HostProxy:   opts.HostProxy,
+			Is256Color:  ios.Is256ColorSupported(),
+			IsTrueColor: ios.IsTrueColorSupported(),
+		}, events)
+		done <- outcome{r, err}
+	}()
+
+	var warnings []string
+	for ev := range events {
+		switch {
+		case ev.Type == shared.MessageWarning:
+			warnings = append(warnings, ev.Message)
+		case ev.Status == shared.StepRunning:
+			ios.StartSpinner(ev.Message)
 		}
 	}
+	ios.StopSpinner()
 
-	if err != nil {
-		return err
+	o := <-done
+	if o.err != nil {
+		return o.err
 	}
 
-	opts.AgentName = initResult.AgentName
+	opts.AgentName = o.result.AgentName
 
 	// --- Phase C: Post-progress ---
 
-	// Print deferred warnings
-	for _, warning := range initResult.Warnings {
-		fmt.Fprintln(ios.ErrOut, warning)
+	cs := ios.ColorScheme()
+	for _, w := range warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
 	}
 
 	if opts.Detach {
+		// Start container for detached mode
+		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
+			return fmt.Errorf("starting container: %w", err)
+		}
 		// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-		if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+		if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
-			if err := opts.SocketBridge().EnsureBridge(initResult.ContainerID, gpgEnabled); err != nil {
+			if err := opts.SocketBridge().EnsureBridge(o.result.ContainerID, gpgEnabled); err != nil {
 				logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
 			}
 		}
-		fmt.Fprintln(ios.Out, initResult.ContainerID[:12])
+		fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
 		return nil
 	}
 
-	return attachThenStart(ctx, client, initResult.ContainerID, opts)
+	return attachThenStart(ctx, client, o.result.ContainerID, opts)
 }
 
 // attachThenStart attaches to a container BEFORE starting it, then waits for it to exit.
@@ -310,7 +336,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 
 	// Start socket bridge for GPG/SSH forwarding
 	cfg := opts.Config().Project
-	if copts.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
+	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
 			logger.Warn().Err(err).Msg("failed to start socket bridge")

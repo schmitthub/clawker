@@ -7,8 +7,7 @@ Docker CLI-compatible container management commands. Subpackages (`run/`, `creat
 ```
 internal/cmd/container/
 ├── container.go        # Parent command, registers subcommands
-├── opts/               # Shared container flag types (import cycle workaround)
-├── shared/             # Shared domain logic (container init orchestration)
+├── shared/             # Container flag types, domain logic, container init orchestration, CreateContainer
 ├── run/                # clawker container run (RunOptions, NewCmdRun)
 ├── create/             # clawker container create (CreateOptions, NewCmdCreate)
 ├── start/              # clawker container start (StartOptions, NewCmdStart)
@@ -16,7 +15,7 @@ internal/cmd/container/
 └── ... (stop, attach, logs, list, inspect, cp, kill, pause, unpause, remove, rename, restart, stats, top, update, wait)
 ```
 
-**Import cycle rule**: `opts/` breaks `container -> run -> container` cycle. `shared/` holds domain orchestration. Never put shared utilities in parent package.
+**Package rule**: `shared/` holds both container flag types and domain orchestration. Never put shared utilities in parent package.
 
 ### Canonical Error Handling
 
@@ -55,13 +54,17 @@ Separate I/O from resize — `pty.Stream(ctx, hijacked)` in goroutine, `signals.
 - `attach/CLAUDE.md` — Stream+resize pattern
 - `exec/CLAUDE.md` — Credential injection, TTY/non-TTY, detach
 - `start/CLAUDE.md` — Attach-then-start, waitForContainerExit
-- `shared/CLAUDE.md` — ContainerInitializer, init orchestration
+- `shared/CLAUDE.md` — CreateContainer, container flag types, domain orchestration
 
 ## Parent Command (`container.go`)
 
 `NewCmdContainer(f *cmdutil.Factory) *cobra.Command` — registers all 20 subcommands. All follow `NewCmd*(f, runF)` pattern.
 
-## Shared Container Options (`opts/`)
+## Shared Package (`shared/`)
+
+Container flag types, domain logic, and container creation — all in one package. See `shared/CLAUDE.md` for full API.
+
+### Container Options (`container.go`)
 
 `ContainerOptions` — all container flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
@@ -69,15 +72,17 @@ Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFl
 
 **Types**: `ContainerOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
 
-**Flag categories**: Basic, Environment, Volumes, Networking, Resources, Security, Health, Process & Runtime, Devices.
+**Flag categories**: Basic, Environment, Volumes, Networking, Resources, Security (incl. `--disable-firewall`), Health, Process & Runtime (incl. `--workdir`), Devices.
 
-## Shared Domain Logic (`shared/`)
+### CreateContainer (`container.go`)
 
-Container init orchestration shared between `run/` and `create/`. See `shared/CLAUDE.md` for full API.
+Single entry point for container creation, shared by `run` and `create`. Performs all init steps: workspace setup, config initialization, environment resolution, Docker container creation, and post-create injection. Progress communicated via events channel (nil for silent mode).
 
-**ContainerInitializer**: Factory noun for progress-tracked 5-6 step init (workspace, config, env, create, post-init if configured, start). Both `run` and `create` call `Initializer.Run(ctx, InitParams)`.
+**Types**: `CreateContainerConfig`, `CreateContainerResult`, `CreateContainerEvent`, `StepStatus`, `MessageType`.
 
-**Types**: `ContainerInitializer`, `InitParams`, `InitResult`, `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
+**Low-level helpers**: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectOnboardingFile(ctx, opts)` writes onboarding marker; `InjectPostInitScript(ctx, opts)` writes post-init script.
+
+**Types**: `CopyToVolumeFn`, `CopyToContainerFn`, `InitConfigOpts`, `InjectOnboardingOpts`, `InjectPostInitOpts`, `RebuildMissingImageOpts`
 
 ## Image Resolution (@ Symbol)
 
@@ -85,7 +90,7 @@ Container init orchestration shared between `run/` and `create/`. See `shared/CL
 
 ## Workspace Setup
 
-Handled internally by `ContainerInitializer.Run()` via `workspace.SetupMounts()`.
+Handled internally by `CreateContainer()` via `workspace.SetupMounts()`.
 
 ## Command DI Pattern
 
