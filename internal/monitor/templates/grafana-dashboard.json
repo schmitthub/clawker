@@ -408,6 +408,7 @@
           {
             "matcher": { "id": "byName", "options": "Value #Sessions" },
             "properties": [
+              { "id": "displayName", "value": "Sessions" },
               { "id": "unit", "value": "short" },
               { "id": "custom.width", "value": 100 }
             ]
@@ -438,7 +439,7 @@
           "refId": "Tokens"
         },
         {
-          "expr": "sum by (project, agent) (increase(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "count by (project, agent) (count by (project, agent, session_id) (claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}))",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -627,18 +628,11 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 80,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
             "scaleDistribution": { "type": "linear" },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "mappings": [],
@@ -653,23 +647,32 @@
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
       "id": 12,
       "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
       },
       "targets": [
         {
-          "expr": "sum(increase(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
-          "legendFormat": "Commits",
+          "expr": "sum by (project, agent) (increase(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}} commits",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
-          "legendFormat": "Pull Requests",
+          "expr": "sum by (project, agent) (increase(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{project}}/{{agent}} PRs",
           "refId": "B"
         }
       ],
       "title": "Commits & PRs",
-      "type": "timeseries"
+      "type": "barchart"
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -830,7 +833,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_request` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
+          "expr": "{service_name=\"claude-code\"} |= `api_request` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -854,7 +857,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_error` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
+          "expr": "{service_name=\"claude-code\"} |= `api_error` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
           "legendFormat": "",
           "refId": "A"
         }

@@ -8,12 +8,15 @@ receivers:
 
 processors:
   batch:
+  # Copy project/agent from resource attributes to datapoint attributes.
+  # The Prometheus exporter only surfaces datapoint attributes as metric labels,
+  # so this transform is required for per-project/agent filtering in Grafana.
   transform/metrics:
     metric_statements:
       - context: datapoint
         statements:
-          - set(attributes["project"], resource.attributes["project"])
-          - set(attributes["agent"], resource.attributes["agent"])
+          - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
+          - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
 
 exporters:
   otlp/jaeger:

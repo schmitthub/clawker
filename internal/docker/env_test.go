@@ -529,3 +529,37 @@ func TestRuntimeEnv_OTELResourceAttributesOverriddenByAgentEnv(t *testing.T) {
 	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=custom=value",
 		"agent env should override auto-generated resource attributes")
 }
+
+func TestRuntimeEnv_OTELResourceAttributesOverriddenByInstructionEnv(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project:        "myapp",
+		Agent:          "ralph",
+		InstructionEnv: map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "service.name=custom"},
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=service.name=custom",
+		"instruction env should override auto-generated resource attributes")
+}
+
+func TestRuntimeEnv_TelemetryDisabledWhenMonitoringInactive(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		MonitoringActive: false,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "CLAUDE_CODE_ENABLE_TELEMETRY=0",
+		"telemetry should be disabled when monitoring stack is not running")
+}
+
+func TestRuntimeEnv_TelemetryEnabledWhenMonitoringActive(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		MonitoringActive: true,
+	})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "CLAUDE_CODE_ENABLE_TELEMETRY="),
+			"should not set CLAUDE_CODE_ENABLE_TELEMETRY when monitoring is active (Dockerfile default applies)")
+	}
+}

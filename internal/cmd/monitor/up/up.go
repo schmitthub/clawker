@@ -37,6 +37,7 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Jaeger UI (port 16686)
   - Prometheus (port 9090)
+  - Loki (port 3100)
   - Grafana (port 3000)
 
 The stack connects to the clawker-net Docker network, allowing
@@ -73,10 +74,13 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil.PrintError(ios, "Monitoring stack not initialized")
-		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
-		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
+	if _, err := os.Stat(composePath); err != nil {
+		if os.IsNotExist(err) {
+			cmdutil.PrintError(ios, "Monitoring stack not initialized")
+			cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
+			return fmt.Errorf("compose.yaml not found in %s", monitorDir)
+		}
+		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}
 
 	// Ensure clawker-net network exists (creates with managed labels if needed)
