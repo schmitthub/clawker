@@ -86,7 +86,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 | `ReadyFilePath` | `/var/run/clawker/ready` | Signal file |
 | `ReadyLogPrefix` / `ErrorLogPrefix` | `[clawker] ready/error` | Log patterns |
 
-**Wait functions** (all take `*docker.Client`): `WaitForReadyFile`, `WaitForContainerExit`, `WaitForContainerCompletion`, `WaitForHealthy`, `WaitForLogPattern`, `WaitForReadyLog`, `GetReadyTimeout`
+**Wait functions** (all take `*docker.Client`): `WaitForReadyFile`, `WaitForContainerExit`, `WaitForContainerExitAny`, `WaitForContainerCompletion`, `WaitForHealthy`, `WaitForLogPattern`, `WaitForReadyLog`, `GetReadyTimeout`
 
 **Verification**: `VerifyProcessRunning`, `VerifyClaudeCodeRunning`, `CheckForErrorPattern`, `GetContainerLogs`, `ParseReadyFile`
 

@@ -1173,8 +1173,9 @@ func TestContainerFs_AgentPostInit_Failure(t *testing.T) {
 	require.NoError(t, err, "ContainerStart failed")
 
 	// Wait for container to exit (post-init failure calls emit_error which exits)
-	err = harness.WaitForContainerExit(ctx, client, containerID)
+	exitCode, err := harness.WaitForContainerExitAny(ctx, client, containerID)
 	require.NoError(t, err, "container did not exit after post-init failure")
+	assert.Equal(t, 1, exitCode, "container should exit with code 1 on post-init failure")
 
 	// --- Scenario: Marker file does NOT exist (script failed) ---
 	t.Run("marker_not_created_on_failure", func(t *testing.T) {
@@ -1195,8 +1196,8 @@ func TestContainerFs_AgentPostInit_Failure(t *testing.T) {
 
 		assert.Contains(t, logs, "[clawker] error component=post-init",
 			"logs should contain post-init error")
-		assert.Contains(t, logs, "script failed:",
-			"error should include 'script failed:' prefix")
+		assert.Contains(t, logs, "msg=script failed",
+			"error should include 'msg=script failed' in structured log format")
 	})
 }
 

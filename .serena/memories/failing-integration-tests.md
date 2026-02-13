@@ -7,9 +7,11 @@ Status: **Open** — discovered during label prefix migration (branch `a/config-
 ## 1. TestContainerFs_AgentPostInit_Failure (test/internals)
 
 **File:** `test/internals/containerfs_test.go:1110`
-**Status:** **FIXED** — The entrypoint.sh no longer uses a pipeline with `head` for post-init execution. The current code directly runs `"$POST_INIT"` and properly captures the exit code.
+**Status:** **FIXED** — Two test-code bugs resolved:
+1. `WaitForContainerExit` rejected non-zero exit codes — replaced with new `WaitForContainerExitAny` helper that returns exit code without treating non-zero as error
+2. Log assertion searched for `"script failed:"` but entrypoint emits `msg=script failed` (no colon) — fixed to match structured format
 
-**Verify:** Re-run `go test ./test/internals/... -run TestContainerFs_AgentPostInit_Failure -v` to confirm the fix.
+**PR:** branch `a/container-flags`
 
 ---
 

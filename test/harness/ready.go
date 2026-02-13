@@ -208,6 +208,32 @@ func WaitForContainerExit(ctx context.Context, cli *docker.Client, containerID s
 	}
 }
 
+// WaitForContainerExitAny waits for a container to stop running and returns
+// the exit code. Unlike WaitForContainerExit, non-zero exit codes are not
+// treated as errors — the caller decides how to handle them.
+func WaitForContainerExitAny(ctx context.Context, cli *docker.Client, containerID string) (int, error) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return -1, fmt.Errorf("timeout waiting for container exit: %w", ctx.Err())
+		case <-ticker.C:
+			info, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+			if err != nil {
+				return -1, fmt.Errorf("failed to inspect container: %w", err)
+			}
+
+			if info.Container.State.Running {
+				continue
+			}
+
+			return info.Container.State.ExitCode, nil
+		}
+	}
+}
+
 // WaitForHealthy waits for the container to be healthy using Docker's HEALTHCHECK.
 // Returns nil when healthy, or an error if timeout is reached.
 func WaitForHealthy(ctx context.Context, cli *docker.Client, containerID string) error {
