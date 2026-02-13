@@ -74,8 +74,8 @@ agent:
   # visual: "vim"    # defaults to "nano" if not set
 
   # Environment variable injection (precedence: env_file < from_env < env)
-  # env_file: load KEY=VALUE files (paths support ~, $VAR, relative to project)
-  #    - ".env"
+#  env_file:
+#    - ".env"
   # from_env: passthrough host env vars by name (unset vars skipped with warning)
   from_env:
     - GH_TOKEN

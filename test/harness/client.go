@@ -29,12 +29,13 @@ import (
 
 // containerConfig holds options for RunContainer.
 type containerConfig struct {
-	capAdd    []string
-	user      string
-	cmd       []string
-	env       []string
-	extraHost []string
-	mounts    []mount.Mount
+	capAdd     []string
+	user       string
+	cmd        []string
+	entrypoint []string
+	env        []string
+	extraHost  []string
+	mounts     []mount.Mount
 }
 
 // ContainerOpt configures a test container.
@@ -58,6 +59,13 @@ func WithUser(user string) ContainerOpt {
 func WithCmd(cmd ...string) ContainerOpt {
 	return func(c *containerConfig) {
 		c.cmd = cmd
+	}
+}
+
+// WithEntrypoint sets the entrypoint for the container.
+func WithEntrypoint(entrypoint ...string) ContainerOpt {
+	return func(c *containerConfig) {
+		c.entrypoint = entrypoint
 	}
 }
 
@@ -102,12 +110,28 @@ func (r *ExecResult) CleanOutput() string {
 
 // Exec executes a command in the container and returns the result.
 func (c *RunningContainer) Exec(ctx context.Context, dc *docker.Client, cmd ...string) (*ExecResult, error) {
-	execResp, err := dc.ExecCreate(ctx, c.ID, docker.ExecCreateOptions{
+	return c.execInternal(ctx, dc, docker.ExecCreateOptions{
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
 	})
+}
+
+// ExecAsUser executes a command in the container as a specific user and returns the result.
+func (c *RunningContainer) ExecAsUser(ctx context.Context, dc *docker.Client, user string, cmd ...string) (*ExecResult, error) {
+	return c.execInternal(ctx, dc, docker.ExecCreateOptions{
+		AttachStdin:  false,
+		AttachStdout: true,
+		AttachStderr: true,
+		User:         user,
+		Cmd:          cmd,
+	})
+}
+
+// execInternal is the shared implementation for Exec and ExecAsUser.
+func (c *RunningContainer) execInternal(ctx context.Context, dc *docker.Client, opts docker.ExecCreateOptions) (*ExecResult, error) {
+	execResp, err := dc.ExecCreate(ctx, c.ID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("exec create failed: %w", err)
 	}
@@ -245,11 +269,12 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 
 	createResp, err := dc.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Config: &container.Config{
-			Image:  image,
-			Cmd:    cmd,
-			Labels: labels,
-			Env:    cfg.env,
-			User:   cfg.user,
+			Image:      image,
+			Entrypoint: cfg.entrypoint,
+			Cmd:        cmd,
+			Labels:     labels,
+			Env:        cfg.env,
+			User:       cfg.user,
 		},
 		HostConfig: &container.HostConfig{
 			CapAdd:     cfg.capAdd,
@@ -660,10 +685,13 @@ func UniqueAgentName(t *testing.T) string {
 // WithVolumeMount instead to avoid duplicate creation/cleanup.
 func WithConfigVolume(t *testing.T, dc *docker.Client, project, agent string) ContainerOpt {
 	t.Helper()
-	volumeName := docker.VolumeName(project, agent, "config")
+	volumeName, err := docker.VolumeName(project, agent, "config")
+	if err != nil {
+		t.Fatalf("WithConfigVolume: invalid name: %v", err)
+	}
 	ctx := context.Background()
 
-	_, err := dc.EnsureVolume(ctx, volumeName, nil)
+	_, err = dc.EnsureVolume(ctx, volumeName, nil)
 	if err != nil {
 		t.Fatalf("WithConfigVolume: failed to create volume %s: %v", volumeName, err)
 	}

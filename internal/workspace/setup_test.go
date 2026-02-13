@@ -49,8 +49,8 @@ func TestBuildWorktreeGitMount_ProjectRootNotExist(t *testing.T) {
 	}
 
 	// Check error message contains useful information
-	if !containsAll(err.Error(), "project root directory does not exist", nonExistentDir) {
-		t.Errorf("error message = %q, should mention 'project root directory does not exist' and path", err.Error())
+	if !containsAll(err.Error(), "failed to resolve symlinks for project root", nonExistentDir) {
+		t.Errorf("error message = %q, should mention 'failed to resolve symlinks for project root' and path", err.Error())
 	}
 }
 

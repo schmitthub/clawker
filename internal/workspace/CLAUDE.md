@@ -39,7 +39,7 @@ type Config struct {
 ```go
 func NewStrategy(mode config.Mode, cfg Config) (Strategy, error) // Factory
 func NewBindStrategy(cfg Config) *BindStrategy
-func NewSnapshotStrategy(cfg Config) *SnapshotStrategy
+func NewSnapshotStrategy(cfg Config) (*SnapshotStrategy, error)
 ```
 
 ## Mount Setup
@@ -54,12 +54,13 @@ type SetupMountsConfig struct {
 }
 
 type SetupMountsResult struct {
-    Mounts             []mount.Mount
-    ConfigVolumeResult ConfigVolumeResult
+    Mounts              []mount.Mount
+    ConfigVolumeResult  ConfigVolumeResult
+    WorkspaceVolumeName string  // Non-empty only for snapshot mode when volume was newly created. Used for cleanup on init failure.
 }
 
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
-func GetConfigVolumeMounts(projectName, agentName string) []mount.Mount
+func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
 func EnsureShareDir() (string, error)
 func GetShareVolumeMount(hostPath string) mount.Mount

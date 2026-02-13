@@ -88,7 +88,11 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 
 	container := opts.container
 	if opts.Agent {
-		container = docker.ContainerName(opts.Config().Resolution.ProjectKey, container)
+		var err error
+		container, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, container)
+		if err != nil {
+			return err
+		}
 	}
 	// Connect to Docker
 	client, err := opts.Client(ctx)

@@ -180,7 +180,10 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// Build container name
-	containerName := docker.ContainerName(cfg.Project, opts.Agent)
+	containerName, err := docker.ContainerName(cfg.Project, opts.Agent)
+	if err != nil {
+		return err
+	}
 
 	// Get docker client
 	client, err := opts.Client(ctx)

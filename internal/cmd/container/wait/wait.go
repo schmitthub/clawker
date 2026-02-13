@@ -72,7 +72,11 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		containers = docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		if err != nil {
+			return err
+		}
+		containers = resolved
 	}
 
 	// Connect to Docker

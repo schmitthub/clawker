@@ -89,7 +89,11 @@ Container name can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]
 			if opts.Agent {
-				opts.containerName = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
+				var err error
+				opts.containerName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
+				if err != nil {
+					return err
+				}
 			}
 
 			if len(args) > 1 {

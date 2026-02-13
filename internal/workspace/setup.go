@@ -36,6 +36,9 @@ type SetupMountsResult struct {
 	// ConfigVolumeResult tracks which config volumes were newly created.
 	// Used by container init orchestration to decide whether to copy host config.
 	ConfigVolumeResult ConfigVolumeResult
+	// WorkspaceVolumeName is the name of the workspace volume created during setup.
+	// Non-empty only for snapshot mode. Used for cleanup on init failure.
+	WorkspaceVolumeName string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -90,6 +93,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("failed to prepare workspace: %w", err)
 	}
 
+	// Track workspace volume name for cleanup on init failure (snapshot mode only)
+	var wsVolumeName string
+	if ss, ok := strategy.(*SnapshotStrategy); ok && ss.WasCreated() {
+		wsVolumeName = ss.VolumeName()
+	}
+
 	// Get workspace mount
 	mounts = append(mounts, strategy.GetMounts()...)
 
@@ -110,7 +119,11 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	mounts = append(mounts, GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)...)
+	configMounts, err := GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
+	}
+	mounts = append(mounts, configMounts...)
 
 	// Ensure and mount shared directory (if enabled)
 	if cfg.Config.Agent.SharedDirEnabled() {
@@ -127,8 +140,9 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	return &SetupMountsResult{
-		Mounts:             mounts,
-		ConfigVolumeResult: configResult,
+		Mounts:              mounts,
+		ConfigVolumeResult:  configResult,
+		WorkspaceVolumeName: wsVolumeName,
 	}, nil
 }
 
@@ -142,17 +156,7 @@ func buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error) {
 	// must match the path git wrote in the worktree's .git file.
 	resolvedRoot, err := filepath.EvalSymlinks(projectRootDir)
 	if err != nil {
-		// Critical errors should fail rather than silently fall back
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("project root directory does not exist: %s", projectRootDir)
-		}
-		if os.IsPermission(err) {
-			return nil, fmt.Errorf("permission denied reading project root directory: %s", projectRootDir)
-		}
-		// For other errors (rare), warn and fall back to original path
-		resolvedRoot = projectRootDir
-		logger.Warn().Err(err).Str("path", projectRootDir).
-			Msg("failed to resolve symlinks, using original path - git commands in container may fail")
+		return nil, fmt.Errorf("failed to resolve symlinks for project root %s: %w", projectRootDir, err)
 	}
 
 	// Validate .git exists and is a directory before mounting

@@ -69,7 +69,11 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 	newName := opts.newName
 
 	if opts.Agent {
-		oldName = docker.ContainerName(opts.Config().Resolution.ProjectKey, oldName)
+		var err error
+		oldName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, oldName)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Connect to Docker
