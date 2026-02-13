@@ -479,3 +479,53 @@ func TestRuntimeEnv_ClawkerVersionEmpty(t *testing.T) {
 			"should not set CLAWKER_VERSION when empty")
 	}
 }
+
+func TestRuntimeEnv_OTELResourceAttributes(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project: "myapp",
+		Agent:   "ralph",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=project=myapp,agent=ralph")
+}
+
+func TestRuntimeEnv_OTELResourceAttributesProjectOnly(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project: "myapp",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=project=myapp")
+}
+
+func TestRuntimeEnv_OTELResourceAttributesAgentOnly(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Agent: "ralph",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=agent=ralph")
+}
+
+func TestRuntimeEnv_OTELResourceAttributesEmpty(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "OTEL_RESOURCE_ATTRIBUTES="),
+			"should not set OTEL_RESOURCE_ATTRIBUTES when no project or agent")
+	}
+}
+
+func TestRuntimeEnv_OTELResourceAttributesOverriddenByAgentEnv(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Project:  "myapp",
+		Agent:    "ralph",
+		AgentEnv: map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "custom=value"},
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "OTEL_RESOURCE_ATTRIBUTES=custom=value",
+		"agent env should override auto-generated resource attributes")
+}

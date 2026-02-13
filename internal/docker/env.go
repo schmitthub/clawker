@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 )
@@ -111,6 +112,18 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			return nil, fmt.Errorf("failed to marshal firewall IP range sources: %w", err)
 		}
 		m["CLAWKER_FIREWALL_IP_RANGE_SOURCES"] = string(ipSourcesBytes)
+	}
+
+	// Telemetry resource attributes for per-project/agent metric segmentation
+	var resourceAttrs []string
+	if opts.Project != "" {
+		resourceAttrs = append(resourceAttrs, "project="+opts.Project)
+	}
+	if opts.Agent != "" {
+		resourceAttrs = append(resourceAttrs, "agent="+opts.Agent)
+	}
+	if len(resourceAttrs) > 0 {
+		m["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttrs, ",")
 	}
 
 	// Socket forwarding (consumed by clawker-socket-server binary inside container)

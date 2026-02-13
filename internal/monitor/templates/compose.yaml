@@ -8,6 +8,8 @@ services:
     ports:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     labels:
       dev.clawker.managed: "true"
     networks:
@@ -61,22 +63,19 @@ services:
       # Enable anonymous access so users don't need to login locally
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      # Set the home dashboard so Grafana loads it on startup
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/claude-code.json
     volumes:
       # Auto-provision datasources and dashboards
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     labels:
       dev.clawker.managed: "true"
     networks:
       - clawker-net
-
-  mcp-gateway:
-    image: docker/mcp-gateway
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    labels:
-      dev.clawker.managed: "true"
 
 networks:
   clawker-net:

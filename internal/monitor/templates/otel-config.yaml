@@ -8,6 +8,12 @@ receivers:
 
 processors:
   batch:
+  transform/metrics:
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(attributes["project"], resource.attributes["project"])
+          - set(attributes["agent"], resource.attributes["agent"])
 
 exporters:
   otlp/jaeger:
@@ -27,7 +33,7 @@ service:
       exporters: [otlp/jaeger]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [batch, transform/metrics]
       exporters: [prometheus]
     logs:
       receivers: [otlp]

@@ -123,39 +123,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 
-		// Check for running clawker containers that need restart
-		checkRunningContainers(ctx, client, ios)
 	}
 
 	return nil
-}
-
-// checkRunningContainers warns if there are running clawker containers
-// that were started before the monitoring stack and won't have telemetry enabled.
-func checkRunningContainers(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams) {
-	cs := ios.ColorScheme()
-	containers, err := client.ListContainers(ctx, false)
-	if err != nil {
-		logger.Debug().Err(err).Msg("failed to list running containers")
-		return
-	}
-
-	if len(containers) == 0 {
-		return
-	}
-
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Running containers detected without telemetry:\n", cs.WarningIcon())
-	for _, c := range containers {
-		fmt.Fprintf(ios.ErrOut, "   %s %s\n", cs.Muted("•"), c.Name)
-	}
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "These containers were started before the monitoring stack and")
-	fmt.Fprintln(ios.ErrOut, "won't export telemetry. To enable telemetry, restart them:")
-	fmt.Fprintln(ios.ErrOut)
-	for _, c := range containers {
-		fmt.Fprintf(ios.ErrOut, "   cd /path/to/%s && clawker restart\n", c.Project)
-	}
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "Then run 'clawker start' to start with telemetry enabled.")
 }
