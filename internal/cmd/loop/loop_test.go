@@ -1,4 +1,4 @@
-package ralph
+package loop
 
 import (
 	"testing"
@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdRalph(t *testing.T) {
+func TestNewCmdLoop(t *testing.T) {
 	f := &cmdutil.Factory{}
-	cmd := NewCmdRalph(f)
+	cmd := NewCmdLoop(f)
 
 	// Test parent command properties
-	assert.Equal(t, "ralph", cmd.Use)
+	assert.Equal(t, "loop", cmd.Use)
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
@@ -42,4 +42,3 @@ func TestNewCmdRalph(t *testing.T) {
 	require.NotNil(t, resetCmd, "reset subcommand should exist")
 	require.NotNil(t, tuiCmd, "tui subcommand should exist")
 }
-

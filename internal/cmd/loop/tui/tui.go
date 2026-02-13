@@ -13,13 +13,13 @@ import (
 	ralphtui "github.com/schmitthub/clawker/internal/ralph/tui"
 )
 
-// TUIOptions holds options for the ralph tui command.
+// TUIOptions holds options for the loop tui command.
 type TUIOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() *config.Config
 }
 
-// NewCmdTUI creates the `clawker ralph tui` command.
+// NewCmdTUI creates the `clawker loop tui` command.
 func NewCmdTUI(f *cmdutil.Factory, runF func(context.Context, *TUIOptions) error) *cobra.Command {
 	opts := &TUIOptions{
 		IOStreams: f.IOStreams,
@@ -29,9 +29,9 @@ func NewCmdTUI(f *cmdutil.Factory, runF func(context.Context, *TUIOptions) error
 	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch interactive TUI dashboard",
-		Long: `Launch an interactive terminal dashboard for monitoring ralph agents.
+		Long: `Launch an interactive terminal dashboard for monitoring loop agents.
 
-The TUI provides a real-time view of all ralph agents in the current project,
+The TUI provides a real-time view of all loop agents in the current project,
 including their status, loop progress, and recent log output.
 
 Features:
@@ -40,7 +40,7 @@ Features:
   - Quick actions (stop, reset circuit breaker)
   - Session history and statistics`,
 		Example: `  # Launch TUI for current project
-  clawker ralph tui`,
+  clawker loop tui`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)

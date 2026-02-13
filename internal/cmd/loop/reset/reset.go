@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ResetOptions holds options for the ralph reset command.
+// ResetOptions holds options for the loop reset command.
 type ResetOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() *config.Config
@@ -30,7 +30,7 @@ func NewCmdReset(f *cmdutil.Factory, runF func(context.Context, *ResetOptions) e
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Reset the circuit breaker for an agent",
-		Long: `Reset the circuit breaker to allow ralph loops to continue.
+		Long: `Reset the circuit breaker to allow loops to continue.
 
 The circuit breaker trips when an agent shows no progress for multiple
 consecutive loops. Use this command to reset it and retry.
@@ -38,10 +38,10 @@ consecutive loops. Use this command to reset it and retry.
 By default, only the circuit breaker is reset. Use --all to also clear
 the session history.`,
 		Example: `  # Reset circuit breaker only
-  clawker ralph reset --agent dev
+  clawker loop reset --agent dev
 
   # Reset everything (circuit and session)
-  clawker ralph reset --agent dev --all`,
+  clawker loop reset --agent dev --all`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)

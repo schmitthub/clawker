@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// RunOptions holds options for the ralph run command.
+// RunOptions holds options for the loop run command.
 type RunOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
@@ -56,7 +56,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Long: `Run Claude Code in an autonomous loop until completion or stagnation.
 
 The agent will run Claude Code repeatedly with --continue, parsing each
-iteration's output for a RALPH_STATUS block. The loop exits when:
+iteration's output for a LOOP_STATUS block. The loop exits when:
 
   - Claude signals EXIT_SIGNAL: true with sufficient completion indicators
   - The circuit breaker trips (no progress, same error, output decline)
@@ -66,31 +66,31 @@ iteration's output for a RALPH_STATUS block. The loop exits when:
 
 The container must already be running. Use 'clawker start' first.`,
 		Example: `  # Start with an initial prompt
-  clawker ralph run --agent dev --prompt "Fix all failing tests"
+  clawker loop run --agent dev --prompt "Fix all failing tests"
 
   # Start with a prompt from a file
-  clawker ralph run --agent dev --prompt-file task.md
+  clawker loop run --agent dev --prompt-file task.md
 
   # Continue an existing session
-  clawker ralph run --agent dev
+  clawker loop run --agent dev
 
   # Reset circuit breaker and retry
-  clawker ralph run --agent dev --reset-circuit
+  clawker loop run --agent dev --reset-circuit
 
   # Run with custom limits
-  clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+  clawker loop run --agent dev --max-loops 100 --stagnation-threshold 5
 
   # Run with live monitoring
-  clawker ralph run --agent dev --monitor
+  clawker loop run --agent dev --monitor
 
   # Run with rate limiting (5 calls per hour)
-  clawker ralph run --agent dev --calls 5
+  clawker loop run --agent dev --calls 5
 
   # Run with verbose output
-  clawker ralph run --agent dev -v
+  clawker loop run --agent dev -v
 
   # Run in YOLO mode (skip all permission prompts)
-  clawker ralph run --agent dev --skip-permissions`,
+  clawker loop run --agent dev --skip-permissions`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -241,7 +241,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 	}
 
-	// Rate limit callback - Ralph is autonomous, so we exit cleanly instead of prompting
+	// Rate limit callback - loop is autonomous, so we exit cleanly instead of prompting
 	// This avoids goroutine leaks from blocking stdin reads
 	var onRateLimitHit func() bool
 	if ios.IsInputTTY() && !opts.Quiet {
@@ -253,7 +253,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	if !opts.Quiet && !opts.JSON {
-		fmt.Fprintf(ios.ErrOut, "Starting ralph loop for %s...\n", containerName)
+		fmt.Fprintf(ios.ErrOut, "Starting loop for %s...\n", containerName)
 	}
 
 	logger.Info().
@@ -262,7 +262,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		Int("max_loops", opts.MaxLoops).
 		Int("stagnation_threshold", opts.StagnationThreshold).
 		Int("calls_per_hour", opts.CallsPerHour).
-		Msg("starting ralph loop")
+		Msg("starting loop")
 
 	// Run the loop
 	result, err := runner.Run(ctx, ralph.LoopOptions{
@@ -294,7 +294,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	if err != nil {
 		// Error is already logged by the runner
 		if !opts.JSON {
-			cmdutil.PrintError(ios, "Ralph loop failed: %v", err)
+			cmdutil.PrintError(ios, "Loop failed: %v", err)
 		}
 	}
 
@@ -341,7 +341,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// Human-readable output (skip if monitor already printed)
 	if !opts.Quiet && monitor == nil {
 		fmt.Fprintf(ios.ErrOut, "\n")
-		fmt.Fprintf(ios.ErrOut, "Ralph loop finished\n")
+		fmt.Fprintf(ios.ErrOut, "Loop finished\n")
 		fmt.Fprintf(ios.ErrOut, "  Loops completed: %d\n", result.LoopsCompleted)
 		fmt.Fprintf(ios.ErrOut, "  Exit reason: %s\n", result.ExitReason)
 		if result.Session != nil {

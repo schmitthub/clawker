@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// StatusOptions holds options for the ralph status command.
+// StatusOptions holds options for the loop status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() *config.Config
@@ -29,18 +29,18 @@ func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions)
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show current ralph session status",
-		Long: `Display the current status of a ralph session for an agent.
+		Short: "Show current loop session status",
+		Long: `Display the current status of a loop session for an agent.
 
 Shows information about:
   - Session state (started, updated, loops completed)
   - Circuit breaker state (tripped, no-progress count)
   - Cumulative statistics (tasks completed, files modified)`,
 		Example: `  # Show status for an agent
-  clawker ralph status --agent dev
+  clawker loop status --agent dev
 
   # Output as JSON
-  clawker ralph status --agent dev --json`,
+  clawker loop status --agent dev --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -89,7 +89,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 		if opts.JSON {
 			fmt.Fprintln(ios.Out, "{\"exists\": false}")
 		} else {
-			fmt.Fprintf(ios.ErrOut, "No ralph session found for agent %q\n", opts.Agent)
+			fmt.Fprintf(ios.ErrOut, "No loop session found for agent %q\n", opts.Agent)
 		}
 		return nil
 	}
@@ -131,7 +131,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	}
 
 	// Human-readable output
-	fmt.Fprintf(ios.ErrOut, "Ralph status for %s.%s\n", cfg.Project, opts.Agent)
+	fmt.Fprintf(ios.ErrOut, "Loop status for %s.%s\n", cfg.Project, opts.Agent)
 	fmt.Fprintf(ios.ErrOut, "\n")
 
 	if session != nil {
@@ -158,7 +158,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 			}
 			fmt.Fprintf(ios.ErrOut, "\n")
 			cmdutil.PrintNextSteps(ios,
-				fmt.Sprintf("Reset the circuit: clawker ralph reset --agent %s", opts.Agent),
+				fmt.Sprintf("Reset the circuit: clawker loop reset --agent %s", opts.Agent),
 			)
 		} else {
 			fmt.Fprintf(ios.ErrOut, "  Status: OK\n")
