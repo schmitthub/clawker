@@ -15,7 +15,7 @@
 | 2 | Task 4: New command structure (iterate + tasks subcommands) | `complete` | opus |
 | 2 | Task 5: Flag definitions and option structs | `complete` | opus |
 | 2 | Task 6: Unit tests for command layer | `complete` | opus |
-| 3 | Task 7: claude -p execution engine | `pending` | — |
+| 3 | Task 7: claude -p execution engine | `complete` | opus |
 | 3 | Task 8: stream-json parser | `pending` | — |
 | 3 | Task 9: LOOP_STATUS block (rename + integration) | `pending` | — |
 | 4 | Task 10: Hook injection system | `pending` | — |
@@ -43,6 +43,18 @@
 - Status and reset `testFactory` omit TUI field (correct — non-interactive commands). Iterate/tasks include it (correct — they use TUI).
 - Test count: 3774 → 3777 (+3 net). All 38 loop command tests pass.
 - Code reviewer found zero issues.
+
+**Task 7:**
+- Scope diverged from original plan: instead of creating `internal/loop/exec.go` with `claude -p` command building, implemented the command→runner bridge — connecting the iterate/tasks command layer to the existing `loop.Runner` via shared helpers.
+- Created `shared/resolve.go` with `ResolvePrompt`, `ResolveTasksPrompt`, `BuildRunnerOptions`. `ResolveTasksPrompt` uses `strings.Replace` (not `fmt.Sprintf`) to avoid format string injection from user-supplied templates.
+- Created `shared/result.go` with `ResultOutput`, `NewResultOutput`, `WriteResult` for JSON/quiet/default output modes via `cmdutil.FormatFlags` and `cmdutil.WriteJSON`.
+- Added `--agent` flag to shared `LoopOptions` in `AddLoopFlags`. Each subcommand marks it required independently.
+- `BuildRunnerOptions` implements the config-override pattern: `flags.Changed("flag-name")` detects explicit CLI flags; config values only apply when flag wasn't explicitly set. `SessionExpirationHours` is config-only (no CLI flag).
+- `SafetyCompletionThreshold` was missing from `loop.Options` — had to add it and wire into `CircuitBreakerConfig` in `Runner.Run`. This was a gap between the shared options layer and the core loop engine.
+- StubRun tests (nil runF) broke because real implementations now need Docker/Config. Replaced with `RealRunNeedsDocker` tests using `testFactoryWithConfig` helper that wires Config + a Client returning "docker not available" error.
+- `iterateRun` and `tasksRun` follow identical 12-step flow (resolve→config→docker→verify→runner→options→monitor→verbose→message→run→result→error). Steps 2-12 are duplicated — noted for future extraction into shared helper when the commands diverge enough to confirm the right abstraction boundary.
+- Code reviewer found 4 issues: (1) stale Long description claiming auto container lifecycle — fixed, (2) `fmt.Sprintf` format string injection — fixed with `strings.Replace`, (3) orphaned `session-expiration-hours` flag guard — fixed to config-only application, (4) duplication between run functions — noted for future work.
+- Test count: 3777 → 3798 (+21 net). All loop command tests pass.
 
 **Task 5:**
 - Created `internal/cmd/loop/shared/options.go` with `LoopOptions` struct, `NewLoopOptions()`, `AddLoopFlags(cmd, opts)`, and `MarkVerboseExclusive(cmd)`.

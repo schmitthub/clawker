@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -13,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 )
@@ -38,6 +40,9 @@ type TasksOptions struct {
 
 	// Output
 	Format *cmdutil.FormatFlags
+
+	// flags captures the command's FlagSet for Changed() detection
+	flags *pflag.FlagSet
 }
 
 // NewCmdTasks creates the `clawker loop tasks` command.
@@ -68,23 +73,24 @@ The loop exits when:
   - Maximum iterations reached
   - A timeout is hit
 
-Container lifecycle is managed automatically: a container is created at the
-start and destroyed on completion.`,
+The container must exist and be running before starting the loop. Create one
+with: clawker container create --agent <name>`,
 		Example: `  # Run a task-driven loop
-  clawker loop tasks --tasks todo.md
+  clawker loop tasks --agent dev --tasks todo.md
 
   # Run with a custom task prompt template
-  clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
+  clawker loop tasks --agent dev --tasks todo.md --task-prompt-file instructions.md
 
   # Run with a custom inline task prompt
-  clawker loop tasks --tasks backlog.md --task-prompt "Pick the highest priority task"
+  clawker loop tasks --agent dev --tasks backlog.md --task-prompt "Pick the highest priority task"
 
   # Stream all agent output in real time
-  clawker loop tasks --tasks todo.md --verbose
+  clawker loop tasks --agent dev --tasks todo.md --verbose
 
   # Output final result as JSON
-  clawker loop tasks --tasks todo.md --json`,
+  clawker loop tasks --agent dev --tasks todo.md --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.flags = cmd.Flags()
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
@@ -108,6 +114,7 @@ start and destroyed on completion.`,
 	opts.Format = cmdutil.AddFormatFlags(cmd)
 
 	// Requirements and mutual exclusivity
+	_ = cmd.MarkFlagRequired("agent")
 	_ = cmd.MarkFlagRequired("tasks")
 	cmd.MarkFlagsMutuallyExclusive("task-prompt", "task-prompt-file")
 	shared.MarkVerboseExclusive(cmd)
@@ -115,8 +122,85 @@ start and destroyed on completion.`,
 	return cmd
 }
 
-func tasksRun(_ context.Context, opts *TasksOptions) error {
-	cs := opts.IOStreams.ColorScheme()
-	fmt.Fprintf(opts.IOStreams.ErrOut, "%s loop tasks is not yet implemented\n", cs.WarningIcon())
+func tasksRun(ctx context.Context, opts *TasksOptions) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	// 1. Resolve task prompt
+	prompt, err := shared.ResolveTasksPrompt(opts.TasksFile, opts.TaskPrompt, opts.TaskPromptFile)
+	if err != nil {
+		return err
+	}
+
+	// 2. Get config
+	cfg := opts.Config()
+	project := cfg.Project.Project
+	agent := opts.Agent
+
+	// 3. Get Docker client
+	client, err := opts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("connecting to Docker: %w", err)
+	}
+
+	// 4. Verify container exists and is running
+	containerName, ctr, err := client.FindContainerByAgent(ctx, project, agent)
+	if err != nil {
+		return fmt.Errorf("looking up container: %w", err)
+	}
+	if ctr == nil {
+		return fmt.Errorf("container %q not found — create it first with: clawker container create --agent %s", containerName, agent)
+	}
+	if ctr.State != "running" {
+		return fmt.Errorf("container %q is not running (state: %s) — start it with: clawker container start %s", containerName, ctr.State, containerName)
+	}
+
+	// 5. Create runner
+	runner, err := loop.NewRunner(client)
+	if err != nil {
+		return fmt.Errorf("creating loop runner: %w", err)
+	}
+
+	// 6. Build runner options
+	runnerOpts := shared.BuildRunnerOptions(
+		opts.LoopOptions, project, agent, containerName, prompt,
+		opts.flags, cfg.Project.Loop,
+	)
+
+	// 7. Set up monitor
+	monitor := loop.NewMonitor(loop.MonitorOptions{
+		Writer:   ios.ErrOut,
+		MaxLoops: runnerOpts.MaxLoops,
+		Verbose:  opts.Verbose,
+	})
+	runnerOpts.Monitor = monitor
+
+	// 8. If verbose, stream output chunks to stderr
+	if opts.Verbose {
+		runnerOpts.OnOutput = func(chunk []byte) {
+			_, _ = ios.ErrOut.Write(chunk)
+		}
+	}
+
+	// 9. Print start message
+	fmt.Fprintf(ios.ErrOut, "%s Starting loop tasks for %s.%s (%d max loops)\n",
+		cs.InfoIcon(), project, agent, runnerOpts.MaxLoops)
+
+	// 10. Run the loop
+	result, err := runner.Run(ctx, runnerOpts)
+	if err != nil {
+		return err
+	}
+
+	// 11. Write result
+	if writeErr := shared.WriteResult(ios.Out, ios.ErrOut, result, opts.Format); writeErr != nil {
+		return writeErr
+	}
+
+	// 12. If loop ended with error, return SilentError (monitor already displayed it)
+	if result.Error != nil {
+		return cmdutil.SilentError
+	}
+
 	return nil
 }

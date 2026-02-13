@@ -35,6 +35,7 @@ type LoopOptions struct {
 	AppendSystemPrompt string
 
 	// Container
+	Agent    string
 	Worktree string
 	Image    string
 
@@ -94,6 +95,8 @@ func AddLoopFlags(cmd *cobra.Command, opts *LoopOptions) {
 		"Additional system prompt instructions appended to the LOOP_STATUS default")
 
 	// Container
+	flags.StringVar(&opts.Agent, "agent", "",
+		"Agent name (identifies container and session)")
 	flags.StringVar(&opts.Worktree, "worktree", "",
 		"Run in a git worktree (optional branch[:base] spec, empty for auto-generated)")
 	flags.StringVar(&opts.Image, "image", "",

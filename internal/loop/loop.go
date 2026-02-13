@@ -80,6 +80,9 @@ type Options struct {
 	// LoopDelaySeconds is the delay between loop iterations.
 	LoopDelaySeconds int
 
+	// SafetyCompletionThreshold is loops with completion indicators but no exit signal before trip.
+	SafetyCompletionThreshold int
+
 	// UseStrictCompletion requires both EXIT_SIGNAL and completion indicators.
 	UseStrictCompletion bool
 
@@ -218,11 +221,12 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Initialize circuit breaker with full config
 	circuit := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
-		StagnationThreshold:     opts.StagnationThreshold,
-		SameErrorThreshold:      opts.SameErrorThreshold,
-		OutputDeclineThreshold:  opts.OutputDeclineThreshold,
-		MaxConsecutiveTestLoops: opts.MaxConsecutiveTestLoops,
-		CompletionThreshold:     opts.CompletionThreshold,
+		StagnationThreshold:       opts.StagnationThreshold,
+		SameErrorThreshold:        opts.SameErrorThreshold,
+		OutputDeclineThreshold:    opts.OutputDeclineThreshold,
+		MaxConsecutiveTestLoops:   opts.MaxConsecutiveTestLoops,
+		CompletionThreshold:       opts.CompletionThreshold,
+		SafetyCompletionThreshold: opts.SafetyCompletionThreshold,
 	})
 
 	// Reset circuit if requested

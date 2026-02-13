@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -13,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 )
@@ -35,6 +37,9 @@ type IterateOptions struct {
 
 	// Output
 	Format *cmdutil.FormatFlags
+
+	// flags captures the command's FlagSet for Changed() detection
+	flags *pflag.FlagSet
 }
 
 // NewCmdIterate creates the `clawker loop iterate` command.
@@ -64,26 +69,27 @@ The loop exits when:
   - Maximum iterations reached
   - A timeout is hit
 
-Container lifecycle is managed automatically: a container is created at the
-start and destroyed on completion.`,
+The container must exist and be running before starting the loop. Create one
+with: clawker container create --agent <name>`,
 		Example: `  # Run a loop with a prompt
-  clawker loop iterate --prompt "Fix all failing tests"
+  clawker loop iterate --agent dev --prompt "Fix all failing tests"
 
   # Run with a prompt from a file
-  clawker loop iterate --prompt-file task.md
+  clawker loop iterate --agent dev --prompt-file task.md
 
   # Run with custom loop limits
-  clawker loop iterate --prompt "Refactor auth module" --max-loops 100
+  clawker loop iterate --agent dev --prompt "Refactor auth module" --max-loops 100
 
   # Stream all agent output in real time
-  clawker loop iterate --prompt "Add tests" --verbose
+  clawker loop iterate --agent dev --prompt "Add tests" --verbose
 
   # Run in a git worktree for isolation
-  clawker loop iterate --prompt "Refactor auth" --worktree feature/auth
+  clawker loop iterate --agent dev --prompt "Refactor auth" --worktree feature/auth
 
   # Output final result as JSON
-  clawker loop iterate --prompt "Fix tests" --json`,
+  clawker loop iterate --agent dev --prompt "Fix tests" --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.flags = cmd.Flags()
 			if runF != nil {
 				return runF(cmd.Context(), opts)
 			}
@@ -101,7 +107,8 @@ start and destroyed on completion.`,
 	// Output format flags (--json, --quiet, --format)
 	opts.Format = cmdutil.AddFormatFlags(cmd)
 
-	// Mutual exclusivity and requirements
+	// Requirements and mutual exclusivity
+	_ = cmd.MarkFlagRequired("agent")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.MarkFlagsOneRequired("prompt", "prompt-file")
 	shared.MarkVerboseExclusive(cmd)
@@ -109,8 +116,85 @@ start and destroyed on completion.`,
 	return cmd
 }
 
-func iterateRun(_ context.Context, opts *IterateOptions) error {
-	cs := opts.IOStreams.ColorScheme()
-	fmt.Fprintf(opts.IOStreams.ErrOut, "%s loop iterate is not yet implemented\n", cs.WarningIcon())
+func iterateRun(ctx context.Context, opts *IterateOptions) error {
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+
+	// 1. Resolve prompt
+	prompt, err := shared.ResolvePrompt(opts.Prompt, opts.PromptFile)
+	if err != nil {
+		return err
+	}
+
+	// 2. Get config
+	cfg := opts.Config()
+	project := cfg.Project.Project
+	agent := opts.Agent
+
+	// 3. Get Docker client
+	client, err := opts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("connecting to Docker: %w", err)
+	}
+
+	// 4. Verify container exists and is running
+	containerName, ctr, err := client.FindContainerByAgent(ctx, project, agent)
+	if err != nil {
+		return fmt.Errorf("looking up container: %w", err)
+	}
+	if ctr == nil {
+		return fmt.Errorf("container %q not found — create it first with: clawker container create --agent %s", containerName, agent)
+	}
+	if ctr.State != "running" {
+		return fmt.Errorf("container %q is not running (state: %s) — start it with: clawker container start %s", containerName, ctr.State, containerName)
+	}
+
+	// 5. Create runner
+	runner, err := loop.NewRunner(client)
+	if err != nil {
+		return fmt.Errorf("creating loop runner: %w", err)
+	}
+
+	// 6. Build runner options
+	runnerOpts := shared.BuildRunnerOptions(
+		opts.LoopOptions, project, agent, containerName, prompt,
+		opts.flags, cfg.Project.Loop,
+	)
+
+	// 7. Set up monitor
+	monitor := loop.NewMonitor(loop.MonitorOptions{
+		Writer:   ios.ErrOut,
+		MaxLoops: runnerOpts.MaxLoops,
+		Verbose:  opts.Verbose,
+	})
+	runnerOpts.Monitor = monitor
+
+	// 8. If verbose, stream output chunks to stderr
+	if opts.Verbose {
+		runnerOpts.OnOutput = func(chunk []byte) {
+			_, _ = ios.ErrOut.Write(chunk)
+		}
+	}
+
+	// 9. Print start message
+	fmt.Fprintf(ios.ErrOut, "%s Starting loop iterate for %s.%s (%d max loops)\n",
+		cs.InfoIcon(), project, agent, runnerOpts.MaxLoops)
+
+	// 10. Run the loop
+	result, err := runner.Run(ctx, runnerOpts)
+	if err != nil {
+		return err
+	}
+
+	// 11. Write result
+	if writeErr := shared.WriteResult(ios.Out, ios.ErrOut, result, opts.Format); writeErr != nil {
+		return writeErr
+	}
+
+	// 12. If loop ended with error, return SilentError (monitor already displayed it)
+	if result.Error != nil {
+		return cmdutil.SilentError
+	}
+
 	return nil
 }
