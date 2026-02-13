@@ -11,13 +11,14 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -396,68 +397,68 @@ func TestCmdRun_NoDetachShorthand(t *testing.T) {
 	require.Nil(t, cmd.Flags().ShorthandLookup("d"))
 }
 
-// TestBuildConfigs tests the shared BuildConfigs function from copts package
+// TestBuildConfigs tests the shared BuildConfigs function from shared package
 func TestBuildConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
-		opts    *copts.ContainerOptions
+		opts    *shared.ContainerOptions
 		wantErr bool
 	}{
 		{
 			name: "basic config",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with tty and stdin",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				TTY:     true,
 				Stdin:   true,
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with command",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Command: []string{"echo", "hello"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with env vars",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Env:     []string{"FOO=bar", "BAZ=qux"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with valid port",
-			opts: func() *copts.ContainerOptions {
-				o := copts.NewContainerOptions()
+			opts: func() *shared.ContainerOptions {
+				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.Publish.Set("8080:80")
 				return o
 			}(),
 		},
 		// Note: Invalid port validation happens in PortOpts.Set(), not in BuildConfigs.
-		// See TestPortOpts in internal/docker/opts_test.go for port validation tests.
+		// See TestPortOpts in internal/cmd/container/shared/container_test.go for port validation tests.
 		{
 			name: "with labels",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Labels:  []string{"foo=bar", "baz"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with network",
-			opts: func() *copts.ContainerOptions {
-				o := copts.NewContainerOptions()
+			opts: func() *shared.ContainerOptions {
+				o := shared.NewContainerOptions()
 				o.Image = "alpine"
 				o.NetMode.Set("mynet")
 				return o
@@ -465,34 +466,42 @@ func TestBuildConfigs(t *testing.T) {
 		},
 		{
 			name: "with auto-remove",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:      "alpine",
 				AutoRemove: true,
-				Publish:    copts.NewPortOpts(),
+				Publish:    shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with entrypoint",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:      "alpine",
 				Entrypoint: "/custom/entrypoint",
-				Publish:    copts.NewPortOpts(),
+				Publish:    shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with volumes/binds",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				Volumes: []string{"/host/path:/container/path", "/another:/mount"},
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
 			},
 		},
 		{
 			name: "with user",
-			opts: &copts.ContainerOptions{
+			opts: &shared.ContainerOptions{
 				Image:   "alpine",
 				User:    "nobody",
-				Publish: copts.NewPortOpts(),
+				Publish: shared.NewPortOpts(),
+			},
+		},
+		{
+			name: "with workdir",
+			opts: &shared.ContainerOptions{
+				Image:   "alpine",
+				Workdir: "/custom/workdir",
+				Publish: shared.NewPortOpts(),
 			},
 		},
 	}
@@ -543,6 +552,11 @@ func TestBuildConfigs(t *testing.T) {
 				require.Equal(t, tt.opts.User, cfg.User)
 			}
 
+			// Verify workdir
+			if tt.opts.Workdir != "" {
+				require.Equal(t, tt.opts.Workdir, cfg.WorkingDir)
+			}
+
 			// Verify labels
 			if len(tt.opts.Labels) > 0 {
 				require.NotNil(t, cfg.Labels)
@@ -557,9 +571,9 @@ func TestBuildConfigs(t *testing.T) {
 }
 
 func TestBuildConfigs_CapAdd(t *testing.T) {
-	opts := &copts.ContainerOptions{
+	opts := &shared.ContainerOptions{
 		Image:   "alpine",
-		Publish: copts.NewPortOpts(),
+		Publish: shared.NewPortOpts(),
 	}
 	projectCfg := &config.Project{
 		Project: "test",
@@ -796,8 +810,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
-		HostProxy: func() *hostproxy.Manager {
-			return hostproxy.NewManager()
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return nil },
 	}, tio
@@ -917,8 +931,8 @@ func TestRunRun(t *testing.T) {
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")
 			},
-			HostProxy: func() *hostproxy.Manager {
-				return hostproxy.NewManager()
+			HostProxy: func() hostproxy.HostProxyService {
+				return hostproxytest.NewMockManager()
 			},
 			Prompter: func() *prompter.Prompter { return nil },
 		}

@@ -71,12 +71,12 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 }
 
 // hostProxyFunc returns a lazy closure that creates a host proxy manager once.
-func hostProxyFunc() func() *hostproxy.Manager {
+func hostProxyFunc() func() hostproxy.HostProxyService {
 	var (
 		once    sync.Once
-		manager *hostproxy.Manager
+		manager hostproxy.HostProxyService
 	)
-	return func() *hostproxy.Manager {
+	return func() hostproxy.HostProxyService {
 		once.Do(func() {
 			manager = hostproxy.NewManager()
 		})

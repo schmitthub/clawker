@@ -124,12 +124,18 @@ type RemoveOptions struct {
 
 **Flags:**
 - `--force` — Remove even with uncommitted changes
-- `--delete-branch` — Also delete the git branch after removing worktree
+- `--delete-branch` — Also delete the git branch after removing worktree (uses `GitManager.DeleteBranch`)
 
 **Safety checks:**
 - Verifies worktree has no uncommitted changes (unless `--force`)
 - If status cannot be verified, requires `--force`
+- `--delete-branch` refuses to delete branches with unmerged commits (like `git branch -d`): prints warning and suggests `git branch -D` for force deletion. The worktree is still removed successfully.
+- `--delete-branch` refuses to delete the currently checked-out branch (`git.ErrIsCurrentBranch`)
+- If branch ref doesn't exist when `--delete-branch` is used, silently succeeds (branch already gone)
 - Batch operation: processes multiple branches, reports all errors at end
+
+**Internal helpers:**
+- `handleBranchDelete(ios, gitMgr, branch)` — Extracted helper for branch deletion with user-friendly error reporting. Tested directly with `gittest.InMemoryGitManager` (doesn't require worktree filesystem operations).
 
 ## Command Patterns
 

@@ -103,7 +103,7 @@ Container commands in `internal/cmd/container/*/` are being migrated to canonica
 |------|------|
 | `internal/cmd/container/run/run.go` | Canonical pattern — error handling, attach-then-start, Stream+resize |
 | `internal/cmd/container/start/start.go` | Canonical attach-then-start for already-created containers |
-| `internal/cmd/container/create/create.go` | Canonical ContainerInitializer usage, output styling |
+| `internal/cmd/container/create/create.go` | Canonical CreateContainer usage, output styling |
 | `internal/cmd/container/run/run_test.go` | Canonical Tier 2 test — testFactory, testConfig |
 | `internal/cmd/container/stop/stop_test.go` | Existing Tier 2 test for simple action commands (testFactory with SocketBridge) |
 | `internal/cmd/container/start/CLAUDE.md` | Attach-then-start pattern documentation |

@@ -38,7 +38,7 @@ type Factory struct {
     Client       func(context.Context) (*docker.Client, error)
     Config       func() *config.Config
     GitManager   func() (*git.GitManager, error)
-    HostProxy    func() *hostproxy.Manager
+    HostProxy    func() hostproxy.HostProxyService
     SocketBridge func() socketbridge.SocketBridgeManager
     Prompter     func() *prompter.Prompter
 }
@@ -50,7 +50,7 @@ type Factory struct {
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- returns `*config.Config` gateway (which itself lazy-loads Project, Settings, Resolution, Registry)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
-- `HostProxy()` -- returns `*hostproxy.Manager`; commands call `.EnsureRunning()` / `.Stop(ctx)` on it
+- `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `socketbridgetest.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 

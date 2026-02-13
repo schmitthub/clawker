@@ -193,7 +193,7 @@ func TestContainerCreate_NoAgentGetsRandomName(t *testing.T) {
 
 // TestContainerCreate_InvalidAgentName tests that invalid agent names are rejected
 // before any Docker resources are created. This exercises the full command pipeline:
-// CLI flags → Cobra → ContainerInitializer → docker.ContainerName → ValidateResourceName.
+// CLI flags → Cobra → shared.CreateContainer → docker.ContainerName → ValidateResourceName.
 func TestContainerCreate_InvalidAgentName(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()

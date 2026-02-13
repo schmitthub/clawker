@@ -198,7 +198,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() *hostproxy.Manager`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -563,15 +563,13 @@ and plugin installation on every container creation.
 - `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
 - `use_host_auth`: Forward host credentials to container. Default: `true`
 
-**Init flow** (orchestrated by `ContainerInitializer.Run()` in `cmd/container/shared/init.go`):
+**Init flow** (orchestrated by `shared.CreateContainer()` in `cmd/container/shared/container.go`):
 
-Progress-tracked steps (5-6 depending on config):
-1. **Workspace** — `workspace.SetupMounts()` + `workspace.EnsureConfigVolumes()`
-2. **Config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
-3. **Environment** — `config.ResolveAgentEnv()` merges env_file/from_env/env → `docker.RuntimeEnvOpts` (warnings threaded to `InitResult.Warnings`)
-4. **Create** — `docker.ContainerCreate()` + `InjectOnboardingFile()` (when `use_host_auth`)
-5. **Post-init** (only when `agent.post_init` configured) — `InjectPostInitScript()` writes `~/.clawker/post-init.sh`
-6. **Start** (detached only) — `docker.ContainerStart()`
+Progress streamed via events channel (`chan CreateContainerEvent`). Steps:
+1. **workspace** — `workspace.SetupMounts()` + `workspace.EnsureConfigVolumes()`
+2. **config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
+3. **environment** — `config.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
+4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectOnboardingFile()` (when `use_host_auth`) + `InjectPostInitScript()` (when `agent.post_init` configured)
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),
 `internal/workspace` (volume lifecycle), `internal/cmd/container/shared` (orchestration)

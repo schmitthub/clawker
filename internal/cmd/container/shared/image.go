@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
-// TODO: Refactor RebuildMissingImageOpts to match ContainerInitializer's Factory noun
+// TODO: Refactor RebuildMissingImageOpts to match CreateContainer's Factory noun
 // pattern — accept *cmdutil.Factory in a constructor instead of individual deps in options.
 
 // RebuildMissingImageOpts holds options for the rebuild prompt flow.

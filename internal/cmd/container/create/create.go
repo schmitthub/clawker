@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 
-	copts "github.com/schmitthub/clawker/internal/cmd/container/opts"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -20,14 +21,16 @@ import (
 // CreateOptions holds options for the create command.
 // It embeds ContainerOptions for shared container configuration.
 type CreateOptions struct {
-	*copts.ContainerOptions
+	*shared.ContainerOptions
 
 	IOStreams   *iostreams.IOStreams
-	TUI         *tui.TUI
-	Client      func(context.Context) (*docker.Client, error)
-	Config      func() *config.Config
-	Prompter    func() *prompter.Prompter
-	Initializer *shared.ContainerInitializer
+	TUI        *tui.TUI
+	Client     func(context.Context) (*docker.Client, error)
+	Config     func() *config.Config
+	GitManager func() (*git.GitManager, error)
+	HostProxy  func() hostproxy.HostProxyService
+	Prompter   func() *prompter.Prompter
+	Version    string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
 	flags *pflag.FlagSet
@@ -35,15 +38,17 @@ type CreateOptions struct {
 
 // NewCmdCreate creates a new container create command.
 func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions) error) *cobra.Command {
-	containerOpts := copts.NewContainerOptions()
+	containerOpts := shared.NewContainerOptions()
 	opts := &CreateOptions{
 		ContainerOptions: containerOpts,
 		IOStreams:        f.IOStreams,
 		TUI:              f.TUI,
 		Client:           f.Client,
 		Config:           f.Config,
+		GitManager:       f.GitManager,
+		HostProxy:        f.HostProxy,
 		Prompter:         f.Prompter,
-		Initializer:      shared.NewContainerInitializer(f),
+		Version:          f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -93,8 +98,8 @@ If IMAGE is "@", clawker will use (in order of precedence):
 	}
 
 	// Add shared container flags
-	copts.AddFlags(cmd.Flags(), containerOpts)
-	copts.MarkMutuallyExclusive(cmd)
+	shared.AddFlags(cmd.Flags(), containerOpts)
+	shared.MarkMutuallyExclusive(cmd)
 
 	// Stop parsing flags after the first positional argument (IMAGE).
 	// This allows flags after IMAGE to be passed to the container command.
@@ -163,35 +168,54 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		return fmt.Errorf("cannot use both --name and --agent")
 	}
 
-	// --- Phase B: Progress-tracked initialization ---
+	// --- Phase B: Create container with spinner ---
 
-	initResult, err := opts.Initializer.Run(ctx, shared.InitParams{
-		Client:           client,
-		Config:           cfg,
-		ContainerOptions: containerOpts,
-		Flags:            opts.flags,
-		Image:            containerOpts.Image,
-		StartAfterCreate: false,
-	})
+	events := make(chan shared.CreateContainerEvent, 16)
+	type outcome struct {
+		result *shared.CreateContainerResult
+		err    error
+	}
+	done := make(chan outcome, 1)
 
-	// Print cleanup warnings to stderr (visible to user regardless of error)
-	if warnings := opts.Initializer.CleanupWarnings(); len(warnings) > 0 {
-		cs := ios.ColorScheme()
-		for _, w := range warnings {
-			fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
+	go func() {
+		defer close(events)
+		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
+			Client:      client,
+			Config:      cfg,
+			Options:     containerOpts,
+			Flags:       opts.flags,
+			Version:     opts.Version,
+			GitManager:  opts.GitManager,
+			HostProxy:   opts.HostProxy,
+			Is256Color:  ios.Is256ColorSupported(),
+			IsTrueColor: ios.IsTrueColorSupported(),
+		}, events)
+		done <- outcome{r, err}
+	}()
+
+	var warnings []string
+	for ev := range events {
+		switch {
+		case ev.Type == shared.MessageWarning:
+			warnings = append(warnings, ev.Message)
+		case ev.Status == shared.StepRunning:
+			ios.StartSpinner(ev.Message)
 		}
 	}
+	ios.StopSpinner()
 
-	if err != nil {
-		return err
+	o := <-done
+	if o.err != nil {
+		return o.err
 	}
 
 	// --- Phase C: Post-progress ---
 
-	for _, warning := range initResult.Warnings {
-		fmt.Fprintln(ios.ErrOut, warning)
+	cs := ios.ColorScheme()
+	for _, w := range warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
 	}
 
-	fmt.Fprintln(ios.Out, initResult.ContainerID[:12])
+	fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
 	return nil
 }

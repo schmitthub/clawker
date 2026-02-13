@@ -32,7 +32,7 @@ type Factory struct {
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() *hostproxy.Manager
+	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Prompter     func() *prompter.Prompter
 }

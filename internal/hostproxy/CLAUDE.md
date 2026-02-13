@@ -58,6 +58,18 @@ type ContainerLister interface {
 }
 ```
 
+## Interface
+
+```go
+// HostProxyService is the interface for host proxy operations used by container commands.
+// Concrete implementation: Manager. Mock: hostproxytest.MockManager.
+type HostProxyService interface {
+    EnsureRunning() error
+    IsRunning() bool
+    ProxyURL() string
+}
+```
+
 ## Constructors
 
 ```go
@@ -145,7 +157,21 @@ Container registers session via `/callback/register`. Server starts dynamic list
 - **Git Config**: `~/.gitconfig` mounted read-only, entrypoint copies filtering `credential.helper`
 - **SSH/GPG**: Handled by `internal/socketbridge` package (muxrpc over `docker exec`, not via host proxy)
 
-## Test Mock (`hostproxytest/`)
+## Test Doubles (`hostproxytest/`)
+
+### MockManager (HostProxyService interface)
+
+For unit tests — no subprocess spawning, no network I/O:
+
+```go
+mock := hostproxytest.NewMockManager()          // Starts not running; EnsureRunning transitions to running
+mock := hostproxytest.NewRunningMockManager(url) // Running with given URL
+mock := hostproxytest.NewFailingMockManager(err) // EnsureRunning returns error
+```
+
+### MockHostProxy (HTTP test server)
+
+For integration tests — real HTTP server with endpoint handlers:
 
 ```go
 mock := hostproxytest.NewMockHostProxy(t)

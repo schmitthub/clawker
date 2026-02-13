@@ -25,9 +25,19 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
-// ErrNotRepository is returned when the path is not inside a git repository.
-// Callers can use errors.Is to check for this condition.
-var ErrNotRepository = errors.New("not a git repository")
+var (
+	// ErrNotRepository is returned when the path is not inside a git repository.
+	ErrNotRepository = errors.New("not a git repository")
+
+	// ErrBranchNotFound is returned when a branch ref does not exist.
+	ErrBranchNotFound = errors.New("branch not found")
+
+	// ErrBranchNotMerged is returned when a branch has commits not reachable from HEAD.
+	ErrBranchNotMerged = errors.New("branch not fully merged")
+
+	// ErrIsCurrentBranch is returned when attempting to delete the currently checked-out branch.
+	ErrIsCurrentBranch = errors.New("cannot delete the currently checked out branch")
+)
 
 // GitManager is the top-level facade for git operations.
 // It owns the repository handle and provides access to domain-specific sub-managers.
@@ -358,6 +368,70 @@ func (g *GitManager) BranchExists(branch string) (bool, error) {
 		return false, fmt.Errorf("checking branch %q: %w", branch, err)
 	}
 	return true, nil
+}
+
+// DeleteBranch deletes a branch ref and its config (equivalent to `git branch -d`).
+// Returns ErrIsCurrentBranch if the branch is the currently checked-out branch.
+// Returns ErrBranchNotMerged if the branch has unmerged commits relative to HEAD.
+// Returns ErrBranchNotFound if the branch doesn't exist.
+func (g *GitManager) DeleteBranch(branch string) error {
+	branchRef := plumbing.NewBranchReferenceName(branch)
+
+	// 1. Resolve branch ref
+	ref, err := g.repo.Reference(branchRef, true)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return ErrBranchNotFound
+		}
+		return fmt.Errorf("resolving branch %q: %w", branch, err)
+	}
+
+	// 2. Safety check: refuse to delete the currently checked-out branch
+	currentBranch, err := g.GetCurrentBranch()
+	if err != nil {
+		return fmt.Errorf("checking current branch: %w", err)
+	}
+	if currentBranch == branch {
+		return ErrIsCurrentBranch
+	}
+
+	// 3. Safety check: is branch merged into HEAD? (like git branch -d)
+	head, err := g.repo.Head()
+	if err != nil {
+		return fmt.Errorf("resolving HEAD: %w", err)
+	}
+
+	branchCommit, err := g.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return fmt.Errorf("resolving branch commit: %w", err)
+	}
+
+	headCommit, err := g.repo.CommitObject(head.Hash())
+	if err != nil {
+		return fmt.Errorf("resolving HEAD commit: %w", err)
+	}
+
+	isMerged, err := branchCommit.IsAncestor(headCommit)
+	if err != nil {
+		return fmt.Errorf("checking merge status: %w", err)
+	}
+	if !isMerged {
+		return ErrBranchNotMerged
+	}
+
+	// 4. Delete the ref (the actual branch pointer)
+	if err := g.repo.Storer.RemoveReference(branchRef); err != nil {
+		return fmt.Errorf("deleting branch ref: %w", err)
+	}
+
+	// 5. Delete the config (tracking info) — may not exist for non-tracking branches
+	if err := g.repo.DeleteBranch(branch); err != nil {
+		if !errors.Is(err, gogit.ErrBranchNotFound) {
+			return fmt.Errorf("branch ref deleted but config cleanup failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // IsInsideWorktree checks if the given path is inside a git worktree

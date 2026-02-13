@@ -142,10 +142,10 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `config.Config` | `internal/config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry |
 | `Factory` | `internal/cmdutil` | DI struct (closure fields); constructor in `cmd/factory` |
 | `WorkspaceStrategy` | `internal/workspace` | Bind (live mount) vs Snapshot (ephemeral copy) |
-| `ContainerInitializer` | `internal/cmd/container/shared` | Progress-tracked container init (workspace, config, env, create, start) |
+| `CreateContainer()` | `internal/cmd/container/shared` | Single entry point for container creation — workspace, config, env, create, inject |
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
 | `tui.RunProgress` | `internal/tui` | Generic progress display (BubbleTea TTY + plain text) |
-| `hostproxy.Manager` | `internal/hostproxy` | Host proxy server for container-to-host actions |
+| `hostproxy.HostProxyService` | `internal/hostproxy` | Interface for host proxy operations; `Manager` is concrete impl |
 | `ralph.Runner` | `internal/ralph` | Autonomous loop orchestrator with circuit breaker |
 
 ## Container Naming and Labels

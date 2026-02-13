@@ -53,7 +53,7 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.Test
 		Config: func() *config.Config {
 			return cfg
 		},
-		HostProxy: func() *hostproxy.Manager {
+		HostProxy: func() hostproxy.HostProxyService {
 			mgr := hostproxy.NewManager()
 			t.Cleanup(func() {
 				_ = mgr.StopDaemon()

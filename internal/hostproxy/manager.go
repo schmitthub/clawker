@@ -15,6 +15,20 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// HostProxyService is the interface for host proxy operations used by container commands.
+// Commands interact with the host proxy through this interface, enabling test doubles
+// that don't spawn daemon subprocesses.
+//
+// Concrete implementation: Manager. Mock: hostproxytest.MockManager.
+type HostProxyService interface {
+	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
+	EnsureRunning() error
+	// IsRunning returns whether the host proxy is currently running.
+	IsRunning() bool
+	// ProxyURL returns the URL containers should use to reach the host proxy.
+	ProxyURL() string
+}
+
 // Manager manages the lifecycle of the host proxy daemon.
 // It spawns a daemon subprocess that persists beyond CLI lifetime,
 // enabling containers to use the proxy even after the CLI exits.

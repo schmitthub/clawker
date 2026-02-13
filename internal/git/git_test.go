@@ -1151,3 +1151,4 @@ func listAllBranches(mgr *GitManager) ([]string, error) {
 	})
 	return branches, err
 }
+

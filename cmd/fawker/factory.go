@@ -46,7 +46,7 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 			return fawkerClient(scenario, configFn())
 		},
 		GitManager:        func() (*git.GitManager, error) { return nil, nil },
-		HostProxy:         func() *hostproxy.Manager { return nil },
+		HostProxy:         func() hostproxy.HostProxyService { return nil },
 		SocketBridge:      func() socketbridge.SocketBridgeManager { return nil },
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(ios) },
 	}

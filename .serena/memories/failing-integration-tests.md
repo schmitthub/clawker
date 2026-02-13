@@ -7,22 +7,11 @@ Status: **Open** — discovered during label prefix migration (branch `a/config-
 ## 1. TestContainerFs_AgentPostInit_Failure (test/internals)
 
 **File:** `test/internals/containerfs_test.go:1110`
-**Symptom:** Container never exits after post-init script failure. Times out at 181s.
-**Root Cause:** Missing `set -o pipefail` in `internal/bundler/assets/entrypoint.sh`.
+**Status:** **FIXED** — Two test-code bugs resolved:
+1. `WaitForContainerExit` rejected non-zero exit codes — replaced with new `WaitForContainerExitAny` helper that returns exit code without treating non-zero as error
+2. Log assertion searched for `"script failed:"` but entrypoint emits `msg=script failed` (no colon) — fixed to match structured format
 
-At line 107:
-```bash
-if post_init_output=$("$POST_INIT" 2>&1 | head -c 10000); then
-```
-
-Without `pipefail`, the pipeline exit code comes from `head` (always 0), not `$POST_INIT` (exit 1). So:
-1. The failing script's exit code is swallowed
-2. `touch "$POST_INIT_DONE"` marker is created (false positive)
-3. Container continues to `exec sleep infinity` instead of calling `emit_error` → `exit 1`
-
-**Fix:** Add `set -o pipefail` after `set -e` on line 2 of `entrypoint.sh`, OR capture `PIPESTATUS[0]` after the pipeline.
-
-**Impact:** Post-init script failures are silently ignored in real usage too — not just tests.
+**PR:** branch `a/container-flags`
 
 ---
 

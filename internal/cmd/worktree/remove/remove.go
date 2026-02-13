@@ -3,6 +3,7 @@ package remove
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -162,14 +163,31 @@ func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, gitMgr *git.
 
 	// Optionally delete the branch
 	if opts.DeleteBranch {
-		repo := gitMgr.Repository()
-		if err := repo.DeleteBranch(branch); err != nil {
-			// Worktree was removed, but branch deletion failed - this is a partial failure
-			// Return error so exit code reflects the failure
-			return fmt.Errorf("worktree removed but failed to delete branch: %w", err)
+		if err := handleBranchDelete(opts.IOStreams, gitMgr, branch); err != nil {
+			return fmt.Errorf("worktree removed but %w", err)
 		}
-		fmt.Fprintf(opts.IOStreams.ErrOut, "Deleted branch %q\n", branch)
 	}
 
+	return nil
+}
+
+// handleBranchDelete handles branch deletion with user-friendly error reporting.
+// Returns nil if the branch was deleted, was already gone, or had unmerged commits (warning printed).
+func handleBranchDelete(ios *iostreams.IOStreams, gitMgr *git.GitManager, branch string) error {
+	if err := gitMgr.DeleteBranch(branch); err != nil {
+		if errors.Is(err, git.ErrBranchNotMerged) {
+			cs := ios.ColorScheme()
+			fmt.Fprintf(ios.ErrOut, "%s branch %q has unmerged commits\n",
+				cs.WarningIcon(), branch)
+			fmt.Fprintf(ios.ErrOut, "  To force delete: git branch -D %s\n", branch)
+			return nil
+		}
+		if errors.Is(err, git.ErrBranchNotFound) {
+			// Branch already deleted or never existed — not an error
+			return nil
+		}
+		return fmt.Errorf("failed to delete branch: %w", err)
+	}
+	fmt.Fprintf(ios.ErrOut, "Deleted branch %q\n", branch)
 	return nil
 }

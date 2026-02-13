@@ -79,7 +79,7 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - Always use `PersistentPreRunE` (never `PersistentPreRun`)
 - Always include `Example` field with indented examples
 - Subpackages under `internal/cmd/<noun>/` are for subcommands only
-- Exception: `opts/` package exists for import cycle avoidance (parent imports subcommands, subcommands need shared types)
+- Exception: `shared/` package holds flag types, domain logic, and `CreateContainer()` — shared across subcommands
 
 ## CLI Guidelines Reference
 - Follow conventions from https://clig.dev/ for CLI design patterns
