@@ -566,7 +566,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
       "id": 10,
       "panels": [],
-      "title": "Activity",
+      "title": "Coding Activity",
       "type": "row"
     },
     {
@@ -602,7 +602,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "id": 11,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -644,7 +644,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "id": 12,
       "options": {
         "barRadius": 0.05,
@@ -692,7 +692,64 @@
       "type": "barchart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 42,
+      "panels": [],
+      "title": "Tool Usage",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 33 },
+      "id": 43,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__auto]))",
+          "legendFormat": "{{tool_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tool Activity Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -701,8 +758,8 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
-      "id": 13,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 33 },
+      "id": 44,
       "options": {
         "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
         "pieType": "pie",
@@ -711,18 +768,194 @@
       },
       "targets": [
         {
-          "expr": "sum by (decision) (increase(claude_code_code_edit_tool_decision_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__range]))",
           "instant": true,
-          "legendFormat": "{{decision}}",
+          "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
       ],
-      "title": "Tool Decisions",
+      "title": "Top Tools",
       "type": "piechart"
     },
     {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "accept" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "reject" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
+      "id": 45,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool_name, decision_type) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true }
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "decision_type",
+            "rowField": "tool_name",
+            "valueField": "Value",
+            "emptyValue": "0"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "tool_name\\decision_type": " " }
+          }
+        }
+      ],
+      "title": "Tool Decisions",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 41 },
+      "id": 46,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "pie",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (decision_source) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__range]))",
+          "instant": true,
+          "legendFormat": "{{decision_source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Decision Sources",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*failures" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 41 },
+      "id": 47,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "expr": "avg by (tool_name) (avg_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | unwrap duration_ms [$__range]))",
+          "instant": true,
+          "legendFormat": "{{tool_name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` [$__range]))",
+          "instant": true,
+          "legendFormat": "{{tool_name}} failures",
+          "refId": "B"
+        }
+      ],
+      "title": "Tool Performance",
+      "type": "barchart"
+    },
+    {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 },
       "id": 30,
       "panels": [],
       "title": "Session Detail",
@@ -779,7 +1012,7 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 51 },
       "id": 31,
       "options": {
         "cellHeight": "sm",
@@ -828,7 +1061,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 },
       "id": 14,
       "panels": [],
       "title": "Events",
@@ -836,7 +1069,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 60 },
       "id": 15,
       "options": {
         "dedupStrategy": "none",
@@ -860,7 +1093,31 @@
     },
     {
       "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 60 },
+      "id": 48,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "expr": "{service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | {{.tool_name}} decision={{.decision_type}} source={{.decision_source}} success={{.success}} duration={{.duration_ms}}ms size={{.tool_result_size_bytes}}b{{if .error}} error=\"{{.error}}\"{{end}}`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Tool Events",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 60 },
       "id": 16,
       "options": {
         "dedupStrategy": "none",
