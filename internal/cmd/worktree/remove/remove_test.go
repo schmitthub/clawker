@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/git/gittest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,81 +180,100 @@ func TestRemoveRun_ForceRemovesCorruptedWorktree(t *testing.T) {
 	assert.True(t, removeWorktreeCalled, "--force should skip status check and proceed with removal")
 }
 
-func TestRemoveRun_DeleteBranch_UnmergedWarning(t *testing.T) {
+func TestHandleBranchDelete_MergedBranch(t *testing.T) {
 	ios, _, errBuf := testIOStreams()
 
-	proj := &config.Project{
-		Project: "test-project",
-	}
+	m := gittest.NewInMemoryGitManager(t, "/test/repo")
+	repo := m.Repository()
 
-	// Simulate: worktree removal succeeds, but DeleteBranch returns ErrBranchNotMerged.
-	// The run function should print a warning and return nil (not an error).
-	runF := func(ctx context.Context, opts *RemoveOptions) error {
-		if !opts.DeleteBranch {
-			t.Fatal("expected --delete-branch to be set")
-		}
+	// Create a merged branch (same commit as HEAD)
+	head, err := repo.Head()
+	require.NoError(t, err)
+	branchRef := plumbing.NewBranchReferenceName("feature-done")
+	err = repo.Storer.SetReference(plumbing.NewHashReference(branchRef, head.Hash()))
+	require.NoError(t, err)
 
-		// Simulate the warning path that removeSingleWorktree would produce
-		cs := opts.IOStreams.ColorScheme()
-		fmt.Fprintf(opts.IOStreams.ErrOut, "%s branch %q has unmerged commits\n",
-			cs.WarningIcon(), opts.Branches[0])
-		fmt.Fprintf(opts.IOStreams.ErrOut, "  To force delete: git branch -D %s\n", opts.Branches[0])
-		return nil
-	}
+	err = handleBranchDelete(ios, m.GitManager, "feature-done")
+	require.NoError(t, err)
+	assert.Contains(t, errBuf.String(), `Deleted branch "feature-done"`)
 
-	f := &cmdutil.Factory{
-		IOStreams: ios,
-		Config: func() *config.Config {
-			return config.NewConfigForTest(proj, nil)
-		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, nil
-		},
-	}
-
-	cmd := NewCmdRemove(f, runF)
-	cmd.SetArgs([]string{"--delete-branch", "unmerged-branch"})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(errBuf)
-
-	err := cmd.Execute()
-	require.NoError(t, err, "worktree removal should succeed even when branch has unmerged commits")
-	assert.Contains(t, errBuf.String(), "has unmerged commits")
-	assert.Contains(t, errBuf.String(), "git branch -D unmerged-branch")
+	exists, err := m.BranchExists("feature-done")
+	require.NoError(t, err)
+	assert.False(t, exists, "branch should be deleted")
 }
 
-func TestRemoveRun_DeleteBranch_NotFound(t *testing.T) {
+func TestHandleBranchDelete_UnmergedBranch(t *testing.T) {
+	ios, _, errBuf := testIOStreams()
+
+	m := gittest.NewInMemoryGitManager(t, "/test/repo")
+	repo := m.Repository()
+
+	// Create an unmerged branch (has a commit not on HEAD)
+	head, err := repo.Head()
+	require.NoError(t, err)
+	branchRef := plumbing.NewBranchReferenceName("feature-wip")
+	err = repo.Storer.SetReference(plumbing.NewHashReference(branchRef, head.Hash()))
+	require.NoError(t, err)
+
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	err = wt.Checkout(&gogit.CheckoutOptions{Branch: branchRef})
+	require.NoError(t, err)
+
+	fs := wt.Filesystem
+	f, err := fs.Create("branch-only.txt")
+	require.NoError(t, err)
+	_, err = f.Write([]byte("branch content\n"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	_, err = wt.Add("branch-only.txt")
+	require.NoError(t, err)
+	_, err = wt.Commit("branch commit", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "test",
+			Email: "test@test.com",
+			When:  time.Now(),
+		},
+	})
+	require.NoError(t, err)
+
+	err = wt.Checkout(&gogit.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("master")})
+	require.NoError(t, err)
+
+	// handleBranchDelete should return nil (warning, not error) for unmerged
+	err = handleBranchDelete(ios, m.GitManager, "feature-wip")
+	require.NoError(t, err, "should return nil for unmerged branch (warning only)")
+	assert.Contains(t, errBuf.String(), "has unmerged commits")
+	assert.Contains(t, errBuf.String(), "git branch -D feature-wip")
+
+	// Branch should still exist
+	exists, err := m.BranchExists("feature-wip")
+	require.NoError(t, err)
+	assert.True(t, exists, "unmerged branch should not be deleted")
+}
+
+func TestHandleBranchDelete_NotFound(t *testing.T) {
+	ios, _, errBuf := testIOStreams()
+
+	m := gittest.NewInMemoryGitManager(t, "/test/repo")
+
+	// Deleting a nonexistent branch should return nil (silent success)
+	err := handleBranchDelete(ios, m.GitManager, "nonexistent")
+	require.NoError(t, err, "should silently succeed when branch is already gone")
+	assert.Empty(t, errBuf.String(), "should not print anything for missing branch")
+}
+
+func TestHandleBranchDelete_CurrentBranch(t *testing.T) {
 	ios, _, _ := testIOStreams()
 
-	proj := &config.Project{
-		Project: "test-project",
-	}
+	m := gittest.NewInMemoryGitManager(t, "/test/repo")
 
-	// Simulate: worktree removal succeeds, branch doesn't exist — returns nil.
-	runF := func(ctx context.Context, opts *RemoveOptions) error {
-		if !opts.DeleteBranch {
-			t.Fatal("expected --delete-branch to be set")
-		}
-		return nil
-	}
-
-	f := &cmdutil.Factory{
-		IOStreams: ios,
-		Config: func() *config.Config {
-			return config.NewConfigForTest(proj, nil)
-		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, nil
-		},
-	}
-
-	cmd := NewCmdRemove(f, runF)
-	cmd.SetArgs([]string{"--delete-branch", "already-gone"})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-
-	err := cmd.Execute()
-	require.NoError(t, err, "should succeed when branch is already deleted")
+	// Attempting to delete the current branch should return an error
+	err := handleBranchDelete(ios, m.GitManager, "master")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete branch")
+	assert.ErrorIs(t, err, git.ErrIsCurrentBranch)
 }
 
 func TestRemoveRun_DeleteBranchFlag_WorksViaCommand(t *testing.T) {

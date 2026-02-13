@@ -105,6 +105,20 @@ func TestGitManager_DeleteBranch(t *testing.T) {
 		assert.ErrorIs(t, err, git.ErrBranchNotFound)
 	})
 
+	t.Run("refuses to delete current branch", func(t *testing.T) {
+		m := gittest.NewInMemoryGitManager(t, "/test/repo")
+
+		// "master" is the default branch and current HEAD
+		err := m.DeleteBranch("master")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, git.ErrIsCurrentBranch)
+
+		// Verify branch still exists
+		exists, err := m.BranchExists("master")
+		require.NoError(t, err)
+		assert.True(t, exists, "current branch should not be deleted")
+	})
+
 	t.Run("branch with no config", func(t *testing.T) {
 		m := gittest.NewInMemoryGitManager(t, "/test/repo")
 		repo := m.Repository()

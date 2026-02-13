@@ -34,6 +34,9 @@ var (
 
 	// ErrBranchNotMerged is returned when a branch has commits not reachable from HEAD.
 	ErrBranchNotMerged = errors.New("branch not fully merged")
+
+	// ErrIsCurrentBranch is returned when attempting to delete the currently checked-out branch.
+	ErrIsCurrentBranch = errors.New("cannot delete the currently checked out branch")
 )
 
 // GitManager is the top-level facade for git operations.
@@ -368,6 +371,7 @@ func (g *GitManager) BranchExists(branch string) (bool, error) {
 }
 
 // DeleteBranch deletes a branch ref and its config (equivalent to `git branch -d`).
+// Returns ErrIsCurrentBranch if the branch is the currently checked-out branch.
 // Returns ErrBranchNotMerged if the branch has unmerged commits relative to HEAD.
 // Returns ErrBranchNotFound if the branch doesn't exist.
 func (g *GitManager) DeleteBranch(branch string) error {
@@ -382,7 +386,16 @@ func (g *GitManager) DeleteBranch(branch string) error {
 		return fmt.Errorf("resolving branch %q: %w", branch, err)
 	}
 
-	// 2. Safety check: is branch merged into HEAD? (like git branch -d)
+	// 2. Safety check: refuse to delete the currently checked-out branch
+	currentBranch, err := g.GetCurrentBranch()
+	if err != nil {
+		return fmt.Errorf("checking current branch: %w", err)
+	}
+	if currentBranch == branch {
+		return ErrIsCurrentBranch
+	}
+
+	// 3. Safety check: is branch merged into HEAD? (like git branch -d)
 	head, err := g.repo.Head()
 	if err != nil {
 		return fmt.Errorf("resolving HEAD: %w", err)
@@ -406,13 +419,17 @@ func (g *GitManager) DeleteBranch(branch string) error {
 		return ErrBranchNotMerged
 	}
 
-	// 3. Delete the ref (the actual branch pointer)
+	// 4. Delete the ref (the actual branch pointer)
 	if err := g.repo.Storer.RemoveReference(branchRef); err != nil {
 		return fmt.Errorf("deleting branch ref: %w", err)
 	}
 
-	// 4. Delete the config (tracking info) — best effort, may not exist
-	_ = g.repo.DeleteBranch(branch)
+	// 5. Delete the config (tracking info) — may not exist for non-tracking branches
+	if err := g.repo.DeleteBranch(branch); err != nil {
+		if !errors.Is(err, gogit.ErrBranchNotFound) {
+			return fmt.Errorf("branch ref deleted but config cleanup failed: %w", err)
+		}
+	}
 
 	return nil
 }
