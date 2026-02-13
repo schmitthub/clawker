@@ -146,6 +146,23 @@ Note: If `Error` is non-nil, the worktree may be:
 
 Check this field before using other fields.
 
+### Branch Operations
+
+```go
+// Check if a branch ref exists
+exists, err := mgr.BranchExists("feature-branch")
+
+// Delete a branch (ref + config), like `git branch -d`
+// Safety: refuses to delete branches with unmerged commits
+err := mgr.DeleteBranch("feature-branch")
+if errors.Is(err, git.ErrBranchNotMerged) {
+    // Branch has commits not reachable from HEAD
+}
+if errors.Is(err, git.ErrBranchNotFound) {
+    // Branch ref doesn't exist
+}
+```
+
 ## Utility Functions
 
 ```go
@@ -156,12 +173,17 @@ isWorktree, err := git.IsInsideWorktree("/some/path")
 ## Errors
 
 ```go
-// Sentinel error for non-git directories
-git.ErrNotRepository
+// Sentinel errors
+git.ErrNotRepository   // path is not inside a git repository
+git.ErrBranchNotFound  // branch ref does not exist
+git.ErrBranchNotMerged // branch has commits not reachable from HEAD
 
 // Usage
 if errors.Is(err, git.ErrNotRepository) {
     // Handle not in git repo
+}
+if errors.Is(err, git.ErrBranchNotMerged) {
+    // Warn user, suggest `git branch -D`
 }
 ```
 

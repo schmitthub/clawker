@@ -3,6 +3,7 @@ package remove
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -162,10 +163,18 @@ func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, gitMgr *git.
 
 	// Optionally delete the branch
 	if opts.DeleteBranch {
-		repo := gitMgr.Repository()
-		if err := repo.DeleteBranch(branch); err != nil {
-			// Worktree was removed, but branch deletion failed - this is a partial failure
-			// Return error so exit code reflects the failure
+		if err := gitMgr.DeleteBranch(branch); err != nil {
+			if errors.Is(err, git.ErrBranchNotMerged) {
+				cs := opts.IOStreams.ColorScheme()
+				fmt.Fprintf(opts.IOStreams.ErrOut, "%s branch %q has unmerged commits\n",
+					cs.WarningIcon(), branch)
+				fmt.Fprintf(opts.IOStreams.ErrOut, "  To force delete: git branch -D %s\n", branch)
+				return nil // worktree was removed successfully, just branch wasn't deleted
+			}
+			if errors.Is(err, git.ErrBranchNotFound) {
+				// Branch already deleted or never existed — not an error
+				return nil
+			}
 			return fmt.Errorf("worktree removed but failed to delete branch: %w", err)
 		}
 		fmt.Fprintf(opts.IOStreams.ErrOut, "Deleted branch %q\n", branch)

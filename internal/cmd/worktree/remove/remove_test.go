@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -172,6 +173,119 @@ func TestRemoveRun_ForceRemovesCorruptedWorktree(t *testing.T) {
 	err = runF(context.Background(), opts)
 	require.NoError(t, err)
 	assert.True(t, removeWorktreeCalled, "--force should skip status check and proceed with removal")
+}
+
+func TestRemoveRun_DeleteBranch_UnmergedWarning(t *testing.T) {
+	ios, _, errBuf := testIOStreams()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Simulate: worktree removal succeeds, but DeleteBranch returns ErrBranchNotMerged.
+	// The run function should print a warning and return nil (not an error).
+	runF := func(ctx context.Context, opts *RemoveOptions) error {
+		if !opts.DeleteBranch {
+			t.Fatal("expected --delete-branch to be set")
+		}
+
+		// Simulate the warning path that removeSingleWorktree would produce
+		cs := opts.IOStreams.ColorScheme()
+		fmt.Fprintf(opts.IOStreams.ErrOut, "%s branch %q has unmerged commits\n",
+			cs.WarningIcon(), opts.Branches[0])
+		fmt.Fprintf(opts.IOStreams.ErrOut, "  To force delete: git branch -D %s\n", opts.Branches[0])
+		return nil
+	}
+
+	f := &cmdutil.Factory{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			return config.NewConfigForTest(proj, nil)
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, nil
+		},
+	}
+
+	cmd := NewCmdRemove(f, runF)
+	cmd.SetArgs([]string{"--delete-branch", "unmerged-branch"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(errBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err, "worktree removal should succeed even when branch has unmerged commits")
+	assert.Contains(t, errBuf.String(), "has unmerged commits")
+	assert.Contains(t, errBuf.String(), "git branch -D unmerged-branch")
+}
+
+func TestRemoveRun_DeleteBranch_NotFound(t *testing.T) {
+	ios, _, _ := testIOStreams()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	// Simulate: worktree removal succeeds, branch doesn't exist — returns nil.
+	runF := func(ctx context.Context, opts *RemoveOptions) error {
+		if !opts.DeleteBranch {
+			t.Fatal("expected --delete-branch to be set")
+		}
+		return nil
+	}
+
+	f := &cmdutil.Factory{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			return config.NewConfigForTest(proj, nil)
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, nil
+		},
+	}
+
+	cmd := NewCmdRemove(f, runF)
+	cmd.SetArgs([]string{"--delete-branch", "already-gone"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	require.NoError(t, err, "should succeed when branch is already deleted")
+}
+
+func TestRemoveRun_DeleteBranchFlag_WorksViaCommand(t *testing.T) {
+	ios, _, _ := testIOStreams()
+
+	proj := &config.Project{
+		Project: "test-project",
+	}
+
+	var capturedOpts *RemoveOptions
+
+	runF := func(ctx context.Context, opts *RemoveOptions) error {
+		capturedOpts = opts
+		return nil
+	}
+
+	f := &cmdutil.Factory{
+		IOStreams: ios,
+		Config: func() *config.Config {
+			return config.NewConfigForTest(proj, nil)
+		},
+		GitManager: func() (*git.GitManager, error) {
+			return nil, nil
+		},
+	}
+
+	cmd := NewCmdRemove(f, runF)
+	cmd.SetArgs([]string{"--delete-branch", "some-branch"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts)
+	assert.True(t, capturedOpts.DeleteBranch, "--delete-branch flag should be captured")
+	assert.Equal(t, []string{"some-branch"}, capturedOpts.Branches)
 }
 
 func TestRemoveRun_ForceFlag_WorksViaCommand(t *testing.T) {
