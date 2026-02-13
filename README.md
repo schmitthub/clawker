@@ -30,14 +30,38 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 
 ## Quick Start
 
-**Prerequisites:** Docker running, Go 1.25+
+**Prerequisites:** Docker running
+
+### Install
 
 ```bash
-# Install
-git clone https://github.com/schmitthub/clawker.git
-cd clawker && go build -o ./bin/clawker ./cmd/clawker
-export PATH="$PWD/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
+```
 
+<details>
+<summary>Other installation methods</summary>
+
+**Specific version:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_VERSION=v0.1.3 bash
+```
+
+**Custom directory:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
+```
+
+**Build from source** (requires Go 1.25+):
+```bash
+git clone https://github.com/schmitthub/clawker.git
+cd clawker && make clawker
+export PATH="$PWD/bin:$PATH"
+```
+</details>
+
+### Setup
+
+```bash
 # One-time user setup
 clawker init
 
@@ -170,6 +194,15 @@ See [`examples/`](./examples/) for complete configs: TypeScript, Python, Rust, G
 ## CLI Reference
 
 Complete command documentation with all flags and examples: [`docs/cli-reference/`](./docs/cli-reference/)
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAWKER_VERSION` | Pin install script to a specific release |
+| `CLAWKER_INSTALL_DIR` | Custom binary install directory |
+| `CLAWKER_HOME` | Override clawker config directory (default: `~/.local/clawker`) |
+| `CLAWKER_NO_UPDATE_NOTIFIER` | Disable "new version available" notifications |
 
 ## Known Issues
 
