@@ -36,6 +36,7 @@ func (v *Validator) Validate(cfg *Project) error {
 	v.validateWorkspace(cfg)
 	v.validateSecurity(cfg)
 	v.validateAgent(cfg)
+	v.validateLoop(cfg)
 
 	if len(v.errors) > 0 {
 		return &MultiValidationError{Errors: v.errors}
@@ -297,6 +298,49 @@ func (v *Validator) validateClaudeCode(cfg *Project) {
 	strategy := cfg.Agent.ClaudeCode.Config.Strategy
 	if strategy != "" && strategy != "copy" && strategy != "fresh" {
 		v.addError("agent.claude_code.config.strategy", "must be \"copy\", \"fresh\", or empty", strategy)
+	}
+}
+
+func (v *Validator) validateLoop(cfg *Project) {
+	if cfg.Loop == nil {
+		return
+	}
+	lc := cfg.Loop
+
+	// Validate hooks_file path exists if specified
+	if lc.HooksFile != "" {
+		hooksPath := lc.HooksFile
+		if !filepath.IsAbs(hooksPath) {
+			hooksPath = filepath.Join(v.workDir, hooksPath)
+		}
+		if _, err := os.Stat(hooksPath); err != nil {
+			v.addError("loop.hooks_file", "file not accessible: "+err.Error(), lc.HooksFile)
+		}
+	}
+
+	// Validate numeric field ranges
+	if lc.MaxLoops < 0 {
+		v.addError("loop.max_loops", "must be non-negative", lc.MaxLoops)
+	}
+	if lc.StagnationThreshold < 0 {
+		v.addError("loop.stagnation_threshold", "must be non-negative", lc.StagnationThreshold)
+	}
+	if lc.TimeoutMinutes < 0 {
+		v.addError("loop.timeout_minutes", "must be non-negative", lc.TimeoutMinutes)
+	}
+	if lc.CallsPerHour < 0 {
+		v.addError("loop.calls_per_hour", "must be non-negative", lc.CallsPerHour)
+	}
+	if lc.OutputDeclineThreshold < 0 || lc.OutputDeclineThreshold > 100 {
+		v.addError("loop.output_decline_threshold", "must be between 0 and 100 (percentage)", lc.OutputDeclineThreshold)
+	}
+	if lc.LoopDelaySeconds < 0 {
+		v.addError("loop.loop_delay_seconds", "must be non-negative", lc.LoopDelaySeconds)
+	}
+
+	// Warn about whitespace-only append_system_prompt
+	if lc.AppendSystemPrompt != "" && strings.TrimSpace(lc.AppendSystemPrompt) == "" {
+		v.addError("loop.append_system_prompt", "must not contain only whitespace", "")
 	}
 }
 

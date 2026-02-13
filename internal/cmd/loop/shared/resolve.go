@@ -119,6 +119,21 @@ func BuildRunnerOptions(
 	return opts
 }
 
+// ApplyLoopConfigDefaults applies config.LoopConfig values to LoopOptions fields
+// that are consumed before the runner is created (e.g., hooks_file, append_system_prompt).
+// Call this after loading the config but before SetupLoopContainer and BuildRunnerOptions.
+func ApplyLoopConfigDefaults(loopOpts *LoopOptions, flags *pflag.FlagSet, cfg *config.LoopConfig) {
+	if cfg == nil || flags == nil {
+		return
+	}
+	if !flags.Changed("hooks-file") && cfg.HooksFile != "" {
+		loopOpts.HooksFile = cfg.HooksFile
+	}
+	if !flags.Changed("append-system-prompt") && cfg.AppendSystemPrompt != "" {
+		loopOpts.AppendSystemPrompt = cfg.AppendSystemPrompt
+	}
+}
+
 // applyConfigOverrides applies config.LoopConfig values for any flag not explicitly set by the user.
 func applyConfigOverrides(opts *loop.Options, loopOpts *LoopOptions, flags *pflag.FlagSet, cfg *config.LoopConfig) {
 	if !flags.Changed("max-loops") && cfg.MaxLoops > 0 {

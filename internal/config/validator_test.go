@@ -1102,3 +1102,219 @@ func TestValidatorHelperFunctions(t *testing.T) {
 		}
 	})
 }
+
+func TestValidatorLoop_NilLoop(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Loop = nil
+
+	v := NewValidator(tmpDir)
+	err = v.Validate(cfg)
+	if err != nil {
+		t.Errorf("nil loop config should not cause validation error: %v", err)
+	}
+}
+
+func TestValidatorLoop_ValidConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Loop = &LoopConfig{
+		MaxLoops:               100,
+		StagnationThreshold:    5,
+		TimeoutMinutes:         30,
+		OutputDeclineThreshold: 70,
+		AppendSystemPrompt:     "Always run tests.",
+	}
+
+	v := NewValidator(tmpDir)
+	err = v.Validate(cfg)
+	if err != nil {
+		t.Errorf("valid loop config should not cause validation error: %v", err)
+	}
+}
+
+func TestValidatorLoop_NegativeValues(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name  string
+		cfg   *LoopConfig
+		field string
+	}{
+		{
+			name:  "negative max_loops",
+			cfg:   &LoopConfig{MaxLoops: -1},
+			field: "loop.max_loops",
+		},
+		{
+			name:  "negative stagnation_threshold",
+			cfg:   &LoopConfig{StagnationThreshold: -1},
+			field: "loop.stagnation_threshold",
+		},
+		{
+			name:  "negative timeout_minutes",
+			cfg:   &LoopConfig{TimeoutMinutes: -1},
+			field: "loop.timeout_minutes",
+		},
+		{
+			name:  "negative calls_per_hour",
+			cfg:   &LoopConfig{CallsPerHour: -1},
+			field: "loop.calls_per_hour",
+		},
+		{
+			name:  "negative loop_delay_seconds",
+			cfg:   &LoopConfig{LoopDelaySeconds: -1},
+			field: "loop.loop_delay_seconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := DefaultConfig()
+			c.Loop = tt.cfg
+
+			v := NewValidator(tmpDir)
+			err := v.Validate(c)
+			if err == nil {
+				t.Fatalf("expected validation error for %s", tt.field)
+			}
+
+			multi, ok := err.(*MultiValidationError)
+			if !ok {
+				t.Fatalf("expected MultiValidationError, got %T", err)
+			}
+
+			found := false
+			for _, e := range multi.Errors {
+				if ve, ok := e.(*ValidationError); ok && ve.Field == tt.field {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error for field %q, got: %v", tt.field, err)
+			}
+		})
+	}
+}
+
+func TestValidatorLoop_OutputDeclineThresholdRange(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name    string
+		value   int
+		wantErr bool
+	}{
+		{"valid zero", 0, false},
+		{"valid 50", 50, false},
+		{"valid 100", 100, false},
+		{"invalid 101", 101, true},
+		{"invalid -1", -1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := DefaultConfig()
+			c.Loop = &LoopConfig{OutputDeclineThreshold: tt.value}
+
+			v := NewValidator(tmpDir)
+			err := v.Validate(c)
+			hasErr := err != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("OutputDeclineThreshold=%d: err=%v, wantErr=%v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidatorLoop_HooksFileNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Loop = &LoopConfig{HooksFile: "nonexistent-hooks.json"}
+
+	v := NewValidator(tmpDir)
+	err = v.Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for nonexistent hooks file")
+	}
+
+	multi, ok := err.(*MultiValidationError)
+	if !ok {
+		t.Fatalf("expected MultiValidationError, got %T", err)
+	}
+
+	found := false
+	for _, e := range multi.Errors {
+		if ve, ok := e.(*ValidationError); ok && ve.Field == "loop.hooks_file" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error for field loop.hooks_file, got: %v", err)
+	}
+}
+
+func TestValidatorLoop_HooksFileExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create the hooks file
+	hooksPath := filepath.Join(tmpDir, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("failed to create hooks file: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Loop = &LoopConfig{HooksFile: "hooks.json"}
+
+	v := NewValidator(tmpDir)
+	err = v.Validate(cfg)
+	if err != nil {
+		t.Errorf("valid hooks file should not cause validation error: %v", err)
+	}
+}
+
+func TestValidatorLoop_WhitespaceOnlySystemPrompt(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := DefaultConfig()
+	cfg.Loop = &LoopConfig{AppendSystemPrompt: "   \t  "}
+
+	v := NewValidator(tmpDir)
+	err = v.Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for whitespace-only append_system_prompt")
+	}
+}

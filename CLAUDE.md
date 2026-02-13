@@ -233,7 +233,7 @@ build:
 agent: { includes: [], env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { remote_path: "/workspace", default_mode: "snapshot" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
-loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false }
+loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
 **Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `LoopConfig`

@@ -26,7 +26,7 @@
 | 6 | Task 15: TUI dashboard (default view) | `complete` | opus |
 | 6 | Task 16: TUI detach → minimal mode | `complete` | opus |
 | 6 | Task 17: Output mode switching (verbose, json, quiet) | `complete` | opus |
-| 7 | Task 18: Config migration (ralph: → loop:) | `pending` | — |
+| 7 | Task 18: Config migration (ralph: → loop:) | `complete` | opus |
 | 7 | Task 19: Integration tests | `pending` | — |
 | 7 | Task 20: Documentation update (CLAUDE.md, CLI-VERBS, memories) | `pending` | — |
 
@@ -95,6 +95,17 @@
 - **Testing technique**: Used a pre-cancelled context (`context.WithCancel` + immediate `cancel()`) to make `Runner.Run` exit immediately on the first loop iteration without needing Docker. This avoids the need for `dockertest.NewFakeClient` in unit tests. Key gotcha: `MaxLoops=0` doesn't skip the loop — `Runner.Run` defaults `MaxLoops <= 0` to `DefaultMaxLoops` (50).
 - Added `TestWriteResult_Default` confirming default mode returns nil and writes nothing (Monitor handles summary display).
 - Test count: 3969 → 3977 (+8 net). 6 new mode selection tests, 1 new result test, 1 test import update. All pass.
+
+**Task 18:**
+- Added two new fields to `config.LoopConfig` in `schema.go`: `HooksFile` (string, yaml:"hooks_file") and `AppendSystemPrompt` (string, yaml:"append_system_prompt"). Added nil-safe getters `GetHooksFile()` and `GetAppendSystemPrompt()`.
+- **Architecture decision**: Two-layer config override pattern. `ApplyLoopConfigDefaults` (new, exported) handles pre-runner fields (`hooks_file`, `append_system_prompt`) on `LoopOptions`. `applyConfigOverrides` (existing, unexported) handles runner-level fields on `loop.Options`. Both use `flags.Changed()` pattern — CLI flags always win. Separation needed because `hooks_file` is consumed by `SetupLoopContainer` and `append_system_prompt` flows through `BuildSystemPrompt()` before the runner is created.
+- Added `validateLoop()` to `validator.go` — validates negative numeric fields, `output_decline_threshold` 0-100 range, `hooks_file` path existence (relative to workDir), whitespace-only `append_system_prompt` rejection. Called in `Validate()` alongside other validators.
+- Both `iterateRun` and `tasksRun` call `ApplyLoopConfigDefaults` at step 3a (after loading config, before container setup and runner options building).
+- Added commented `loop:` section to `DefaultConfigYAML` and `clawker.yaml.tmpl` showing all configurable fields.
+- Added YAML round-trip test verifying new fields serialize/deserialize correctly.
+- No backward compatibility logic needed — pre-release project with zero users (per CLAUDE.md mantra).
+- Code reviewer found zero issues above threshold.
+- Test count: 3977 → 4009 (+32 net). 26 new config tests (schema getters, validator loop, YAML round-trip), 6 new resolve tests (ApplyLoopConfigDefaults). All pass.
 
 **Task 10:**
 - Task 10 and Task 11 were merged — the original plan split hook types from defaults/override, but they're naturally cohesive. Task 10 now covers everything: types, constants, default hooks, hook files, resolution, and serialization.

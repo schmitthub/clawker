@@ -59,9 +59,13 @@ Prompt resolution and option building helpers:
 
 - `ResolvePrompt(prompt, promptFile string) (string, error)` — returns inline prompt or reads from file, trims whitespace, errors on empty
 - `ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, error)` — reads tasks file, wraps in default template or applies custom template (`%s` placeholder or appended)
-- `BuildRunnerOptions(loopOpts, project, agent, containerName, prompt, flags, loopCfg) loop.Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern)
+- `BuildRunnerOptions(loopOpts, project, agent, containerName, prompt, workDir, flags, loopCfg) loop.Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern)
+- `ApplyLoopConfigDefaults(loopOpts, flags, loopCfg)` — applies config overrides to `LoopOptions` for pre-runner fields (`hooks_file`, `append_system_prompt`). Called in iterate/tasks run functions after loading config but before `SetupLoopContainer` and `BuildRunnerOptions`.
 
-**Config override pattern**: For each configurable field, if the CLI flag was not explicitly set (`!flags.Changed(flagName)`) and the config value is non-zero/true, the config value wins. Explicit CLI flags always take precedence.
+**Config override pattern**: Two layers of config-to-flag override:
+1. **Pre-runner** (`ApplyLoopConfigDefaults`): Applies `hooks_file` and `append_system_prompt` from config to `LoopOptions`. These fields are consumed before the runner is created (by `SetupLoopContainer` and `BuildRunnerOptions` respectively).
+2. **Runner-level** (`applyConfigOverrides`, called within `BuildRunnerOptions`): Applies numeric/boolean tuning fields from config to `loop.Options`.
+Both use the `!flags.Changed(flagName)` pattern — explicit CLI flags always take precedence over config values.
 
 ## Shared Dashboard (`shared/dashboard.go`)
 

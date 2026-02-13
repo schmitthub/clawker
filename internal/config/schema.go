@@ -311,18 +311,36 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 
 // LoopConfig defines configuration for autonomous agent loops.
 type LoopConfig struct {
-	MaxLoops                  int  `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
-	StagnationThreshold       int  `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
-	TimeoutMinutes            int  `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
-	CallsPerHour              int  `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
-	CompletionThreshold       int  `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
-	SessionExpirationHours    int  `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
-	SameErrorThreshold        int  `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
-	OutputDeclineThreshold    int  `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
-	MaxConsecutiveTestLoops   int  `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
-	LoopDelaySeconds          int  `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
-	SafetyCompletionThreshold int  `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
-	SkipPermissions           bool `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
+	MaxLoops                  int    `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
+	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
+	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
+	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
+	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
+	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
+	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
+	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
+	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
+	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
+	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
+	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
+	HooksFile                 string `yaml:"hooks_file,omitempty" mapstructure:"hooks_file"`
+	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" mapstructure:"append_system_prompt"`
+}
+
+// GetHooksFile returns the hooks file path (empty string if not configured).
+func (r *LoopConfig) GetHooksFile() string {
+	if r == nil {
+		return ""
+	}
+	return r.HooksFile
+}
+
+// GetAppendSystemPrompt returns the additional system prompt (empty string if not configured).
+func (r *LoopConfig) GetAppendSystemPrompt() string {
+	if r == nil {
+		return ""
+	}
+	return r.AppendSystemPrompt
 }
 
 // GetMaxLoops returns the max loops with default fallback.

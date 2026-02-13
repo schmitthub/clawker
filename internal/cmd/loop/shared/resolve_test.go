@@ -274,6 +274,92 @@ func TestBuildRunnerOptions_SystemPromptWithAdditional(t *testing.T) {
 	assert.Equal(t, loop.BuildSystemPrompt("Always run tests before marking complete."), opts.SystemPrompt)
 }
 
+func TestBuildRunnerOptions_ConfigOverridesHooksFile(t *testing.T) {
+	loopOpts := NewLoopOptions()
+
+	loopCfg := &config.LoopConfig{
+		HooksFile: "/path/to/hooks.json",
+	}
+
+	cmd := newTestCmd()
+	AddLoopFlags(cmd, loopOpts)
+	require.NoError(t, cmd.ParseFlags([]string{}))
+
+	// Apply config defaults to LoopOptions (pre-runner fields)
+	ApplyLoopConfigDefaults(loopOpts, cmd.Flags(), loopCfg)
+
+	// HooksFile should be set from config
+	assert.Equal(t, "/path/to/hooks.json", loopOpts.HooksFile)
+}
+
+func TestBuildRunnerOptions_ConfigOverridesAppendSystemPrompt(t *testing.T) {
+	loopOpts := NewLoopOptions()
+
+	loopCfg := &config.LoopConfig{
+		AppendSystemPrompt: "Always run tests first.",
+	}
+
+	cmd := newTestCmd()
+	AddLoopFlags(cmd, loopOpts)
+	require.NoError(t, cmd.ParseFlags([]string{}))
+
+	ApplyLoopConfigDefaults(loopOpts, cmd.Flags(), loopCfg)
+
+	assert.Equal(t, "Always run tests first.", loopOpts.AppendSystemPrompt)
+
+	// Also verify it flows through to SystemPrompt in BuildRunnerOptions
+	opts := BuildRunnerOptions(loopOpts, "proj", "dev", "clawker.proj.dev", "test", "/workspace", cmd.Flags(), loopCfg)
+	assert.Contains(t, opts.SystemPrompt, "Always run tests first.")
+}
+
+func TestApplyLoopConfigDefaults_ExplicitFlagWins(t *testing.T) {
+	loopOpts := NewLoopOptions()
+
+	loopCfg := &config.LoopConfig{
+		HooksFile:          "/config/hooks.json",
+		AppendSystemPrompt: "Config prompt.",
+	}
+
+	cmd := newTestCmd()
+	AddLoopFlags(cmd, loopOpts)
+	// Explicitly set both flags
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--hooks-file", "/cli/hooks.json",
+		"--append-system-prompt", "CLI prompt.",
+	}))
+
+	ApplyLoopConfigDefaults(loopOpts, cmd.Flags(), loopCfg)
+
+	// CLI flags should win
+	assert.Equal(t, "/cli/hooks.json", loopOpts.HooksFile)
+	assert.Equal(t, "CLI prompt.", loopOpts.AppendSystemPrompt)
+}
+
+func TestApplyLoopConfigDefaults_NilConfig(t *testing.T) {
+	loopOpts := NewLoopOptions()
+
+	cmd := newTestCmd()
+	AddLoopFlags(cmd, loopOpts)
+	require.NoError(t, cmd.ParseFlags([]string{}))
+
+	// Should not panic
+	ApplyLoopConfigDefaults(loopOpts, cmd.Flags(), nil)
+	assert.Equal(t, "", loopOpts.HooksFile)
+	assert.Equal(t, "", loopOpts.AppendSystemPrompt)
+}
+
+func TestApplyLoopConfigDefaults_NilFlags(t *testing.T) {
+	loopOpts := NewLoopOptions()
+
+	loopCfg := &config.LoopConfig{
+		HooksFile: "/path/to/hooks.json",
+	}
+
+	// Should not panic with nil flags
+	ApplyLoopConfigDefaults(loopOpts, nil, loopCfg)
+	assert.Equal(t, "", loopOpts.HooksFile)
+}
+
 func TestBuildRunnerOptions_SkipPermissionsBoolean(t *testing.T) {
 	loopOpts := NewLoopOptions()
 	// SkipPermissions defaults to false

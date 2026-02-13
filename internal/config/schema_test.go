@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseMode(t *testing.T) {
@@ -383,5 +385,129 @@ func TestAgentConfig_SharedDirEnabled(t *testing.T) {
 				t.Errorf("SharedDirEnabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoopConfig_GetHooksFile(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *LoopConfig
+		want   string
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   "",
+		},
+		{
+			name:   "empty hooks file",
+			config: &LoopConfig{},
+			want:   "",
+		},
+		{
+			name:   "hooks file set",
+			config: &LoopConfig{HooksFile: "hooks.json"},
+			want:   "hooks.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GetHooksFile()
+			if got != tt.want {
+				t.Errorf("GetHooksFile() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoopConfig_GetAppendSystemPrompt(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *LoopConfig
+		want   string
+	}{
+		{
+			name:   "nil config",
+			config: nil,
+			want:   "",
+		},
+		{
+			name:   "empty prompt",
+			config: &LoopConfig{},
+			want:   "",
+		},
+		{
+			name:   "prompt set",
+			config: &LoopConfig{AppendSystemPrompt: "Always run tests."},
+			want:   "Always run tests.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GetAppendSystemPrompt()
+			if got != tt.want {
+				t.Errorf("GetAppendSystemPrompt() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoopConfig_ExistingGetters(t *testing.T) {
+	// Verify existing getters still work correctly with nil receiver
+	var nilCfg *LoopConfig
+
+	if nilCfg.GetMaxLoops() != 50 {
+		t.Errorf("GetMaxLoops() on nil = %d, want 50", nilCfg.GetMaxLoops())
+	}
+	if nilCfg.GetStagnationThreshold() != 3 {
+		t.Errorf("GetStagnationThreshold() on nil = %d, want 3", nilCfg.GetStagnationThreshold())
+	}
+	if nilCfg.GetTimeoutMinutes() != 15 {
+		t.Errorf("GetTimeoutMinutes() on nil = %d, want 15", nilCfg.GetTimeoutMinutes())
+	}
+}
+
+func TestLoopConfig_YAMLRoundTrip(t *testing.T) {
+	input := `
+loop:
+  max_loops: 100
+  stagnation_threshold: 5
+  timeout_minutes: 30
+  hooks_file: "custom-hooks.json"
+  append_system_prompt: "Always run tests before marking complete."
+  skip_permissions: true
+  output_decline_threshold: 80
+`
+
+	var project Project
+	if err := yaml.Unmarshal([]byte(input), &project); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if project.Loop == nil {
+		t.Fatal("Loop config should not be nil")
+	}
+	if project.Loop.MaxLoops != 100 {
+		t.Errorf("MaxLoops = %d, want 100", project.Loop.MaxLoops)
+	}
+	if project.Loop.StagnationThreshold != 5 {
+		t.Errorf("StagnationThreshold = %d, want 5", project.Loop.StagnationThreshold)
+	}
+	if project.Loop.TimeoutMinutes != 30 {
+		t.Errorf("TimeoutMinutes = %d, want 30", project.Loop.TimeoutMinutes)
+	}
+	if project.Loop.HooksFile != "custom-hooks.json" {
+		t.Errorf("HooksFile = %q, want %q", project.Loop.HooksFile, "custom-hooks.json")
+	}
+	if project.Loop.AppendSystemPrompt != "Always run tests before marking complete." {
+		t.Errorf("AppendSystemPrompt = %q, want %q", project.Loop.AppendSystemPrompt, "Always run tests before marking complete.")
+	}
+	if !project.Loop.SkipPermissions {
+		t.Error("SkipPermissions should be true")
+	}
+	if project.Loop.OutputDeclineThreshold != 80 {
+		t.Errorf("OutputDeclineThreshold = %d, want 80", project.Loop.OutputDeclineThreshold)
 	}
 }

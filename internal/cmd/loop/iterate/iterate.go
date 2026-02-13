@@ -142,6 +142,9 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// 3. Get config and Docker client
 	cfgGateway := opts.Config()
 
+	// 3a. Apply config file defaults for pre-runner fields (hooks_file, append_system_prompt)
+	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, cfgGateway.Project.Loop)
+
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to Docker: %w", err)
