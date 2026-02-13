@@ -189,7 +189,10 @@ func TestFindContainerByAgentNotFound_Integration(t *testing.T) {
 		t.Error("FindContainerByAgent() should return nil for non-existent container")
 	}
 	// Name should still be returned even if container doesn't exist
-	expectedName, _ := docker.ContainerName("nonexistent", "container")
+	expectedName, err := docker.ContainerName("nonexistent", "container")
+	if err != nil {
+		t.Fatalf("ContainerName() error = %v", err)
+	}
 	if name != expectedName {
 		t.Errorf("FindContainerByAgent() name = %q, want %q", name, expectedName)
 	}

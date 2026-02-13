@@ -156,17 +156,7 @@ func buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error) {
 	// must match the path git wrote in the worktree's .git file.
 	resolvedRoot, err := filepath.EvalSymlinks(projectRootDir)
 	if err != nil {
-		// Critical errors should fail rather than silently fall back
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("project root directory does not exist: %s", projectRootDir)
-		}
-		if os.IsPermission(err) {
-			return nil, fmt.Errorf("permission denied reading project root directory: %s", projectRootDir)
-		}
-		// For other errors (rare), warn and fall back to original path
-		resolvedRoot = projectRootDir
-		logger.Warn().Err(err).Str("path", projectRootDir).
-			Msg("failed to resolve symlinks, using original path - git commands in container may fail")
+		return nil, fmt.Errorf("failed to resolve symlinks for project root %s: %w", projectRootDir, err)
 	}
 
 	// Validate .git exists and is a directory before mounting

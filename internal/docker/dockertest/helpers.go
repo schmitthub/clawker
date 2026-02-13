@@ -2,6 +2,7 @@ package dockertest
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -23,8 +24,10 @@ import (
 // ContainerFixture builds a container.Summary with proper clawker labels.
 // The container is in "exited" state by default.
 func ContainerFixture(project, agent, image string) container.Summary {
-	// Test fixtures always use valid literal names — ignore error.
-	name, _ := docker.ContainerName(project, agent)
+	name, err := docker.ContainerName(project, agent)
+	if err != nil {
+		panic(fmt.Sprintf("ContainerFixture: invalid inputs (project=%q, agent=%q): %v", project, agent, err))
+	}
 	labels := map[string]string{
 		docker.LabelManaged: docker.ManagedLabelValue,
 		docker.LabelAgent:   agent,

@@ -81,6 +81,7 @@ type initOutcome struct {
 // Run performs container initialization with TUI progress display.
 // It expects image resolution to have already been completed (pre-progress phase).
 func (ci *ContainerInitializer) Run(ctx context.Context, params InitParams) (*InitResult, error) {
+	ci.cleanupWarnings = nil
 	ch := make(chan tui.ProgressStep, 32)
 	doneCh := make(chan initOutcome, 1)
 
@@ -155,12 +156,20 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 	// (with user session data) are never touched.
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "config"); vnErr == nil {
+		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "config"); vnErr != nil {
+			logger.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
+			ci.cleanupWarnings = append(ci.cleanupWarnings,
+				fmt.Sprintf("Warning: could not track config volume for cleanup: %v", vnErr))
+		} else {
 			createdVolumes = append(createdVolumes, vn)
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "history"); vnErr == nil {
+		if vn, vnErr := docker.VolumeName(cfg.Project, agentName, "history"); vnErr != nil {
+			logger.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
+			ci.cleanupWarnings = append(ci.cleanupWarnings,
+				fmt.Sprintf("Warning: could not track history volume for cleanup: %v", vnErr))
+		} else {
 			createdVolumes = append(createdVolumes, vn)
 		}
 	}
@@ -187,7 +196,7 @@ func (ci *ContainerInitializer) runSteps(ctx context.Context, params InitParams,
 		}
 		if len(cleaned) > 0 {
 			ci.cleanupWarnings = append(ci.cleanupWarnings,
-				fmt.Sprintf("Cleaned up %d orphaned volume(s)", len(cleaned)))
+				fmt.Sprintf("Cleaned up %d orphaned volume(s) after init failure", len(cleaned)))
 		}
 		if len(failed) > 0 {
 			ci.cleanupWarnings = append(ci.cleanupWarnings,

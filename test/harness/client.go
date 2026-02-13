@@ -110,52 +110,28 @@ func (r *ExecResult) CleanOutput() string {
 
 // Exec executes a command in the container and returns the result.
 func (c *RunningContainer) Exec(ctx context.Context, dc *docker.Client, cmd ...string) (*ExecResult, error) {
-	execResp, err := dc.ExecCreate(ctx, c.ID, docker.ExecCreateOptions{
+	return c.execInternal(ctx, dc, docker.ExecCreateOptions{
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          cmd,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("exec create failed: %w", err)
-	}
-
-	hijacked, err := dc.ExecAttach(ctx, execResp.ID, docker.ExecAttachOptions{TTY: false})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach failed: %w", err)
-	}
-	defer hijacked.Close()
-
-	var stdout, stderr bytes.Buffer
-	_, err = stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read exec output: %w", err)
-	}
-
-	// Get exit code
-	inspectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	inspectResp, err := dc.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("exec inspect failed: %w", err)
-	}
-
-	return &ExecResult{
-		ExitCode: inspectResp.ExitCode,
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-	}, nil
 }
 
 // ExecAsUser executes a command in the container as a specific user and returns the result.
 func (c *RunningContainer) ExecAsUser(ctx context.Context, dc *docker.Client, user string, cmd ...string) (*ExecResult, error) {
-	execResp, err := dc.ExecCreate(ctx, c.ID, docker.ExecCreateOptions{
+	return c.execInternal(ctx, dc, docker.ExecCreateOptions{
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
 		User:         user,
 		Cmd:          cmd,
 	})
+}
+
+// execInternal is the shared implementation for Exec and ExecAsUser.
+func (c *RunningContainer) execInternal(ctx context.Context, dc *docker.Client, opts docker.ExecCreateOptions) (*ExecResult, error) {
+	execResp, err := dc.ExecCreate(ctx, c.ID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("exec create failed: %w", err)
 	}

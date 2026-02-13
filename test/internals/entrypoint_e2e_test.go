@@ -82,7 +82,11 @@ func TestEntrypoint_FullInitSequence(t *testing.T) {
 			Env: []string{
 				"CLAWKER_PROJECT=" + project,
 				"CLAWKER_AGENT=" + agent,
-				`CLAWKER_FIREWALL_IP_RANGE_SOURCES=[{"name":"github"}]`,
+				// Use github+google IP ranges to produce >10KB of firewall output.
+				// This catches the SIGPIPE bug: head -c 10000 in the entrypoint closes
+				// the pipe, killing the firewall script before DROP policies are set.
+				`CLAWKER_FIREWALL_IP_RANGE_SOURCES=[{"name":"github"},{"name":"google"}]`,
+				`CLAWKER_FIREWALL_DOMAINS=["charm.land","code.gitea.io","golang.org","proxy.golang.org","sum.golang.org","gocloud.dev","gopkg.in","software.sslmate.com","cloud.google.com","sigs.k8s.io","google.golang.org","storage.googleapis.com","go.opentelemetry.io","go.uber.org","lukechampine.com","go.yaml.in","cel.dev","files.pythonhosted.org","pkg.go.dev","go.dev","raw.githubusercontent.com","objects.githubusercontent.com","crates.io","npmjs.com","hub.docker.com","ghcr.io"]`,
 				"CLAWKER_GIT_HTTPS=true",
 				"CLAWKER_HOST_PROXY=" + containerProxyURL,
 				"CLAWKER_WORKSPACE_MODE=snapshot",

@@ -65,7 +65,7 @@ Separate I/O from resize — `pty.Stream(ctx, hijacked)` in goroutine, `signals.
 
 `ContainerOptions` — all container flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
-Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `FormatContainerName(project, agent)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
+Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
 
 **Types**: `ContainerOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
 

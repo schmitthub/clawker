@@ -1007,11 +1007,6 @@ func MergeLabels(baseLabels, userLabels map[string]string) map[string]string {
 	return result
 }
 
-// FormatContainerName formats a container name using clawker conventions.
-func FormatContainerName(project, agent string) string {
-	return fmt.Sprintf("clawker.%s.%s", project, agent)
-}
-
 // -----------------------------------------------------------------------------
 // ListOpts, MapOpts, PortOpts - Custom pflag.Value types for container options
 // These are CLI flag types, not API types, so they belong with command options.
