@@ -49,6 +49,33 @@ Load/create session and circuit breaker state. Each iteration: check circuit bre
 - `LoopStatusInstructions` — default system prompt constant instructing the agent to output a LOOP_STATUS block. Contains a parseable example block (validated by tests). Documents all fields, valid values, and rules.
 - `BuildSystemPrompt(additional string) string` — combines `LoopStatusInstructions` with optional user-provided instructions (from `--append-system-prompt`). Returns default only when additional is empty; separates with double newline otherwise.
 
+### Hooks (`hooks.go`)
+
+Hook injection system for enforcing LOOP_STATUS output and maintaining context after compaction. Hooks are injected into containers as Claude Code `settings.json` configuration.
+
+**Types:**
+- `HookHandler` — single hook action: Type ("command"/"prompt"/"agent"), Command, Prompt (string), Timeout (int). JSON-tagged to match Claude Code settings.json format.
+- `HookMatcherGroup` — Matcher (regex string, empty = match all) + Hooks ([]HookHandler)
+- `HookConfig` — `map[string][]HookMatcherGroup`. Maps event names to matcher groups. Value of the "hooks" key in settings.json.
+
+**Event name constants:** `EventStop`, `EventSessionStart`, `EventPreToolUse`, `EventPostToolUse`, `EventNotification`
+
+**Handler type constants:** `HandlerCommand`, `HandlerPrompt`, `HandlerAgent`
+
+**Script path constants:** `HookScriptDir` ("/tmp/clawker-hooks"), `StopCheckScriptPath` ("/tmp/clawker-hooks/stop-check.js")
+
+**Functions:**
+- `DefaultHooks() HookConfig` — returns default hook config with Stop (LOOP_STATUS enforcement) and SessionStart/compact (reminder after compaction) hooks
+- `DefaultHookFiles() map[string][]byte` — returns scripts needed by default hooks (stop-check.js). Keys are absolute container paths; values are file contents.
+- `ResolveHooks(hooksFile string) (HookConfig, map[string][]byte, error)` — if hooksFile is empty, returns DefaultHooks() + DefaultHookFiles(). If provided, reads JSON file as complete HookConfig replacement with no default hook files.
+- `HookConfig.MarshalSettingsJSON() ([]byte, error)` — serializes as `{"hooks": {...}}` for Claude Code settings.json
+
+**Default hooks behavior:**
+- **Stop hook**: Command type running `node /tmp/clawker-hooks/stop-check.js`. The Node.js script reads hook input from stdin, checks `stop_hook_active` for recursion prevention, finds the session transcript, checks last 10 lines for `---LOOP_STATUS---` markers. Exit 0 = allow stop, exit 2 = block (Claude retries with error message).
+- **SessionStart/compact hook**: Command type with echo. Matcher "compact" fires only on context compaction. Outputs LOOP_STATUS reminder text that Claude Code injects as context.
+
+**Override mechanism:** `--hooks-file` flag provides a JSON file that completely replaces default hooks (no merging). Custom hooks do not require DefaultHookFiles().
+
 ### Circuit Breaker (`circuit.go`)
 
 - `CircuitBreaker` — tracks stagnation, same-error sequences, output decline, test-only loops, and safety completion. Thread-safe (mutex). Trip conditions:
@@ -174,4 +201,4 @@ NDJSON parser for Claude Code's `--output-format stream-json` output. Reads line
 
 ## Testing
 
-Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, loop, prompt, ratelimit, session, stream, tui/model.
+Tests in `*_test.go` files cover all packages. Test files exist for: analyzer, circuit, config, history, hooks, loop, prompt, ratelimit, session, stream, tui/model.
