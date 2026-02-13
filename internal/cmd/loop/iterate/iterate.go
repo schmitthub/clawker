@@ -7,25 +7,47 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // IterateOptions holds options for the loop iterate command.
 type IterateOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client   func(context.Context) (*docker.Client, error)
-	Config   func() *config.Config
+	*shared.LoopOptions
+
+	// Factory DI
+	IOStreams   *iostreams.IOStreams
+	TUI        *tui.TUI
+	Client     func(context.Context) (*docker.Client, error)
+	Config     func() *config.Config
+	GitManager func() (*git.GitManager, error)
+	Prompter   func() *prompter.Prompter
+
+	// Prompt source (mutually exclusive, one required)
+	Prompt     string
+	PromptFile string
+
+	// Output
+	Format *cmdutil.FormatFlags
 }
 
 // NewCmdIterate creates the `clawker loop iterate` command.
 func NewCmdIterate(f *cmdutil.Factory, runF func(context.Context, *IterateOptions) error) *cobra.Command {
+	loopOpts := shared.NewLoopOptions()
 	opts := &IterateOptions{
-		IOStreams: f.IOStreams,
-		Client:   f.Client,
-		Config:   f.Config,
+		LoopOptions: loopOpts,
+		IOStreams:   f.IOStreams,
+		TUI:        f.TUI,
+		Client:     f.Client,
+		Config:     f.Config,
+		GitManager: f.GitManager,
+		Prompter:   f.Prompter,
 	}
 
 	cmd := &cobra.Command{
@@ -51,7 +73,16 @@ start and destroyed on completion.`,
   clawker loop iterate --prompt-file task.md
 
   # Run with custom loop limits
-  clawker loop iterate --prompt "Refactor auth module" --max-loops 100`,
+  clawker loop iterate --prompt "Refactor auth module" --max-loops 100
+
+  # Stream all agent output in real time
+  clawker loop iterate --prompt "Add tests" --verbose
+
+  # Run in a git worktree for isolation
+  clawker loop iterate --prompt "Refactor auth" --worktree feature/auth
+
+  # Output final result as JSON
+  clawker loop iterate --prompt "Fix tests" --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -59,6 +90,21 @@ start and destroyed on completion.`,
 			return iterateRun(cmd.Context(), opts)
 		},
 	}
+
+	// Prompt source flags
+	cmd.Flags().StringVarP(&opts.Prompt, "prompt", "p", "", "Prompt to repeat each iteration")
+	cmd.Flags().StringVar(&opts.PromptFile, "prompt-file", "", "Path to file containing the prompt")
+
+	// Shared loop flags
+	shared.AddLoopFlags(cmd, loopOpts)
+
+	// Output format flags (--json, --quiet, --format)
+	opts.Format = cmdutil.AddFormatFlags(cmd)
+
+	// Mutual exclusivity and requirements
+	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+	cmd.MarkFlagsOneRequired("prompt", "prompt-file")
+	shared.MarkVerboseExclusive(cmd)
 
 	return cmd
 }

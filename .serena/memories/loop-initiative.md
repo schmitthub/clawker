@@ -13,7 +13,7 @@
 | 1 | Task 2: Rename ralph → loop (internal package) | `complete` | opus |
 | 1 | Task 3: Rename ralph → loop (config, docs, references) | `complete` (a2980b0) | opus |
 | 2 | Task 4: New command structure (iterate + tasks subcommands) | `complete` | opus |
-| 2 | Task 5: Flag definitions and option structs | `pending` | — |
+| 2 | Task 5: Flag definitions and option structs | `complete` | opus |
 | 2 | Task 6: Unit tests for command layer | `pending` | — |
 | 3 | Task 7: claude -p execution engine | `pending` | — |
 | 3 | Task 8: stream-json parser | `pending` | — |
@@ -33,6 +33,20 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 5:**
+- Created `internal/cmd/loop/shared/options.go` with `LoopOptions` struct, `NewLoopOptions()`, `AddLoopFlags(cmd, opts)`, and `MarkVerboseExclusive(cmd)`.
+- Followed the `internal/cmd/container/shared/` pattern: plain struct with `NewContainerOptions()`/`AddFlags()` pair. `LoopOptions` is the loop equivalent.
+- Flag defaults sourced from `loop.Default*` constants (single source of truth). Config file overrides will be resolved in the run function (not during flag parsing) — the pattern is `if !cmd.Flags().Changed("flag") && cfg != nil` layering.
+- `IterateOptions` embeds `*shared.LoopOptions` + adds `--prompt`/`-p` and `--prompt-file` (mutually exclusive via Cobra, one required via `MarkFlagsOneRequired`).
+- `TasksOptions` embeds `*shared.LoopOptions` + adds `--tasks` (required via `MarkFlagRequired`), `--task-prompt`/`--task-prompt-file` (mutually exclusive, both optional).
+- Both commands wire full Factory DI: IOStreams, TUI, Client, Config, GitManager, Prompter — forward-looking for container lifecycle (Task 12).
+- `FormatFlags` (`--json`/`--quiet`/`--format`) handled per-command via `cmdutil.AddFormatFlags(cmd)`, not in shared. `--verbose` registered in shared, exclusivity with format flags via `MarkVerboseExclusive(cmd)`.
+- Cobra v1.8.1 supports `MarkFlagsOneRequired` and `MarkFlagsMutuallyExclusive` — no manual PreRunE validation needed.
+- Tests are comprehensive: 11 tests for iterate, 10 for tasks. Cover flag parsing, mutual exclusivity, required flags, defaults vs `loop.Default*` constants, all-flags round-trip, format flag integration, verbose exclusivity. Test count went from 3747 to 3774.
+- Updated `internal/cmd/loop/CLAUDE.md` with shared options reference, flag table, and testing section.
+- Regenerated CLI reference docs: `clawker_loop_iterate.md` and `clawker_loop_tasks.md` now show all flags in `--help`.
+- Code reviewer found zero issues.
 
 **Task 4:**
 - The previous agent had already created stub files for `iterate/iterate.go` and `tasks/tasks.go` with proper `NewCmd(f, runF)` pattern and stub `RunE` implementations.
