@@ -2,7 +2,6 @@ package status
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -59,6 +58,7 @@ Shows information about:
 
 func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
 	// Get config
 	cfg := opts.Config().Project
@@ -66,31 +66,27 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	// Get session store
 	store, err := loop.DefaultSessionStore()
 	if err != nil {
-		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
-		return err
+		return fmt.Errorf("creating session store: %w", err)
 	}
 
 	// Load session
 	session, err := store.LoadSession(cfg.Project, opts.Agent)
 	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load session: %v", err)
-		return err
+		return fmt.Errorf("loading session: %w", err)
 	}
 
 	// Load circuit state
 	circuitState, err := store.LoadCircuitState(cfg.Project, opts.Agent)
 	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load circuit state: %v", err)
-		return err
+		return fmt.Errorf("loading circuit state: %w", err)
 	}
 
 	// Check if any data exists
 	if session == nil && circuitState == nil {
 		if opts.JSON {
-			fmt.Fprintln(ios.Out, "{\"exists\": false}")
-		} else {
-			fmt.Fprintf(ios.ErrOut, "No loop session found for agent %q\n", opts.Agent)
+			return cmdutil.WriteJSON(ios.Out, map[string]any{"exists": false})
 		}
+		fmt.Fprintf(ios.ErrOut, "No loop session found for agent %q\n", opts.Agent)
 		return nil
 	}
 
@@ -121,18 +117,11 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 				"no_progress_count": circuitState.NoProgressCount,
 			}
 		}
-		data, jsonErr := json.MarshalIndent(output, "", "  ")
-		if jsonErr != nil {
-			cmdutil.PrintError(ios, "Failed to encode JSON output: %v", jsonErr)
-			return fmt.Errorf("json encoding failed: %w", jsonErr)
-		}
-		fmt.Fprintln(ios.Out, string(data))
-		return nil
+		return cmdutil.WriteJSON(ios.Out, output)
 	}
 
 	// Human-readable output
-	fmt.Fprintf(ios.ErrOut, "Loop status for %s.%s\n", cfg.Project, opts.Agent)
-	fmt.Fprintf(ios.ErrOut, "\n")
+	fmt.Fprintf(ios.ErrOut, "Loop status for %s.%s\n\n", cfg.Project, opts.Agent)
 
 	if session != nil {
 		fmt.Fprintf(ios.ErrOut, "Session:\n")
@@ -156,10 +145,8 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 			if circuitState.TrippedAt != nil {
 				fmt.Fprintf(ios.ErrOut, "  Tripped at: %s\n", circuitState.TrippedAt.Format("2006-01-02 15:04:05"))
 			}
-			fmt.Fprintf(ios.ErrOut, "\n")
-			cmdutil.PrintNextSteps(ios,
-				fmt.Sprintf("Reset the circuit: clawker loop reset --agent %s", opts.Agent),
-			)
+			fmt.Fprintf(ios.ErrOut, "\n%s Reset the circuit: clawker loop reset --agent %s\n",
+				cs.InfoIcon(), opts.Agent)
 		} else {
 			fmt.Fprintf(ios.ErrOut, "  Status: OK\n")
 			fmt.Fprintf(ios.ErrOut, "  No-progress count: %d\n", circuitState.NoProgressCount)

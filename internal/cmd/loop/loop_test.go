@@ -4,13 +4,19 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdLoop(t *testing.T) {
-	f := &cmdutil.Factory{}
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+	}
 	cmd := NewCmdLoop(f)
 
 	// Test parent command properties
@@ -19,7 +25,18 @@ func TestNewCmdLoop(t *testing.T) {
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
 
-	// Test subcommands exist
+	// Parent command should not have RunE (requires subcommand)
+	assert.Nil(t, cmd.RunE)
+}
+
+func TestNewCmdLoop_Subcommands(t *testing.T) {
+	tio := iostreams.NewTestIOStreams()
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+		TUI:      tui.NewTUI(tio.IOStreams),
+	}
+	cmd := NewCmdLoop(f)
+
 	subCmds := cmd.Commands()
 	require.Len(t, subCmds, 4)
 
@@ -41,4 +58,16 @@ func TestNewCmdLoop(t *testing.T) {
 	require.NotNil(t, tasksCmd, "tasks subcommand should exist")
 	require.NotNil(t, statusCmd, "status subcommand should exist")
 	require.NotNil(t, resetCmd, "reset subcommand should exist")
+
+	// Verify subcommands have descriptions
+	assert.NotEmpty(t, iterateCmd.Short)
+	assert.NotEmpty(t, tasksCmd.Short)
+	assert.NotEmpty(t, statusCmd.Short)
+	assert.NotEmpty(t, resetCmd.Short)
+
+	// Verify subcommands have RunE (they are leaf commands)
+	assert.NotNil(t, iterateCmd.RunE)
+	assert.NotNil(t, tasksCmd.RunE)
+	assert.NotNil(t, statusCmd.RunE)
+	assert.NotNil(t, resetCmd.RunE)
 }

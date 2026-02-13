@@ -14,7 +14,7 @@
 | 1 | Task 3: Rename ralph → loop (config, docs, references) | `complete` (a2980b0) | opus |
 | 2 | Task 4: New command structure (iterate + tasks subcommands) | `complete` | opus |
 | 2 | Task 5: Flag definitions and option structs | `complete` | opus |
-| 2 | Task 6: Unit tests for command layer | `pending` | — |
+| 2 | Task 6: Unit tests for command layer | `complete` | opus |
 | 3 | Task 7: claude -p execution engine | `pending` | — |
 | 3 | Task 8: stream-json parser | `pending` | — |
 | 3 | Task 9: LOOP_STATUS block (rename + integration) | `pending` | — |
@@ -33,6 +33,16 @@
 ## Key Learnings
 
 (Agents append here as they complete tasks)
+
+**Task 6:**
+- Modernized `status.go`: removed deprecated `cmdutil.PrintError` (3 calls) and `cmdutil.PrintNextSteps` (1 call). Errors now use `return fmt.Errorf("context: %w", err)` for centralized rendering. Next-steps output uses `cs.InfoIcon()` inline. Replaced manual `json.MarshalIndent` with `cmdutil.WriteJSON`. Removed `encoding/json` import.
+- Modernized `reset.go`: removed deprecated `cmdutil.PrintError` (3 calls). Errors now use `return fmt.Errorf("context: %w", err)`. Success output uses `cs.SuccessIcon()` for styled confirmation.
+- Rewrote `status_test.go`: 6 tests following iterate/tasks pattern — `testFactory` helper, `runF` capture, command properties, required flags, JSON flag, defaults, flag existence, DI wiring.
+- Rewrote `reset_test.go`: 9 tests following iterate/tasks pattern — `testFactory` helper, `runF` capture, command properties, required flags, `--all`, `--quiet`, `-q` shorthand, defaults, all-flags round-trip, flag existence, DI wiring. Removed `shlex.Split` dependency.
+- Enhanced `loop_test.go`: split into 2 tests — `TestNewCmdLoop` (properties, no RunE) and `TestNewCmdLoop_Subcommands` (4 subcommands verified with Short descriptions and RunE).
+- Status and reset `testFactory` omit TUI field (correct — non-interactive commands). Iterate/tasks include it (correct — they use TUI).
+- Test count: 3774 → 3777 (+3 net). All 38 loop command tests pass.
+- Code reviewer found zero issues.
 
 **Task 5:**
 - Created `internal/cmd/loop/shared/options.go` with `LoopOptions` struct, `NewLoopOptions()`, `AddLoopFlags(cmd, opts)`, and `MarkVerboseExclusive(cmd)`.

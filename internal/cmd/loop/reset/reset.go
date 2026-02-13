@@ -61,6 +61,7 @@ the session history.`,
 
 func resetRun(_ context.Context, opts *ResetOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
 	// Get config
 	cfg := opts.Config().Project
@@ -68,28 +69,26 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	// Get session store
 	store, err := loop.DefaultSessionStore()
 	if err != nil {
-		cmdutil.PrintError(ios, "Failed to create session store: %v", err)
-		return err
+		return fmt.Errorf("creating session store: %w", err)
 	}
 
 	// Reset circuit breaker
 	if err := store.DeleteCircuitState(cfg.Project, opts.Agent); err != nil {
-		cmdutil.PrintError(ios, "Failed to reset circuit breaker: %v", err)
-		return err
+		return fmt.Errorf("resetting circuit breaker: %w", err)
 	}
 
 	if !opts.Quiet {
-		fmt.Fprintf(ios.ErrOut, "Circuit breaker reset for %s.%s\n", cfg.Project, opts.Agent)
+		fmt.Fprintf(ios.ErrOut, "%s Circuit breaker reset for %s.%s\n",
+			cs.SuccessIcon(), cfg.Project, opts.Agent)
 	}
 
 	// Optionally clear session
 	if opts.ClearAll {
 		if err := store.DeleteSession(cfg.Project, opts.Agent); err != nil {
-			cmdutil.PrintError(ios, "Failed to clear session: %v", err)
-			return err
+			return fmt.Errorf("clearing session: %w", err)
 		}
 		if !opts.Quiet {
-			fmt.Fprintf(ios.ErrOut, "Session history cleared\n")
+			fmt.Fprintf(ios.ErrOut, "%s Session history cleared\n", cs.SuccessIcon())
 		}
 	}
 

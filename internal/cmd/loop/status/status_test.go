@@ -4,88 +4,132 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewCmdStatus_Flags(t *testing.T) {
+func testFactory(t *testing.T) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+	t.Helper()
 	tio := iostreams.NewTestIOStreams()
-	ios := tio.IOStreams
-	f := &cmdutil.Factory{IOStreams: ios}
+	f := &cmdutil.Factory{
+		IOStreams: tio.IOStreams,
+	}
+	return f, tio
+}
+
+func TestNewCmdStatus(t *testing.T) {
+	f, tio := testFactory(t)
+
+	var gotOpts *StatusOptions
+	cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	assert.Equal(t, "status", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotEmpty(t, cmd.Example)
+
+	cmd.SetArgs([]string{"--agent", "dev"})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	assert.NotNil(t, gotOpts.IOStreams)
+	assert.Equal(t, "dev", gotOpts.Agent)
+}
+
+func TestNewCmdStatus_RequiresAgentFlag(t *testing.T) {
+	f, tio := testFactory(t)
+
+	cmd := NewCmdStatus(f, func(_ context.Context, _ *StatusOptions) error {
+		return nil
+	})
+
+	cmd.SetArgs([]string{})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `required flag(s) "agent" not set`)
+}
+
+func TestNewCmdStatus_JSONFlag(t *testing.T) {
+	f, tio := testFactory(t)
+
+	var gotOpts *StatusOptions
+	cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--agent", "dev", "--json"})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	assert.Equal(t, "dev", gotOpts.Agent)
+	assert.True(t, gotOpts.JSON)
+}
+
+func TestNewCmdStatus_Defaults(t *testing.T) {
+	f, tio := testFactory(t)
+
+	var gotOpts *StatusOptions
+	cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
+		gotOpts = opts
+		return nil
+	})
+
+	cmd.SetArgs([]string{"--agent", "dev"})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
+	assert.Equal(t, "dev", gotOpts.Agent)
+	assert.False(t, gotOpts.JSON)
+}
+
+func TestNewCmdStatus_FlagsExist(t *testing.T) {
+	f, _ := testFactory(t)
 	cmd := NewCmdStatus(f, nil)
 
-	// Test required flags
 	require.NotNil(t, cmd.Flags().Lookup("agent"))
-
-	// Test optional flags
 	require.NotNil(t, cmd.Flags().Lookup("json"))
 }
 
-func TestNewCmdStatus_FlagParsing(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      string
-		wantErr    bool
-		wantErrMsg string
-		checkOpts  func(t *testing.T, opts *StatusOptions)
-	}{
-		{
-			name:       "missing required agent flag",
-			input:      "--",
-			wantErr:    true,
-			wantErrMsg: "required flag(s) \"agent\" not set",
-		},
-		{
-			name:  "with agent flag",
-			input: "--agent dev",
-			checkOpts: func(t *testing.T, opts *StatusOptions) {
-				assert.Equal(t, "dev", opts.Agent)
-			},
-		},
-		{
-			name:  "with json flag",
-			input: "--agent dev --json",
-			checkOpts: func(t *testing.T, opts *StatusOptions) {
-				assert.Equal(t, "dev", opts.Agent)
-				assert.True(t, opts.JSON)
-			},
-		},
-	}
+func TestNewCmdStatus_FactoryDIWiring(t *testing.T) {
+	f, tio := testFactory(t)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
-			ios := tio.IOStreams
-			f := &cmdutil.Factory{IOStreams: ios}
+	var gotOpts *StatusOptions
+	cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
+		gotOpts = opts
+		return nil
+	})
 
-			var gotOpts *StatusOptions
-			cmd := NewCmdStatus(f, func(_ context.Context, opts *StatusOptions) error {
-				gotOpts = opts
-				return nil
-			})
+	cmd.SetArgs([]string{"--agent", "dev"})
+	cmd.SetIn(tio.In)
+	cmd.SetOut(tio.Out)
+	cmd.SetErr(tio.ErrOut)
 
-			argv, err := shlex.Split(tt.input)
-			require.NoError(t, err)
-			cmd.SetArgs(argv)
-			cmd.SetIn(tio.In)
-			cmd.SetOut(tio.Out)
-			cmd.SetErr(tio.ErrOut)
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, gotOpts)
 
-			_, err = cmd.ExecuteC()
-			if tt.wantErr {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), tt.wantErrMsg)
-				return
-			}
-
-			require.NoError(t, err)
-			require.NotNil(t, gotOpts)
-			if tt.checkOpts != nil {
-				tt.checkOpts(t, gotOpts)
-			}
-		})
-	}
+	// Verify Factory DI fields are wired
+	assert.Same(t, f.IOStreams, gotOpts.IOStreams)
 }
