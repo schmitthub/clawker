@@ -180,13 +180,16 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 
 	// Collect events to check for warnings
 	events := make(chan CreateContainerEvent, 64)
+	eventsDone := make(chan struct{})
 	go func() {
+		defer close(eventsDone)
 		for range events {
 		}
 	}()
 
 	result, err := CreateContainer(context.Background(), ccfg, events)
 	close(events)
+	<-eventsDone
 
 	// Should succeed despite host proxy failure (non-fatal)
 	require.NoError(t, err)

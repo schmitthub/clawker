@@ -1640,7 +1640,6 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
 				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
 					Msg("failed to clean up container after injection failure")
-				return nil, fmt.Errorf("inject onboarding: %w (also failed to clean up container %s: %v)", err, resp.ID, rmErr)
 			}
 			return nil, fmt.Errorf("inject onboarding: %w", err)
 		}
@@ -1657,7 +1656,6 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
 				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
 					Msg("failed to clean up container after injection failure")
-				return nil, fmt.Errorf("inject post-init script: %w (also failed to clean up container %s: %v)", err, resp.ID, rmErr)
 			}
 			return nil, fmt.Errorf("inject post-init script: %w", err)
 		}
@@ -1759,13 +1757,9 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 		return false
 	}
 
-	logger.Debug().Msg("host proxy started successfully")
-
-	if hp.IsRunning() {
-		envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
-		containerOpts.Env = append(containerOpts.Env, envVar)
-		logger.Debug().Str("env", envVar).Msg("injected host proxy env var")
-	}
+	envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
+	containerOpts.Env = append(containerOpts.Env, envVar)
+	logger.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
 
 	return true
 }

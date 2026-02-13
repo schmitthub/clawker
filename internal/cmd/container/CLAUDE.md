@@ -116,4 +116,4 @@ Cobra+Factory pattern: `dockertest.NewFakeClient()` → `testFactory(f)` → `Ne
 
 ## Attach-Then-Start Pattern
 
-Interactive `-it` sessions attach before starting to prevent race with `--rm` containers. I/O goroutines start before `ContainerStart`; resize + SIGWINCH after start. `AltScreen=true` in interactive `-it` `run` mode — clears progress display for clean TTY handoff. `false` for `create` and detached `run`.
+Interactive `-it` sessions attach before starting to prevent race with `--rm` containers. I/O goroutines start before `ContainerStart`; resize + SIGWINCH after start.

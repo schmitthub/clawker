@@ -26,7 +26,9 @@ Progress is communicated via an events channel (nil for silent mode). Callers ow
 
 ```go
 events := make(chan CreateContainerEvent, 64)
+done := make(chan struct{})
 go func() {
+    defer close(done)
     for ev := range events { /* drive spinner, collect warnings */ }
 }()
 
@@ -39,6 +41,7 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
     HostProxy:  f.HostProxy,
 }, events)
 close(events)
+<-done // wait for consumer goroutine before reading result
 // result.ContainerID, result.AgentName, result.ContainerName, result.HostProxyRunning
 ```
 

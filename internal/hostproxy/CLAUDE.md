@@ -164,7 +164,7 @@ Container registers session via `/callback/register`. Server starts dynamic list
 For unit tests — no subprocess spawning, no network I/O:
 
 ```go
-mock := hostproxytest.NewMockManager()          // Not running, no error
+mock := hostproxytest.NewMockManager()          // Starts not running; EnsureRunning transitions to running
 mock := hostproxytest.NewRunningMockManager(url) // Running with given URL
 mock := hostproxytest.NewFailingMockManager(err) // EnsureRunning returns error
 ```

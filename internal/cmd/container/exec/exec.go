@@ -148,9 +148,11 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// This enables GPG signing and git credential helpers in exec'd commands
 	cfg := opts.Config().Project
 	hostProxyRunning := false
-	if cfg.Security.HostProxyEnabled() {
+	if cfg.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()
-		if err := hp.EnsureRunning(); err != nil {
+		if hp == nil {
+			logger.Debug().Msg("host proxy function returned nil")
+		} else if err := hp.EnsureRunning(); err != nil {
 			logger.Warn().Err(err).Msg("failed to start host proxy for exec")
 		} else if hp.IsRunning() {
 			hostProxyRunning = true

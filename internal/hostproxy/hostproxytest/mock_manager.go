@@ -13,9 +13,10 @@ type MockManager struct {
 	URL       string // Value returned by ProxyURL
 }
 
-// NewMockManager returns a MockManager that reports as not running.
+// NewMockManager returns a MockManager that starts not running.
+// EnsureRunning transitions it to running (since EnsureErr is nil).
 func NewMockManager() *MockManager {
-	return &MockManager{}
+	return &MockManager{URL: "http://host.docker.internal:18374"}
 }
 
 // NewRunningMockManager returns a MockManager that reports as running
@@ -29,6 +30,11 @@ func NewFailingMockManager(err error) *MockManager {
 	return &MockManager{EnsureErr: err}
 }
 
-func (m *MockManager) EnsureRunning() error { return m.EnsureErr }
-func (m *MockManager) IsRunning() bool      { return m.Running }
-func (m *MockManager) ProxyURL() string     { return m.URL }
+func (m *MockManager) EnsureRunning() error {
+	if m.EnsureErr == nil {
+		m.Running = true
+	}
+	return m.EnsureErr
+}
+func (m *MockManager) IsRunning() bool { return m.Running }
+func (m *MockManager) ProxyURL() string { return m.URL }

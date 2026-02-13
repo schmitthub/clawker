@@ -114,11 +114,12 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 		return fmt.Errorf("container %q is not running", container)
 	}
 
-	// Start host proxy so browser opening and other host actions work
+	// Start host proxy so browser opening and other host actions work (non-fatal)
 	if opts.HostProxy != nil {
-		hp := opts.HostProxy()
-		if err := hp.EnsureRunning(); err != nil {
-			return fmt.Errorf("failed to start host proxy: %w", err)
+		if hp := opts.HostProxy(); hp != nil {
+			if err := hp.EnsureRunning(); err != nil {
+				logger.Warn().Err(err).Msg("failed to start host proxy for attach")
+			}
 		}
 	}
 
