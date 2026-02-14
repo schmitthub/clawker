@@ -60,10 +60,10 @@ security:
 	cfg := NewConfig()
 
 	if cfg.Project.Build.Image != "node:20-slim" {
-		t.Errorf("Project.Build.Image = %q, want %q", cfg.Project.Build.Image, "node:20-slim")
+		t.Errorf("ProjectCfg.Build.Image = %q, want %q", cfg.Project.Build.Image, "node:20-slim")
 	}
 	if cfg.Project.Workspace.RemotePath != "/workspace" {
-		t.Errorf("Project.Workspace.RemotePath = %q, want %q", cfg.Project.Workspace.RemotePath, "/workspace")
+		t.Errorf("ProjectCfg.Workspace.RemotePath = %q, want %q", cfg.Project.Workspace.RemotePath, "/workspace")
 	}
 }
 
@@ -166,17 +166,17 @@ func TestConfig_ProjectRuntimeMethods(t *testing.T) {
 	testChdir(t, tmpDir)
 	cfg := NewConfig()
 
-	// Project should have runtime methods available
+	// ProjectCfg should have runtime methods available
 	if cfg.Project == nil {
-		t.Fatal("Config.Project is nil")
+		t.Fatal("Config.ProjectCfg is nil")
 	}
 
 	// Not in a registered project, so these should return empty/false
 	if cfg.Project.Found() {
-		t.Error("Project.Found() should be false when not in a registered project")
+		t.Error("ProjectCfg.Found() should be false when not in a registered project")
 	}
 	if cfg.Project.RootDir() != "" {
-		t.Error("Project.RootDir() should be empty when not in a registered project")
+		t.Error("ProjectCfg.RootDir() should be empty when not in a registered project")
 	}
 }
 
@@ -195,7 +195,7 @@ func TestConfig_DefaultsWhenNoConfigFile(t *testing.T) {
 
 	// Should get defaults
 	if cfg.Project == nil {
-		t.Fatal("Config.Project is nil even with no config file")
+		t.Fatal("Config.ProjectCfg is nil even with no config file")
 	}
 	if cfg.Settings == nil {
 		t.Fatal("Config.Settings is nil even with no settings file")
@@ -216,7 +216,7 @@ func TestNewConfigForTest(t *testing.T) {
 	cfg := NewConfigForTest(project, settings)
 
 	if cfg.Project != project {
-		t.Error("NewConfigForTest did not set Project correctly")
+		t.Error("NewConfigForTest did not set ProjectCfg correctly")
 	}
 	if cfg.Settings != settings {
 		t.Error("NewConfigForTest did not set Settings correctly")
@@ -227,9 +227,9 @@ func TestNewConfigForTest(t *testing.T) {
 	if cfg.Resolution.ProjectKey != "test-project" {
 		t.Errorf("Resolution.ProjectKey = %q, want %q", cfg.Resolution.ProjectKey, "test-project")
 	}
-	// Project should have runtime context set
+	// ProjectCfg should have runtime context set
 	if cfg.Project.Key() != "test-project" {
-		t.Errorf("Project.Key() = %q, want %q", cfg.Project.Key(), "test-project")
+		t.Errorf("ProjectCfg.Key() = %q, want %q", cfg.Project.Key(), "test-project")
 	}
 }
 
@@ -237,7 +237,7 @@ func TestNewConfigForTest_NilInputs(t *testing.T) {
 	cfg := NewConfigForTest(nil, nil)
 
 	if cfg.Project == nil {
-		t.Fatal("NewConfigForTest(nil, nil) should use default Project")
+		t.Fatal("NewConfigForTest(nil, nil) should use default ProjectCfg")
 	}
 	if cfg.Settings == nil {
 		t.Fatal("NewConfigForTest(nil, nil) should use default Settings")

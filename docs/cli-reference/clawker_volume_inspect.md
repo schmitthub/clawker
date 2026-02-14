@@ -16,10 +16,10 @@ clawker volume inspect VOLUME [VOLUME...] [flags]
 
 ```
   # Inspect a volume
-  clawker volume inspect clawker.myapp.ralph-workspace
+  clawker volume inspect clawker.myapp.dev-workspace
 
   # Inspect multiple volumes
-  clawker volume inspect clawker.myapp.ralph-workspace clawker.myapp.ralph-config
+  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-config
 ```
 
 ### Options

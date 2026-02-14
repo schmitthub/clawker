@@ -24,7 +24,7 @@ make test-all                                    # All test suites
 2. **CLI** (`test/cli/`): Testscript-based CLI workflow validation
 3. **Commands** (`test/commands/`): Command integration tests (container create/exec/run/start)
 4. **Internals** (`test/internals/`): Container scripts/services (firewall, SSH, entrypoint)
-5. **Agents** (`test/agents/`): Full agent lifecycle, ralph tests
+5. **Agents** (`test/agents/`): Full agent lifecycle, loop tests
 
 No build tags — directory separation only. All Docker tests use `harness.BuildLightImage` + `harness.RunContainer` (dogfooded on `docker.Client`).
 
@@ -39,6 +39,9 @@ No build tags — directory separation only. All Docker tests use `harness.Build
 
 ## Recent Changes (Continued 3)
 - **opts/ → shared/ consolidation + CreateContainer + new flags** (2026-02-13): Merged `internal/cmd/container/opts/` into `internal/cmd/container/shared/`. `opts.go` → `shared/container.go`, `network.go` → `shared/network.go`, `socket_bridge.go` → `shared/socket_bridge.go`. All imports updated (8 files). Added `CreateContainer()` function as single entry point for container creation (validates flags, builds configs, creates container, injects onboarding + post-init). Replaces old `ContainerInitializer` struct with a standalone function. New flags: `--disable-firewall` (bool, skips firewall env injection), `--workdir` (string, override container working directory). Extracted `HostProxyService` interface from concrete `hostproxy.Manager` with `hostproxytest.MockManager` for unit tests.
+
+## Recent Changes (Continued 4)
+- **Loop overhaul (ralph → loop)** (2026-02-13): Complete rewrite of the autonomous loop system across 20 tasks in 7 phases on branch `a/loop`. Renamed `ralph` → `loop` throughout (command, package, config, docs). Replaced `loop run` with two strategies: `loop iterate` (repeated prompt) and `loop tasks` (task-file-driven). Core engine rewritten to use `claude -p` with `--output-format stream-json` for real-time monitoring. Added hook injection system (default Stop + SessionStart/compact hooks), full container lifecycle management (ephemeral containers created/destroyed per session), auto-generated agent names (`loop-<adjective>-<noun>`), session concurrency detection with worktree support, TUI dashboard with detach-to-minimal-text-mode, output mode switching (TUI/verbose/JSON/quiet). Config schema: `LoopConfig` with `hooks_file` and `append_system_prompt` fields. Stream-JSON parser (`stream.go`) for Claude Code NDJSON output. Tests: 3747 → 4009 (+262 net). Integration tests in `test/agents/loop_test.go` and `test/commands/loop_test.go`.
 
 ## Recent Features
 - **agent.env_file / agent.from_env / agent.env** (2026-02-11): YAML fields on AgentConfig for runtime env var injection. `env_file` loads env files with path expansion (`~`, `$VAR` — strict: unset vars error). `from_env` passes host env vars by name (unset vars skipped with warning via `CreateContainerEvent` warnings; set-but-empty included). `env` for static values. Precedence: env_file < from_env < env. Resolved via `config.ResolveAgentEnv(agent, dir) (map, []string, error)` in `shared/container.go`'s `buildRuntimeEnv`. Validated in `validator.go` (path existence via full os.Stat, empty-string rejection, var name format). Path helpers (`expandPath`, `resolvePath`) return errors. Injectable `userHomeDir` for testing.

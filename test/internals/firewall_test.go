@@ -199,7 +199,7 @@ func TestFirewall_AllowedDomainsReachable(t *testing.T) {
 	)
 
 	// Install dependencies
-	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools")
+	execResult, err := ctr.Exec(ctx, client, "sh", "-c", "apk add --no-cache ipset bind-tools bash")
 	require.NoError(t, err, "failed to install dependencies")
 	require.Equal(t, 0, execResult.ExitCode, "failed to install deps")
 
@@ -210,10 +210,21 @@ func TestFirewall_AllowedDomainsReachable(t *testing.T) {
 		ipset destroy allowed-domains 2>/dev/null || true
 		ipset create allowed-domains hash:net
 
-		# Resolve and add example.com IPs
-		for ip in $(dig +short example.com A); do
-			ipset add allowed-domains "$ip" -exist
-			echo "Added $ip to allowed-domains"
+		for domain in "example.com"; do
+			echo "Resolving $domain..."
+			ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
+			if [ -z "$ips" ]; then
+				echo "ERROR: Failed to resolve $domain"
+				exit 1
+			fi
+			while read -r ip; do
+				if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+					echo "ERROR: Invalid IP from DNS for $domain: $ip"
+					exit 1
+				fi
+				echo "Adding $ip for $domain"
+				ipset add allowed-domains "$ip" 2>/dev/null || true
+			done < <(echo "$ips")
 		done
 
 		# Allow localhost and DNS
@@ -237,12 +248,28 @@ func TestFirewall_AllowedDomainsReachable(t *testing.T) {
 
 		echo "Firewall configured with example.com allowed"
 	`
-	execResult, err = ctr.Exec(ctx, client, "sh", "-c", setupFirewall)
+	execResult, err = ctr.Exec(ctx, client, "bash", "-c", setupFirewall)
 	require.NoError(t, err, "failed to setup firewall")
+	t.Logf("Firewall setup output: %s", execResult.CleanOutput())
 	require.Equal(t, 0, execResult.ExitCode, "firewall setup failed: %s", execResult.CleanOutput())
 
+	// Debug: show ipset contents
+	ipsetResult, err := ctr.Exec(ctx, client, "ipset", "list", "allowed-domains")
+	require.NoError(t, err, "failed to list ipset")
+	t.Logf("ipset allowed-domains:\n%s", ipsetResult.CleanOutput())
+
+	// Debug: show iptables rules
+	iptablesResult, err := ctr.Exec(ctx, client, "iptables", "-L", "-n", "-v")
+	require.NoError(t, err, "failed to list iptables")
+	t.Logf("iptables rules:\n%s", iptablesResult.CleanOutput())
+
 	// Try to curl the allowed domain (should succeed)
-	curlResult, err := ctr.Exec(ctx, client, "sh", "-c", "curl --connect-timeout 10 -s -o /dev/null -w '%{http_code}' https://example.com")
+	// First, let's try with verbose output to debug
+	curlDebugResult, err := ctr.Exec(ctx, client, "sh", "-c", "curl -v -k --connect-timeout 10 https://example.com 2>&1 || true")
+	require.NoError(t, err, "failed to run curl debug")
+	t.Logf("curl verbose output:\n%s", curlDebugResult.CleanOutput())
+
+	curlResult, err := ctr.Exec(ctx, client, "sh", "-c", "curl -k --connect-timeout 10 -s -o /dev/null -w '%{http_code}' https://example.com")
 	require.NoError(t, err, "failed to run curl")
 
 	t.Logf("curl response code: %s", curlResult.CleanOutput())

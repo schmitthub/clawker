@@ -242,7 +242,7 @@ func TestSetContext(t *testing.T) {
 
 	ctx := getContext()
 	if ctx.Project != "myproject" {
-		t.Errorf("Project = %q, want %q", ctx.Project, "myproject")
+		t.Errorf("ProjectCfg = %q, want %q", ctx.Project, "myproject")
 	}
 	if ctx.Agent != "myagent" {
 		t.Errorf("Agent = %q, want %q", ctx.Agent, "myagent")
@@ -262,7 +262,7 @@ func TestSetContextPartial(t *testing.T) {
 	SetContext("onlyproject", "")
 	ctx := getContext()
 	if ctx.Project != "onlyproject" {
-		t.Errorf("Project = %q, want %q", ctx.Project, "onlyproject")
+		t.Errorf("ProjectCfg = %q, want %q", ctx.Project, "onlyproject")
 	}
 	if ctx.Agent != "" {
 		t.Errorf("Agent should be empty, got %q", ctx.Agent)
@@ -271,7 +271,7 @@ func TestSetContextPartial(t *testing.T) {
 	SetContext("", "onlyagent")
 	ctx = getContext()
 	if ctx.Project != "" {
-		t.Errorf("Project should be empty, got %q", ctx.Project)
+		t.Errorf("ProjectCfg should be empty, got %q", ctx.Project)
 	}
 	if ctx.Agent != "onlyagent" {
 		t.Errorf("Agent = %q, want %q", ctx.Agent, "onlyagent")

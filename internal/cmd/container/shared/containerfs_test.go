@@ -25,7 +25,7 @@ func TestInitContainerConfig_FreshStrategy_NoHostAuth(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
@@ -49,7 +49,7 @@ func TestInitContainerConfig_FreshStrategy_WithHostAuth(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
@@ -65,7 +65,7 @@ func TestInitContainerConfig_FreshStrategy_WithHostAuth(t *testing.T) {
 	require.Equal(t, 1, tracker.callCount(), "should call CopyToVolume once for credentials")
 
 	call := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.ralph-config", call.volumeName)
+	assert.Equal(t, "clawker.myapp.dev-config", call.volumeName)
 	assert.Equal(t, "/home/claude/.claude", call.destPath)
 }
 
@@ -77,7 +77,7 @@ func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},
@@ -93,7 +93,7 @@ func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
 	require.Equal(t, 1, tracker.callCount(), "should call CopyToVolume once for config")
 
 	call := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.ralph-config", call.volumeName)
+	assert.Equal(t, "clawker.myapp.dev-config", call.volumeName)
 	assert.Equal(t, "/home/claude/.claude", call.destPath)
 
 	// Verify the source directory contained staged content at call time
@@ -111,7 +111,7 @@ func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},
@@ -128,11 +128,11 @@ func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
 
 	// First call: config copy
 	configCall := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.ralph-config", configCall.volumeName)
+	assert.Equal(t, "clawker.myapp.dev-config", configCall.volumeName)
 
 	// Second call: credentials copy
 	credsCall := tracker.calls()[1]
-	assert.Equal(t, "clawker.myapp.ralph-config", credsCall.volumeName)
+	assert.Equal(t, "clawker.myapp.dev-config", credsCall.volumeName)
 }
 
 func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
@@ -146,7 +146,7 @@ func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode:       nil, // defaults: copy strategy, use_host_auth true
 		CopyToVolume:     tracker.copyToVolumeFn(),
@@ -169,7 +169,7 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "", // empty project
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			UseHostAuth: boolPtr(true),
@@ -182,9 +182,9 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 
 	// Default copy strategy + host auth = 2 calls (config + credentials)
 	require.Equal(t, 2, tracker.callCount())
-	// 2-segment: clawker.ralph-config (no project segment)
-	assert.Equal(t, "clawker.ralph-config", tracker.calls()[0].volumeName)
-	assert.Equal(t, "clawker.ralph-config", tracker.calls()[1].volumeName)
+	// 2-segment: clawker.dev-config (no project segment)
+	assert.Equal(t, "clawker.dev-config", tracker.calls()[0].volumeName)
+	assert.Equal(t, "clawker.dev-config", tracker.calls()[1].volumeName)
 }
 
 func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
@@ -196,7 +196,7 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			UseHostAuth: boolPtr(true),
@@ -220,7 +220,7 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
-		AgentName:        "ralph",
+		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
 		ClaudeCode: &config.ClaudeCodeConfig{
 			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},

@@ -43,8 +43,8 @@ func TestNewCmdRename(t *testing.T) {
 		},
 		{
 			name:     "with agent flag",
-			input:    "--agent ralph newname",
-			wantOpts: RenameOptions{Agent: true, container: "ralph", newName: "newname"},
+			input:    "--agent dev newname",
+			wantOpts: RenameOptions{Agent: true, container: "dev", newName: "newname"},
 		},
 	}
 
@@ -124,14 +124,14 @@ func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 
 func TestRenameRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRename()
 
 	f, tio := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.newname"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.newname"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -173,7 +173,7 @@ func TestRenameRun_ContainerNotFound(t *testing.T) {
 	f, tio := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.newname"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.newname"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -185,8 +185,8 @@ func TestRenameRun_ContainerNotFound(t *testing.T) {
 
 func TestRenameRun_RenameAPIError(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	// Set up rename to fail
 	fake.FakeAPI.ContainerRenameFn = func(_ context.Context, _ string, _ mobyclient.ContainerRenameOptions) (mobyclient.ContainerRenameResult, error) {
 		return mobyclient.ContainerRenameResult{}, fmt.Errorf("name already in use")
@@ -195,7 +195,7 @@ func TestRenameRun_RenameAPIError(t *testing.T) {
 	f, tio := testRenameFactory(t, fake)
 
 	cmd := NewCmdRename(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.taken"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.taken"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

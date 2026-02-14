@@ -54,3 +54,13 @@ security:
     #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
+
+# Autonomous loop settings (clawker loop iterate / clawker loop tasks)
+# loop:
+#   max_loops: 50                     # Maximum iterations per session
+#   stagnation_threshold: 3           # Iterations without progress before circuit trips
+#   timeout_minutes: 15               # Per-iteration timeout
+#   loop_delay_seconds: 3             # Delay between iterations
+#   skip_permissions: false            # Allow all tools without prompting
+#   hooks_file: ""                     # Custom hooks file (overrides defaults)
+#   append_system_prompt: ""           # Additional system prompt instructions

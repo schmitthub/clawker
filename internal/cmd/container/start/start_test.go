@@ -29,71 +29,71 @@ func TestNewCmdStart(t *testing.T) {
 	}{
 		{
 			name: "single container",
-			args: []string{"clawker.myapp.ralph"},
+			args: []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
-				Containers: []string{"clawker.myapp.ralph"},
+				Containers: []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "with agent flag",
 			input: "--agent",
-			args:  []string{"ralph"},
+			args:  []string{"dev"},
 			wantOpts: StartOptions{
 				Agent:      true,
-				Containers: []string{"ralph"},
+				Containers: []string{"dev"},
 			},
 		},
 		{
 			name: "multiple containers",
-			args: []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+			args: []string{"clawker.myapp.dev", "clawker.myapp.writer"},
 			wantOpts: StartOptions{
-				Containers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+				Containers: []string{"clawker.myapp.dev", "clawker.myapp.writer"},
 			},
 		},
 		{
 			name:  "with attach flag",
 			input: "--attach",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Attach:     true,
-				Containers: []string{"clawker.myapp.ralph"},
+				Containers: []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "with shorthand attach flag",
 			input: "-a",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Attach:     true,
-				Containers: []string{"clawker.myapp.ralph"},
+				Containers: []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "with interactive flag",
 			input: "--interactive",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Interactive: true,
-				Containers:  []string{"clawker.myapp.ralph"},
+				Containers:  []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "with shorthand interactive flag",
 			input: "-i",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Interactive: true,
-				Containers:  []string{"clawker.myapp.ralph"},
+				Containers:  []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "with attach and interactive flags",
 			input: "-a -i",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Attach:      true,
 				Interactive: true,
-				Containers:  []string{"clawker.myapp.ralph"},
+				Containers:  []string{"clawker.myapp.dev"},
 			},
 		},
 		{
@@ -105,20 +105,20 @@ func TestNewCmdStart(t *testing.T) {
 		{
 			name:  "combined flags shorthand",
 			input: "-ai",
-			args:  []string{"clawker.myapp.ralph"},
+			args:  []string{"clawker.myapp.dev"},
 			wantOpts: StartOptions{
 				Attach:      true,
 				Interactive: true,
-				Containers:  []string{"clawker.myapp.ralph"},
+				Containers:  []string{"clawker.myapp.dev"},
 			},
 		},
 		{
 			name:  "agent flag with multiple containers",
 			input: "--agent",
-			args:  []string{"ralph", "writer"},
+			args:  []string{"dev", "writer"},
 			wantOpts: StartOptions{
 				Agent:      true,
-				Containers: []string{"ralph", "writer"},
+				Containers: []string{"dev", "writer"},
 			},
 		},
 	}
@@ -245,14 +245,14 @@ func TestStartRun_Success(t *testing.T) {
 
 	f, tio := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerStart")
 }
 
@@ -262,7 +262,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 
 	f, tio := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.writer"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.writer"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -271,7 +271,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 	require.NoError(t, err)
 
 	out := tio.OutBuf.String()
-	assert.Contains(t, out, "clawker.myapp.ralph")
+	assert.Contains(t, out, "clawker.myapp.dev")
 	assert.Contains(t, out, "clawker.myapp.writer")
 	fake.AssertCalledN(t, "ContainerStart", 2)
 }
@@ -291,7 +291,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 
 	f, tio := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.missing"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -300,7 +300,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	// Second container had error
 	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
 }
@@ -323,12 +323,12 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 	}
 
 	cmd := NewCmdStart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.NoError(t, err) // No panic, start succeeds
-	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 }

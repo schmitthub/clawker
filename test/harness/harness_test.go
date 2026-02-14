@@ -139,7 +139,7 @@ func TestHarness_Chdir(t *testing.T) {
 func TestHarness_ContainerName(t *testing.T) {
 	h := NewHarness(t, WithProject("myapp"))
 
-	assert.Equal(t, "clawker.myapp.ralph", h.ContainerName("ralph"))
+	assert.Equal(t, "clawker.myapp.dev", h.ContainerName("dev"))
 	assert.Equal(t, "clawker.myapp.worker", h.ContainerName("worker"))
 }
 
@@ -177,9 +177,9 @@ func TestHarness_ImageName(t *testing.T) {
 func TestHarness_VolumeName(t *testing.T) {
 	h := NewHarness(t, WithProject("myapp"))
 
-	assert.Equal(t, "clawker.myapp.ralph-workspace", h.VolumeName("ralph", "workspace"))
-	assert.Equal(t, "clawker.myapp.ralph-claude", h.VolumeName("ralph", "claude"))
-	assert.Equal(t, "clawker.myapp.ralph-history", h.VolumeName("ralph", "history"))
+	assert.Equal(t, "clawker.myapp.dev-workspace", h.VolumeName("dev", "workspace"))
+	assert.Equal(t, "clawker.myapp.dev-claude", h.VolumeName("dev", "claude"))
+	assert.Equal(t, "clawker.myapp.dev-history", h.VolumeName("dev", "history"))
 }
 
 func TestHarness_NetworkName(t *testing.T) {

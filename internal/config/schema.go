@@ -19,7 +19,7 @@ type Project struct {
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
-	Ralph        *RalphConfig    `yaml:"ralph,omitempty" mapstructure:"ralph"`
+	Loop        *LoopConfig    `yaml:"loop,omitempty" mapstructure:"loop"`
 
 	// Runtime context (not persisted, injected after loading)
 	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
@@ -309,24 +309,42 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 	return *g.ForwardGPG
 }
 
-// RalphConfig defines configuration for autonomous ralph loops.
-type RalphConfig struct {
-	MaxLoops                  int  `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
-	StagnationThreshold       int  `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
-	TimeoutMinutes            int  `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
-	CallsPerHour              int  `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
-	CompletionThreshold       int  `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
-	SessionExpirationHours    int  `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
-	SameErrorThreshold        int  `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
-	OutputDeclineThreshold    int  `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
-	MaxConsecutiveTestLoops   int  `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
-	LoopDelaySeconds          int  `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
-	SafetyCompletionThreshold int  `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
-	SkipPermissions           bool `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
+// LoopConfig defines configuration for autonomous agent loops.
+type LoopConfig struct {
+	MaxLoops                  int    `yaml:"max_loops,omitempty" mapstructure:"max_loops"`
+	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" mapstructure:"stagnation_threshold"`
+	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" mapstructure:"timeout_minutes"`
+	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" mapstructure:"calls_per_hour"`
+	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" mapstructure:"completion_threshold"`
+	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" mapstructure:"session_expiration_hours"`
+	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" mapstructure:"same_error_threshold"`
+	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" mapstructure:"output_decline_threshold"`
+	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" mapstructure:"max_consecutive_test_loops"`
+	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" mapstructure:"loop_delay_seconds"`
+	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" mapstructure:"safety_completion_threshold"`
+	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" mapstructure:"skip_permissions"`
+	HooksFile                 string `yaml:"hooks_file,omitempty" mapstructure:"hooks_file"`
+	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" mapstructure:"append_system_prompt"`
+}
+
+// GetHooksFile returns the hooks file path (empty string if not configured).
+func (r *LoopConfig) GetHooksFile() string {
+	if r == nil {
+		return ""
+	}
+	return r.HooksFile
+}
+
+// GetAppendSystemPrompt returns the additional system prompt (empty string if not configured).
+func (r *LoopConfig) GetAppendSystemPrompt() string {
+	if r == nil {
+		return ""
+	}
+	return r.AppendSystemPrompt
 }
 
 // GetMaxLoops returns the max loops with default fallback.
-func (r *RalphConfig) GetMaxLoops() int {
+func (r *LoopConfig) GetMaxLoops() int {
 	if r == nil || r.MaxLoops <= 0 {
 		return 50
 	}
@@ -334,7 +352,7 @@ func (r *RalphConfig) GetMaxLoops() int {
 }
 
 // GetStagnationThreshold returns the stagnation threshold with default fallback.
-func (r *RalphConfig) GetStagnationThreshold() int {
+func (r *LoopConfig) GetStagnationThreshold() int {
 	if r == nil || r.StagnationThreshold <= 0 {
 		return 3
 	}
@@ -342,7 +360,7 @@ func (r *RalphConfig) GetStagnationThreshold() int {
 }
 
 // GetTimeoutMinutes returns the timeout in minutes with default fallback.
-func (r *RalphConfig) GetTimeoutMinutes() int {
+func (r *LoopConfig) GetTimeoutMinutes() int {
 	if r == nil || r.TimeoutMinutes <= 0 {
 		return 15
 	}

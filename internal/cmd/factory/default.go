@@ -27,7 +27,7 @@ func New(version string) *cmdutil.Factory {
 		Version: version,
 
 		Config:       configFunc(),
-		IOStreams:     ios,
+		IOStreams:    ios,
 		TUI:          tui.NewTUI(ios),
 		HostProxy:    hostProxyFunc(),
 		SocketBridge: socketBridgeFunc(),
@@ -121,7 +121,7 @@ func prompterFunc(f *cmdutil.Factory) func() *prompter.Prompter {
 }
 
 // gitManagerFunc returns a lazy closure that creates a GitManager once.
-// Uses project root from Config.Project.RootDir() as the git repository path.
+// Uses project root from Config.ProjectCfg.RootDir() as the git repository path.
 // Returns error if not in a registered project or not a git repository.
 func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	var (

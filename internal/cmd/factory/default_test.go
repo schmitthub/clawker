@@ -65,7 +65,7 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	// Create a registry file with the current directory as a project
 	registry := config.ProjectRegistry{
 		Projects: map[string]config.ProjectEntry{
-			"cwd-project": {Name: "CWD Project", Root: cwd},
+			"cwd-project": {Name: "CWD ProjectCfg", Root: cwd},
 		},
 	}
 	data, err := yaml.Marshal(registry)

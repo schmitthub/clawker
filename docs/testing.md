@@ -11,7 +11,7 @@ Clawker uses a multi-tier testing strategy with no build tags — test categorie
 | Commands | `test/commands/` | Yes | Command integration (create/exec/run/start) |
 | Internals | `test/internals/` | Yes | Container scripts/services (firewall, SSH) |
 | Whail | `test/whail/` | Yes + BuildKit | BuildKit integration, engine-level builds |
-| Agents | `test/agents/` | Yes | Full agent lifecycle, ralph tests |
+| Agents | `test/agents/` | Yes | Full agent lifecycle, loop tests |
 
 ## Running Tests
 

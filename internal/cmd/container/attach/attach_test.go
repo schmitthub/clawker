@@ -125,8 +125,8 @@ func TestCmdAttach_ArgsParsing(t *testing.T) {
 		},
 		{
 			name:              "full container name",
-			args:              []string{"clawker.myapp.ralph"},
-			expectedContainer: "clawker.myapp.ralph",
+			args:              []string{"clawker.myapp.dev"},
+			expectedContainer: "clawker.myapp.dev",
 		},
 	}
 
@@ -210,16 +210,16 @@ func TestAttachRun_ContainerNotFound(t *testing.T) {
 
 func TestAttachRun_ContainerNotRunning(t *testing.T) {
 	// Create a container fixture in "exited" state
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(fixture)
-	fake.SetupContainerInspect("clawker.myapp.ralph", fixture)
+	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdAttach(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -230,16 +230,16 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 }
 
 func TestAttachRun_NonTTYHappyPath(t *testing.T) {
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(fixture)
-	fake.SetupContainerInspect("clawker.myapp.ralph", fixture)
+	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	fake.SetupContainerAttach()
 	f, tio := testFactory(t, fake)
 
 	cmd := NewCmdAttach(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

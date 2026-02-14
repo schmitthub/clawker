@@ -44,7 +44,7 @@ type WorktreeDirEntry struct {
 	Path string
 }
 
-// WorktreeDirProvider is implemented by Config.Project() to manage
+// WorktreeDirProvider is implemented by Config.ProjectCfg() to manage
 // worktree directories in CLAWKER_HOME. Defined here for dependency inversion —
 // the git package does not import config.
 type WorktreeDirProvider interface {

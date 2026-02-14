@@ -239,12 +239,12 @@ func TestAddRun_Integration_CreatesWorktree(t *testing.T) {
 	registry, err := config.NewRegistryLoader()
 	require.NoError(t, err)
 
-	slug, err := registry.Register("Test Project", repoDir)
+	slug, err := registry.Register("Test ProjectCfg", repoDir)
 	require.NoError(t, err)
 
 	// Create a project entry with worktrees map
 	entry := &config.ProjectEntry{
-		Name:      "Test Project",
+		Name:      "Test ProjectCfg",
 		Root:      repoDir,
 		Worktrees: make(map[string]string),
 	}
@@ -302,12 +302,12 @@ func TestAddRun_Integration_SlashedBranchName(t *testing.T) {
 	registry, err := config.NewRegistryLoader()
 	require.NoError(t, err)
 
-	slug, err := registry.Register("Test Project", repoDir)
+	slug, err := registry.Register("Test ProjectCfg", repoDir)
 	require.NoError(t, err)
 
 	// Create a project entry with worktrees map
 	entry := &config.ProjectEntry{
-		Name:      "Test Project",
+		Name:      "Test ProjectCfg",
 		Root:      repoDir,
 		Worktrees: make(map[string]string),
 	}

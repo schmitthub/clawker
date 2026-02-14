@@ -17,7 +17,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
 ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
 │ git, logger │     │ bundler     │     │ docker,     │     │ cmd/*       │
 │ iostreams   │     │             │     │ workspace,  │     │             │
-│ config      │     │             │     │ ralph       │     │             │
+│ config      │     │             │     │ loop      │     │             │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
        │                                       │                   │
        ▼                                       ▼                   ▼
@@ -179,7 +179,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
         gotOpts = opts
         return nil
     })
-    cmd.SetArgs([]string{"--force", "clawker.myapp.ralph"})
+    cmd.SetArgs([]string{"--force", "clawker.myapp.dev"})
     cmd.SetIn(&bytes.Buffer{})
     cmd.SetOut(&bytes.Buffer{})
     cmd.SetErr(&bytes.Buffer{})
@@ -187,7 +187,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     err := cmd.Execute()
     require.NoError(t, err)
     assert.True(t, gotOpts.Force)
-    assert.Equal(t, []string{"clawker.myapp.ralph"}, gotOpts.Names)
+    assert.Equal(t, []string{"clawker.myapp.dev"}, gotOpts.Names)
 ```
 
 **What this tests**: flag registration, defaults, enum validation, mutual exclusion, required args, positional arg mapping.
@@ -1017,9 +1017,9 @@ func TestStopIntegration_BothPatterns(t *testing.T) {
         t.Run(tt.name, func(t *testing.T) {
             var args []string
             if tt.useFlag {
-                args = []string{"container", "stop", "--agent", "ralph"}
+                args = []string{"container", "stop", "--agent", "dev"}
             } else {
-                args = []string{"container", "stop", h.ContainerName("ralph")}
+                args = []string{"container", "stop", h.ContainerName("dev")}
             }
             // Execute and verify...
         })
@@ -1039,7 +1039,7 @@ Dogfoods clawker's own `docker.Client` via `harness.BuildLightImage` and `harnes
 |-----------|---------|
 | `test/internals/` | Container scripts/services (firewall, SSH, entrypoint, docker client) |
 | `test/commands/` | Command integration (container create/exec/run/start) |
-| `test/agents/` | Full agent lifecycle, ralph tests |
+| `test/agents/` | Full agent lifecycle, loop tests |
 
 ### Running
 

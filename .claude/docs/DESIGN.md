@@ -55,7 +55,7 @@ An agent is a named container instance. Agents have a many-to-many relationship 
 
 **Naming Convention**: `clawker.<project>.<agent>`
 
-- Example: `clawker.myapp.ralph`, `clawker.backend.worker`
+- Example: `clawker.myapp.dev`, `clawker.backend.worker`
 
 If no agent name provided, one is generated randomly (Docker-style adjective-noun).
 
@@ -78,8 +78,8 @@ dev.clawker.agent=<agent-name>
 ```
 
 **Naming Segments**:
-- 3-segment: `clawker.project.agent` (e.g., `clawker.myapp.ralph`) — when project is set
-- 2-segment: `clawker.agent` (e.g., `clawker.ralph`) — when project is empty (orphan project)
+- 3-segment: `clawker.project.agent` (e.g., `clawker.myapp.dev`) — when project is set
+- 2-segment: `clawker.agent` (e.g., `clawker.dev`) — when project is empty (orphan project)
 
 **Strict Ownership**: Clawker refuses to operate on resources without `dev.clawker.managed=true` label, even if they have the `clawker.` name prefix.
 
@@ -625,8 +625,8 @@ func TestNewCmdStop(t *testing.T) {
         wantErr bool
     }{
         {name: "no args", args: []string{}, wantErr: true},
-        {name: "with agent flag", args: []string{"--agent", "ralph"}},
-        {name: "with container name", args: []string{"clawker.myapp.ralph"}},
+        {name: "with agent flag", args: []string{"--agent", "dev"}},
+        {name: "with container name", args: []string{"clawker.myapp.dev"}},
     }
 
     for _, tt := range tests {

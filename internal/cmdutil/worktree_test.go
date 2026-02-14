@@ -17,8 +17,8 @@ func TestParseWorktreeFlag(t *testing.T) {
 		{
 			name:       "empty value generates branch name",
 			value:      "",
-			agentName:  "ralph",
-			wantBranch: "clawker-ralph-", // prefix only, timestamp varies
+			agentName:  "dev",
+			wantBranch: "clawker-dev-", // prefix only, timestamp varies
 		},
 		{
 			name:       "empty value with empty agent",
@@ -29,77 +29,77 @@ func TestParseWorktreeFlag(t *testing.T) {
 		{
 			name:       "simple branch name",
 			value:      "feat-42",
-			agentName:  "ralph",
+			agentName:  "dev",
 			wantBranch: "feat-42",
 			wantBase:   "",
 		},
 		{
 			name:       "branch with slashes",
 			value:      "feature/foo/bar",
-			agentName:  "ralph",
+			agentName:  "dev",
 			wantBranch: "feature/foo/bar",
 			wantBase:   "",
 		},
 		{
 			name:       "branch:base syntax",
 			value:      "feat-42:main",
-			agentName:  "ralph",
+			agentName:  "dev",
 			wantBranch: "feat-42",
 			wantBase:   "main",
 		},
 		{
 			name:       "branch:base with slashes",
 			value:      "feature/new:develop/v2",
-			agentName:  "ralph",
+			agentName:  "dev",
 			wantBranch: "feature/new",
 			wantBase:   "develop/v2",
 		},
 		{
 			name:      "invalid branch with shell metachar semicolon",
 			value:     "feat;rm -rf /",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid characters",
 		},
 		{
 			name:      "invalid branch with shell metachar backtick",
 			value:     "feat`whoami`",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid characters",
 		},
 		{
 			name:      "invalid branch with shell metachar dollar",
 			value:     "feat$HOME",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid characters",
 		},
 		{
 			name:      "invalid branch starting with hyphen",
 			value:     "-feat",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid characters",
 		},
 		{
 			name:      "invalid branch ending with .lock",
 			value:     "feat.lock",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "cannot end with .lock",
 		},
 		{
 			name:      "invalid branch with consecutive dots",
 			value:     "feat..bar",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "cannot contain consecutive dots",
 		},
 		{
 			name:      "invalid branch with @{",
 			value:     "feat@{0}",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid characters", // @{ contains invalid chars (@ not allowed)
 		},
 		{
 			name:      "invalid base branch",
 			value:     "feat:main;evil",
-			agentName: "ralph",
+			agentName: "dev",
 			wantErr:   "invalid base branch",
 		},
 	}

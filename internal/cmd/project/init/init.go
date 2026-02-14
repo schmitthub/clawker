@@ -45,7 +45,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default).
 
 In interactive mode (default), you will be prompted to configure:
-  - Project name
+  - ProjectCfg name
   - Base container image
   - Default workspace mode (bind or snapshot)
 
@@ -156,7 +156,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	} else {
 		// Interactive: prompt for project name
 		projectName, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "Project name",
+			Message:  "ProjectCfg name",
 			Default:  dirName,
 			Required: true,
 		})
@@ -283,7 +283,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.ConfigFileName)
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.IgnoreFileName)
-	fmt.Fprintf(ios.ErrOut, "%s Project: %s\n", cs.InfoIcon(), projectName)
+	fmt.Fprintf(ios.ErrOut, "%s ProjectCfg: %s\n", cs.InfoIcon(), projectName)
 	fmt.Fprintln(ios.ErrOut)
 	cmdutil.PrintNextSteps(ios,
 		"Review and customize clawker.yaml",

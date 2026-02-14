@@ -61,13 +61,13 @@ func TestContainerLabels(t *testing.T) {
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := ContainerLabels("", "ralph", "1.0.0", "myimage:latest", "/workspace")
+		labels := ContainerLabels("", "dev", "1.0.0", "myimage:latest", "/workspace")
 
 		if _, ok := labels[LabelProject]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
 		}
-		if got := labels[LabelAgent]; got != "ralph" {
-			t.Errorf("labels[LabelAgent] = %q, want %q", got, "ralph")
+		if got := labels[LabelAgent]; got != "dev" {
+			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
 		if got := labels[LabelManaged]; got != ManagedLabelValue {
 			t.Errorf("labels[LabelManaged] = %q, want %q", got, ManagedLabelValue)
@@ -99,13 +99,13 @@ func TestVolumeLabels(t *testing.T) {
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := VolumeLabels("", "ralph", "workspace")
+		labels := VolumeLabels("", "dev", "workspace")
 
 		if _, ok := labels[LabelProject]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
 		}
-		if got := labels[LabelAgent]; got != "ralph" {
-			t.Errorf("labels[LabelAgent] = %q, want %q", got, "ralph")
+		if got := labels[LabelAgent]; got != "dev" {
+			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
 	})
 }

@@ -21,10 +21,10 @@ clawker rename CONTAINER NEW_NAME [flags]
 
 ```
   # Rename a container using agent name
-  clawker container rename --agent ralph clawker.myapp.newname
+  clawker container rename --agent dev clawker.myapp.newname
 
   # Rename a container by full name
-  clawker container rename clawker.myapp.ralph clawker.myapp.newname
+  clawker container rename clawker.myapp.dev clawker.myapp.newname
 ```
 
 ### Options

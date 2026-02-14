@@ -49,19 +49,19 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Inspect a container using agent name
-  clawker container inspect --agent ralph
+  clawker container inspect --agent dev
 
   # Inspect a container by full name
-  clawker container inspect clawker.myapp.ralph
+  clawker container inspect clawker.myapp.dev
 
   # Inspect multiple containers
-  clawker container inspect clawker.myapp.ralph clawker.myapp.writer
+  clawker container inspect clawker.myapp.dev clawker.myapp.writer
 
   # Get specific field using Go template
-  clawker container inspect --format '{{.State.Status}}' --agent ralph
+  clawker container inspect --format '{{.State.Status}}' --agent dev
 
   # Get container IP address
-  clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent ralph`,
+  clawker container inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' --agent dev`,
 		Args: cmdutil.AgentArgsValidator(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args

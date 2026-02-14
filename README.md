@@ -23,7 +23,7 @@ Claude Code in YOLO mode can wreak havoc on your system. Setting up Docker manua
 - Seamless auth: host proxy bridges OAuth for subscription users
 - Git credential forwarding (HTTPS, SSH — zero config)
 - Network firewall (outbound blocked by default, allowlist domains)
-- Ralph: autonomous loop engine with circuit breaker protection
+- Loop: autonomous loop engine with circuit breaker protection
 - Optional monitoring stack (Prometheus + Grafana)
 - Bind or snapshot workspace modes
 - Label-based resource isolation (clawker never touches your other Docker resources)
@@ -129,17 +129,20 @@ clawker image ls                    # List clawker images
 clawker volume ls                   # List clawker volumes
 ```
 
-### Autonomous Loops (Ralph)
+### Autonomous Loops (Loop)
 
-Ralph runs Claude Code in autonomous loops with stagnation detection and circuit breaker protection:
+Loop runs Claude Code in autonomous loops with stagnation detection and circuit breaker protection:
 
 ```bash
-clawker ralph run --agent ralph --prompt "Fix all failing tests"
-clawker ralph status --agent ralph
-clawker ralph reset --agent ralph
+# Start a new autonomous loop; this prints a generated agent name like "loop-abc123"
+clawker loop iterate --prompt "Fix all failing tests"
+
+# Use the printed agent name with status/reset
+clawker loop status --agent loop-abc123
+clawker loop reset --agent loop-abc123
 ```
 
-See `clawker ralph --help` for all options and configuration.
+See `clawker loop --help` for all options and configuration.
 
 ### Scripted Workflows
 
@@ -157,7 +160,7 @@ clawker stop --agent worker
 Use `--` to separate clawker flags from Claude Code flags:
 
 ```bash
-clawker run -it --agent ralph @ -- --dangerously-skip-permissions
+clawker run -it --agent dev @ -- --dangerously-skip-permissions
 ```
 
 ### Monitoring

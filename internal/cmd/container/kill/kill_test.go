@@ -27,31 +27,31 @@ func TestNewCmdKill(t *testing.T) {
 		{
 			name:   "single container",
 			input:  "",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: KillOptions{Signal: "SIGKILL"},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
-			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
+			args:   []string{"clawker.myapp.dev", "clawker.myapp.writer"},
 			output: KillOptions{Signal: "SIGKILL"},
 		},
 		{
 			name:   "with signal flag",
 			input:  "--signal SIGTERM",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: KillOptions{Signal: "SIGTERM"},
 		},
 		{
 			name:   "with shorthand signal flag",
 			input:  "-s SIGINT",
-			args:   []string{"clawker.myapp.ralph"},
+			args:   []string{"clawker.myapp.dev"},
 			output: KillOptions{Signal: "SIGINT"},
 		},
 		{
 			name:   "with agent flag",
 			input:  "--agent",
-			args:   []string{"ralph"},
+			args:   []string{"dev"},
 			output: KillOptions{Agent: true, Signal: "SIGKILL"},
 		},
 		{
@@ -168,14 +168,14 @@ func TestKillRun_DockerConnectionError(t *testing.T) {
 
 func TestKillRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerKill()
 
 	f, tio := testKillFactory(t, fake)
 
 	cmd := NewCmdKill(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -183,7 +183,7 @@ func TestKillRun_Success(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerKill")
 }
 
@@ -194,14 +194,14 @@ func TestKillRun_ContainerNotFound(t *testing.T) {
 	f, tio := testKillFactory(t, fake)
 
 	cmd := NewCmdKill(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
 }
 
 func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {

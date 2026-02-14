@@ -216,92 +216,156 @@ clawker start [flags]
 
 ---
 
-## Autonomous Loops (`clawker ralph`)
+## Autonomous Loops (`clawker loop`)
 
-Run Claude Code in autonomous loops using the "Ralph Wiggum" technique.
+Run Claude Code in autonomous loops with circuit breaker protection.
 
-### `clawker ralph run`
+### `clawker loop iterate`
 
-Start an autonomous Claude Code loop.
+Run an agent loop with a repeated prompt.
 
 **Usage:**
 ```bash
-clawker ralph run --agent NAME [flags]
+clawker loop iterate [flags]
 ```
 
-Runs Claude Code repeatedly with `--continue` until completion or stagnation.
-The agent must output a RALPH_STATUS block for progress tracking.
+Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration starts a fresh Claude session (no conversation context carried
+forward). The agent only sees the current codebase state from previous runs.
 
-**Flags:**
+**Prompt flags** (mutually exclusive, one required):
+
+| Flag | Shorthand | Type | Description |
+|------|-----------|------|-------------|
+| `--prompt` | `-p` | string | Prompt to repeat each iteration |
+| `--prompt-file` | | string | Path to file containing the prompt |
+
+**Shared loop flags:**
 
 | Flag | Shorthand | Type | Default | Description |
 |------|-----------|------|---------|-------------|
-| `--agent` | | string | | Agent name (required) |
-| `--prompt` | `-p` | string | | Initial prompt for the first loop |
-| `--prompt-file` | | string | | File containing the initial prompt |
-| `--max-loops` | | int | 50 | Maximum number of loops |
-| `--stagnation-threshold` | | int | 3 | Loops without progress before circuit trips |
-| `--timeout` | | duration | 15m | Timeout per loop iteration |
+| `--max-loops` | | int | 50 | Maximum number of iterations |
+| `--stagnation-threshold` | | int | 3 | Iterations without progress before circuit breaker trips |
+| `--timeout` | | int | 15 | Per-iteration timeout in minutes |
+| `--loop-delay` | | int | 3 | Seconds to wait between iterations |
+| `--same-error-threshold` | | int | 5 | Consecutive identical errors before circuit breaker trips |
+| `--output-decline-threshold` | | int | 70 | Output size decline percentage before circuit breaker trips |
+| `--max-test-loops` | | int | 3 | Consecutive test-only iterations before circuit breaker trips |
+| `--safety-completion-threshold` | | int | 5 | Iterations with completion indicators but no exit signal before trip |
+| `--completion-threshold` | | int | 2 | Completion indicators required for strict completion |
+| `--strict-completion` | | bool | false | Require both exit signal and completion indicators |
+| `--skip-permissions` | | bool | false | Allow all tools without prompting |
+| `--calls-per-hour` | | int | 100 | API call rate limit per hour (0 to disable) |
 | `--reset-circuit` | | bool | false | Reset circuit breaker before starting |
-| `--quiet` | `-q` | bool | false | Suppress progress output |
+| `--hooks-file` | | string | | Path to hook configuration file (overrides default hooks) |
+| `--append-system-prompt` | | string | | Additional system prompt instructions appended to the LOOP_STATUS default |
+| `--worktree` | | string | | Run in a git worktree (branch[:base] spec) |
+| `--image` | | string | | Override container image |
+| `--verbose` | `-v` | bool | false | Stream all agent output in real time |
 | `--json` | | bool | false | Output result as JSON |
-| `--calls` | | int | 100 | Rate limit: max calls per hour (0 to disable) |
-| `--monitor` | | bool | false | Enable live monitoring output |
-| `--verbose` | `-v` | bool | false | Enable verbose output |
-| `--strict-completion` | | bool | false | Require both EXIT_SIGNAL and completion indicators |
-| `--same-error-threshold` | | int | 5 | Same error repetitions before circuit trips |
-| `--output-decline-threshold` | | int | 70 | Output decline percentage that triggers trip |
-| `--max-test-loops` | | int | 3 | Consecutive test-only loops before circuit trips |
-| `--loop-delay` | | int | 3 | Seconds to wait between loop iterations |
-| `--skip-permissions` | | bool | false | Pass --dangerously-skip-permissions to claude |
+| `--quiet` | `-q` | bool | false | Suppress output (errors only) |
+| `--format` | | string | | Output format (json, template) |
+
+**Note:** `--verbose`, `--json`, `--quiet`, and `--format` are mutually exclusive.
 
 **Examples:**
 ```bash
-# Start with an initial prompt
-clawker ralph run --agent dev --prompt "Fix all failing tests"
+# Run a loop with a prompt
+clawker loop iterate --prompt "Fix all failing tests"
 
-# Start from a prompt file
-clawker ralph run --agent dev --prompt-file task.md
+# Run with a prompt from a file
+clawker loop iterate --prompt-file task.md
 
-# Continue an existing session
-clawker ralph run --agent dev
+# Run with custom loop limits
+clawker loop iterate --prompt "Refactor auth module" --max-loops 100
 
-# Reset circuit breaker and retry
-clawker ralph run --agent dev --reset-circuit
+# Run in verbose mode (stream agent output)
+clawker loop iterate --prompt "Add tests" --verbose
 
-# Run with custom limits
-clawker ralph run --agent dev --max-loops 100 --stagnation-threshold 5
+# Run with JSON output
+clawker loop iterate --prompt "Fix bugs" --json
 
-# Run with live monitoring
-clawker ralph run --agent dev --monitor
+# Override the default hooks
+clawker loop iterate --prompt "Build feature" --hooks-file hooks.json
 
-# Run with rate limiting (5 calls per hour)
-clawker ralph run --agent dev --calls 5
-
-# Run with verbose output
-clawker ralph run --agent dev -v
-
-# Run in YOLO mode (skip all permission prompts)
-clawker ralph run --agent dev --skip-permissions
+# Run in a git worktree for isolation
+clawker loop iterate --prompt "Refactor" --worktree feature/refactor
 ```
 
 **Exit conditions:**
-- Claude signals `EXIT_SIGNAL: true` with sufficient completion indicators (strict mode)
-- Claude signals `EXIT_SIGNAL: true` or `STATUS: COMPLETE` (default mode)
-- Circuit breaker trips (no progress, same error, output decline, or test loops)
-- Maximum loops reached
-- Error during execution
-- Claude's API rate limit hit
+- Claude signals completion via a LOOP_STATUS block
+- Circuit breaker trips (stagnation, same error, output decline)
+- Maximum iterations reached
+- Timeout hit
+
+**Default output:** TUI dashboard (when stderr is a TTY) showing iteration progress, circuit breaker state, rate limits, and per-iteration cost/token/turn metrics. Press `q`/`Esc` to detach to minimal text output; `Ctrl+C` to stop the loop. Non-TTY defaults to text monitor output.
 
 ---
 
-### `clawker ralph status`
+### `clawker loop tasks`
 
-Show current ralph session status.
+Run an agent loop driven by a task file.
 
 **Usage:**
 ```bash
-clawker ralph status --agent NAME [flags]
+clawker loop tasks [flags]
+```
+
+Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration, the agent reads the task file, picks an open task, completes it,
+and marks it done. Clawker manages the loop — the agent LLM handles task
+selection and completion.
+
+**Task flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--tasks` | string | | Path to task file (required) |
+| `--task-prompt` | string | | Custom task prompt template (inline) |
+| `--task-prompt-file` | string | | Path to custom task prompt template file |
+
+**Note:** `--task-prompt` and `--task-prompt-file` are mutually exclusive. Both are optional — a default template is used if neither is provided. The template may include `%s` as a placeholder for the task file contents; if absent, tasks are appended.
+
+**Shared loop flags:** Same as `loop iterate` (see table above).
+
+**Examples:**
+```bash
+# Run a task-driven loop
+clawker loop tasks --tasks todo.md
+
+# Run with a custom task prompt template
+clawker loop tasks --tasks todo.md --task-prompt-file instructions.md
+
+# Run with inline task prompt
+clawker loop tasks --tasks todo.md --task-prompt "Complete the next task from: %s"
+
+# Run with verbose output
+clawker loop tasks --tasks todo.md --verbose
+```
+
+**Exit conditions:**
+- All tasks completed (agent signals via LOOP_STATUS)
+- Circuit breaker trips (stagnation, same error, output decline)
+- Maximum iterations reached
+- Timeout hit
+
+**Default output:** Same as `loop iterate` — TUI dashboard with cost/token tracking and detach support.
+
+---
+
+### `clawker loop status`
+
+Show current loop session status.
+
+**Usage:**
+```bash
+clawker loop status --agent NAME [flags]
 ```
 
 **Flags:**
@@ -314,21 +378,21 @@ clawker ralph status --agent NAME [flags]
 **Examples:**
 ```bash
 # Show status
-clawker ralph status --agent dev
+clawker loop status --agent dev
 
 # Output as JSON
-clawker ralph status --agent dev --json
+clawker loop status --agent dev --json
 ```
 
 ---
 
-### `clawker ralph reset`
+### `clawker loop reset`
 
 Reset the circuit breaker for an agent.
 
 **Usage:**
 ```bash
-clawker ralph reset --agent NAME [flags]
+clawker loop reset --agent NAME [flags]
 ```
 
 **Flags:**
@@ -342,41 +406,20 @@ clawker ralph reset --agent NAME [flags]
 **Examples:**
 ```bash
 # Reset circuit breaker only
-clawker ralph reset --agent dev
+clawker loop reset --agent dev
 
 # Reset everything (circuit and session)
-clawker ralph reset --agent dev --all
+clawker loop reset --agent dev --all
 ```
 
 ---
 
-### `clawker ralph tui`
-
-Launch an interactive TUI dashboard for monitoring ralph agents.
-
-**Usage:**
-```bash
-clawker ralph tui
-```
-
-Provides a real-time terminal interface for monitoring all ralph agents in the current project. Features include live agent discovery, status updates, and log streaming.
-
-**Examples:**
-```bash
-# Launch TUI for current project
-clawker ralph tui
-```
-
-**Note:** Must be run from a directory containing `clawker.yaml`.
-
----
-
-### RALPH_STATUS Block Format
+### LOOP_STATUS Block Format
 
 Claude must output this block for progress tracking:
 
 ```
----RALPH_STATUS---
+---LOOP_STATUS---
 STATUS: IN_PROGRESS | COMPLETE | BLOCKED
 TASKS_COMPLETED_THIS_LOOP: <number>
 FILES_MODIFIED: <number>
@@ -384,7 +427,7 @@ TESTS_STATUS: PASSING | FAILING | NOT_RUN
 WORK_TYPE: IMPLEMENTATION | TESTING | DOCUMENTATION | REFACTORING
 EXIT_SIGNAL: false | true
 RECOMMENDATION: <one line>
----END_RALPH_STATUS---
+---END_LOOP_STATUS---
 ```
 
 Add instructions to your project's CLAUDE.md to have the agent output this block.
@@ -550,7 +593,7 @@ clawker run -it @
 
 # Works with all run/create flags:
 clawker run -it --rm @
-clawker run -it --agent ralph @
+clawker run -it --agent dev @
 clawker container create --agent sandbox @
 
 # When using with Claude Code flags, @ stops clawker's flag parsing:
@@ -612,22 +655,22 @@ When `--agent` is provided, the container name is resolved as `clawker.<project>
 
 ```bash
 # Instead of:
-clawker container stop clawker.myproject.ralph
+clawker container stop clawker.myproject.dev
 
 # You can use:
-clawker container stop --agent ralph
+clawker container stop --agent dev
 
 # View logs
-clawker container logs --agent ralph --follow
+clawker container logs --agent dev --follow
 
 # Copy files: :PATH uses the --agent flag value
-clawker container cp --agent ralph :/app/config.json ./config.json
+clawker container cp --agent dev :/app/config.json ./config.json
 
 # Copy files: name:PATH resolves name as agent (overrides --agent)
-clawker container cp --agent ralph writer:/app/output.txt ./output.txt
+clawker container cp --agent dev writer:/app/output.txt ./output.txt
 
 # Rename (only NEW_NAME required with --agent)
-clawker container rename --agent ralph clawker.myproject.newname
+clawker container rename --agent dev clawker.myproject.newname
 ```
 
 **Mutual exclusivity:**
@@ -886,10 +929,10 @@ clawker container ls -a --format '{{.Names}}'
 clawker container ls -a --format '{{.Name}} {{.Status}}'
 
 # Get container state
-clawker container inspect --agent ralph --format '{{.State.Status}}'
+clawker container inspect --agent dev --format '{{.State.Status}}'
 
 # Get container IP
-clawker container inspect --agent ralph --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+clawker container inspect --agent dev --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 ```
 
 ---
@@ -925,10 +968,10 @@ When using `--agent`, you must also specify the `@` symbol to auto-resolve the i
 
 ```bash
 # Standard pattern: --agent with @ for image resolution
-clawker run -it --rm --agent ralph @
+clawker run -it --rm --agent dev @
 
 # Pass flags to Claude Code after @ and --
-clawker run -it --rm --agent ralph @ -- --dangerously-skip-permissions -p "Fix bugs"
+clawker run -it --rm --agent dev @ -- --dangerously-skip-permissions -p "Fix bugs"
 ```
 
 **Flag conflict: `-p`**
@@ -940,7 +983,7 @@ Clawker uses `-p` as shorthand for `--publish` (port mapping), while Claude Code
 clawker run -it --rm -p "Fix bugs"  # ERROR: invalid port format
 
 # Correct: Use @ for image, -- to separate, then Claude's -p
-clawker run -it --rm --agent ralph @ -- -p "Fix bugs"
+clawker run -it --rm --agent dev @ -- -p "Fix bugs"
 
 # Also works with explicit image name
 clawker run -it --rm clawker-myapp:latest -- -p "Fix bugs"

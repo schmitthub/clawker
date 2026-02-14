@@ -22,7 +22,7 @@ import (
 // Additional methods provide clawker-specific high-level operations.
 type Client struct {
 	*whail.Engine
-	cfg *config.Config // lazily provides Project() and Settings() for image resolution
+	cfg *config.Config // lazily provides ProjectCfg() and Settings() for image resolution
 
 	// BuildDefaultImageFunc overrides BuildDefaultImage when non-nil.
 	// Used by fawker/tests to inject fake build behavior.

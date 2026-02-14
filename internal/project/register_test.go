@@ -25,7 +25,7 @@ func TestRegisterProject_HappyPath(t *testing.T) {
 		t.Fatalf("NewRegistryLoader() error: %v", err)
 	}
 
-	slug, err := RegisterProject(tios.IOStreams, registryLoader, projectDir, "My Project")
+	slug, err := RegisterProject(tios.IOStreams, registryLoader, projectDir, "My ProjectCfg")
 	if err != nil {
 		t.Fatalf("RegisterProject() error: %v", err)
 	}

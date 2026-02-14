@@ -107,7 +107,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	} else {
 		prompter := opts.Prompter()
 		projectName, err = prompter.String(prompterpkg.PromptConfig{
-			Message:  "Project name",
+			Message:  "ProjectCfg name",
 			Default:  dirName,
 			Required: true,
 		})

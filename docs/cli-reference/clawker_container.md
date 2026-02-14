@@ -19,10 +19,10 @@ container management commands.
   clawker container ls -a
 
   # Remove a container
-  clawker container rm clawker.myapp.ralph
+  clawker container rm clawker.myapp.dev
 
   # Stop a running container
-  clawker container stop clawker.myapp.ralph
+  clawker container stop clawker.myapp.dev
 ```
 
 ### Subcommands

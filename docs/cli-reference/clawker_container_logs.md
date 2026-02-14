@@ -21,22 +21,22 @@ clawker container logs [CONTAINER] [flags]
 
 ```
   # Show logs using agent name
-  clawker container logs --agent ralph
+  clawker container logs --agent dev
 
   # Show logs by full container name
-  clawker container logs clawker.myapp.ralph
+  clawker container logs clawker.myapp.dev
 
   # Follow log output (like tail -f)
-  clawker container logs --follow --agent ralph
+  clawker container logs --follow --agent dev
 
   # Show last 50 lines
-  clawker container logs --tail 50 --agent ralph
+  clawker container logs --tail 50 --agent dev
 
   # Show logs since a timestamp
-  clawker container logs --since 2024-01-01T00:00:00Z --agent ralph
+  clawker container logs --since 2024-01-01T00:00:00Z --agent dev
 
   # Show logs with timestamps
-  clawker container logs --timestamps --agent ralph
+  clawker container logs --timestamps --agent dev
 ```
 
 ### Options

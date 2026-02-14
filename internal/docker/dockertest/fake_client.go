@@ -8,7 +8,7 @@
 // Usage:
 //
 //	fake := dockertest.NewFakeClient()
-//	fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "ralph"))
+//	fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "dev"))
 //	containers, err := fake.Client.ListContainers(ctx, true)
 //
 //	fake.AssertCalled(t, "ContainerList")

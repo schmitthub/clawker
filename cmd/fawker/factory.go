@@ -115,7 +115,7 @@ func fawkerClient(scenarioName string, cfg *config.Config) (*docker.Client, erro
 
 	// Wire container list with some demo fixtures.
 	fake.SetupContainerList(
-		dockertest.RunningContainerFixture("fawker-demo", "ralph"),
+		dockertest.RunningContainerFixture("fawker-demo", "dev"),
 		dockertest.ContainerFixture("fawker-demo", "worker", "node:20-slim"),
 	)
 

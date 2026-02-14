@@ -66,25 +66,25 @@ Container name can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Run a command
-  clawker container exec clawker.myapp.ralph ls -la
+  clawker container exec clawker.myapp.dev ls -la
 
   # Run a command using agent name (resolves via project config)
-  clawker container exec --agent ralph ls -la
+  clawker container exec --agent dev ls -la
 
   # Run an interactive shell
-  clawker container exec -it clawker.myapp.ralph /bin/bash
+  clawker container exec -it clawker.myapp.dev /bin/bash
 
   # Run an interactive shell using agent name
-  clawker container exec -it --agent ralph /bin/bash
+  clawker container exec -it --agent dev /bin/bash
 
   # Run with environment variable
-  clawker container exec -e FOO=bar clawker.myapp.ralph env
+  clawker container exec -e FOO=bar clawker.myapp.dev env
 
   # Run as a specific user
-  clawker container exec -u root clawker.myapp.ralph whoami
+  clawker container exec -u root clawker.myapp.dev whoami
 
   # Run in a specific directory
-  clawker container exec -w /tmp clawker.myapp.ralph pwd`,
+  clawker container exec -w /tmp clawker.myapp.dev pwd`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]

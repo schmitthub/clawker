@@ -95,7 +95,7 @@ func TestNewCmdWait_AgentFlag(t *testing.T) {
 		return nil
 	})
 
-	cmd.SetArgs([]string{"--agent", "ralph"})
+	cmd.SetArgs([]string{"--agent", "dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -104,7 +104,7 @@ func TestNewCmdWait_AgentFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotOpts)
 	require.True(t, gotOpts.Agent)
-	require.Equal(t, []string{"ralph"}, gotOpts.Containers)
+	require.Equal(t, []string{"dev"}, gotOpts.Containers)
 }
 
 func TestNewCmdWait_Properties(t *testing.T) {
@@ -137,14 +137,14 @@ func testWaitFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factor
 
 func TestWaitRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)
 
 	f, tio := testWaitFactory(t, fake)
 
 	cmd := NewCmdWait(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -159,14 +159,14 @@ func TestWaitRun_Success(t *testing.T) {
 
 func TestWaitRun_NonZeroExitCode(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(42)
 
 	f, tio := testWaitFactory(t, fake)
 
 	cmd := NewCmdWait(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -208,26 +208,26 @@ func TestWaitRun_ContainerNotFound(t *testing.T) {
 	f, tio := testWaitFactory(t, fake)
 
 	cmd := NewCmdWait(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+	assert.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
 }
 
 func TestWaitRun_PartialFailure(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)
 
 	f, tio := testWaitFactory(t, fake)
 
 	cmd := NewCmdWait(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.missing"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

@@ -114,7 +114,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 	// Success output
 	fmt.Fprintln(ios.ErrOut, "Configuration is valid!")
 	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "  Project:    %s\n", cfg.Project)
+	fmt.Fprintf(ios.ErrOut, "  ProjectCfg:    %s\n", cfg.Project)
 	fmt.Fprintf(ios.ErrOut, "  Image:      %s\n", cfg.Build.Image)
 	if cfg.Build.Dockerfile != "" {
 		fmt.Fprintf(ios.ErrOut, "  Dockerfile: %s\n", cfg.Build.Dockerfile)

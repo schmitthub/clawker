@@ -63,13 +63,13 @@ func TestNewCmdCp(t *testing.T) {
 		},
 		{
 			name:     "agent flag with container path",
-			input:    "--agent ralph:/app/file.txt ./file.txt",
-			wantOpts: CpOptions{Agent: true, Src: "ralph:/app/file.txt", Dst: "./file.txt"},
+			input:    "--agent dev:/app/file.txt ./file.txt",
+			wantOpts: CpOptions{Agent: true, Src: "dev:/app/file.txt", Dst: "./file.txt"},
 		},
 		{
 			name:     "agent flag copy to container",
-			input:    "--agent ./file.txt ralph:/app/file.txt",
-			wantOpts: CpOptions{Agent: true, Src: "./file.txt", Dst: "ralph:/app/file.txt"},
+			input:    "--agent ./file.txt dev:/app/file.txt",
+			wantOpts: CpOptions{Agent: true, Src: "./file.txt", Dst: "dev:/app/file.txt"},
 		},
 	}
 
@@ -153,8 +153,8 @@ func TestParseContainerPath(t *testing.T) {
 		},
 		{
 			name:            "full container name",
-			input:           "clawker.myapp.ralph:/workspace/config.json",
-			wantContainer:   "clawker.myapp.ralph",
+			input:           "clawker.myapp.dev:/workspace/config.json",
+			wantContainer:   "clawker.myapp.dev",
 			wantPath:        "/workspace/config.json",
 			wantIsContainer: true,
 		},
@@ -282,14 +282,14 @@ func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory,
 
 func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyFromContainer()
 
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph:/app/file.txt", "-"})
+	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -301,14 +301,14 @@ func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 
 func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyToContainer()
 
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
-	cmd.SetArgs([]string{"-", "clawker.myapp.ralph:/app/file.txt"})
+	cmd.SetArgs([]string{"-", "clawker.myapp.dev:/app/file.txt"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -331,7 +331,7 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 	}
 
 	cmd := NewCmdCp(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph:/app/file.txt", "-"})
+	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -348,7 +348,7 @@ func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph:/app/file.txt", "-"})
+	cmd.SetArgs([]string{"clawker.myapp.dev:/app/file.txt", "-"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -365,7 +365,7 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
-	cmd.SetArgs([]string{"-", "clawker.myapp.ralph:/app/file.txt"})
+	cmd.SetArgs([]string{"-", "clawker.myapp.dev:/app/file.txt"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

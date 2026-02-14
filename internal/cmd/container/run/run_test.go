@@ -204,9 +204,9 @@ func TestNewCmdRun(t *testing.T) {
 		},
 		{
 			name:      "@ symbol with agent flag",
-			input:     "--agent ralph",
+			input:     "--agent dev",
 			args:      []string{"@"},
-			wantAgent: "ralph",
+			wantAgent: "dev",
 			wantImage: "@",
 		},
 		{
@@ -295,12 +295,12 @@ func TestNewCmdRun(t *testing.T) {
 			// After --, all remaining args are positional. The real RunE always
 			// treats args[0] as Image, so a flag-like arg becomes the image.
 			name:           "flags only as command with -- separator",
-			input:          "-it --rm --agent ralph --",
+			input:          "-it --rm --agent dev --",
 			args:           []string{"--allow-dangerously-skip-permissions", "-p", "Fix bugs"},
 			wantTTY:        true,
 			wantStdin:      true,
 			wantAutoRemove: true,
-			wantAgent:      "ralph",
+			wantAgent:      "dev",
 			wantImage:      "--allow-dangerously-skip-permissions",
 			wantCommand:    []string{"-p", "Fix bugs"},
 		},

@@ -12,7 +12,7 @@ func TestInMemoryRegistry_PathError(t *testing.T) {
 	pathErr := errors.New("failed to resolve clawker home")
 
 	registry := NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithErrorWorktree("error-branch", "error-branch", pathErr).
 		Registry().
 		Build()
@@ -55,7 +55,7 @@ func TestInMemoryRegistry_SetWorktreePathError(t *testing.T) {
 	registry := NewInMemoryRegistry()
 
 	// Add a project with a worktree
-	_, err := registry.Register("Test Project", "/fake/project")
+	_, err := registry.Register("Test ProjectCfg", "/fake/project")
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}

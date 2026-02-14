@@ -30,49 +30,49 @@ func TestNewCmdRemove(t *testing.T) {
 	}{
 		{
 			name:     "single container",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "multiple containers",
-			args:     []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"}},
+			args:     []string{"clawker.myapp.dev", "clawker.myapp.writer"},
+			wantOpts: RemoveOptions{Containers: []string{"clawker.myapp.dev", "clawker.myapp.writer"}},
 		},
 		{
 			name:     "with force flag",
 			input:    "--force",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "with shorthand force flag",
 			input:    "-f",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Force: true, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "with volumes flag",
 			input:    "--volumes",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "with shorthand volumes flag",
 			input:    "-v",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Volumes: true, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "with force and volumes flags",
 			input:    "-f -v",
-			args:     []string{"clawker.myapp.ralph"},
-			wantOpts: RemoveOptions{Force: true, Volumes: true, Containers: []string{"clawker.myapp.ralph"}},
+			args:     []string{"clawker.myapp.dev"},
+			wantOpts: RemoveOptions{Force: true, Volumes: true, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:     "with agent flag",
 			input:    "--agent",
-			args:     []string{"ralph"},
-			wantOpts: RemoveOptions{Agent: true, Containers: []string{"ralph"}},
+			args:     []string{"dev"},
+			wantOpts: RemoveOptions{Agent: true, Containers: []string{"dev"}},
 		},
 		{
 			name:       "no container specified",
@@ -150,8 +150,8 @@ func TestCmdRemove_Properties(t *testing.T) {
 
 func TestRemoveRun_StopsBridge(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: bridge must stop before docker remove
 	var dockerRemoveCalled bool
@@ -168,7 +168,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdRemove(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -183,8 +183,8 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 
 func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
 		return mobyclient.ContainerRemoveResult{}, nil
@@ -197,7 +197,7 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdRemove(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -212,8 +212,8 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 
 func TestRemoveRun_NilSocketBridge(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerRemoveFn = func(_ context.Context, _ string, _ mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
 		return mobyclient.ContainerRemoveResult{}, nil
@@ -223,7 +223,7 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 	f, tio := testFactory(t, fake, nil)
 
 	cmd := NewCmdRemove(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -236,8 +236,8 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 
 func TestRemoveRun_WithVolumes(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.ContainerFixture("myapp", "ralph", "node:20-slim")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Override ContainerInspect to include State (RemoveContainerWithVolumes accesses State.Running)
 	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
@@ -265,7 +265,7 @@ func TestRemoveRun_WithVolumes(t *testing.T) {
 	f, tio := testFactory(t, fake, nil)
 
 	cmd := NewCmdRemove(f, nil)
-	cmd.SetArgs([]string{"--force", "--volumes", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--force", "--volumes", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

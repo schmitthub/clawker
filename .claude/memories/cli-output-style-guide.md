@@ -1057,12 +1057,12 @@ return cmdutil.SilentError
 ```
 
 **Priority files** (highest call count):
-- `ralph/run/run.go` (5 calls)
+- `loop/run/run.go` (5 calls)
 - `generate/generate.go` (4 calls)
-- `ralph/status/status.go` (4 calls)
+- `loop/status/status.go` (4 calls)
 - `container/create/create.go` (4 calls)
 - `container/run/run.go` (3 calls)
-- `ralph/reset/reset.go` (3 calls)
+- `loop/reset/reset.go` (3 calls)
 - `config/check/check.go` (3 calls)
 
 ### Migration Recipe: `cmdutil.PrintWarning`

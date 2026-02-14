@@ -55,8 +55,8 @@ func TestNewCmdRestart(t *testing.T) {
 		},
 		{
 			name:     "with agent flag",
-			input:    "--agent ralph",
-			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"ralph"}},
+			input:    "--agent dev",
+			wantOpts: RestartOptions{Agent: true, Timeout: 10, Signal: "", Containers: []string{"dev"}},
 		},
 		{
 			name:       "no arguments",
@@ -175,14 +175,14 @@ func testRestartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fac
 
 func TestRestartRun_Success(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRestart()
 
 	f, tio := testRestartFactory(t, fake)
 
 	cmd := NewCmdRestart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -190,7 +190,7 @@ func TestRestartRun_Success(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerRestart")
 }
 
@@ -224,26 +224,26 @@ func TestRestartRun_ContainerNotFound(t *testing.T) {
 	f, tio := testRestartFactory(t, fake)
 
 	cmd := NewCmdRestart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
 
 	err := cmd.Execute()
 	require.ErrorIs(t, err, cmdutil.SilentError)
-	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.ralph")
+	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
 }
 
 func TestRestartRun_PartialFailure(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture1 := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture1)
+	fixture1 := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture1)
 	fake.SetupContainerRestart()
 
 	f, tio := testRestartFactory(t, fake)
 
 	cmd := NewCmdRestart(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph", "clawker.myapp.missing"})
+	cmd.SetArgs([]string{"clawker.myapp.dev", "clawker.myapp.missing"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -252,7 +252,7 @@ func TestRestartRun_PartialFailure(t *testing.T) {
 	require.ErrorIs(t, err, cmdutil.SilentError)
 
 	// First container succeeded
-	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.ralph")
+	require.Contains(t, tio.OutBuf.String(), "clawker.myapp.dev")
 	// Second container had error
 	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.missing")
 }

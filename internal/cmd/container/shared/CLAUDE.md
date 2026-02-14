@@ -42,7 +42,7 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
 }, events)
 close(events)
 <-done // wait for consumer goroutine before reading result
-// result.ContainerID, result.AgentName, result.ContainerName, result.HostProxyRunning
+// result.ContainerID, result.AgentName, result.ContainerName, result.WorkDir, result.HostProxyRunning
 ```
 
 **Steps** (streamed via events channel):
@@ -65,7 +65,7 @@ import "github.com/schmitthub/clawker/internal/cmd/container/shared"
 // Copy host config and/or credentials to config volume
 err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
     ProjectName:      "myapp",
-    AgentName:        "ralph",
+    AgentName:        "dev",
     ContainerWorkDir: cfg.Workspace.RemotePath,
     ClaudeCode:       cfg.Agent.ClaudeCode,
     CopyToVolume:     client.CopyToVolume,
@@ -102,7 +102,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
 | `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, GitManager, HostProxy, Version, color flags |
-| `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, HostProxyRunning |
+| `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
 | `StepStatus` | Step lifecycle: `StepRunning`, `StepComplete`, `StepCached` |
 | `MessageType` | Event severity: `MessageInfo`, `MessageWarning` |

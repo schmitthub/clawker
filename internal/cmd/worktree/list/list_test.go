@@ -174,7 +174,7 @@ func TestListRun_HealthyWorktree(t *testing.T) {
 
 	// Use in-memory registry with healthy worktree
 	registry := configtest.NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithHealthyWorktree("feature-a", "feature-a").
 		Registry().
 		Build()
@@ -220,7 +220,7 @@ func TestListRun_StaleWorktree(t *testing.T) {
 
 	// Use in-memory registry with stale worktree (dir missing, git missing)
 	registry := configtest.NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithStaleWorktree("stale-branch", "stale-branch").
 		Registry().
 		Build()
@@ -264,7 +264,7 @@ func TestListRun_MixedWorktrees(t *testing.T) {
 
 	// Use in-memory registry with both healthy and stale worktrees
 	registry := configtest.NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithHealthyWorktree("healthy-branch", "healthy-branch").
 		WithStaleWorktree("stale-branch", "stale-branch").
 		WithPartialWorktree("partial-branch", "partial-branch", true, false). // dir exists, git missing
@@ -308,7 +308,7 @@ func TestListRun_QuietMode(t *testing.T) {
 
 	// Use in-memory registry with healthy worktrees
 	registry := configtest.NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithHealthyWorktree("feature-a", "feature-a").
 		WithHealthyWorktree("feature-b", "feature-b").
 		Registry().
@@ -356,7 +356,7 @@ func TestListRun_PathError(t *testing.T) {
 
 	// Use in-memory registry with one healthy worktree and one with path error
 	registry := configtest.NewInMemoryRegistryBuilder().
-		WithProject("test-project", "Test Project", "/fake/project").
+		WithProject("test-project", "Test ProjectCfg", "/fake/project").
 		WithHealthyWorktree("healthy-branch", "healthy-branch").
 		WithErrorWorktree("error-branch", "error-branch", pathErr).
 		Registry().

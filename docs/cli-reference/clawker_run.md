@@ -77,6 +77,7 @@ clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
       --device-read-iops throttle-device    Limit read rate (IO per second) from a device
       --device-write-bps throttle-device    Limit write rate (bytes per second) to a device
       --device-write-iops throttle-device   Limit write rate (IO per second) to a device
+      --disable-firewall                    Disable container firewall regardless of project config
       --dns stringArray                     Set custom DNS servers
       --dns-option stringArray              Set DNS options
       --dns-search stringArray              Set custom DNS search domains
@@ -146,6 +147,7 @@ clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
   -v, --volume stringArray                  Bind mount a volume
       --volume-driver string                Optional volume driver for the container
       --volumes-from stringArray            Mount volumes from the specified container(s)
+      --workdir string                      Override container working directory
       --worktree string                     Use git worktree: 'branch' to use/create, 'branch:base' to create from base
 ```
 

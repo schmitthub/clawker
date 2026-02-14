@@ -1468,6 +1468,7 @@ type CreateContainerResult struct {
 	ContainerID      string
 	AgentName        string
 	ContainerName    string
+	WorkDir          string
 	HostProxyRunning bool
 }
 
@@ -1607,6 +1608,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	extraLabels := map[string]string{
 		docker.LabelProject: projectCfg.Project,
 		docker.LabelAgent:   agentName,
+		docker.LabelWorkdir: wd,
 	}
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
@@ -1667,6 +1669,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		ContainerID:      resp.ID,
 		AgentName:        agentName,
 		ContainerName:    containerName,
+		WorkDir:          wd,
 		HostProxyRunning: hostProxyRunning,
 	}, nil
 }

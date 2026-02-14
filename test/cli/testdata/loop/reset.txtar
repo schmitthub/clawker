@@ -1,0 +1,24 @@
+# Test loop reset command
+# Verifies: reset command executes successfully even when no session exists
+
+# Reset circuit breaker (should succeed even with no session)
+exec clawker loop reset --agent testdev
+stderr 'Circuit breaker reset'
+
+# Reset with --quiet flag (no output)
+exec clawker loop reset --agent testdev --quiet
+! stderr 'Circuit breaker'
+
+# Reset with --all flag
+exec clawker loop reset --agent testdev --all
+stderr 'Circuit breaker reset'
+
+-- clawker.yaml --
+version: "1"
+
+build:
+  image: "alpine:latest"
+
+security:
+  firewall:
+    enable: false

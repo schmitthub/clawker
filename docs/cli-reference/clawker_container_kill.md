@@ -24,17 +24,17 @@ clawker container kill [CONTAINER...] [flags]
 
 ```
   # Kill a container using agent name
-  clawker container kill --agent ralph
+  clawker container kill --agent dev
 
   # Kill a container by full name (SIGKILL)
-  clawker container kill clawker.myapp.ralph
+  clawker container kill clawker.myapp.dev
 
   # Kill multiple containers
-  clawker container kill clawker.myapp.ralph clawker.myapp.writer
+  clawker container kill clawker.myapp.dev clawker.myapp.writer
 
   # Send specific signal
-  clawker container kill --signal SIGTERM --agent ralph
-  clawker container kill -s SIGINT clawker.myapp.ralph
+  clawker container kill --signal SIGTERM --agent dev
+  clawker container kill -s SIGINT clawker.myapp.dev
 ```
 
 ### Options

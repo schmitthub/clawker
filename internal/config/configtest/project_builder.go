@@ -67,9 +67,9 @@ func (b *ProjectBuilder) WithSecurity(security config.SecurityConfig) *ProjectBu
 	return b
 }
 
-// WithRalph sets the ralph configuration.
-func (b *ProjectBuilder) WithRalph(ralph *config.RalphConfig) *ProjectBuilder {
-	b.cfg.Ralph = ralph
+// WithLoop sets the loop configuration.
+func (b *ProjectBuilder) WithLoop(loop *config.LoopConfig) *ProjectBuilder {
+	b.cfg.Loop = loop
 	return b
 }
 
@@ -91,6 +91,6 @@ func (b *ProjectBuilder) Build() *config.Project {
 		Agent:        b.cfg.Agent,
 		Workspace:    b.cfg.Workspace,
 		Security:     b.cfg.Security,
-		Ralph:        b.cfg.Ralph,
+		Loop:        b.cfg.Loop,
 	}
 }

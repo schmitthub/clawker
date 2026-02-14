@@ -21,13 +21,13 @@ clawker container unpause [CONTAINER...] [flags]
 
 ```
   # Unpause a container using agent name
-  clawker container unpause --agent ralph
+  clawker container unpause --agent dev
 
   # Unpause a container by full name
-  clawker container unpause clawker.myapp.ralph
+  clawker container unpause clawker.myapp.dev
 
   # Unpause multiple containers
-  clawker container unpause clawker.myapp.ralph clawker.myapp.writer
+  clawker container unpause clawker.myapp.dev clawker.myapp.writer
 ```
 
 ### Options

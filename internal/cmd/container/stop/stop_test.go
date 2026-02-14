@@ -30,38 +30,38 @@ func TestNewCmdStop(t *testing.T) {
 		{
 			name:   "single container",
 			input:  "",
-			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10, Containers: []string{"clawker.myapp.ralph"}},
+			args:   []string{"clawker.myapp.dev"},
+			output: StopOptions{Timeout: 10, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:   "multiple containers",
 			input:  "",
-			args:   []string{"clawker.myapp.ralph", "clawker.myapp.writer"},
-			output: StopOptions{Timeout: 10, Containers: []string{"clawker.myapp.ralph", "clawker.myapp.writer"}},
+			args:   []string{"clawker.myapp.dev", "clawker.myapp.writer"},
+			output: StopOptions{Timeout: 10, Containers: []string{"clawker.myapp.dev", "clawker.myapp.writer"}},
 		},
 		{
 			name:   "with timeout flag",
 			input:  "--time 20",
-			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 20, Containers: []string{"clawker.myapp.ralph"}},
+			args:   []string{"clawker.myapp.dev"},
+			output: StopOptions{Timeout: 20, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:   "with shorthand timeout flag",
 			input:  "-t 30",
-			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 30, Containers: []string{"clawker.myapp.ralph"}},
+			args:   []string{"clawker.myapp.dev"},
+			output: StopOptions{Timeout: 30, Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:   "with signal flag",
 			input:  "--signal SIGKILL",
-			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10, Signal: "SIGKILL", Containers: []string{"clawker.myapp.ralph"}},
+			args:   []string{"clawker.myapp.dev"},
+			output: StopOptions{Timeout: 10, Signal: "SIGKILL", Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:   "with shorthand signal flag",
 			input:  "-s SIGINT",
-			args:   []string{"clawker.myapp.ralph"},
-			output: StopOptions{Timeout: 10, Signal: "SIGINT", Containers: []string{"clawker.myapp.ralph"}},
+			args:   []string{"clawker.myapp.dev"},
+			output: StopOptions{Timeout: 10, Signal: "SIGINT", Containers: []string{"clawker.myapp.dev"}},
 		},
 		{
 			name:       "no container specified",
@@ -73,8 +73,8 @@ func TestNewCmdStop(t *testing.T) {
 		{
 			name:   "with agent flag",
 			input:  "--agent",
-			args:   []string{"ralph"},
-			output: StopOptions{Agent: true, Timeout: 10, Containers: []string{"ralph"}},
+			args:   []string{"dev"},
+			output: StopOptions{Agent: true, Timeout: 10, Containers: []string{"dev"}},
 		},
 	}
 
@@ -147,8 +147,8 @@ func TestCmdStop_Properties(t *testing.T) {
 
 func TestStopRun_StopsBridge(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	// Track ordering: bridge must stop before docker stop
 	var dockerStopCalled bool
@@ -165,7 +165,7 @@ func TestStopRun_StopsBridge(t *testing.T) {
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -180,8 +180,8 @@ func TestStopRun_StopsBridge(t *testing.T) {
 
 func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
 		return mobyclient.ContainerStopResult{}, nil
@@ -194,7 +194,7 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -209,8 +209,8 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 
 func TestStopRun_NilSocketBridge(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerStopFn = func(_ context.Context, _ string, _ mobyclient.ContainerStopOptions) (mobyclient.ContainerStopResult, error) {
 		return mobyclient.ContainerStopResult{}, nil
@@ -220,7 +220,7 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 	f, tio := testFactory(t, fake, nil)
 
 	cmd := NewCmdStop(f, nil)
-	cmd.SetArgs([]string{"clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)
@@ -233,8 +233,8 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 
 func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	fixture := dockertest.RunningContainerFixture("myapp", "ralph")
-	fake.SetupFindContainer("clawker.myapp.ralph", fixture)
+	fixture := dockertest.RunningContainerFixture("myapp", "dev")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
 	fake.FakeAPI.ContainerKillFn = func(_ context.Context, _ string, _ mobyclient.ContainerKillOptions) (mobyclient.ContainerKillResult, error) {
 		return mobyclient.ContainerKillResult{}, nil
@@ -244,7 +244,7 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 	f, tio := testFactory(t, fake, mock)
 
 	cmd := NewCmdStop(f, nil)
-	cmd.SetArgs([]string{"--signal", "SIGKILL", "clawker.myapp.ralph"})
+	cmd.SetArgs([]string{"--signal", "SIGKILL", "clawker.myapp.dev"})
 	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetOut(tio.OutBuf)
 	cmd.SetErr(tio.ErrBuf)

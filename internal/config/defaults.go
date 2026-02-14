@@ -116,6 +116,24 @@ security:
     #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
+
+# Autonomous loop settings (clawker loop iterate / clawker loop tasks)
+# loop:
+#   max_loops: 50                     # Maximum iterations per session
+#   stagnation_threshold: 3           # Iterations without progress before circuit trips
+#   timeout_minutes: 15               # Per-iteration timeout
+#   loop_delay_seconds: 3             # Delay between iterations
+#   calls_per_hour: 100               # API rate limit (0 to disable)
+#   skip_permissions: false            # Allow all tools without prompting
+#   hooks_file: ""                     # Custom hooks file (overrides defaults)
+#   append_system_prompt: ""           # Additional system prompt instructions
+#   # Circuit breaker tuning
+#   same_error_threshold: 5            # Consecutive identical errors before trip
+#   output_decline_threshold: 70       # Output shrink percentage before trip
+#   max_consecutive_test_loops: 3      # Test-only iterations before trip
+#   safety_completion_threshold: 5     # Completion indicators without exit signal before trip
+#   completion_threshold: 2            # Indicators required for strict completion
+#   session_expiration_hours: 24       # Session TTL
 `
 
 // DefaultSettingsYAML returns the default settings template for new users
@@ -131,7 +149,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 `
 
 // DefaultRegistryYAML returns the default registry template
-const DefaultRegistryYAML = `# Clawker Project Registry
+const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
 projects: {}
 `

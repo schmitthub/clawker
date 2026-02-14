@@ -87,8 +87,8 @@ Re-exports ~37 Docker types from whail. Key groups: container/exec options, imag
 **Setup helpers** (all on `*FakeClient`):
 - **Container lifecycle**: `SetupContainerCreate/Start/Stop/Kill/Pause/Unpause/Rename/Restart/Update/Remove`
 - **Container I/O**: `SetupContainerResize/Attach/Wait(exitCode)/Inspect(id, summary)/Logs(logs)/Top(titles, processes)/Stats(json)`
-- **Exec**: `SetupExecCreate(execID)/ExecStart/ExecAttach/ExecInspect`
+- **Exec**: `SetupExecCreate(execID)/ExecStart/ExecAttach/ExecAttachWithOutput(data)/ExecInspect`
 - **Copy**: `SetupCopyToContainer/CopyFromContainer`
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
 - **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
-- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList`
+- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/SetupContainerListError`

@@ -35,10 +35,10 @@ func NewCmdInspect(f *cmdutil.Factory, runF func(context.Context, *InspectOption
 
 Outputs detailed volume information in JSON format.`,
 		Example: `  # Inspect a volume
-  clawker volume inspect clawker.myapp.ralph-workspace
+  clawker volume inspect clawker.myapp.dev-workspace
 
   # Inspect multiple volumes
-  clawker volume inspect clawker.myapp.ralph-workspace clawker.myapp.ralph-config`,
+  clawker volume inspect clawker.myapp.dev-workspace clawker.myapp.dev-config`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Names = args

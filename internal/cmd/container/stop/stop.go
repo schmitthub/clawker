@@ -51,16 +51,16 @@ Container names can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Stop a container using agent name (resolves via project config)
-  clawker container stop --agent ralph
+  clawker container stop --agent dev
 
   # Stop a container by full name (10s timeout)
-  clawker container stop clawker.myapp.ralph
+  clawker container stop clawker.myapp.dev
 
   # Stop multiple containers
-  clawker container stop clawker.myapp.ralph clawker.myapp.writer
+  clawker container stop clawker.myapp.dev clawker.myapp.writer
 
   # Stop with a custom timeout (20 seconds)
-  clawker container stop --time 20 --agent ralph`,
+  clawker container stop --time 20 --agent dev`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Containers = args

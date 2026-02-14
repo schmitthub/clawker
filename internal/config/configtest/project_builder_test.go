@@ -18,7 +18,7 @@ func TestProjectBuilder_Defaults(t *testing.T) {
 }
 
 func TestProjectBuilder_Fluent(t *testing.T) {
-	ralph := &config.RalphConfig{}
+	loopCfg := &config.LoopConfig{}
 
 	cfg := NewProjectBuilder().
 		WithVersion("2").
@@ -38,7 +38,7 @@ func TestProjectBuilder_Fluent(t *testing.T) {
 		WithSecurity(config.SecurityConfig{
 			DockerSocket: true,
 		}).
-		WithRalph(ralph).
+		WithLoop(loopCfg).
 		Build()
 
 	assert.Equal(t, "2", cfg.Version)
@@ -50,7 +50,7 @@ func TestProjectBuilder_Fluent(t *testing.T) {
 	assert.Equal(t, "/app", cfg.Workspace.RemotePath)
 	assert.Equal(t, "snapshot", cfg.Workspace.DefaultMode)
 	assert.True(t, cfg.Security.DockerSocket)
-	require.NotNil(t, cfg.Ralph)
+	require.NotNil(t, cfg.Loop)
 }
 
 func TestProjectBuilder_Immutability(t *testing.T) {

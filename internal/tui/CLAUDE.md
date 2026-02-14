@@ -10,6 +10,8 @@ Reusable BubbleTea components for terminal UIs. Stateless render functions + val
 
 **Style pattern**: Use `func(string) string` instead of `lipgloss.Style` in signatures. Inline via type inference: `style := iostreams.PanelStyle`.
 
+**Composition principle**: TUI provides generic reusable components — it does NOT contain consumer-specific logic. If you need a special view that doesn't exist, create a generic one in tui that can be customized or expanded upon in the command layer package you need it in. For example, `RunDashboard` is a generic channel-driven dashboard; `cmd/loop/shared/` implements `DashboardRenderer` to create the loop-specific dashboard. Importing bubbletea types for interface implementation is acceptable in consumer packages.
+
 ## Keys (`keys.go`)
 
 `KeyMap` struct with `Quit`, `Up`, `Down`, `Left`, `Right`, `Enter`, `Escape`, `Help`, `Tab`. `DefaultKeyMap()`.
@@ -94,6 +96,24 @@ Multi-step progress display — BubbleTea for TTY, sequential text for plain. Ze
 `HookResult{Continue bool, Message string, Err error}` — controls post-hook flow. `LifecycleHook func(component, event string) HookResult`.
 
 Threaded via config structs (e.g., `ProgressDisplayConfig.OnLifecycle`). Nil = no-op. Fires AFTER BubbleTea exits, BEFORE summary. Abort without error/message produces default error.
+
+## Generic Dashboard (`dashboard.go`)
+
+Reusable channel-driven BubbleTea dashboard framework. Consumer packages implement `DashboardRenderer` to provide domain-specific views.
+
+**DashboardRenderer interface**: `ProcessEvent(ev any)` handles domain events from the channel. `View(cs *iostreams.ColorScheme, width int) string` renders dashboard content (framework handles help line and padding).
+
+**DashboardConfig**: `HelpText` (e.g., `"q detach  ctrl+c stop"`).
+
+**DashboardResult**: `Err` (display error), `Detached` (user pressed q/Esc), `Interrupted` (user pressed Ctrl+C).
+
+**Entry point**: `RunDashboard(ios, renderer, cfg, ch)` — creates internal `dashboardModel`, runs BubbleTea via `RunProgram`, returns result.
+
+**Key bindings**: `q`/`Esc` = detach, `Ctrl+C` = interrupt. Does NOT use the shared `IsQuit` matcher because detach and interrupt have different semantics.
+
+**Internal model**: `Init()` → `waitForDashEvent(ch)`, `Update()` → key handling, window size, event dispatch to `renderer.ProcessEvent()`, channel close detection. `View()` → `renderer.View(cs, width)` + help line + high-water padding.
+
+**Consumers**: `internal/cmd/loop/shared/loopdash.go` implements `DashboardRenderer` for the loop dashboard.
 
 ## TUI Struct (`tui.go`)
 

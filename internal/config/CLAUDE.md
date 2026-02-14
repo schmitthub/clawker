@@ -66,7 +66,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ## Schema Types (`schema.go`)
 
-**Top-level `Project`:** `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Ralph`
+**Top-level `Project`:** `Version`, `Project` (yaml:"-"), `DefaultImage`, `Build`, `Agent`, `Workspace`, `Security`, `Loop`
 
 **Build:** `BuildConfig` → `DockerInstructions`, `InjectConfig`, `CopyInstruction`, `RunInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`
 
@@ -94,7 +94,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 - `IPRangeSource`: `IsRequired() bool` (default: true for github)
 - `GitCredentialsConfig`: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `GPGEnabled()`, `CopyGitConfigEnabled()`
 
-**Ralph:** `*RalphConfig` (nil when not configured) with `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()`
+**Loop:** `*LoopConfig` (nil when not configured) with `GetMaxLoops()`, `GetStagnationThreshold()`, `GetTimeoutMinutes()`, `GetHooksFile()`, `GetAppendSystemPrompt()`. Fields: MaxLoops, StagnationThreshold, TimeoutMinutes, CallsPerHour, CompletionThreshold, SessionExpirationHours, SameErrorThreshold, OutputDeclineThreshold, MaxConsecutiveTestLoops, LoopDelaySeconds, SafetyCompletionThreshold (int), SkipPermissions (bool), HooksFile, AppendSystemPrompt (string). Validated by `validateLoop()`: numeric range checks, hooks_file path existence, whitespace-only system prompt rejection.
 
 ## Settings (`settings.go`, `settings_loader.go`)
 

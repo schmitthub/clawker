@@ -45,16 +45,16 @@ Container name can be:
   - Full name: clawker.myproject.myagent
   - Container ID: abc123...`,
 		Example: `  # Show processes using agent name
-  clawker container top --agent ralph
+  clawker container top --agent dev
 
   # Show processes by full container name
-  clawker container top clawker.myapp.ralph
+  clawker container top clawker.myapp.dev
 
   # Show processes with custom ps options
-  clawker container top --agent ralph aux
+  clawker container top --agent dev aux
 
   # Show all processes with extended info
-  clawker container top --agent ralph -ef`,
+  clawker container top --agent dev -ef`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Args = args

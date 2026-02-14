@@ -21,13 +21,13 @@ clawker container wait [OPTIONS] CONTAINER [CONTAINER...] [flags]
 
 ```
   # Wait for a container using agent name
-  clawker container wait --agent ralph
+  clawker container wait --agent dev
 
   # Wait for a container by full name
-  clawker container wait clawker.myapp.ralph
+  clawker container wait clawker.myapp.dev
 
   # Wait for multiple containers
-  clawker container wait clawker.myapp.ralph clawker.myapp.writer
+  clawker container wait clawker.myapp.dev clawker.myapp.writer
 ```
 
 ### Options

@@ -32,14 +32,14 @@ func TestAgentArgsValidator(t *testing.T) {
 		{
 			name:      "valid with agent flag",
 			minArgs:   1,
-			agentFlag: "ralph",
+			agentFlag: "dev",
 			args:      []string{},
 			wantErr:   false,
 		},
 		{
 			name:       "error: agent and positional args",
 			minArgs:    1,
-			agentFlag:  "ralph",
+			agentFlag:  "dev",
 			args:       []string{"container1"},
 			wantErr:    true,
 			wantErrMsg: "--agent and positional container arguments are mutually exclusive",
@@ -116,14 +116,14 @@ func TestAgentArgsValidatorExact(t *testing.T) {
 		{
 			name:      "valid with agent flag",
 			n:         2,
-			agentFlag: "ralph",
+			agentFlag: "dev",
 			args:      []string{},
 			wantErr:   false,
 		},
 		{
 			name:       "error: agent and positional args",
 			n:          2,
-			agentFlag:  "ralph",
+			agentFlag:  "dev",
 			args:       []string{"container1"},
 			wantErr:    true,
 			wantErrMsg: "--agent and positional container arguments are mutually exclusive",

@@ -145,7 +145,7 @@ security:
     forward_gpg: true
     copy_git_config: true
 
-ralph:
+loop:
   max_loops: 50                   # Maximum loops before stopping (default: 50)
   stagnation_threshold: 3         # Loops without progress before circuit trips (default: 3)
   timeout_minutes: 15             # Per-loop timeout in minutes (default: 15)
