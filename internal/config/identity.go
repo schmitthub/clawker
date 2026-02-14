@@ -18,6 +18,9 @@ const (
 	// LabelManaged marks a resource as managed by clawker.
 	LabelManaged = LabelPrefix + "managed"
 
+	// LabelMonitoringStack marks monitoring stack resources.
+	LabelMonitoringStack = LabelPrefix + "monitoring"
+
 	// LabelProject identifies the project name.
 	LabelProject = LabelPrefix + "project"
 
