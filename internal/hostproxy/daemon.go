@@ -71,7 +71,9 @@ func NewDaemon(opts DaemonOptions) (*Daemon, error) {
 	dockerClient := opts.DockerClient
 	if dockerClient == nil {
 		var err error
-		dockerClient, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		dockerClient, err = client.New(
+			client.FromEnv,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create docker client: %w", err)
 		}
@@ -189,7 +191,7 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 	// Use the moby client Filters type
 	f := client.Filters{}
-	f = f.Add("label", config.LabelManaged+"="+config.ManagedLabelValue)
+	f = f.Add("label", config.LabelManaged+"="+config.ManagedLabelValue).Add("label", config.LabelMonitoringStack+"!="+config.ManagedLabelValue)
 
 	result, err := d.docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: f,
@@ -286,4 +288,3 @@ func StopDaemon(pidFile string) error {
 
 	return nil
 }
-
