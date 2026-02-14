@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/tui"
 )
 
 func testProject(name string) *configtest.ProjectBuilder {
@@ -20,7 +19,7 @@ func testProject(name string) *configtest.ProjectBuilder {
 
 func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{
 		AgentName:  "loop-test-agent",
 		ProjectCfg: testProject("testproj").Build(),
@@ -28,9 +27,8 @@ func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 
 	WireLoopDashboard(opts, ch, setup, 50)
 
-	// Should have sent a start event
 	ev := <-ch
-	assert.Equal(t, tui.LoopDashEventStart, ev.Kind)
+	assert.Equal(t, LoopDashEventStart, ev.Kind)
 	assert.Equal(t, "loop-test-agent", ev.AgentName)
 	assert.Equal(t, "testproj", ev.Project)
 	assert.Equal(t, 50, ev.MaxIterations)
@@ -38,16 +36,14 @@ func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 
 func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{
 		AgentName:  "loop-test-agent",
 		ProjectCfg: testProject("testproj").Build(),
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
-
-	// Drain start event
-	<-ch
+	<-ch // drain start
 
 	assert.NotNil(t, opts.OnLoopStart)
 	assert.NotNil(t, opts.OnLoopEnd)
@@ -57,7 +53,7 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 
 func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
@@ -66,19 +62,18 @@ func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 	opts.OnLoopStart(3)
 
 	ev := <-ch
-	assert.Equal(t, tui.LoopDashEventIterStart, ev.Kind)
+	assert.Equal(t, LoopDashEventIterStart, ev.Kind)
 	assert.Equal(t, 3, ev.Iteration)
 }
 
 func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
 
-	// Simulate start then end
 	opts.OnLoopStart(1)
 	<-ch // drain iter start
 
@@ -92,7 +87,7 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	opts.OnLoopEnd(1, status, nil, nil)
 
 	ev := <-ch
-	assert.Equal(t, tui.LoopDashEventIterEnd, ev.Kind)
+	assert.Equal(t, LoopDashEventIterEnd, ev.Kind)
 	assert.Equal(t, 1, ev.Iteration)
 	assert.Equal(t, "IN_PROGRESS", ev.StatusText)
 	assert.Equal(t, 3, ev.TasksCompleted)
@@ -103,7 +98,6 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	assert.Equal(t, 3, ev.TotalTasks)
 	assert.Equal(t, 5, ev.TotalFiles)
 	assert.Greater(t, ev.IterDuration, time.Duration(0))
-	// No ResultEvent → zero cost/token
 	assert.Equal(t, 0.0, ev.IterCostUSD)
 	assert.Equal(t, 0, ev.IterTokens)
 	assert.Equal(t, 0, ev.IterTurns)
@@ -111,7 +105,7 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 
 func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
@@ -136,7 +130,7 @@ func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
 
 func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
@@ -148,20 +142,19 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	opts.OnLoopEnd(1, nil, nil, nil)
 
 	ev := <-ch
-	assert.Equal(t, tui.LoopDashEventIterEnd, ev.Kind)
+	assert.Equal(t, LoopDashEventIterEnd, ev.Kind)
 	assert.Equal(t, "", ev.StatusText)
 	assert.Equal(t, 0, ev.TasksCompleted)
 }
 
 func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
 
-	// Iteration 1
 	opts.OnLoopStart(1)
 	<-ch
 	opts.OnLoopEnd(1, &Status{TasksCompleted: 2, FilesModified: 3}, nil, nil)
@@ -169,7 +162,6 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	assert.Equal(t, 2, ev1.TotalTasks)
 	assert.Equal(t, 3, ev1.TotalFiles)
 
-	// Iteration 2 — totals should accumulate
 	opts.OnLoopStart(2)
 	<-ch
 	opts.OnLoopEnd(2, &Status{TasksCompleted: 1, FilesModified: 4}, nil, nil)
@@ -180,7 +172,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 
 func TestWireLoopDashboard_OnOutput(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
@@ -189,13 +181,14 @@ func TestWireLoopDashboard_OnOutput(t *testing.T) {
 	opts.OnOutput([]byte("hello world"))
 
 	ev := <-ch
-	assert.Equal(t, tui.LoopDashEventOutput, ev.Kind)
+	assert.Equal(t, LoopDashEventOutput, ev.Kind)
 	assert.Equal(t, "hello world", ev.OutputChunk)
+	assert.Equal(t, OutputText, ev.OutputKind)
 }
 
 func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 	opts := &Options{}
-	ch := make(chan tui.LoopDashEvent, 16)
+	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
@@ -213,19 +206,16 @@ func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 }
 
 func TestSendEvent_FullChannel(t *testing.T) {
-	// Create a channel with no buffer
-	ch := make(chan tui.LoopDashEvent)
+	ch := make(chan LoopDashEvent)
 
-	// Sending to a full (unbuffered, no receiver) channel should not block
 	done := make(chan struct{})
 	go func() {
-		sendEvent(ch, tui.LoopDashEvent{Kind: tui.LoopDashEventOutput})
+		sendEvent(ch, LoopDashEvent{Kind: LoopDashEventOutput})
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		// sendEvent returned without blocking — correct
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("sendEvent blocked on full channel")
 	}
@@ -240,12 +230,11 @@ func TestDrainLoopEventsAsText_IterStart(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{Kind: tui.LoopDashEventIterStart, Iteration: 3}
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 3}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
 	assert.Contains(t, buf.String(), "[Loop 3] Running...")
 }
 
@@ -254,9 +243,9 @@ func TestDrainLoopEventsAsText_IterEnd(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:           tui.LoopDashEventIterEnd,
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{
+		Kind:           LoopDashEventIterEnd,
 		Iteration:      2,
 		StatusText:     "IN_PROGRESS",
 		TasksCompleted: 3,
@@ -278,9 +267,9 @@ func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:       tui.LoopDashEventIterEnd,
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{
+		Kind:       LoopDashEventIterEnd,
 		Iteration:  1,
 		StatusText: "BLOCKED",
 		Error:      errors.New("test error"),
@@ -288,9 +277,7 @@ func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
-	output := buf.String()
-	assert.Contains(t, output, "[Loop 1] BLOCKED")
+	assert.Contains(t, buf.String(), "[Loop 1] BLOCKED")
 }
 
 func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
@@ -298,15 +285,11 @@ func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:      tui.LoopDashEventIterEnd,
-		Iteration: 1,
-	}
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{Kind: LoopDashEventIterEnd, Iteration: 1}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
 	assert.Contains(t, buf.String(), "[Loop 1] done")
 }
 
@@ -315,16 +298,11 @@ func TestDrainLoopEventsAsText_RateLimit(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:          tui.LoopDashEventRateLimit,
-		RateRemaining: 5,
-		RateLimit:     100,
-	}
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{Kind: LoopDashEventRateLimit, RateRemaining: 5, RateLimit: 100}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
 	assert.Contains(t, buf.String(), "5/100")
 }
 
@@ -333,15 +311,11 @@ func TestDrainLoopEventsAsText_Complete(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:       tui.LoopDashEventComplete,
-		ExitReason: "agent signaled completion",
-	}
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{Kind: LoopDashEventComplete, ExitReason: "agent signaled completion"}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
 	assert.Contains(t, buf.String(), "Loop completed: agent signaled completion")
 }
 
@@ -350,16 +324,15 @@ func TestDrainLoopEventsAsText_CompleteWithError(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{
-		Kind:       tui.LoopDashEventComplete,
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{
+		Kind:       LoopDashEventComplete,
 		ExitReason: "circuit breaker tripped",
 		Error:      errors.New("stagnation"),
 	}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
 	output := buf.String()
 	assert.Contains(t, output, "Loop ended: circuit breaker tripped")
 	assert.Contains(t, output, "stagnation")
@@ -370,23 +343,20 @@ func TestDrainLoopEventsAsText_MultipleEvents(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 8)
-	ch <- tui.LoopDashEvent{Kind: tui.LoopDashEventIterStart, Iteration: 1}
-	ch <- tui.LoopDashEvent{
-		Kind: tui.LoopDashEventIterEnd, Iteration: 1,
+	ch := make(chan LoopDashEvent, 8)
+	ch <- LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1}
+	ch <- LoopDashEvent{
+		Kind: LoopDashEventIterEnd, Iteration: 1,
 		StatusText: "IN_PROGRESS", TasksCompleted: 2, FilesModified: 3,
 		IterDuration: 30 * time.Second,
 	}
-	ch <- tui.LoopDashEvent{Kind: tui.LoopDashEventIterStart, Iteration: 2}
-	ch <- tui.LoopDashEvent{
-		Kind: tui.LoopDashEventIterEnd, Iteration: 2,
+	ch <- LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 2}
+	ch <- LoopDashEvent{
+		Kind: LoopDashEventIterEnd, Iteration: 2,
 		StatusText: "COMPLETE", ExitSignal: true,
 		IterDuration: 45 * time.Second,
 	}
-	ch <- tui.LoopDashEvent{
-		Kind:       tui.LoopDashEventComplete,
-		ExitReason: "agent signaled completion",
-	}
+	ch <- LoopDashEvent{Kind: LoopDashEventComplete, ExitReason: "agent signaled completion"}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
@@ -404,14 +374,12 @@ func TestDrainLoopEventsAsText_IgnoresOutputEvents(t *testing.T) {
 	tio := iostreams.NewTestIOStreams()
 	cs := tio.IOStreams.ColorScheme()
 
-	ch := make(chan tui.LoopDashEvent, 4)
-	ch <- tui.LoopDashEvent{Kind: tui.LoopDashEventOutput, OutputChunk: "some output"}
-	ch <- tui.LoopDashEvent{Kind: tui.LoopDashEventStart, AgentName: "test"}
+	ch := make(chan LoopDashEvent, 4)
+	ch <- LoopDashEvent{Kind: LoopDashEventOutput, OutputChunk: "some output"}
+	ch <- LoopDashEvent{Kind: LoopDashEventStart, AgentName: "test"}
 	close(ch)
 
 	drainLoopEventsAsText(&buf, cs, ch)
-
-	// Output and Start events should be silently ignored in minimal mode
 	assert.Empty(t, buf.String())
 }
 

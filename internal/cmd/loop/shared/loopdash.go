@@ -1,14 +1,13 @@
-package tui
+package shared
 
 import (
 	"fmt"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
+	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,7 +27,7 @@ const (
 	// LoopDashEventIterEnd is sent when an iteration completes.
 	LoopDashEventIterEnd
 
-	// LoopDashEventOutput is sent with raw output chunks (for future verbose feed).
+	// LoopDashEventOutput is sent with output chunks for the streaming feed.
 	LoopDashEventOutput
 
 	// LoopDashEventRateLimit is sent when the rate limiter triggers a wait.
@@ -57,6 +56,17 @@ func (k LoopDashEventKind) String() string {
 		return fmt.Sprintf("Unknown(%d)", int(k))
 	}
 }
+
+// OutputKind distinguishes output chunk types.
+type OutputKind int
+
+const (
+	// OutputText is a raw text chunk from the assistant.
+	OutputText OutputKind = iota
+
+	// OutputToolStart indicates a tool invocation began.
+	OutputToolStart
+)
 
 // LoopDashEvent is sent on the channel to update the dashboard.
 type LoopDashEvent struct {
@@ -98,8 +108,9 @@ type LoopDashEvent struct {
 	IterTokens  int
 	IterTurns   int
 
-	// Output (for future verbose feed)
+	// Output
 	OutputChunk string
+	OutputKind  OutputKind
 }
 
 // LoopDashboardConfig configures the dashboard.
@@ -117,48 +128,33 @@ type LoopDashboardResult struct {
 }
 
 // ---------------------------------------------------------------------------
-// BubbleTea messages
-// ---------------------------------------------------------------------------
-
-type loopDashEventMsg LoopDashEvent
-
-type loopDashChannelClosedMsg struct{}
-
-func waitForLoopEvent(ch <-chan LoopDashEvent) tea.Cmd {
-	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
-			return loopDashChannelClosedMsg{}
-		}
-		return loopDashEventMsg(ev)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Activity log entry
 // ---------------------------------------------------------------------------
 
 type activityEntry struct {
-	iteration int
-	status    string // "Running", "IN_PROGRESS", "COMPLETE", "BLOCKED", or error text
-	tasks     int
-	files     int
-	costUSD   float64
-	tokens    int
-	turns     int
-	duration  time.Duration
-	isError   bool
-	running   bool
+	iteration   int
+	status      string // "Running", "IN_PROGRESS", "COMPLETE", "BLOCKED", or error text
+	tasks       int
+	files       int
+	costUSD     float64
+	tokens      int
+	turns       int
+	duration    time.Duration
+	isError     bool
+	running     bool
+	outputLines []string // streaming output lines (only for running entries)
 }
 
-const maxActivityEntries = 10
+const (
+	maxActivityEntries = 10
+	maxOutputLines     = 5
+)
 
 // ---------------------------------------------------------------------------
-// BubbleTea model
+// Loop dashboard renderer (implements tui.DashboardRenderer)
 // ---------------------------------------------------------------------------
 
-type loopDashboardModel struct {
-	ios *iostreams.IOStreams
+type loopDashRenderer struct {
 	cs  *iostreams.ColorScheme
 	cfg LoopDashboardConfig
 
@@ -197,21 +193,12 @@ type loopDashboardModel struct {
 	exitReason string
 	exitError  error
 
-	// Terminal
-	finished    bool
-	detached    bool // user pressed q/Esc — TUI exits, loop continues
-	interrupted bool // user pressed Ctrl+C — stop the loop
-	width       int
-
-	// High-water mark for stable frame height (pointer for View value receiver)
-	highWater *int
-
-	eventCh <-chan LoopDashEvent
+	// Streaming output line buffer
+	outputLineBuf strings.Builder
 }
 
-func newLoopDashboardModel(ios *iostreams.IOStreams, cfg LoopDashboardConfig, eventCh <-chan LoopDashEvent) loopDashboardModel {
-	return loopDashboardModel{
-		ios:              ios,
+func newLoopDashRenderer(ios *iostreams.IOStreams, cfg LoopDashboardConfig) *loopDashRenderer {
+	return &loopDashRenderer{
 		cs:               ios.ColorScheme(),
 		cfg:              cfg,
 		agentName:        cfg.AgentName,
@@ -219,83 +206,101 @@ func newLoopDashboardModel(ios *iostreams.IOStreams, cfg LoopDashboardConfig, ev
 		maxIter:          cfg.MaxLoops,
 		startTime:        time.Now(),
 		circuitThreshold: 3, // default, updated by events
-		highWater:        new(int),
-		width:            ios.TerminalWidth(),
-		eventCh:          eventCh,
 	}
 }
 
-func (m loopDashboardModel) Init() tea.Cmd {
-	return waitForLoopEvent(m.eventCh)
+// ProcessEvent implements tui.DashboardRenderer.
+func (r *loopDashRenderer) ProcessEvent(ev any) {
+	e := ev.(LoopDashEvent)
+	r.processEvent(e)
 }
 
-func (m loopDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch {
-		case msg.Type == tea.KeyCtrlC:
-			// Ctrl+C = interrupt (stop the loop)
-			m.interrupted = true
-			m.finished = true
-			return m, tea.Quit
-		case msg.Type == tea.KeyRunes && string(msg.Runes) == "q",
-			msg.Type == tea.KeyEsc:
-			// q/Esc = detach (exit TUI, loop continues with minimal output)
-			m.detached = true
-			m.finished = true
-			return m, tea.Quit
-		}
-		return m, nil
+// View implements tui.DashboardRenderer.
+func (r *loopDashRenderer) View(cs *iostreams.ColorScheme, width int) string {
+	var buf strings.Builder
 
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		return m, nil
+	// Header bar
+	renderLoopDashHeader(&buf, cs, r.agentName, width)
+	buf.WriteByte('\n')
 
-	case loopDashEventMsg:
-		m.processEvent(LoopDashEvent(msg))
-		return m, waitForLoopEvent(m.eventCh)
+	// Info line: Agent / ProjectCfg / Elapsed
+	elapsed := time.Since(r.startTime)
+	infoLine := fmt.Sprintf("  Agent: %s    ProjectCfg: %s    Elapsed: %s",
+		r.agentName, r.project, formatElapsed(elapsed))
+	buf.WriteString(infoLine)
+	buf.WriteByte('\n')
 
-	case loopDashChannelClosedMsg:
-		m.finished = true
-		return m, tea.Quit
+	// Counters line: Iteration / Circuit / Rate
+	iterStr := fmt.Sprintf("%d/%d", r.currentIter, r.maxIter)
+	circuitStr := fmt.Sprintf("%d/%d", r.circuitProgress, r.circuitThreshold)
+	if r.circuitTripped {
+		circuitStr = cs.Error("TRIPPED")
+	}
+	rateStr := ""
+	if r.rateLimit > 0 {
+		rateStr = fmt.Sprintf("      Rate: %d/%d", r.rateRemaining, r.rateLimit)
+	}
+	countersLine := fmt.Sprintf("  Iteration: %s             Circuit: %s%s",
+		iterStr, circuitStr, rateStr)
+	buf.WriteString(countersLine)
+	buf.WriteByte('\n')
+
+	// Cost/token line (only shown after first iteration completes)
+	if r.totalTokens > 0 || r.totalCostUSD > 0 {
+		costLine := fmt.Sprintf("  Cost: %s  Tokens: %s  Turns: %d",
+			formatCostUSD(r.totalCostUSD), formatTokenCount(r.totalTokens), r.totalTurns)
+		buf.WriteString(cs.Muted(costLine))
+		buf.WriteByte('\n')
 	}
 
-	return m, nil
+	buf.WriteByte('\n')
+
+	// Status section
+	renderLoopDashStatusSection(&buf, cs, r.statusText, r.totalTasks, r.totalFiles, r.testsStatus, width)
+	buf.WriteByte('\n')
+
+	// Activity section
+	renderLoopDashActivitySection(&buf, cs, r.activity, width)
+
+	buf.WriteByte('\n')
+
+	return buf.String()
 }
 
-func (m *loopDashboardModel) processEvent(ev LoopDashEvent) {
+func (r *loopDashRenderer) processEvent(ev LoopDashEvent) {
 	switch ev.Kind {
 	case LoopDashEventStart:
-		m.agentName = ev.AgentName
-		m.project = ev.Project
-		m.maxIter = ev.MaxIterations
+		r.agentName = ev.AgentName
+		r.project = ev.Project
+		r.maxIter = ev.MaxIterations
 
 	case LoopDashEventIterStart:
-		m.currentIter = ev.Iteration
-		m.iterStartTime = time.Now()
+		r.currentIter = ev.Iteration
+		r.iterStartTime = time.Now()
+		r.outputLineBuf.Reset()
 		// Add "Running..." entry
-		m.addActivity(activityEntry{
+		r.addActivity(activityEntry{
 			iteration: ev.Iteration,
 			status:    "Running",
 			running:   true,
 		})
 
 	case LoopDashEventIterEnd:
-		m.currentIter = ev.Iteration
-		m.statusText = ev.StatusText
-		m.totalTasks = ev.TotalTasks
-		m.totalFiles = ev.TotalFiles
-		m.testsStatus = ev.TestsStatus
-		m.circuitProgress = ev.CircuitProgress
-		m.circuitThreshold = ev.CircuitThreshold
-		m.circuitTripped = ev.CircuitTripped
-		m.rateRemaining = ev.RateRemaining
-		m.rateLimit = ev.RateLimit
-		m.totalCostUSD += ev.IterCostUSD
-		m.totalTokens += ev.IterTokens
-		m.totalTurns += ev.IterTurns
-		// Update the running entry to completed
-		m.updateRunningActivity(activityEntry{
+		r.currentIter = ev.Iteration
+		r.statusText = ev.StatusText
+		r.totalTasks = ev.TotalTasks
+		r.totalFiles = ev.TotalFiles
+		r.testsStatus = ev.TestsStatus
+		r.circuitProgress = ev.CircuitProgress
+		r.circuitThreshold = ev.CircuitThreshold
+		r.circuitTripped = ev.CircuitTripped
+		r.rateRemaining = ev.RateRemaining
+		r.rateLimit = ev.RateLimit
+		r.totalCostUSD += ev.IterCostUSD
+		r.totalTokens += ev.IterTokens
+		r.totalTurns += ev.IterTurns
+		// Update the running entry to completed (output lines cleared)
+		r.updateRunningActivity(activityEntry{
 			iteration: ev.Iteration,
 			status:    ev.StatusText,
 			tasks:     ev.TasksCompleted,
@@ -307,121 +312,81 @@ func (m *loopDashboardModel) processEvent(ev LoopDashEvent) {
 			isError:   ev.Error != nil,
 		})
 
+	case LoopDashEventOutput:
+		r.processOutputEvent(ev)
+
 	case LoopDashEventRateLimit:
-		m.rateRemaining = ev.RateRemaining
-		m.rateLimit = ev.RateLimit
+		r.rateRemaining = ev.RateRemaining
+		r.rateLimit = ev.RateLimit
 
 	case LoopDashEventComplete:
-		m.exitReason = ev.ExitReason
-		m.exitError = ev.Error
-		m.totalTasks = ev.TotalTasks
-		m.totalFiles = ev.TotalFiles
+		r.exitReason = ev.ExitReason
+		r.exitError = ev.Error
+		r.totalTasks = ev.TotalTasks
+		r.totalFiles = ev.TotalFiles
 	}
 }
 
-func (m *loopDashboardModel) addActivity(entry activityEntry) {
-	if len(m.activity) >= maxActivityEntries {
-		m.activity = m.activity[1:]
+func (r *loopDashRenderer) processOutputEvent(ev LoopDashEvent) {
+	// Find the current running entry
+	idx := r.findRunningEntry()
+	if idx < 0 {
+		return
 	}
-	m.activity = append(m.activity, entry)
+
+	switch ev.OutputKind {
+	case OutputToolStart:
+		// Push tool indicator line directly
+		r.pushOutputLine(idx, ev.OutputChunk)
+
+	case OutputText:
+		// Accumulate in line buffer, push complete lines on \n
+		for _, ch := range ev.OutputChunk {
+			if ch == '\n' {
+				line := strings.TrimSpace(r.outputLineBuf.String())
+				if line != "" {
+					r.pushOutputLine(idx, line)
+				}
+				r.outputLineBuf.Reset()
+			} else {
+				r.outputLineBuf.WriteRune(ch)
+			}
+		}
+	}
 }
 
-func (m *loopDashboardModel) updateRunningActivity(entry activityEntry) {
-	// Find and update the latest running entry for this iteration
-	for i := len(m.activity) - 1; i >= 0; i-- {
-		if m.activity[i].running && m.activity[i].iteration == entry.iteration {
-			m.activity[i] = entry
+func (r *loopDashRenderer) findRunningEntry() int {
+	for i := len(r.activity) - 1; i >= 0; i-- {
+		if r.activity[i].running {
+			return i
+		}
+	}
+	return -1
+}
+
+func (r *loopDashRenderer) pushOutputLine(idx int, line string) {
+	entry := &r.activity[idx]
+	entry.outputLines = append(entry.outputLines, line)
+	if len(entry.outputLines) > maxOutputLines {
+		entry.outputLines = entry.outputLines[len(entry.outputLines)-maxOutputLines:]
+	}
+}
+
+func (r *loopDashRenderer) addActivity(entry activityEntry) {
+	if len(r.activity) >= maxActivityEntries {
+		r.activity = r.activity[1:]
+	}
+	r.activity = append(r.activity, entry)
+}
+
+func (r *loopDashRenderer) updateRunningActivity(entry activityEntry) {
+	for i := len(r.activity) - 1; i >= 0; i-- {
+		if r.activity[i].running && r.activity[i].iteration == entry.iteration {
+			r.activity[i] = entry
 			return
 		}
 	}
-	// Not found (shouldn't happen), just add it
-	m.addActivity(entry)
-}
-
-// ---------------------------------------------------------------------------
-// View
-// ---------------------------------------------------------------------------
-
-func (m loopDashboardModel) View() string {
-	cs := m.cs
-	width := m.width
-	if width < 40 {
-		width = 40
-	}
-
-	var buf strings.Builder
-	lines := 0
-
-	// Header bar
-	renderLoopDashHeader(&buf, cs, m.agentName, width)
-	lines++
-	buf.WriteByte('\n')
-	lines++
-
-	// Info line: Agent / ProjectCfg / Elapsed
-	elapsed := time.Since(m.startTime)
-	infoLine := fmt.Sprintf("  Agent: %s    ProjectCfg: %s    Elapsed: %s",
-		m.agentName, m.project, formatElapsed(elapsed))
-	buf.WriteString(infoLine)
-	buf.WriteByte('\n')
-	lines++
-
-	// Counters line: Iteration / Circuit / Rate
-	iterStr := fmt.Sprintf("%d/%d", m.currentIter, m.maxIter)
-	circuitStr := fmt.Sprintf("%d/%d", m.circuitProgress, m.circuitThreshold)
-	if m.circuitTripped {
-		circuitStr = cs.Error("TRIPPED")
-	}
-	rateStr := ""
-	if m.rateLimit > 0 {
-		rateStr = fmt.Sprintf("      Rate: %d/%d", m.rateRemaining, m.rateLimit)
-	}
-	countersLine := fmt.Sprintf("  Iteration: %s             Circuit: %s%s",
-		iterStr, circuitStr, rateStr)
-	buf.WriteString(countersLine)
-	buf.WriteByte('\n')
-	lines++
-
-	// Cost/token line (only shown after first iteration completes)
-	if m.totalTokens > 0 || m.totalCostUSD > 0 {
-		costLine := fmt.Sprintf("  Cost: %s  Tokens: %s  Turns: %d",
-			formatCostUSD(m.totalCostUSD), formatTokenCount(m.totalTokens), m.totalTurns)
-		buf.WriteString(cs.Muted(costLine))
-		buf.WriteByte('\n')
-		lines++
-	}
-
-	buf.WriteByte('\n')
-	lines++
-
-	// Status section
-	renderLoopDashStatusSection(&buf, cs, m.statusText, m.totalTasks, m.totalFiles, m.testsStatus, width)
-	lines += 3 // divider + status line + blank
-	buf.WriteByte('\n')
-	lines++
-
-	// Activity section
-	activityLines := renderLoopDashActivitySection(&buf, cs, m.activity, width)
-	lines += 1 + activityLines // divider + entries
-
-	buf.WriteByte('\n')
-	lines++
-
-	// Help
-	helpLine := cs.Muted("  q detach  ctrl+c stop")
-	buf.WriteString(helpLine)
-	buf.WriteByte('\n')
-	lines++
-
-	// Pad to high-water mark
-	if lines > *m.highWater {
-		*m.highWater = lines
-	}
-	for range *m.highWater - lines {
-		buf.WriteByte('\n')
-	}
-
-	return buf.String()
+	r.addActivity(entry)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +394,7 @@ func (m loopDashboardModel) View() string {
 // ---------------------------------------------------------------------------
 
 func renderLoopDashHeader(buf *strings.Builder, cs *iostreams.ColorScheme, agentName string, width int) {
-	title := fmt.Sprintf("  ━━ Loop Dashboard ")
+	title := "  ━━ Loop Dashboard "
 	subtitle := fmt.Sprintf(" %s ━━", agentName)
 
 	titleRendered := cs.Bold(cs.Primary(title))
@@ -452,7 +417,7 @@ func renderLoopDashHeader(buf *strings.Builder, cs *iostreams.ColorScheme, agent
 func renderLoopDashStatusSection(buf *strings.Builder, cs *iostreams.ColorScheme, statusText string, totalTasks, totalFiles int, testsStatus string, width int) {
 	// Divider
 	divLabel := " Status "
-	divFill := width - text.CountVisibleWidth(divLabel) - 4 // "  ─── " prefix
+	divFill := width - text.CountVisibleWidth(divLabel) - 4
 	if divFill < 3 {
 		divFill = 3
 	}
@@ -474,7 +439,7 @@ func renderLoopDashStatusSection(buf *strings.Builder, cs *iostreams.ColorScheme
 	buf.WriteByte('\n')
 }
 
-func renderLoopDashActivitySection(buf *strings.Builder, cs *iostreams.ColorScheme, activity []activityEntry, width int) int {
+func renderLoopDashActivitySection(buf *strings.Builder, cs *iostreams.ColorScheme, activity []activityEntry, width int) {
 	// Divider
 	divLabel := " Activity "
 	divFill := width - text.CountVisibleWidth(divLabel) - 4
@@ -488,23 +453,30 @@ func renderLoopDashActivitySection(buf *strings.Builder, cs *iostreams.ColorSche
 	if len(activity) == 0 {
 		buf.WriteString(cs.Muted("  Waiting for first iteration..."))
 		buf.WriteByte('\n')
-		return 2
+		return
 	}
 
-	lines := 0
 	// Render newest first
 	for i := len(activity) - 1; i >= 0; i-- {
 		entry := activity[i]
-		renderActivityEntry(buf, cs, entry)
-		lines++
+		renderActivityEntry(buf, cs, entry, width)
 	}
-	return lines + 1 // +1 for divider
 }
 
-func renderActivityEntry(buf *strings.Builder, cs *iostreams.ColorScheme, entry activityEntry) {
+func renderActivityEntry(buf *strings.Builder, cs *iostreams.ColorScheme, entry activityEntry, width int) {
 	if entry.running {
-		buf.WriteString(fmt.Sprintf("  %s [Loop %d] Running...\n",
-			cs.Muted("●"), entry.iteration))
+		fmt.Fprintf(buf, "  %s [Loop %d] Running...\n",
+			cs.Muted("●"), entry.iteration)
+		// Render streaming output lines under running entry
+		for _, line := range entry.outputLines {
+			maxWidth := width - 8 // "    ⎿ " prefix
+			if maxWidth < 10 {
+				maxWidth = 10
+			}
+			truncated := text.Truncate(line, maxWidth)
+			fmt.Fprintf(buf, "    %s %s\n",
+				cs.Muted("⎿"), cs.Muted(truncated))
+		}
 		return
 	}
 
@@ -588,29 +560,30 @@ func formatElapsed(d time.Duration) string {
 }
 
 // ---------------------------------------------------------------------------
-// Entry point — package-level (called by TUI factory method)
+// Entry point
 // ---------------------------------------------------------------------------
 
 // RunLoopDashboard runs the loop dashboard display, consuming events from ch
 // until the channel is closed. Returns when the BubbleTea program exits.
 func RunLoopDashboard(ios *iostreams.IOStreams, cfg LoopDashboardConfig, ch <-chan LoopDashEvent) LoopDashboardResult {
-	model := newLoopDashboardModel(ios, cfg, ch)
-	finalModel, err := RunProgram(ios, model)
-	if err != nil {
-		return LoopDashboardResult{Err: fmt.Errorf("display error: %w", err)}
-	}
+	renderer := newLoopDashRenderer(ios, cfg)
 
-	m, ok := finalModel.(loopDashboardModel)
-	if !ok {
-		return LoopDashboardResult{Err: fmt.Errorf("unexpected model type")}
-	}
+	// Bridge typed channel to generic any channel
+	anyCh := make(chan any, 16)
+	go func() {
+		defer close(anyCh)
+		for ev := range ch {
+			anyCh <- ev
+		}
+	}()
 
-	if m.detached {
-		return LoopDashboardResult{Detached: true}
-	}
-	if m.interrupted {
-		return LoopDashboardResult{Interrupted: true}
-	}
+	result := tui.RunDashboard(ios, renderer, tui.DashboardConfig{
+		HelpText: "q detach  ctrl+c stop",
+	}, anyCh)
 
-	return LoopDashboardResult{}
+	return LoopDashboardResult{
+		Err:         result.Err,
+		Detached:    result.Detached,
+		Interrupted: result.Interrupted,
+	}
 }

@@ -46,6 +46,7 @@ Commands fall into one of four output scenarios. Choose imports accordingly:
 - A command may import both `iostreams` and `tui`
 - Commands access TUI via `f.TUI` (Factory noun), not by calling tui package functions directly
 - zerolog is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams
+- **TUI composition**: If you need a special view that doesn't exist, create a generic one in `tui` that can be customized or expanded upon in the command layer package you need it in. TUI is generic infrastructure — it never contains consumer-specific logic.
 
 ## Output Conventions (gh-style)
 

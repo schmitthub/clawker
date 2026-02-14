@@ -10,14 +10,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // RunLoopConfig holds all inputs for RunLoop.
 type RunLoopConfig struct {
 	Runner      *Runner
 	RunnerOpts  Options
-	TUI         *tui.TUI
+	TUI         interface{} // unused after refactor, kept for API compat (TODO: remove)
 	IOStreams   *iostreams.IOStreams
 	Setup       *LoopContainerResult
 	Format      *cmdutil.FormatFlags
@@ -40,7 +39,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 		runCtx, runCancel := context.WithCancel(ctx)
 		defer runCancel()
 
-		ch := make(chan tui.LoopDashEvent, 16)
+		ch := make(chan LoopDashEvent, 16)
 		WireLoopDashboard(&runnerOpts, ch, cfg.Setup, runnerOpts.MaxLoops)
 
 		var runErr error
@@ -49,7 +48,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 			result, runErr = cfg.Runner.Run(runCtx, runnerOpts)
 		}()
 
-		dashResult := cfg.TUI.RunLoopDashboard(tui.LoopDashboardConfig{
+		dashResult := RunLoopDashboard(ios, LoopDashboardConfig{
 			AgentName: cfg.Setup.AgentName,
 			Project:   cfg.Setup.ProjectCfg.Project,
 			MaxLoops:  runnerOpts.MaxLoops,
@@ -113,13 +112,13 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 
 // drainLoopEventsAsText consumes remaining events from the dashboard channel
 // and renders them as minimal text output after TUI detach.
-func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui.LoopDashEvent) {
+func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan LoopDashEvent) {
 	for ev := range ch {
 		switch ev.Kind {
-		case tui.LoopDashEventIterStart:
+		case LoopDashEventIterStart:
 			fmt.Fprintf(w, "%s [Loop %d] Running...\n", cs.InfoIcon(), ev.Iteration)
 
-		case tui.LoopDashEventIterEnd:
+		case LoopDashEventIterEnd:
 			icon := cs.SuccessIcon()
 			if ev.Error != nil {
 				icon = cs.FailureIcon()
@@ -150,10 +149,10 @@ func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui
 
 			fmt.Fprintf(w, "%s [Loop %d] %s%s%s\n", icon, ev.Iteration, statusText, detail, durStr)
 
-		case tui.LoopDashEventRateLimit:
+		case LoopDashEventRateLimit:
 			fmt.Fprintf(w, "%s Rate limit: %d/%d remaining\n", cs.WarningIcon(), ev.RateRemaining, ev.RateLimit)
 
-		case tui.LoopDashEventComplete:
+		case LoopDashEventComplete:
 			if ev.Error != nil {
 				fmt.Fprintf(w, "%s Loop ended: %s (%s)\n", cs.FailureIcon(), ev.ExitReason, ev.Error)
 			} else if ev.ExitReason != "" {
@@ -182,9 +181,9 @@ func formatMinimalDuration(d time.Duration) string {
 // WireLoopDashboard sets Runner callback options to send events on the dashboard channel.
 // It configures OnLoopStart, OnLoopEnd, and OnOutput callbacks. It does NOT close the
 // channel — the goroutine wrapping runner.Run() is responsible for that.
-func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int) {
-	ch <- tui.LoopDashEvent{
-		Kind:          tui.LoopDashEventStart,
+func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContainerResult, maxLoops int) {
+	ch <- LoopDashEvent{
+		Kind:          LoopDashEventStart,
 		AgentName:     setup.AgentName,
 		Project:       setup.ProjectCfg.Project,
 		MaxIterations: maxLoops,
@@ -195,8 +194,8 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 
 	opts.OnLoopStart = func(loopNum int) {
 		iterStart = time.Now()
-		sendEvent(ch, tui.LoopDashEvent{
-			Kind:      tui.LoopDashEventIterStart,
+		sendEvent(ch, LoopDashEvent{
+			Kind:      LoopDashEventIterStart,
 			Iteration: loopNum,
 		})
 	}
@@ -204,8 +203,8 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 	opts.OnLoopEnd = func(loopNum int, status *Status, resultEvent *ResultEvent, err error) {
 		iterDuration := time.Since(iterStart)
 
-		ev := tui.LoopDashEvent{
-			Kind:         tui.LoopDashEventIterEnd,
+		ev := LoopDashEvent{
+			Kind:         LoopDashEventIterEnd,
 			Iteration:    loopNum,
 			IterDuration: iterDuration,
 			Error:        err,
@@ -237,8 +236,9 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 	}
 
 	opts.OnOutput = func(chunk []byte) {
-		sendEvent(ch, tui.LoopDashEvent{
-			Kind:        tui.LoopDashEventOutput,
+		sendEvent(ch, LoopDashEvent{
+			Kind:        LoopDashEventOutput,
+			OutputKind:  OutputText,
 			OutputChunk: string(chunk),
 		})
 	}
@@ -247,7 +247,7 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 }
 
 // sendEvent sends an event on the channel without blocking.
-func sendEvent(ch chan<- tui.LoopDashEvent, ev tui.LoopDashEvent) {
+func sendEvent(ch chan<- LoopDashEvent, ev LoopDashEvent) {
 	select {
 	case ch <- ev:
 	default:

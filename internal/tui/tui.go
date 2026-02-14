@@ -64,12 +64,6 @@ func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error) {
 	return WizardResult{}, fmt.Errorf("unexpected model type %T from wizard program", finalModel)
 }
 
-// RunLoopDashboard displays a real-time loop dashboard, consuming events from ch
-// until the channel is closed. Follows the same pattern as RunProgress.
-func (t *TUI) RunLoopDashboard(cfg LoopDashboardConfig, ch <-chan LoopDashEvent) LoopDashboardResult {
-	return RunLoopDashboard(t.ios, cfg, ch)
-}
-
 // composedHook returns a single LifecycleHook that chains all registered hooks.
 // Hooks fire in order; the first abort (Continue=false) or error short-circuits.
 func (t *TUI) composedHook() LifecycleHook {
