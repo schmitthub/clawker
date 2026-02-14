@@ -91,4 +91,4 @@ Re-exports ~37 Docker types from whail. Key groups: container/exec options, imag
 - **Copy**: `SetupCopyToContainer/CopyFromContainer`
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
 - **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
-- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/ContainerListError`
+- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/SetupContainerListError`

@@ -338,7 +338,7 @@ func (v *Validator) validateLoop(cfg *Project) {
 		v.addError("loop.loop_delay_seconds", "must be non-negative", lc.LoopDelaySeconds)
 	}
 
-	// Warn about whitespace-only append_system_prompt
+	// Reject whitespace-only append_system_prompt
 	if lc.AppendSystemPrompt != "" && strings.TrimSpace(lc.AppendSystemPrompt) == "" {
 		v.addError("loop.append_system_prompt", "must not contain only whitespace", "")
 	}
