@@ -110,9 +110,12 @@ clawker volume ls                   # List clawker volumes
 Loop runs Claude Code in autonomous loops with stagnation detection and circuit breaker protection:
 
 ```bash
-clawker loop run --agent dev --prompt "Fix all failing tests"
-clawker loop status --agent dev
-clawker loop reset --agent dev
+# Start a new autonomous loop; this prints a generated agent name like "loop-abc123"
+clawker loop iterate --prompt "Fix all failing tests"
+
+# Use the printed agent name with status/reset
+clawker loop status --agent loop-abc123
+clawker loop reset --agent loop-abc123
 ```
 
 See `clawker loop --help` for all options and configuration.
