@@ -73,8 +73,8 @@ Output mode selection, event bridge, and TUI detach handling for loop commands:
 
 - `RunLoopConfig` — all inputs for `RunLoop`: Runner, RunnerOpts, TUI, IOStreams, Setup, Format, Verbose, CommandName
 - `RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error)` — consolidated loop execution with output mode selection. Context passed as first parameter (not stored in struct). If stderr is a TTY and not verbose/quiet/json, uses TUI dashboard; otherwise falls back to text Monitor (verbose/non-TTY default) or silent execution (quiet/json). Shared by iterate and tasks commands. Handles three TUI exit paths: normal completion, detach (q/Esc), and interrupt (Ctrl+C).
-- `WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Extracts cost/token data from `*ResultEvent` into `IterCostUSD`/`IterTokens`/`IterTurns` fields. Does NOT close the channel — the caller's goroutine does that.
-- `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines using semantic icon methods (`cs.InfoIcon()`, `cs.SuccessIcon()`, `cs.FailureIcon()`, `cs.WarningIcon()`). Returns when the channel is closed (runner finished).
+- `WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnStreamEvent` callbacks on Runner options to send `LoopDashEvent` values on the channel. `OnStreamEvent` sends `OutputToolStart` for tool starts and `OutputText` for text deltas. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Extracts cost/token data from `*ResultEvent` into `IterCostUSD`/`IterTokens`/`IterTurns` fields. Does NOT close the channel — the caller's goroutine does that.
+- `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines using semantic icon methods (`cs.InfoIcon()`, `cs.SuccessIcon()`, `cs.FailureIcon()`, `cs.WarningIcon()`). Returns when the channel is closed (runner finished).
 - `formatMinimalDuration(d time.Duration) string` — formats duration for minimal text output.
 - `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine. Dropped events are logged via `logger.Warn` with the event kind name.
 
@@ -85,6 +85,24 @@ Output mode selection, event bridge, and TUI detach handling for loop commands:
 **Output mode suppression**: Quiet (`--quiet`) and JSON (`--json`) modes suppress the text Monitor and "Starting loop..." start message — only the final result matters. The `showProgress` guard in the non-TUI branch checks `!cfg.Format.Quiet && !cfg.Format.IsJSON()`. When suppressed, `runnerOpts.Monitor` remains nil (which the Runner handles gracefully via nil-checks on all Monitor calls). Verbose output (`OnOutput` callback) is still gated independently by `cfg.Verbose`, though in practice `--verbose` is mutually exclusive with `--json`/`--quiet`.
 
 **Session totals**: Accumulated across iterations (TasksCompleted, FilesModified) and sent on each `IterEnd` event as TotalTasks/TotalFiles.
+
+## Loop Dashboard (`shared/loopdash.go`)
+
+Real-time BubbleTea dashboard for `loop iterate` and `loop tasks` commands. Implements `tui.DashboardRenderer` — the generic dashboard handles BubbleTea lifecycle; this package provides loop-specific rendering.
+
+**Event types**: `LoopDashEventKind` (`LoopDashEventStart/IterStart/IterEnd/Output/RateLimit/Complete`). `String()` method returns human-readable name for logging.
+
+**OutputKind**: `OutputText` (text deltas) and `OutputToolStart` (tool activity indicators like `[Using Bash...]`).
+
+**LoopDashEvent**: Channel event with Kind, Iteration, MaxIterations, AgentName, Project, StatusText, TasksCompleted, FilesModified, TestsStatus, ExitSignal, CircuitProgress/Threshold/Tripped, RateRemaining/RateLimit, IterDuration, ExitReason, Error, TotalTasks, TotalFiles, IterCostUSD, IterTokens, IterTurns, OutputChunk, OutputKind.
+
+**Entry point**: `RunLoopDashboard(ios, cfg, ch)` — creates `loopDashRenderer`, bridges typed `chan LoopDashEvent` to generic `chan any`, delegates to `tui.RunDashboard`.
+
+**Layout**: Header bar → info line (agent/project/elapsed) → counters (iteration/circuit/rate) → cost/token line (after first iteration) → status section → activity log (newest first, last 10) → help line. Running entries show streaming output lines (max 5) with `⎿` tree connectors.
+
+**Activity log**: Ring buffer of `activityEntry` (max 10). Running entries show `● [Loop N] Running...` with output lines, completed entries show `✓ [Loop N] STATUS — tasks, files, $cost (duration)`.
+
+**Streaming output**: `processOutputEvent` handles `OutputText` (line-buffered, pushed on `\n`) and `OutputToolStart` (pushed directly). Output lines cleared on `IterStart` and `IterEnd`.
 
 ## Shared Result (`shared/result.go`)
 

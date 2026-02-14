@@ -235,12 +235,21 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 		sendEvent(ch, ev)
 	}
 
-	opts.OnOutput = func(chunk []byte) {
-		sendEvent(ch, LoopDashEvent{
-			Kind:        LoopDashEventOutput,
-			OutputKind:  OutputText,
-			OutputChunk: string(chunk),
-		})
+	opts.OnStreamEvent = func(e *StreamDeltaEvent) {
+		if name := e.ToolName(); name != "" {
+			sendEvent(ch, LoopDashEvent{
+				Kind:        LoopDashEventOutput,
+				OutputKind:  OutputToolStart,
+				OutputChunk: fmt.Sprintf("[Using %s...]", name),
+			})
+		}
+		if text := e.TextDelta(); text != "" {
+			sendEvent(ch, LoopDashEvent{
+				Kind:        LoopDashEventOutput,
+				OutputKind:  OutputText,
+				OutputChunk: text,
+			})
+		}
 	}
 
 	opts.Monitor = nil

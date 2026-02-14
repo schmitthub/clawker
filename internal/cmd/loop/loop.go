@@ -15,7 +15,9 @@ func NewCmdLoop(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "loop",
 		Short: "Run Claude Code in autonomous loops",
-		Long: `Commands for running Claude Code agents in autonomous loops.
+		Long: `WARNING: This command is experimental and may change in future releases.
+
+Commands for running Claude Code agents in autonomous loops.
 
 The loop command automates Claude Code execution: Claude runs repeatedly
 until signaling completion via a LOOP_STATUS block in its output.

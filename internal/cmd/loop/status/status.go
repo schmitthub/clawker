@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -29,7 +29,9 @@ func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions)
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show current loop session status",
-		Long: `Display the current status of a loop session for an agent.
+		Long: `WARNING: This command is experimental and may change in future releases.
+
+Display the current status of a loop session for an agent.
 
 Shows information about:
   - Session state (started, updated, loops completed)

@@ -4,6 +4,8 @@ Run an agent loop with a repeated prompt
 
 ### Synopsis
 
+WARNING: This command is experimental and may change in future releases.
+
 Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
 
 Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).

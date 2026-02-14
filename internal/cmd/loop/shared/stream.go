@@ -51,6 +51,7 @@ const maxScannerBuffer = 10 * 1024 * 1024
 // SystemEvent is emitted once at session start (init) or on conversation compaction.
 type SystemEvent struct {
 	Type           EventType `json:"type"`
+	UUID           string    `json:"uuid,omitempty"`
 	Subtype        string    `json:"subtype"`
 	SessionID      string    `json:"session_id"`
 	Model          string    `json:"model,omitempty"`
@@ -70,9 +71,10 @@ type CompactMetadata struct {
 
 // AssistantEvent is a complete assistant message containing text and/or tool invocations.
 type AssistantEvent struct {
-	Type            EventType      `json:"type"`
-	SessionID       string         `json:"session_id"`
-	ParentToolUseID *string        `json:"parent_tool_use_id"`
+	Type            EventType        `json:"type"`
+	UUID            string           `json:"uuid,omitempty"`
+	SessionID       string           `json:"session_id"`
+	ParentToolUseID *string          `json:"parent_tool_use_id"`
 	Message         AssistantMessage `json:"message"`
 }
 
@@ -163,6 +165,7 @@ func (b *ContentBlock) ToolResultText() string {
 // UserEvent is a tool result message returned after tool execution.
 type UserEvent struct {
 	Type            EventType        `json:"type"`
+	UUID            string           `json:"uuid,omitempty"`
 	SessionID       string           `json:"session_id"`
 	ParentToolUseID *string          `json:"parent_tool_use_id"`
 	Message         UserEventMessage `json:"message"`
@@ -227,15 +230,40 @@ func (r *ResultEvent) CombinedText() string {
 // StreamDeltaEvent wraps a raw Claude API streaming event.
 // Emitted with --include-partial-messages for real-time token display.
 type StreamDeltaEvent struct {
-	Type      EventType `json:"type"`
-	SessionID string    `json:"session_id"`
-	Event     struct {
-		Type  string `json:"type"` // "content_block_delta", "message_start", etc.
-		Delta *struct {
-			Type string `json:"type"` // "text_delta", "input_json_delta"
-			Text string `json:"text"`
-		} `json:"delta,omitempty"`
-	} `json:"event"`
+	Type            EventType      `json:"type"`
+	UUID            string         `json:"uuid,omitempty"`
+	SessionID       string         `json:"session_id"`
+	ParentToolUseID *string        `json:"parent_tool_use_id"`
+	Event           StreamAPIEvent `json:"event"`
+}
+
+// StreamAPIEvent is the inner SSE event from the Anthropic streaming API.
+type StreamAPIEvent struct {
+	Type         string              `json:"type"` // message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
+	Index        int                 `json:"index,omitempty"`
+	ContentBlock *StreamContentBlock `json:"content_block,omitempty"`
+	Delta        *StreamDelta        `json:"delta,omitempty"`
+	Message      *StreamMessageDelta `json:"message,omitempty"`
+	Usage        *TokenUsage         `json:"usage,omitempty"`
+}
+
+// StreamContentBlock describes a content block in a content_block_start event.
+type StreamContentBlock struct {
+	Type string `json:"type"`           // "text", "tool_use"
+	ID   string `json:"id,omitempty"`   // block ID
+	Name string `json:"name,omitempty"` // tool name when Type == "tool_use"
+}
+
+// StreamDelta holds incremental content from a content_block_delta event.
+type StreamDelta struct {
+	Type        string `json:"type"`                   // "text_delta", "input_json_delta"
+	Text        string `json:"text,omitempty"`         // text content when Type == "text_delta"
+	PartialJSON string `json:"partial_json,omitempty"` // partial JSON when Type == "input_json_delta"
+}
+
+// StreamMessageDelta holds message-level delta fields from a message_delta event.
+type StreamMessageDelta struct {
+	StopReason string `json:"stop_reason,omitempty"`
 }
 
 // TextDelta returns text if this is a text_delta event, empty string otherwise.
@@ -244,6 +272,24 @@ func (e *StreamDeltaEvent) TextDelta() string {
 		return e.Event.Delta.Text
 	}
 	return ""
+}
+
+// ToolName returns the tool name if this is a content_block_start for a tool_use block.
+func (e *StreamDeltaEvent) ToolName() string {
+	if e.Event.Type == "content_block_start" && e.Event.ContentBlock != nil && e.Event.ContentBlock.Type == "tool_use" {
+		return e.Event.ContentBlock.Name
+	}
+	return ""
+}
+
+// IsToolStart returns true if this event starts a tool_use content block.
+func (e *StreamDeltaEvent) IsToolStart() bool {
+	return e.ToolName() != ""
+}
+
+// IsContentBlockStop returns true if this event ends a content block.
+func (e *StreamDeltaEvent) IsContentBlockStop() bool {
+	return e.Event.Type == "content_block_stop"
 }
 
 // StreamHandler receives parsed stream-json events via callbacks.

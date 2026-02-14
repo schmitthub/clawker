@@ -121,8 +121,13 @@ type Options struct {
 	// OnLoopEnd is called after each loop iteration with optional cost data.
 	OnLoopEnd func(loopNum int, status *Status, resultEvent *ResultEvent, err error)
 
-	// OnOutput is called with output chunks during execution.
+	// OnOutput is called with text output chunks during execution.
 	OnOutput func(chunk []byte)
+
+	// OnStreamEvent is called for each raw streaming event (content_block_start,
+	// content_block_delta, etc.). Enables rich TUI updates like tool activity
+	// indicators. When set alongside OnOutput, both fire independently.
+	OnStreamEvent func(*StreamDeltaEvent)
 
 	// OnRateLimitHit is called when Claude's API limit is detected.
 	// Return true to wait and retry, false to exit.
@@ -357,7 +362,7 @@ mainLoop:
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		text, resultEvent, exitCode, loopErr := r.StartContainer(loopCtx, opts.ProjectCfg, containerCfg, opts.OnOutput)
+		text, resultEvent, exitCode, loopErr := r.StartContainer(loopCtx, opts.ProjectCfg, containerCfg, opts.OnOutput, opts.OnStreamEvent)
 		cancel()
 
 		// Always cleanup the container after each iteration
@@ -528,19 +533,25 @@ mainLoop:
 // output via io.Pipe + ParseStream, and returns the accumulated text,
 // the terminal ResultEvent, the exit code, and any error.
 //
-// Real-time token deltas (stream_event with text_delta) are forwarded to
-// onOutput for TUI display. Complete assistant messages are accumulated
+// Streaming events are forwarded to onStreamEvent for rich TUI updates
+// (tool starts, text deltas). Text deltas are also forwarded to onOutput
+// for simple text display. Complete assistant messages are accumulated
 // via TextAccumulator for LOOP_STATUS parsing.
-func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte)) (string, *ResultEvent, int, error) {
+func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte), onStreamEvent func(*StreamDeltaEvent)) (string, *ResultEvent, int, error) {
 	// Set up stream-json parsing pipeline: stdcopy → io.Pipe → ParseStream
 	pr, pw := io.Pipe()
 	textAcc, handler := NewTextAccumulator()
 
-	// Forward real-time text deltas for TUI display
-	if onOutput != nil {
+	// Forward streaming events for TUI display and/or text output
+	if onOutput != nil || onStreamEvent != nil {
 		handler.OnStreamEvent = func(e *StreamDeltaEvent) {
-			if text := e.TextDelta(); text != "" {
-				onOutput([]byte(text))
+			if onStreamEvent != nil {
+				onStreamEvent(e)
+			}
+			if onOutput != nil {
+				if text := e.TextDelta(); text != "" {
+					onOutput([]byte(text))
+				}
 			}
 		}
 	}

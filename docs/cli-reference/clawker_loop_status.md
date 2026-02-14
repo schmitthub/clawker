@@ -4,6 +4,8 @@ Show current loop session status
 
 ### Synopsis
 
+WARNING: This command is experimental and may change in future releases.
+
 Display the current status of a loop session for an agent.
 
 Shows information about:

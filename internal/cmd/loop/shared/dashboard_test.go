@@ -47,7 +47,8 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 
 	assert.NotNil(t, opts.OnLoopStart)
 	assert.NotNil(t, opts.OnLoopEnd)
-	assert.NotNil(t, opts.OnOutput)
+	assert.NotNil(t, opts.OnStreamEvent)
+	assert.Nil(t, opts.OnOutput, "OnOutput should be nil when dashboard uses OnStreamEvent")
 	assert.Nil(t, opts.Monitor, "Monitor should be nil when dashboard is wired")
 }
 
@@ -170,7 +171,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	assert.Equal(t, 7, ev2.TotalFiles)
 }
 
-func TestWireLoopDashboard_OnOutput(t *testing.T) {
+func TestWireLoopDashboard_OnStreamEvent_TextDelta(t *testing.T) {
 	opts := &Options{}
 	ch := make(chan LoopDashEvent, 16)
 	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
@@ -178,12 +179,59 @@ func TestWireLoopDashboard_OnOutput(t *testing.T) {
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
 
-	opts.OnOutput([]byte("hello world"))
+	opts.OnStreamEvent(&StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:  "content_block_delta",
+			Delta: &StreamDelta{Type: "text_delta", Text: "hello world"},
+		},
+	})
 
 	ev := <-ch
 	assert.Equal(t, LoopDashEventOutput, ev.Kind)
 	assert.Equal(t, "hello world", ev.OutputChunk)
 	assert.Equal(t, OutputText, ev.OutputKind)
+}
+
+func TestWireLoopDashboard_OnStreamEvent_ToolStart(t *testing.T) {
+	opts := &Options{}
+	ch := make(chan LoopDashEvent, 16)
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
+
+	WireLoopDashboard(opts, ch, setup, 10)
+	<-ch // drain start
+
+	opts.OnStreamEvent(&StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:         "content_block_start",
+			ContentBlock: &StreamContentBlock{Type: "tool_use", Name: "Bash"},
+		},
+	})
+
+	ev := <-ch
+	assert.Equal(t, LoopDashEventOutput, ev.Kind)
+	assert.Equal(t, OutputToolStart, ev.OutputKind)
+	assert.Equal(t, "[Using Bash...]", ev.OutputChunk)
+}
+
+func TestWireLoopDashboard_OnStreamEvent_IgnoresOtherEvents(t *testing.T) {
+	opts := &Options{}
+	ch := make(chan LoopDashEvent, 16)
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
+
+	WireLoopDashboard(opts, ch, setup, 10)
+	<-ch // drain start
+
+	// message_stop should not produce any output event
+	opts.OnStreamEvent(&StreamDeltaEvent{
+		Event: StreamAPIEvent{Type: "message_stop"},
+	})
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected event: %+v", ev)
+	default:
+		// expected: no event sent
+	}
 }
 
 func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {

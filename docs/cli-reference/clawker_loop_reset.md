@@ -4,6 +4,8 @@ Reset the circuit breaker for an agent
 
 ### Synopsis
 
+WARNING: This command is experimental and may change in future releases.
+
 Reset the circuit breaker to allow loops to continue.
 
 The circuit breaker trips when an agent shows no progress for multiple

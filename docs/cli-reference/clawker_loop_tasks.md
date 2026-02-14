@@ -4,6 +4,8 @@ Run an agent loop driven by a task file
 
 ### Synopsis
 
+WARNING: This command is experimental and may change in future releases.
+
 Run Claude Code in an autonomous loop driven by a task file.
 
 Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).

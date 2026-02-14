@@ -682,3 +682,212 @@ func TestSystemSubtypeConstants(t *testing.T) {
 	assert.Equal(t, "init", SystemSubtypeInit)
 	assert.Equal(t, "compact_boundary", SystemSubtypeCompactBoundary)
 }
+
+// --- StreamDeltaEvent helper tests ---
+
+func TestStreamDeltaEvent_TextDelta(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:  "content_block_delta",
+			Delta: &StreamDelta{Type: "text_delta", Text: "hello"},
+		},
+	}
+	assert.Equal(t, "hello", e.TextDelta())
+}
+
+func TestStreamDeltaEvent_TextDelta_InputJSON(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:  "content_block_delta",
+			Delta: &StreamDelta{Type: "input_json_delta", PartialJSON: `{"key"`},
+		},
+	}
+	assert.Equal(t, "", e.TextDelta())
+}
+
+func TestStreamDeltaEvent_TextDelta_NilDelta(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{Type: "content_block_delta"},
+	}
+	assert.Equal(t, "", e.TextDelta())
+}
+
+func TestStreamDeltaEvent_TextDelta_WrongEventType(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:  "message_start",
+			Delta: &StreamDelta{Type: "text_delta", Text: "nope"},
+		},
+	}
+	assert.Equal(t, "", e.TextDelta())
+}
+
+func TestStreamDeltaEvent_ToolName(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:         "content_block_start",
+			ContentBlock: &StreamContentBlock{Type: "tool_use", Name: "Bash", ID: "toolu_01"},
+		},
+	}
+	assert.Equal(t, "Bash", e.ToolName())
+	assert.True(t, e.IsToolStart())
+}
+
+func TestStreamDeltaEvent_ToolName_TextBlock(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:         "content_block_start",
+			ContentBlock: &StreamContentBlock{Type: "text"},
+		},
+	}
+	assert.Equal(t, "", e.ToolName())
+	assert.False(t, e.IsToolStart())
+}
+
+func TestStreamDeltaEvent_ToolName_WrongEventType(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{
+			Type:         "content_block_delta",
+			ContentBlock: &StreamContentBlock{Type: "tool_use", Name: "Bash"},
+		},
+	}
+	assert.Equal(t, "", e.ToolName())
+}
+
+func TestStreamDeltaEvent_ToolName_NilContentBlock(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{Type: "content_block_start"},
+	}
+	assert.Equal(t, "", e.ToolName())
+}
+
+func TestStreamDeltaEvent_IsContentBlockStop(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{Type: "content_block_stop", Index: 1},
+	}
+	assert.True(t, e.IsContentBlockStop())
+}
+
+func TestStreamDeltaEvent_IsContentBlockStop_False(t *testing.T) {
+	e := StreamDeltaEvent{
+		Event: StreamAPIEvent{Type: "content_block_delta"},
+	}
+	assert.False(t, e.IsContentBlockStop())
+}
+
+func TestStreamDeltaEvent_UUID(t *testing.T) {
+	stream := ndjson(
+		`{"type":"stream_event","uuid":"evt-123","session_id":"s1","parent_tool_use_id":"toolu_parent","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var streamEvent *StreamDeltaEvent
+	handler := &StreamHandler{
+		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, streamEvent)
+
+	assert.Equal(t, "evt-123", streamEvent.UUID)
+	require.NotNil(t, streamEvent.ParentToolUseID)
+	assert.Equal(t, "toolu_parent", *streamEvent.ParentToolUseID)
+	assert.Equal(t, "hi", streamEvent.TextDelta())
+}
+
+func TestStreamDeltaEvent_ToolUseBlock_Parse(t *testing.T) {
+	stream := ndjson(
+		`{"type":"stream_event","session_id":"s1","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"Read"}}}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var streamEvent *StreamDeltaEvent
+	handler := &StreamHandler{
+		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, streamEvent)
+
+	assert.Equal(t, "Read", streamEvent.ToolName())
+	assert.True(t, streamEvent.IsToolStart())
+	require.NotNil(t, streamEvent.Event.ContentBlock)
+	assert.Equal(t, "toolu_01", streamEvent.Event.ContentBlock.ID)
+}
+
+func TestStreamDeltaEvent_MessageDelta_Parse(t *testing.T) {
+	stream := ndjson(
+		`{"type":"stream_event","session_id":"s1","event":{"type":"message_delta","message":{"stop_reason":"end_turn"},"usage":{"input_tokens":500,"output_tokens":200}}}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var streamEvent *StreamDeltaEvent
+	handler := &StreamHandler{
+		OnStreamEvent: func(e *StreamDeltaEvent) { streamEvent = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, streamEvent)
+
+	assert.Equal(t, "message_delta", streamEvent.Event.Type)
+	require.NotNil(t, streamEvent.Event.Message)
+	assert.Equal(t, "end_turn", streamEvent.Event.Message.StopReason)
+	require.NotNil(t, streamEvent.Event.Usage)
+	assert.Equal(t, 500, streamEvent.Event.Usage.InputTokens)
+}
+
+// --- UUID on other event types ---
+
+func TestSystemEvent_UUID(t *testing.T) {
+	stream := ndjson(
+		`{"type":"system","uuid":"sys-uuid-1","subtype":"init","session_id":"s1","model":"claude-opus-4-6"}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var sys *SystemEvent
+	handler := &StreamHandler{
+		OnSystem: func(e *SystemEvent) { sys = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, sys)
+	assert.Equal(t, "sys-uuid-1", sys.UUID)
+}
+
+func TestAssistantEvent_UUID(t *testing.T) {
+	stream := ndjson(
+		`{"type":"assistant","uuid":"ast-uuid-1","session_id":"s1","parent_tool_use_id":null,"message":{"id":"msg_01","role":"assistant","model":"claude-opus-4-6","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var ast *AssistantEvent
+	handler := &StreamHandler{
+		OnAssistant: func(e *AssistantEvent) { ast = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, ast)
+	assert.Equal(t, "ast-uuid-1", ast.UUID)
+}
+
+func TestUserEvent_UUID(t *testing.T) {
+	stream := ndjson(
+		`{"type":"user","uuid":"usr-uuid-1","session_id":"s1","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"done"}]}}`,
+		`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+	)
+
+	var usr *UserEvent
+	handler := &StreamHandler{
+		OnUser: func(e *UserEvent) { usr = e },
+	}
+
+	_, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, usr)
+	assert.Equal(t, "usr-uuid-1", usr.UUID)
+}

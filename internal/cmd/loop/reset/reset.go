@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +30,9 @@ func NewCmdReset(f *cmdutil.Factory, runF func(context.Context, *ResetOptions) e
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Reset the circuit breaker for an agent",
-		Long: `Reset the circuit breaker to allow loops to continue.
+		Long: `WARNING: This command is experimental and may change in future releases.
+
+Reset the circuit breaker to allow loops to continue.
 
 The circuit breaker trips when an agent shows no progress for multiple
 consecutive loops. Use this command to reset it and retry.

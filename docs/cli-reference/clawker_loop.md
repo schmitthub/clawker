@@ -4,6 +4,8 @@ Run Claude Code in autonomous loops
 
 ### Synopsis
 
+WARNING: This command is experimental and may change in future releases.
+
 Commands for running Claude Code agents in autonomous loops.
 
 The loop command automates Claude Code execution: Claude runs repeatedly
