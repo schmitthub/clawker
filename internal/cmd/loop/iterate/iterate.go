@@ -66,7 +66,9 @@ func NewCmdIterate(f *cmdutil.Factory, runF func(context.Context, *IterateOption
 	cmd := &cobra.Command{
 		Use:   "iterate",
 		Short: "Run an agent loop with a repeated prompt",
-		Long: `Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
+		Long: `WARNING: This command is experimental and may change in future releases.
+
+Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
 
 Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
 A fresh container is created for each iteration — hooks are injected, the agent
@@ -197,6 +199,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		"-p", prompt,
 		"--output-format=stream-json",
 		"--verbose",
+		"--include-partial-messages",
 	}
 	if opts.SkipPermissions {
 		cmd = append(cmd, "--dangerously-skip-permissions")
