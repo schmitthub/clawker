@@ -11,34 +11,60 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "panels": [],
       "title": "Overview",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
       "id": 2,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -53,31 +79,56 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
             ]
           },
           "unit": "currencyUSD"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 3, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 3,
+        "y": 1
+      },
       "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -92,27 +143,48 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 3, "x": 7, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 7,
+        "y": 1
+      },
       "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -127,27 +199,48 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "orange", "value": null }]
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 3, "x": 10, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 10,
+        "y": 1
+      },
       "id": 40,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -162,27 +255,48 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "semi-dark-blue", "value": null }]
+            "steps": [
+              {
+                "color": "semi-dark-blue",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 13, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 13,
+        "y": 1
+      },
       "id": 41,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -197,27 +311,48 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "blue", "value": null }]
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 17, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 17,
+        "y": 1
+      },
       "id": 5,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -232,27 +367,48 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "purple", "value": null }]
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
           },
           "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
       "id": 6,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
@@ -268,50 +424,64 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "id": 20,
       "panels": [],
       "title": "Per-Project / Agent",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineWidth": 1,
-            "scaleDistribution": { "type": "linear" },
-            "thresholdsStyle": { "mode": "off" }
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
           "unit": "currencyUSD"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
       "id": 21,
       "options": {
-        "barRadius": 0.05,
-        "barWidth": 0.7,
-        "groupWidth": 0.7,
-        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "normal",
-        "tooltip": { "mode": "single", "sort": "none" },
-        "xTickLabelRotation": 0
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
@@ -322,46 +492,55 @@
         }
       ],
       "title": "Cost by Project / Agent",
-      "type": "barchart"
+      "type": "piechart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineWidth": 1,
-            "scaleDistribution": { "type": "linear" },
-            "thresholdsStyle": { "mode": "off" }
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
       "id": 22,
       "options": {
-        "barRadius": 0.05,
-        "barWidth": 0.7,
-        "groupWidth": 0.7,
-        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "normal",
-        "tooltip": { "mode": "single", "sort": "none" },
-        "xTickLabelRotation": 0
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
@@ -372,56 +551,116 @@
         }
       ],
       "title": "Tokens by Project / Agent",
-      "type": "barchart"
+      "type": "piechart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "align": "auto",
-            "cellOptions": { "type": "auto" },
+            "cellOptions": {
+              "type": "auto"
+            },
             "inspect": false
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Value #Cost" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Cost"
+            },
             "properties": [
-              { "id": "unit", "value": "currencyUSD" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #Tokens" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Tokens"
+            },
             "properties": [
-              { "id": "unit", "value": "short" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #Sessions" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Sessions"
+            },
             "properties": [
-              { "id": "displayName", "value": "Sessions" },
-              { "id": "unit", "value": "short" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
       "id": 23,
       "options": {
         "cellHeight": "sm",
-        "footer": { "countRows": false, "enablePagination": false, "fields": "", "reducer": ["sum"], "show": true },
+        "footer": {
+          "countRows": false,
+          "enablePagination": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
         "showHeader": true,
-        "sortBy": [{ "desc": true, "displayName": "Value #Cost" }]
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value #Cost"
+          }
+        ]
       },
       "targets": [
         {
@@ -457,17 +696,27 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
       "id": 7,
       "panels": [],
       "title": "Cost & Usage",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -477,30 +726,61 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "currencyUSD"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
       "id": 8,
       "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
@@ -513,10 +793,15 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -526,30 +811,61 @@
             "drawStyle": "bars",
             "fillOpacity": 100,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
       "id": 9,
       "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
@@ -563,17 +879,27 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
       "id": 10,
       "panels": [],
-      "title": "Activity",
+      "title": "Coding Activity",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -583,30 +909,59 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
       "id": 11,
       "options": {
-        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
@@ -619,10 +974,15 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -630,145 +990,798 @@
             "axisPlacement": "auto",
             "fillOpacity": 80,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineWidth": 1,
-            "scaleDistribution": { "type": "linear" },
-            "thresholdsStyle": { "mode": "off" }
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
       "id": 12,
       "options": {
         "barRadius": 0.05,
         "barWidth": 0.7,
         "groupWidth": 0.7,
-        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "orientation": "horizontal",
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "vertical",
         "showValue": "auto",
         "stacking": "normal",
-        "tooltip": { "mode": "single", "sort": "none" },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
         "xTickLabelRotation": 0
       },
       "targets": [
         {
-          "expr": "sum by (project, agent) (increase(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"Commits\", \"\", \"\") or label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"PRs\", \"\", \"\")",
+          "format": "table",
           "instant": true,
-          "legendFormat": "{{project}}/{{agent}} commits",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
         },
         {
-          "expr": "sum by (project, agent) (increase(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "{{project}}/{{agent}} PRs",
-          "refId": "B"
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "agent",
+            "rowField": "type",
+            "valueField": "Value",
+            "emptyValue": "0"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "type\\agent": " "
+            }
+          }
         }
       ],
       "title": "Commits & PRs",
       "type": "barchart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 42,
+      "panels": [],
+      "title": "Tool Usage",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
-          "mappings": []
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/\\(ok\\)$/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/\\(fail\\)$/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
-      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 33
+      },
+      "id": 43,
       "options": {
-        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
-        "pieType": "pie",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
-          "expr": "sum by (decision) (increase(claude_code_code_edit_tool_decision_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
-          "instant": true,
-          "legendFormat": "{{decision}}",
+          "expr": "sum by (tool, result) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}`, result=`{{ if eq .success \"true\" }}ok{{ else }}fail{{ end }}` [$__auto]))",
+          "legendFormat": "{{tool}} ({{result}})",
           "refId": "A"
         }
       ],
-      "title": "Tool Decisions",
-      "type": "piechart"
+      "title": "Tool Activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 33
+      },
+      "id": 44,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` [$__range]))",
+          "instant": true,
+          "legendFormat": "Failures",
+          "refId": "A"
+        }
+      ],
+      "title": "Tool Failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "noValue": "0%",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 15
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 33
+      },
+      "id": 50,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` [$__range])) / sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__range])) * 100",
+          "instant": true,
+          "legendFormat": "Failure Rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Failure Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "noValue": "No failures",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Count"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 37
+      },
+      "id": 51,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "enablePagination": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Count"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (agent, tool, error) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Failing Tools",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "agent": 0,
+              "tool": 1,
+              "error": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "agent": "Agent",
+              "tool": "Tool",
+              "error": "Error",
+              "Value": "Count"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Calls"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failures"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Avg Duration (ms)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "id": 46,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "enablePagination": true,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Calls"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (agent, tool) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (agent, tool) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "B"
+        },
+        {
+          "expr": "avg by (agent, tool) (avg_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` | unwrap duration_ms [$__range]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "C"
+        }
+      ],
+      "title": "Tool Usage Breakdown",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "agent": "Agent",
+              "tool": "Tool",
+              "Value #A": "Calls",
+              "Value #B": "Failures",
+              "Value #C": "Avg Duration (ms)"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
       "id": 30,
       "panels": [],
       "title": "Session Detail",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "align": "auto",
-            "cellOptions": { "type": "auto" },
+            "cellOptions": {
+              "type": "auto"
+            },
             "inspect": false
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Value #Cost" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Cost"
+            },
             "properties": [
-              { "id": "displayName", "value": "Cost" },
-              { "id": "unit", "value": "currencyUSD" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "displayName",
+                "value": "Cost"
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #Tokens" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Tokens"
+            },
             "properties": [
-              { "id": "displayName", "value": "Tokens" },
-              { "id": "unit", "value": "short" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "displayName",
+                "value": "Tokens"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #Lines" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Lines"
+            },
             "properties": [
-              { "id": "displayName", "value": "Lines" },
-              { "id": "unit", "value": "short" },
-              { "id": "custom.width", "value": 80 }
+              {
+                "id": "displayName",
+                "value": "Lines"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Value #Time" },
+            "matcher": {
+              "id": "byName",
+              "options": "Value #Time"
+            },
             "properties": [
-              { "id": "displayName", "value": "Active Time" },
-              { "id": "unit", "value": "s" },
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "displayName",
+                "value": "Active Time"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
       "id": 31,
       "options": {
         "cellHeight": "sm",
-        "footer": { "countRows": false, "enablePagination": true, "fields": "", "reducer": ["sum"], "show": true },
+        "footer": {
+          "countRows": false,
+          "enablePagination": true,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
         "showHeader": true,
-        "sortBy": [{ "desc": true, "displayName": "Cost" }]
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Cost"
+          }
+        ]
       },
       "targets": [
         {
@@ -811,15 +1824,28 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
       "id": 14,
       "panels": [],
       "title": "Events",
       "type": "row"
     },
     {
-      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 59
+      },
       "id": 15,
       "options": {
         "dedupStrategy": "none",
@@ -833,7 +1859,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_request` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
+          "expr": "{service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -842,8 +1868,48 @@
       "type": "logs"
     },
     {
-      "datasource": { "type": "loki", "uid": "${lokidatasource}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 59
+      },
+      "id": 48,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "expr": "{service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | {{.tool_name}} decision={{.decision_type}} source={{.decision_source}} success={{.success}} duration={{.duration_ms}}ms size={{.tool_result_size_bytes}}b{{if .error}} error=\"{{.error}}\"{{end}}`",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Tool Events",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 59
+      },
       "id": 16,
       "options": {
         "dedupStrategy": "none",
@@ -857,7 +1923,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_error` | json | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
+          "expr": "{service_name=\"claude-code\"} |= `api_error` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -869,11 +1935,19 @@
   "refresh": "30s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["claude-code", "clawker", "monitoring"],
+  "tags": [
+    "claude-code",
+    "clawker",
+    "monitoring"
+  ],
   "templating": {
     "list": [
       {
-        "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" },
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
         "hide": 0,
         "includeAll": false,
         "label": "Datasource",
@@ -887,7 +1961,11 @@
         "type": "datasource"
       },
       {
-        "current": { "selected": false, "text": "Loki", "value": "Loki" },
+        "current": {
+          "selected": false,
+          "text": "Loki",
+          "value": "Loki"
+        },
         "hide": 0,
         "includeAll": false,
         "label": "Loki Datasource",
@@ -902,8 +1980,15 @@
       },
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "definition": "label_values(claude_code_token_usage_tokens_total, project)",
         "hide": 0,
         "includeAll": true,
@@ -911,7 +1996,10 @@
         "multi": true,
         "name": "project",
         "options": [],
-        "query": { "query": "label_values(claude_code_token_usage_tokens_total, project)", "refId": "StandardVariableQuery" },
+        "query": {
+          "query": "label_values(claude_code_token_usage_tokens_total, project)",
+          "refId": "StandardVariableQuery"
+        },
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -920,8 +2008,15 @@
       },
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)",
         "hide": 0,
         "includeAll": true,
@@ -929,7 +2024,10 @@
         "multi": true,
         "name": "agent",
         "options": [],
-        "query": { "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)", "refId": "StandardVariableQuery" },
+        "query": {
+          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)",
+          "refId": "StandardVariableQuery"
+        },
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -938,8 +2036,15 @@
       },
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)",
         "hide": 0,
         "includeAll": true,
@@ -947,7 +2052,10 @@
         "multi": true,
         "name": "session_id",
         "options": [],
-        "query": { "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)", "refId": "StandardVariableQuery" },
+        "query": {
+          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)",
+          "refId": "StandardVariableQuery"
+        },
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -956,7 +2064,10 @@
       }
     ]
   },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "Claude Code Monitoring",
