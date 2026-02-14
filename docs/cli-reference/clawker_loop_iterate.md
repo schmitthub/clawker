@@ -7,10 +7,11 @@ Run an agent loop with a repeated prompt
 Run Claude Code in an autonomous loop, repeating the same prompt each iteration.
 
 Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
-A new container is created, hooks are injected, and the container is automatically
-cleaned up when the loop exits. Each iteration starts a fresh Claude session
-(no conversation context carried forward). The agent only sees the current
-codebase state from previous runs.
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration starts a fresh Claude session (no conversation context carried
+forward). The agent only sees the current codebase state from previous runs.
 
 The loop exits when:
   - Claude signals completion via a LOOP_STATUS block

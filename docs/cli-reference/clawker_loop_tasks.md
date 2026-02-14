@@ -7,10 +7,12 @@ Run an agent loop driven by a task file
 Run Claude Code in an autonomous loop driven by a task file.
 
 Each loop session gets an auto-generated agent name (e.g., loop-brave-turing).
-A new container is created, hooks are injected, and the container is automatically
-cleaned up when the loop exits. Each iteration, the agent reads the task file,
-picks an open task, completes it, and marks it done. Clawker manages the loop —
-the agent LLM handles task selection and completion.
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration, the agent reads the task file, picks an open task, completes it,
+and marks it done. Clawker manages the loop — the agent LLM handles task
+selection and completion.
 
 The loop exits when:
   - All tasks are completed (agent signals via LOOP_STATUS)

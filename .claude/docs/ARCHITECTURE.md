@@ -411,7 +411,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 │  Clawker examples:                                              │
 │    docker/ → bundler, config, logger, pkg/whail, pkg/whail/buildkit│
 │    workspace/ → config, docker, logger                          │
-│    loop/ → docker, logger                                       │
+│    cmd/loop/shared/ → docker, config, logger                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -423,8 +423,7 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
   ✓  middle → foundation           bundler imports config
   ✓  composite → middle            docker imports bundler
   ✓  composite → foundation        docker imports config
-  ✓  composite → leaf              loop imports logger
-  ✓  composite → own children      loop imports loop/tui
+  ✓  composite → leaf              loop/shared imports logger
 
   ✗  leaf → foundation             logger must never import config
   ✗  leaf → leaf (sibling)         leaves have zero internal imports

@@ -24,8 +24,9 @@ Two loop strategies are available:
   iterate  Same prompt repeated fresh each invocation
   tasks    Agent reads a task file, picks an open task, does it, marks it done
 
-Container lifecycle is managed automatically — a container is created at the
-start of each loop and destroyed on completion.
+Container lifecycle is managed automatically — a fresh container is created for
+each iteration and destroyed afterward. Workspace and config volumes persist
+across iterations so the agent sees cumulative codebase changes.
 
 Available commands:
   iterate  Run an agent loop with a repeated prompt

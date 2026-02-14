@@ -230,10 +230,11 @@ clawker loop iterate [flags]
 ```
 
 Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
-A new container is created, hooks are injected, and the container is automatically
-cleaned up when the loop exits. Each iteration starts a fresh Claude session
-(no conversation context carried forward). The agent only sees the current
-codebase state from previous runs.
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration starts a fresh Claude session (no conversation context carried
+forward). The agent only sees the current codebase state from previous runs.
 
 **Prompt flags** (mutually exclusive, one required):
 
@@ -300,7 +301,7 @@ clawker loop iterate --prompt "Refactor" --worktree feature/refactor
 - Maximum iterations reached
 - Timeout hit
 
-**Default output:** TUI dashboard (when stderr is a TTY). Press `q`/`Esc` to detach to minimal text output; `Ctrl+C` to stop the loop. Non-TTY defaults to text monitor output.
+**Default output:** TUI dashboard (when stderr is a TTY) showing iteration progress, circuit breaker state, rate limits, and per-iteration cost/token/turn metrics. Press `q`/`Esc` to detach to minimal text output; `Ctrl+C` to stop the loop. Non-TTY defaults to text monitor output.
 
 ---
 
@@ -314,10 +315,12 @@ clawker loop tasks [flags]
 ```
 
 Each loop session gets an auto-generated agent name (e.g., `loop-brave-turing`).
-A new container is created, hooks are injected, and the container is automatically
-cleaned up when the loop exits. Each iteration, the agent reads the task file,
-picks an open task, completes it, and marks it done. Clawker manages the loop —
-the agent LLM handles task selection and completion.
+A fresh container is created for each iteration — hooks are injected, the agent
+runs, and the container is destroyed afterward. Workspace and config volumes
+persist across iterations so the agent sees cumulative codebase changes.
+Each iteration, the agent reads the task file, picks an open task, completes it,
+and marks it done. Clawker manages the loop — the agent LLM handles task
+selection and completion.
 
 **Task flags:**
 
@@ -352,7 +355,7 @@ clawker loop tasks --tasks todo.md --verbose
 - Maximum iterations reached
 - Timeout hit
 
-**Default output:** Same as `loop iterate` — TUI dashboard with detach support.
+**Default output:** Same as `loop iterate` — TUI dashboard with cost/token tracking and detach support.
 
 ---
 
