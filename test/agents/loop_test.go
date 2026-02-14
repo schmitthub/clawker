@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,8 +15,9 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	loopshared "github.com/schmitthub/clawker/internal/cmd/loop/shared"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
@@ -23,353 +25,277 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLoopIntegration_SessionCreatedImmediately verifies that when loop run
-// starts, the session file is created immediately before the first exec completes.
-// This was a bug where the session was only saved after the first loop finished,
-// causing "loop status" to show "No session found" during long-running loops.
-func TestLoopIntegration_SessionCreatedImmediately(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	// Setup temp directories for session store
-	tempDir := t.TempDir()
-	storeDir := filepath.Join(tempDir, "loop")
-
-	// Create a harness for test container
-	h := harness.NewHarness(t,
-		harness.WithConfigBuilder(
-			builders.MinimalValidConfig().
-				WithProject("loop-test").
-				WithSecurity(builders.SecurityFirewallDisabled()),
-		),
-	)
-	h.Chdir()
-
-	dockerClient := harness.NewTestClient(t)
-	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "loop-test"); err != nil {
-			t.Logf("WARNING: cleanup failed for loop-test: %v", err)
-		}
-	}()
-
-	// Generate unique container name
-	agentName := "test-loop-" + time.Now().Format("150405.000000")
-	containerName := h.ContainerName(agentName)
-
-	// Create and start container — whail auto-injects managed + test labels
-	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
-		Name: containerName,
-		Config: &container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "300"},
-			Labels: map[string]string{
-				docker.LabelProject: "loop-test",
-				docker.LabelAgent:   agentName,
-			},
-		},
-	})
-	require.NoError(t, err, "failed to create container")
-
-	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
-	require.NoError(t, err, "failed to start container")
-
-	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
-	require.NoError(t, err, "container did not start")
-
-	// Create runner with custom store directory
-	store := loop.NewSessionStore(storeDir)
-	history := loop.NewHistoryStore(storeDir)
-	wrappedClient := &docker.Client{Engine: dockerClient.Engine}
-	runner := loop.NewRunnerWith(wrappedClient, store, history)
-
-	// Channel to signal when Run has started
-	runStarted := make(chan struct{})
-
-	// Run loop in a goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		close(runStarted)
-		_, err := runner.Run(ctx, loop.Options{
-			ContainerName: containerName,
-			ProjectCfg:    "loop-test",
-			Agent:         agentName,
-			Prompt:        "echo hello", // Simple command that exits quickly
-			MaxLoops:      1,
-			Timeout:       30 * time.Second,
-		})
-		errCh <- err
-	}()
-
-	// Wait for Run to start
-	<-runStarted
-
-	// Give it a moment to create the session
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify session file exists BEFORE the exec could complete
-	sessionPath := filepath.Join(storeDir, "sessions", "loop-test."+agentName+".json")
-	_, err = os.Stat(sessionPath)
-	require.NoError(t, err, "session file should exist immediately after Run starts")
-
-	// Verify we can load the session
-	session, err := store.LoadSession("loop-test", agentName)
-	require.NoError(t, err, "should be able to load session")
-	require.NotNil(t, session, "session should not be nil")
-	require.Equal(t, "loop-test", session.Project)
-	require.Equal(t, agentName, session.Agent)
-}
-
-// TestLoopIntegration_ExecCaptureTimeout verifies that the ExecCapture function
-// properly respects context cancellation and doesn't hang forever.
-func TestLoopIntegration_ExecCaptureTimeout(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	tempDir := t.TempDir()
-	storeDir := filepath.Join(tempDir, "loop")
-
-	h := harness.NewHarness(t,
-		harness.WithConfigBuilder(
-			builders.MinimalValidConfig().
-				WithProject("loop-timeout-test").
-				WithSecurity(builders.SecurityFirewallDisabled()),
-		),
-	)
-	h.Chdir()
-
-	dockerClient := harness.NewTestClient(t)
-	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, "loop-timeout-test"); err != nil {
-			t.Logf("WARNING: cleanup failed for loop-timeout-test: %v", err)
-		}
-	}()
-
-	agentName := "test-timeout-" + time.Now().Format("150405.000000")
-	containerName := h.ContainerName(agentName)
-
-	// Create container — whail auto-injects managed + test labels
-	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
-		Name: containerName,
-		Config: &container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "300"},
-			Labels: map[string]string{
-				docker.LabelProject: "loop-timeout-test",
-				docker.LabelAgent:   agentName,
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
-	require.NoError(t, err)
-
-	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	err = harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID)
-	require.NoError(t, err)
-
-	store := loop.NewSessionStore(storeDir)
-	history := loop.NewHistoryStore(storeDir)
-	wrappedClient := &docker.Client{Engine: dockerClient.Engine}
-	runner := loop.NewRunnerWith(wrappedClient, store, history)
-
-	// Test that ExecCapture with a short timeout doesn't hang
-	execCtx, execCancel := context.WithTimeout(ctx, 2*time.Second)
-	defer execCancel()
-
-	start := time.Now()
-	// This command takes 30 seconds but our context times out in 2 seconds
-	output, exitCode, err := runner.ExecCapture(execCtx, containerName, []string{"sleep", "30"}, nil)
-	elapsed := time.Since(start)
-
-	// Should complete in roughly 2 seconds (the timeout), not 30 seconds
-	require.Less(t, elapsed, 10*time.Second, "ExecCapture should respect context timeout")
-
-	// Should have a timeout error
-	require.Error(t, err, "expected timeout error")
-	require.Contains(t, err.Error(), "timed out", "error should mention timeout")
-
-	// Exit code should be -1 for timeout
-	require.Equal(t, -1, exitCode, "exit code should be -1 for timeout")
-
-	// Output may have partial data, that's fine
-	_ = output
-}
-
 // ---------------------------------------------------------------------------
-// Helper: createLoopTestContainer creates a running Alpine container wired for
-// loop integration tests. Returns the container ID, container name, and a
-// cleanup function. The container runs "sleep 300" so it stays alive for exec.
+// NDJSON stream-json helpers
 // ---------------------------------------------------------------------------
 
-func createLoopTestContainer(t *testing.T, ctx context.Context, project, agentName string) (
-	containerID, containerName string, dockerClient *docker.Client, cleanup func(),
-) {
-	t.Helper()
-
-	h := harness.NewHarness(t,
-		harness.WithConfigBuilder(
-			builders.MinimalValidConfig().
-				WithProject(project).
-				WithSecurity(builders.SecurityFirewallDisabled()),
-		),
-	)
-	h.Chdir()
-
-	dockerClient = harness.NewTestClient(t)
-	containerName = h.ContainerName(agentName)
-
-	resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
-		Name: containerName,
-		Config: &container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "300"},
-			Labels: map[string]string{
-				docker.LabelProject: project,
-				docker.LabelAgent:   agentName,
-			},
-		},
-	})
-	require.NoError(t, err, "failed to create container")
-
-	_, err = dockerClient.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID})
-	require.NoError(t, err, "failed to start container")
-
-	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	require.NoError(t, harness.WaitForContainerRunning(readyCtx, dockerClient, resp.ID), "container did not start")
-
-	cleanup = func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
-			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
-		}
+// loopStatusBlock builds assistant text containing a LOOP_STATUS block.
+func loopStatusBlock(status string, exitSignal bool, tasksCompleted, filesModified int) string {
+	signal := "false"
+	if exitSignal {
+		signal = "true"
 	}
-	containerID = resp.ID
-	return
+	return fmt.Sprintf(`Here is my work summary.
+
+---LOOP_STATUS---
+STATUS: %s
+TASKS_COMPLETED_THIS_LOOP: %d
+FILES_MODIFIED: %d
+COMPLETION_INDICATORS: 0
+TESTS_STATUS: NOT_RUN
+WORK_TYPE: IMPLEMENTATION
+RECOMMENDATION: continue
+EXIT_SIGNAL: %s
+---END_LOOP_STATUS---
+`, status, tasksCompleted, filesModified, signal)
+}
+
+// ndjsonOutput builds NDJSON stream-json output (stream_event + assistant + result).
+func ndjsonOutput(text string) string {
+	streamEvent, _ := json.Marshal(map[string]interface{}{
+		"type":       "stream_event",
+		"session_id": "test-session",
+		"event": map[string]interface{}{
+			"type": "content_block_delta",
+			"delta": map[string]interface{}{
+				"type": "text_delta",
+				"text": "token",
+			},
+		},
+	})
+	assistant, _ := json.Marshal(map[string]interface{}{
+		"type":       "assistant",
+		"session_id": "test-session",
+		"message": map[string]interface{}{
+			"id":          "msg-1",
+			"role":        "assistant",
+			"model":       "test-model",
+			"stop_reason": "end_turn",
+			"content": []map[string]interface{}{
+				{"type": "text", "text": text},
+			},
+		},
+	})
+	result, _ := json.Marshal(map[string]interface{}{
+		"type":            "result",
+		"subtype":         "success",
+		"session_id":      "test-session",
+		"is_error":        false,
+		"duration_ms":     1000,
+		"duration_api_ms": 900,
+		"num_turns":       1,
+		"total_cost_usd":  0.01,
+	})
+	return string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
+}
+
+// ---------------------------------------------------------------------------
+// Container creation helpers for per-iteration Runner
+// ---------------------------------------------------------------------------
+
+// containerCmd returns a shell command that outputs the given NDJSON to stdout.
+// Uses base64 encoding to avoid shell escaping issues.
+func containerCmd(ndjson string) []string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(ndjson))
+	return []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d", encoded)}
+}
+
+// makeCreateContainer returns a CreateContainer callback that creates Alpine
+// containers outputting the given NDJSON each iteration.
+func makeCreateContainer(t *testing.T, dockerClient *docker.Client, project, agent, output string) func(context.Context) (*loopshared.ContainerStartConfig, error) {
+	t.Helper()
+	iteration := 0
+	return func(ctx context.Context) (*loopshared.ContainerStartConfig, error) {
+		iteration++
+		name := fmt.Sprintf("loop-iter-%s-%d-%d", agent, iteration, time.Now().UnixNano())
+		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
+			Name: name,
+			Config: &container.Config{
+				Image:  "alpine:latest",
+				Cmd:    containerCmd(output),
+				Labels: map[string]string{
+					docker.LabelProject: project,
+					docker.LabelAgent:   agent,
+				},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating test container: %w", err)
+		}
+		containerID := resp.ID
+		return &loopshared.ContainerStartConfig{
+			ContainerID: containerID,
+			Cleanup: func() {
+				_ = dockerClient.RemoveContainerWithVolumes(context.Background(), containerID, true)
+			},
+		}, nil
+	}
+}
+
+// makeMultiCreateContainer returns a CreateContainer callback that uses
+// different NDJSON output for each iteration (cycling back to the last if
+// there are more iterations than outputs).
+func makeMultiCreateContainer(t *testing.T, dockerClient *docker.Client, project, agent string, outputs []string) func(context.Context) (*loopshared.ContainerStartConfig, error) {
+	t.Helper()
+	iteration := 0
+	return func(ctx context.Context) (*loopshared.ContainerStartConfig, error) {
+		idx := iteration
+		if idx >= len(outputs) {
+			idx = len(outputs) - 1
+		}
+		iteration++
+		name := fmt.Sprintf("loop-iter-%s-%d-%d", agent, iteration, time.Now().UnixNano())
+		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
+			Name: name,
+			Config: &container.Config{
+				Image:  "alpine:latest",
+				Cmd:    containerCmd(outputs[idx]),
+				Labels: map[string]string{
+					docker.LabelProject: project,
+					docker.LabelAgent:   agent,
+				},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating test container: %w", err)
+		}
+		containerID := resp.ID
+		return &loopshared.ContainerStartConfig{
+			ContainerID: containerID,
+			Cleanup: func() {
+				_ = dockerClient.RemoveContainerWithVolumes(context.Background(), containerID, true)
+			},
+		}, nil
+	}
+}
+
+// makeSlowCreateContainer returns a CreateContainer callback that creates a
+// container which sleeps for the given duration before exiting. Used to test
+// context cancellation during container execution.
+func makeSlowCreateContainer(t *testing.T, dockerClient *docker.Client, project, agent string, sleepSeconds int) func(context.Context) (*loopshared.ContainerStartConfig, error) {
+	t.Helper()
+	iteration := 0
+	return func(ctx context.Context) (*loopshared.ContainerStartConfig, error) {
+		iteration++
+		name := fmt.Sprintf("loop-iter-%s-%d-%d", agent, iteration, time.Now().UnixNano())
+		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
+			Name: name,
+			Config: &container.Config{
+				Image:  "alpine:latest",
+				Cmd:    []string{"sh", "-c", fmt.Sprintf("sleep %d", sleepSeconds)},
+				Labels: map[string]string{
+					docker.LabelProject: project,
+					docker.LabelAgent:   agent,
+				},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating test container: %w", err)
+		}
+		containerID := resp.ID
+		return &loopshared.ContainerStartConfig{
+			ContainerID: containerID,
+			Cleanup: func() {
+				_ = dockerClient.RemoveContainerWithVolumes(context.Background(), containerID, true)
+			},
+		}, nil
+	}
 }
 
 // newTestRunner creates a Runner with temp-dir stores suitable for testing.
-func newTestRunner(t *testing.T, dockerClient *docker.Client) (*loop.Runner, *loop.SessionStore, *loop.HistoryStore) {
+func newTestRunner(t *testing.T, dockerClient *docker.Client) (*loopshared.Runner, *loopshared.SessionStore, *loopshared.HistoryStore) {
 	t.Helper()
-	tempDir := t.TempDir()
-	storeDir := filepath.Join(tempDir, "loop")
-	store := loop.NewSessionStore(storeDir)
-	history := loop.NewHistoryStore(storeDir)
-	wrappedClient := &docker.Client{Engine: dockerClient.Engine}
-	return loop.NewRunnerWith(wrappedClient, store, history), store, history
+	tmpDir := t.TempDir()
+	storeDir := filepath.Join(tmpDir, "loop")
+	store := loopshared.NewSessionStore(storeDir)
+	history := loopshared.NewHistoryStore(storeDir)
+	return loopshared.NewRunnerWith(dockerClient, store, history), store, history
+}
+
+// projectCleanup registers a t.Cleanup that removes all resources for a project.
+func projectCleanup(t *testing.T, dockerClient *docker.Client, project string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
+			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
+		}
+	})
+}
+
+// testProject creates a *config.Project for tests.
+func testProject(name string) *configtest.ProjectBuilder {
+	return configtest.NewProjectBuilder().WithProject(name)
 }
 
 // ---------------------------------------------------------------------------
-// Runner-level integration tests
+// Runner integration tests
 // ---------------------------------------------------------------------------
 
 // TestLoopIntegration_RunSingleIteration verifies that Runner.Run executes
-// a single loop iteration, produces a result, and persists the session. The
-// exec command outputs a LOOP_STATUS block so the circuit breaker is satisfied.
+// a single loop iteration with per-iteration container creation, produces a
+// result, and persists the session.
 func TestLoopIntegration_RunSingleIteration(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	project := "loop-single-test"
-	agentName := "test-single-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-	_ = containerID
+	agent := "test-single-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
+	text := loopStatusBlock("COMPLETE", true, 1, 2)
+	output := ndjsonOutput(text)
 	runner, store, _ := newTestRunner(t, dockerClient)
 
-	// The prompt is a shell command that prints a LOOP_STATUS block.
-	// Runner.ExecCapture runs ["claude", "-p", prompt] but since claude is not
-	// installed in the alpine container, the command will fail with a non-zero
-	// exit code. We still verify the runner machinery handles this gracefully.
-	//
-	// For a true integration path we exec a simple echo command instead.
-	// We inject a small script that outputs a parseable LOOP_STATUS block.
-	// Write a helper script into the container that mimics claude -p output.
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: COMPLETE"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 2"
-echo "TESTS_STATUS: ALL_PASSING"
-echo "WORK_TYPE: IMPLEMENTATION"
-echo "EXIT_SIGNAL: true"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	// Now run the loop — it will exec "claude -p <prompt>" which will run our script.
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test prompt",
-		MaxLoops:         1,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test prompt",
+		MaxLoops:            1,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    0,
+		StagnationThreshold: 10,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, 1, result.LoopsCompleted, "should complete exactly 1 loop")
+	assert.Equal(t, 1, result.LoopsCompleted, "should complete exactly 1 loop")
+	assert.Contains(t, result.ExitReason, "completion")
 
 	// Verify session was persisted
-	session, err := store.LoadSession(project, agentName)
+	session, err := store.LoadSession(project, agent)
 	require.NoError(t, err)
 	require.NotNil(t, session, "session should be persisted")
 	assert.Equal(t, project, session.Project)
-	assert.Equal(t, agentName, session.Agent)
+	assert.Equal(t, agent, session.Agent)
 	assert.Equal(t, 1, session.LoopsCompleted)
 }
 
 // TestLoopIntegration_SessionPersistenceAcrossIterations verifies that session
-// data accumulates correctly across multiple loop iterations.
+// data accumulates correctly across multiple per-iteration containers.
 func TestLoopIntegration_SessionPersistenceAcrossIterations(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	project := "loop-persist-test"
-	agentName := "test-persist-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-persist-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
+	// IN_PROGRESS with progress each loop — no exit signal
+	text := loopStatusBlock("IN_PROGRESS", false, 1, 2)
+	output := ndjsonOutput(text)
 	runner, store, history := newTestRunner(t, dockerClient)
 
-	// Write a fake claude script that outputs different LOOP_STATUS blocks.
-	// The script uses a counter file to track invocations.
-	script := `#!/bin/sh
-COUNTER_FILE=/tmp/loop-counter
-if [ ! -f "$COUNTER_FILE" ]; then
-  echo 1 > "$COUNTER_FILE"
-else
-  COUNT=$(cat "$COUNTER_FILE")
-  COUNT=$((COUNT + 1))
-  echo $COUNT > "$COUNTER_FILE"
-fi
-COUNT=$(cat "$COUNTER_FILE")
-
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 2"
-echo "TESTS_STATUS: ALL_PASSING"
-echo "WORK_TYPE: IMPLEMENTATION"
-echo "EXIT_SIGNAL: false"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	// Run 3 iterations
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test prompt",
-		MaxLoops:         3,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test prompt",
+		MaxLoops:            3,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
+		StagnationThreshold: 10,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -377,18 +303,16 @@ echo "---END_LOOP_STATUS---"
 	assert.Equal(t, "max loops reached", result.ExitReason)
 
 	// Verify session state accumulated
-	session, err := store.LoadSession(project, agentName)
+	session, err := store.LoadSession(project, agent)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	assert.Equal(t, 3, session.LoopsCompleted)
-	// Each loop reported 1 task completed, so total should be 3
 	assert.Equal(t, 3, session.TotalTasksCompleted, "tasks should accumulate across loops")
-	// Each loop reported 2 files modified, so total should be 6
 	assert.Equal(t, 6, session.TotalFilesModified, "files should accumulate across loops")
 	assert.Equal(t, 0, session.NoProgressCount, "should have progress each loop")
 
 	// Verify history has entries
-	sessionHistory, err := history.LoadSessionHistory(project, agentName)
+	sessionHistory, err := history.LoadSessionHistory(project, agent)
 	require.NoError(t, err)
 	require.NotNil(t, sessionHistory)
 	assert.Greater(t, len(sessionHistory.Entries), 0, "history should have entries")
@@ -401,47 +325,34 @@ func TestLoopIntegration_CircuitBreakerTripsOnStagnation(t *testing.T) {
 	ctx := context.Background()
 
 	project := "loop-stagnation-test"
-	agentName := "test-stagnation-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-stagnation-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
+	// No progress: 0 tasks, 0 files
+	text := loopStatusBlock("IN_PROGRESS", false, 0, 0)
+	output := ndjsonOutput(text)
 	runner, store, _ := newTestRunner(t, dockerClient)
 
-	// Write a fake claude script that outputs a LOOP_STATUS with no progress.
-	// tasks_completed: 0 and files_modified: 0 means no progress.
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 0"
-echo "FILES_MODIFIED: 0"
-echo "TESTS_STATUS: NOT_RUN"
-echo "WORK_TYPE: IMPLEMENTATION"
-echo "EXIT_SIGNAL: false"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	// Run with a low stagnation threshold
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          project,
-		Agent:               agentName,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
 		Prompt:              "test prompt",
-		MaxLoops:            20, // High enough to never hit
-		StagnationThreshold: 3,  // Trip after 3 no-progress loops
-		Timeout:             30 * time.Second,
-		LoopDelaySeconds:    0,
+		MaxLoops:            20,
+		StagnationThreshold: 3,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Circuit breaker should have tripped before MaxLoops
 	assert.Less(t, result.LoopsCompleted, 20, "should trip before max loops")
 	assert.Contains(t, result.ExitReason, "stagnation", "exit reason should mention stagnation")
 	assert.Error(t, result.Error, "should have an error when circuit trips")
 
 	// Verify circuit state was persisted as tripped
-	circuitState, err := store.LoadCircuitState(project, agentName)
+	circuitState, err := store.LoadCircuitState(project, agent)
 	require.NoError(t, err)
 	require.NotNil(t, circuitState, "circuit state should be persisted")
 	assert.True(t, circuitState.Tripped, "circuit should be tripped")
@@ -456,33 +367,35 @@ func TestLoopIntegration_CircuitBreakerBlocksRerun(t *testing.T) {
 	ctx := context.Background()
 
 	project := "loop-blocked-test"
-	agentName := "test-blocked-" + time.Now().Format("150405.000000")
-	_, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-blocked-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, store, _ := newTestRunner(t, dockerClient)
 
-	// Manually save a tripped circuit state
+	// Pre-trip the circuit
 	now := time.Now()
-	err := store.SaveCircuitState(&loop.CircuitState{
+	err := store.SaveCircuitState(&loopshared.CircuitState{
 		Project:    project,
-		Agent:      agentName,
+		Agent:      agent,
 		Tripped:    true,
 		TripReason: "test: manually tripped",
 		TrippedAt:  &now,
 	})
 	require.NoError(t, err)
 
-	// Attempt to run — should fail immediately
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName: containerName,
-		ProjectCfg:    project,
-		Agent:         agentName,
-		Prompt:        "test",
-		MaxLoops:      1,
-		Timeout:       10 * time.Second,
+	// Attempt to run — should fail immediately (no container needed)
+	text := loopStatusBlock("COMPLETE", true, 1, 1)
+	output := ndjsonOutput(text)
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer: makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:      testProject(project).Build(),
+		Agent:           agent,
+		Prompt:          "test",
+		MaxLoops:        1,
+		Timeout:         10 * time.Second,
 	})
-	require.NoError(t, err) // Run returns nil error — the error is in Result
+	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.LoopsCompleted, "no loops should run when circuit is tripped")
 	assert.Contains(t, result.ExitReason, "circuit already tripped")
@@ -496,115 +409,78 @@ func TestLoopIntegration_ResetCircuitAllowsRerun(t *testing.T) {
 	ctx := context.Background()
 
 	project := "loop-reset-test"
-	agentName := "test-reset-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-reset-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, store, _ := newTestRunner(t, dockerClient)
 
 	// Pre-trip the circuit
 	now := time.Now()
-	err := store.SaveCircuitState(&loop.CircuitState{
+	err := store.SaveCircuitState(&loopshared.CircuitState{
 		Project:    project,
-		Agent:      agentName,
+		Agent:      agent,
 		Tripped:    true,
 		TripReason: "test: pre-tripped",
 		TrippedAt:  &now,
 	})
 	require.NoError(t, err)
 
-	// Write a completion script so the loop exits cleanly
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: COMPLETE"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "TESTS_STATUS: ALL_PASSING"
-echo "WORK_TYPE: IMPLEMENTATION"
-echo "EXIT_SIGNAL: true"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
+	// Completion output so the loop exits cleanly after reset
+	text := loopStatusBlock("COMPLETE", true, 1, 1)
+	output := ndjsonOutput(text)
 
-	// Run with --reset-circuit
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         1,
-		Timeout:          30 * time.Second,
-		ResetCircuit:     true,
-		LoopDelaySeconds: 0,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            1,
+		Timeout:             60 * time.Second,
+		ResetCircuit:        true,
+		LoopDelaySeconds:    0,
+		StagnationThreshold: 10,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.LoopsCompleted, "should run after circuit reset")
 
 	// Circuit state should no longer be tripped
-	circuitState, err := store.LoadCircuitState(project, agentName)
+	circuitState, err := store.LoadCircuitState(project, agent)
 	require.NoError(t, err)
-	// After reset + successful run, circuit state file may not exist or be clean
 	if circuitState != nil {
 		assert.False(t, circuitState.Tripped, "circuit should not be tripped after reset")
 	}
 }
 
 // TestLoopIntegration_CompletionDetection verifies that the loop exits when the
-// agent signals completion via exit_signal: true in the LOOP_STATUS block.
+// agent signals completion via EXIT_SIGNAL: true in the LOOP_STATUS block.
 func TestLoopIntegration_CompletionDetection(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	project := "loop-complete-test"
-	agentName := "test-complete-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-complete-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, _, _ := newTestRunner(t, dockerClient)
 
-	// Write a fake claude that signals completion on the 2nd invocation.
-	script := `#!/bin/sh
-COUNTER_FILE=/tmp/loop-counter
-if [ ! -f "$COUNTER_FILE" ]; then
-  echo 1 > "$COUNTER_FILE"
-  COUNT=1
-else
-  COUNT=$(cat "$COUNTER_FILE")
-  COUNT=$((COUNT + 1))
-  echo $COUNT > "$COUNTER_FILE"
-fi
+	// First iteration: IN_PROGRESS. Second: COMPLETE with exit signal.
+	outputs := []string{
+		ndjsonOutput(loopStatusBlock("IN_PROGRESS", false, 1, 1)),
+		ndjsonOutput(loopStatusBlock("COMPLETE", true, 2, 3)),
+	}
 
-if [ "$COUNT" -ge 2 ]; then
-  echo "---LOOP_STATUS---"
-  echo "STATUS: COMPLETE"
-  echo "TASKS_COMPLETED_THIS_LOOP: 2"
-  echo "FILES_MODIFIED: 3"
-  echo "TESTS_STATUS: ALL_PASSING"
-  echo "WORK_TYPE: IMPLEMENTATION"
-  echo "EXIT_SIGNAL: true"
-  echo "---END_LOOP_STATUS---"
-else
-  echo "---LOOP_STATUS---"
-  echo "STATUS: IN_PROGRESS"
-  echo "TASKS_COMPLETED_THIS_LOOP: 1"
-  echo "FILES_MODIFIED: 1"
-  echo "TESTS_STATUS: ALL_PASSING"
-  echo "WORK_TYPE: IMPLEMENTATION"
-  echo "EXIT_SIGNAL: false"
-  echo "---END_LOOP_STATUS---"
-fi
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "complete the task",
-		MaxLoops:         10,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeMultiCreateContainer(t, dockerClient, project, agent, outputs),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "complete the task",
+		MaxLoops:            10,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
+		StagnationThreshold: 10,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -616,46 +492,45 @@ fi
 }
 
 // TestLoopIntegration_LOOPSTATUSParsing verifies end-to-end LOOP_STATUS block
-// parsing from actual docker exec output through the analyzer.
+// parsing from real Docker container output through the stream-json pipeline.
 func TestLoopIntegration_LOOPSTATUSParsing(t *testing.T) {
 	harness.RequireDocker(t)
 	ctx := context.Background()
 
 	project := "loop-status-parse-test"
-	agentName := "test-parse-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-parse-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, _, _ := newTestRunner(t, dockerClient)
 
-	// Write a rich LOOP_STATUS block to verify all fields parse correctly.
-	script := `#!/bin/sh
-echo "Some preceding output from the agent..."
-echo "Working on task: fix authentication"
-echo ""
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 3"
-echo "FILES_MODIFIED: 7"
-echo "TESTS_STATUS: FAILING"
-echo "WORK_TYPE: TESTING"
-echo "RECOMMENDATION: Need to fix auth test mocks"
-echo "EXIT_SIGNAL: false"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
+	// Rich LOOP_STATUS with all fields
+	richText := `Some preceding output from the agent...
+Working on task: fix authentication
 
-	// Track what the callbacks receive
-	var capturedStatus *loop.Status
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "fix tests",
-		MaxLoops:         1,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
-		OnLoopEnd: func(loopNum int, status *loop.Status, loopErr error) {
+---LOOP_STATUS---
+STATUS: IN_PROGRESS
+TASKS_COMPLETED_THIS_LOOP: 3
+FILES_MODIFIED: 7
+TESTS_STATUS: FAILING
+WORK_TYPE: TESTING
+RECOMMENDATION: Need to fix auth test mocks
+EXIT_SIGNAL: false
+---END_LOOP_STATUS---
+`
+	output := ndjsonOutput(richText)
+
+	var capturedStatus *loopshared.Status
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "fix tests",
+		MaxLoops:            1,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    0,
+		StagnationThreshold: 10,
+		OnLoopEnd: func(_ int, status *loopshared.Status, _ *loopshared.ResultEvent, _ error) {
 			capturedStatus = status
 		},
 	})
@@ -686,37 +561,33 @@ func TestLoopIntegration_NoLOOPSTATUS_CountsAsNoProgress(t *testing.T) {
 	ctx := context.Background()
 
 	project := "loop-nostatus-test"
-	agentName := "test-nostatus-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-nostatus-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, store, _ := newTestRunner(t, dockerClient)
 
-	// Write a claude script that outputs NO LOOP_STATUS block.
-	script := `#!/bin/sh
-echo "I did some work but forgot the status block"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
+	// No LOOP_STATUS in the output
+	output := ndjsonOutput("I did some work but forgot the status block")
 
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          project,
-		Agent:               agentName,
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            10,
 		StagnationThreshold: 3,
-		Timeout:             30 * time.Second,
-		LoopDelaySeconds:    0,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Should trip after StagnationThreshold loops with no progress
 	assert.LessOrEqual(t, result.LoopsCompleted, 4, "should trip around stagnation threshold")
 	assert.Contains(t, result.ExitReason, "stagnation")
 
 	// Session should show no-progress count
-	session, err := store.LoadSession(project, agentName)
+	session, err := store.LoadSession(project, agent)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	assert.Greater(t, session.NoProgressCount, 0, "session should track no-progress count")
@@ -728,27 +599,14 @@ func TestLoopIntegration_ContextCancellation(t *testing.T) {
 	harness.RequireDocker(t)
 
 	project := "loop-cancel-test"
-	agentName := "test-cancel-" + time.Now().Format("150405.000000")
-
-	bgCtx := context.Background()
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, bgCtx, project, agentName)
-	defer cleanup()
+	agent := "test-cancel-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, _, _ := newTestRunner(t, dockerClient)
 
-	// Write a slow script so the loop doesn't finish before we cancel.
-	script := `#!/bin/sh
-echo "starting long work..."
-sleep 60
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 0"
-echo "FILES_MODIFIED: 0"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, bgCtx, dockerClient, containerID, "/usr/local/bin/claude", script)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	ctx, cancel := context.WithCancel(bgCtx)
 	// Cancel after a brief delay
 	go func() {
 		time.Sleep(3 * time.Second)
@@ -756,14 +614,16 @@ echo "---END_LOOP_STATUS---"
 	}()
 
 	start := time.Now()
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         5,
-		Timeout:          120 * time.Second,
-		LoopDelaySeconds: 0,
+	result, err := runner.Run(ctx, loopshared.Options{
+		// Slow container: sleeps 300s so context cancellation is tested mid-exec
+		CreateContainer:     makeSlowCreateContainer(t, dockerClient, project, agent, 300),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            5,
+		Timeout:             120 * time.Second,
+		StagnationThreshold: 100,
+		LoopDelaySeconds:    0,
 	})
 	elapsed := time.Since(start)
 
@@ -782,45 +642,246 @@ func TestLoopIntegration_OnOutputCallback(t *testing.T) {
 	ctx := context.Background()
 
 	project := "loop-output-test"
-	agentName := "test-output-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
+	agent := "test-output-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
 
 	runner, _, _ := newTestRunner(t, dockerClient)
 
-	script := `#!/bin/sh
-echo "OUTPUT_LINE_1: hello from the agent"
-echo "OUTPUT_LINE_2: working on task"
-echo "---LOOP_STATUS---"
-echo "STATUS: COMPLETE"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "EXIT_SIGNAL: true"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
+	text := loopStatusBlock("COMPLETE", true, 1, 1)
+	output := ndjsonOutput(text)
 
-	var outputChunks []string
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         1,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
+	var outputReceived bool
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            1,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    0,
+		StagnationThreshold: 10,
 		OnOutput: func(chunk []byte) {
-			outputChunks = append(outputChunks, string(chunk))
+			if len(chunk) > 0 {
+				outputReceived = true
+			}
 		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-
-	// Verify we received output via callback
-	combined := strings.Join(outputChunks, "")
-	assert.Contains(t, combined, "OUTPUT_LINE_1", "should receive agent output via callback")
-	assert.Contains(t, combined, "OUTPUT_LINE_2", "should receive all output lines")
+	assert.True(t, outputReceived, "OnOutput should receive stream_event data")
 }
+
+// TestLoopIntegration_SessionExpiration verifies that expired sessions are
+// cleaned up and a fresh session is started.
+func TestLoopIntegration_SessionExpiration(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "loop-expire-test"
+	agent := "test-expire-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
+
+	runner, store, _ := newTestRunner(t, dockerClient)
+
+	// Pre-create an expired session (started 48 hours ago)
+	oldSession := &loopshared.Session{
+		Project:        project,
+		Agent:          agent,
+		StartedAt:      time.Now().Add(-48 * time.Hour),
+		UpdatedAt:      time.Now().Add(-48 * time.Hour),
+		LoopsCompleted: 10,
+		Status:         "IN_PROGRESS",
+	}
+	require.NoError(t, store.SaveSession(oldSession))
+
+	text := loopStatusBlock("COMPLETE", true, 1, 1)
+	output := ndjsonOutput(text)
+
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:        makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:             testProject(project).Build(),
+		Agent:                  agent,
+		Prompt:                 "test",
+		MaxLoops:               1,
+		Timeout:                60 * time.Second,
+		SessionExpirationHours: 24, // 24h expiration, session is 48h old
+		LoopDelaySeconds:       0,
+		StagnationThreshold:    10,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// The old session should have been replaced with a fresh one
+	session, err := store.LoadSession(project, agent)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	assert.Equal(t, 1, session.LoopsCompleted, "fresh session should have 1 loop (just ran)")
+	assert.True(t, session.StartedAt.After(time.Now().Add(-1*time.Minute)),
+		"fresh session should have been created recently, not 48h ago")
+}
+
+// TestLoopIntegration_RateLimiter verifies that the rate limiter state is
+// persisted in the session and respected across loop iterations.
+func TestLoopIntegration_RateLimiter(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "loop-ratelimit-test"
+	agent := "test-ratelimit-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
+
+	runner, store, _ := newTestRunner(t, dockerClient)
+
+	text := loopStatusBlock("IN_PROGRESS", false, 1, 1)
+	output := ndjsonOutput(text)
+
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            2,
+		Timeout:             60 * time.Second,
+		CallsPerHour:        100,
+		LoopDelaySeconds:    1,
+		StagnationThreshold: 10,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify rate limit state was persisted in session
+	session, err := store.LoadSession(project, agent)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	require.NotNil(t, session.RateLimitState, "rate limit state should be persisted in session")
+	assert.Greater(t, session.RateLimitState.Calls, 0, "rate limit should track calls")
+}
+
+// TestLoopIntegration_HistoryTracking verifies that session and circuit history
+// entries are recorded during loop execution.
+func TestLoopIntegration_HistoryTracking(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "loop-history-test"
+	agent := "test-history-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
+
+	runner, _, history := newTestRunner(t, dockerClient)
+
+	text := loopStatusBlock("IN_PROGRESS", false, 1, 1)
+	output := ndjsonOutput(text)
+
+	_, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            2,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
+		StagnationThreshold: 10,
+	})
+	require.NoError(t, err)
+
+	// Verify session history was recorded
+	sessionHistory, err := history.LoadSessionHistory(project, agent)
+	require.NoError(t, err)
+	require.NotNil(t, sessionHistory, "session history should exist")
+	assert.Greater(t, len(sessionHistory.Entries), 0, "should have history entries")
+
+	// Should have a "created" entry and "updated" entries
+	var hasCreated, hasUpdated bool
+	for _, entry := range sessionHistory.Entries {
+		if entry.Event == "created" {
+			hasCreated = true
+		}
+		if entry.Event == "updated" {
+			hasUpdated = true
+		}
+	}
+	assert.True(t, hasCreated, "history should have 'created' entry")
+	assert.True(t, hasUpdated, "history should have 'updated' entries")
+}
+
+// TestLoopIntegration_WorkDirPersisted verifies that the working directory is
+// stored in the session for concurrency detection.
+func TestLoopIntegration_WorkDirPersisted(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "loop-workdir-test"
+	agent := "test-workdir-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
+
+	runner, store, _ := newTestRunner(t, dockerClient)
+
+	text := loopStatusBlock("COMPLETE", true, 1, 1)
+	output := ndjsonOutput(text)
+
+	testWorkDir := "/test/work/dir"
+	_, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            1,
+		Timeout:             60 * time.Second,
+		WorkDir:             testWorkDir,
+		LoopDelaySeconds:    0,
+		StagnationThreshold: 10,
+	})
+	require.NoError(t, err)
+
+	session, err := store.LoadSession(project, agent)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	assert.Equal(t, testWorkDir, session.WorkDir, "session should store the working directory")
+}
+
+// TestLoopIntegration_SameErrorTrip verifies the circuit breaker trips when the
+// same error signature appears too many times.
+func TestLoopIntegration_SameErrorTrip(t *testing.T) {
+	harness.RequireDocker(t)
+	ctx := context.Background()
+
+	project := "loop-same-error-test"
+	agent := "test-same-error-" + time.Now().Format("150405.000000")
+	dockerClient := harness.NewTestClient(t)
+	projectCleanup(t, dockerClient, project)
+
+	runner, _, _ := newTestRunner(t, dockerClient)
+
+	// Output with an error pattern in the assistant text but no LOOP_STATUS
+	errorText := "Error: connection refused to api.example.com\nFailed to complete the task."
+	output := ndjsonOutput(errorText)
+
+	result, err := runner.Run(ctx, loopshared.Options{
+		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
+		ProjectCfg:          testProject(project).Build(),
+		Agent:               agent,
+		Prompt:              "test",
+		MaxLoops:            20,
+		StagnationThreshold: 10,
+		SameErrorThreshold:  3,
+		Timeout:             60 * time.Second,
+		LoopDelaySeconds:    1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.LessOrEqual(t, result.LoopsCompleted, 5, "should trip around same-error threshold")
+	assert.Contains(t, result.ExitReason, "stagnation", "should exit due to circuit breaker trip")
+}
+
+// ---------------------------------------------------------------------------
+// Hook injection tests
+// ---------------------------------------------------------------------------
 
 // TestLoopIntegration_HookInjection verifies that InjectLoopHooks properly
 // writes hook configuration and scripts into a container.
@@ -841,11 +902,7 @@ func TestLoopIntegration_HookInjection(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
-			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
-		}
-	}()
+	projectCleanup(t, dockerClient, project)
 
 	containerName := h.ContainerName(agentName)
 
@@ -893,13 +950,13 @@ func TestLoopIntegration_HookInjection(t *testing.T) {
 	assert.Contains(t, settings.Hooks, "SessionStart", "hooks should include SessionStart event")
 
 	// Verify stop-check script was injected
-	scriptResult, err := ctr.Exec(ctx, dockerClient, "cat", loop.StopCheckScriptPath)
+	scriptResult, err := ctr.Exec(ctx, dockerClient, "cat", loopshared.StopCheckScriptPath)
 	require.NoError(t, err, "stop-check script should exist")
 	assert.Equal(t, 0, scriptResult.ExitCode, "cat stop-check.js should succeed")
 	assert.Contains(t, scriptResult.CleanOutput(), "LOOP_STATUS", "stop-check script should reference LOOP_STATUS")
 
 	// Verify the hook script directory exists
-	dirResult, err := ctr.Exec(ctx, dockerClient, "ls", loop.HookScriptDir)
+	dirResult, err := ctr.Exec(ctx, dockerClient, "ls", loopshared.HookScriptDir)
 	require.NoError(t, err)
 	assert.Equal(t, 0, dirResult.ExitCode, "hook script directory should exist")
 }
@@ -923,11 +980,7 @@ func TestLoopIntegration_CustomHooksFile(t *testing.T) {
 	h.Chdir()
 
 	dockerClient := harness.NewTestClient(t)
-	defer func() {
-		if err := harness.CleanupProjectResources(context.Background(), dockerClient, project); err != nil {
-			t.Logf("WARNING: cleanup failed for %s: %v", project, err)
-		}
-	}()
+	projectCleanup(t, dockerClient, project)
 
 	containerName := h.ContainerName(agentName)
 
@@ -988,291 +1041,48 @@ func TestLoopIntegration_CustomHooksFile(t *testing.T) {
 	assert.NotContains(t, settings.Hooks, "Stop", "should NOT have default Stop hook (custom replaces)")
 
 	// Verify stop-check.js was NOT injected (custom hooks don't get default scripts)
-	scriptResult, err := ctr.Exec(ctx, dockerClient, "ls", loop.StopCheckScriptPath)
+	scriptResult, err := ctr.Exec(ctx, dockerClient, "ls", loopshared.StopCheckScriptPath)
 	require.NoError(t, err)
 	assert.NotEqual(t, 0, scriptResult.ExitCode, "stop-check.js should NOT exist with custom hooks")
 }
 
-// TestLoopIntegration_SessionExpiration verifies that expired sessions are
-// cleaned up and a fresh session is started.
-func TestLoopIntegration_SessionExpiration(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	project := "loop-expire-test"
-	agentName := "test-expire-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-
-	runner, store, _ := newTestRunner(t, dockerClient)
-
-	// Pre-create an expired session (started 48 hours ago)
-	oldSession := &loop.Session{
-		Project:        project,
-		Agent:          agentName,
-		StartedAt:      time.Now().Add(-48 * time.Hour),
-		UpdatedAt:      time.Now().Add(-48 * time.Hour),
-		LoopsCompleted: 10,
-		Status:         "IN_PROGRESS",
-	}
-	require.NoError(t, store.SaveSession(oldSession))
-
-	// Write a completion script
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: COMPLETE"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "EXIT_SIGNAL: true"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:          containerName,
-		ProjectCfg:             project,
-		Agent:                  agentName,
-		Prompt:                 "test",
-		MaxLoops:               1,
-		Timeout:                30 * time.Second,
-		SessionExpirationHours: 24, // 24h expiration, session is 48h old
-		LoopDelaySeconds:       0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// The old session should have been replaced with a fresh one
-	session, err := store.LoadSession(project, agentName)
-	require.NoError(t, err)
-	require.NotNil(t, session)
-	// New session starts with fresh counters
-	assert.Equal(t, 1, session.LoopsCompleted, "fresh session should have 1 loop (just ran)")
-	assert.True(t, session.StartedAt.After(time.Now().Add(-1*time.Minute)),
-		"fresh session should have been created recently, not 48h ago")
-}
+// ---------------------------------------------------------------------------
+// Pure unit tests (no Docker)
+// ---------------------------------------------------------------------------
 
 // TestLoopIntegration_NamingFormat verifies that auto-generated agent names
 // follow the expected loop-<adjective>-<noun> format.
 func TestLoopIntegration_NamingFormat(t *testing.T) {
-	// This doesn't need Docker — it's a pure unit test included here for
-	// completeness of the loop integration test suite.
 	names := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		name := loop.GenerateAgentName()
+		name := loopshared.GenerateAgentName()
 
-		// Format: loop-<adjective>-<noun>
 		assert.True(t, strings.HasPrefix(name, "loop-"), "name should start with loop-: %s", name)
 
 		parts := strings.SplitN(name, "-", 3)
 		assert.Equal(t, 3, len(parts), "name should have 3 parts (loop-adjective-noun): %s", name)
 
-		// Should be unique (with very high probability over 100 names)
 		assert.False(t, names[name], "name collision: %s", name)
 		names[name] = true
 	}
 }
 
-// TestLoopIntegration_RateLimiter verifies that the rate limiter state is
-// persisted in the session and respected across loop iterations.
-func TestLoopIntegration_RateLimiter(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	project := "loop-ratelimit-test"
-	agentName := "test-ratelimit-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-
-	runner, store, _ := newTestRunner(t, dockerClient)
-
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "EXIT_SIGNAL: false"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         2,
-		Timeout:          30 * time.Second,
-		CallsPerHour:     100,
-		LoopDelaySeconds: 0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Verify rate limit state was persisted in session
-	session, err := store.LoadSession(project, agentName)
-	require.NoError(t, err)
-	require.NotNil(t, session)
-	require.NotNil(t, session.RateLimitState, "rate limit state should be persisted in session")
-	assert.Greater(t, session.RateLimitState.Calls, 0, "rate limit should track calls")
-}
-
-// TestLoopIntegration_HistoryTracking verifies that session and circuit history
-// entries are recorded during loop execution.
-func TestLoopIntegration_HistoryTracking(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	project := "loop-history-test"
-	agentName := "test-history-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-
-	runner, _, history := newTestRunner(t, dockerClient)
-
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: IN_PROGRESS"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "EXIT_SIGNAL: false"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	_, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         2,
-		Timeout:          30 * time.Second,
-		LoopDelaySeconds: 0,
-	})
-	require.NoError(t, err)
-
-	// Verify session history was recorded
-	sessionHistory, err := history.LoadSessionHistory(project, agentName)
-	require.NoError(t, err)
-	require.NotNil(t, sessionHistory, "session history should exist")
-	assert.Greater(t, len(sessionHistory.Entries), 0, "should have history entries")
-
-	// Should have a "created" entry and "updated" entries
-	var hasCreated, hasUpdated bool
-	for _, entry := range sessionHistory.Entries {
-		if entry.Event == "created" {
-			hasCreated = true
-		}
-		if entry.Event == "updated" {
-			hasUpdated = true
-		}
-	}
-	assert.True(t, hasCreated, "history should have 'created' entry")
-	assert.True(t, hasUpdated, "history should have 'updated' entries")
-}
-
-// TestLoopIntegration_WorkDirPersisted verifies that the working directory is
-// stored in the session for concurrency detection.
-func TestLoopIntegration_WorkDirPersisted(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	project := "loop-workdir-test"
-	agentName := "test-workdir-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-
-	runner, store, _ := newTestRunner(t, dockerClient)
-
-	script := `#!/bin/sh
-echo "---LOOP_STATUS---"
-echo "STATUS: COMPLETE"
-echo "TASKS_COMPLETED_THIS_LOOP: 1"
-echo "FILES_MODIFIED: 1"
-echo "EXIT_SIGNAL: true"
-echo "---END_LOOP_STATUS---"
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	testWorkDir := "/test/work/dir"
-	_, err := runner.Run(ctx, loop.Options{
-		ContainerName:    containerName,
-		ProjectCfg:       project,
-		Agent:            agentName,
-		Prompt:           "test",
-		MaxLoops:         1,
-		Timeout:          30 * time.Second,
-		WorkDir:          testWorkDir,
-		LoopDelaySeconds: 0,
-	})
-	require.NoError(t, err)
-
-	session, err := store.LoadSession(project, agentName)
-	require.NoError(t, err)
-	require.NotNil(t, session)
-	assert.Equal(t, testWorkDir, session.WorkDir, "session should store the working directory")
-}
-
-// TestLoopIntegration_SameErrorTrip verifies the circuit breaker trips when the
-// same error signature appears too many times.
-func TestLoopIntegration_SameErrorTrip(t *testing.T) {
-	harness.RequireDocker(t)
-	ctx := context.Background()
-
-	project := "loop-same-error-test"
-	agentName := "test-same-error-" + time.Now().Format("150405.000000")
-	containerID, containerName, dockerClient, cleanup := createLoopTestContainer(t, ctx, project, agentName)
-	defer cleanup()
-
-	runner, _, _ := newTestRunner(t, dockerClient)
-
-	// Script that always exits with error (non-zero exit code)
-	script := `#!/bin/sh
-echo "Error: connection refused to api.example.com"
-exit 1
-`
-	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
-
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          project,
-		Agent:               agentName,
-		Prompt:              "test",
-		MaxLoops:            20,
-		StagnationThreshold: 10, // High so stagnation doesn't trip first
-		SameErrorThreshold:  3,  // Trip after 3 same errors
-		Timeout:             30 * time.Second,
-		LoopDelaySeconds:    0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Non-zero exit code doesn't cause loopErr (ExecCapture returns nil error for
-	// non-zero exit codes). The output contains "Error: ..." which errorPatternRe
-	// matches, extracting a consistent error signature. Without a LOOP_STATUS block,
-	// each loop counts as no-progress. The same-error circuit breaker should trip
-	// after SameErrorThreshold consecutive identical error signatures.
-	assert.LessOrEqual(t, result.LoopsCompleted, 5, "should trip around same-error threshold")
-	assert.Contains(t, result.ExitReason, "stagnation", "should exit due to circuit breaker trip")
-}
-
 // TestLoopIntegration_ListSessions verifies that sessions can be listed per project.
 func TestLoopIntegration_ListSessions(t *testing.T) {
-	// Pure unit test — doesn't need Docker
 	tempDir := t.TempDir()
 	storeDir := filepath.Join(tempDir, "loop")
-	store := loop.NewSessionStore(storeDir)
+	store := loopshared.NewSessionStore(storeDir)
 
 	project := "list-test"
 
-	// Create multiple sessions for the same project
 	for i, agent := range []string{"agent-1", "agent-2", "agent-3"} {
-		session := loop.NewSession(project, agent, "test prompt", "/test/dir")
+		session := loopshared.NewSession(project, agent, "test prompt", "/test/dir")
 		session.LoopsCompleted = i + 1
 		require.NoError(t, store.SaveSession(session))
 	}
 
 	// Create a session for a different project
-	otherSession := loop.NewSession("other-project", "agent-x", "test", "/other")
+	otherSession := loopshared.NewSession("other-project", "agent-x", "test", "/other")
 	require.NoError(t, store.SaveSession(otherSession))
 
 	// List sessions for our project
@@ -1280,7 +1090,6 @@ func TestLoopIntegration_ListSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, sessions, 3, "should find 3 sessions for project")
 
-	// Verify all belong to the correct project
 	for _, s := range sessions {
 		assert.Equal(t, project, s.Project)
 	}
@@ -1289,67 +1098,30 @@ func TestLoopIntegration_ListSessions(t *testing.T) {
 // TestLoopIntegration_PromptInstructions verifies that BuildSystemPrompt produces
 // parseable LOOP_STATUS instructions.
 func TestLoopIntegration_PromptInstructions(t *testing.T) {
-	// Pure unit test — doesn't need Docker
-	prompt := loop.BuildSystemPrompt("")
+	prompt := loopshared.BuildSystemPrompt("")
 	assert.Contains(t, prompt, "---LOOP_STATUS---", "system prompt should include LOOP_STATUS marker")
 	assert.Contains(t, prompt, "---END_LOOP_STATUS---", "system prompt should include end marker")
 	assert.Contains(t, prompt, "EXIT_SIGNAL", "system prompt should document EXIT_SIGNAL field")
 
 	// Verify the example in the prompt is parseable
-	status := loop.ParseStatus(prompt)
+	status := loopshared.ParseStatus(prompt)
 	require.NotNil(t, status, "the LOOP_STATUS example in the prompt should be parseable")
 
 	// With additional instructions
 	additional := "Always use TypeScript for new files."
-	promptWithExtra := loop.BuildSystemPrompt(additional)
+	promptWithExtra := loopshared.BuildSystemPrompt(additional)
 	assert.Contains(t, promptWithExtra, "---LOOP_STATUS---")
 	assert.Contains(t, promptWithExtra, additional)
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Hook test helpers
 // ---------------------------------------------------------------------------
 
-// writeScriptToContainer writes a shell script to a path inside the container
-// by executing sh -c "cat > path && chmod +x path" via docker exec.
-func writeScriptToContainer(t *testing.T, ctx context.Context, client *docker.Client, containerID, path, script string) {
-	t.Helper()
-
-	dir := filepath.Dir(path)
-	cmd := fmt.Sprintf("mkdir -p %s && cat > %s && chmod +x %s", dir, path, path)
-
-	execResp, err := client.ExecCreate(ctx, containerID, docker.ExecCreateOptions{
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		Cmd:          []string{"sh", "-c", cmd},
-	})
-	require.NoError(t, err, "failed to create exec for script injection")
-
-	hijacked, err := client.ExecAttach(ctx, execResp.ID, docker.ExecAttachOptions{TTY: false})
-	require.NoError(t, err, "failed to attach for script injection")
-
-	_, err = hijacked.Conn.Write([]byte(script))
-	require.NoError(t, err, "failed to write script content")
-	hijacked.CloseWrite()
-	hijacked.Close()
-
-	// Wait for exec to complete
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify the script was written
-	inspectCtx, inspectCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer inspectCancel()
-	inspectResp, err := client.ExecInspect(inspectCtx, execResp.ID, docker.ExecInspectOptions{})
-	require.NoError(t, err, "failed to inspect exec")
-	require.Equal(t, 0, inspectResp.ExitCode, "script injection should succeed (exit code 0)")
-}
-
 // injectLoopHooksForTest is a test-accessible wrapper around the shared
-// InjectLoopHooks function. It imports the shared package indirectly to avoid
-// a dependency cycle — tests in test/agents/ can import internal packages.
+// InjectLoopHooks function.
 func injectLoopHooksForTest(ctx context.Context, containerID, hooksFile string, copyFn func(ctx context.Context, containerID, destPath string, content io.Reader) error) error {
-	hooks, hookFiles, err := loop.ResolveHooks(hooksFile)
+	hooks, hookFiles, err := loopshared.ResolveHooks(hooksFile)
 	if err != nil {
 		return err
 	}
