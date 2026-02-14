@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o clawker-socket-server clawker-socket-server.go
 {{- end}}
 
-FROM {{.BaseImage}}
+FROM {{.BaseImage}} AS final
 
 ARG TZ=UTC
 ENV TZ="$TZ"
