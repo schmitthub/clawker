@@ -1,4 +1,4 @@
-package loop
+package shared
 
 import (
 	"strings"

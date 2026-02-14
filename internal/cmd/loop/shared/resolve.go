@@ -1,13 +1,13 @@
 package shared
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/pflag"
 )
 
@@ -80,21 +80,22 @@ func ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, e
 	return template + "\n\n" + tasks, nil
 }
 
-// BuildRunnerOptions maps CLI LoopOptions + command context into loop.Options.
+// BuildRunnerOptions maps CLI LoopOptions + command context into Options.
 // Config overrides are applied for any flags the user did not explicitly set.
 func BuildRunnerOptions(
 	loopOpts *LoopOptions,
 	project *config.Project,
-	agent, containerName, prompt, workDir string,
+	agent, prompt, workDir string,
+	createContainer func(ctx context.Context) (*ContainerStartConfig, error),
 	flags *pflag.FlagSet,
 	loopCfg *config.LoopConfig,
-) loop.Options {
-	opts := loop.Options{
-		ContainerName:             containerName,
-		ProjectCfg:                *config.Project,
+) Options {
+	opts := Options{
+		ProjectCfg:                project,
 		Agent:                     agent,
 		Prompt:                    prompt,
 		WorkDir:                   workDir,
+		CreateContainer:           createContainer,
 		MaxLoops:                  loopOpts.MaxLoops,
 		StagnationThreshold:       loopOpts.StagnationThreshold,
 		Timeout:                   time.Duration(loopOpts.TimeoutMinutes) * time.Minute,
@@ -106,7 +107,7 @@ func BuildRunnerOptions(
 		CompletionThreshold:       loopOpts.CompletionThreshold,
 		UseStrictCompletion:       loopOpts.StrictCompletion,
 		SkipPermissions:           loopOpts.SkipPermissions,
-		SystemPrompt:              loop.BuildSystemPrompt(loopOpts.AppendSystemPrompt),
+		SystemPrompt:              BuildSystemPrompt(loopOpts.AppendSystemPrompt),
 		CallsPerHour:              loopOpts.CallsPerHour,
 		ResetCircuit:              loopOpts.ResetCircuit,
 		Verbose:                   loopOpts.Verbose,
@@ -136,7 +137,7 @@ func ApplyLoopConfigDefaults(loopOpts *LoopOptions, flags *pflag.FlagSet, cfg *c
 }
 
 // applyConfigOverrides applies config.LoopConfig values for any flag not explicitly set by the user.
-func applyConfigOverrides(opts *loop.Options, loopOpts *LoopOptions, flags *pflag.FlagSet, cfg *config.LoopConfig) {
+func applyConfigOverrides(opts *Options, loopOpts *LoopOptions, flags *pflag.FlagSet, cfg *config.LoopConfig) {
 	if !flags.Changed("max-loops") && cfg.MaxLoops > 0 {
 		opts.MaxLoops = cfg.MaxLoops
 	}

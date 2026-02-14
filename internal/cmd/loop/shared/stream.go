@@ -1,4 +1,4 @@
-package loop
+package shared
 
 import (
 	"bufio"
@@ -15,10 +15,11 @@ import (
 type EventType string
 
 const (
-	EventTypeSystem    EventType = "system"
-	EventTypeAssistant EventType = "assistant"
-	EventTypeUser      EventType = "user"
-	EventTypeResult    EventType = "result"
+	EventTypeSystem      EventType = "system"
+	EventTypeAssistant   EventType = "assistant"
+	EventTypeUser        EventType = "user"
+	EventTypeResult      EventType = "result"
+	EventTypeStreamEvent EventType = "stream_event"
 )
 
 // System event subtypes.
@@ -223,6 +224,28 @@ func (r *ResultEvent) CombinedText() string {
 	return strings.Join(r.Errors, "\n")
 }
 
+// StreamDeltaEvent wraps a raw Claude API streaming event.
+// Emitted with --include-partial-messages for real-time token display.
+type StreamDeltaEvent struct {
+	Type      EventType `json:"type"`
+	SessionID string    `json:"session_id"`
+	Event     struct {
+		Type  string `json:"type"` // "content_block_delta", "message_start", etc.
+		Delta *struct {
+			Type string `json:"type"` // "text_delta", "input_json_delta"
+			Text string `json:"text"`
+		} `json:"delta,omitempty"`
+	} `json:"event"`
+}
+
+// TextDelta returns text if this is a text_delta event, empty string otherwise.
+func (e *StreamDeltaEvent) TextDelta() string {
+	if e.Event.Type == "content_block_delta" && e.Event.Delta != nil && e.Event.Delta.Type == "text_delta" {
+		return e.Event.Delta.Text
+	}
+	return ""
+}
+
 // StreamHandler receives parsed stream-json events via callbacks.
 // All callbacks are optional — nil callbacks are skipped.
 type StreamHandler struct {
@@ -237,6 +260,10 @@ type StreamHandler struct {
 
 	// OnResult is called when the final result event arrives.
 	OnResult func(*ResultEvent)
+
+	// OnStreamEvent is called for real-time streaming events (token deltas).
+	// Requires --include-partial-messages flag.
+	OnStreamEvent func(*StreamDeltaEvent)
 }
 
 // ParseStream reads NDJSON lines from r, dispatches events to handler,
@@ -299,6 +326,16 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 			}
 			if handler != nil && handler.OnUser != nil {
 				handler.OnUser(&event)
+			}
+
+		case EventTypeStreamEvent:
+			var event StreamDeltaEvent
+			if err := json.Unmarshal(line, &event); err != nil {
+				logger.Warn().Err(err).Str("type", "stream_event").Msg("failed to parse known stream event")
+				continue
+			}
+			if handler != nil && handler.OnStreamEvent != nil {
+				handler.OnStreamEvent(&event)
 			}
 
 		case EventTypeResult:

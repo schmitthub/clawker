@@ -1,7 +1,6 @@
-package loop
+package shared
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 // Result represents the outcome of running the loop.
@@ -38,29 +36,27 @@ type Result struct {
 	RateLimitHit bool
 }
 
+// ContainerStartConfig is returned by the per-iteration container factory.
+// It provides the container ID and a cleanup function that removes the
+// container and its associated volumes.
 type ContainerStartConfig struct {
 	ContainerID string
 	Cleanup     func()
 }
 
-type ContainerAttachConfig struct {
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-}
-
 // Options configures the loop execution.
 type Options struct {
-	// ContainerName is the full container name (clawker.project.agent).
-	ContainerStartConfig *ContainerStartConfig
+	// CreateContainer creates a new container for each iteration.
+	// Returns a ContainerStartConfig with the container ID and cleanup function.
+	CreateContainer func(ctx context.Context) (*ContainerStartConfig, error)
 
-	// ProjectCfg is the project name.
+	// ProjectCfg is the project configuration.
 	ProjectCfg *config.Project
 
 	// Agent is the agent name.
 	Agent string
 
-	// Prompt is the initial prompt (used only on first loop if provided).
+	// Prompt is the prompt used for each iteration (-p flag).
 	Prompt string
 
 	// MaxLoops is the maximum number of loops to run.
@@ -122,8 +118,8 @@ type Options struct {
 	// OnLoopStart is called before each loop iteration.
 	OnLoopStart func(loopNum int)
 
-	// OnLoopEnd is called after each loop iteration.
-	OnLoopEnd func(loopNum int, status *Status, err error)
+	// OnLoopEnd is called after each loop iteration with optional cost data.
+	OnLoopEnd func(loopNum int, status *Status, resultEvent *ResultEvent, err error)
 
 	// OnOutput is called with output chunks during execution.
 	OnOutput func(chunk []byte)
@@ -135,14 +131,13 @@ type Options struct {
 
 // Runner executes autonomous loops.
 type Runner struct {
-	client       *docker.Client
-	socketBridge func() socketbridge.SocketBridgeManager
-	store        *SessionStore
-	history      *HistoryStore
+	client  *docker.Client
+	store   *SessionStore
+	history *HistoryStore
 }
 
-// NewRunner creates a new Runner with the given Docker client.
-func NewRunner(f *cmdutil.Factory) (*Runner, error) {
+// NewRunner creates a new Runner with the given Docker client and default stores.
+func NewRunner(client *docker.Client) (*Runner, error) {
 	store, err := DefaultSessionStore()
 	if err != nil {
 		return nil, err
@@ -151,34 +146,26 @@ func NewRunner(f *cmdutil.Factory) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := f.Client(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Docker client: %w", err)
-	}
 	return &Runner{
-		client:       client,
-		socketBridge: f.SocketBridge,
-		store:        store,
-		history:      history,
+		client:  client,
+		store:   store,
+		history: history,
 	}, nil
 }
 
 // NewRunnerWith creates a Runner with explicit store and history dependencies.
 // This is useful for testing with custom storage directories.
-func NewRunnerWith(f *cmdutil.Factory, store *SessionStore, history *HistoryStore) (*Runner, error) {
-	client, err := f.Client(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Docker client: %w", err)
-	}
+func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryStore) *Runner {
 	return &Runner{
-		client:       client,
-		socketBridge: f.SocketBridge,
-		store:        store,
-		history:      history,
-	}, nil
+		client:  client,
+		store:   store,
+		history: history,
+	}
 }
 
 // Run executes the loop until completion, error, or max loops.
+// Each iteration creates a new container via opts.CreateContainer, attaches,
+// parses stream-json output, and cleans up the container.
 func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	// Set defaults
 	if opts.MaxLoops <= 0 {
@@ -220,7 +207,6 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if expired {
 		logger.Info().Msg("session expired, starting fresh")
-		// Record session expiration in history
 		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "expired", "", "", 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
 		}
@@ -229,13 +215,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	if session == nil {
 		session = NewSession(opts.ProjectCfg.Project, opts.Agent, opts.Prompt, opts.WorkDir)
 	}
-	// Record session creation in history and save session immediately
-	// This ensures `loop status` can see the session before the first loop completes
 	if sessionCreated {
 		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record session creation in history")
 		}
-		// Save session immediately so status command can see it
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
 			logger.Error().Err(saveErr).Msg("failed to save initial session")
 			return &Result{
@@ -254,7 +237,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
-	// Initialize circuit breaker with full config
+	// Initialize circuit breaker
 	circuit := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
 		StagnationThreshold:       opts.StagnationThreshold,
 		SameErrorThreshold:        opts.SameErrorThreshold,
@@ -274,12 +257,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 				Error:      fmt.Errorf("failed to reset circuit breaker as requested: %w", err),
 			}, nil
 		}
-		// Record circuit reset in history
 		if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
 		}
 	} else {
-		// Load existing circuit state
 		circuitState, err := r.store.LoadCircuitState(opts.ProjectCfg.Project, opts.Agent)
 		if err != nil {
 			logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
@@ -308,7 +289,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 		opts.Monitor.opts.ShowRateLimit = rateLimiter.IsEnabled()
 	}
 
-	// Main loop
+	// Main loop — each iteration creates a new container
 mainLoop:
 	for loopNum := 1; loopNum <= opts.MaxLoops; loopNum++ {
 		// Check context cancellation
@@ -336,7 +317,6 @@ mainLoop:
 				fmt.Fprintln(opts.Monitor.opts.Writer, opts.Monitor.FormatRateLimitWait(rateLimiter.ResetTime()))
 			}
 
-			// Wait until reset time
 			waitDuration := time.Until(rateLimiter.ResetTime())
 			if waitDuration > 0 {
 				select {
@@ -345,7 +325,6 @@ mainLoop:
 					result.Error = ctx.Err()
 					break mainLoop
 				case <-time.After(waitDuration):
-					// Rate limit should be reset now, retry this loop
 					loopNum--
 					continue
 				}
@@ -361,21 +340,33 @@ mainLoop:
 			opts.Monitor.PrintLoopStart(loopNum)
 		}
 
+		// Create container for this iteration
+		containerCfg, createErr := opts.CreateContainer(ctx)
+		if createErr != nil {
+			result.ExitReason = fmt.Sprintf("container creation failed: %v", createErr)
+			result.Error = createErr
+			result.LoopsCompleted = loopNum - 1
+			break
+		}
+
 		logger.Info().
 			Int("loop", loopNum).
 			Int("max_loops", opts.MaxLoops).
-			Str("container", opts.ContainerStartConfig.ContainerID).
+			Str("container", containerCfg.ContainerID).
 			Msg("starting loop iteration")
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		output, exitCode, loopErr := r.StartContainer(loopCtx, opts.ProjectCfg, opts.ContainerStartConfig, opts.OnOutput)
+		text, resultEvent, exitCode, loopErr := r.StartContainer(loopCtx, opts.ProjectCfg, containerCfg, opts.OnOutput)
 		cancel()
+
+		// Always cleanup the container after each iteration
+		containerCfg.Cleanup()
 
 		loopDuration := time.Since(loopStart)
 
-		// Full analysis of output
-		analysis := AnalyzeOutput(output)
+		// Analyze stream result (text from TextAccumulator + ResultEvent metadata)
+		analysis := AnalyzeStreamResult(text, resultEvent)
 		status := analysis.Status
 		result.FinalStatus = status
 		result.LoopsCompleted = loopNum
@@ -391,7 +382,6 @@ mainLoop:
 			}
 
 			if opts.OnRateLimitHit != nil && opts.OnRateLimitHit() {
-				// User chose to wait, sleep for a bit and retry
 				select {
 				case <-ctx.Done():
 					result.ExitReason = "context cancelled while waiting for API rate limit"
@@ -418,7 +408,6 @@ mainLoop:
 				fmt.Fprintf(opts.Monitor.opts.Writer, "WARNING: Failed to save session: %v\n", saveErr)
 			}
 		} else {
-			// Record session update in history
 			errStr := ""
 			if loopErr != nil {
 				errStr = loopErr.Error()
@@ -433,7 +422,7 @@ mainLoop:
 		}
 
 		if opts.OnLoopEnd != nil {
-			opts.OnLoopEnd(loopNum, status, loopErr)
+			opts.OnLoopEnd(loopNum, status, resultEvent, loopErr)
 		}
 		if opts.Monitor != nil {
 			opts.Monitor.PrintLoopEnd(loopNum, status, loopErr, analysis.OutputSize, loopDuration)
@@ -450,7 +439,6 @@ mainLoop:
 		updateResult := circuit.UpdateWithAnalysis(status, analysis)
 
 		// Surface repeated errors in history before they trip the circuit.
-		// This makes same-error patterns visible in `loop status` early.
 		if sameCount := circuit.SameErrorCount(); sameCount >= 3 && analysis != nil && analysis.ErrorSignature != "" {
 			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
 				logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
@@ -463,30 +451,25 @@ mainLoop:
 			break
 		}
 
-		// For backward compatibility: check basic completion if strict mode not required
 		if !opts.UseStrictCompletion && status != nil && status.IsComplete() {
 			result.ExitReason = "agent signaled completion"
 			break
 		}
 
-		// Check for execution error
 		if loopErr != nil {
 			result.ExitReason = fmt.Sprintf("execution error: %v", loopErr)
 			result.Error = loopErr
 			break
 		}
 
-		// Check for non-zero exit code
 		if exitCode != 0 {
 			logger.Warn().Int("exit_code", exitCode).Msg("non-zero exit code from claude")
 		}
 
-		// Check if circuit tripped from update
 		if updateResult.Tripped {
 			result.ExitReason = fmt.Sprintf("stagnation: %s", updateResult.Reason)
 			result.Error = fmt.Errorf("circuit breaker tripped: %s", updateResult.Reason)
 
-			// Save circuit state
 			now := time.Now()
 			circuitState := &CircuitState{
 				Project:         opts.ProjectCfg.Project,
@@ -502,7 +485,6 @@ mainLoop:
 				result.Error = fmt.Errorf("circuit breaker tripped (%s) and state save failed: %w", updateResult.Reason, saveErr)
 			}
 
-			// Record circuit trip in history
 			state := circuit.State()
 			if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "closed", "tripped", updateResult.Reason,
 				state.NoProgressCount, state.SameErrorCount, state.ConsecutiveTestLoops, state.ConsecutiveCompletionCount); histErr != nil {
@@ -511,12 +493,11 @@ mainLoop:
 			break
 		}
 
-		// Monitor progress output
 		if opts.Monitor != nil {
 			opts.Monitor.PrintLoopProgress(loopNum, status, circuit)
 		}
 
-		// Brief pause between loops (context-aware so Ctrl+C is responsive)
+		// Brief pause between loops
 		loopDelay := time.Duration(opts.LoopDelaySeconds) * time.Second
 		if loopDelay <= 0 {
 			loopDelay = time.Duration(DefaultLoopDelaySeconds) * time.Second
@@ -536,7 +517,6 @@ mainLoop:
 		result.Error = fmt.Errorf("reached maximum loops (%d)", opts.MaxLoops)
 	}
 
-	// Print final result if monitor available
 	if opts.Monitor != nil {
 		opts.Monitor.PrintResult(result)
 	}
@@ -544,20 +524,28 @@ mainLoop:
 	return result, nil
 }
 
-// StartContainer starts the container and captures output.
-func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte)) (string, int, error) {
+// StartContainer attaches to the container, starts it, parses stream-json
+// output via io.Pipe + ParseStream, and returns the accumulated text,
+// the terminal ResultEvent, the exit code, and any error.
+//
+// Real-time token deltas (stream_event with text_delta) are forwarded to
+// onOutput for TUI display. Complete assistant messages are accumulated
+// via TextAccumulator for LOOP_STATUS parsing.
+func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte)) (string, *ResultEvent, int, error) {
+	// Set up stream-json parsing pipeline: stdcopy → io.Pipe → ParseStream
+	pr, pw := io.Pipe()
+	textAcc, handler := NewTextAccumulator()
 
-	// capture output in a buffer while also forwarding to onOutput callback
-	var stdout, stderr bytes.Buffer
-	var outputWriter io.Writer = &stdout
-
+	// Forward real-time text deltas for TUI display
 	if onOutput != nil {
-		outputWriter = io.MultiWriter(&stdout, &callbackWriter{fn: onOutput})
+		handler.OnStreamEvent = func(e *StreamDeltaEvent) {
+			if text := e.TextDelta(); text != "" {
+				onOutput([]byte(text))
+			}
+		}
 	}
 
 	// Attach to container BEFORE starting it
-	// This is critical for short-lived containers (especially with --rm) where the container
-	// might exit and be removed before we can attach if we start first.
 	attachOpts := docker.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  false,
@@ -567,91 +555,94 @@ func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project,
 	logger.Debug().Msg("attaching to container before start")
 	hijacked, err := r.client.ContainerAttach(ctx, containerConfig.ContainerID, attachOpts)
 	if err != nil {
+		pw.Close()
 		logger.Debug().Err(err).Msg("container attach failed")
-		return stdout.String(), -1, fmt.Errorf("attaching to container: %w", err)
+		return "", nil, -1, fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
 	logger.Debug().Msg("container attach succeeded")
 
-	// Set up wait channel for container exit following Docker CLI's waitExitOrRemoved pattern.
-	// This wraps the dual-channel ContainerWait into a single status channel.
-	// Must use WaitConditionNextExit (not WaitConditionNotRunning) because this is called
-	// before the container starts — a "created" container is already not-running.
+	// Set up wait channel for container exit
 	logger.Debug().Msg("setting up container wait")
 	statusCh := waitForContainerExit(ctx, r.client, containerConfig.ContainerID, false)
 
-	// Start I/O streaming BEFORE starting the container.
-	// This ensures we're ready to receive output immediately when the container starts.
-	// Following Docker CLI pattern: I/O goroutines start pre-start, resize happens post-start.
+	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream into the pipe
 	streamDone := make(chan error, 1)
-
 	go func() {
-		_, err := stdcopy.StdCopy(outputWriter, &stderr, hijacked.Reader)
+		_, err := stdcopy.StdCopy(pw, io.Discard, hijacked.Reader)
+		pw.CloseWithError(err) // Signal EOF to ParseStream
 		streamDone <- err
 	}()
 
-	// Now start the container — the I/O streaming goroutines are already running
-	logger.Debug().Msg("starting container ")
+	// Start ParseStream in a goroutine — it reads from the pipe
+	type parseResult struct {
+		result *ResultEvent
+		err    error
+	}
+	parseDone := make(chan parseResult, 1)
+	go func() {
+		resultEvent, parseErr := ParseStream(ctx, pr, handler)
+		parseDone <- parseResult{resultEvent, parseErr}
+	}()
+
+	// Start the container
+	logger.Debug().Msg("starting container")
 	if _, err := r.client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerConfig.ContainerID}); err != nil {
-		containerConfig.Cleanup()
-		return stdout.String(), -1, fmt.Errorf("start container failed: %w", err)
+		pw.Close()
+		return "", nil, -1, fmt.Errorf("start container failed: %w", err)
 	}
 	logger.Debug().Msg("container started successfully")
 
-	// Start socket bridge for GPG/SSH forwarding if needed.
-	if containershared.NeedsSocketBridge(projectCfg) && r.socketBridge != nil {
+	// Start socket bridge for GPG/SSH forwarding if needed
+	if containershared.NeedsSocketBridge(projectCfg) {
 		gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
-		if err := r.socketBridge().EnsureBridge(containerConfig.ContainerID, gpgEnabled); err != nil {
-			logger.Warn().Err(err).Msg("failed to start socket bridge for loop container")
-			return stdout.String(), -1, fmt.Errorf("socket bridge failed: %w (GPG/SSH forwarding may not work)", err)
-		}
+		// Socket bridge is accessed via the lifecycle config — the Runner no longer
+		// holds a socketBridge field since it's wired through CreateContainer.
+		// For now, log a warning if socket bridge is needed but not available.
+		// The socket bridge setup is handled in the CreateContainer callback.
+		logger.Debug().Bool("gpg_enabled", gpgEnabled).Msg("socket bridge may be needed (handled by container factory)")
 	}
 
-	// Wait for stream completion or container exit.
-	// Following Docker CLI's run.go pattern: when stream ends, check exit status;
-	// when exit status arrives first, drain the stream.
+	// Wait for stream completion and parse result
+	var streamErr error
 	select {
-	case err := <-streamDone:
-		logger.Debug().Err(err).Msg("stream completed")
-		if err != nil {
-			return stdout.String(), -1, err
-		}
-		// Stream done — check for container exit status.
-		// For normal container exits, the status is available almost immediately.
-		// For detach (Ctrl+P Ctrl+Q), the container is still running so no status
-		// arrives. We use a timeout to distinguish the two cases without blocking
-		// forever. This is necessary because we don't do client-side detach key
-		// detection (Docker CLI uses term.EscapeError for this).
-		select {
-		case status := <-statusCh:
-			logger.Debug().Int("exitCode", status).Msg("container exited")
-			if status != 0 {
-				return "", -1, &cmdutil.ExitError{Code: status}
-			}
-			return stdout.String(), status, nil
-		case <-time.After(2 * time.Second):
-			// No exit status within timeout — stream ended due to detach, not exit.
-			logger.Debug().Msg("no exit status received after stream ended, assuming detach")
-			return "", -1, nil
-		}
-	case status := <-statusCh:
-		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
-		if status != 0 {
-			return stdout.String(), -1, &cmdutil.ExitError{Code: status}
-		}
+	case streamErr = <-streamDone:
+		logger.Debug().Err(streamErr).Msg("stream completed")
+	case exitCode := <-statusCh:
+		logger.Debug().Int("exitCode", exitCode).Msg("container exited before stream completed")
+		// Container exited — wait for stream to finish draining
+		streamErr = <-streamDone
 	}
 
-	return stdout.String(), 0, nil
-}
+	// Wait for ParseStream to complete
+	parsed := <-parseDone
+	text := textAcc.Text()
 
-// callbackWriter wraps a callback function as an io.Writer.
-type callbackWriter struct {
-	fn func([]byte)
-}
+	// Determine exit code
+	var exitCode int
+	select {
+	case code := <-statusCh:
+		exitCode = code
+	default:
+		// Already consumed above or not yet available
+		exitCode = 0
+	}
 
-func (w *callbackWriter) Write(p []byte) (n int, err error) {
-	w.fn(p)
-	return len(p), nil
+	// Handle errors
+	if parsed.err != nil && streamErr == nil {
+		// ParseStream error but stream was clean — container may have crashed
+		// before emitting a result event. Return text we have.
+		logger.Warn().Err(parsed.err).Msg("stream parse error (container may have crashed)")
+		return text, nil, exitCode, nil
+	}
+	if streamErr != nil {
+		return text, parsed.result, -1, streamErr
+	}
+	if exitCode != 0 {
+		return text, parsed.result, exitCode, &cmdutil.ExitError{Code: exitCode}
+	}
+
+	return text, parsed.result, exitCode, nil
 }
 
 // ResetCircuit resets the circuit breaker for a project/agent.
@@ -678,11 +669,6 @@ func (r *Runner) GetCircuitState(project, agent string) (*CircuitState, error) {
 }
 
 // waitForContainerExit sets up a channel that receives the container's exit status code.
-// It follows Docker CLI's waitExitOrRemoved pattern:
-//   - Uses WaitConditionNextExit (not WaitConditionNotRunning) so it can be called
-//     BEFORE the container starts without returning immediately for "created" containers.
-//   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
-//     when the container is removed after exit.
 func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {

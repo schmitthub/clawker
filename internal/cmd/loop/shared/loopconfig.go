@@ -1,5 +1,4 @@
-// Package loop provides autonomous loop execution for Claude Code agents.
-package loop
+package shared
 
 import "time"
 

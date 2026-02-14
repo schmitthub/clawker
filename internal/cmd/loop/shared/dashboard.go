@@ -9,14 +9,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
 // RunLoopConfig holds all inputs for RunLoop.
 type RunLoopConfig struct {
-	Runner      *loop.Runner
-	RunnerOpts  loop.Options
+	Runner      *Runner
+	RunnerOpts  Options
 	TUI         *tui.TUI
 	IOStreams   *iostreams.IOStreams
 	Setup       *LoopContainerResult
@@ -28,21 +27,15 @@ type RunLoopConfig struct {
 // RunLoop executes the loop with either the TUI dashboard (TTY default) or the
 // text monitor (verbose/json/quiet/non-TTY). Returns the result and any error.
 // This consolidates the output mode selection shared by iterate and tasks.
-//
-// When running in TUI mode, the user can:
-//   - Press q/Esc to detach — the TUI exits and output switches to minimal text mode
-//     while the loop continues running in the foreground.
-//   - Press Ctrl+C to interrupt — the loop is cancelled and the process exits.
-func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
+func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 	ios := cfg.IOStreams
 	cs := ios.ColorScheme()
 	useTUI := ios.IsStderrTTY() && !cfg.Verbose && !cfg.Format.Quiet && !cfg.Format.IsJSON()
 
-	var result *loop.Result
+	var result *Result
 	runnerOpts := cfg.RunnerOpts
 
 	if useTUI {
-		// Wrap context so we can cancel the runner on Ctrl+C
 		runCtx, runCancel := context.WithCancel(ctx)
 		defer runCancel()
 
@@ -57,7 +50,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 
 		dashResult := cfg.TUI.RunLoopDashboard(tui.LoopDashboardConfig{
 			AgentName: cfg.Setup.AgentName,
-			Project:   cfg.Setup.ProjectCfg,
+			Project:   cfg.Setup.ProjectCfg.Project,
 			MaxLoops:  runnerOpts.MaxLoops,
 		}, ch)
 		if dashResult.Err != nil {
@@ -68,10 +61,8 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 		}
 
 		if dashResult.Detached {
-			// TUI exited but loop continues — switch to minimal text output
 			fmt.Fprintf(ios.ErrOut, "%s Detached from dashboard — loop continues...\n", cs.InfoIcon())
 			drainLoopEventsAsText(ios.ErrOut, cs, ch)
-			// Runner goroutine has finished (channel closed)
 			if runErr != nil {
 				return nil, runErr
 			}
@@ -79,24 +70,20 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 		}
 
 		if dashResult.Interrupted {
-			// Cancel the runner and drain remaining events
 			runCancel()
 			for range ch {
-				// Drain to unblock the runner goroutine
 			}
 			return nil, cmdutil.SilentError
 		}
 
-		// Normal completion (channel closed, runner done)
 		if runErr != nil {
 			return nil, runErr
 		}
 	} else {
-		// Quiet and JSON modes suppress progress output — only final result matters.
 		showProgress := !cfg.Format.Quiet && !cfg.Format.IsJSON()
 
 		if showProgress {
-			monitor := loop.NewMonitor(loop.MonitorOptions{
+			monitor := NewMonitor(MonitorOptions{
 				Writer:   ios.ErrOut,
 				MaxLoops: runnerOpts.MaxLoops,
 				Verbose:  cfg.Verbose,
@@ -104,7 +91,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 			runnerOpts.Monitor = monitor
 
 			fmt.Fprintf(ios.ErrOut, "%s Starting loop %s for %s.%s (%d max loops)\n",
-				cs.InfoIcon(), cfg.CommandName, cfg.Setup.ProjectCfg, cfg.Setup.AgentName, runnerOpts.MaxLoops)
+				cs.InfoIcon(), cfg.CommandName, cfg.Setup.ProjectCfg.Project, cfg.Setup.AgentName, runnerOpts.MaxLoops)
 		}
 
 		if cfg.Verbose {
@@ -124,9 +111,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 }
 
 // drainLoopEventsAsText consumes remaining events from the dashboard channel
-// and renders them as minimal text output. This is used when the user detaches
-// from the TUI dashboard — the loop continues and events are displayed as
-// simple status lines on stderr.
+// and renders them as minimal text output after TUI detach.
 func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui.LoopDashEvent) {
 	for ev := range ch {
 		switch ev.Kind {
@@ -188,19 +173,15 @@ func formatMinimalDuration(d time.Duration) string {
 // WireLoopDashboard sets Runner callback options to send events on the dashboard channel.
 // It configures OnLoopStart, OnLoopEnd, and OnOutput callbacks. It does NOT close the
 // channel — the goroutine wrapping runner.Run() is responsible for that.
-func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int) {
-	// Send initial session start event
+func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int) {
 	ch <- tui.LoopDashEvent{
 		Kind:          tui.LoopDashEventStart,
 		AgentName:     setup.AgentName,
-		Project:       setup.ProjectCfg,
+		Project:       setup.ProjectCfg.Project,
 		MaxIterations: maxLoops,
 	}
 
-	// Track per-iteration start time for duration calculation
 	var iterStart time.Time
-
-	// Track session totals (accumulated across iterations)
 	var totalTasks, totalFiles int
 
 	opts.OnLoopStart = func(loopNum int) {
@@ -211,7 +192,7 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 		})
 	}
 
-	opts.OnLoopEnd = func(loopNum int, status *loop.Status, err error) {
+	opts.OnLoopEnd = func(loopNum int, status *Status, resultEvent *ResultEvent, err error) {
 		iterDuration := time.Since(iterStart)
 
 		ev := tui.LoopDashEvent{
@@ -232,6 +213,15 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 			totalFiles += status.FilesModified
 		}
 
+		// Populate cost/token data from ResultEvent
+		if resultEvent != nil {
+			ev.IterCostUSD = resultEvent.TotalCostUSD
+			ev.IterTurns = resultEvent.NumTurns
+			if resultEvent.Usage != nil {
+				ev.IterTokens = resultEvent.Usage.Total()
+			}
+		}
+
 		ev.TotalTasks = totalTasks
 		ev.TotalFiles = totalFiles
 
@@ -245,13 +235,10 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 		})
 	}
 
-	// Disable the text monitor — the dashboard replaces it
 	opts.Monitor = nil
 }
 
-// sendEvent sends an event on the channel without blocking. If the channel is
-// full, the event is dropped to prevent deadlocking the runner goroutine.
-// Dropped events are logged as warnings with the event kind name for observability.
+// sendEvent sends an event on the channel without blocking.
 func sendEvent(ch chan<- tui.LoopDashEvent, ev tui.LoopDashEvent) {
 	select {
 	case ch <- ev:

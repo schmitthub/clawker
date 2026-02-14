@@ -2,7 +2,6 @@
 package shared
 
 import (
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/cobra"
 )
 
@@ -57,25 +56,25 @@ func AddLoopFlags(cmd *cobra.Command, opts *LoopOptions) {
 	flags := cmd.Flags()
 
 	// Loop control
-	flags.IntVar(&opts.MaxLoops, "max-loops", loop.DefaultMaxLoops,
+	flags.IntVar(&opts.MaxLoops, "max-loops", DefaultMaxLoops,
 		"Maximum number of iterations")
-	flags.IntVar(&opts.StagnationThreshold, "stagnation-threshold", loop.DefaultStagnationThreshold,
+	flags.IntVar(&opts.StagnationThreshold, "stagnation-threshold", DefaultStagnationThreshold,
 		"Iterations without progress before circuit breaker trips")
-	flags.IntVar(&opts.TimeoutMinutes, "timeout", loop.DefaultTimeoutMinutes,
+	flags.IntVar(&opts.TimeoutMinutes, "timeout", DefaultTimeoutMinutes,
 		"Per-iteration timeout in minutes")
-	flags.IntVar(&opts.LoopDelay, "loop-delay", loop.DefaultLoopDelaySeconds,
+	flags.IntVar(&opts.LoopDelay, "loop-delay", DefaultLoopDelaySeconds,
 		"Seconds to wait between iterations")
 
 	// Circuit breaker tuning
-	flags.IntVar(&opts.SameErrorThreshold, "same-error-threshold", loop.DefaultSameErrorThreshold,
+	flags.IntVar(&opts.SameErrorThreshold, "same-error-threshold", DefaultSameErrorThreshold,
 		"Consecutive identical errors before circuit breaker trips")
-	flags.IntVar(&opts.OutputDeclineThreshold, "output-decline-threshold", loop.DefaultOutputDeclineThreshold,
+	flags.IntVar(&opts.OutputDeclineThreshold, "output-decline-threshold", DefaultOutputDeclineThreshold,
 		"Output size decline percentage before circuit breaker trips")
-	flags.IntVar(&opts.MaxConsecutiveTestLoops, "max-test-loops", loop.DefaultMaxConsecutiveTestLoops,
+	flags.IntVar(&opts.MaxConsecutiveTestLoops, "max-test-loops", DefaultMaxConsecutiveTestLoops,
 		"Consecutive test-only iterations before circuit breaker trips")
-	flags.IntVar(&opts.SafetyCompletionThreshold, "safety-completion-threshold", loop.DefaultSafetyCompletionThreshold,
+	flags.IntVar(&opts.SafetyCompletionThreshold, "safety-completion-threshold", DefaultSafetyCompletionThreshold,
 		"Iterations with completion indicators but no exit signal before trip")
-	flags.IntVar(&opts.CompletionThreshold, "completion-threshold", loop.DefaultCompletionThreshold,
+	flags.IntVar(&opts.CompletionThreshold, "completion-threshold", DefaultCompletionThreshold,
 		"Completion indicators required for strict completion")
 	flags.BoolVar(&opts.StrictCompletion, "strict-completion", false,
 		"Require both exit signal and completion indicators for completion")
@@ -83,7 +82,7 @@ func AddLoopFlags(cmd *cobra.Command, opts *LoopOptions) {
 	// Execution
 	flags.BoolVar(&opts.SkipPermissions, "skip-permissions", false,
 		"Allow all tools without prompting")
-	flags.IntVar(&opts.CallsPerHour, "calls-per-hour", loop.DefaultCallsPerHour,
+	flags.IntVar(&opts.CallsPerHour, "calls-per-hour", DefaultCallsPerHour,
 		"API call rate limit per hour (0 to disable)")
 	flags.BoolVar(&opts.ResetCircuit, "reset-circuit", false,
 		"Reset circuit breaker before starting")

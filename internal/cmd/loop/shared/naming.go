@@ -1,4 +1,4 @@
-package loop
+package shared
 
 import "github.com/schmitthub/clawker/internal/docker"
 
