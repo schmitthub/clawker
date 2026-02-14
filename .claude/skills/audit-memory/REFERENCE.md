@@ -11,7 +11,7 @@ Packages that **should** have a CLAUDE.md (contain significant public API):
 - `internal/iostreams/`
 - `internal/workspace/`
 - `internal/bundler/`
-- `internal/loop/`
+- `internal/cmd/loop/shared/`
 - `internal/socketbridge/`
 - `internal/tui/`
 - `internal/term/`

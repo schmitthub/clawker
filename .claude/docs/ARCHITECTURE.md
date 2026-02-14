@@ -227,16 +227,19 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
 - SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
 
-### internal/loop - Autonomous Loop Engine
+### internal/cmd/loop/shared - Autonomous Loop Engine
 
-Runs Claude Code in non-interactive Docker exec with circuit breaker protection. See `internal/loop/CLAUDE.md` for implementation details.
+Runs Claude Code in per-iteration Docker containers with stream-json parsing and circuit breaker protection. See `internal/cmd/loop/CLAUDE.md` for implementation details.
 
 **Core types:**
-- `Runner` - Main loop orchestrator
+- `Runner` - Main loop orchestrator (per-iteration container lifecycle)
 - `CircuitBreaker` - CLOSED/TRIPPED with multiple trip conditions
 - `Session` / `SessionStore` - Persistent session state
 - `RateLimiter` - Sliding window rate limiting
 - `Analyzer` - LOOP_STATUS parser and completion detection
+- `StreamHandler` / `ParseStream` - NDJSON stream-json parser for real-time output
+- `TextAccumulator` - Aggregates assistant text across stream events
+- `ResultEvent` - Cost, tokens, turns from Claude API result
 
 ## Command Dependency Injection Pattern
 

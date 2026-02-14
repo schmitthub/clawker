@@ -146,7 +146,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
 | `tui.RunProgress` | `internal/tui` | Generic progress display (BubbleTea TTY + plain text) |
 | `hostproxy.HostProxyService` | `internal/hostproxy` | Interface for host proxy operations; `Manager` is concrete impl |
-| `loop.Runner` | `internal/loop` | Autonomous loop orchestrator with circuit breaker |
+| `shared.Runner` | `internal/cmd/loop/shared` | Autonomous loop orchestrator with per-iteration containers and circuit breaker |
 
 ## Container Naming and Labels
 

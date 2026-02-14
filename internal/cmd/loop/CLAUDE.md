@@ -59,12 +59,12 @@ Prompt resolution and option building helpers:
 
 - `ResolvePrompt(prompt, promptFile string) (string, error)` — returns inline prompt or reads from file, trims whitespace, errors on empty
 - `ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, error)` — reads tasks file, wraps in default template or applies custom template (`%s` placeholder or appended)
-- `BuildRunnerOptions(loopOpts, project, agent, containerName, prompt, workDir, flags, loopCfg) loop.Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern)
+- `BuildRunnerOptions(loopOpts, project, agent, containerName, prompt, workDir, flags, loopCfg) Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern)
 - `ApplyLoopConfigDefaults(loopOpts, flags, loopCfg)` — applies config overrides to `LoopOptions` for pre-runner fields (`hooks_file`, `append_system_prompt`). Called in iterate/tasks run functions after loading config but before `SetupLoopContainer` and `BuildRunnerOptions`.
 
 **Config override pattern**: Two layers of config-to-flag override:
 1. **Pre-runner** (`ApplyLoopConfigDefaults`): Applies `hooks_file` and `append_system_prompt` from config to `LoopOptions`. These fields are consumed before the runner is created (by `SetupLoopContainer` and `BuildRunnerOptions` respectively).
-2. **Runner-level** (`applyConfigOverrides`, called within `BuildRunnerOptions`): Applies numeric/boolean tuning fields from config to `loop.Options`.
+2. **Runner-level** (`applyConfigOverrides`, called within `BuildRunnerOptions`): Applies numeric/boolean tuning fields from config to `Options`.
 Both use the `!flags.Changed(flagName)` pattern — explicit CLI flags always take precedence over config values.
 
 ## Shared Dashboard (`shared/dashboard.go`)
@@ -72,8 +72,8 @@ Both use the `!flags.Changed(flagName)` pattern — explicit CLI flags always ta
 Output mode selection, event bridge, and TUI detach handling for loop commands:
 
 - `RunLoopConfig` — all inputs for `RunLoop`: Runner, RunnerOpts, TUI, IOStreams, Setup, Format, Verbose, CommandName
-- `RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error)` — consolidated loop execution with output mode selection. Context passed as first parameter (not stored in struct). If stderr is a TTY and not verbose/quiet/json, uses TUI dashboard; otherwise falls back to text Monitor (verbose/non-TTY default) or silent execution (quiet/json). Shared by iterate and tasks commands. Handles three TUI exit paths: normal completion, detach (q/Esc), and interrupt (Ctrl+C).
-- `WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Does NOT close the channel — the caller's goroutine does that.
+- `RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error)` — consolidated loop execution with output mode selection. Context passed as first parameter (not stored in struct). If stderr is a TTY and not verbose/quiet/json, uses TUI dashboard; otherwise falls back to text Monitor (verbose/non-TTY default) or silent execution (quiet/json). Shared by iterate and tasks commands. Handles three TUI exit paths: normal completion, detach (q/Esc), and interrupt (Ctrl+C).
+- `WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Extracts cost/token data from `*ResultEvent` into `IterCostUSD`/`IterTokens`/`IterTurns` fields. Does NOT close the channel — the caller's goroutine does that.
 - `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines using semantic icon methods (`cs.InfoIcon()`, `cs.SuccessIcon()`, `cs.FailureIcon()`, `cs.WarningIcon()`). Returns when the channel is closed (runner finished).
 - `formatMinimalDuration(d time.Duration) string` — formats duration for minimal text output.
 - `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine. Dropped events are logged via `logger.Warn` with the event kind name.
@@ -91,8 +91,8 @@ Output mode selection, event bridge, and TUI detach handling for loop commands:
 Result output formatting:
 
 - `ResultOutput` — JSON-serializable struct: LoopsCompleted, ExitReason, Success, Error, TotalTasksCompleted, TotalFilesModified, FinalStatus, RateLimitHit
-- `NewResultOutput(result *loop.Result) *ResultOutput` — maps loop.Result to output struct
-- `WriteResult(out, errOut io.Writer, result *loop.Result, format *cmdutil.FormatFlags) error` — writes JSON (`--json`), exit reason (`--quiet`), or nothing (default, monitor handles it)
+- `NewResultOutput(result *Result) *ResultOutput` — maps Result to output struct
+- `WriteResult(out, errOut io.Writer, result *Result, format *cmdutil.FormatFlags) error` — writes JSON (`--json`), exit reason (`--quiet`), or nothing (default, monitor handles it)
 
 ## Shared Lifecycle (`shared/lifecycle.go`)
 

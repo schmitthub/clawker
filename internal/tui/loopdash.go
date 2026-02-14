@@ -93,6 +93,11 @@ type LoopDashEvent struct {
 	TotalTasks int
 	TotalFiles int
 
+	// Cost/token data (populated on IterEnd from ResultEvent)
+	IterCostUSD float64
+	IterTokens  int
+	IterTurns   int
+
 	// Output (for future verbose feed)
 	OutputChunk string
 }
@@ -138,6 +143,9 @@ type activityEntry struct {
 	status    string // "Running", "IN_PROGRESS", "COMPLETE", "BLOCKED", or error text
 	tasks     int
 	files     int
+	costUSD   float64
+	tokens    int
+	turns     int
 	duration  time.Duration
 	isError   bool
 	running   bool
@@ -167,6 +175,11 @@ type loopDashboardModel struct {
 	totalTasks  int
 	totalFiles  int
 	testsStatus string
+
+	// Cost/token accumulation
+	totalCostUSD float64
+	totalTokens  int
+	totalTurns   int
 
 	// Circuit breaker
 	circuitProgress  int
@@ -278,12 +291,18 @@ func (m *loopDashboardModel) processEvent(ev LoopDashEvent) {
 		m.circuitTripped = ev.CircuitTripped
 		m.rateRemaining = ev.RateRemaining
 		m.rateLimit = ev.RateLimit
+		m.totalCostUSD += ev.IterCostUSD
+		m.totalTokens += ev.IterTokens
+		m.totalTurns += ev.IterTurns
 		// Update the running entry to completed
 		m.updateRunningActivity(activityEntry{
 			iteration: ev.Iteration,
 			status:    ev.StatusText,
 			tasks:     ev.TasksCompleted,
 			files:     ev.FilesModified,
+			costUSD:   ev.IterCostUSD,
+			tokens:    ev.IterTokens,
+			turns:     ev.IterTurns,
 			duration:  ev.IterDuration,
 			isError:   ev.Error != nil,
 		})
@@ -362,6 +381,16 @@ func (m loopDashboardModel) View() string {
 	buf.WriteString(countersLine)
 	buf.WriteByte('\n')
 	lines++
+
+	// Cost/token line (only shown after first iteration completes)
+	if m.totalTokens > 0 || m.totalCostUSD > 0 {
+		costLine := fmt.Sprintf("  Cost: %s  Tokens: %s  Turns: %d",
+			formatCostUSD(m.totalCostUSD), formatTokenCount(m.totalTokens), m.totalTurns)
+		buf.WriteString(cs.Muted(costLine))
+		buf.WriteByte('\n')
+		lines++
+	}
+
 	buf.WriteByte('\n')
 	lines++
 
@@ -484,9 +513,17 @@ func renderActivityEntry(buf *strings.Builder, cs *iostreams.ColorScheme, entry 
 		icon = cs.Error("✗")
 	}
 
-	detail := ""
+	var parts []string
 	if entry.tasks > 0 || entry.files > 0 {
-		detail = fmt.Sprintf(" — %d tasks, %d files", entry.tasks, entry.files)
+		parts = append(parts, fmt.Sprintf("%d tasks, %d files", entry.tasks, entry.files))
+	}
+	if entry.costUSD > 0 {
+		parts = append(parts, formatCostUSD(entry.costUSD))
+	}
+
+	detail := ""
+	if len(parts) > 0 {
+		detail = " — " + strings.Join(parts, ", ")
 	}
 
 	durStr := ""
@@ -494,8 +531,8 @@ func renderActivityEntry(buf *strings.Builder, cs *iostreams.ColorScheme, entry 
 		durStr = fmt.Sprintf(" (%s)", formatElapsed(entry.duration))
 	}
 
-	buf.WriteString(fmt.Sprintf("  %s [Loop %d] %s%s%s\n",
-		icon, entry.iteration, entry.status, detail, durStr))
+	fmt.Fprintf(buf, "  %s [Loop %d] %s%s%s\n",
+		icon, entry.iteration, entry.status, detail, durStr)
 }
 
 func formatStatusText(cs *iostreams.ColorScheme, status string) string {
@@ -510,6 +547,24 @@ func formatStatusText(cs *iostreams.ColorScheme, status string) string {
 		return cs.Muted("PENDING")
 	default:
 		return status
+	}
+}
+
+func formatCostUSD(cost float64) string {
+	if cost < 0.01 {
+		return fmt.Sprintf("$%.4f", cost)
+	}
+	return fmt.Sprintf("$%.2f", cost)
+}
+
+func formatTokenCount(tokens int) string {
+	switch {
+	case tokens >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
+	case tokens >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(tokens)/1_000)
+	default:
+		return fmt.Sprintf("%d", tokens)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -124,9 +125,17 @@ func drainLoopEventsAsText(w io.Writer, cs *iostreams.ColorScheme, ch <-chan tui
 				icon = cs.FailureIcon()
 			}
 
-			detail := ""
+			var parts []string
 			if ev.TasksCompleted > 0 || ev.FilesModified > 0 {
-				detail = fmt.Sprintf(" — %d tasks, %d files", ev.TasksCompleted, ev.FilesModified)
+				parts = append(parts, fmt.Sprintf("%d tasks, %d files", ev.TasksCompleted, ev.FilesModified))
+			}
+			if ev.IterCostUSD > 0 {
+				parts = append(parts, fmt.Sprintf("$%.4f", ev.IterCostUSD))
+			}
+
+			detail := ""
+			if len(parts) > 0 {
+				detail = " — " + strings.Join(parts, ", ")
 			}
 
 			durStr := ""
@@ -211,6 +220,14 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 
 			totalTasks += status.TasksCompleted
 			totalFiles += status.FilesModified
+		}
+
+		if resultEvent != nil {
+			ev.IterCostUSD = resultEvent.TotalCostUSD
+			ev.IterTurns = resultEvent.NumTurns
+			if resultEvent.Usage != nil {
+				ev.IterTokens = resultEvent.Usage.Total()
+			}
 		}
 
 		ev.TotalTasks = totalTasks

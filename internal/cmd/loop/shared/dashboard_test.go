@@ -103,6 +103,35 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	assert.Equal(t, 3, ev.TotalTasks)
 	assert.Equal(t, 5, ev.TotalFiles)
 	assert.Greater(t, ev.IterDuration, time.Duration(0))
+	// No ResultEvent → zero cost/token
+	assert.Equal(t, 0.0, ev.IterCostUSD)
+	assert.Equal(t, 0, ev.IterTokens)
+	assert.Equal(t, 0, ev.IterTurns)
+}
+
+func TestWireLoopDashboard_OnLoopEnd_WithResultEvent(t *testing.T) {
+	opts := &Options{}
+	ch := make(chan tui.LoopDashEvent, 16)
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
+
+	WireLoopDashboard(opts, ch, setup, 10)
+	<-ch // drain start
+
+	opts.OnLoopStart(1)
+	<-ch // drain iter start
+
+	status := &Status{Status: "IN_PROGRESS", TasksCompleted: 2}
+	resultEvent := &ResultEvent{
+		TotalCostUSD: 0.0523,
+		NumTurns:     4,
+		Usage:        &TokenUsage{InputTokens: 10000, OutputTokens: 5000},
+	}
+	opts.OnLoopEnd(1, status, resultEvent, nil)
+
+	ev := <-ch
+	assert.InDelta(t, 0.0523, ev.IterCostUSD, 0.0001)
+	assert.Equal(t, 15000, ev.IterTokens)
+	assert.Equal(t, 4, ev.IterTurns)
 }
 
 func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {

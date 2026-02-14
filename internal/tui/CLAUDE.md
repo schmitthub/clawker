@@ -101,7 +101,7 @@ Real-time BubbleTea dashboard for `loop iterate` and `loop tasks` commands. Foll
 
 **Event types**: `LoopDashEventKind` (`LoopDashEventStart/IterStart/IterEnd/Output/RateLimit/Complete`). `String()` method returns human-readable name (e.g. `"Start"`, `"IterEnd"`) for logging.
 
-**LoopDashEvent**: Channel event with Kind, Iteration, MaxIterations, AgentName, Project, StatusText, TasksCompleted, FilesModified, TestsStatus, ExitSignal, CircuitProgress/Threshold/Tripped, RateRemaining/RateLimit, IterDuration, ExitReason, Error, TotalTasks, TotalFiles, OutputChunk.
+**LoopDashEvent**: Channel event with Kind, Iteration, MaxIterations, AgentName, Project, StatusText, TasksCompleted, FilesModified, TestsStatus, ExitSignal, CircuitProgress/Threshold/Tripped, RateRemaining/RateLimit, IterDuration, ExitReason, Error, TotalTasks, TotalFiles, IterCostUSD, IterTokens, IterTurns, OutputChunk.
 
 **LoopDashboardConfig**: AgentName, Project, MaxLoops.
 
@@ -109,11 +109,13 @@ Real-time BubbleTea dashboard for `loop iterate` and `loop tasks` commands. Foll
 
 **Entry point**: `RunLoopDashboard(ios, cfg, ch)` — creates model, runs BubbleTea, returns result.
 
-**Layout**: Header bar → info line (agent/project/elapsed) → counters (iteration/circuit/rate) → status section → activity log (newest first, last 10) → help line (`q detach  ctrl+c stop`).
+**Layout**: Header bar → info line (agent/project/elapsed) → counters (iteration/circuit/rate) → cost/token line (after first iteration) → status section → activity log (newest first, last 10) → help line (`q detach  ctrl+c stop`).
 
 **Key bindings**: `q`/`Esc` = detach (exit TUI, loop continues with minimal text output in `RunLoop`). `Ctrl+C` = interrupt (cancel the runner context, exit process). This intentionally does NOT use the shared `IsQuit` matcher because detach and interrupt have different semantics.
 
-**Activity log**: Ring buffer of `activityEntry` (max 10). Running entries show `● [Loop N] Running...`, completed entries show `✓ [Loop N] STATUS — tasks, files (duration)`.
+**Activity log**: Ring buffer of `activityEntry` (max 10). Running entries show `● [Loop N] Running...`, completed entries show `✓ [Loop N] STATUS — tasks, files, $cost (duration)`.
+
+**Cost/token tracking**: `IterCostUSD`, `IterTokens`, `IterTurns` populated from `ResultEvent` by `WireLoopDashboard`. Model accumulates `totalCostUSD`, `totalTokens`, `totalTurns` across iterations. Cost line shows after first iteration completes. Format helpers: `formatCostUSD` (4 decimals < $0.01, 2 decimals otherwise), `formatTokenCount` (k/M suffixes).
 
 **Model pattern**: Same as `progressModel` — `Init()` returns `waitForLoopEvent(ch)`, `Update()` processes `loopDashEventMsg` then dispatches next wait, `loopDashChannelClosedMsg` triggers `tea.Quit`. High-water mark for stable frame height.
 

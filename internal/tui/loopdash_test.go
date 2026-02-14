@@ -216,6 +216,9 @@ func TestLoopDash_ProcessEvent_IterEnd(t *testing.T) {
 		IterDuration:     45 * time.Second,
 		TotalTasks:       3,
 		TotalFiles:       5,
+		IterCostUSD:      0.0523,
+		IterTokens:       15000,
+		IterTurns:        4,
 	})
 
 	assert.Equal(t, 1, m.currentIter)
@@ -228,12 +231,20 @@ func TestLoopDash_ProcessEvent_IterEnd(t *testing.T) {
 	assert.Equal(t, 97, m.rateRemaining)
 	assert.Equal(t, 100, m.rateLimit)
 
+	// Cost/token accumulation
+	assert.InDelta(t, 0.0523, m.totalCostUSD, 0.0001)
+	assert.Equal(t, 15000, m.totalTokens)
+	assert.Equal(t, 4, m.totalTurns)
+
 	// Activity should be updated (not running anymore)
 	require.Len(t, m.activity, 1)
 	assert.False(t, m.activity[0].running)
 	assert.Equal(t, "IN_PROGRESS", m.activity[0].status)
 	assert.Equal(t, 3, m.activity[0].tasks)
 	assert.Equal(t, 5, m.activity[0].files)
+	assert.InDelta(t, 0.0523, m.activity[0].costUSD, 0.0001)
+	assert.Equal(t, 15000, m.activity[0].tokens)
+	assert.Equal(t, 4, m.activity[0].turns)
 }
 
 func TestLoopDash_ProcessEvent_Complete(t *testing.T) {
@@ -386,6 +397,125 @@ func TestLoopDash_View_WithRate(t *testing.T) {
 	view := m.View()
 
 	assert.Contains(t, view, "Rate: 97/100")
+}
+
+func TestLoopDash_ProcessEvent_CostTokenAccumulation(t *testing.T) {
+	ch := make(chan LoopDashEvent, 1)
+	defer close(ch)
+
+	m := newTestDashModel(ch)
+
+	// Iteration 1
+	m.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
+	m.processEvent(LoopDashEvent{
+		Kind:        LoopDashEventIterEnd,
+		Iteration:   1,
+		IterCostUSD: 0.05,
+		IterTokens:  10000,
+		IterTurns:   3,
+	})
+
+	assert.InDelta(t, 0.05, m.totalCostUSD, 0.0001)
+	assert.Equal(t, 10000, m.totalTokens)
+	assert.Equal(t, 3, m.totalTurns)
+
+	// Iteration 2 — totals should accumulate
+	m.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 2})
+	m.processEvent(LoopDashEvent{
+		Kind:        LoopDashEventIterEnd,
+		Iteration:   2,
+		IterCostUSD: 0.08,
+		IterTokens:  25000,
+		IterTurns:   5,
+	})
+
+	assert.InDelta(t, 0.13, m.totalCostUSD, 0.0001)
+	assert.Equal(t, 35000, m.totalTokens)
+	assert.Equal(t, 8, m.totalTurns)
+}
+
+func TestLoopDash_View_WithCostTokens(t *testing.T) {
+	ch := make(chan LoopDashEvent, 1)
+	defer close(ch)
+
+	m := newTestDashModel(ch)
+
+	m.processEvent(LoopDashEvent{Kind: LoopDashEventIterStart, Iteration: 1})
+	m.processEvent(LoopDashEvent{
+		Kind:           LoopDashEventIterEnd,
+		Iteration:      1,
+		StatusText:     "IN_PROGRESS",
+		TasksCompleted: 2,
+		FilesModified:  4,
+		TotalTasks:     2,
+		TotalFiles:     4,
+		IterCostUSD:    0.0523,
+		IterTokens:     15000,
+		IterTurns:      4,
+		IterDuration:   30 * time.Second,
+	})
+
+	view := m.View()
+
+	// Should show cost/token line
+	assert.Contains(t, view, "Cost:")
+	assert.Contains(t, view, "$0.05")
+	assert.Contains(t, view, "Tokens:")
+	assert.Contains(t, view, "15.0k")
+	assert.Contains(t, view, "Turns: 4")
+
+	// Activity entry should show cost (formatCostUSD uses 2 decimals for >= $0.01)
+	assert.Contains(t, view, "$0.05")
+}
+
+func TestLoopDash_View_NoCostTokensBeforeFirstIteration(t *testing.T) {
+	ch := make(chan LoopDashEvent, 1)
+	defer close(ch)
+
+	m := newTestDashModel(ch)
+	view := m.View()
+
+	// Should NOT show cost line before any iteration completes
+	assert.NotContains(t, view, "Cost:")
+	assert.NotContains(t, view, "Tokens:")
+}
+
+func TestFormatCostUSD(t *testing.T) {
+	tests := []struct {
+		cost float64
+		want string
+	}{
+		{0.0, "$0.0000"},
+		{0.0001, "$0.0001"},
+		{0.005, "$0.0050"},
+		{0.0523, "$0.05"},
+		{0.15, "$0.15"},
+		{1.50, "$1.50"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatCostUSD(tt.cost))
+		})
+	}
+}
+
+func TestFormatTokenCount(t *testing.T) {
+	tests := []struct {
+		tokens int
+		want   string
+	}{
+		{0, "0"},
+		{500, "500"},
+		{1500, "1.5k"},
+		{15000, "15.0k"},
+		{150000, "150.0k"},
+		{1500000, "1.5M"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatTokenCount(tt.tokens))
+		})
+	}
 }
 
 func TestLoopDash_FormatElapsed(t *testing.T) {

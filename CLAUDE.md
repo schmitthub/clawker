@@ -75,7 +75,6 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── logger/                # Zerolog setup
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
-│   ├── loop/                  # Autonomous loop core logic
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
