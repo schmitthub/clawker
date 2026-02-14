@@ -270,7 +270,13 @@ func NewSession(project, agent, prompt, workDir string) *Session {
 	}
 }
 
-// Update updates the session with loop results.
+// Update updates the session with loop results. It always increments
+// LoopsCompleted and refreshes UpdatedAt. A non-nil loopErr is recorded
+// as LastError; nil clears it. When status is non-nil, the session's
+// Status, TotalTasksCompleted, and TotalFilesModified are updated from
+// the status fields, and NoProgressCount is reset if the status shows
+// progress. When status is nil (no LOOP_STATUS block found), the loop
+// is treated as a no-progress iteration.
 func (sess *Session) Update(status *Status, loopErr error) {
 	sess.LoopsCompleted++
 	sess.UpdatedAt = time.Now()

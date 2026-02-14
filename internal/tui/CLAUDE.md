@@ -99,7 +99,7 @@ Threaded via config structs (e.g., `ProgressDisplayConfig.OnLifecycle`). Nil = n
 
 Real-time BubbleTea dashboard for `loop iterate` and `loop tasks` commands. Follows the same channel-reading pattern as `progressModel`.
 
-**Event types**: `LoopDashEventKind` (`LoopDashEventStart/IterStart/IterEnd/Output/RateLimit/Complete`)
+**Event types**: `LoopDashEventKind` (`LoopDashEventStart/IterStart/IterEnd/Output/RateLimit/Complete`). `String()` method returns human-readable name (e.g. `"Start"`, `"IterEnd"`) for logging.
 
 **LoopDashEvent**: Channel event with Kind, Iteration, MaxIterations, AgentName, Project, StatusText, TasksCompleted, FilesModified, TestsStatus, ExitSignal, CircuitProgress/Threshold/Tripped, RateRemaining/RateLimit, IterDuration, ExitReason, Error, TotalTasks, TotalFiles, OutputChunk.
 

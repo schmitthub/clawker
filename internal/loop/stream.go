@@ -243,8 +243,10 @@ type StreamHandler struct {
 // and returns the final ResultEvent. Returns an error if the stream ends
 // without a result event, on context cancellation, or on scan failure.
 //
-// Malformed lines and unrecognized event types are silently skipped to
-// maintain forward compatibility with future Claude Code versions.
+// Malformed lines are debug-logged and skipped. Unrecognized event types
+// are silently skipped for forward compatibility. Known event types that
+// fail to parse (system, assistant, user) are warn-logged and skipped.
+// A malformed result event returns an error (terminal event corruption).
 func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*ResultEvent, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBuffer)

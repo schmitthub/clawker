@@ -5,10 +5,15 @@ import (
 	"sync"
 )
 
-// CircuitBreaker detects stagnation in loop iterations.
-// It tracks consecutive loops without progress and trips when
-// the threshold is exceeded. It also tracks same-error sequences,
-// output decline, and consecutive test-only loops.
+// CircuitBreaker detects stagnation in loop iterations and trips when
+// unhealthy patterns persist. Trip conditions (any one triggers a trip):
+//   - Stagnation: N consecutive loops without progress (threshold)
+//   - No LOOP_STATUS: N consecutive loops where status block is missing (threshold)
+//   - Same error: N identical error signatures in a row (sameErrorThreshold)
+//   - Output decline: Output size shrinks >= threshold% for 2 consecutive loops
+//   - Test-only loops: N consecutive TESTING-only work type loops (maxConsecutiveTestLoops)
+//   - Safety completion: N consecutive loops with completion indicators but no EXIT_SIGNAL (safetyCompletionThreshold)
+//   - Blocked status: Trips immediately when agent reports BLOCKED
 type CircuitBreaker struct {
 	mu                      sync.Mutex
 	threshold               int
@@ -126,7 +131,11 @@ func (cb *CircuitBreaker) Update(status *Status) (tripped bool, reason string) {
 }
 
 // UpdateWithAnalysis evaluates the full analysis and updates circuit state.
-// Provides more detailed results including completion detection.
+// It checks all trip conditions in order: safety completion, strict completion
+// (success path), nil status, blocked status, same-error sequence, output
+// decline, test-only loops, and finally no-progress stagnation. Returns an
+// UpdateResult indicating whether the circuit tripped, the reason, or whether
+// strict completion criteria were met.
 func (cb *CircuitBreaker) UpdateWithAnalysis(status *Status, analysis *AnalysisResult) UpdateResult {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

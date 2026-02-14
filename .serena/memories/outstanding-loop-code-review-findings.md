@@ -1,53 +1,44 @@
 # Outstanding Loop Code Review Findings
 
-Remaining suggestions and medium-severity items from the `a/loop` PR review.
-These are not critical/important but should be addressed in future work.
+All actionable items from the `a/loop` PR review have been addressed.
 
-## Medium Priority
+## Completed (2026-02-13)
 
-### 1. History recording: surface after N consecutive failures
-- **File**: `internal/loop/loop.go` (main loop body)
-- **Issue**: When the same error occurs N times in a row, history entries just accumulate identical "updated" rows. Consider adding a distinct "repeated_error" event after consecutive failures so `loop status` can surface it prominently.
+### Medium Priority — All Fixed
 
-### 2. sendEvent: log event kind as string, not raw int
-- **File**: `internal/cmd/loop/shared/dashboard.go:256`
-- **Issue**: `logger.Warn().Int("event_kind", int(ev.Kind))` logs the enum as a raw integer. When reading logs, `3` is meaningless. Add a `String()` method to `LoopDashEventKind` or use a switch to log the name.
+1. **History recording: repeated_error event** — Added `"repeated_error"` history entry after 3+ consecutive same-error loops in `loop.go`. Makes failures visible in `loop status` before circuit trips.
+2. **sendEvent: log event kind as string** — Added `String()` method on `LoopDashEventKind` in `loopdash.go`. Updated `sendEvent` in `dashboard.go` to use `.Str("event_kind", ev.Kind.String())`.
+3. **ResolveTasksPrompt: validate empty template** — Already implemented at `resolve.go:56-59` (no change needed).
+4. **Double-close risk in ExecCapture** — Replaced `defer hijacked.Close()` + explicit close with `sync.Once`-guarded `closeConn()` in `loop.go`.
+5. **ContentBlock typed accessors** — Deferred. Low priority, current flat struct works for internal serialization use case.
+6. **HookConfig: add Validate() method** — Added `Validate() error` on `HookConfig` in `hooks.go`. Called in `ResolveHooks` for user-provided hooks files.
+7. **CircuitBreaker doc: safety completion trip** — Updated `CircuitBreaker` struct doc and `UpdateWithAnalysis` godoc in `circuit.go` to list all trip conditions.
+8. **CircuitBreaker: granular tests** — Added 5 edge case tests in `circuit_test.go`: exactly-at-threshold, alternating progress/no-progress, same-error reset on different error, first-trip-condition-wins, safety completion alternating.
 
-### 3. ResolveTasksPrompt: validate empty template
-- **File**: `internal/cmd/loop/shared/resolve.go`
-- **Issue**: If `tasksFile` reads successfully but is empty (0 bytes), the default template wraps an empty string in `<tasks></tasks>`, sending a meaningless prompt. Add an early check: `if strings.TrimSpace(tasksContent) == "" { return "", fmt.Errorf("tasks file is empty") }`.
+### Comment Improvements — All Fixed
 
-### 4. Double-close risk in ExecCapture
-- **File**: `internal/loop/loop.go:556-584`
-- **Issue**: `defer hijacked.Close()` at line 556, but the `<-ctx.Done()` branch at line 582 also calls `hijacked.Close()`. The Docker hijacked connection's `Close()` is idempotent in practice (calls `net.Conn.Close`), but this is fragile. Consider using `sync.Once` or removing the defer in favor of explicit close in both paths.
+- `stream.go` ParseStream godoc: Updated from "silently skipped" to describe debug-log/warn-log behavior.
+- `hooks.go` stop-check.js catch block: Updated to reference specific failure modes.
+- `dashboard.go` sendEvent godoc: Updated to mention event kind name in drop warning.
 
-### 5. ContentBlock: anemic union type
-- **File**: `internal/loop/stream.go:112-131`
-- **Issue**: `ContentBlock` is a flat struct with all fields for all variants. This works but provides no compile-time enforcement. Consider adding typed accessor methods like `AsToolUse() (*ToolUseBlock, bool)` that return nil/false for wrong variants. Low priority — the current approach works fine for the serialization use case.
+### Type Design Improvements — All Fixed
 
-### 6. HookConfig: add Validate() method
-- **File**: `internal/loop/hooks.go:49`
-- **Issue**: `HookConfig` is a `map[string][]HookMatcherGroup` with no validation. A `Validate()` method could check: non-empty event names, valid handler types, non-empty commands for command handlers, reasonable timeouts. This would catch malformed `--hooks-file` input earlier.
+- `LoopDashEventKind.String()`: Added with all enum names + unknown fallback.
+- `ResultEvent.Errors as []ErrorDetail`: Deferred — current `[]string` works.
+- `Session.Update()`: Documented full contract (nil status, non-nil error behavior, counter updates).
 
-### 7. CircuitBreaker doc comment: document safety completion trip
-- **File**: `internal/loop/circuit.go`
-- **Issue**: The circuit breaker's `Update`/`UpdateWithAnalysis` godoc doesn't mention the safety completion trip condition (N consecutive loops with completion indicators but no EXIT_SIGNAL). Add this to the doc comment so callers understand all trip conditions.
+## Deferred Items
 
-### 8. CircuitBreaker UpdateWithAnalysis: more granular tests
-- **File**: `internal/loop/circuit_test.go`
-- **Issue**: Tests cover the main paths but could benefit from edge case coverage: exactly-at-threshold trips, alternating progress/no-progress sequences, interaction between multiple trip conditions firing simultaneously.
+- **ContentBlock typed accessors** (Finding #5): Low priority. Internal to stream parser.
+- **ResultEvent.Errors as []ErrorDetail**: Would change serialization. Current `[]string` sufficient.
 
-## Comment Improvements
+## Tests Added
 
-- `stream.go:246-248`: The `ParseStream` godoc says "silently skipped" for malformed lines — update to reflect the new `logger.Debug` logging.
-- `hooks.go:218-221`: The catch block comment `"JSON parse error or unexpected issue"` should be updated to `"Unexpected error — logged to stderr"`.
-- `dashboard.go:249-252`: The `sendEvent` godoc should mention that dropped events are logged with the event kind.
-
-## Type Design Improvements
-
-- `LoopDashEventKind`: Consider adding a `String()` method for debug/log readability.
-- `ResultEvent`: The `Errors []string` field could be `[]ErrorDetail` with structured info (code, source, message) for richer error reporting.
-- `Session.Update()`: Method takes `(*Status, error)` but doesn't validate nil Status + non-nil error consistency. Document the contract.
-
-## Created
-2026-02-13 — from PR review of `a/loop` branch
+- `TestLoopDashEventKind_String` — all enum values + unknown fallback
+- `TestHookConfig_Validate_*` — 9 test cases (valid, empty event, invalid type, missing command/prompt, negative timeout, empty hooks, agent type, resolve integration)
+- `TestCircuitBreaker_ExactlyAtThreshold` — verifies trip at exactly threshold count
+- `TestCircuitBreaker_AlternatingProgressNoProgress` — 10 cycles, never trips
+- `TestCircuitBreaker_SameErrorResetOnDifferentError` — interleaved errors reset counter
+- `TestCircuitBreaker_FirstTripConditionWins` — dual conditions, first wins
+- `TestCircuitBreaker_SafetyCompletionAlternating` — 10 alternating cycles, never trips
+- `TestRunnerRun_RepeatedErrorHistoryEntry` — verifies repeated_error in history after 3+ same-error loops

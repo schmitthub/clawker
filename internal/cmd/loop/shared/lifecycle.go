@@ -78,6 +78,7 @@ type LoopContainerResult struct {
 // removes the container.
 //
 // The cleanup function uses context.Background() so it runs even after cancellation.
+// TODO io does not belong in here — refactor to return structured events for the caller to handle output and spinner.
 func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopContainerResult, func(), error) {
 	ios := cfg.IOStreams
 	projectCfg := cfg.Config.Project

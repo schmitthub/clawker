@@ -16,7 +16,7 @@ const (
 // SessionHistoryEntry represents a session state transition.
 type SessionHistoryEntry struct {
 	Timestamp time.Time `json:"timestamp"`
-	Event     string    `json:"event"` // created, updated, expired, deleted
+	Event     string    `json:"event"` // created, updated, expired, deleted, repeated_error
 	LoopCount int       `json:"loop_count"`
 	Status    string    `json:"status,omitempty"`
 	Error     string    `json:"error,omitempty"`

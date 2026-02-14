@@ -38,6 +38,26 @@ const (
 	LoopDashEventComplete
 )
 
+// String returns a human-readable name for the event kind.
+func (k LoopDashEventKind) String() string {
+	switch k {
+	case LoopDashEventStart:
+		return "Start"
+	case LoopDashEventIterStart:
+		return "IterStart"
+	case LoopDashEventIterEnd:
+		return "IterEnd"
+	case LoopDashEventOutput:
+		return "Output"
+	case LoopDashEventRateLimit:
+		return "RateLimit"
+	case LoopDashEventComplete:
+		return "Complete"
+	default:
+		return fmt.Sprintf("Unknown(%d)", int(k))
+	}
+}
+
 // LoopDashEvent is sent on the channel to update the dashboard.
 type LoopDashEvent struct {
 	Kind          LoopDashEventKind

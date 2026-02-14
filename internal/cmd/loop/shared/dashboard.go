@@ -251,11 +251,11 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 
 // sendEvent sends an event on the channel without blocking. If the channel is
 // full, the event is dropped to prevent deadlocking the runner goroutine.
-// Dropped events are logged as warnings for observability.
+// Dropped events are logged as warnings with the event kind name for observability.
 func sendEvent(ch chan<- tui.LoopDashEvent, ev tui.LoopDashEvent) {
 	select {
 	case ch <- ev:
 	default:
-		logger.Warn().Int("event_kind", int(ev.Kind)).Msg("dashboard event dropped: channel full")
+		logger.Warn().Str("event_kind", ev.Kind.String()).Msg("dashboard event dropped: channel full")
 	}
 }

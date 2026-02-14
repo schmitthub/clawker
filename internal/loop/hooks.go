@@ -48,6 +48,49 @@ type HookMatcherGroup struct {
 // This is the value of the "hooks" key in Claude Code's settings.json.
 type HookConfig map[string][]HookMatcherGroup
 
+// validHandlerTypes is the set of accepted HookHandler.Type values.
+var validHandlerTypes = map[string]bool{
+	HandlerCommand: true,
+	HandlerPrompt:  true,
+	HandlerAgent:   true,
+}
+
+// Validate checks the hook configuration for structural errors.
+// It verifies that event names are non-empty, handler types are valid,
+// required fields are populated for each handler type, timeouts are
+// non-negative, and each matcher group has at least one hook.
+func (hc HookConfig) Validate() error {
+	for event, groups := range hc {
+		if strings.TrimSpace(event) == "" {
+			return fmt.Errorf("hook config: empty event name")
+		}
+		for gi, group := range groups {
+			if len(group.Hooks) == 0 {
+				return fmt.Errorf("hook config: event %q matcher group %d has no hooks", event, gi)
+			}
+			for hi, handler := range group.Hooks {
+				if !validHandlerTypes[handler.Type] {
+					return fmt.Errorf("hook config: event %q group %d hook %d: invalid type %q (must be %q, %q, or %q)",
+						event, gi, hi, handler.Type, HandlerCommand, HandlerPrompt, HandlerAgent)
+				}
+				if handler.Type == HandlerCommand && strings.TrimSpace(handler.Command) == "" {
+					return fmt.Errorf("hook config: event %q group %d hook %d: command handler requires non-empty command",
+						event, gi, hi)
+				}
+				if handler.Type == HandlerPrompt && strings.TrimSpace(handler.Prompt) == "" {
+					return fmt.Errorf("hook config: event %q group %d hook %d: prompt handler requires non-empty prompt",
+						event, gi, hi)
+				}
+				if handler.Timeout < 0 {
+					return fmt.Errorf("hook config: event %q group %d hook %d: timeout must be non-negative, got %d",
+						event, gi, hi, handler.Timeout)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // compactReminderText is the message output by the SessionStart compact hook.
 // It reminds the agent about LOOP_STATUS requirements after context compaction.
 const compactReminderText = `IMPORTANT REMINDER: You are running inside an autonomous loop managed by Clawker.
@@ -117,6 +160,10 @@ func ResolveHooks(hooksFile string) (HookConfig, map[string][]byte, error) {
 	var config HookConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, nil, fmt.Errorf("parsing hooks file %s: %w", filepath.Base(hooksFile), err)
+	}
+
+	if err := config.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("validating hooks file %s: %w", filepath.Base(hooksFile), err)
 	}
 
 	return config, nil, nil
@@ -216,7 +263,7 @@ process.stdin.on('end', () => {
     process.exit(2);
 
   } catch (e) {
-    // Unexpected error (TypeError, EPERM, etc.) — log and allow stop
+    // Unexpected error (JSON parse of stdin, filesystem errors, TypeError, etc.) — log to stderr and allow stop
     process.stderr.write('stop-check.js: unexpected error: ' + e.message + '\n');
     process.exit(0);
   }

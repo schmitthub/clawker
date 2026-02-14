@@ -77,11 +77,11 @@ func printError(out io.Writer, cs *iostreams.ColorScheme, err error, cmd *cobra.
 		fmt.Fprintln(out, err)
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, cmd.UsageString())
+		fmt.Fprintf(out, "\nRun '%s --help' for more information.\n", cmd.CommandPath())
 	case errors.As(err, &ufErr):
 		fmt.Fprint(out, ufErr.FormatUserError())
 	default:
 		fmt.Fprintf(out, "%s %s\n", cs.FailureIcon(), err)
 	}
 
-	fmt.Fprintf(out, "\nRun '%s --help' for more information.\n", cmd.CommandPath())
 }

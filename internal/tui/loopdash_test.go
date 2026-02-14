@@ -13,6 +13,26 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
+func TestLoopDashEventKind_String(t *testing.T) {
+	tests := []struct {
+		kind LoopDashEventKind
+		want string
+	}{
+		{LoopDashEventStart, "Start"},
+		{LoopDashEventIterStart, "IterStart"},
+		{LoopDashEventIterEnd, "IterEnd"},
+		{LoopDashEventOutput, "Output"},
+		{LoopDashEventRateLimit, "RateLimit"},
+		{LoopDashEventComplete, "Complete"},
+		{LoopDashEventKind(99), "Unknown(99)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.kind.String())
+		})
+	}
+}
+
 func newTestDashModel(ch <-chan LoopDashEvent) loopDashboardModel {
 	ios := iostreams.NewTestIOStreams()
 	cfg := LoopDashboardConfig{

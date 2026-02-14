@@ -76,7 +76,7 @@ Output mode selection, event bridge, and TUI detach handling for loop commands:
 - `WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *LoopContainerResult, maxLoops int)` — sets `OnLoopStart`, `OnLoopEnd`, `OnOutput` callbacks on Runner options to send `tui.LoopDashEvent` values on the channel. Sends an initial `LoopDashEventStart` event. Sets `opts.Monitor = nil` to disable text monitor. Does NOT close the channel — the caller's goroutine does that.
 - `drainLoopEventsAsText(w io.Writer, cs *ColorScheme, ch <-chan tui.LoopDashEvent)` — consumes remaining events after TUI detach and renders as minimal text status lines using semantic icon methods (`cs.InfoIcon()`, `cs.SuccessIcon()`, `cs.FailureIcon()`, `cs.WarningIcon()`). Returns when the channel is closed (runner finished).
 - `formatMinimalDuration(d time.Duration) string` — formats duration for minimal text output.
-- `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine. Dropped events are logged via `logger.Warn`.
+- `sendEvent(ch, ev)` — non-blocking send: drops events if channel is full to prevent deadlocking the runner goroutine. Dropped events are logged via `logger.Warn` with the event kind name.
 
 **TUI detach flow**: When the user presses q/Esc in the TUI, `RunLoop` prints a transition message and calls `drainLoopEventsAsText` to continue consuming events as minimal text. The runner goroutine keeps running — the channel close signals completion. Ctrl+C cancels the runner context (via `context.WithCancel`) and drains the channel to let the goroutine exit cleanly. Dashboard errors also cancel the runner and drain the channel to prevent goroutine leaks.
 

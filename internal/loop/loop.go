@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/pkg/stdcopy"
@@ -436,6 +437,14 @@ mainLoop:
 		// Check for completion using circuit breaker's analysis
 		updateResult := circuit.UpdateWithAnalysis(status, analysis)
 
+		// Surface repeated errors in history before they trip the circuit.
+		// This makes same-error patterns visible in `loop status` early.
+		if sameCount := circuit.SameErrorCount(); sameCount >= 3 && analysis != nil && analysis.ErrorSignature != "" {
+			if histErr := r.history.AddSessionEntry(opts.Project, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
+				logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
+			}
+		}
+
 		if updateResult.IsComplete {
 			result.ExitReason = "agent signaled completion"
 			logger.Info().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
@@ -553,7 +562,9 @@ func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []st
 	if err != nil {
 		return "", -1, fmt.Errorf("failed to attach to exec: %w", err)
 	}
-	defer hijacked.Close()
+	var closeOnce sync.Once
+	closeConn := func() { closeOnce.Do(func() { hijacked.Close() }) }
+	defer closeConn()
 
 	// Capture output
 	var stdout, stderr bytes.Buffer
@@ -579,7 +590,7 @@ func (r *Runner) ExecCapture(ctx context.Context, containerName string, cmd []st
 		// Normal completion
 	case <-ctx.Done():
 		// Context cancelled/timeout - close connection to unblock StdCopy
-		hijacked.Close()
+		closeConn()
 		<-copyDone // Wait for goroutine to finish
 		return stdout.String(), -1, fmt.Errorf("exec timed out: %w", ctx.Err())
 	}

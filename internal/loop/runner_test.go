@@ -235,6 +235,48 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 	assert.Equal(t, "context cancelled", result.ExitReason)
 }
 
+func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
+	fake := dockertest.NewFakeClient()
+	containerName := "clawker.testproj.testagent"
+
+	// Output with an error signature that will repeat every loop
+	output := `Error: compilation failed
+` + loopStatusOutput("IN_PROGRESS", false, 1, 1)
+	setupExecFakes(fake, containerName, output, 0)
+
+	runner, _, history := newTestRunner(t, fake)
+
+	// Run enough loops for same-error count to reach 3 (threshold for repeated_error event).
+	// Same-error threshold is 5 by default so the circuit won't trip yet.
+	result, err := runner.Run(context.Background(), loop.Options{
+		ContainerName:       containerName,
+		Project:             "testproj",
+		Agent:               "testagent",
+		Prompt:              "do work",
+		MaxLoops:            4,
+		StagnationThreshold: 100, // High to avoid stagnation trip
+		LoopDelaySeconds:    1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.GreaterOrEqual(t, result.LoopsCompleted, 3)
+
+	// Check history for a repeated_error entry
+	hist, histErr := history.LoadSessionHistory("testproj", "testagent")
+	require.NoError(t, histErr)
+
+	var foundRepeatedError bool
+	for _, entry := range hist.Entries {
+		if entry.Event == "repeated_error" {
+			foundRepeatedError = true
+			assert.NotEmpty(t, entry.Error, "repeated_error entry should include the error signature")
+			break
+		}
+	}
+	assert.True(t, foundRepeatedError, "should find a repeated_error history entry after 3+ same-error loops")
+}
+
 func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	containerName := "clawker.testproj.testagent"

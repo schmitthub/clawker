@@ -143,6 +143,97 @@ func TestResolveHooks_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "parsing hooks file")
 }
 
+// --- Validate ---
+
+func TestHookConfig_Validate_ValidConfig(t *testing.T) {
+	hooks := DefaultHooks()
+	assert.NoError(t, hooks.Validate())
+}
+
+func TestHookConfig_Validate_EmptyConfig(t *testing.T) {
+	hooks := HookConfig{}
+	assert.NoError(t, hooks.Validate())
+}
+
+func TestHookConfig_Validate_EmptyEventName(t *testing.T) {
+	hooks := HookConfig{
+		"": {{Hooks: []HookHandler{{Type: HandlerCommand, Command: "echo hi"}}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty event name")
+}
+
+func TestHookConfig_Validate_InvalidHandlerType(t *testing.T) {
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: "invalid"}}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid type")
+}
+
+func TestHookConfig_Validate_MissingCommandForCommandType(t *testing.T) {
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: HandlerCommand, Command: ""}}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "command handler requires non-empty command")
+}
+
+func TestHookConfig_Validate_MissingPromptForPromptType(t *testing.T) {
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: HandlerPrompt, Prompt: ""}}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt handler requires non-empty prompt")
+}
+
+func TestHookConfig_Validate_NegativeTimeout(t *testing.T) {
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: HandlerCommand, Command: "echo", Timeout: -1}}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout must be non-negative")
+}
+
+func TestHookConfig_Validate_EmptyHooksSlice(t *testing.T) {
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{}}},
+	}
+	err := hooks.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no hooks")
+}
+
+func TestHookConfig_Validate_AgentTypeNeedsNoCommand(t *testing.T) {
+	// Agent type is valid without command or prompt
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: HandlerAgent}}}},
+	}
+	assert.NoError(t, hooks.Validate())
+}
+
+func TestResolveHooks_InvalidConfig(t *testing.T) {
+	// Valid JSON but structurally invalid hook config
+	hooks := HookConfig{
+		EventStop: {{Hooks: []HookHandler{{Type: "bogus"}}}},
+	}
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "bad-hooks.json")
+	data, err := json.Marshal(hooks)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filePath, data, 0o644))
+
+	_, _, err = ResolveHooks(filePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validating hooks file")
+}
+
 // --- MarshalSettingsJSON ---
 
 func TestHookConfig_MarshalSettingsJSON(t *testing.T) {

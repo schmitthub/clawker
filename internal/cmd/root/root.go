@@ -8,10 +8,10 @@ import (
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
+	"github.com/schmitthub/clawker/internal/cmd/loop"
 	"github.com/schmitthub/clawker/internal/cmd/monitor"
 	"github.com/schmitthub/clawker/internal/cmd/network"
 	"github.com/schmitthub/clawker/internal/cmd/project"
-	"github.com/schmitthub/clawker/internal/cmd/loop"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
@@ -59,6 +59,10 @@ Workspace modes:
 
 	// Global flags
 	cmd.PersistentFlags().BoolVarP(&debug, "debug", "D", false, "Enable debug logging")
+
+	// Silence Cobra's default error and usage output — we handle this in Main. It's obnoxious
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
 
 	// Register top-level aliases (shortcuts to subcommands)
 	registerAliases(cmd, f)

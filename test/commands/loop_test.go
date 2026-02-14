@@ -106,8 +106,11 @@ func TestLoopIterate_JSONOutput(t *testing.T) {
 
 	f, tio := harness.NewTestFactory(t, h)
 
-	cmd := iterate.NewCmdIterate(f, nil)
+	// Use root command so we inherit SilenceUsage/SilenceErrors
+	cmd, err := h.NewRootCmd(f)
+	require.NoError(t, err)
 	cmd.SetArgs([]string{
+		"loop", "iterate",
 		"--prompt", "echo hello",
 		"--max-loops", "1",
 		"--timeout", "1",
@@ -126,6 +129,9 @@ func TestLoopIterate_JSONOutput(t *testing.T) {
 	if stdout != "" {
 		var result shared.ResultOutput
 		err := json.Unmarshal([]byte(stdout), &result)
+		if err != nil {
+			t.Logf("Invalid JSON output: %s", stdout)
+		}
 		assert.NoError(t, err, "JSON output should be valid: %s", stdout)
 	}
 }
@@ -413,15 +419,19 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	dockerClient, err := f.Client(ctx)
 	require.NoError(t, err)
 
+	// Use BuildLightImage which has "sleep infinity" entrypoint to keep the container running.
+	// alpine:latest exits immediately, but loop tests need a running container for lifecycle testing.
+	image := harness.BuildLightImage(t, client)
+
 	agentName := "test-lifecycle-" + time.Now().Format("150405.000000")
 	loopOpts := shared.NewLoopOptions()
 	loopOpts.Agent = agentName
-	loopOpts.Image = "alpine:latest"
+	loopOpts.Image = image
 
 	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
-		Client:   dockerClient,
-		Config:   f.Config(),
-		LoopOpts: loopOpts,
+		Client:    dockerClient,
+		Config:    f.Config(),
+		LoopOpts:  loopOpts,
 		IOStreams: tio.IOStreams,
 	})
 	require.NoError(t, err, "SetupLoopContainer should succeed: stderr=%s", tio.ErrBuf.String())
@@ -484,11 +494,11 @@ func TestLoopShared_ConcurrencyDetection(t *testing.T) {
 
 	// Without any running containers, concurrency check should return Proceed
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
-		Client:   client,
-		Project:  project,
-		WorkDir:  "/some/workdir",
+		Client:    client,
+		Project:   project,
+		WorkDir:   "/some/workdir",
 		IOStreams: tio.IOStreams,
-		Prompter: nil, // non-interactive
+		Prompter:  nil, // non-interactive
 	})
 	require.NoError(t, err)
 	assert.Equal(t, shared.ActionProceed, action, "should proceed when no running containers")

@@ -27,7 +27,7 @@ type TasksOptions struct {
 	*shared.LoopOptions
 
 	// Factory DI
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
@@ -57,14 +57,14 @@ func NewCmdTasks(f *cmdutil.Factory, runF func(context.Context, *TasksOptions) e
 	opts := &TasksOptions{
 		LoopOptions:  loopOpts,
 		IOStreams:    f.IOStreams,
-		TUI:         f.TUI,
-		Client:      f.Client,
-		Config:      f.Config,
-		GitManager:  f.GitManager,
-		HostProxy:   f.HostProxy,
+		TUI:          f.TUI,
+		Client:       f.Client,
+		Config:       f.Config,
+		GitManager:   f.GitManager,
+		HostProxy:    f.HostProxy,
 		SocketBridge: f.SocketBridge,
-		Prompter:    f.Prompter,
-		Version:     f.Version,
+		Prompter:     f.Prompter,
+		Version:      f.Version,
 	}
 
 	cmd := &cobra.Command{
@@ -167,11 +167,11 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	}
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
-		Client:   client,
-		Project:  cfgGateway.Project.Project,
-		WorkDir:  workDir,
+		Client:    client,
+		Project:   cfgGateway.Project.Project,
+		WorkDir:   workDir,
 		IOStreams: ios,
-		Prompter: opts.Prompter,
+		Prompter:  opts.Prompter,
 	})
 	if err != nil {
 		return err
@@ -199,7 +199,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		GitManager:   opts.GitManager,
 		HostProxy:    opts.HostProxy,
 		SocketBridge: opts.SocketBridge,
-		IOStreams:     ios,
+		IOStreams:    ios,
 	})
 	if err != nil {
 		return err
@@ -223,7 +223,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		Runner:      runner,
 		RunnerOpts:  runnerOpts,
 		TUI:         opts.TUI,
-		IOStreams:    ios,
+		IOStreams:   ios,
 		Setup:       setup,
 		Format:      opts.Format,
 		Verbose:     opts.Verbose,

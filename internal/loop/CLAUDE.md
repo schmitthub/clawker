@@ -67,7 +67,8 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 **Functions:**
 - `DefaultHooks() HookConfig` — returns default hook config with Stop (LOOP_STATUS enforcement) and SessionStart/compact (reminder after compaction) hooks
 - `DefaultHookFiles() map[string][]byte` — returns scripts needed by default hooks (stop-check.js). Keys are absolute container paths; values are file contents.
-- `ResolveHooks(hooksFile string) (HookConfig, map[string][]byte, error)` — if hooksFile is empty, returns DefaultHooks() + DefaultHookFiles(). If provided, reads JSON file as complete HookConfig replacement with no default hook files.
+- `ResolveHooks(hooksFile string) (HookConfig, map[string][]byte, error)` — if hooksFile is empty, returns DefaultHooks() + DefaultHookFiles(). If provided, reads JSON file as complete HookConfig replacement with no default hook files. User-provided hooks are validated via `Validate()`.
+- `HookConfig.Validate() error` — checks event names non-empty, handler types valid (`command`/`prompt`/`agent`), required fields populated per type, timeouts non-negative, each matcher group has at least one hook
 - `HookConfig.MarshalSettingsJSON() ([]byte, error)` — serializes as `{"hooks": {...}}` for Claude Code settings.json
 
 **Default hooks behavior:**
@@ -80,6 +81,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 
 - `CircuitBreaker` — tracks stagnation, same-error sequences, output decline, test-only loops, and safety completion. Thread-safe (mutex). Trip conditions:
   - Stagnation: N loops without progress (threshold)
+  - No LOOP_STATUS: N consecutive loops where status block is missing (threshold)
   - Same error: N identical error signatures in a row (sameErrorThreshold)
   - Output decline: Output shrinks >= threshold% for 2 consecutive loops (outputDeclineThreshold)
   - Test-only loops: N consecutive TESTING-only loops (maxConsecutiveTestLoops)
@@ -112,7 +114,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 - `Session` — persistent loop state: Project, Agent, WorkDir, Status, InitialPrompt, LastError (string), StartedAt, UpdatedAt (time.Time), LoopsCompleted, NoProgressCount, TotalTasksCompleted, TotalFilesModified (int), RateLimitState (*RateLimitState)
 - `NewSession(project, agent, prompt, workDir string) *Session` — constructor
 - `Session.IsExpired(hours int) bool`, `Session.Age() time.Duration` — expiration checks
-- `Session.Update(status *Status, loopErr error)` — updates counters after a loop
+- `Session.Update(status *Status, loopErr error)` — updates counters after a loop. Always increments LoopsCompleted. Non-nil loopErr recorded as LastError; nil clears it. Non-nil status updates Status/TotalTasksCompleted/TotalFilesModified and resets NoProgressCount on progress. Nil status (no LOOP_STATUS block) counts as no-progress.
 - `CircuitState` — persistent circuit state: Project, Agent, TripReason (string), NoProgressCount (int), Tripped (bool), TrippedAt (*time.Time), UpdatedAt (time.Time)
 - `SessionStore` — manages session and circuit persistence to JSON files
 - `NewSessionStore(baseDir string)`, `DefaultSessionStore() (*SessionStore, error)` — constructors
@@ -124,7 +126,7 @@ Hook injection system for enforcing LOOP_STATUS output and maintaining context a
 
 - `HistoryStore` — manages session and circuit event logs. `MaxHistoryEntries` = 50.
 - `NewHistoryStore(baseDir string)`, `DefaultHistoryStore() (*HistoryStore, error)` — constructors
-- `SessionHistoryEntry` — Timestamp, Event, LoopCount, Status, Error
+- `SessionHistoryEntry` — Timestamp, Event (created/updated/expired/deleted/repeated_error), LoopCount, Status, Error
 - `SessionHistory` — Project, Agent, Entries ([]SessionHistoryEntry)
 - `CircuitHistoryEntry` — Timestamp, FromState, ToState, Reason, NoProgressCount, SameErrorCount, TestLoopCount, CompletionCount
 - `CircuitHistory` — Project, Agent, Entries ([]CircuitHistoryEntry)
