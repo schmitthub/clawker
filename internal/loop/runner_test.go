@@ -66,7 +66,7 @@ func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), loop.Options{
 		ContainerName: containerName,
-		Project:       "testproj",
+		ProjectCfg:    "testproj",
 		Agent:         "testagent",
 		Prompt:        "implement the feature",
 		MaxLoops:      10,
@@ -97,10 +97,10 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 	runner, _, _ := newTestRunner(t, fake)
 
 	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName:      containerName,
-		Project:            "testproj",
-		Agent:              "testagent",
-		Prompt:             "do some work",
+		ContainerName:       containerName,
+		ProjectCfg:          "testproj",
+		Agent:               "testagent",
+		Prompt:              "do some work",
 		MaxLoops:            2,
 		StagnationThreshold: 10, // High so we don't trip circuit
 		LoopDelaySeconds:    1,
@@ -125,7 +125,7 @@ func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), loop.Options{
 		ContainerName:       containerName,
-		Project:             "testproj",
+		ProjectCfg:          "testproj",
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            10,
@@ -155,7 +155,7 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 	var loopsRan int
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:       containerName,
-		Project:             "testproj",
+		ProjectCfg:          "testproj",
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            100,
@@ -189,7 +189,7 @@ func TestRunnerRun_CallbacksFired(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), loop.Options{
 		ContainerName: containerName,
-		Project:       "testproj",
+		ProjectCfg:    "testproj",
 		Agent:         "testagent",
 		Prompt:        "do it",
 		MaxLoops:      5,
@@ -224,7 +224,7 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName: containerName,
-		Project:       "testproj",
+		ProjectCfg:    "testproj",
 		Agent:         "testagent",
 		Prompt:        "do it",
 		MaxLoops:      5,
@@ -250,7 +250,7 @@ func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 	// Same-error threshold is 5 by default so the circuit won't trip yet.
 	result, err := runner.Run(context.Background(), loop.Options{
 		ContainerName:       containerName,
-		Project:             "testproj",
+		ProjectCfg:          "testproj",
 		Agent:               "testagent",
 		Prompt:              "do work",
 		MaxLoops:            4,
@@ -295,7 +295,7 @@ func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 
 	result, runErr := runner.Run(context.Background(), loop.Options{
 		ContainerName: containerName,
-		Project:       "testproj",
+		ProjectCfg:    "testproj",
 		Agent:         "testagent",
 		Prompt:        "do it",
 		MaxLoops:      5,

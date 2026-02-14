@@ -214,7 +214,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 
 	// 6. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
+		opts.LoopOptions, setup.ProjectCfg, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
 		opts.flags, cfgGateway.Project.Loop,
 	)
 

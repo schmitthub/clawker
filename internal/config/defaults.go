@@ -149,7 +149,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 `
 
 // DefaultRegistryYAML returns the default registry template
-const DefaultRegistryYAML = `# Clawker Project Registry
+const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
 projects: {}
 `

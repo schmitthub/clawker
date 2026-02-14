@@ -37,6 +37,9 @@ type IterateOptions struct {
 	Prompter     func() *prompter.Prompter
 	Version      string
 
+	// AppendSystemPrompt allows users to override clawkers loop system prompt to be appended to the default system prompt for each iteration.
+	AppendSystemPrompt string
+
 	// Prompt source (mutually exclusive, one required)
 	Prompt     string
 	PromptFile string
@@ -112,6 +115,7 @@ The loop exits when:
 	// Prompt source flags
 	cmd.Flags().StringVarP(&opts.Prompt, "prompt", "p", "", "Prompt to repeat each iteration")
 	cmd.Flags().StringVar(&opts.PromptFile, "prompt-file", "", "Path to file containing the prompt")
+	cmd.Flags().StringVarP(&opts.AppendSystemPrompt, "append-system-prompt", "", "", "Additional system prompt to append to the default system prompt")
 
 	// Shared loop flags
 	shared.AddLoopFlags(cmd, loopOpts)
@@ -153,6 +157,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// 3.5. Check for concurrent sessions in the same directory
 	// Use the project root (same as resolveWorkDir in CreateContainer) so that
 	// the concurrency check matches the LabelWorkdir stored on containers.
+	// TODO: Does this rely on the assumption that the command is being ran from within a project dir? ProjectCfg worktrees are not in the original root dir so this is a poor assumption. What if a user runs a loop in the same worktree?
 	workDir := cfgGateway.Project.RootDir()
 	if workDir == "" {
 		workDir, err = os.Getwd()
@@ -184,9 +189,23 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 		return cmdutil.SilentError
 	}
 
+	// Container command
+	cmd := []string{
+		"-p", opts.Prompt,
+		"--output-format=stream-json",
+		"--verbose",
+	}
+	if opts.SkipPermissions {
+		cmd = append(cmd, "--dangerously-skip-permissions")
+	}
+	if opts.AppendSystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", opts.AppendSystemPrompt)
+	}
+
 	// 4. Create and start container with hooks
 	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
 		Client:       client,
+		Command:      cmd,
 		Config:       cfgGateway,
 		LoopOpts:     opts.LoopOptions,
 		Flags:        opts.flags,
@@ -209,7 +228,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	// 6. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, setup.Project, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
+		opts.LoopOptions, setup.ProjectCfg, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
 		opts.flags, cfgGateway.Project.Loop,
 	)
 

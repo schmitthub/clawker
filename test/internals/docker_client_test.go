@@ -143,7 +143,7 @@ func TestClientContainerLifecycle_Integration(t *testing.T) {
 		if c.ID == createResp.ID {
 			found = true
 			if c.Project != project {
-				t.Errorf("container.Project = %q, want %q", c.Project, project)
+				t.Errorf("container.ProjectCfg = %q, want %q", c.Project, project)
 			}
 			if c.Agent != agent {
 				t.Errorf("container.Agent = %q, want %q", c.Agent, agent)

@@ -93,7 +93,7 @@ func TestLoopIntegration_SessionCreatedImmediately(t *testing.T) {
 		close(runStarted)
 		_, err := runner.Run(ctx, loop.Options{
 			ContainerName: containerName,
-			Project:       "loop-test",
+			ProjectCfg:    "loop-test",
 			Agent:         agentName,
 			Prompt:        "echo hello", // Simple command that exits quickly
 			MaxLoops:      1,
@@ -303,12 +303,12 @@ echo "---END_LOOP_STATUS---"
 
 	// Now run the loop — it will exec "claude -p <prompt>" which will run our script.
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName: containerName,
-		Project:       project,
-		Agent:         agentName,
-		Prompt:        "test prompt",
-		MaxLoops:      1,
-		Timeout:       30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test prompt",
+		MaxLoops:         1,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -363,12 +363,12 @@ echo "---END_LOOP_STATUS---"
 
 	// Run 3 iterations
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test prompt",
-		MaxLoops:        3,
-		Timeout:         30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test prompt",
+		MaxLoops:         3,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -424,7 +424,7 @@ echo "---END_LOOP_STATUS---"
 	// Run with a low stagnation threshold
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:       containerName,
-		Project:             project,
+		ProjectCfg:          project,
 		Agent:               agentName,
 		Prompt:              "test prompt",
 		MaxLoops:            20, // High enough to never hit
@@ -476,7 +476,7 @@ func TestLoopIntegration_CircuitBreakerBlocksRerun(t *testing.T) {
 	// Attempt to run — should fail immediately
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName: containerName,
-		Project:       project,
+		ProjectCfg:    project,
 		Agent:         agentName,
 		Prompt:        "test",
 		MaxLoops:      1,
@@ -528,13 +528,13 @@ echo "---END_LOOP_STATUS---"
 
 	// Run with --reset-circuit
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        1,
-		Timeout:         30 * time.Second,
-		ResetCircuit:    true,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         1,
+		Timeout:          30 * time.Second,
+		ResetCircuit:     true,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -598,12 +598,12 @@ fi
 	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
 
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "complete the task",
-		MaxLoops:        10,
-		Timeout:         30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "complete the task",
+		MaxLoops:         10,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -648,12 +648,12 @@ echo "---END_LOOP_STATUS---"
 	// Track what the callbacks receive
 	var capturedStatus *loop.Status
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "fix tests",
-		MaxLoops:        1,
-		Timeout:         30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "fix tests",
+		MaxLoops:         1,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 		OnLoopEnd: func(loopNum int, status *loop.Status, loopErr error) {
 			capturedStatus = status
@@ -700,7 +700,7 @@ echo "I did some work but forgot the status block"
 
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:       containerName,
-		Project:             project,
+		ProjectCfg:          project,
 		Agent:               agentName,
 		Prompt:              "test",
 		MaxLoops:            10,
@@ -757,12 +757,12 @@ echo "---END_LOOP_STATUS---"
 
 	start := time.Now()
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        5,
-		Timeout:         120 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         5,
+		Timeout:          120 * time.Second,
 		LoopDelaySeconds: 0,
 	})
 	elapsed := time.Since(start)
@@ -802,12 +802,12 @@ echo "---END_LOOP_STATUS---"
 
 	var outputChunks []string
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        1,
-		Timeout:         30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         1,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 		OnOutput: func(chunk []byte) {
 			outputChunks = append(outputChunks, string(chunk))
@@ -1030,7 +1030,7 @@ echo "---END_LOOP_STATUS---"
 
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:          containerName,
-		Project:                project,
+		ProjectCfg:             project,
 		Agent:                  agentName,
 		Prompt:                 "test",
 		MaxLoops:               1,
@@ -1096,13 +1096,13 @@ echo "---END_LOOP_STATUS---"
 	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
 
 	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        2,
-		Timeout:         30 * time.Second,
-		CallsPerHour:    100,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         2,
+		Timeout:          30 * time.Second,
+		CallsPerHour:     100,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -1140,12 +1140,12 @@ echo "---END_LOOP_STATUS---"
 	writeScriptToContainer(t, ctx, dockerClient, containerID, "/usr/local/bin/claude", script)
 
 	_, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        2,
-		Timeout:         30 * time.Second,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         2,
+		Timeout:          30 * time.Second,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -1195,13 +1195,13 @@ echo "---END_LOOP_STATUS---"
 
 	testWorkDir := "/test/work/dir"
 	_, err := runner.Run(ctx, loop.Options{
-		ContainerName:   containerName,
-		Project:         project,
-		Agent:           agentName,
-		Prompt:          "test",
-		MaxLoops:        1,
-		Timeout:         30 * time.Second,
-		WorkDir:         testWorkDir,
+		ContainerName:    containerName,
+		ProjectCfg:       project,
+		Agent:            agentName,
+		Prompt:           "test",
+		MaxLoops:         1,
+		Timeout:          30 * time.Second,
+		WorkDir:          testWorkDir,
 		LoopDelaySeconds: 0,
 	})
 	require.NoError(t, err)
@@ -1234,7 +1234,7 @@ exit 1
 
 	result, err := runner.Run(ctx, loop.Options{
 		ContainerName:       containerName,
-		Project:             project,
+		ProjectCfg:          project,
 		Agent:               agentName,
 		Prompt:              "test",
 		MaxLoops:            20,

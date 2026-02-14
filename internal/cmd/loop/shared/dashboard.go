@@ -18,7 +18,7 @@ type RunLoopConfig struct {
 	Runner      *loop.Runner
 	RunnerOpts  loop.Options
 	TUI         *tui.TUI
-	IOStreams    *iostreams.IOStreams
+	IOStreams   *iostreams.IOStreams
 	Setup       *LoopContainerResult
 	Format      *cmdutil.FormatFlags
 	Verbose     bool
@@ -57,7 +57,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 
 		dashResult := cfg.TUI.RunLoopDashboard(tui.LoopDashboardConfig{
 			AgentName: cfg.Setup.AgentName,
-			Project:   cfg.Setup.Project,
+			Project:   cfg.Setup.ProjectCfg,
 			MaxLoops:  runnerOpts.MaxLoops,
 		}, ch)
 		if dashResult.Err != nil {
@@ -104,7 +104,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*loop.Result, error) {
 			runnerOpts.Monitor = monitor
 
 			fmt.Fprintf(ios.ErrOut, "%s Starting loop %s for %s.%s (%d max loops)\n",
-				cs.InfoIcon(), cfg.CommandName, cfg.Setup.Project, cfg.Setup.AgentName, runnerOpts.MaxLoops)
+				cs.InfoIcon(), cfg.CommandName, cfg.Setup.ProjectCfg, cfg.Setup.AgentName, runnerOpts.MaxLoops)
 		}
 
 		if cfg.Verbose {
@@ -193,7 +193,7 @@ func WireLoopDashboard(opts *loop.Options, ch chan<- tui.LoopDashEvent, setup *L
 	ch <- tui.LoopDashEvent{
 		Kind:          tui.LoopDashEventStart,
 		AgentName:     setup.AgentName,
-		Project:       setup.Project,
+		Project:       setup.ProjectCfg,
 		MaxIterations: maxLoops,
 	}
 

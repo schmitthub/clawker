@@ -90,7 +90,7 @@ func (c *Client) ResolveImage(ctx context.Context) (string, error) {
 
 // ResolveImageWithSource resolves the image to use for container operations.
 // Resolution order:
-// 1. Project image with :latest tag (by label lookup)
+// 1. ProjectCfg image with :latest tag (by label lookup)
 // 2. Merged default_image from config/settings
 //
 // Returns nil if no image could be resolved (caller decides what to do).

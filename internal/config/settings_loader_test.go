@@ -366,12 +366,12 @@ func TestSettingsLoader_Load_ProjectOverride(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	// Project override should win for max_size_mb
+	// ProjectCfg override should win for max_size_mb
 	if settings.Logging.GetMaxSizeMB() != 200 {
 		t.Errorf("GetMaxSizeMB() = %d, want 200 (project override)", settings.Logging.GetMaxSizeMB())
 	}
 
-	// Project override should win for file_enabled
+	// ProjectCfg override should win for file_enabled
 	if settings.Logging.IsFileEnabled() {
 		t.Error("IsFileEnabled() should be false (project override)")
 	}
@@ -406,7 +406,7 @@ func TestSettingsLoader_Load_NoProjectOverride(t *testing.T) {
 		t.Fatalf("failed to write global settings: %v", err)
 	}
 
-	// Project root exists but has no .clawker.settings.yaml
+	// ProjectCfg root exists but has no .clawker.settings.yaml
 	projectDir := filepath.Join(tmpDir, "myproject")
 	os.MkdirAll(projectDir, 0755)
 

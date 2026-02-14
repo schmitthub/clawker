@@ -137,7 +137,7 @@ func (c *Config) load() {
 	// Load project config
 	c.loadProject(wd)
 
-	// Inject runtime context into Project
+	// Inject runtime context into ProjectCfg
 	if c.Resolution.Found() {
 		c.Project.setRuntimeContext(&c.Resolution.ProjectEntry, c.Registry)
 	}

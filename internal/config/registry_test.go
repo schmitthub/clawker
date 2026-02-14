@@ -13,7 +13,7 @@ func TestSlugify(t *testing.T) {
 		name string
 		want string
 	}{
-		{"My Project", "my-project"},
+		{"My ProjectCfg", "my-project"},
 		{"hello world", "hello-world"},
 		{"UPPER_CASE", "upper-case"},
 		{"  spaces  ", "spaces"},
@@ -50,14 +50,14 @@ func TestUniqueSlug(t *testing.T) {
 	}
 
 	// Collision
-	got = UniqueSlug("My Project", existing)
+	got = UniqueSlug("My ProjectCfg", existing)
 	if got != "my-project-2" {
 		t.Errorf("UniqueSlug collision = %q, want %q", got, "my-project-2")
 	}
 
 	// Double collision
 	existing["my-project-2"] = true
-	got = UniqueSlug("My Project", existing)
+	got = UniqueSlug("My ProjectCfg", existing)
 	if got != "my-project-3" {
 		t.Errorf("UniqueSlug double collision = %q, want %q", got, "my-project-3")
 	}
@@ -99,7 +99,7 @@ func TestSlugify_TruncationNoTrailingHyphen(t *testing.T) {
 func TestProjectRegistry_Lookup(t *testing.T) {
 	registry := &ProjectRegistry{
 		Projects: map[string]ProjectEntry{
-			"my-project": {Name: "My Project", Root: "/home/user/myapp"},
+			"my-project": {Name: "My ProjectCfg", Root: "/home/user/myapp"},
 			"other":      {Name: "Other", Root: "/home/user/other"},
 			"nested":     {Name: "Nested", Root: "/home/user/myapp/sub"},
 		},
@@ -303,7 +303,7 @@ func TestRegistryLoader_Register_Collision(t *testing.T) {
 	os.MkdirAll(root2, 0755)
 
 	// Register first project
-	slug1, err := loader.Register("My Project", root1)
+	slug1, err := loader.Register("My ProjectCfg", root1)
 	if err != nil {
 		t.Fatalf("Register first error: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestRegistryLoader_Register_Collision(t *testing.T) {
 	}
 
 	// Register second project with same name but different root
-	slug2, err := loader.Register("My Project", root2)
+	slug2, err := loader.Register("My ProjectCfg", root2)
 	if err != nil {
 		t.Fatalf("Register second error: %v", err)
 	}
@@ -342,7 +342,6 @@ func TestRegistryLoader_Path(t *testing.T) {
 		t.Errorf("Path() = %q, want %q", loader.Path(), expected)
 	}
 }
-
 
 func TestProjectHandle_Get(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -433,7 +432,7 @@ func TestProjectHandle_ListWorktrees(t *testing.T) {
 	registry := &ProjectRegistry{
 		Projects: map[string]ProjectEntry{
 			"test-project": {
-				Name: "Test Project",
+				Name: "Test ProjectCfg",
 				Root: filepath.Join(tmpDir, "project"),
 				Worktrees: map[string]string{
 					"feature-a": "feature-a",
@@ -482,7 +481,7 @@ func TestWorktreeHandle_DirExists(t *testing.T) {
 	registry := &ProjectRegistry{
 		Projects: map[string]ProjectEntry{
 			"test-project": {
-				Name: "Test Project",
+				Name: "Test ProjectCfg",
 				Root: filepath.Join(tmpDir, "project"),
 				Worktrees: map[string]string{
 					"feature-a": "feature-a",
@@ -524,7 +523,7 @@ func TestWorktreeHandle_GitExists(t *testing.T) {
 	registry := &ProjectRegistry{
 		Projects: map[string]ProjectEntry{
 			"test-project": {
-				Name: "Test Project",
+				Name: "Test ProjectCfg",
 				Root: projectRoot,
 				Worktrees: map[string]string{
 					"feature-a": "feature-a",
@@ -552,12 +551,12 @@ func TestWorktreeHandle_GitExists(t *testing.T) {
 
 func TestWorktreeStatus_Methods(t *testing.T) {
 	tests := []struct {
-		name       string
-		dirExists  bool
-		gitExists  bool
-		wantHealthy bool
+		name         string
+		dirExists    bool
+		gitExists    bool
+		wantHealthy  bool
 		wantPrunable bool
-		wantString string
+		wantString   string
 	}{
 		{"healthy", true, true, true, false, "healthy"},
 		{"dir missing only", false, true, false, false, "dir missing"},
@@ -627,7 +626,7 @@ func TestWorktreeHandle_Delete(t *testing.T) {
 	registry := &ProjectRegistry{
 		Projects: map[string]ProjectEntry{
 			"test-project": {
-				Name: "Test Project",
+				Name: "Test ProjectCfg",
 				Root: filepath.Join(tmpDir, "project"),
 				Worktrees: map[string]string{
 					"feature-a": "feature-a",

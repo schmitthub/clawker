@@ -9,11 +9,11 @@ import (
 )
 
 func TestProject_RuntimeAccessors_NotInProject(t *testing.T) {
-	// Project with no runtime context
+	// ProjectCfg with no runtime context
 	p := &Project{Project: ""}
 
 	if p.Found() {
-		t.Error("Found() should return false when Project field is empty")
+		t.Error("Found() should return false when ProjectCfg field is empty")
 	}
 	if p.Key() != "" {
 		t.Errorf("Key() = %q, want empty", p.Key())
@@ -28,14 +28,14 @@ func TestProject_RuntimeAccessors_NotInProject(t *testing.T) {
 
 func TestProject_RuntimeAccessors_InProject(t *testing.T) {
 	entry := &ProjectEntry{
-		Name: "My Test Project",
+		Name: "My Test ProjectCfg",
 		Root: "/home/user/myproject",
 	}
 	p := &Project{Project: "my-test-project"}
 	p.setRuntimeContext(entry, nil)
 
 	if !p.Found() {
-		t.Error("Found() should return true when Project field is set")
+		t.Error("Found() should return true when ProjectCfg field is set")
 	}
 	if p.Key() != "my-test-project" {
 		t.Errorf("Key() = %q, want %q", p.Key(), "my-test-project")
@@ -43,8 +43,8 @@ func TestProject_RuntimeAccessors_InProject(t *testing.T) {
 	if p.RootDir() != "/home/user/myproject" {
 		t.Errorf("RootDir() = %q, want %q", p.RootDir(), "/home/user/myproject")
 	}
-	if p.DisplayName() != "My Test Project" {
-		t.Errorf("DisplayName() = %q, want %q", p.DisplayName(), "My Test Project")
+	if p.DisplayName() != "My Test ProjectCfg" {
+		t.Errorf("DisplayName() = %q, want %q", p.DisplayName(), "My Test ProjectCfg")
 	}
 }
 
@@ -106,14 +106,14 @@ func TestProject_GetOrCreateWorktreeDir(t *testing.T) {
 		t.Fatalf("failed to create project root: %v", err)
 	}
 
-	slug, err := registry.Register("My Project", projectRoot)
+	slug, err := registry.Register("My ProjectCfg", projectRoot)
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	// Set up the Project with runtime context
+	// Set up the ProjectCfg with runtime context
 	entry := &ProjectEntry{
-		Name:      "My Project",
+		Name:      "My ProjectCfg",
 		Root:      projectRoot,
 		Worktrees: make(map[string]string),
 	}
@@ -167,14 +167,14 @@ func TestProject_GetWorktreeDir(t *testing.T) {
 		t.Fatalf("failed to create project root: %v", err)
 	}
 
-	slug, err := registry.Register("My Project", projectRoot)
+	slug, err := registry.Register("My ProjectCfg", projectRoot)
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	// Set up the Project with runtime context
+	// Set up the ProjectCfg with runtime context
 	entry := &ProjectEntry{
-		Name:      "My Project",
+		Name:      "My ProjectCfg",
 		Root:      projectRoot,
 		Worktrees: make(map[string]string),
 	}
@@ -223,14 +223,14 @@ func TestProject_DeleteWorktreeDir(t *testing.T) {
 		t.Fatalf("failed to create project root: %v", err)
 	}
 
-	slug, err := registry.Register("My Project", projectRoot)
+	slug, err := registry.Register("My ProjectCfg", projectRoot)
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	// Set up the Project with runtime context
+	// Set up the ProjectCfg with runtime context
 	entry := &ProjectEntry{
-		Name:      "My Project",
+		Name:      "My ProjectCfg",
 		Root:      projectRoot,
 		Worktrees: make(map[string]string),
 	}
@@ -292,14 +292,14 @@ func TestProject_ListWorktreeDirs(t *testing.T) {
 		t.Fatalf("failed to create project root: %v", err)
 	}
 
-	slug, err := registry.Register("My Project", projectRoot)
+	slug, err := registry.Register("My ProjectCfg", projectRoot)
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	// Set up the Project with runtime context
+	// Set up the ProjectCfg with runtime context
 	entry := &ProjectEntry{
-		Name:      "My Project",
+		Name:      "My ProjectCfg",
 		Root:      projectRoot,
 		Worktrees: make(map[string]string),
 	}
@@ -349,9 +349,9 @@ func TestProject_ListWorktreeDirs(t *testing.T) {
 }
 
 func TestProject_WorktreeMethods_NoRegistry(t *testing.T) {
-	// Project with runtime context but no registry loader
+	// ProjectCfg with runtime context but no registry loader
 	entry := &ProjectEntry{
-		Name: "My Project",
+		Name: "My ProjectCfg",
 		Root: "/home/user/myproject",
 	}
 	p := &Project{Project: "my-project"}
@@ -372,7 +372,6 @@ func hasPrefix(path, prefix string) bool {
 	return len(path) >= len(prefix) && path[:len(prefix)] == prefix
 }
 
-
 func TestProject_GetOrCreateWorktreeDir_Concurrent(t *testing.T) {
 	tmpDir := t.TempDir()
 	clawkerHome := filepath.Join(tmpDir, "clawker-home")
@@ -392,14 +391,14 @@ func TestProject_GetOrCreateWorktreeDir_Concurrent(t *testing.T) {
 		t.Fatalf("failed to create project root: %v", err)
 	}
 
-	slug, err := registry.Register("My Project", projectRoot)
+	slug, err := registry.Register("My ProjectCfg", projectRoot)
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	// Set up the Project with runtime context
+	// Set up the ProjectCfg with runtime context
 	entry := &ProjectEntry{
-		Name:      "My Project",
+		Name:      "My ProjectCfg",
 		Root:      projectRoot,
 		Worktrees: make(map[string]string),
 	}

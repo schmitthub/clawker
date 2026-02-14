@@ -49,7 +49,7 @@ func TestListContainers(t *testing.T) {
 			t.Fatalf("ListContainers() returned %d containers, want 1", len(containers))
 		}
 		if containers[0].Project != "myapp" {
-			t.Errorf("containers[0].Project = %q, want %q", containers[0].Project, "myapp")
+			t.Errorf("containers[0].ProjectCfg = %q, want %q", containers[0].Project, "myapp")
 		}
 		if containers[0].Agent != "dev" {
 			t.Errorf("containers[0].Agent = %q, want %q", containers[0].Agent, "dev")

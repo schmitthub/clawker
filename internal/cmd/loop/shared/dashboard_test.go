@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -21,8 +22,8 @@ func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
 	setup := &LoopContainerResult{
-		AgentName: "loop-test-agent",
-		Project:   "testproj",
+		AgentName:  "loop-test-agent",
+		ProjectCfg: "testproj",
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -39,8 +40,8 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
 	setup := &LoopContainerResult{
-		AgentName: "loop-test-agent",
-		Project:   "testproj",
+		AgentName:  "loop-test-agent",
+		ProjectCfg: "testproj",
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -57,7 +58,7 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -72,7 +73,7 @@ func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -107,7 +108,7 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -126,7 +127,7 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -151,7 +152,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 func TestWireLoopDashboard_OnOutput(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -166,7 +167,7 @@ func TestWireLoopDashboard_OnOutput(t *testing.T) {
 func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 	opts := &loop.Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", Project: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -426,7 +427,8 @@ func TestRunLoop_ModeSelection(t *testing.T) {
 			tmpDir := t.TempDir()
 			store := loop.NewSessionStore(filepath.Join(tmpDir, "sessions"))
 			history := loop.NewHistoryStore(filepath.Join(tmpDir, "history"))
-			runner := loop.NewRunnerWith(nil, store, history)
+			runner, err := loop.NewRunnerWith(nil, store, history)
+			require.NoError(t, err)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel() // pre-cancel so Run exits immediately
@@ -439,17 +441,21 @@ func TestRunLoop_ModeSelection(t *testing.T) {
 				format.Format, _ = cmdutil.ParseFormat("json")
 			}
 
+			cleanup := func() {
+				defer cancel()
+			}
+
 			cfg := RunLoopConfig{
 				Runner: runner,
 				RunnerOpts: loop.Options{
 					MaxLoops:      1,
-					Project:       "testproj",
+					ProjectCfg:    configtest.NewProjectBuilder().WithProject("testproj").Build(),
 					Agent:         "testagent",
-					ContainerName: "clawker.testproj.testagent",
+					ContainerStartConfig: {	"clawker.testproj.testagent", cleanup()}
 				},
 				TUI:         tui.NewTUI(tio.IOStreams),
-				IOStreams:    tio.IOStreams,
-				Setup:       &LoopContainerResult{AgentName: "testagent", Project: "testproj"},
+				IOStreams:   tio.IOStreams,
+				Setup:       &LoopContainerResult{AgentName: "testagent", ProjectCfg: "testproj"},
 				Format:      format,
 				Verbose:     tt.verbose,
 				CommandName: "iterate",

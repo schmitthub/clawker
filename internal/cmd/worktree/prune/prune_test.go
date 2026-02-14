@@ -300,7 +300,7 @@ func TestPruneRun_PartialDeleteFailure(t *testing.T) {
 	inMemRegistry.Save(&config.ProjectRegistry{
 		Projects: map[string]config.ProjectEntry{
 			"test-project": {
-				Name: "Test Project",
+				Name: "Test ProjectCfg",
 				Root: "/fake/project",
 				Worktrees: map[string]string{
 					"stale-a": "stale-a",

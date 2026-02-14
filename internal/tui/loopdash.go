@@ -339,9 +339,9 @@ func (m loopDashboardModel) View() string {
 	buf.WriteByte('\n')
 	lines++
 
-	// Info line: Agent / Project / Elapsed
+	// Info line: Agent / ProjectCfg / Elapsed
 	elapsed := time.Since(m.startTime)
-	infoLine := fmt.Sprintf("  Agent: %s    Project: %s    Elapsed: %s",
+	infoLine := fmt.Sprintf("  Agent: %s    ProjectCfg: %s    Elapsed: %s",
 		m.agentName, m.project, formatElapsed(elapsed))
 	buf.WriteString(infoLine)
 	buf.WriteByte('\n')

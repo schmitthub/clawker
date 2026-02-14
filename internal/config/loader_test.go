@@ -141,9 +141,9 @@ security:
 	if cfg.Version != "1" {
 		t.Errorf("cfg.Version = %q, want %q", cfg.Version, "1")
 	}
-	// Project should be empty — set by registry, not YAML
+	// ProjectCfg should be empty — set by registry, not YAML
 	if cfg.Project != "" {
-		t.Errorf("cfg.Project = %q, want empty (set by registry, not YAML)", cfg.Project)
+		t.Errorf("cfg.ProjectCfg = %q, want empty (set by registry, not YAML)", cfg.Project)
 	}
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("cfg.Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")
@@ -252,7 +252,7 @@ func TestLoaderLoadWithProjectKey(t *testing.T) {
 	}
 
 	if cfg.Project != "my-project" {
-		t.Errorf("cfg.Project = %q, want %q (injected from WithProjectKey)", cfg.Project, "my-project")
+		t.Errorf("cfg.ProjectCfg = %q, want %q (injected from WithProjectKey)", cfg.Project, "my-project")
 	}
 }
 
@@ -297,7 +297,7 @@ build:
 		t.Fatalf("Loader.Load() returned error: %v", err)
 	}
 
-	// Project config should override user config for image
+	// ProjectCfg config should override user config for image
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("cfg.Build.Image = %q, want %q (project overrides user)", cfg.Build.Image, "node:20-slim")
 	}
@@ -352,7 +352,7 @@ func TestLoaderLoadWithProjectRoot(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Project root has the config
+	// ProjectCfg root has the config
 	projectRoot := filepath.Join(tmpDir, "myapp")
 	os.MkdirAll(projectRoot, 0755)
 	configContent := `

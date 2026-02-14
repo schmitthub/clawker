@@ -105,7 +105,7 @@ func TestConfigStructure(t *testing.T) {
 		t.Errorf("Config.Version = %q, want %q", cfg.Version, "1")
 	}
 	if cfg.Project != "test-project" {
-		t.Errorf("Config.Project = %q, want %q", cfg.Project, "test-project")
+		t.Errorf("Config.ProjectCfg = %q, want %q", cfg.Project, "test-project")
 	}
 	if cfg.Build.Image != "node:20-slim" {
 		t.Errorf("Config.Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")

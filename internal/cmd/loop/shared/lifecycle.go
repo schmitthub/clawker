@@ -29,7 +29,9 @@ type LoopContainerConfig struct {
 	// Client is the Docker client.
 	Client *docker.Client
 
-	// Config is the gateway config providing Project(), Settings(), etc.
+	Command []string
+
+	// Config is the gateway config providing ProjectCfg(), Settings(), etc.
 	Config *config.Config
 
 	// LoopOpts holds the shared loop flags (agent, image, worktree, etc.).
@@ -65,8 +67,8 @@ type LoopContainerResult struct {
 	// AgentName is the resolved agent name.
 	AgentName string
 
-	// Project is the project name.
-	Project string
+	// ProjectCfg is the project name.
+	ProjectCfg *config.Project
 
 	// WorkDir is the host working directory for this session.
 	WorkDir string
@@ -78,7 +80,6 @@ type LoopContainerResult struct {
 // removes the container.
 //
 // The cleanup function uses context.Background() so it runs even after cancellation.
-// TODO io does not belong in here — refactor to return structured events for the caller to handle output and spinner.
 func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopContainerResult, func(), error) {
 	ios := cfg.IOStreams
 	projectCfg := cfg.Config.Project
@@ -119,7 +120,8 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 	containerOpts.Agent = cfg.LoopOpts.Agent
 	containerOpts.Image = image
 	containerOpts.Worktree = cfg.LoopOpts.Worktree
-	// Loop containers don't need stdin/TTY — they use docker exec for claude -p
+	containerOpts.Command = cfg.Command
+	// Loop containers don't need stdin/TTY
 	containerOpts.Stdin = false
 	containerOpts.TTY = false
 
@@ -194,30 +196,11 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 	}
 	ios.StopSpinner()
 
-	// --- Phase D: Start container ---
-	ios.StartSpinner("Starting container")
-	if _, err := cfg.Client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
-		ios.StopSpinner()
-		cleanup()
-		return nil, nil, fmt.Errorf("starting container: %w", err)
-	}
-	ios.StopSpinner()
-
-	// Start socket bridge for GPG/SSH forwarding if needed.
-	if containershared.NeedsSocketBridge(projectCfg) && cfg.SocketBridge != nil {
-		gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
-		if err := cfg.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-			logger.Warn().Err(err).Msg("failed to start socket bridge for loop container")
-			fmt.Fprintf(ios.ErrOut, "%s Socket bridge failed: %v (GPG/SSH forwarding may not work)\n",
-				cs.WarningIcon(), err)
-		}
-	}
-
 	return &LoopContainerResult{
 		ContainerID:   containerID,
 		ContainerName: containerName,
 		AgentName:     agentName,
-		Project:       projectCfg.Project,
+		ProjectCfg:    projectCfg,
 		WorkDir:       o.result.WorkDir,
 	}, cleanup, nil
 }

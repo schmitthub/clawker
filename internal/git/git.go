@@ -10,7 +10,7 @@
 //   - WorktreeManager handles linked worktree operations
 //
 // Dependency Inversion: GitManager defines WorktreeDirProvider interface which
-// Config.Project() implements. This allows high-level orchestration without
+// Config.ProjectCfg() implements. This allows high-level orchestration without
 // importing the config package.
 package git
 
@@ -118,7 +118,7 @@ func (g *GitManager) Worktrees() (*WorktreeManager, error) {
 // It orchestrates: directory creation (via provider) + git worktree add.
 //
 // Parameters:
-//   - dirs: Provider for worktree directory management (typically Config.Project())
+//   - dirs: Provider for worktree directory management (typically Config.ProjectCfg())
 //   - branch: Branch name to check out (created if doesn't exist)
 //   - base: Base ref to create branch from (empty string uses HEAD)
 //

@@ -150,7 +150,7 @@ func TestBuildRunnerOptions_BasicMapping(t *testing.T) {
 	opts := BuildRunnerOptions(loopOpts, "myproject", "dev", "clawker.myproject.dev", "Fix tests", "/workspace", cmd.Flags(), nil)
 
 	assert.Equal(t, "clawker.myproject.dev", opts.ContainerName)
-	assert.Equal(t, "myproject", opts.Project)
+	assert.Equal(t, "myproject", opts.ProjectCfg)
 	assert.Equal(t, "dev", opts.Agent)
 	assert.Equal(t, "Fix tests", opts.Prompt)
 	assert.Equal(t, "/workspace", opts.WorkDir)

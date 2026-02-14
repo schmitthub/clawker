@@ -217,7 +217,7 @@ func initGitRepo(t *testing.T, dir string) {
 
 	// Create initial commit
 	readmePath := filepath.Join(dir, "README.md")
-	require.NoError(t, os.WriteFile(readmePath, []byte("# Test Project\n"), 0644))
+	require.NoError(t, os.WriteFile(readmePath, []byte("# Test ProjectCfg\n"), 0644))
 
 	gitAdd := exec.Command("git", "add", "README.md")
 	gitAdd.Dir = dir
