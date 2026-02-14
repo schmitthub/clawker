@@ -16,7 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/pflag"
 )
@@ -74,10 +73,119 @@ type LoopContainerResult struct {
 	WorkDir string
 }
 
+// ResolveLoopImage resolves the container image for loop execution.
+// If an image is explicitly set on loopOpts, it's returned as-is.
+// Otherwise, the Docker client's image resolution chain is used.
+func ResolveLoopImage(ctx context.Context, client *docker.Client, ios *iostreams.IOStreams, loopOpts *LoopOptions) (string, error) {
+	image := loopOpts.Image
+	if image != "" && image != "@" {
+		return image, nil
+	}
+
+	resolvedImage, err := client.ResolveImageWithSource(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving image: %w", err)
+	}
+	if resolvedImage == nil {
+		cs := ios.ColorScheme()
+		fmt.Fprintf(ios.ErrOut, "%s No image specified and no default image configured\n", cs.FailureIcon())
+		fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
+		fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker loop iterate --image IMAGE ...")
+		fmt.Fprintln(ios.ErrOut, "  2. Set default_image in clawker.yaml")
+		fmt.Fprintln(ios.ErrOut, "  3. Set default_image in ~/.local/clawker/settings.yaml")
+		fmt.Fprintln(ios.ErrOut, "  4. Build a project image: clawker build")
+		return "", fmt.Errorf("no image available")
+	}
+
+	if resolvedImage.Source == docker.ImageSourceDefault {
+		exists, err := client.ImageExists(ctx, resolvedImage.Reference)
+		if err != nil {
+			return "", fmt.Errorf("checking if image exists: %w", err)
+		}
+		if !exists {
+			return "", fmt.Errorf("default image %q not found — build it first with: clawker build", resolvedImage.Reference)
+		}
+	}
+
+	return resolvedImage.Reference, nil
+}
+
+// MakeCreateContainerFunc creates a factory closure that creates a new container
+// for each loop iteration. The returned containers are created with hooks injected
+// but NOT started — the Runner's StartContainer handles attachment and start.
+func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*ContainerStartConfig, error) {
+	return func(ctx context.Context) (*ContainerStartConfig, error) {
+		containerOpts := containershared.NewContainerOptions()
+		containerOpts.Agent = cfg.LoopOpts.Agent
+		containerOpts.Image = cfg.LoopOpts.Image
+		containerOpts.Worktree = cfg.LoopOpts.Worktree
+		containerOpts.Command = cfg.Command
+		containerOpts.Stdin = false
+		containerOpts.TTY = false
+
+		events := make(chan containershared.CreateContainerEvent, 16)
+		type outcome struct {
+			result *containershared.CreateContainerResult
+			err    error
+		}
+		done := make(chan outcome, 1)
+
+		go func() {
+			defer close(events)
+			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
+				Client:      cfg.Client,
+				Config:      cfg.Config.Project,
+				Options:     containerOpts,
+				Flags:       cfg.Flags,
+				Version:     cfg.Version,
+				GitManager:  cfg.GitManager,
+				HostProxy:   cfg.HostProxy,
+				Is256Color:  cfg.IOStreams.Is256ColorSupported(),
+				IsTrueColor: cfg.IOStreams.IsTrueColorSupported(),
+			}, events)
+			done <- outcome{r, err}
+		}()
+
+		// Drain events (runner is in a goroutine — no spinner available)
+		for range events {
+		}
+
+		o := <-done
+		if o.err != nil {
+			return nil, fmt.Errorf("creating iteration container: %w", o.err)
+		}
+
+		containerID := o.result.ContainerID
+
+		// Inject hooks into the container
+		if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client)); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true)
+			return nil, fmt.Errorf("injecting hooks: %w", err)
+		}
+
+		cleanup := func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true); err != nil {
+				shortID := containerID
+				if len(shortID) > 12 {
+					shortID = shortID[:12]
+				}
+				logger.Warn().Err(err).Str("container", shortID).Msg("failed to clean up iteration container")
+			}
+		}
+
+		return &ContainerStartConfig{
+			ContainerID: containerID,
+			Cleanup:     cleanup,
+		}, nil
+	}
+}
+
 // SetupLoopContainer creates, configures, and starts a container for loop execution.
-// It handles: image resolution, container creation, hook injection, container start,
-// and socket bridge setup. Returns a result and a cleanup function that stops and
-// removes the container.
+// Deprecated: Use ResolveLoopImage + MakeCreateContainerFunc for per-iteration containers.
 //
 // The cleanup function uses context.Background() so it runs even after cancellation.
 func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopContainerResult, func(), error) {
@@ -209,7 +317,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 // If hooksFile is empty, default hooks are used. If provided, the file is read as a
 // complete replacement. Hook scripts referenced by default hooks are also injected.
 func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn) error {
-	hooks, hookFiles, err := loop.ResolveHooks(hooksFile)
+	hooks, hookFiles, err := ResolveHooks(hooksFile)
 	if err != nil {
 		return err
 	}

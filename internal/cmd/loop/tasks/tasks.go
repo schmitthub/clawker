@@ -16,7 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -142,7 +141,7 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 	}
 
 	// 2. Auto-generate agent name for this loop session
-	opts.Agent = loop.GenerateAgentName()
+	opts.Agent = shared.GenerateAgentName()
 
 	// 3. Get config and Docker client
 	cfgGateway := opts.Config()
@@ -189,9 +188,27 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		return cmdutil.SilentError
 	}
 
-	// 4. Create and start container with hooks
-	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
+	// 4. Resolve image once
+	image, err := shared.ResolveLoopImage(ctx, client, ios, opts.LoopOptions)
+	if err != nil {
+		return err
+	}
+	opts.Image = image
+
+	// Container command — tasks use the same prompt each iteration
+	cmd := []string{
+		"-p", prompt,
+		"--output-format=stream-json",
+		"--verbose",
+	}
+	if opts.SkipPermissions {
+		cmd = append(cmd, "--dangerously-skip-permissions")
+	}
+
+	// 5. Build per-iteration container factory
+	createContainer := shared.MakeCreateContainerFunc(&shared.LoopContainerConfig{
 		Client:       client,
+		Command:      cmd,
 		Config:       cfgGateway,
 		LoopOpts:     opts.LoopOptions,
 		Flags:        opts.flags,
@@ -201,24 +218,27 @@ func tasksRun(ctx context.Context, opts *TasksOptions) error {
 		SocketBridge: opts.SocketBridge,
 		IOStreams:    ios,
 	})
-	if err != nil {
-		return err
-	}
-	defer cleanup()
 
-	// 5. Create runner
-	runner, err := loop.NewRunner(client)
+	// 6. Create runner
+	runner, err := shared.NewRunner(client)
 	if err != nil {
 		return fmt.Errorf("creating loop runner: %w", err)
 	}
 
-	// 6. Build runner options
+	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, setup.ProjectCfg, setup.AgentName, setup.ContainerName, prompt, setup.WorkDir,
-		opts.flags, cfgGateway.Project.Loop,
+		opts.LoopOptions, cfgGateway.Project, opts.Agent, prompt, workDir,
+		createContainer, opts.flags, cfgGateway.Project.Loop,
 	)
 
-	// 7. Run loop with appropriate output mode (TUI dashboard or text monitor)
+	// Setup info for dashboard/monitor display (no container ID — per-iteration)
+	setup := &shared.LoopContainerResult{
+		AgentName:  opts.Agent,
+		ProjectCfg: cfgGateway.Project,
+		WorkDir:    workDir,
+	}
+
+	// 8. Run loop with appropriate output mode (TUI dashboard or text monitor)
 	result, err := shared.RunLoop(ctx, shared.RunLoopConfig{
 		Runner:      runner,
 		RunnerOpts:  runnerOpts,

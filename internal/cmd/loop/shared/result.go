@@ -5,7 +5,6 @@ import (
 	"io"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/loop"
 )
 
 // ResultOutput is the structured output for loop results.
@@ -20,8 +19,8 @@ type ResultOutput struct {
 	RateLimitHit        bool   `json:"rate_limit_hit,omitempty"`
 }
 
-// NewResultOutput maps a loop.Result into a ResultOutput for serialization.
-func NewResultOutput(result *loop.Result) *ResultOutput {
+// NewResultOutput maps a Result into a ResultOutput for serialization.
+func NewResultOutput(result *Result) *ResultOutput {
 	out := &ResultOutput{
 		LoopsCompleted: result.LoopsCompleted,
 		ExitReason:     result.ExitReason,
@@ -46,7 +45,7 @@ func NewResultOutput(result *loop.Result) *ResultOutput {
 }
 
 // WriteResult writes the loop result in the appropriate format.
-func WriteResult(out, errOut io.Writer, result *loop.Result, format *cmdutil.FormatFlags) error {
+func WriteResult(out, errOut io.Writer, result *Result, format *cmdutil.FormatFlags) error {
 	output := NewResultOutput(result)
 
 	if format.IsJSON() {

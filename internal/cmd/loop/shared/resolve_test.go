@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,9 +172,9 @@ func TestBuildRunnerOptions_BasicMapping(t *testing.T) {
 func TestBuildRunnerOptions_ConfigOverrides(t *testing.T) {
 	loopOpts := NewLoopOptions()
 	// Leave at defaults — config should override
-	loopOpts.MaxLoops = loop.DefaultMaxLoops
-	loopOpts.StagnationThreshold = loop.DefaultStagnationThreshold
-	loopOpts.TimeoutMinutes = loop.DefaultTimeoutMinutes
+	loopOpts.MaxLoops = DefaultMaxLoops
+	loopOpts.StagnationThreshold = DefaultStagnationThreshold
+	loopOpts.TimeoutMinutes = DefaultTimeoutMinutes
 
 	loopCfg := &config.LoopConfig{
 		MaxLoops:            200,
@@ -258,7 +257,7 @@ func TestBuildRunnerOptions_SystemPromptDefault(t *testing.T) {
 	// Default system prompt should contain LOOP_STATUS instructions
 	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
 	assert.Contains(t, opts.SystemPrompt, "---END_LOOP_STATUS---")
-	assert.Equal(t, loop.BuildSystemPrompt(""), opts.SystemPrompt)
+	assert.Equal(t, BuildSystemPrompt(""), opts.SystemPrompt)
 }
 
 func TestBuildRunnerOptions_SystemPromptWithAdditional(t *testing.T) {
@@ -271,7 +270,7 @@ func TestBuildRunnerOptions_SystemPromptWithAdditional(t *testing.T) {
 	// Should have both default and additional instructions
 	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
 	assert.Contains(t, opts.SystemPrompt, "Always run tests before marking complete.")
-	assert.Equal(t, loop.BuildSystemPrompt("Always run tests before marking complete."), opts.SystemPrompt)
+	assert.Equal(t, BuildSystemPrompt("Always run tests before marking complete."), opts.SystemPrompt)
 }
 
 func TestBuildRunnerOptions_ConfigOverridesHooksFile(t *testing.T) {

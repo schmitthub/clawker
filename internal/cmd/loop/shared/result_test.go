@@ -7,21 +7,20 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewResultOutput_Success(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 5,
 		ExitReason:     "agent signaled completion",
-		Session: &loop.Session{
+		Session: &Session{
 			TotalTasksCompleted: 3,
 			TotalFilesModified:  7,
 		},
-		FinalStatus: &loop.Status{
-			Status: loop.StatusComplete,
+		FinalStatus: &Status{
+			Status: StatusComplete,
 		},
 	}
 
@@ -33,16 +32,16 @@ func TestNewResultOutput_Success(t *testing.T) {
 	assert.Empty(t, output.Error)
 	assert.Equal(t, 3, output.TotalTasksCompleted)
 	assert.Equal(t, 7, output.TotalFilesModified)
-	assert.Equal(t, loop.StatusComplete, output.FinalStatus)
+	assert.Equal(t, StatusComplete, output.FinalStatus)
 	assert.False(t, output.RateLimitHit)
 }
 
 func TestNewResultOutput_Error(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 2,
 		ExitReason:     "stagnation: no progress",
 		Error:          fmt.Errorf("circuit breaker tripped"),
-		Session: &loop.Session{
+		Session: &Session{
 			TotalTasksCompleted: 1,
 			TotalFilesModified:  2,
 		},
@@ -57,7 +56,7 @@ func TestNewResultOutput_Error(t *testing.T) {
 }
 
 func TestNewResultOutput_NilSession(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 0,
 		ExitReason:     "failed to load session",
 		Error:          fmt.Errorf("some error"),
@@ -72,15 +71,15 @@ func TestNewResultOutput_NilSession(t *testing.T) {
 }
 
 func TestWriteResult_JSON(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 3,
 		ExitReason:     "agent signaled completion",
-		Session: &loop.Session{
+		Session: &Session{
 			TotalTasksCompleted: 2,
 			TotalFilesModified:  4,
 		},
-		FinalStatus: &loop.Status{
-			Status: loop.StatusComplete,
+		FinalStatus: &Status{
+			Status: StatusComplete,
 		},
 	}
 
@@ -101,10 +100,10 @@ func TestWriteResult_JSON(t *testing.T) {
 }
 
 func TestWriteResult_Default(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 5,
 		ExitReason:     "agent signaled completion",
-		Session:        &loop.Session{},
+		Session:        &Session{},
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -119,10 +118,10 @@ func TestWriteResult_Default(t *testing.T) {
 }
 
 func TestWriteResult_Quiet(t *testing.T) {
-	result := &loop.Result{
+	result := &Result{
 		LoopsCompleted: 5,
 		ExitReason:     "agent signaled completion",
-		Session:        &loop.Session{},
+		Session:        &Session{},
 	}
 
 	var stdout, stderr bytes.Buffer

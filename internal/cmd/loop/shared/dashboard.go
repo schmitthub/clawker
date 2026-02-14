@@ -213,15 +213,6 @@ func WireLoopDashboard(opts *Options, ch chan<- tui.LoopDashEvent, setup *LoopCo
 			totalFiles += status.FilesModified
 		}
 
-		// Populate cost/token data from ResultEvent
-		if resultEvent != nil {
-			ev.IterCostUSD = resultEvent.TotalCostUSD
-			ev.IterTurns = resultEvent.NumTurns
-			if resultEvent.Usage != nil {
-				ev.IterTokens = resultEvent.Usage.Total()
-			}
-		}
-
 		ev.TotalTasks = totalTasks
 		ev.TotalFiles = totalFiles
 

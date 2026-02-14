@@ -6,8 +6,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/spf13/cobra"
 )
 
@@ -64,7 +64,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	cfg := opts.Config().Project
 
 	// Get session store
-	store, err := loop.DefaultSessionStore()
+	store, err := shared.DefaultSessionStore()
 	if err != nil {
 		return fmt.Errorf("creating session store: %w", err)
 	}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,15 +43,15 @@ func TestInjectLoopHooks_DefaultHooks(t *testing.T) {
 	var settings map[string]json.RawMessage
 	err = json.Unmarshal(settingsFile, &settings)
 	require.NoError(t, err)
-	assert.Contains(t, string(settings["hooks"]), loop.EventStop)
-	assert.Contains(t, string(settings["hooks"]), loop.EventSessionStart)
+	assert.Contains(t, string(settings["hooks"]), EventStop)
+	assert.Contains(t, string(settings["hooks"]), EventSessionStart)
 
 	// Second copy: hook scripts to /
 	assert.Equal(t, "abc123", copies[1].containerID)
 	assert.Equal(t, "/", copies[1].destPath)
 
 	// Verify stop-check.js is in the tar (at relative path without leading /)
-	scriptPath := loop.StopCheckScriptPath[1:] // trim leading /
+	scriptPath := StopCheckScriptPath[1:] // trim leading /
 	stopScript := extractTarFile(t, copies[1].data, scriptPath)
 	require.NotNil(t, stopScript, "stop-check.js not found in tar")
 	assert.Contains(t, string(stopScript), "LOOP_STATUS")
