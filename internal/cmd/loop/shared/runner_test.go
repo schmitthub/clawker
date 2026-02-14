@@ -2,6 +2,7 @@ package shared_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -10,12 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
+	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/loop"
 )
 
-// loopStatusOutput builds a fake Claude output with a LOOP_STATUS block.
-func loopStatusOutput(status string, exitSignal bool, tasksCompleted, filesModified int) string {
+// loopStatusText builds the assistant text containing a LOOP_STATUS block.
+func loopStatusText(status string, exitSignal bool, tasksCompleted, filesModified int) string {
 	signal := "false"
 	if exitSignal {
 		signal = "true"
@@ -24,7 +26,7 @@ func loopStatusOutput(status string, exitSignal bool, tasksCompleted, filesModif
 
 ---LOOP_STATUS---
 STATUS: %s
-TASKS_COMPLETED: %d
+TASKS_COMPLETED_THIS_LOOP: %d
 FILES_MODIFIED: %d
 COMPLETION_INDICATORS: 0
 TESTS_STATUS: NOT_RUN
@@ -35,41 +37,96 @@ EXIT_SIGNAL: %s
 `, status, tasksCompleted, filesModified, signal)
 }
 
-// setupExecFakes wires the minimal Docker API fakes needed for Runner.ExecCapture:
-// FindContainerByName (ContainerList), ExecCreate (ContainerInspect + ExecCreate),
-// ExecAttach (with stdcopy-framed output), ExecInspect.
-func setupExecFakes(fake *dockertest.FakeClient, containerName, output string, exitCode int) {
-	fake.SetupFindContainer(containerName, dockertest.RunningContainerFixture("testproj", "testagent"))
-	fake.SetupExecCreate("exec-123")
-	fake.SetupExecAttachWithOutput(output)
-	fake.SetupExecInspect(exitCode)
+// streamJSONLines builds NDJSON stream-json output: a stream_event delta,
+// an assistant event with the given text, and a result event.
+func streamJSONLines(text string) string {
+	// Stream event (text delta for OnOutput callback)
+	streamEvent, _ := json.Marshal(map[string]interface{}{
+		"type":       "stream_event",
+		"session_id": "test-session",
+		"event": map[string]interface{}{
+			"type": "content_block_delta",
+			"delta": map[string]interface{}{
+				"type": "text_delta",
+				"text": "token",
+			},
+		},
+	})
+
+	// Assistant event with the full text
+	assistant, _ := json.Marshal(map[string]interface{}{
+		"type":       "assistant",
+		"session_id": "test-session",
+		"message": map[string]interface{}{
+			"id":          "msg-1",
+			"role":        "assistant",
+			"model":       "test-model",
+			"stop_reason": "end_turn",
+			"content": []map[string]interface{}{
+				{"type": "text", "text": text},
+			},
+		},
+	})
+
+	// Result event
+	result, _ := json.Marshal(map[string]interface{}{
+		"type":            "result",
+		"subtype":         "success",
+		"session_id":      "test-session",
+		"is_error":        false,
+		"duration_ms":     1000,
+		"duration_api_ms": 900,
+		"num_turns":       1,
+		"total_cost_usd":  0.01,
+	})
+
+	return string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
+}
+
+// setupContainerFakes wires the Docker API fakes needed for Runner.StartContainer:
+// ContainerAttach (with stdcopy-framed NDJSON output), ContainerStart, ContainerWait.
+func setupContainerFakes(fake *dockertest.FakeClient, output string, exitCode int64) {
+	fake.SetupContainerAttachWithOutput(output)
+	fake.SetupContainerStart()
+	fake.SetupContainerWait(exitCode)
 }
 
 // newTestRunner creates a Runner with temp stores and returns it along with
 // the store and history for assertions.
-func newTestRunner(t *testing.T, client *dockertest.FakeClient) (*loop.Runner, *loop.SessionStore, *loop.HistoryStore) {
+func newTestRunner(t *testing.T, client *dockertest.FakeClient) (*shared.Runner, *shared.SessionStore, *shared.HistoryStore) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	store := loop.NewSessionStore(filepath.Join(tmpDir, "sessions"))
-	history := loop.NewHistoryStore(filepath.Join(tmpDir, "history"))
-	runner := loop.NewRunnerWith(client.Client, store, history)
+	store := shared.NewSessionStore(filepath.Join(tmpDir, "sessions"))
+	history := shared.NewHistoryStore(filepath.Join(tmpDir, "history"))
+	runner := shared.NewRunnerWith(client.Client, store, history)
 	return runner, store, history
+}
+
+// makeCreateContainer returns a CreateContainer callback that always returns
+// the given container ID with a no-op cleanup function.
+func makeCreateContainer(containerID string) func(context.Context) (*shared.ContainerStartConfig, error) {
+	return func(_ context.Context) (*shared.ContainerStartConfig, error) {
+		return &shared.ContainerStartConfig{
+			ContainerID: containerID,
+			Cleanup:     func() {},
+		}, nil
+	}
 }
 
 func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
-	output := loopStatusOutput("COMPLETE", true, 5, 3)
-	setupExecFakes(fake, containerName, output, 0)
+	text := loopStatusText("COMPLETE", true, 5, 3)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, store, _ := newTestRunner(t, fake)
 
-	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName: containerName,
-		ProjectCfg:    "testproj",
-		Agent:         "testagent",
-		Prompt:        "implement the feature",
-		MaxLoops:      10,
+	result, err := runner.Run(context.Background(), shared.Options{
+		CreateContainer: makeCreateContainer("container-123"),
+		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		Agent:           "testagent",
+		Prompt:          "implement the feature",
+		MaxLoops:        10,
 	})
 
 	require.NoError(t, err)
@@ -89,16 +146,16 @@ func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 
 func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
 	// Output that always says IN_PROGRESS with some progress (no exit signal)
-	output := loopStatusOutput("IN_PROGRESS", false, 1, 1)
-	setupExecFakes(fake, containerName, output, 0)
+	text := loopStatusText("IN_PROGRESS", false, 1, 1)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, _, _ := newTestRunner(t, fake)
 
-	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          "testproj",
+	result, err := runner.Run(context.Background(), shared.Options{
+		CreateContainer:     makeCreateContainer("container-123"),
+		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            2,
@@ -116,16 +173,16 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 
 func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
 	// Output with no progress (0 tasks, 0 files, no exit signal) — triggers stagnation
-	output := loopStatusOutput("IN_PROGRESS", false, 0, 0)
-	setupExecFakes(fake, containerName, output, 0)
+	text := loopStatusText("IN_PROGRESS", false, 0, 0)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, _, _ := newTestRunner(t, fake)
 
-	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          "testproj",
+	result, err := runner.Run(context.Background(), shared.Options{
+		CreateContainer:     makeCreateContainer("container-123"),
+		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            10,
@@ -143,9 +200,9 @@ func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 
 func TestRunnerRun_ContextCancellation(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
-	output := loopStatusOutput("IN_PROGRESS", false, 1, 1)
-	setupExecFakes(fake, containerName, output, 0)
+	text := loopStatusText("IN_PROGRESS", false, 1, 1)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, _, _ := newTestRunner(t, fake)
 
@@ -153,15 +210,15 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 
 	// Cancel after first OnLoopEnd callback
 	var loopsRan int
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          "testproj",
+	result, err := runner.Run(ctx, shared.Options{
+		CreateContainer:     makeCreateContainer("container-123"),
+		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            100,
 		StagnationThreshold: 100,
 		LoopDelaySeconds:    1,
-		OnLoopEnd: func(_ int, _ *loop.Status, _ error) {
+		OnLoopEnd: func(_ int, _ *shared.Status, _ *shared.ResultEvent, _ error) {
 			loopsRan++
 			if loopsRan >= 1 {
 				cancel()
@@ -178,25 +235,25 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 
 func TestRunnerRun_CallbacksFired(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
-	output := loopStatusOutput("COMPLETE", true, 2, 1)
-	setupExecFakes(fake, containerName, output, 0)
+	text := loopStatusText("COMPLETE", true, 2, 1)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, _, _ := newTestRunner(t, fake)
 
 	var startLoops, endLoops []int
 	var outputReceived bool
 
-	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName: containerName,
-		ProjectCfg:    "testproj",
-		Agent:         "testagent",
-		Prompt:        "do it",
-		MaxLoops:      5,
+	result, err := runner.Run(context.Background(), shared.Options{
+		CreateContainer: makeCreateContainer("container-123"),
+		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		Agent:           "testagent",
+		Prompt:          "do it",
+		MaxLoops:        5,
 		OnLoopStart: func(loopNum int) {
 			startLoops = append(startLoops, loopNum)
 		},
-		OnLoopEnd: func(loopNum int, _ *loop.Status, _ error) {
+		OnLoopEnd: func(loopNum int, _ *shared.Status, _ *shared.ResultEvent, _ error) {
 			endLoops = append(endLoops, loopNum)
 		},
 		OnOutput: func(chunk []byte) {
@@ -210,24 +267,23 @@ func TestRunnerRun_CallbacksFired(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, []int{1}, startLoops, "OnLoopStart should fire once")
 	assert.Equal(t, []int{1}, endLoops, "OnLoopEnd should fire once")
-	assert.True(t, outputReceived, "OnOutput should receive data")
+	assert.True(t, outputReceived, "OnOutput should receive stream_event data")
 }
 
 func TestRunnerRun_PreCancelledContext(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
-	// No exec fakes needed — context is pre-cancelled so Run exits immediately
+	// No container fakes needed — context is pre-cancelled so Run exits immediately
 	runner, _, _ := newTestRunner(t, fake)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Pre-cancel
 
-	result, err := runner.Run(ctx, loop.Options{
-		ContainerName: containerName,
-		ProjectCfg:    "testproj",
-		Agent:         "testagent",
-		Prompt:        "do it",
-		MaxLoops:      5,
+	result, err := runner.Run(ctx, shared.Options{
+		CreateContainer: makeCreateContainer("container-123"),
+		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		Agent:           "testagent",
+		Prompt:          "do it",
+		MaxLoops:        5,
 	})
 
 	require.NoError(t, err)
@@ -237,20 +293,19 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 
 func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
 
 	// Output with an error signature that will repeat every loop
-	output := `Error: compilation failed
-` + loopStatusOutput("IN_PROGRESS", false, 1, 1)
-	setupExecFakes(fake, containerName, output, 0)
+	text := "Error: compilation failed\n" + loopStatusText("IN_PROGRESS", false, 1, 1)
+	output := streamJSONLines(text)
+	setupContainerFakes(fake, output, 0)
 
 	runner, _, history := newTestRunner(t, fake)
 
 	// Run enough loops for same-error count to reach 3 (threshold for repeated_error event).
 	// Same-error threshold is 5 by default so the circuit won't trip yet.
-	result, err := runner.Run(context.Background(), loop.Options{
-		ContainerName:       containerName,
-		ProjectCfg:          "testproj",
+	result, err := runner.Run(context.Background(), shared.Options{
+		CreateContainer:     makeCreateContainer("container-123"),
+		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
 		Agent:               "testagent",
 		Prompt:              "do work",
 		MaxLoops:            4,
@@ -279,12 +334,11 @@ func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 
 func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 	fake := dockertest.NewFakeClient()
-	containerName := "clawker.testproj.testagent"
 	runner, store, _ := newTestRunner(t, fake)
 
 	// Pre-trip the circuit
 	now := time.Now()
-	err := store.SaveCircuitState(&loop.CircuitState{
+	err := store.SaveCircuitState(&shared.CircuitState{
 		Project:    "testproj",
 		Agent:      "testagent",
 		Tripped:    true,
@@ -293,12 +347,12 @@ func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, runErr := runner.Run(context.Background(), loop.Options{
-		ContainerName: containerName,
-		ProjectCfg:    "testproj",
-		Agent:         "testagent",
-		Prompt:        "do it",
-		MaxLoops:      5,
+	result, runErr := runner.Run(context.Background(), shared.Options{
+		CreateContainer: makeCreateContainer("container-123"),
+		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		Agent:           "testagent",
+		Prompt:          "do it",
+		MaxLoops:        5,
 	})
 
 	require.NoError(t, runErr)

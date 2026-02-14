@@ -243,6 +243,24 @@ func (f *FakeClient) SetupContainerAttach() {
 	}
 }
 
+// SetupContainerAttachWithOutput configures the fake to return a hijacked
+// connection for ContainerAttach that writes the given data as stdcopy-framed
+// stdout. This allows StartContainer (which uses stdcopy.StdCopy) to demux
+// the output correctly. The server side is closed after writing.
+func (f *FakeClient) SetupContainerAttachWithOutput(data string) {
+	f.FakeAPI.ContainerAttachFn = func(_ context.Context, _ string, _ client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			w := stdcopy.NewStdWriter(serverConn, stdcopy.Stdout)
+			_, _ = w.Write([]byte(data))
+		}()
+		return client.ContainerAttachResult{
+			HijackedResponse: client.NewHijackedResponse(clientConn, "application/vnd.docker.multiplexed-stream"),
+		}, nil
+	}
+}
+
 // SetupContainerWait configures the fake to succeed on ContainerWait,
 // returning the given exit code immediately.
 func (f *FakeClient) SetupContainerWait(exitCode int64) {

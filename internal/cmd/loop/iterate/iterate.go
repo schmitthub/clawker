@@ -36,9 +36,6 @@ type IterateOptions struct {
 	Prompter     func() *prompter.Prompter
 	Version      string
 
-	// AppendSystemPrompt allows users to override clawkers loop system prompt to be appended to the default system prompt for each iteration.
-	AppendSystemPrompt string
-
 	// Prompt source (mutually exclusive, one required)
 	Prompt     string
 	PromptFile string
@@ -114,7 +111,6 @@ The loop exits when:
 	// Prompt source flags
 	cmd.Flags().StringVarP(&opts.Prompt, "prompt", "p", "", "Prompt to repeat each iteration")
 	cmd.Flags().StringVar(&opts.PromptFile, "prompt-file", "", "Path to file containing the prompt")
-	cmd.Flags().StringVarP(&opts.AppendSystemPrompt, "append-system-prompt", "", "", "Additional system prompt to append to the default system prompt")
 
 	// Shared loop flags
 	shared.AddLoopFlags(cmd, loopOpts)

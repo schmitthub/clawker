@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/loop"
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,22 +165,22 @@ func TestNewCmdTasks_SharedFlagDefaults(t *testing.T) {
 	require.NotNil(t, gotOpts)
 
 	// Loop control defaults
-	assert.Equal(t, loop.DefaultMaxLoops, gotOpts.MaxLoops)
-	assert.Equal(t, loop.DefaultStagnationThreshold, gotOpts.StagnationThreshold)
-	assert.Equal(t, loop.DefaultTimeoutMinutes, gotOpts.TimeoutMinutes)
-	assert.Equal(t, loop.DefaultLoopDelaySeconds, gotOpts.LoopDelay)
+	assert.Equal(t, shared.DefaultMaxLoops, gotOpts.MaxLoops)
+	assert.Equal(t, shared.DefaultStagnationThreshold, gotOpts.StagnationThreshold)
+	assert.Equal(t, shared.DefaultTimeoutMinutes, gotOpts.TimeoutMinutes)
+	assert.Equal(t, shared.DefaultLoopDelaySeconds, gotOpts.LoopDelay)
 
 	// Circuit breaker defaults
-	assert.Equal(t, loop.DefaultSameErrorThreshold, gotOpts.SameErrorThreshold)
-	assert.Equal(t, loop.DefaultOutputDeclineThreshold, gotOpts.OutputDeclineThreshold)
-	assert.Equal(t, loop.DefaultMaxConsecutiveTestLoops, gotOpts.MaxConsecutiveTestLoops)
-	assert.Equal(t, loop.DefaultSafetyCompletionThreshold, gotOpts.SafetyCompletionThreshold)
-	assert.Equal(t, loop.DefaultCompletionThreshold, gotOpts.CompletionThreshold)
+	assert.Equal(t, shared.DefaultSameErrorThreshold, gotOpts.SameErrorThreshold)
+	assert.Equal(t, shared.DefaultOutputDeclineThreshold, gotOpts.OutputDeclineThreshold)
+	assert.Equal(t, shared.DefaultMaxConsecutiveTestLoops, gotOpts.MaxConsecutiveTestLoops)
+	assert.Equal(t, shared.DefaultSafetyCompletionThreshold, gotOpts.SafetyCompletionThreshold)
+	assert.Equal(t, shared.DefaultCompletionThreshold, gotOpts.CompletionThreshold)
 	assert.False(t, gotOpts.StrictCompletion)
 
 	// Execution defaults
 	assert.False(t, gotOpts.SkipPermissions)
-	assert.Equal(t, loop.DefaultCallsPerHour, gotOpts.CallsPerHour)
+	assert.Equal(t, shared.DefaultCallsPerHour, gotOpts.CallsPerHour)
 	assert.False(t, gotOpts.ResetCircuit)
 
 	// Optional fields

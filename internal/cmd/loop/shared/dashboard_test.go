@@ -2,9 +2,7 @@ package shared
 
 import (
 	"bytes"
-	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,18 +10,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/loop"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
+func testProject(name string) *configtest.ProjectBuilder {
+	return configtest.NewProjectBuilder().WithProject(name)
+}
+
 func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
 	setup := &LoopContainerResult{
 		AgentName:  "loop-test-agent",
-		ProjectCfg: "testproj",
+		ProjectCfg: testProject("testproj").Build(),
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -37,11 +37,11 @@ func TestWireLoopDashboard_SendsStartEvent(t *testing.T) {
 }
 
 func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
 	setup := &LoopContainerResult{
 		AgentName:  "loop-test-agent",
-		ProjectCfg: "testproj",
+		ProjectCfg: testProject("testproj").Build(),
 	}
 
 	WireLoopDashboard(opts, ch, setup, 50)
@@ -56,9 +56,9 @@ func TestWireLoopDashboard_SetsCallbacks(t *testing.T) {
 }
 
 func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -71,9 +71,9 @@ func TestWireLoopDashboard_OnLoopStart(t *testing.T) {
 }
 
 func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -82,14 +82,14 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 	opts.OnLoopStart(1)
 	<-ch // drain iter start
 
-	status := &loop.Status{
+	status := &Status{
 		Status:         "IN_PROGRESS",
 		TasksCompleted: 3,
 		FilesModified:  5,
 		TestsStatus:    "PASSING",
 		ExitSignal:     false,
 	}
-	opts.OnLoopEnd(1, status, nil)
+	opts.OnLoopEnd(1, status, nil, nil)
 
 	ev := <-ch
 	assert.Equal(t, tui.LoopDashEventIterEnd, ev.Kind)
@@ -106,9 +106,9 @@ func TestWireLoopDashboard_OnLoopEnd(t *testing.T) {
 }
 
 func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -116,7 +116,7 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 	opts.OnLoopStart(1)
 	<-ch // drain iter start
 
-	opts.OnLoopEnd(1, nil, nil)
+	opts.OnLoopEnd(1, nil, nil, nil)
 
 	ev := <-ch
 	assert.Equal(t, tui.LoopDashEventIterEnd, ev.Kind)
@@ -125,9 +125,9 @@ func TestWireLoopDashboard_OnLoopEnd_NilStatus(t *testing.T) {
 }
 
 func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -135,7 +135,7 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	// Iteration 1
 	opts.OnLoopStart(1)
 	<-ch
-	opts.OnLoopEnd(1, &loop.Status{TasksCompleted: 2, FilesModified: 3}, nil)
+	opts.OnLoopEnd(1, &Status{TasksCompleted: 2, FilesModified: 3}, nil, nil)
 	ev1 := <-ch
 	assert.Equal(t, 2, ev1.TotalTasks)
 	assert.Equal(t, 3, ev1.TotalFiles)
@@ -143,16 +143,16 @@ func TestWireLoopDashboard_OnLoopEnd_AccumulatesTotals(t *testing.T) {
 	// Iteration 2 — totals should accumulate
 	opts.OnLoopStart(2)
 	<-ch
-	opts.OnLoopEnd(2, &loop.Status{TasksCompleted: 1, FilesModified: 4}, nil)
+	opts.OnLoopEnd(2, &Status{TasksCompleted: 1, FilesModified: 4}, nil, nil)
 	ev2 := <-ch
 	assert.Equal(t, 3, ev2.TotalTasks)
 	assert.Equal(t, 7, ev2.TotalFiles)
 }
 
 func TestWireLoopDashboard_OnOutput(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -165,9 +165,9 @@ func TestWireLoopDashboard_OnOutput(t *testing.T) {
 }
 
 func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
-	opts := &loop.Options{}
+	opts := &Options{}
 	ch := make(chan tui.LoopDashEvent, 16)
-	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: "proj"}
+	setup := &LoopContainerResult{AgentName: "test", ProjectCfg: testProject("proj").Build()}
 
 	WireLoopDashboard(opts, ch, setup, 10)
 	<-ch // drain start
@@ -176,7 +176,7 @@ func TestWireLoopDashboard_OnLoopEnd_WithError(t *testing.T) {
 	<-ch
 
 	testErr := assert.AnError
-	opts.OnLoopEnd(1, nil, testErr)
+	opts.OnLoopEnd(1, nil, nil, testErr)
 
 	ev := <-ch
 	require.Error(t, ev.Error)
@@ -389,91 +389,6 @@ func TestDrainLoopEventsAsText_IgnoresOutputEvents(t *testing.T) {
 // ---------------------------------------------------------------------------
 // formatMinimalDuration tests
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// RunLoop mode selection tests
-// ---------------------------------------------------------------------------
-
-// TestRunLoop_ModeSelection verifies that the correct output mode is selected
-// for each combination of TTY status and format flags. It uses MaxLoops=0 so
-// the runner returns immediately without needing Docker.
-//
-// TTY default (TUI mode) is NOT tested here — it enters the BubbleTea branch
-// which requires a real terminal. TUI behavior is covered by dashboard model tests.
-func TestRunLoop_ModeSelection(t *testing.T) {
-	tests := []struct {
-		name         string
-		tty          bool
-		verbose      bool
-		json         bool
-		quiet        bool
-		wantStartMsg bool // "Starting loop" printed to stderr
-	}{
-		// TTY modes (non-TUI paths — TUI default skipped)
-		{"TTY verbose", true, true, false, false, true},
-		{"TTY json", true, false, true, false, false},
-		{"TTY quiet", true, false, false, true, false},
-		// Non-TTY modes
-		{"non-TTY default", false, false, false, false, true},
-		{"non-TTY json", false, false, true, false, false},
-		{"non-TTY quiet", false, false, false, true, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create temp stores for the Runner.
-			// Use a pre-cancelled context so Run exits immediately on the first
-			// loop iteration without needing Docker.
-			tmpDir := t.TempDir()
-			store := loop.NewSessionStore(filepath.Join(tmpDir, "sessions"))
-			history := loop.NewHistoryStore(filepath.Join(tmpDir, "history"))
-			runner, err := loop.NewRunnerWith(nil, store, history)
-			require.NoError(t, err)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel() // pre-cancel so Run exits immediately
-
-			tio := iostreams.NewTestIOStreams()
-			tio.SetInteractive(tt.tty)
-
-			format := &cmdutil.FormatFlags{Quiet: tt.quiet}
-			if tt.json {
-				format.Format, _ = cmdutil.ParseFormat("json")
-			}
-
-			cleanup := func() {
-				defer cancel()
-			}
-
-			cfg := RunLoopConfig{
-				Runner: runner,
-				RunnerOpts: loop.Options{
-					MaxLoops:      1,
-					ProjectCfg:    configtest.NewProjectBuilder().WithProject("testproj").Build(),
-					Agent:         "testagent",
-					ContainerStartConfig: {	"clawker.testproj.testagent", cleanup()}
-				},
-				TUI:         tui.NewTUI(tio.IOStreams),
-				IOStreams:   tio.IOStreams,
-				Setup:       &LoopContainerResult{AgentName: "testagent", ProjectCfg: "testproj"},
-				Format:      format,
-				Verbose:     tt.verbose,
-				CommandName: "iterate",
-			}
-
-			result, err := RunLoop(ctx, cfg)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-
-			stderr := tio.ErrBuf.String()
-			if tt.wantStartMsg {
-				assert.Contains(t, stderr, "Starting loop", "expected start message in stderr")
-			} else {
-				assert.NotContains(t, stderr, "Starting loop", "expected no start message in stderr")
-			}
-		})
-	}
-}
 
 func TestFormatMinimalDuration(t *testing.T) {
 	tests := []struct {

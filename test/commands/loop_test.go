@@ -14,7 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/loop/status"
 	"github.com/schmitthub/clawker/internal/cmd/loop/tasks"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/loop"
+	loopshared "github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/assert"
@@ -454,7 +454,7 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	assert.Equal(t, 0, result.ExitCode, "settings.json should exist after hook injection")
 
 	// Verify stop-check.js was injected
-	result, err = ctr.Exec(ctx, client, "test", "-f", loop.StopCheckScriptPath)
+	result, err = ctr.Exec(ctx, client, "test", "-f", loopshared.StopCheckScriptPath)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.ExitCode, "stop-check.js should exist after hook injection")
 
@@ -556,7 +556,7 @@ func TestLoopIterate_ConfigOverrides(t *testing.T) {
 
 	// When using runF trapdoor, the config override happens inside iterateRun
 	// which was bypassed. But we can verify the flags were captured at parse time.
-	assert.Equal(t, loop.DefaultMaxLoops, capturedOpts.MaxLoops,
+	assert.Equal(t, loopshared.DefaultMaxLoops, capturedOpts.MaxLoops,
 		"MaxLoops should be default at parse time (config override happens in run)")
 }
 
