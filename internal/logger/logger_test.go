@@ -24,7 +24,7 @@ func TestLogFunctions(t *testing.T) {
 	// With file logging, all log functions return non-nil events
 	tmpDir := t.TempDir()
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	if err := InitWithFile(true, tmpDir, cfg); err != nil {
+	if err := InitWithFile(tmpDir, cfg); err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
 	t.Cleanup(func() { CloseFileWriter() })
@@ -66,7 +66,7 @@ func TestLoggerReinitialize(t *testing.T) {
 	}
 
 	// InitWithFile → real logger
-	if err := InitWithFile(true, tmpDir, cfg); err != nil {
+	if err := InitWithFile(tmpDir, cfg); err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
 	t.Cleanup(func() { CloseFileWriter() })
@@ -136,7 +136,7 @@ func TestInitWithFile(t *testing.T) {
 	}
 
 	// Initialize with file logging
-	err := InitWithFile(false, tmpDir, cfg)
+	err := InitWithFile(tmpDir, cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestInitWithFileDisabled(t *testing.T) {
 		FileEnabled: &falseVal,
 	}
 
-	err := InitWithFile(false, "/some/path", cfg)
+	err := InitWithFile("/some/path", cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile with disabled file logging should not fail: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestInitWithFileEmptyDir(t *testing.T) {
 
 	cfg := &LoggingConfig{}
 
-	err := InitWithFile(false, "", cfg)
+	err := InitWithFile("", cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile with empty dir should not fail: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestInitWithFileEmptyDir(t *testing.T) {
 func TestInitWithFileNilConfig(t *testing.T) {
 	fileWriter = nil
 
-	err := InitWithFile(false, "/some/path", nil)
+	err := InitWithFile("/some/path", nil)
 	if err != nil {
 		t.Fatalf("InitWithFile with nil config should not fail: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestContextInFileLog(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	err := InitWithFile(false, tmpDir, cfg)
+	err := InitWithFile(tmpDir, cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestContextInFileLogPartial(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	err := InitWithFile(false, tmpDir, cfg)
+	err := InitWithFile(tmpDir, cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestContextNotInLogWhenEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	err := InitWithFile(false, tmpDir, cfg)
+	err := InitWithFile(tmpDir, cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestCloseFileWriterResetsState(t *testing.T) {
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
 
-	err := InitWithFile(false, tmpDir, cfg)
+	err := InitWithFile(tmpDir, cfg)
 	if err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestCloseFileWriterResetsState(t *testing.T) {
 func TestInitWithFilePermissionError(t *testing.T) {
 	resetLoggerState()
 
-	err := InitWithFile(false, "/dev/null/deeply/nested/path/that/fails", &LoggingConfig{})
+	err := InitWithFile("/dev/null/deeply/nested/path/that/fails", &LoggingConfig{})
 	if err == nil {
 		if GetLogFilePath() != "" {
 			t.Error("GetLogFilePath should return empty for invalid path")
@@ -428,7 +428,7 @@ func TestInitWithFile_NoConsoleOutput(t *testing.T) {
 	os.Stderr = w
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	if err := InitWithFile(false, tmpDir, cfg); err != nil {
+	if err := InitWithFile(tmpDir, cfg); err != nil {
 		os.Stderr = oldStderr
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestInitWithFile_DebugLevel(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := &LoggingConfig{MaxSizeMB: 1}
-	if err := InitWithFile(true, tmpDir, cfg); err != nil {
+	if err := InitWithFile(tmpDir, cfg); err != nil {
 		t.Fatalf("InitWithFile failed: %v", err)
 	}
 	defer CloseFileWriter()
@@ -488,6 +488,6 @@ func TestInitWithFile_DebugLevel(t *testing.T) {
 		t.Fatalf("Failed to read log file: %v", err)
 	}
 	if !strings.Contains(string(content), "debug message") {
-		t.Error("Log file should contain debug message when debug=true")
+		t.Error("Log file should contain debug message")
 	}
 }

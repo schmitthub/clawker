@@ -211,7 +211,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 		}, nil
 	}
 	if expired {
-		logger.Info().Msg("session expired, starting fresh")
+		logger.Debug().Msg("session expired, starting fresh")
 		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "expired", "", "", 0); histErr != nil {
 			logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
 		}
@@ -354,7 +354,7 @@ mainLoop:
 			break
 		}
 
-		logger.Info().
+		logger.Debug().
 			Int("loop", loopNum).
 			Int("max_loops", opts.MaxLoops).
 			Str("container", containerCfg.ContainerID).
@@ -433,7 +433,7 @@ mainLoop:
 			opts.Monitor.PrintLoopEnd(loopNum, status, loopErr, analysis.OutputSize, loopDuration)
 		}
 
-		logger.Info().
+		logger.Debug().
 			Int("loop", loopNum).
 			Int("exit_code", exitCode).
 			Str("status", status.String()).
@@ -452,7 +452,7 @@ mainLoop:
 
 		if updateResult.IsComplete {
 			result.ExitReason = "agent signaled completion"
-			logger.Info().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
+			logger.Debug().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
 			break
 		}
 

@@ -124,11 +124,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Wait for signal or watcher exit
 	select {
 	case sig := <-sigCh:
-		logger.Info().Str("signal", sig.String()).Msg("received signal, shutting down")
+		logger.Debug().Str("signal", sig.String()).Msg("received signal, shutting down")
 	case <-watcherDone:
-		logger.Info().Msg("container watcher exited, shutting down")
+		logger.Debug().Msg("container watcher exited, shutting down")
 	case <-ctx.Done():
-		logger.Info().Msg("context cancelled, shutting down")
+		logger.Debug().Msg("context cancelled, shutting down")
 	}
 
 	// Graceful shutdown
@@ -180,7 +180,7 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 			consecutiveErrs = 0
 			logger.Debug().Int("count", count).Msg("checked clawker containers")
 			if count == 0 {
-				logger.Info().Msg("no clawker containers running, initiating shutdown")
+				logger.Debug().Msg("no clawker containers running, initiating shutdown")
 				return
 			}
 		}

@@ -142,7 +142,24 @@ PROJECT_NAME=MyGroundbreakingTodoApp
 OTEL_RESOURCE_ATTRIBUTES=project=$PROJECT_NAME,agent=host
 ```
 
-When I'm done I can commit / push / open a PR right in the container terminal with all my creds and git access set up, or I can open the worktree in my IDE and do it from there. I can `/exit` out and the container will stop (or `ctrl c` in the terminal). I can use `--rm` flags just like docker cli to automatically remove containers when they stop, or I can start the same one back up again with `clawker start -a -i --agent example` to pick up right where I left off. All containers get named volume mounts for their claude config directories and command history for persistence.
+When I'm done I can commit / push / open a PR right in the container terminal with all my creds and git access set up, or I can open the worktree in my IDE and do it from there. I can `/exit` out and the container will stop (or `ctrl c` in the terminal). I can use `--rm` flags just like docker cli to automatically remove containers when they stop, or I can start the same one back up again with `clawker start -a -i --agent example` to pick up right where I left off. 
+
+Or you can get cute with some ralph loops 
+
+```bash
+#!/bin/bash
+
+PROMPT="start or expand upon the dramatic story written in @ralph.txt by adding a single paragraph. If the file doesn't exist create it and start the story with a dramatic opening"
+
+for i in {1..5}; do
+  echo "Starting loop iteration $i..."
+  cclawker run --rm --agent ralph @ -p "$PROMPT" --output-format=stream-json --verbose --include-partial-messages
+  echo "Finished loop iteration $i."
+done
+
+```
+
+All containers get named volume mounts for their claude config directories and command history for persistence.
 
 ```bash
 $ clawker volume ls

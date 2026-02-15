@@ -151,7 +151,7 @@ func (s *Server) Start() error {
 		}(listener, server, addr)
 	}
 
-	logger.Info().Strs("addrs", listenedAddrs).Msg("host proxy server started")
+	logger.Debug().Strs("addrs", listenedAddrs).Msg("host proxy server started")
 	return nil
 }
 
@@ -241,7 +241,7 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 		}
 	}()
 
-	logger.Info().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
+	logger.Debug().Int("port", port).Str("session_id", sessionID).Msg("dynamic listener started")
 	return nil
 }
 

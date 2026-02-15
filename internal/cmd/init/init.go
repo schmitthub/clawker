@@ -195,7 +195,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	logger.Info().Str("file", settingsLoader.Path()).Msg("saved user settings")
+	logger.Debug().Str("file", settingsLoader.Path()).Msg("saved user settings")
 
 	// Success output
 	fmt.Fprintln(ios.ErrOut)

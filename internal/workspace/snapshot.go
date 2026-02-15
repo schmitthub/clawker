@@ -56,7 +56,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 	}
 
 	if exists {
-		logger.Info().
+		logger.Debug().
 			Str("volume", s.volumeName).
 			Msg("using existing workspace volume")
 		return nil
@@ -78,7 +78,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 
 	// Copy files to the volume
 	if created {
-		logger.Info().
+		logger.Debug().
 			Str("volume", s.volumeName).
 			Str("src", s.config.HostPath).
 			Msg("copying files to snapshot volume")
@@ -100,7 +100,7 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 			return fmt.Errorf("failed to copy files to volume: %w", err)
 		}
 
-		logger.Info().
+		logger.Debug().
 			Str("volume", s.volumeName).
 			Msg("snapshot volume ready")
 	}
@@ -134,7 +134,7 @@ func (s *SnapshotStrategy) Cleanup(ctx context.Context, cli *docker.Client) erro
 		return err
 	}
 
-	logger.Info().Str("volume", s.volumeName).Msg("removed snapshot volume")
+	logger.Debug().Str("volume", s.volumeName).Msg("removed snapshot volume")
 	return nil
 }
 

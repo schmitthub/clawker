@@ -130,7 +130,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 
 	// Check if we should use a custom Dockerfile
 	if gen.UseCustomDockerfile() {
-		logger.Info().
+		logger.Debug().
 			Str("dockerfile", b.config.Build.Dockerfile).
 			Msg("building from custom Dockerfile")
 

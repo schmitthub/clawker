@@ -99,7 +99,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		return fmt.Errorf("failed to build image: %w", err)
 	}
 
-	logger.Info().Str("image", DefaultImageTag).Msg("base image built successfully")
+	logger.Debug().Str("image", DefaultImageTag).Msg("base image built successfully")
 	return nil
 }
 
