@@ -45,7 +45,7 @@ Workspace modes:
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize logger with file logging if possible
-			initializeLogger(debug)
+			initializeLogger()
 
 			logger.Debug().
 				Str("version", f.Version).
@@ -94,7 +94,7 @@ Workspace modes:
 
 // initializeLogger sets up the logger with file logging if possible.
 // Falls back to console-only logging on any errors.
-func initializeLogger(debug bool) {
+func initializeLogger() {
 	// Try to load settings for logging config
 	loader, err := internalconfig.NewSettingsLoader()
 	if err != nil {
@@ -130,7 +130,7 @@ func initializeLogger(debug bool) {
 	}
 
 	// Initialize with file logging
-	if err := logger.InitWithFile(debug, logsDir, logCfg); err != nil {
+	if err := logger.InitWithFile(logsDir, logCfg); err != nil {
 		// Fall back to console-only on error
 		logger.Init()
 		logger.Warn().Err(err).Msg("file logging unavailable: failed to initialize file writer")

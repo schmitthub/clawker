@@ -1,3 +1,6 @@
 {
+  "permissions": {
+    "deny": ["Read(./docs/cli-reference/*)", "Read(./.devcontainer/*)"]
+  },
   "enabledPlugins": {}
 }

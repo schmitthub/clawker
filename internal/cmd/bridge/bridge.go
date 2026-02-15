@@ -57,7 +57,7 @@ func NewCmdBridgeServe() *cobra.Command {
 			// Initialize daemon logger
 			logger.Init()
 
-			logger.Info().
+			logger.Debug().
 				Str("container", containerID).
 				Bool("gpg", gpgEnabled).
 				Str("pid_file", pidFile).
@@ -83,7 +83,7 @@ func NewCmdBridgeServe() *cobra.Command {
 			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 			go func() {
 				sig := <-sigCh
-				logger.Info().Str("signal", sig.String()).Msg("received shutdown signal")
+				logger.Debug().Str("signal", sig.String()).Msg("received shutdown signal")
 				bridge.Stop()
 				cancel()
 			}()
@@ -94,7 +94,7 @@ func NewCmdBridgeServe() *cobra.Command {
 				return err
 			}
 
-			logger.Info().Msg("bridge started, waiting for container exit")
+			logger.Debug().Msg("bridge started, waiting for container exit")
 
 			// Watch Docker events for container death (parallel to exec EOF)
 			go func() {
@@ -104,7 +104,7 @@ func NewCmdBridgeServe() *cobra.Command {
 					return
 				}
 				if err := watchContainerEvents(ctx, cli, containerID, func() {
-					logger.Info().Str("container", containerID).Msg("container died, stopping bridge")
+					logger.Debug().Str("container", containerID).Msg("container died, stopping bridge")
 					bridge.Stop()
 					cancel()
 				}); err != nil && ctx.Err() == nil {
@@ -121,7 +121,7 @@ func NewCmdBridgeServe() *cobra.Command {
 				return err
 			}
 
-			logger.Info().Msg("socket bridge daemon stopped")
+			logger.Debug().Msg("socket bridge daemon stopped")
 			return nil
 		},
 	}

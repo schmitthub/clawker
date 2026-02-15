@@ -118,11 +118,8 @@ func Init() {
 // fmt.Fprintf to IOStreams (see code style guide).
 // If logsDir is empty or cfg indicates file logging is disabled,
 // the logger remains a nop.
-func InitWithFile(debug bool, logsDir string, cfg *LoggingConfig) error {
-	level := zerolog.InfoLevel
-	if debug {
-		level = zerolog.DebugLevel
-	}
+func InitWithFile(logsDir string, cfg *LoggingConfig) error {
+	level := zerolog.DebugLevel
 
 	if logsDir == "" || cfg == nil || !cfg.IsFileEnabled() {
 		Log = zerolog.Nop()

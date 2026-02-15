@@ -402,6 +402,11 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		}
 	case status := <-statusCh:
 		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
+		// Wait for stream to finish flushing buffered output.
+		// Docker CLI does the same: "we need to keep the streamer running
+		// until all output is read." The daemon closes the hijacked connection
+		// on container exit, so the stream goroutine terminates via EOF.
+		<-streamDone
 		if status != 0 {
 			return &cmdutil.ExitError{Code: status}
 		}

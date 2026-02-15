@@ -40,6 +40,6 @@ func RegisterProject(ios *iostreams.IOStreams, registryLoader config.Registry, w
 		return "", fmt.Errorf("could not register project: %w", err)
 	}
 
-	logger.Info().Str("dir", workDir).Str("slug", slug).Str("name", projectName).Msg("registered project in registry")
+	logger.Debug().Str("dir", workDir).Str("slug", slug).Str("name", projectName).Msg("registered project in registry")
 	return slug, nil
 }

@@ -64,7 +64,6 @@ BSD-2-Clause
 ================================================================================
 
 github.com/emirpasic/gods                                                      BSD-2-Clause
-github.com/godbus/dbus/v5                                                      BSD-2-Clause
 github.com/magiconair/properties                                               BSD-2-Clause
 github.com/pkg/errors                                                          BSD-2-Clause
 github.com/russross/blackfriday/v2                                             BSD-2-Clause
@@ -107,6 +106,7 @@ github.com/davecgh/go-spew/spew                                                I
 MIT
 ================================================================================
 
+al.essio.dev/pkg/shellescape                                                   MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT

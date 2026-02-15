@@ -13,7 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/schmitthub/clawker/test/harness"
+	"github.com/schmitthub/clawker/test/harness/golden"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,7 +58,7 @@ func TestBuildProgress_Golden(t *testing.T) {
 
 			// Scrub durations for deterministic golden comparison.
 			output := scrubDurations(tio.ErrBuf.String())
-			harness.CompareGoldenString(t, scenario.Name, output)
+			golden.CompareGoldenString(t, scenario.Name, output)
 		})
 	}
 }

@@ -29,7 +29,7 @@ func NewCmdServe() *cobra.Command {
 			// Initialize daemon logger (debug mode disabled for background daemon)
 			logger.Init()
 
-			logger.Info().
+			logger.Debug().
 				Int("port", opts.Port).
 				Str("pid_file", opts.PIDFile).
 				Dur("poll_interval", opts.PollInterval).
@@ -48,7 +48,7 @@ func NewCmdServe() *cobra.Command {
 				return err
 			}
 
-			logger.Info().Msg("host proxy daemon stopped")
+			logger.Debug().Msg("host proxy daemon stopped")
 			return nil
 		},
 	}

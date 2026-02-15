@@ -263,7 +263,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", config.ConfigFileName, err)
 	}
-	logger.Info().Str("file", configPath).Msg("created configuration file")
+	logger.Debug().Str("file", configPath).Msg("created configuration file")
 
 	// Create .clawkerignore
 	ignorePath := loader.IgnorePath()
@@ -271,7 +271,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
 		}
-		logger.Info().Str("file", ignorePath).Msg("created ignore file")
+		logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
 	// Register project in user settings

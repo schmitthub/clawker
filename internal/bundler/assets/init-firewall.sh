@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
+trap 'echo "ERROR: init-firewall.sh failed at line $LINENO (exit code $?)" >&2' ERR
 IFS=$'\n\t'       # Stricter word splitting
 
 # Fix Docker socket permissions for Docker-outside-of-Docker
@@ -353,13 +354,9 @@ for domain in \
             exit 1
         fi
         echo "Adding $ip for $domain"
-        if ! ipset add allowed-domains "$ip" 2>&1 | grep -v "Element cannot be added to the set: it's already added"; then
-            echo "INFO: $ip for $domain is already in the set, skipping"
-            # Ignore "already added" errors, but fail on others
-            error_msg=$(ipset add allowed-domains "$ip" 2>&1 || true)
-            if [[ ! "$error_msg" =~ "already added" ]]; then
-                echo "ERROR: Failed to add $ip: $error_msg"
-                exit 1
+        if ! ipset_err=$(ipset add allowed-domains "$ip" -exist 2>&1); then
+            if [[ -n "$ipset_err" ]]; then
+                echo "WARNING: Failed to add $ip for $domain: $ipset_err"
             fi
         fi
     done < <(echo "$ips")

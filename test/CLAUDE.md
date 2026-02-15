@@ -6,20 +6,20 @@ Test infrastructure for all non-unit tests. Uses directory separation instead of
 
 ```
 test/
-├── harness/       # Shared test utilities (imported by all test packages)
-│   ├── builders/  # ConfigBuilder, presets (MinimalValidConfig, FullFeaturedConfig)
-│   ├── harness.go # NewHarness, HarnessOption, project/config setup
-│   ├── docker.go  # RequireDocker, NewTestClient, cleanup, readiness
-│   ├── client.go  # BuildLightImage, RunContainer, ExecResult
-│   ├── ready.go   # WaitFor* functions, timeout constants
-│   ├── factory.go # NewTestFactory for integration tests
-│   ├── hash.go    # ComputeTemplateHash, TemplateHashShort
-│   └── golden.go  # GoldenAssert, CompareGolden
-├── whail/         # Whail BuildKit integration tests (Docker + BuildKit)
-├── cli/           # Testscript-based CLI workflow tests (Docker)
-├── commands/      # Command integration tests (Docker)
-├── internals/     # Container script/service tests (Docker)
-└── agents/        # Full agent E2E tests (Docker)
+├── harness/        # Shared test utilities (imported by all test packages)
+│   ├── golden/     # Golden file utilities (leaf — stdlib + testify only)
+│   ├── builders/   # ConfigBuilder, presets (MinimalValidConfig, FullFeaturedConfig)
+│   ├── harness.go  # NewHarness, HarnessOption, project/config setup
+│   ├── docker.go   # RequireDocker, NewTestClient, cleanup, readiness
+│   ├── client.go   # BuildLightImage, RunContainer, ExecResult
+│   ├── ready.go    # WaitFor* functions, timeout constants
+│   ├── factory.go  # NewTestFactory for integration tests
+│   └── hash.go     # ComputeTemplateHash, TemplateHashShort
+├── whail/          # Whail BuildKit integration tests (Docker + BuildKit)
+├── cli/            # Testscript-based CLI workflow tests (Docker)
+├── commands/       # Command integration tests (Docker)
+├── internals/      # Container script/service tests (Docker)
+└── agents/         # Full agent E2E tests (Docker)
 ```
 
 ## Running Tests
@@ -106,9 +106,13 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 `ComputeTemplateHash()`, `ComputeTemplateHashFromDir(root)`, `TemplateHashShort()`, `FindProjectRoot()`
 
-### Golden Files (golden.go)
+### Golden Files (golden/)
 
-`GoldenAssert(t, name, actual)`, `CompareGolden(t, name, actual) error`, `CompareGoldenString(t, name, actual) error`, `GoldenPath(t, name) string`. Errors: `ErrGoldenMismatch`, `ErrGoldenMissing`.
+Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
+
+`import "github.com/schmitthub/clawker/test/harness/golden"`
+
+`golden.GoldenAssert(t, name, actual)`, `golden.CompareGolden(t, name, actual)`, `golden.CompareGoldenString(t, name, actual)`, `golden.GoldenPath(t, name) string`. Errors: `golden.ErrGoldenMismatch`, `golden.ErrGoldenMissing`.
 
 ### Socket Bridge Helpers
 
