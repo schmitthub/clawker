@@ -10,6 +10,7 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Jaeger UI (port 16686)
   - Prometheus (port 9090)
+  - Loki (port 3100)
   - Grafana (port 3000)
 
 The stack connects to the clawker-net Docker network, allowing
