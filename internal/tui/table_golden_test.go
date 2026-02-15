@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/test/harness/golden"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func TestTablePlain_Golden(t *testing.T) {
 			err := tp.Render()
 			require.NoError(t, err)
 
-			compareGolden(t, tt.name, tio.OutBuf.String())
+			golden.CompareGoldenString(t, tt.name, tio.OutBuf.String())
 		})
 	}
 }
@@ -109,7 +110,7 @@ func TestTableStyled_Golden(t *testing.T) {
 			err := tp.Render()
 			require.NoError(t, err)
 
-			compareGolden(t, tt.name, tio.OutBuf.String())
+			golden.CompareGoldenString(t, tt.name, tio.OutBuf.String())
 		})
 	}
 }

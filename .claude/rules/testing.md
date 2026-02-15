@@ -5,7 +5,7 @@ paths:
 
 # CLI Testing Guide
 
-> Essential rules and utilities for writing tests. For detailed examples and patterns, see `.claude/docs/TESTING-REFERENCE.md`.
+> For detailed examples, harness API, and patterns, see `.claude/docs/TESTING-REFERENCE.md`.
 
 ## CRITICAL: All Tests Must Pass
 
@@ -13,47 +13,17 @@ paths:
 
 ```bash
 make test                                        # Unit tests (no Docker)
-go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration (Docker + BuildKit)
-go test ./test/cli/... -v -timeout 15m           # CLI workflow tests (Docker)
-go test ./test/commands/... -v -timeout 10m      # Command integration (Docker)
-go test ./test/internals/... -v -timeout 10m     # Internal integration (Docker)
-go test ./test/agents/... -v -timeout 15m        # Agent E2E (Docker)
 make test-all                                    # All test suites
+go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
+go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
+go test ./test/commands/... -v -timeout 10m      # Command integration
+go test ./test/internals/... -v -timeout 10m     # Internal integration
+go test ./test/agents/... -v -timeout 15m        # Agent E2E
 ```
 
----
+## DAG-Driven Test Infrastructure
 
-## Testing Philosophy: DAG Nodes Must Provide Test Infrastructure
-
-**Each package (node) in the dependency DAG must provide test utilities so dependents can mock the entire chain.**
-
-```
-foundation → middle → composite → commands
-     │                     │          │
-     ▼                     ▼          ▼
-  *test/                *test/    Factory DI
-(gittest/             (dockertest/  + runF
- configtest/)          whailtest/)
-```
-
-### Test Seams
-
-| Seam | Level | Example |
-|------|-------|---------|
-| **Package `*test/`** | Any package | `dockertest.NewFakeClient()` |
-| **Factory DI** | Commands | `f.Client = func() { return fake.Client }` |
-| **runF override** | Commands | `NewCmdRun(f, captureOpts)` |
-
-### Agent Obligation
-
-If a dependency node lacks test infrastructure:
-1. **STOP** — The node is incomplete
-2. **Add the infrastructure** — Interface, fake/mock, fixtures
-3. **Then proceed** — Your tier can now mock that node
-
-This compounds: each completed node enables all downstream tests.
-
-### Existing Test Infrastructure
+Each package in the dependency DAG must provide test utilities so dependents can mock the entire chain. If a node lacks test infrastructure, **add it first** — it's incomplete.
 
 | Package | Test Utils | Provides |
 |---------|------------|----------|
@@ -63,116 +33,58 @@ This compounds: each completed node enables all downstream tests.
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
 
----
-
 ## Test Categories
 
-| Category | Directory | Docker Required | Purpose |
+| Category | Directory | Docker | Purpose |
 |----------|-----------|:---:|---------|
 | Unit | `*_test.go` (co-located) | No | Pure logic, fakes, mocks |
-| CLI | `test/cli/` | Yes | Testscript-based CLI workflow validation |
-| Commands | `test/commands/` | Yes | Command integration (container create/exec/run/start) |
-| Internals | `test/internals/` | Yes | Container scripts/services (firewall, SSH, entrypoint) |
-| Whail | `test/whail/` | Yes (+ BuildKit) | BuildKit integration, engine-level image builds |
-| Agents | `test/agents/` | Yes | Full clawker images, loop, agent lifecycle tests |
-| Harness | `test/harness/` | No | Builders, fixtures, golden file utils, helpers |
+| CLI | `test/cli/` | Yes | Testscript-based CLI workflows |
+| Commands | `test/commands/` | Yes | Command integration |
+| Internals | `test/internals/` | Yes | Container scripts/services |
+| Whail | `test/whail/` | Yes+BuildKit | Engine-level image builds |
+| Agents | `test/agents/` | Yes | Full E2E lifecycle |
+| Harness | `test/harness/` | No | Builders, fixtures, golden files, helpers |
 
 No build tags — directory separation only.
 
----
-
-## CLI Workflow Tests (`test/cli/`)
-
-Use [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript). See `test/cli/README.md` for docs.
-
-```bash
-go test ./test/cli/... -v -timeout 15m                                    # All
-go test -run ^TestContainer$ ./test/cli/... -v                            # Category
-CLAWKER_ACCEPTANCE_SCRIPT=run-basic.txtar go test \
-  -run ^TestContainer$ ./test/cli/... -v                                  # Single script
-```
-
----
-
-## Test Utilities (`test/harness`)
-
-| File | Purpose |
-|------|---------|
-| `harness.go` | Test harness with project/config setup |
-| `docker.go` | Docker client helpers, cleanup, container state waiting |
-| `ready.go` | Readiness detection, wait functions, timeouts |
-| `golden.go` | Golden file comparison |
-| `client.go` | Container execution, RunContainer, light image building |
-| `factory.go` | Factory construction for integration tests |
-| `hash.go` | Content-addressed template hashing |
-| `builders/` | Fluent config construction with presets |
-
-### Test Harness
+## Test Naming
 
 ```go
-h := harness.NewHarness(t, harness.WithProject("myproject"),
-    harness.WithConfigBuilder(builders.NewConfigBuilder().
-        WithProject("myproject").WithDefaultImage("alpine:latest").WithBuild(builders.DefaultBuild())))
+func TestFunctionName(t *testing.T)           // Unit
+func TestFeature_Integration(t *testing.T)    // Integration
+func TestFeature_E2E(t *testing.T)            // E2E
 ```
 
-### Config Builder Presets
+## Golden File Tests
 
-`MinimalValidConfig()`, `FullFeaturedConfig()`, `DefaultBuild()`, `AlpineBuild()`, `SecurityFirewallEnabled/Disabled()`, `WorkspaceSnapshot()`
-
-### Timeout Constants
-
-| Constant | Value | Use Case |
-|----------|-------|----------|
-| `DefaultReadyTimeout` | 60s | Local tests |
-| `E2EReadyTimeout` | 120s | E2E tests |
-| `CIReadyTimeout` | 180s | CI environments |
-| `BypassCommandTimeout` | 10s | Entrypoint bypass |
-
-### Docker Helpers
+Golden file utilities live in `test/harness/golden/` (leaf subpackage — stdlib + testify only).
 
 ```go
-harness.SkipIfNoDocker(t)                    // Skip if no Docker
-harness.RequireDocker(t)                     // Fail if no Docker
-client := harness.NewTestClient(t)           // *docker.Client with auto test labels
+import "github.com/schmitthub/clawker/test/harness/golden"
 
-// Container testing
-ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
-result, _ := ctr.Exec(ctx, client, "echo", "hello")
-
-// Wait functions (all take *docker.Client)
-harness.WaitForReadyFile(ctx, client, containerID)
-harness.WaitForContainerRunning(ctx, cli, name)
-harness.WaitForContainerExit(ctx, cli, containerID)
-harness.WaitForHealthy(ctx, cli, containerID)
-harness.WaitForLogPattern(ctx, cli, containerID, pattern)
+golden.CompareGoldenString(t, name, actual)  // Compare + auto-update
+golden.CompareGolden(t, name, actualBytes)   // Byte variant
+golden.GoldenAssert(t, name, actualBytes)    // Assert-style (no update mode)
+golden.GoldenPath(t, name)                   // Get path only
 ```
 
-### Docker Test Fakes (Recommended for New Command Tests)
+Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
 
-Use `dockertest.NewFakeClient` instead of gomock. Composes a real `*docker.Client` backed by function-field fakes — docker-layer methods run real code through the whail jail.
+## Command Test Pattern (Cobra+Factory)
 
-```go
-fake := dockertest.NewFakeClient()
-fake.SetupContainerList(dockertest.RunningContainerFixture("myapp", "dev"))
-fake.AssertCalled(t, "ContainerList")
-```
-
-**Setup helpers**: `SetupContainerList`, `SetupFindContainer`, `SetupImageExists`, `SetupImageTag`, `SetupImageList`, `SetupContainerCreate`, `SetupContainerStart`, `SetupContainerStop`, `SetupContainerKill`, `SetupContainerPause`, `SetupContainerUnpause`, `SetupContainerRename`, `SetupContainerRestart`, `SetupContainerUpdate`, `SetupContainerInspect(id, summary)`, `SetupContainerLogs(logs)`, `SetupContainerTop(titles, processes)`, `SetupContainerStats(json)`, `SetupCopyToContainer`, `SetupCopyFromContainer`, `SetupExecCreate(execID)`, `SetupVolumeExists`, `SetupVolumeCreate`, `SetupNetworkExists`, `SetupNetworkCreate`, `SetupContainerAttach`, `SetupContainerWait(exitCode)`, `SetupContainerResize`, `SetupContainerRemove`, `SetupBuildKit`
-
-**Fixtures**: `ContainerFixture`, `RunningContainerFixture`, `MinimalCreateOpts`, `MinimalStartOpts`, `ImageSummaryFixture`, `BuildKitBuildOpts`
-
-**Assertions**: `AssertCalled`, `AssertNotCalled`, `AssertCalledN`, `Reset`
-
-### Cobra+Factory Pattern (Command Tests)
-
-Canonical pattern for testing commands end-to-end without Docker. Uses `NewCmd(f, nil)` — nil runF means real run function executes.
+Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
 fake := dockertest.NewFakeClient()
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
-f, tio := testFactory(t, fake) // per-package helper
-cmd := NewCmdRun(f, nil)       // nil runF -> real run function
+tio := iostreams.NewTestIOStreams()
+f := &cmdutil.Factory{
+    IOStreams: tio.IOStreams,
+    TUI:      tui.NewTUI(tio.IOStreams),
+    Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+}
+cmd := NewCmdRun(f, nil)  // nil runF → real run function
 cmd.SetArgs([]string{"--detach", "alpine"})
 cmd.SetIn(&bytes.Buffer{})
 cmd.SetOut(tio.OutBuf)
@@ -180,69 +92,12 @@ cmd.SetErr(tio.ErrBuf)
 err := cmd.Execute()
 ```
 
-**Key points**: `testFactory`/`testConfig` are per-package. Reference: `internal/cmd/container/run/run_test.go`. See TESTING-REFERENCE.md for full templates.
-
-### Cleanup (CRITICAL)
-
-Always clean up via `t.Cleanup()`. Use `context.Background()` in cleanup functions. Never write local wait functions — use `harness.WaitForContainerRunning`, `WaitForContainerExit`, `WaitForReadyFile`, etc.
-
----
-
-## Test Naming Conventions
-
-```go
-func TestFunctionName(t *testing.T)           // Unit
-func TestFeature_Integration(t *testing.T)    // Integration (test/internals)
-func TestFeature_E2E(t *testing.T)            // E2E (test/agents)
-```
-
-Agent names: include timestamp AND random suffix for parallel safety.
-
----
-
 ## Common Gotchas
 
 1. **Parallel test conflicts**: Use unique agent names with random suffixes
-2. **Cleanup order**: Stop containers before removing them
+2. **Cleanup order**: Stop containers before removing them; use `t.Cleanup()` always
 3. **Context cancellation**: Use `context.Background()` in cleanup functions
 4. **Docker availability**: Always check with `RequireDocker(t)` or `SkipIfNoDocker(t)`
-5. **Resource leaks**: Always use `t.Cleanup()` for resource cleanup
-6. **Don't duplicate harness functions**: Always check `test/harness` first
-7. **Exit code handling**: Container exit code 0 doesn't mean success if ready file missing
-8. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
-9. **Unit test imports**: Co-located unit tests (`*_test.go` in source packages) should NOT import `test/harness` or heavy test infrastructure. Use standard library + `shlex` + `testify` + `cmdutil` directly. The `test/harness` package transitively pulls in Docker SDK, whail, config, yaml — acceptable for `test/internals/` and `test/agents/` but too heavy for flag-parsing unit tests. Prefer 3-line boilerplate over a convenience helper that drags in the world.
-10. **Factory construction in tests**: `factory.New()` should only ever be called in `internal/clawker/cmd.go`, except for factory's own tests (`internal/cmd/factory/`). All other tests must create `&cmdutil.Factory{}` struct literals with test doubles (e.g., `iostreams.NewTestIOStreams()`, `tui.NewTUI(tio.IOStreams)`, mock/fake clients, `configtest.InMemorySettingsLoader`, etc.). Do not set `Version` on these struct literals — leave it as the zero value.
-
----
-
-## Quick Reference
-
-```go
-// Harness setup
-h := harness.NewHarness(t, harness.WithProject("test"),
-    harness.WithConfigBuilder(builders.MinimalValidConfig()))
-
-// Docker client (auto-injects dev.clawker.test=true + dev.clawker.test.name labels)
-client := harness.NewTestClient(t)
-
-// Factory for integration tests
-f, tio := harness.NewTestFactory(t, h)
-
-// Container testing
-ctr := harness.RunContainer(t, client, image, harness.WithCapAdd("NET_ADMIN"))
-result, err := ctr.Exec(ctx, client, "bash", "-c", "echo hello")
-
-// Readiness (all take *docker.Client)
-err = harness.WaitForReadyFile(ctx, client, containerID)
-err = harness.WaitForContainerRunning(ctx, client, containerName)
-err = harness.WaitForContainerExit(ctx, client, containerID)
-err = harness.WaitForHealthy(ctx, client, containerID)
-
-// Fake Docker for command tests
-fake := dockertest.NewFakeClient()
-fake.SetupContainerCreate()
-fake.SetupContainerStart()
-fake.AssertCalled(t, "ContainerCreate")
-fake.AssertNotCalled(t, "ContainerStart")
-fake.Reset()
-```
+5. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
+6. **Unit test imports**: Co-located `*_test.go` should NOT import `test/harness` (pulls Docker SDK). Use `test/harness/golden/` for golden file utilities only.
+7. **Factory in tests**: Never call `factory.New()` outside `internal/clawker/cmd.go`. Use `&cmdutil.Factory{}` struct literals with test doubles.

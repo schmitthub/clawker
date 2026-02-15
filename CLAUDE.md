@@ -86,7 +86,8 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   └── whail/                 # Reusable Docker engine with label-based isolation
 │       └── buildkit/          # BuildKit client (moby/buildkit) — isolated heavy deps
 ├── test/
-│   ├── harness/               # Test harness, config builders, helpers (golden files, docker)
+│   ├── harness/               # Test harness, config builders, helpers (docker)
+│   │   └── golden/            # Golden file utilities (leaf — stdlib + testify only)
 │   ├── whail/                 # Whail BuildKit integration tests (Docker + BuildKit)
 │   ├── cli/                   # Testscript-based CLI workflow tests (Docker)
 │   ├── commands/              # Command integration tests (Docker)

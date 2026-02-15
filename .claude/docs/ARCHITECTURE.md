@@ -114,10 +114,11 @@ Shared toolkit importable by all command packages.
 
 **Key abstractions:**
 - `Factory` — Pure struct with closure fields (no methods, no construction logic). Defines the dependency contract. Constructor lives in `internal/cmd/factory/default.go`.
-- Error handling utilities (`HandleError`, `PrintNextSteps`, `PrintError`, `ExitError`)
+- Error types (`FlagError`, `SilentError`, `ExitError`) — centralized rendering in Main()
+- Format/filter flags (`FormatFlags`, `FilterFlags`, `WriteJSON`, `ExecuteTemplate`)
+- Arg validators (`ExactArgs`, `MinimumArgs`, `NoArgsQuoteReminder`)
 - Image resolution (`ResolveImageWithSource`, `FindProjectImage`)
 - Name resolution (`ResolveContainerName`, `ResolveContainerNames`)
-- Project registration (`RegisterProject`)
 
 ### internal/cmd/factory - Factory Wiring
 
@@ -170,16 +171,14 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/tableprinter` | TTY-aware table printing with styled headers (imports iostreams, text) |
 | `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`) |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
-| `internal/cmdutil` | Factory struct (closure fields), error handling, name resolution, output utilities |
+| `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
 | `internal/cmd/factory` | Factory constructor — wires real dependencies (sync.Once closures) |
 | `internal/iostreams` | Testable I/O with TTY detection, colors, progress, pager |
 | `internal/prompter` | Interactive prompts (String, Confirm, Select) |
-| `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts |
-| `internal/tui` (loopdash.go) | Loop TUI dashboard model (uses `internal/tui` components, follows import boundary) |
+| `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts, tables |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |

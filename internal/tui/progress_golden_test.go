@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
+	"github.com/schmitthub/clawker/test/harness/golden"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +43,7 @@ func TestProgressPlain_Golden(t *testing.T) {
 			require.NoError(t, result.Err)
 
 			output := tio.ErrBuf.String()
-			compareGolden(t, scenario.Name, output)
+			golden.CompareGoldenString(t, scenario.Name, output)
 		})
 	}
 }
@@ -86,60 +85,5 @@ func progressStatus(s whail.BuildStepStatus) ProgressStepStatus {
 	default:
 		return StepPending
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Inline golden file helper — avoids importing test/harness and its heavy
-// transitive dependencies (Docker SDK, whail, config, yaml).
-// ---------------------------------------------------------------------------
-
-func compareGolden(t *testing.T, name, got string) {
-	t.Helper()
-
-	testDir := sanitizeGoldenName(t.Name())
-	path := filepath.Join("testdata", testDir, name+".golden")
-	updateMode := os.Getenv("GOLDEN_UPDATE") == "1"
-
-	want, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		if updateMode {
-			writeGoldenFile(t, path, got)
-			t.Logf("Created golden file: %s", path)
-			return
-		}
-		t.Fatalf("golden file not found: %s\n\nTo create, run:\n  GOLDEN_UPDATE=1 go test ./internal/tui/... -run %s", path, t.Name())
-	}
-	require.NoError(t, err)
-
-	if got != string(want) {
-		if updateMode {
-			writeGoldenFile(t, path, got)
-			t.Logf("Updated golden file: %s", path)
-			return
-		}
-		t.Errorf("output does not match golden file: %s\n\nTo update:\n  GOLDEN_UPDATE=1 go test ./internal/tui/... -run %s\n\nGot:\n%s\nWant:\n%s",
-			path, t.Name(), got, string(want))
-	}
-}
-
-func writeGoldenFile(t *testing.T, path, content string) {
-	t.Helper()
-	dir := filepath.Dir(path)
-	require.NoError(t, os.MkdirAll(dir, 0755))
-	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
-}
-
-func sanitizeGoldenName(name string) string {
-	result := make([]byte, len(name))
-	for i := range len(name) {
-		c := name[i]
-		switch c {
-		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
-			result[i] = '_'
-		default:
-			result[i] = c
-		}
-	}
-	return string(result)
 }
 
