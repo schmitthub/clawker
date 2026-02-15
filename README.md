@@ -7,7 +7,7 @@
   <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
 </p>
 
-When I began experimenting with Claude Code to keep up with the Agentic AI trend, I was surprised by the total absence of local development container offerings for using it. Claude Code's sandbox mode is lackluster; the only other options for isolation and orchestration involve paid remote services, which seems silly to me—we've had containers for over a decade now. The Claude Code docs recommend using containers, but they only offer a devcontainer example, which is a step in the right direction but leaves you coupled to the IDE. The DIY approach results in managing multiple Claude Code Dockerfiles, maybe a container registry, per languange stack/project which also sucks and there are a lot of internals that devcontainers offer that vanilla containers don't have. So I decided to build something that abstracts away all the complexity of creating, managing, automating, and running Claude Code in containers with Docker. It served as a good project to learn the ways of "Agentic Engineering" and "vibing" (exhausting btw, beware of some hilarious slop I've been cleaning up in this code base), but Clawker has become very useful for me, so I've decided to open source it for anyone yearning for a better local development container experience.
+When I began experimenting with Claude Code to keep up with the Agentic AI trend, I was surprised by the total absence of local development container offerings for using it. Claude Code's sandbox mode is lackluster; the only other options for isolation and orchestration involve paid remote services, which seems silly to me—we've had containers for over a decade now. The Claude Code docs recommend using containers, but they only offer a devcontainer example, which is a step in the right direction but leaves you coupled to the IDE. The DIY approach results in managing multiple Claude Code Dockerfiles, maybe a container registry, per language stack/project, which also sucks, and there are a lot of internals that devcontainers offer that vanilla containers don't have. So I decided to build something that abstracts away all the complexity of creating, managing, automating, and running Claude Code in containers with Docker. It served as a good project to learn the ways of "Agentic Engineering" and "vibing" (exhausting btw, beware of some hilarious slop I've been cleaning up in this code base), but Clawker has become very useful for me, so I've decided to open source it for anyone yearning for a better local development container experience.
 
 > Clawker is in a very early stage, but it's already quite usable and has a lot of features. I'm actively developing it and adding new features, so expect some breaking changes and rough edges. If you want to contribute or have any feedback, please open an issue or a pull request! Give it a star if you find it useful so I can brag about them at parties
 
@@ -19,18 +19,18 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Bind or snapshot workspace modes**: mount your repository to the container for live editing, or copy it at runtime for pure isolation
 - **Fresh or copy agent mode**: start with a clean Claude Code install, or copy all your Claude Code settings, plugins, authentication, skills, etc. into the container at runtime for a seamless transition from doing work in a host instance to a container
 - **Seamless Git credential forwarding**: toggleable SSH agent, GPG agent forwarding from the host using muxrpc (just like devcontainers) for zero-config access to private repositories and commit signing
-- **Host proxy service** copies git ssh keys into the container; and send events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with `claude` or `gh`
+- **Host proxy service** copies git ssh keys into the container and sends events like "browser open" from the container to your host for browser authentication, then proxies the callback back to the container. Great for when you have to authenticate with `claude` or `gh`
 - **Configurable environment variables**: set or copy environment variables and env files from the host into containers at runtime
 - **Injectable post-initialization bash script** that runs after the container starts but before Claude Code launches, letting you set up MCPs, etc.
 - **Default-configured firewall** to prevent agents from accessing most of the internet except GitHub and common package managers; add domains, IP list services, and pre-created addons (GCP) per project, or disable it entirely. This is a great security layer to mitigate runaway agents or prompt injections from doing damage while still giving them the network access they need to be useful.
 - **Toggleable read-only global share**: volume mount from the host giving all containers real-time access to files you place in it
-- **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically and via docker label prefixes lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --agent dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
+- **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --agent dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
-- **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentaly deleting non clawker managed containers/volumes/images etc. 
+- **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
-- **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees greated by clawker, uses `go-git` under the hood to avoid relying on the host git binary
+- **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
 - **Optional monitoring stack** with Prometheus, Loki, and Grafana to monitor agents and containers; every container has the environment variables needed to communicate with it
-- **Looping mode (experimental)**: pass a prompt, file, or task list to Clawker and it runs an autonomous loop with a fresh container each interation with stagnation detection, circuit breaker protection, max loops, tracking container agent output, progress, costs, token usage, etc.
+- **Looping mode (experimental)**: pass a prompt, file, or task list to Clawker and it runs an autonomous loop with a fresh container each iteration with stagnation detection, circuit breaker protection, max loops, tracking container agent output, progress, costs, token usage, etc.
 
 > I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend  
 
@@ -78,33 +78,39 @@ This is going to create a `~/.local/clawker` directory (configurable with `CLAWK
 #### Start a project
 
 ```bash
-cd your-project # this changes directories to your project, that is what `cd` stands for. If you didn't already know this then you might want to stop here and just install claude cowork. trust me you're gunna enjoy it more   
-clawker project init    # Creates a clawker.yaml, .clawekeringore, and registers your project in the $CLAWKER_HOME registry
+cd your-project # this changes directories to your project, that is what `cd` stands for. If you didn't already know this then you might want to stop here and just install claude cowork. trust me you're gonna enjoy it more   
+clawker project init    # Creates a clawker.yaml, .clawkerignore, and registers your project in the $CLAWKER_HOME registry
 # Customize your clawker.yaml (see examples/ for language-specific configs) or let claude take a stab at it. I dogfood clawker to build clawker so you can check out my clawker.yaml to see how I customized the image for golang development and other config strats
-clawker build           # Builds your project's image. This image's latest build can now be referenced using a reserved special charcter "@" when you are in a project directory path. Or you can give a full image name or ID
+clawker build           # Builds your project's image. This image's latest build can now be referenced using a reserved special character "@" when you are in a project directory path. Or you can give a full image name or ID
 ```
 
 #### Run a container 
 
 My workflow is a hybrid approach. I like having a claude code instance running on the host for real intensive interactive work while at the same time launching a few clawker managed containers in separate tabs and worktrees using `--dangerously-skip-permissions`. 
 
-So to do that let's say your working on a feature branch with host claude code and inspriation strikes or you notice an issue / bug and say "shit i should address this". Or you've finished up a few PRDs and want to bang them out in paralell. I just quickly open a tab and have another claude agent via clawker get after it on the side without me having to approve anything over and over again so...
+So to do that let's say you're working on a feature branch with host claude code and inspiration strikes or you notice an issue / bug and say "shit i should address this". Or you've finished up a few PRDs and want to bang them out in parallel. I just quickly open a tab and have another claude agent via clawker get after it on the side without me having to approve anything over and over again so...
 
 ```bash
 clawker run -it --agent example --worktree hotfix/example:main @ --dangerously-skip-permissions
 ```
 
-This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `CLAWKER_HOME` off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly its just a matter of telling the little rascal what to do and let it go bananas and create a pr about it. I'll peridodically check in on it to see how its doing in another tab. Or you can detach `ctrl p+q` and return to your terminal, to reattach to the same session use `clawker attach --agent example`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you. For free.  
+This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `CLAWKER_HOME` off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent example`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you. For free.  
 
 I can see my worktree paths and open them in an IDE if I want to do some manual work or review the code.  
 
 ```bash
 $ clawker worktree list
 BRANCH     PATH                                                                   HEAD     MODIFIED     STATUS
-a/example  /Users/schmitthub/.local/clawker/projects/clawker/worktrees/a-example  f20aa37  1 hours ago  healthy
+a/example  /Users/schmitthub/.local/clawker/projects/clawker/worktrees/a-example  f20aa37  1 hour ago   healthy
 ```
 
-If I have too many agents ripping through features and want a high level overview i start the monitoring stack
+When I'm done I easily remove the worktree 
+
+```bash
+clawker worktree remove a/example --delete-branch  # this deletes the worktree and the branch since it was only for this worktree, if you want to keep the branch just omit the flag. Delete won't work if the branch isn't fully merged
+```
+
+If I have too many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack
 
 ```bash
 clawker monitor init
@@ -114,7 +120,7 @@ clawker monitor status
 clawker monitor down
 ```
 
-Now I can go to the grafana dashboard at http://localhost:3000 and see all my agents, containers, resource usage, costs, tool executions, decisions, prompts, api calls, etc from every agent. (you can also env vars in your host shell and it will report to this stack)
+Now I can go to the grafana dashboard at http://localhost:3000 and see all my agents, containers, resource usage, costs, tool executions, decisions, prompts, api calls, etc from every agent. (you can also set env vars in your host shell and it will report to this stack)
 
 ```bash
 # Add this to your shell profile 
