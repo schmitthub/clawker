@@ -70,7 +70,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (session_id) (claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}))",
+          "expr": "count(max by (session_id) (max_over_time(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range])))",
           "instant": true,
           "legendFormat": "Sessions",
           "refId": "A"
@@ -135,7 +135,7 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cost_usd [$__range]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cost_usd [$__range]))",
           "queryType": "instant",
           "legendFormat": "Cost",
           "refId": "A"
@@ -192,7 +192,7 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap input_tokens [$__range]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap input_tokens [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "A"
@@ -249,7 +249,7 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap output_tokens [$__range]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap output_tokens [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "A"
@@ -269,7 +269,7 @@
             "mode": "thresholds"
           },
           "mappings": [],
-          "noValue": "0",
+          "noValue": "0%",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -279,13 +279,13 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "percent"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
+        "w": 4,
         "x": 12,
         "y": 1
       },
@@ -306,13 +306,13 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_read_tokens [$__range]))",
+          "expr": "(sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_read_tokens [$__range])) / (sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_read_tokens [$__range])) + sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_creation_tokens [$__range])))) * 100",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Cache Read",
+      "title": "Cache Read Ratio",
       "type": "stat"
     },
     {
@@ -341,9 +341,9 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 15,
+        "h": 2,
+        "w": 2,
+        "x": 16,
         "y": 1
       },
       "id": 52,
@@ -363,13 +363,70 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_creation_tokens [$__range]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_read_tokens [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Cache Creation",
+      "title": "Cache Read Total",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokidatasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-purple",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 2,
+        "x": 16,
+        "y": 3
+      },
+      "id": 53,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_creation_tokens [$__range]))",
+          "queryType": "instant",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Creation Total",
       "type": "stat"
     },
     {
@@ -420,7 +477,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))",
           "instant": true,
           "legendFormat": "",
           "refId": "A"
@@ -477,7 +534,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(claude_code_active_time_seconds_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum(increase(claude_code_active_time_seconds_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))",
           "instant": true,
           "legendFormat": "",
           "refId": "A"
@@ -549,9 +606,9 @@
       },
       "targets": [
         {
-          "expr": "sum by (pa) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | label_format pa=`{{.project}}/{{.agent}}` | unwrap cost_usd [$__range]))",
+          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cost_usd [$__range]))",
           "queryType": "instant",
-          "legendFormat": "{{pa}}",
+          "legendFormat": "{{project}}/{{agent}}",
           "refId": "A"
         }
       ],
@@ -628,9 +685,9 @@
       },
       "targets": [
         {
-          "expr": "sum by (pa) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | label_format pa=`{{.project}}/{{.agent}}` | unwrap input_tokens [$__range])) + sum by (pa) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | label_format pa=`{{.project}}/{{.agent}}` | unwrap output_tokens [$__range])) + sum by (pa) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | label_format pa=`{{.project}}/{{.agent}}` | unwrap cache_read_tokens [$__range])) + sum by (pa) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | label_format pa=`{{.project}}/{{.agent}}` | unwrap cache_creation_tokens [$__range]))",
+          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap input_tokens [$__range])) + sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap output_tokens [$__range]))",
           "queryType": "instant",
-          "legendFormat": "{{pa}}",
+          "legendFormat": "{{project}}/{{agent}}",
           "refId": "A"
         }
       ],
@@ -772,7 +829,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cost_usd [$__range]))",
+          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cost_usd [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "Cost"
@@ -782,7 +839,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap input_tokens [$__range])) + sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap output_tokens [$__range])) + sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_read_tokens [$__range])) + sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_creation_tokens [$__range]))",
+          "expr": "sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap input_tokens [$__range])) + sum by (project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap output_tokens [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "Tokens"
@@ -792,7 +849,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "count by (project, agent) (count by (project, agent, session_id) (claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}))",
+          "expr": "count by (project, agent) (max by (project, agent, session_id) (max_over_time(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range])))",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -912,7 +969,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (model) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cost_usd [$__auto]))",
+          "expr": "sum by (model) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cost_usd [$__auto]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -997,22 +1054,22 @@
       },
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap input_tokens [$__auto]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap input_tokens [$__auto]))",
           "legendFormat": "input",
           "refId": "A"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap output_tokens [$__auto]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap output_tokens [$__auto]))",
           "legendFormat": "output",
           "refId": "B"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_read_tokens [$__auto]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_read_tokens [$__auto]))",
           "legendFormat": "cacheRead",
           "refId": "C"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_creation_tokens [$__auto]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cache_creation_tokens [$__auto]))",
           "legendFormat": "cacheCreation",
           "refId": "D"
         }
@@ -1108,7 +1165,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__rate_interval]))",
+          "expr": "sum(increase(claude_code_lines_of_code_count_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__rate_interval]))",
           "legendFormat": "Lines Changed",
           "refId": "A"
         }
@@ -1190,7 +1247,7 @@
       },
       "targets": [
         {
-          "expr": "label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"Commits\", \"\", \"\") or label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))), \"type\", \"PRs\", \"\", \"\")",
+          "expr": "label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_commit_count_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))), \"type\", \"Commits\", \"\", \"\") or label_replace(sum by (agent) (max by (agent, session_id) (max_over_time(claude_code_pull_request_count_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))), \"type\", \"PRs\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -1296,7 +1353,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/\\(ok\\)$/"
+              "options": "/\\(true\\)$/"
             },
             "properties": [
               {
@@ -1311,7 +1368,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/\\(fail\\)$/"
+              "options": "/\\(false\\)$/"
             },
             "properties": [
               {
@@ -1348,8 +1405,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (tool, result) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}`, result=`{{ if eq .success \"true\" }}ok{{ else }}fail{{ end }}` [$__auto]))",
-          "legendFormat": "{{tool}} ({{result}})",
+          "expr": "sum by (tool_name, success) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` [$__auto]))",
+          "legendFormat": "{{tool_name}} ({{success}})",
           "refId": "A"
         }
       ],
@@ -1408,7 +1465,7 @@
       },
       "targets": [
         {
-          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` [$__range]))",
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | success=`false` [$__range]))",
           "queryType": "instant",
           "legendFormat": "Failures",
           "refId": "A"
@@ -1473,7 +1530,7 @@
       },
       "targets": [
         {
-          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` [$__range])) / sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` [$__range])) * 100",
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | success=`false` [$__range])) / sum(count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` [$__range])) * 100",
           "queryType": "instant",
           "legendFormat": "Failure Rate",
           "refId": "A"
@@ -1554,7 +1611,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (agent, tool, error) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "expr": "sum by (agent, tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | success=`false` [$__range]))",
           "format": "table",
           "queryType": "instant",
           "legendFormat": "",
@@ -1581,14 +1638,12 @@
             },
             "indexByName": {
               "agent": 0,
-              "tool": 1,
-              "error": 2,
-              "Value": 3
+              "tool_name": 1,
+              "Value": 2
             },
             "renameByName": {
               "agent": "Agent",
-              "tool": "Tool",
-              "error": "Error",
+              "tool_name": "Tool",
               "Value": "Count"
             }
           }
@@ -1725,21 +1780,21 @@
       },
       "targets": [
         {
-          "expr": "sum by (agent, tool) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "expr": "sum by (agent, tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` [$__range]))",
           "format": "table",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "A"
         },
         {
-          "expr": "sum by (agent, tool) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | success=`false` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` [$__range]))",
+          "expr": "sum by (agent, tool_name) (count_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | success=`false` [$__range]))",
           "format": "table",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "B"
         },
         {
-          "expr": "avg by (agent, tool) (avg_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | label_format tool=`{{ if eq .tool_name \"mcp_tool\" }}mcp:{{ regexReplaceAll \".*mcp_tool_name\\\":\\\"([^\\\"]*)\\\".*\" .tool_parameters \"${1}\" }}{{ else }}{{ .tool_name }}{{ end }}` | unwrap duration_ms [$__range]))",
+          "expr": "avg by (agent, tool_name) (avg_over_time({service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap duration_ms [$__range]))",
           "format": "table",
           "queryType": "instant",
           "legendFormat": "",
@@ -1766,7 +1821,7 @@
             },
             "renameByName": {
               "agent": "Agent",
-              "tool": "Tool",
+              "tool_name": "Tool",
               "Value #A": "Calls",
               "Value #B": "Failures",
               "Value #C": "Avg Duration (ms)"
@@ -1932,7 +1987,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cost_usd [$__range]))",
+          "expr": "sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap cost_usd [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "Cost"
@@ -1942,7 +1997,7 @@
             "type": "loki",
             "uid": "${lokidatasource}"
           },
-          "expr": "sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap input_tokens [$__range])) + sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap output_tokens [$__range])) + sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_read_tokens [$__range])) + sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | session_id=~`$session_id` | unwrap cache_creation_tokens [$__range]))",
+          "expr": "sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap input_tokens [$__range])) + sum by (session_id, project, agent) (sum_over_time({service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | unwrap output_tokens [$__range]))",
           "queryType": "instant",
           "legendFormat": "",
           "refId": "Tokens"
@@ -1952,7 +2007,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (session_id, project, agent) (increase(claude_code_lines_of_code_count_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_lines_of_code_count_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -1963,7 +2018,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (session_id, project, agent) (increase(claude_code_active_time_seconds_total{project=~\"$project\", agent=~\"$agent\", session_id=~\"$session_id\"}[$__range]))",
+          "expr": "sum by (session_id, project, agent) (increase(claude_code_active_time_seconds_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\", session_id=~\"^(${session_id:regex})$\"}[$__range]))",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -2030,7 +2085,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_request` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
+          "expr": "{service_name=\"claude-code\"} |= `api_request` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | line_format `{{.project}}.{{.agent}} | model={{.model}} cost=$${{.cost_usd}} tokens_in={{.input_tokens}} tokens_out={{.output_tokens}} cache_read={{.cache_read_tokens}} duration={{.duration_ms}}ms`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -2062,7 +2117,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `tool_result` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | {{.tool_name}} decision={{.decision_type}} source={{.decision_source}} success={{.success}} duration={{.duration_ms}}ms size={{.tool_result_size_bytes}}b{{if .error}} error=\"{{.error}}\"{{end}}`",
+          "expr": "{service_name=\"claude-code\"} |= `tool_result` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | line_format `{{.project}}.{{.agent}} | {{.tool_name}} decision={{.decision_type}} source={{.decision_source}} success={{.success}} duration={{.duration_ms}}ms size={{.tool_result_size_bytes}}b{{if .error}} error=\"{{.error}}\"{{end}}`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -2094,7 +2149,7 @@
       },
       "targets": [
         {
-          "expr": "{service_name=\"claude-code\"} |= `api_error` | project=~`$project` | agent=~`$agent` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
+          "expr": "{service_name=\"claude-code\"} |= `api_error` | project=~`^(${project:regex})$` | agent=~`^(${agent:regex})$` | session_id=~`^(${session_id:regex})$` | line_format `{{.project}}.{{.agent}} | model={{.model}} error={{.error}} status={{.status_code}} duration={{.duration_ms}}ms attempt={{.attempt}}`",
           "legendFormat": "",
           "refId": "A"
         }
@@ -2188,7 +2243,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)",
+        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\"}, agent)",
         "hide": 0,
         "includeAll": true,
         "label": "Agent",
@@ -2196,7 +2251,7 @@
         "name": "agent",
         "options": [],
         "query": {
-          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\"}, agent)",
+          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\"}, agent)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -2216,7 +2271,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)",
+        "definition": "label_values(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, session_id)",
         "hide": 0,
         "includeAll": true,
         "label": "Session",
@@ -2224,7 +2279,7 @@
         "name": "session_id",
         "options": [],
         "query": {
-          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"$project\", agent=~\"$agent\"}, session_id)",
+          "query": "label_values(claude_code_token_usage_tokens_total{project=~\"^(${project:regex})$\", agent=~\"^(${agent:regex})$\"}, session_id)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
