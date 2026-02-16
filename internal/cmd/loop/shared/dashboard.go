@@ -45,6 +45,11 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 		var runErr error
 		go func() {
 			defer close(ch)
+			defer func() {
+				if r := recover(); r != nil {
+					runErr = fmt.Errorf("runner panic: %v", r)
+				}
+			}()
 			result, runErr = cfg.Runner.Run(runCtx, runnerOpts)
 		}()
 

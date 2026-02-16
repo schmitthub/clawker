@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,7 +147,7 @@ func TestBuildRunnerOptions_BasicMapping(t *testing.T) {
 	}
 
 	cmd := newTestCmd()
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "myproject"}, "dev", "Fix tests", "/workspace", nil, cmd.Flags(), nil)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "myproject"}, "dev", "Fix tests", "/workspace", nil, cmd.Flags(), nil, loggertest.NewNop())
 
 	assert.Equal(t, "myproject", opts.ProjectCfg.Project)
 	assert.Equal(t, "dev", opts.Agent)
@@ -189,7 +190,7 @@ func TestBuildRunnerOptions_ConfigOverrides(t *testing.T) {
 	// Don't set any flags — none are "changed"
 	require.NoError(t, cmd.ParseFlags([]string{}))
 
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg, loggertest.NewNop())
 
 	assert.Equal(t, 200, opts.MaxLoops)
 	assert.Equal(t, 10, opts.StagnationThreshold)
@@ -211,7 +212,7 @@ func TestBuildRunnerOptions_ExplicitFlagWins(t *testing.T) {
 	// Set --max-loops explicitly
 	require.NoError(t, cmd.ParseFlags([]string{"--max-loops", "75"}))
 
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg, loggertest.NewNop())
 
 	// Explicit flag wins over config
 	assert.Equal(t, 75, opts.MaxLoops)
@@ -227,7 +228,7 @@ func TestBuildRunnerOptions_NilConfig(t *testing.T) {
 	}
 
 	cmd := newTestCmd()
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil, loggertest.NewNop())
 
 	assert.Equal(t, 100, opts.MaxLoops)
 	assert.Equal(t, 5, opts.StagnationThreshold)
@@ -240,7 +241,7 @@ func TestBuildRunnerOptions_NilFlags(t *testing.T) {
 		TimeoutMinutes:      30,
 	}
 
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, nil, nil)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, nil, nil, loggertest.NewNop())
 
 	assert.Equal(t, 100, opts.MaxLoops)
 	assert.Equal(t, 5, opts.StagnationThreshold)
@@ -251,7 +252,7 @@ func TestBuildRunnerOptions_SystemPromptDefault(t *testing.T) {
 	// AppendSystemPrompt is empty (default)
 
 	cmd := newTestCmd()
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil, loggertest.NewNop())
 
 	// Default system prompt should contain LOOP_STATUS instructions
 	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
@@ -264,7 +265,7 @@ func TestBuildRunnerOptions_SystemPromptWithAdditional(t *testing.T) {
 	loopOpts.AppendSystemPrompt = "Always run tests before marking complete."
 
 	cmd := newTestCmd()
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), nil, loggertest.NewNop())
 
 	// Should have both default and additional instructions
 	assert.Contains(t, opts.SystemPrompt, "---LOOP_STATUS---")
@@ -306,7 +307,7 @@ func TestBuildRunnerOptions_ConfigOverridesAppendSystemPrompt(t *testing.T) {
 	assert.Equal(t, "Always run tests first.", loopOpts.AppendSystemPrompt)
 
 	// Also verify it flows through to SystemPrompt in BuildRunnerOptions
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg, loggertest.NewNop())
 	assert.Contains(t, opts.SystemPrompt, "Always run tests first.")
 }
 
@@ -370,7 +371,7 @@ func TestBuildRunnerOptions_SkipPermissionsBoolean(t *testing.T) {
 	AddLoopFlags(cmd, loopOpts)
 	require.NoError(t, cmd.ParseFlags([]string{}))
 
-	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg)
+	opts := BuildRunnerOptions(loopOpts, &config.Project{Project: "proj"}, "dev", "test", "/workspace", nil, cmd.Flags(), loopCfg, loggertest.NewNop())
 
 	// Config override for boolean
 	assert.True(t, opts.SkipPermissions)
