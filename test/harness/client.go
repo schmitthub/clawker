@@ -20,6 +20,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -29,13 +30,15 @@ import (
 
 // containerConfig holds options for RunContainer.
 type containerConfig struct {
-	capAdd     []string
-	user       string
-	cmd        []string
-	entrypoint []string
-	env        []string
-	extraHost  []string
-	mounts     []mount.Mount
+	capAdd       []string
+	user         string
+	cmd          []string
+	entrypoint   []string
+	env          []string
+	extraHost    []string
+	mounts       []mount.Mount
+	network      string // Docker network name to join (creates if needed)
+	portBindings network.PortMap
 }
 
 // ContainerOpt configures a test container.
@@ -87,6 +90,25 @@ func WithExtraHost(hosts ...string) ContainerOpt {
 func WithMounts(mounts ...mount.Mount) ContainerOpt {
 	return func(c *containerConfig) {
 		c.mounts = append(c.mounts, mounts...)
+	}
+}
+
+// WithNetwork joins the container to a Docker network (creates it if needed).
+func WithNetwork(name string) ContainerOpt {
+	return func(c *containerConfig) {
+		c.network = name
+	}
+}
+
+// WithPortBinding publishes a container port to a random host port.
+// containerPort is in "port/proto" format, e.g. "50051/tcp".
+func WithPortBinding(containerPort string) ContainerOpt {
+	return func(c *containerConfig) {
+		if c.portBindings == nil {
+			c.portBindings = make(network.PortMap)
+		}
+		port := network.MustParsePort(containerPort)
+		c.portBindings[port] = []network.PortBinding{{}}
 	}
 }
 
@@ -267,19 +289,30 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 
 	ctx := context.Background()
 
+	// Build ExposedPorts from PortBindings keys.
+	var exposedPorts network.PortSet
+	if len(cfg.portBindings) > 0 {
+		exposedPorts = make(network.PortSet, len(cfg.portBindings))
+		for port := range cfg.portBindings {
+			exposedPorts[port] = struct{}{}
+		}
+	}
+
 	createResp, err := dc.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Config: &container.Config{
-			Image:      image,
-			Entrypoint: cfg.entrypoint,
-			Cmd:        cmd,
-			Labels:     labels,
-			Env:        cfg.env,
-			User:       cfg.user,
+			Image:        image,
+			Entrypoint:   cfg.entrypoint,
+			Cmd:          cmd,
+			Labels:       labels,
+			Env:          cfg.env,
+			User:         cfg.user,
+			ExposedPorts: exposedPorts,
 		},
 		HostConfig: &container.HostConfig{
-			CapAdd:     cfg.capAdd,
-			ExtraHosts: cfg.extraHost,
-			Mounts:     cfg.mounts,
+			CapAdd:       cfg.capAdd,
+			ExtraHosts:   cfg.extraHost,
+			Mounts:       cfg.mounts,
+			PortBindings: cfg.portBindings,
 		},
 		Name: name,
 	})
@@ -287,7 +320,13 @@ func RunContainer(t *testing.T, dc *docker.Client, image string, opts ...Contain
 		t.Fatalf("RunContainer: create failed: %v", err)
 	}
 
-	if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
+	startOpts := whail.ContainerStartOptions{ContainerID: createResp.ID}
+	if cfg.network != "" {
+		startOpts.EnsureNetwork = &whail.EnsureNetworkOptions{
+			Name: cfg.network,
+		}
+	}
+	if _, err := dc.ContainerStart(ctx, startOpts); err != nil {
 		t.Fatalf("RunContainer: start failed: %v", err)
 	}
 

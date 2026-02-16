@@ -1,7 +1,8 @@
 .PHONY: help \
         clawker clawker-build clawker-generate clawker-test clawker-test-internals clawker-lint clawker-staticcheck clawker-install clawker-clean \
         fawker \
-        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update \
+        test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-controlplane test-all test-coverage test-clean golden-update \
+        proto \
         licenses licenses-check \
         docs docs-check \
         pre-commit pre-commit-install
@@ -197,7 +198,7 @@ clawker-clean:
 # ============================================================================
 
 # Package list for unit tests (excludes integration test directories)
-UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents')
+UNIT_PKGS = $$($(GO) list ./... | grep -v '/test/cli' | grep -v '/test/commands' | grep -v '/test/whail' | grep -v '/test/internals' | grep -v '/test/agents' | grep -v '/test/controlplane')
 
 # Unit tests only (fast, no Docker)
 # Excludes test/cli, test/internals, test/agents which require Docker
@@ -259,8 +260,16 @@ ifndef GOTESTSUM
 endif
 	$(TEST_CMD_VERBOSE) -timeout 15m ./test/agents/...
 
+# Control plane integration tests (requires Docker)
+test-controlplane:
+	@echo "Running control plane integration tests (requires Docker)..."
+ifndef GOTESTSUM
+	@echo "(tip: install gotestsum for prettier output: go install gotest.tools/gotestsum@latest)"
+endif
+	$(TEST_CMD_VERBOSE) -timeout 5m ./test/controlplane/...
+
 # All test suites
-test-all: test test-commands test-whail test-internals test-acceptance test-agents
+test-all: test test-commands test-whail test-internals test-acceptance test-agents test-controlplane
 
 # Unit tests with coverage
 test-coverage:
@@ -341,3 +350,22 @@ pre-commit-install:
 # Run all pre-commit hooks against all files
 pre-commit:
 	@pre-commit run --all-files
+
+# ============================================================================
+# Protobuf Targets
+# ============================================================================
+
+# Generate protobuf Go code from .proto files
+proto:
+	@echo "Generating protobuf code..."
+	@if ! command -v buf >/dev/null 2>&1; then \
+		echo "buf not installed. Install: https://buf.build/docs/installation" >&2; exit 1; \
+	fi
+	@if ! command -v protoc-gen-go >/dev/null 2>&1; then \
+		echo "protoc-gen-go not installed. Run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest" >&2; exit 1; \
+	fi
+	@if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then \
+		echo "protoc-gen-go-grpc not installed. Run: go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest" >&2; exit 1; \
+	fi
+	buf generate
+	@echo "Protobuf generation complete."
