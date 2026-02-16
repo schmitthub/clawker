@@ -1,13 +1,15 @@
-package iostreams
+package iostreams_test
 
 import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewProgressBar(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(100, "Building")
@@ -17,7 +19,7 @@ func TestNewProgressBar(t *testing.T) {
 }
 
 func TestNewProgressBar_Disabled(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(false)
 
 	pb := ios.IOStreams.NewProgressBar(100, "Building")
@@ -36,7 +38,7 @@ func TestNewProgressBar_Disabled(t *testing.T) {
 }
 
 func TestProgressBar_Set(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(100, "Building")
@@ -52,7 +54,7 @@ func TestProgressBar_Set(t *testing.T) {
 }
 
 func TestProgressBar_Increment(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(4, "Steps")
@@ -66,7 +68,7 @@ func TestProgressBar_Increment(t *testing.T) {
 }
 
 func TestProgressBar_Finish(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(10, "Loading")
@@ -81,7 +83,7 @@ func TestProgressBar_Finish(t *testing.T) {
 }
 
 func TestProgressBar_NonTTY_PeriodicUpdates(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	// Non-TTY by default in test — should print periodic line updates
 
@@ -105,7 +107,7 @@ func TestProgressBar_NonTTY_PeriodicUpdates(t *testing.T) {
 }
 
 func TestProgressBar_TTY_AnimatedBar(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetInteractive(true)
 	ios.SetColorEnabled(true)
@@ -124,7 +126,7 @@ func TestProgressBar_TTY_AnimatedBar(t *testing.T) {
 }
 
 func TestProgressBar_ClampValues(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(10, "Test")
@@ -147,7 +149,7 @@ func TestProgressBar_ClampValues(t *testing.T) {
 }
 
 func TestProgressBar_ZeroTotal(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(0, "Test")
@@ -160,7 +162,7 @@ func TestProgressBar_ZeroTotal(t *testing.T) {
 }
 
 func TestProgressBar_ThreadSafety(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(100, "Concurrent")
@@ -179,7 +181,7 @@ func TestProgressBar_ThreadSafety(t *testing.T) {
 }
 
 func TestProgressBar_FinishTwice(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(10, "Test")
@@ -188,7 +190,7 @@ func TestProgressBar_FinishTwice(t *testing.T) {
 }
 
 func TestProgressBar_SetAfterFinish(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	pb := ios.IOStreams.NewProgressBar(10, "Test")
@@ -204,7 +206,7 @@ func TestProgressBar_SetAfterFinish(t *testing.T) {
 }
 
 func TestProgressBar_BarVisuals(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetInteractive(true)
 

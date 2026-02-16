@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +61,7 @@ func TestImageList_Golden(t *testing.T) {
 			fake := dockertest.NewFakeClient()
 			fake.SetupImageList(tt.images...)
 
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
 				IOStreams: tio.IOStreams,
 				TUI:      tui.NewTUI(tio.IOStreams),

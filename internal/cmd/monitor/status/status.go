@@ -10,7 +10,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -53,7 +52,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	logger.Debug().Str("monitor_dir", monitorDir).Msg("checking monitor stack status")
+	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("checking monitor stack status")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName

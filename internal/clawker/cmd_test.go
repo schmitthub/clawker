@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/update"
 )
 
 func TestPrintUpdateNotification_NilResult(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 
 	printUpdateNotification(tio.IOStreams, nil)
@@ -20,7 +20,7 @@ func TestPrintUpdateNotification_NilResult(t *testing.T) {
 }
 
 func TestPrintUpdateNotification_NonTTY(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Default: non-TTY — should suppress output
 
 	result := &update.CheckResult{
@@ -37,7 +37,7 @@ func TestPrintUpdateNotification_NonTTY(t *testing.T) {
 }
 
 func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 
 	result := &update.CheckResult{

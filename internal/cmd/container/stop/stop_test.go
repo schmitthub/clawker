@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/socketbridge/socketbridgetest"
 	"github.com/stretchr/testify/require"
@@ -258,7 +258,7 @@ func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
 }
 
 func TestStopRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {
@@ -282,9 +282,9 @@ func TestStopRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,

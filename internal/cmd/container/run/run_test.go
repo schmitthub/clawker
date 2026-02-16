@@ -19,7 +19,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 
@@ -795,9 +795,9 @@ func TestImageArg(t *testing.T) {
 
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
 // The returned Factory wires fake Docker client, test config, and test IOStreams.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
@@ -918,7 +918,7 @@ func TestRunRun(t *testing.T) {
 		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
 
-		tio := iostreams.NewTestIOStreams() // non-interactive
+		tio := iostreamstest.New() // non-interactive
 		f := &cmdutil.Factory{
 			IOStreams: tio.IOStreams,
 			TUI:       tui.NewTUI(tio.IOStreams),

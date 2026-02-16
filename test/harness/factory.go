@@ -8,7 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 )
@@ -30,10 +30,10 @@ import (
 //
 // Tests that explicitly need copy mode (e.g., test/internals/containerfs_test.go)
 // set their own ClaudeCodeConfig directly and don't use NewTestFactory.
-func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	// Use the harness config with test-safe defaults applied
 	applyTestDefaults(h.Config)

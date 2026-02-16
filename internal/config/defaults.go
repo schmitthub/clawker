@@ -146,6 +146,23 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #   max_size_mb: 50
 #   max_age_days: 7
 #   max_backups: 3
+#   compress: true
+#   otel:
+#     enabled: true
+#     timeout_seconds: 5
+#     max_queue_size: 2048
+#     export_interval_seconds: 5
+
+# Monitoring stack ports (override if defaults conflict)
+# monitoring:
+#   otel_collector_port: 4318
+#   otel_collector_host: localhost
+#   otel_collector_internal: otel-collector
+#   grafana_port: 3000
+#   jaeger_port: 16686
+#   prometheus_port: 9090
+#   loki_port: 3100
+#   prometheus_metrics_port: 8889
 `
 
 // DefaultRegistryYAML returns the default registry template
@@ -206,3 +223,36 @@ credentials.json
 *.log
 logs/
 `
+
+// DefaultSettings returns a Settings with sensible default values.
+// This is the single source of truth for all settings defaults.
+func DefaultSettings() *Settings {
+	return &Settings{
+		Logging: LoggingConfig{
+			FileEnabled: boolPtr(true),
+			MaxSizeMB:   50,
+			MaxAgeDays:  7,
+			MaxBackups:  3,
+			Compress:    boolPtr(true),
+			Otel: OtelConfig{
+				Enabled:               boolPtr(true),
+				TimeoutSeconds:        5,
+				MaxQueueSize:          2048,
+				ExportIntervalSeconds: 5,
+			},
+		},
+		Monitoring: MonitoringConfig{
+			OtelCollectorPort:     4318,
+			OtelCollectorHost:     "localhost",
+			OtelCollectorInternal: "otel-collector",
+			LokiPort:              3100,
+			PrometheusPort:        9090,
+			JaegerPort:            16686,
+			GrafanaPort:           3000,
+			PrometheusMetricsPort: 8889,
+		},
+	}
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool { return &b }

@@ -9,7 +9,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
@@ -165,7 +164,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	settingsLoader := cfg.SettingsLoader()
 	if settingsLoader == nil {
 		// Fallback: create a settings loader directly (e.g. first run, no config loaded yet)
-		logger.Warn().Msg("SettingsLoader not set on Config; creating filesystem loader as fallback")
+		ios.Logger.Warn().Msg("SettingsLoader not set on Config; creating filesystem loader as fallback")
 		var err error
 		settingsLoader, err = config.NewSettingsLoader()
 		if err != nil {
@@ -185,7 +184,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		settings.DefaultImage = ""
 	}
 
-	logger.Debug().
+	ios.Logger.Debug().
 		Bool("build_base_image", buildBaseImage).
 		Str("flavor", selectedFlavor).
 		Msg("initializing user settings")
@@ -195,7 +194,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	logger.Debug().Str("file", settingsLoader.Path()).Msg("saved user settings")
+	ios.Logger.Debug().Str("file", settingsLoader.Path()).Msg("saved user settings")
 
 	// Success output
 	fmt.Fprintln(ios.ErrOut)
@@ -223,7 +222,11 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			},
 		}
 
-		gen := intbuild.NewProjectGenerator(project, "")
+		initCfg := &config.Config{
+			Project:  project,
+			Settings: cfg.Settings, // effective settings from the gateway
+		}
+		gen := intbuild.NewProjectGenerator(initCfg, "")
 		buildContext, err := gen.GenerateBuildContext()
 		if err != nil {
 			return fmt.Errorf("failed to generate build context: %w", err)
@@ -293,7 +296,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			// Update settings with the built image
 			settings.DefaultImage = docker.DefaultImageTag
 			if err := settingsLoader.Save(settings); err != nil {
-				logger.Warn().Err(err).Msg("failed to update settings with default image")
+				ios.Logger.Warn().Err(err).Msg("failed to update settings with default image")
 				fmt.Fprintf(ios.ErrOut, "%s Warning: built image %s but failed to update settings: %v\n",
 					cs.WarningIcon(), docker.DefaultImageTag, err)
 			}

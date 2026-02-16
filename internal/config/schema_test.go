@@ -127,9 +127,7 @@ func TestModeConstants(t *testing.T) {
 	}
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
+// boolPtr is defined in defaults.go — shared across this package.
 
 func TestGitCredentialsConfig_GitHTTPSEnabled(t *testing.T) {
 	tests := []struct {

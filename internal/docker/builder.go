@@ -66,7 +66,7 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir string) *Builder {
 // Uses content-addressed tags to detect whether config actually changed.
 // If ForceBuild is true, rebuilds even if the image exists.
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts BuilderOptions) error {
-	gen := bundler.NewProjectGenerator(b.config, b.workDir)
+	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Custom Dockerfiles bypass content hashing — delegate to Build() so that
@@ -119,7 +119,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
-	gen := bundler.NewProjectGenerator(b.config, b.workDir)
+	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)

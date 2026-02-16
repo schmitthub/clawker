@@ -24,8 +24,8 @@ import (
 // Error rendering is centralized here — commands return typed errors
 // rather than printing them directly.
 func Main() int {
-	// Ensure logs are flushed on exit
-	defer logger.CloseFileWriter()
+	// Ensure logs and OTEL provider are flushed on exit
+	defer logger.Close()
 
 	buildDate := build.Date
 	buildVersion := build.Version

@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewCmdCheck(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *CheckOptions
@@ -34,7 +34,7 @@ func TestNewCmdCheck(t *testing.T) {
 }
 
 func TestNewCmdCheck_metadata(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	cmd := NewCmdCheck(f, nil)

@@ -11,7 +11,7 @@ import (
 )
 
 func TestWriteBuildContextToDir(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},
@@ -21,7 +21,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: true},
 		},
-	}
+	}}
 
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.BuildKitEnabled = true
@@ -62,7 +62,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 }
 
 func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},
@@ -72,7 +72,7 @@ func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: false},
 		},
-	}
+	}}
 
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	dir := t.TempDir()
@@ -92,7 +92,7 @@ func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
 	includeContent := []byte("# my include file\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), includeContent, 0644))
 
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
 		},
@@ -102,7 +102,7 @@ func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {
 		Agent: config.AgentConfig{
 			Includes: []string{"CLAUDE.md"},
 		},
-	}
+	}}
 
 	gen := NewProjectGenerator(cfg, workDir)
 	dir := t.TempDir()

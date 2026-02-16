@@ -11,7 +11,6 @@ import (
   "github.com/schmitthub/clawker/internal/config"
   "github.com/schmitthub/clawker/internal/docker"
   "github.com/schmitthub/clawker/internal/iostreams"
-  "github.com/schmitthub/clawker/internal/logger"
   "github.com/schmitthub/clawker/internal/signals"
   "github.com/schmitthub/clawker/internal/tui"
   "github.com/schmitthub/clawker/pkg/whail"
@@ -142,7 +141,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
     cfg.Build.Dockerfile = opts.File
   }
 
-  logger.Debug().
+  ios.Logger.Debug().
     Str("project", cfg.Project).
     Bool("no-cache", opts.NoCache).
     Bool("pull", opts.Pull).
@@ -159,7 +158,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   // Check BuildKit availability — cache mounts in Dockerfile require it
   buildkitEnabled, bkErr := docker.BuildKitEnabled(ctx, client.APIClient)
   if bkErr != nil {
-    logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
+    ios.Logger.Warn().Err(bkErr).Msg("BuildKit detection failed")
     fmt.Fprintf(ios.ErrOut, "%s BuildKit detection failed — falling back to legacy builder\n", cs.WarningIcon())
   } else if !buildkitEnabled {
     fmt.Fprintf(ios.ErrOut, "%s BuildKit is not available — cache mount directives will be ignored and builds may be slower\n", cs.WarningIcon())
@@ -185,7 +184,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
   // Defense in depth: --no-cache should also skip content hash check if
   // EnsureImage() is ever used. This ensures explicit no-cache requests
   // always trigger a full rebuild.
-  logger.Debug().
+  ios.Logger.Debug().
     Str("project", cfg.Project).
     Str("image", imageTag).
     Msg("building container image")

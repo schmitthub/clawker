@@ -20,8 +20,8 @@ const (
 	SpinnerMoon                       // 🌑🌒🌓🌔🌕🌖🌗🌘
 )
 
-// spinnerFrames returns the frame characters for a given spinner type.
-func spinnerFrames(t SpinnerType) []string {
+// SpinnerFrames returns the frame characters for a given spinner type.
+func SpinnerFrames(t SpinnerType) []string {
 	switch t {
 	case SpinnerBraille:
 		return []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -46,7 +46,7 @@ func spinnerFrames(t SpinnerType) []string {
 // The tui SpinnerModel uses bubbles/spinner directly but maintains visual consistency
 // through shared CyanStyle.
 func SpinnerFrame(t SpinnerType, tick int, label string, cs *ColorScheme) string {
-	frames := spinnerFrames(t)
+	frames := SpinnerFrames(t)
 	frame := frames[tick%len(frames)]
 
 	// Apply color to the spinner character

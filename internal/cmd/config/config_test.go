@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewCmdConfig(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdConfig(f)
 

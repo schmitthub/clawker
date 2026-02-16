@@ -166,7 +166,7 @@ Intercepts the Options struct *before* the run function executes. Verifies CLI f
 
 ```go
 func TestNewCmdStop_FlagParsing(t *testing.T) {
-    tio := iostreams.NewTestIOStreams()
+    tio := iostreamstest.New()
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         Resolution: func() *config.Resolution {
@@ -215,7 +215,7 @@ For Tier 2 (full pipeline) tests, define a private `runCommand` helper per comma
 
 ```go
 func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut, error) {
-    tio := iostreams.NewTestIOStreams()
+    tio := iostreamstest.New()
     tio.IOStreams.SetStdoutTTY(isTTY)
     tio.IOStreams.SetStdinTTY(isTTY)
     tio.IOStreams.SetStderrTTY(isTTY)
@@ -251,7 +251,7 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
 
 **Key design choices**:
 - `nil` for `runF` → real run function executes the full pipeline
-- I/O capture via `iostreams.NewTestIOStreams()` → access `tio.IOStreams`, `tio.OutBuf`, `tio.ErrBuf`
+- I/O capture via `iostreamstest.New()` → access `tio.IOStreams`, `tio.OutBuf`, `tio.ErrBuf`
 - TTY toggling — tests both interactive and non-interactive paths
 - Cobra output discarded (`io.Discard`) — real output goes through `iostreams`
 - Docker mock client injected via Factory closure
@@ -274,9 +274,9 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
     t.Helper()
-    tio := iostreams.NewTestIOStreams()
+    tio := iostreamstest.New()
     tmpDir := t.TempDir()
     return &cmdutil.Factory{
         IOStreams: tio.IOStreams,
@@ -559,8 +559,8 @@ f, tio := harness.NewTestFactory(t, h)
 **Per-package testFactory** — For command tests with fake Docker:
 
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
-    tio := iostreams.NewTestIOStreams()
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+    tio := iostreamstest.New()
     return &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         Client: func(_ context.Context) (*docker.Client, error) {

@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
+	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -59,6 +60,7 @@ func testCreateConfig(fake *dockertest.FakeClient, cfg *config.Project, containe
 		Config:  cfg,
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
+		Logger:  loggertest.NewNop(),
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},
@@ -170,6 +172,7 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 		Config:  cfg,
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
+		Logger:  loggertest.NewNop(),
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
 		},

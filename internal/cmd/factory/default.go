@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -21,27 +23,24 @@ import (
 // Called exactly once at the CLI entry point (internal/clawker/cmd.go).
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version string) *cmdutil.Factory {
-	ios := ioStreams()
-
 	f := &cmdutil.Factory{
-		Version: version,
-
+		Version:      version,
 		Config:       configFunc(),
-		IOStreams:    ios,
-		TUI:          tui.NewTUI(ios),
 		HostProxy:    hostProxyFunc(),
 		SocketBridge: socketBridgeFunc(),
 	}
 
-	f.Client = clientFunc(f)         // depends on Config
-	f.GitManager = gitManagerFunc(f) // depends on Config
+	f.IOStreams = ioStreams(f)           // needs f.Config() for logger settings
+	f.TUI = tui.NewTUI(f.IOStreams)     // needs IOStreams
+	f.Client = clientFunc(f)            // depends on Config
+	f.GitManager = gitManagerFunc(f)    // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
 }
 
-// ioStreams creates an IOStreams with TTY/color/CI detection.
-func ioStreams() *iostreams.IOStreams {
+// ioStreams creates an IOStreams with TTY/color/CI detection and initializes the logger.
+func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 	ios := iostreams.System()
 
 	// CLAWKER_SPINNER_DISABLED is clawker-specific config
@@ -49,6 +48,43 @@ func ioStreams() *iostreams.IOStreams {
 		ios.SetSpinnerDisabled(true)
 	}
 
+	// Initialize logger from settings — config gateway resolves ENV > config > defaults
+	settings := f.Config().Settings
+
+	logsDir, err := config.LogsDir()
+	if err != nil {
+		logger.Init()
+		ios.Logger = &logger.Log
+		return ios
+	}
+
+	// Build OTEL config from settings if enabled
+	var otelCfg *logger.OtelLogConfig
+	if settings.Logging.Otel.IsEnabled() {
+		otelCfg = &logger.OtelLogConfig{
+			Endpoint:       settings.Monitoring.OtelCollectorEndpoint(),
+			Insecure:       true,
+			Timeout:        time.Duration(settings.Logging.Otel.GetTimeoutSeconds()) * time.Second,
+			MaxQueueSize:   settings.Logging.Otel.GetMaxQueueSize(),
+			ExportInterval: time.Duration(settings.Logging.Otel.GetExportIntervalSeconds()) * time.Second,
+		}
+	}
+
+	if err := logger.NewLogger(&logger.Options{
+		LogsDir: logsDir,
+		FileConfig: &logger.LoggingConfig{
+			FileEnabled: settings.Logging.FileEnabled,
+			MaxSizeMB:   settings.Logging.MaxSizeMB,
+			MaxAgeDays:  settings.Logging.MaxAgeDays,
+			MaxBackups:  settings.Logging.MaxBackups,
+			Compress:    settings.Logging.Compress,
+		},
+		OtelConfig: otelCfg,
+	}); err != nil {
+		logger.Init()
+	}
+
+	ios.Logger = &logger.Log
 	return ios
 }
 

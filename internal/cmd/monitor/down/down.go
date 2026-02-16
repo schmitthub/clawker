@@ -9,7 +9,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
@@ -60,7 +59,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	logger.Debug().Str("monitor_dir", monitorDir).Msg("stopping monitor stack")
+	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("stopping monitor stack")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
@@ -76,7 +75,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		composeArgs = append(composeArgs, "-v")
 	}
 
-	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
+	ios.Logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out

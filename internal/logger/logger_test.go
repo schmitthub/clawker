@@ -126,6 +126,133 @@ func TestLoggingConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoggingConfigDefaults_Compress(t *testing.T) {
+	// Test nil Compress defaults to true
+	cfg := &LoggingConfig{}
+	if !cfg.IsCompressEnabled() {
+		t.Error("IsCompressEnabled should default to true when nil")
+	}
+
+	// Test explicit false
+	falseVal := false
+	cfg.Compress = &falseVal
+	if cfg.IsCompressEnabled() {
+		t.Error("IsCompressEnabled should return false when explicitly set to false")
+	}
+
+	// Test explicit true
+	trueVal := true
+	cfg.Compress = &trueVal
+	if !cfg.IsCompressEnabled() {
+		t.Error("IsCompressEnabled should return true when explicitly set to true")
+	}
+}
+
+func TestNewLogger_FileOnly(t *testing.T) {
+	resetLoggerState()
+	tmpDir := t.TempDir()
+
+	err := NewLogger(&Options{
+		LogsDir: tmpDir,
+		FileConfig: &LoggingConfig{
+			MaxSizeMB: 1,
+		},
+		OtelConfig: nil, // file-only
+	})
+	if err != nil {
+		t.Fatalf("NewLogger failed: %v", err)
+	}
+	defer Close()
+
+	// Logger should be active (not nop)
+	if Log.GetLevel() == zerolog.Disabled {
+		t.Error("NewLogger with file config should produce active logger")
+	}
+
+	// Write and verify
+	Info().Msg("file only test")
+	Close()
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "clawker.log"))
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(content), "file only test") {
+		t.Error("Log file should contain the test message")
+	}
+}
+
+func TestNewLogger_FileOnly_CompressEnabled(t *testing.T) {
+	resetLoggerState()
+	tmpDir := t.TempDir()
+
+	trueVal := true
+	err := NewLogger(&Options{
+		LogsDir: tmpDir,
+		FileConfig: &LoggingConfig{
+			MaxSizeMB: 1,
+			Compress:  &trueVal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewLogger failed: %v", err)
+	}
+	defer Close()
+
+	// Verify lumberjack has compress enabled
+	if fileWriter == nil {
+		t.Fatal("fileWriter should not be nil")
+	}
+	if !fileWriter.Compress {
+		t.Error("fileWriter.Compress should be true")
+	}
+}
+
+func TestNewLogger_NilOpts(t *testing.T) {
+	resetLoggerState()
+
+	err := NewLogger(nil)
+	if err != nil {
+		t.Fatalf("NewLogger with nil opts should not fail: %v", err)
+	}
+
+	// Should produce nop logger
+	if Log.GetLevel() != zerolog.Disabled {
+		t.Error("NewLogger with nil opts should produce nop logger")
+	}
+}
+
+func TestClose(t *testing.T) {
+	resetLoggerState()
+	tmpDir := t.TempDir()
+
+	err := NewLogger(&Options{
+		LogsDir:    tmpDir,
+		FileConfig: &LoggingConfig{MaxSizeMB: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewLogger failed: %v", err)
+	}
+
+	Info().Msg("pre-close message")
+
+	err = Close()
+	if err != nil {
+		t.Errorf("Close failed: %v", err)
+	}
+
+	// fileWriter should be nil after close
+	if fileWriter != nil {
+		t.Error("fileWriter should be nil after Close")
+	}
+
+	// Double close should not error
+	err = Close()
+	if err != nil {
+		t.Errorf("Double Close should not error: %v", err)
+	}
+}
+
 func TestInitWithFile(t *testing.T) {
 	tmpDir := t.TempDir()
 

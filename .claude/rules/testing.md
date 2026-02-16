@@ -78,7 +78,7 @@ Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline
 fake := dockertest.NewFakeClient()
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
-tio := iostreams.NewTestIOStreams()
+tio := iostreamstest.New()
 f := &cmdutil.Factory{
     IOStreams: tio.IOStreams,
     TUI:      tui.NewTUI(tio.IOStreams),

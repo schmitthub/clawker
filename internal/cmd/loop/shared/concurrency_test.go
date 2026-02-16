@@ -7,7 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +17,7 @@ func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList() // empty list
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -34,7 +34,7 @@ func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -51,7 +51,7 @@ func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Non-interactive: no Prompter set
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
@@ -64,7 +64,7 @@ func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
 	assert.Contains(t, tio.ErrBuf.String(), "already running")
 }
 
-func testPrompterWithSelection(tio *iostreams.TestIOStreams, selection int) func() *prompter.Prompter {
+func testPrompterWithSelection(tio *iostreamstest.TestIOStreams, selection int) func() *prompter.Prompter {
 	tio.SetInteractive(true)
 	tio.InBuf.SetInput(selectionInput(selection))
 	return func() *prompter.Prompter {
@@ -83,7 +83,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -101,7 +101,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -119,7 +119,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -135,7 +135,7 @@ func TestCheckConcurrency_DockerListError(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerListError(fmt.Errorf("docker daemon unavailable"))
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,
 		Project:  "myproj",
@@ -155,7 +155,7 @@ func TestCheckConcurrency_MultipleRunning_WarnsAndProceeds(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	fake.SetupContainerList(ctr1, ctr2)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Non-interactive should still warn and proceed
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
 		Client:   fake.Client,

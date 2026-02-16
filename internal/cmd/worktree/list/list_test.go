@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/git/gittest"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +27,7 @@ func testIOStreams() (*iostreams.IOStreams, *bytes.Buffer, *bytes.Buffer) {
 		In:     &bytes.Buffer{},
 		Out:    outBuf,
 		ErrOut: errBuf,
+		Logger: loggertest.NewNop(),
 	}
 	return ios, outBuf, errBuf
 }

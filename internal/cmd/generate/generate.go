@@ -10,7 +10,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/bundler/registry"
@@ -98,7 +97,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	versionsFile := filepath.Join(outputDir, "versions.json")
 
-	logger.Debug().
+	ios.Logger.Debug().
 		Strs("versions", versions).
 		Bool("skip-fetch", opts.SkipFetch).
 		Str("output-dir", outputDir).

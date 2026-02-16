@@ -8,7 +8,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	internalconfig "github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +53,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
-	logger.Debug().Str("workdir", wd).Msg("checking configuration")
+	ios.Logger.Debug().Str("workdir", wd).Msg("checking configuration")
 
 	// Load configuration
 	loader := internalconfig.NewLoader(wd)
@@ -79,7 +78,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 		return err
 	}
 
-	logger.Debug().
+	ios.Logger.Debug().
 		Str("project", cfg.Project).
 		Str("image", cfg.Build.Image).
 		Msg("configuration loaded")

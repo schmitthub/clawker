@@ -581,7 +581,7 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            tio := iostreams.NewTestIOStreams()
+            tio := iostreamstest.New()
             f := &cmdutil.Factory{IOStreams: tio.IOStreams}
             cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error { return nil })
             argv, _ := shlex.Split(tt.input)
@@ -964,8 +964,8 @@ GOLDEN_UPDATE=1 go test ./internal/tui/... -run TestProgressPlain_Golden -v  # r
 
 **Unit tests** (model-level, no BubbleTea program):
 ```go
-func newTestProgressModel(t *testing.T) (progressModel, *iostreams.TestIOStreams) {
-    tio := iostreams.NewTestIOStreams()
+func newTestProgressModel(t *testing.T) (progressModel, *iostreamstest.TestIOStreams) {
+    tio := iostreamstest.New()
     ch := make(chan ProgressStep, 10)
     cfg := ProgressDisplayConfig{
         Title: "Building myproject", Subtitle: "myproject:latest",
@@ -1207,7 +1207,7 @@ tp := f.TUI.NewTable(headers...)
 ### Test Setup
 
 ```go
-tio := iostreams.NewTestIOStreams()
+tio := iostreamstest.New()
 // tio.IOStreams — non-TTY, colors disabled by default
 // tio.OutBuf   — captures stdout
 // tio.ErrBuf   — captures stderr
@@ -1228,7 +1228,7 @@ func TestCmdRun(t *testing.T) {
     fake.SetupContainerCreate()
     fake.SetupContainerStart()
 
-    tio := iostreams.NewTestIOStreams()
+    tio := iostreamstest.New()
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         TUI:      tui.NewTUI(tio.IOStreams),

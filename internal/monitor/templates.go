@@ -1,21 +1,28 @@
 package monitor
 
 import (
+	"bytes"
 	_ "embed"
+	"fmt"
+	"text/template"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
-// Embedded templates for monitoring stack configuration
+// Embedded templates for monitoring stack configuration.
+// Templates with .tmpl extension contain Go template variables
+// and must be rendered via RenderTemplate before writing to disk.
 
-//go:embed templates/compose.yaml
+//go:embed templates/compose.yaml.tmpl
 var ComposeTemplate string
 
-//go:embed templates/otel-config.yaml
+//go:embed templates/otel-config.yaml.tmpl
 var OtelConfigTemplate string
 
-//go:embed templates/grafana-datasources.yaml
+//go:embed templates/grafana-datasources.yaml.tmpl
 var GrafanaDatasourcesTemplate string
 
-//go:embed templates/prometheus.yaml
+//go:embed templates/prometheus.yaml.tmpl
 var PrometheusTemplate string
 
 //go:embed templates/grafana-dashboards.yaml
@@ -33,3 +40,44 @@ const (
 	GrafanaDashboardsFileName  = "grafana-dashboards.yaml"
 	GrafanaDashboardFileName   = "grafana-dashboard.json"
 )
+
+// MonitorTemplateData provides values for rendering monitoring stack templates.
+type MonitorTemplateData struct {
+	OtelCollectorPort     int
+	OtelGRPCPort          int    // always OtelCollectorPort - 1
+	LokiPort              int
+	PrometheusPort        int
+	JaegerPort            int
+	GrafanaPort           int
+	PrometheusMetricsPort int
+	OtelCollectorInternal string
+}
+
+// NewMonitorTemplateData constructs template data from MonitoringConfig.
+func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
+	return MonitorTemplateData{
+		OtelCollectorPort:     cfg.OtelCollectorPort,
+		OtelGRPCPort:          cfg.OtelCollectorPort - 1, // gRPC is always HTTP port - 1
+		LokiPort:              cfg.LokiPort,
+		PrometheusPort:        cfg.PrometheusPort,
+		JaegerPort:            cfg.JaegerPort,
+		GrafanaPort:           cfg.GrafanaPort,
+		PrometheusMetricsPort: cfg.PrometheusMetricsPort,
+		OtelCollectorInternal: cfg.OtelCollectorInternal,
+	}
+}
+
+// RenderTemplate renders a Go text/template with the given data.
+func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error) {
+	t, err := template.New(name).Parse(tmplContent)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template %s: %w", name, err)
+	}
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to render template %s: %w", name, err)
+	}
+
+	return buf.String(), nil
+}

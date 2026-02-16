@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,7 +31,7 @@ func (m testModel) View() string {
 }
 
 func TestRunProgram(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	model := testModel{}
 	result, err := RunProgram(tio.IOStreams, model)
@@ -40,7 +40,7 @@ func TestRunProgram(t *testing.T) {
 }
 
 func TestRunProgram_WithAltScreen(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	model := testModel{}
 	result, err := RunProgram(tio.IOStreams, model, WithAltScreen(true))
@@ -49,7 +49,7 @@ func TestRunProgram_WithAltScreen(t *testing.T) {
 }
 
 func TestRunProgram_WithMouseMotion(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	model := testModel{}
 	result, err := RunProgram(tio.IOStreams, model, WithMouseMotion(true))
@@ -58,7 +58,7 @@ func TestRunProgram_WithMouseMotion(t *testing.T) {
 }
 
 func TestRunProgram_MultipleOptions(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	model := testModel{}
 	result, err := RunProgram(tio.IOStreams, model,

@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestRegisterProject_HappyPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
-	tios := iostreams.NewTestIOStreams()
+	tios := iostreamstest.New()
 
 	projectDir := filepath.Join(tmpDir, "myproject")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -38,7 +38,7 @@ func TestRegisterProject_NilRegistryLoader(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv(config.ClawkerHomeEnv, tmpDir)
 
-	tios := iostreams.NewTestIOStreams()
+	tios := iostreamstest.New()
 
 	slug, err := RegisterProject(tios.IOStreams, nil, tmpDir, "test")
 	if err == nil {
@@ -58,7 +58,7 @@ func TestRegisterProject_RegisterError(t *testing.T) {
 	}
 	t.Setenv(config.ClawkerHomeEnv, unwritableDir)
 
-	tios := iostreams.NewTestIOStreams()
+	tios := iostreamstest.New()
 
 	// Create a valid registry loader
 	registryLoader, err := config.NewRegistryLoader()

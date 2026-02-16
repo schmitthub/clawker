@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +20,7 @@ import (
 
 // testInitOpts builds a default InitOptions for testing with an in-memory settings loader.
 // Returns the options and the settings loader for verification.
-func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, *configtest.InMemorySettingsLoader) {
+func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions, *configtest.InMemorySettingsLoader) {
 	t.Helper()
 
 	// Use temp dir for clawker home so performSetup can create share dir
@@ -45,7 +45,7 @@ func testInitOpts(t *testing.T, tio *iostreams.TestIOStreams) (*InitOptions, *co
 // --- NewCmdInit tests ---
 
 func TestNewCmdInit(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
 	fake := dockertest.NewFakeClient()
 	f := &cmdutil.Factory{
@@ -76,7 +76,7 @@ func TestNewCmdInit(t *testing.T) {
 }
 
 func TestNewCmdInit_YesFlag(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *InitOptions
@@ -95,7 +95,7 @@ func TestNewCmdInit_YesFlag(t *testing.T) {
 // --- Run dispatch tests ---
 
 func TestRun_NonInteractive(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Non-interactive by default (isInputTTY = 0)
 
 	opts, _ := testInitOpts(t, tio)
@@ -111,7 +111,7 @@ func TestRun_NonInteractive(t *testing.T) {
 }
 
 func TestRun_NonInteractive_SavesSettings(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	opts, sl := testInitOpts(t, tio)
 	opts.Yes = true
@@ -130,7 +130,7 @@ func TestRun_NonInteractive_SavesSettings(t *testing.T) {
 // --- performSetup tests ---
 
 func TestPerformSetup_NoBuild(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	opts, sl := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, false, "")
@@ -155,7 +155,7 @@ func TestPerformSetup_NoBuild(t *testing.T) {
 }
 
 func TestPerformSetup_BuildSuccess(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	opts, sl := testInitOpts(t, tio)
 
 	err := performSetup(context.Background(), opts, true, "bookworm")
@@ -169,7 +169,7 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 }
 
 func TestPerformSetup_BuildFailure(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	sl := configtest.NewInMemorySettingsLoader()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())

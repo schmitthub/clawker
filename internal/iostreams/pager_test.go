@@ -1,6 +1,7 @@
 package iostreams
 
 import (
+	"bytes"
 	"os"
 	"runtime"
 	"testing"
@@ -69,7 +70,7 @@ func TestGetPagerCommand(t *testing.T) {
 }
 
 func TestPagerWriter_EmptyCommand(t *testing.T) {
-	var buf testBuffer
+	var buf bytes.Buffer
 	pw, err := newPagerWriter("", &buf)
 	if err != nil {
 		t.Fatalf("newPagerWriter with empty command should not error: %v", err)

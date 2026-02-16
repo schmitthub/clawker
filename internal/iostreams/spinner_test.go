@@ -1,4 +1,4 @@
-package iostreams
+package iostreams_test
 
 import (
 	"errors"
@@ -7,13 +7,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 // --- SpinnerFrame pure function tests ---
 
 func TestSpinnerFrame_BrailleType(t *testing.T) {
-	cs := NewColorScheme(false, "none")
-	frame := SpinnerFrame(SpinnerBraille, 0, "Loading", cs)
+	cs := iostreams.NewColorScheme(false, "none")
+	frame := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 0, "Loading", cs)
 
 	if frame == "" {
 		t.Error("SpinnerFrame should return non-empty string")
@@ -24,11 +27,11 @@ func TestSpinnerFrame_BrailleType(t *testing.T) {
 }
 
 func TestSpinnerFrame_FramesCycle(t *testing.T) {
-	cs := NewColorScheme(false, "none")
+	cs := iostreams.NewColorScheme(false, "none")
 
 	seen := make(map[string]bool)
 	for i := 0; i < 10; i++ {
-		frame := SpinnerFrame(SpinnerBraille, i, "", cs)
+		frame := iostreams.SpinnerFrame(iostreams.SpinnerBraille, i, "", cs)
 		seen[frame] = true
 	}
 
@@ -39,31 +42,31 @@ func TestSpinnerFrame_FramesCycle(t *testing.T) {
 }
 
 func TestSpinnerFrame_AllTypes(t *testing.T) {
-	cs := NewColorScheme(false, "none")
+	cs := iostreams.NewColorScheme(false, "none")
 
-	types := []SpinnerType{
-		SpinnerBraille,
-		SpinnerDots,
-		SpinnerLine,
-		SpinnerPulse,
-		SpinnerGlobe,
-		SpinnerMoon,
+	types := []iostreams.SpinnerType{
+		iostreams.SpinnerBraille,
+		iostreams.SpinnerDots,
+		iostreams.SpinnerLine,
+		iostreams.SpinnerPulse,
+		iostreams.SpinnerGlobe,
+		iostreams.SpinnerMoon,
 	}
 
 	for _, st := range types {
-		frame := SpinnerFrame(st, 0, "test", cs)
+		frame := iostreams.SpinnerFrame(st, 0, "test", cs)
 		if frame == "" {
-			t.Errorf("SpinnerFrame(%d, 0, ...) returned empty string", st)
+			t.Errorf("iostreams.SpinnerFrame(%d, 0, ...) returned empty string", st)
 		}
 		if !strings.Contains(frame, "test") {
-			t.Errorf("SpinnerFrame(%d, ...) missing label, got %q", st, frame)
+			t.Errorf("iostreams.SpinnerFrame(%d, ...) missing label, got %q", st, frame)
 		}
 	}
 }
 
 func TestSpinnerFrame_EmptyLabel(t *testing.T) {
-	cs := NewColorScheme(false, "none")
-	frame := SpinnerFrame(SpinnerBraille, 0, "", cs)
+	cs := iostreams.NewColorScheme(false, "none")
+	frame := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 0, "", cs)
 
 	if frame == "" {
 		t.Error("SpinnerFrame with empty label should still return spinner character")
@@ -71,11 +74,11 @@ func TestSpinnerFrame_EmptyLabel(t *testing.T) {
 }
 
 func TestSpinnerFrame_WithColors(t *testing.T) {
-	csEnabled := NewColorScheme(true, "dark")
-	csDisabled := NewColorScheme(false, "none")
+	csEnabled := iostreams.NewColorScheme(true, "dark")
+	csDisabled := iostreams.NewColorScheme(false, "none")
 
-	frameColored := SpinnerFrame(SpinnerBraille, 0, "Loading", csEnabled)
-	framePlain := SpinnerFrame(SpinnerBraille, 0, "Loading", csDisabled)
+	frameColored := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 0, "Loading", csEnabled)
+	framePlain := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 0, "Loading", csDisabled)
 
 	// Both should contain the label
 	if !strings.Contains(frameColored, "Loading") {
@@ -92,11 +95,11 @@ func TestSpinnerFrame_WithColors(t *testing.T) {
 }
 
 func TestSpinnerFrame_IsPure(t *testing.T) {
-	cs := NewColorScheme(false, "none")
+	cs := iostreams.NewColorScheme(false, "none")
 
 	// Same inputs should produce same output
-	frame1 := SpinnerFrame(SpinnerBraille, 3, "test", cs)
-	frame2 := SpinnerFrame(SpinnerBraille, 3, "test", cs)
+	frame1 := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 3, "test", cs)
+	frame2 := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 3, "test", cs)
 
 	if frame1 != frame2 {
 		t.Errorf("SpinnerFrame should be pure: %q != %q", frame1, frame2)
@@ -104,22 +107,22 @@ func TestSpinnerFrame_IsPure(t *testing.T) {
 }
 
 func TestSpinnerFrame_WrapsAround(t *testing.T) {
-	cs := NewColorScheme(false, "none")
+	cs := iostreams.NewColorScheme(false, "none")
 
 	// Tick much larger than frame count should still work (modular arithmetic)
-	frame := SpinnerFrame(SpinnerBraille, 1000, "test", cs)
+	frame := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 1000, "test", cs)
 	if frame == "" {
 		t.Error("SpinnerFrame with large tick should wrap around, not fail")
 	}
 }
 
 func TestSpinnerFrame_LineType(t *testing.T) {
-	cs := NewColorScheme(false, "none")
+	cs := iostreams.NewColorScheme(false, "none")
 
 	// Line type uses ASCII: - \ | /
 	frames := make([]string, 4)
 	for i := 0; i < 4; i++ {
-		frames[i] = SpinnerFrame(SpinnerLine, i, "", cs)
+		frames[i] = iostreams.SpinnerFrame(iostreams.SpinnerLine, i, "", cs)
 	}
 
 	// Should have 4 distinct frames
@@ -135,17 +138,17 @@ func TestSpinnerFrame_LineType(t *testing.T) {
 // --- spinnerFrames function tests ---
 
 func TestSpinnerFrames(t *testing.T) {
-	types := []SpinnerType{
-		SpinnerBraille,
-		SpinnerDots,
-		SpinnerLine,
-		SpinnerPulse,
-		SpinnerGlobe,
-		SpinnerMoon,
+	types := []iostreams.SpinnerType{
+		iostreams.SpinnerBraille,
+		iostreams.SpinnerDots,
+		iostreams.SpinnerLine,
+		iostreams.SpinnerPulse,
+		iostreams.SpinnerGlobe,
+		iostreams.SpinnerMoon,
 	}
 
 	for _, st := range types {
-		frames := spinnerFrames(st)
+		frames := iostreams.SpinnerFrames(st)
 		if len(frames) == 0 {
 			t.Errorf("spinnerFrames(%d) returned empty slice", st)
 		}
@@ -159,7 +162,7 @@ func TestSpinnerFrames(t *testing.T) {
 
 func TestSpinnerFrames_UnknownType(t *testing.T) {
 	// Unknown type should fall back to braille
-	frames := spinnerFrames(SpinnerType(99))
+	frames := iostreams.SpinnerFrames(iostreams.SpinnerType(99))
 	if len(frames) == 0 {
 		t.Error("unknown spinner type should fall back to braille frames")
 	}
@@ -168,7 +171,7 @@ func TestSpinnerFrames_UnknownType(t *testing.T) {
 // --- IOStreams spinner integration tests ---
 
 func TestStartSpinner_TextFallback(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true) // text fallback mode
 
@@ -181,7 +184,7 @@ func TestStartSpinner_TextFallback(t *testing.T) {
 }
 
 func TestStartSpinner_TextFallback_DefaultLabel(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -194,7 +197,7 @@ func TestStartSpinner_TextFallback_DefaultLabel(t *testing.T) {
 }
 
 func TestStartSpinner_TextFallback_NoDoubleEllipsis(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -210,7 +213,7 @@ func TestStartSpinner_TextFallback_NoDoubleEllipsis(t *testing.T) {
 }
 
 func TestStartSpinner_Disabled(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(false)
 
 	ios.IOStreams.StartSpinner("Test")
@@ -222,7 +225,7 @@ func TestStartSpinner_Disabled(t *testing.T) {
 }
 
 func TestStopSpinner_WithoutStart(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	// Should not panic
@@ -230,7 +233,7 @@ func TestStopSpinner_WithoutStart(t *testing.T) {
 }
 
 func TestStopSpinner_Twice(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -240,7 +243,7 @@ func TestStopSpinner_Twice(t *testing.T) {
 }
 
 func TestRunWithSpinner_CallsFunction(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -264,7 +267,7 @@ func TestRunWithSpinner_CallsFunction(t *testing.T) {
 }
 
 func TestRunWithSpinner_PropagatesError(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -279,11 +282,11 @@ func TestRunWithSpinner_PropagatesError(t *testing.T) {
 }
 
 func TestStartSpinnerWithType(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.IOStreams.StartSpinnerWithType(SpinnerLine, "Building")
+	ios.IOStreams.StartSpinnerWithType(iostreams.SpinnerLine, "Building")
 
 	output := ios.ErrBuf.String()
 	if !strings.Contains(output, "Building...") {
@@ -292,7 +295,7 @@ func TestStartSpinnerWithType(t *testing.T) {
 }
 
 func TestSpinner_ConcurrentAccess(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -313,7 +316,7 @@ func TestSpinner_ConcurrentAccess(t *testing.T) {
 }
 
 func TestSpinner_ConcurrentAccess_AnimatedMode(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	// spinnerDisabled is false → animated mode
 
@@ -339,7 +342,7 @@ func TestSpinner_ConcurrentAccess_AnimatedMode(t *testing.T) {
 }
 
 func TestStopSpinner_AnimatedMode_Twice(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	// spinnerDisabled is false — animated mode
 
@@ -351,7 +354,7 @@ func TestStopSpinner_AnimatedMode_Twice(t *testing.T) {
 }
 
 func TestStartSpinner_AnimatedMode_StartStop(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	// spinnerDisabled is false — animated mode
 
@@ -367,7 +370,7 @@ func TestStartSpinner_AnimatedMode_StartStop(t *testing.T) {
 }
 
 func TestStartSpinner_LabelUpdate(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 

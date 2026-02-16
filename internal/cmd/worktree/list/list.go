@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -103,7 +102,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		status := handle.Status()
 		if status.Error != nil {
 			// Path resolution failed - skip git lookup, record error for display
-			logger.Debug().Err(status.Error).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
+			opts.IOStreams.Logger.Debug().Err(status.Error).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
 			errorWorktrees = append(errorWorktrees, git.WorktreeInfo{
 				Name:   handle.Name(),
 				Slug:   handle.Slug(),

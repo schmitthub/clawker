@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 // testRenderer is a minimal DashboardRenderer for testing.
@@ -26,7 +27,7 @@ func (r *testRenderer) View(cs *iostreams.ColorScheme, width int) string {
 }
 
 func newTestDashboard(ch <-chan any) (dashboardModel, *testRenderer) {
-	ios := iostreams.NewTestIOStreams()
+	ios := iostreamstest.New()
 	renderer := &testRenderer{view: "  test content\n"}
 	cfg := DashboardConfig{HelpText: "q quit  ctrl+c stop"}
 	return newDashboardModel(ios.IOStreams, renderer, cfg, ch), renderer
@@ -163,7 +164,7 @@ func TestDashboard_View_IncludesHelpText(t *testing.T) {
 }
 
 func TestDashboard_View_NoHelpText(t *testing.T) {
-	ios := iostreams.NewTestIOStreams()
+	ios := iostreamstest.New()
 	renderer := &testRenderer{view: "content\n"}
 	cfg := DashboardConfig{} // no help text
 	ch := make(chan any, 1)

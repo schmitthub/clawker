@@ -28,7 +28,26 @@ fmt.Fprintln(ios.ErrOut, "Processing...")   // stderr for status (humans)
 
 ### IOStreams
 
-Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`. Constructors: `System()` (production), `NewTestIOStreams()` (testing, non-TTY, no colors).
+Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`, `Logger Logger`. Constructors: `System()` (production), `NewTestIOStreams()` (testing, non-TTY, no colors). The `Logger` field is set by the factory during construction; commands access it via `ios.Logger.Debug()`, etc.
+
+### Logger (interface, `logger.go`)
+
+Defined in `internal/iostreams`, NOT `internal/logger`. Matches `*zerolog.Logger` method signatures so that `*zerolog.Logger` satisfies it directly (pointer receiver). Keeps IOStreams decoupled from the concrete logger package.
+
+```go
+type Logger interface {
+    Debug() *zerolog.Event
+    Info()  *zerolog.Event
+    Warn()  *zerolog.Event
+    Error() *zerolog.Event
+}
+```
+
+**Usage**: IOStreams has an exported `Logger Logger` field (no accessor method, no nop default). Set by factory during construction. Commands use `ios.Logger.Debug().Msg("...")` for file-based diagnostic logging.
+
+**Import note**: `iostreams` imports `rs/zerolog` (the external library) for the `*zerolog.Event` return type. It does NOT import `internal/logger`.
+
+**Test utilities**: `loggertest.New()` returns a `*loggertest.TestLogger` that captures output to a buffer (with `Output() string` and `Reset()`). `loggertest.NewNop()` returns a no-op logger that discards all output. Both satisfy the `iostreams.Logger` interface. Package: `internal/logger/loggertest/`.
 
 ### TestIOStreams
 
@@ -175,4 +194,4 @@ Lipgloss-based pure functions for composing visual output:
 
 ## Import Boundary
 
-Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`.
+Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `rs/zerolog`, `internal/text`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`, `internal/logger`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`. The `rs/zerolog` import is for the `Logger` interface return types only -- `iostreams` does NOT import `internal/logger`.

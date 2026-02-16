@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTopLevelAliases(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	root := &cobra.Command{Use: "clawker"}
 	registerAliases(root, f)

@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/schmitthub/clawker/test/harness/golden"
@@ -32,18 +32,19 @@ func TestBuildProgress_Golden(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
-			fake := dockertest.NewFakeClient()
+			testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+			fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
 				IOStreams: tio.IOStreams,
-				TUI:      tui.NewTUI(tio.IOStreams),
+				TUI:       tui.NewTUI(tio.IOStreams),
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
 				Config: func() *config.Config {
-					return config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+					return testCfg
 				},
 			}
 

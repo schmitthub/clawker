@@ -1,10 +1,107 @@
 package iostreams
 
 import (
+	"io"
+	"sync"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/stretchr/testify/assert"
 )
+
+type iostreamstestShim struct{}
+
+var iostreamstest iostreamstestShim
+
+type testIOStreams struct {
+	*IOStreams
+	InBuf  *testBuffer
+	OutBuf *testBuffer
+	ErrBuf *testBuffer
+}
+
+type testBuffer struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (iostreamstestShim) New() *testIOStreams {
+	in := &testBuffer{}
+	out := &testBuffer{}
+	errOut := &testBuffer{}
+
+	ios := &IOStreams{
+		In:     in,
+		Out:    out,
+		ErrOut: errOut,
+		Logger: loggertest.NewNop(),
+	}
+
+	return &testIOStreams{
+		IOStreams: ios,
+		InBuf:     in,
+		OutBuf:    out,
+		ErrBuf:    errOut,
+	}
+}
+
+func (b *testBuffer) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, b.data)
+	b.data = b.data[n:]
+	return n, nil
+}
+
+func (b *testBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *testBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
+}
+
+func (b *testBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = nil
+}
+
+func (b *testBuffer) SetInput(s string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = []byte(s)
+}
+
+func (t *testIOStreams) SetInteractive(interactive bool) {
+	t.IOStreams.SetStdinTTY(interactive)
+	t.IOStreams.SetStdoutTTY(interactive)
+	t.IOStreams.SetStderrTTY(interactive)
+}
+
+func (t *testIOStreams) SetColorEnabled(enabled bool) {
+	t.IOStreams.SetColorEnabled(enabled)
+}
+
+func (t *testIOStreams) SetTerminalSize(width, height int) {
+	t.IOStreams.SetTerminalSizeCache(width, height)
+}
+
+func (t *testIOStreams) SetProgressEnabled(enabled bool) {
+	t.IOStreams.SetProgressIndicatorEnabled(enabled)
+}
+
+func (t *testIOStreams) SetSpinnerDisabled(disabled bool) {
+	t.IOStreams.SetSpinnerDisabled(disabled)
+}
 
 func TestSystem_BasicSetup(t *testing.T) {
 	ios := System()
@@ -36,7 +133,7 @@ func TestSystem_BasicSetup(t *testing.T) {
 
 func TestIOStreams_TTY(t *testing.T) {
 	// Test with non-TTY (test buffers)
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Default is non-interactive
 	if ios.IsInputTTY() {
@@ -50,23 +147,23 @@ func TestIOStreams_TTY(t *testing.T) {
 	}
 }
 
-func TestNewTestIOStreams(t *testing.T) {
-	ios := NewTestIOStreams()
+func TestNewIOStreams_New(t *testing.T) {
+	ios := iostreamstest.New()
 
 	if ios == nil {
-		t.Fatal("NewTestIOStreams() returned nil")
+		t.Fatal("iostreamstest.New() returned nil")
 	}
 	if ios.IOStreams == nil {
-		t.Fatal("NewTestIOStreams().IOStreams is nil")
+		t.Fatal("iostreamstest.New().IOStreams is nil")
 	}
 	if ios.InBuf == nil {
-		t.Error("NewTestIOStreams().InBuf is nil")
+		t.Error("iostreamstest.New().InBuf is nil")
 	}
 	if ios.OutBuf == nil {
-		t.Error("NewTestIOStreams().OutBuf is nil")
+		t.Error("iostreamstest.New().OutBuf is nil")
 	}
 	if ios.ErrBuf == nil {
-		t.Error("NewTestIOStreams().ErrBuf is nil")
+		t.Error("iostreamstest.New().ErrBuf is nil")
 	}
 
 	// Verify buffers are connected to IOStreams
@@ -82,10 +179,10 @@ func TestNewTestIOStreams(t *testing.T) {
 
 	// Verify non-interactive by default
 	if ios.isInputTTY != 0 {
-		t.Errorf("NewTestIOStreams().isInputTTY = %d, want 0", ios.isInputTTY)
+		t.Errorf("iostreamstest.New().isInputTTY = %d, want 0", ios.isInputTTY)
 	}
 	if ios.isOutputTTY != 0 {
-		t.Errorf("NewTestIOStreams().isOutputTTY = %d, want 0", ios.isOutputTTY)
+		t.Errorf("iostreamstest.New().isOutputTTY = %d, want 0", ios.isOutputTTY)
 	}
 }
 
@@ -112,7 +209,7 @@ func TestSetInteractive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := NewTestIOStreams()
+			ios := iostreamstest.New()
 			ios.SetInteractive(tt.interactive)
 
 			if ios.IsInputTTY() != tt.wantInput {
@@ -130,7 +227,8 @@ func TestSetInteractive(t *testing.T) {
 
 func TestTestBuffer(t *testing.T) {
 	t.Run("Write and String", func(t *testing.T) {
-		buf := &testBuffer{}
+		ios := iostreamstest.New()
+		buf := ios.OutBuf
 		n, err := buf.Write([]byte("hello"))
 		if err != nil {
 			t.Fatalf("Write() error = %v", err)
@@ -144,7 +242,8 @@ func TestTestBuffer(t *testing.T) {
 	})
 
 	t.Run("Read", func(t *testing.T) {
-		buf := &testBuffer{}
+		ios := iostreamstest.New()
+		buf := ios.InBuf
 		buf.SetInput("world")
 
 		p := make([]byte, 10)
@@ -161,19 +260,21 @@ func TestTestBuffer(t *testing.T) {
 	})
 
 	t.Run("Read empty returns EOF", func(t *testing.T) {
-		buf := &testBuffer{}
+		ios := iostreamstest.New()
+		buf := ios.InBuf
 		p := make([]byte, 10)
 		n, err := buf.Read(p)
 		if n != 0 {
 			t.Errorf("Read() = %d, want 0", n)
 		}
-		if err == nil {
-			t.Error("Read() expected EOF error")
+		if err != io.EOF {
+			t.Errorf("Read() error = %v, want EOF", err)
 		}
 	})
 
 	t.Run("Reset", func(t *testing.T) {
-		buf := &testBuffer{}
+		ios := iostreamstest.New()
+		buf := ios.OutBuf
 		buf.Write([]byte("hello"))
 		buf.Reset()
 		if buf.String() != "" {
@@ -182,7 +283,8 @@ func TestTestBuffer(t *testing.T) {
 	})
 
 	t.Run("SetInput", func(t *testing.T) {
-		buf := &testBuffer{}
+		ios := iostreamstest.New()
+		buf := ios.InBuf
 		buf.SetInput("test input")
 		if buf.String() != "test input" {
 			t.Errorf("String() after SetInput() = %q, want %q", buf.String(), "test input")
@@ -200,7 +302,7 @@ func TestBoolToInt(t *testing.T) {
 }
 
 func TestIOStreams_IsStderrTTY(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Default is non-TTY for test streams
 	if ios.IsStderrTTY() {
@@ -233,7 +335,7 @@ func TestIOStreams_ColorEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := NewTestIOStreams()
+			ios := iostreamstest.New()
 			tt.setup(ios.IOStreams)
 
 			if ios.ColorEnabled() != tt.wantEnabled {
@@ -244,7 +346,7 @@ func TestIOStreams_ColorEnabled(t *testing.T) {
 }
 
 func TestIOStreams_TerminalTheme(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Test DetectTerminalTheme
 	ios.IOStreams.DetectTerminalTheme()
@@ -257,7 +359,7 @@ func TestIOStreams_TerminalTheme(t *testing.T) {
 }
 
 func TestIOStreams_ColorScheme(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	cs := ios.ColorScheme()
 
 	if cs == nil {
@@ -271,7 +373,7 @@ func TestIOStreams_ColorScheme(t *testing.T) {
 }
 
 func TestIOStreams_TerminalSize(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Set a custom size
 	ios.SetTerminalSize(120, 40)
@@ -330,7 +432,7 @@ func TestIOStreams_CanPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := NewTestIOStreams()
+			ios := iostreamstest.New()
 			ios.SetInteractive(tt.interactive)
 			ios.IOStreams.SetNeverPrompt(tt.neverPrompt)
 
@@ -342,7 +444,7 @@ func TestIOStreams_CanPrompt(t *testing.T) {
 }
 
 func TestIOStreams_NeverPrompt(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Default is false
 	if ios.GetNeverPrompt() {
@@ -363,7 +465,7 @@ func TestIOStreams_NeverPrompt(t *testing.T) {
 }
 
 func TestIOStreams_Progress(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Start and stop progress (non-TTY should be a no-op but not panic)
 	ios.StartProgressIndicator()
@@ -388,7 +490,7 @@ func TestIOStreams_Progress(t *testing.T) {
 }
 
 func TestIOStreams_Pager(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Set custom pager
 	ios.IOStreams.SetPager("cat")
@@ -406,7 +508,7 @@ func TestIOStreams_Pager(t *testing.T) {
 }
 
 func TestIOStreams_AlternateScreen(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Enable and start (non-TTY should be a no-op)
 	ios.IOStreams.SetAlternateScreenBufferEnabled(true)
@@ -418,7 +520,7 @@ func TestIOStreams_AlternateScreen(t *testing.T) {
 }
 
 func TestTestIOStreams_SetColorEnabled(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
 	// Default colors disabled
 	if ios.ColorEnabled() {
@@ -445,8 +547,8 @@ func TestSystem_TermCapabilities(t *testing.T) {
 	_ = ios.IsTrueColorSupported()
 }
 
-func TestNewTestIOStreams_TermNil(t *testing.T) {
-	tio := NewTestIOStreams()
+func TestIostreamstestNew_TermNil(t *testing.T) {
+	tio := iostreamstest.New()
 	assert.False(t, tio.Is256ColorSupported())
 	assert.False(t, tio.IsTrueColorSupported())
 }

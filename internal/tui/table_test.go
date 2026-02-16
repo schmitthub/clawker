@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,9 +21,9 @@ func forceColorProfile(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 }
 
-func newTestTUI(t *testing.T) (*TUI, *iostreams.TestIOStreams) {
+func newTestTUI(t *testing.T) (*TUI, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return NewTUI(tio.IOStreams), tio
 }
 

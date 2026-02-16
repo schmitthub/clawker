@@ -48,7 +48,7 @@ idx, err := prompter.Select("Choose base image", []prompter.SelectOption{
 ## Testing
 
 ```go
-ios := iostreams.NewTestIOStreams()
+ios := iostreamstest.New()
 ios.SetInteractive(true)
 ios.InBuf.SetInput("y\n")
 

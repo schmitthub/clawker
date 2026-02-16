@@ -13,7 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -188,9 +188,9 @@ func TestCmdStart_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests (non-attach path) ---
 
-func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	disableHP := false
 	project := config.DefaultConfig()
 	project.Security.EnableHostProxy = &disableHP
@@ -217,7 +217,7 @@ func setupContainerStart(fake *dockertest.FakeClient) {
 }
 
 func TestStartRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {
@@ -309,7 +309,7 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	setupContainerStart(fake)
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Default config has host proxy enabled (EnableHostProxy = nil → true)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,

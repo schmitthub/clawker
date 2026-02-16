@@ -1,4 +1,4 @@
-package iostreams
+package iostreams_test
 
 import (
 	"strings"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ func forceColorProfile(t *testing.T) {
 
 func TestRenderStyledTable_Basic(t *testing.T) {
 	forceColorProfile(t)
-	tio := NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
@@ -54,7 +55,7 @@ func TestRenderStyledTable_Basic(t *testing.T) {
 
 func TestRenderStyledTable_UppercaseHeaders(t *testing.T) {
 	forceColorProfile(t)
-	tio := NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
@@ -72,7 +73,7 @@ func TestRenderStyledTable_UppercaseHeaders(t *testing.T) {
 
 func TestRenderStyledTable_Empty(t *testing.T) {
 	forceColorProfile(t)
-	tio := NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
@@ -90,7 +91,7 @@ func TestRenderStyledTable_Empty(t *testing.T) {
 
 func TestRenderStyledTable_NoBorders(t *testing.T) {
 	forceColorProfile(t)
-	tio := NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(80, 24)
@@ -109,7 +110,7 @@ func TestRenderStyledTable_NoBorders(t *testing.T) {
 
 func TestRenderStyledTable_FitsTermWidth(t *testing.T) {
 	forceColorProfile(t)
-	tio := NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.SetColorEnabled(true)
 	tio.SetTerminalSize(60, 24)

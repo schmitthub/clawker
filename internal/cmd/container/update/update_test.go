@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -285,9 +285,9 @@ func int64Ptr(v int64) *int64 {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
@@ -322,7 +322,7 @@ func TestUpdateRun_Success(t *testing.T) {
 }
 
 func TestUpdateRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {

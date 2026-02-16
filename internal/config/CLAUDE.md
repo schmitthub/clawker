@@ -9,8 +9,8 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 | `config.go` | `Config` facade — eager container for Project, Settings, Resolution, Registry |
 | `schema.go` | `Project` struct (YAML schema + runtime context) and nested types |
 | `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
-| `settings.go` | `Settings` struct (user-level: `default_image`, `logging`) |
-| `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — loads/saves `settings.yaml`, merges project-level overrides |
+| `settings.go` | `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig` structs + method receivers |
+| `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — Viper-based, loads/saves `settings.yaml`, merges project-level overrides, supports `CLAWKER_*` env vars |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
 | `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
 | `project_runtime.go` | `Project` runtime methods — project context + worktree directory management |
@@ -98,13 +98,56 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ## Settings (`settings.go`, `settings_loader.go`)
 
-`Settings{DefaultImage, Logging LoggingConfig}`. `LoggingConfig{FileEnabled *bool, MaxSizeMB, MaxAgeDays, MaxBackups}`.
+`Settings{Logging LoggingConfig, Monitoring MonitoringConfig, DefaultImage string}`. All fields use `mapstructure` tags for Viper compatibility.
 
-**LoggingConfig methods**: `IsFileEnabled() bool` (default: true), `GetMaxSizeMB() int` (default: 50), `GetMaxAgeDays() int` (default: 7), `GetMaxBackups() int` (default: 3).
+### LoggingConfig
+
+`LoggingConfig{FileEnabled *bool, MaxSizeMB int, MaxAgeDays int, MaxBackups int, Compress *bool, Otel OtelConfig}`.
+
+**Methods**: `IsFileEnabled() bool` (default: true), `IsCompressEnabled() bool` (default: true), `GetMaxSizeMB() int` (default: 50), `GetMaxAgeDays() int` (default: 7), `GetMaxBackups() int` (default: 3).
+
+- `Compress` controls gzip compression of rotated log files. Active `clawker.log` stays plain text; only rotated backups are gzipped.
+- `Otel` configures the OTEL bridge for streaming logs to the monitoring stack. The OTLP endpoint is NOT configured here — it comes from `MonitoringConfig.OtelCollectorEndpoint()`.
+
+### OtelConfig
+
+`OtelConfig{Enabled *bool, TimeoutSeconds int, MaxQueueSize int, ExportIntervalSeconds int}`.
+
+**Getters** (nil-safe, return defaults for zero values): `IsEnabled() bool` (default: true), `GetTimeoutSeconds() int` (default: 5), `GetMaxQueueSize() int` (default: 2048), `GetExportIntervalSeconds() int` (default: 5).
+
+### MonitoringConfig
+
+`MonitoringConfig{OtelCollectorPort int, OtelCollectorHost string, OtelCollectorInternal string, LokiPort int, PrometheusPort int, JaegerPort int, GrafanaPort int, PrometheusMetricsPort int}`.
+
+Configures monitoring stack ports and OTEL endpoints. Values are shared by the logger (host-side), monitor templates, and Dockerfile templates (container-side).
+
+**Defaults**: OtelCollectorPort=4318, OtelCollectorHost="localhost", OtelCollectorInternal="otel-collector", LokiPort=3100, PrometheusPort=9090, JaegerPort=16686, GrafanaPort=3000, PrometheusMetricsPort=8889.
+
+**Derived URL helpers** (nil-safe, fallback to defaults for zero values):
+- `OtelCollectorEndpoint() string` — host-side OTLP HTTP endpoint (e.g. `"localhost:4318"`)
+- `OtelCollectorInternalURL() string` — docker-network-side OTLP HTTP URL (e.g. `"http://otel-collector:4318"`)
+- `LokiInternalURL() string` — Loki OTLP push URL on docker network (e.g. `"http://loki:3100/otlp"`)
+- `GrafanaURL() string` — Grafana dashboard URL (e.g. `"http://localhost:3000"`)
+- `JaegerURL() string` — Jaeger UI URL (e.g. `"http://localhost:16686"`)
+- `PrometheusURL() string` — Prometheus UI URL (e.g. `"http://localhost:9090"`)
+
+### DefaultSettings()
+
+Returns a fully populated `*Settings` with all nested defaults (was previously empty). Used by `FileSettingsLoader` to register Viper defaults.
+
+### SettingsLoader Interface & Viper Migration
 
 **Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`. Matches the `Registry`/`InMemoryRegistry` pattern.
 
-**Implementation**: `FileSettingsLoader` (file-based, two-layer hierarchy). `NewSettingsLoader(opts...)` returns `(SettingsLoader, error)`. `NewSettingsLoaderForTest(dir)` returns `*FileSettingsLoader`. `SettingsLoaderOption func(*FileSettingsLoader)`. Option: `WithProjectSettingsRoot(path)`.
+**Implementation**: `FileSettingsLoader` (Viper-based, three-layer hierarchy). `NewSettingsLoader(opts...)` returns `(SettingsLoader, error)`. `NewSettingsLoaderForTest(dir)` returns `*FileSettingsLoader`. `SettingsLoaderOption func(*FileSettingsLoader)`. Option: `WithProjectSettingsRoot(path)`.
+
+**Loading order** (lowest→highest precedence): `DefaultSettings()` → `$CLAWKER_HOME/settings.yaml` → `<project-root>/.clawker.settings.yaml` → `CLAWKER_*` env vars.
+
+**ENV override**: Uses `CLAWKER_` prefix with `_` as nested key separator (via `viper.SetEnvKeyReplacer`). Same pattern as `Loader` for `clawker.yaml`. Examples:
+- `CLAWKER_MONITORING_GRAFANA_PORT=4000` → `monitoring.grafana_port`
+- `CLAWKER_LOGGING_COMPRESS=false` → `logging.compress`
+- `CLAWKER_LOGGING_OTEL_ENABLED=false` → `logging.otel.enabled`
+- `CLAWKER_DEFAULT_IMAGE=node:22` → `default_image`
 
 **Config gateway**: `Config.SettingsLoader()` returns `SettingsLoader` (interface). `Config.SetSettingsLoader(sl SettingsLoader)` injects custom loader.
 

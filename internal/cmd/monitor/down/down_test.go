@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewCmdDown(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *DownOptions
@@ -36,7 +36,7 @@ func TestNewCmdDown(t *testing.T) {
 }
 
 func TestNewCmdDown_VolumesFlag(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *DownOptions

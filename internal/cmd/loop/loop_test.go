@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewCmdLoop(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -30,7 +30,7 @@ func TestNewCmdLoop(t *testing.T) {
 }
 
 func TestNewCmdLoop_Subcommands(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),

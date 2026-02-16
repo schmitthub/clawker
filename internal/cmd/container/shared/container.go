@@ -28,7 +28,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1452,14 +1452,15 @@ type CreateContainerEvent struct {
 
 // CreateContainerConfig holds all inputs for CreateContainer.
 type CreateContainerConfig struct {
-	Client     *docker.Client
-	Config     *config.Project
-	Options    *ContainerOptions
-	Flags      *pflag.FlagSet
-	Version    string
-	GitManager func() (*git.GitManager, error)
-	HostProxy  func() hostproxy.HostProxyService
-	Is256Color bool
+	Client      *docker.Client
+	Config      *config.Project
+	Options     *ContainerOptions
+	Flags       *pflag.FlagSet
+	Version     string
+	GitManager  func() (*git.GitManager, error)
+	HostProxy   func() hostproxy.HostProxyService
+	Logger      iostreams.Logger
+	Is256Color  bool
 	IsTrueColor bool
 }
 
@@ -1484,6 +1485,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	projectCfg := cfg.Config
 	containerOpts := cfg.Options
 	client := cfg.Client
+	log := cfg.Logger
 
 	// --- Step 1: Prepare workspace ---
 	sendInfo(ctx, events, "workspace", "Preparing workspace")
@@ -1497,7 +1499,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, projectCfg, agentName, cfg.GitManager)
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, projectCfg, agentName, cfg.GitManager, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1519,7 +1521,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "config"); vnErr != nil {
-			logger.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
+			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
 			createdVolumes = append(createdVolumes, vn)
@@ -1527,7 +1529,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
 		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "history"); vnErr != nil {
-			logger.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
+			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
 			createdVolumes = append(createdVolumes, vn)
@@ -1544,11 +1546,11 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		cleanupCtx := context.Background()
 		for _, vol := range createdVolumes {
 			if _, rmErr := client.VolumeRemove(cleanupCtx, vol, true); rmErr != nil {
-				logger.Warn().Str("volume", vol).Err(rmErr).
+				log.Warn().Str("volume", vol).Err(rmErr).
 					Msg("failed to clean up volume after init failure")
 				sendWarning(ctx, events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, rmErr))
 			} else {
-				logger.Debug().Str("volume", vol).Msg("cleaned up volume after init failure")
+				log.Debug().Str("volume", vol).Msg("cleaned up volume after init failure")
 			}
 		}
 	}()
@@ -1576,13 +1578,13 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// --- Step 3: Setup environment ---
 	sendInfo(ctx, events, "environment", "Setting up environment")
 
-	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, cfg.HostProxy)
+	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, cfg.HostProxy, log)
 
 	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd)
+	runtimeEnv, envWarnings, err := buildRuntimeEnv(ctx, cfg, projectCfg, containerOpts, agentName, wd, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1640,7 +1642,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		}); err != nil {
 			cleanupCtx := context.Background()
 			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
+				log.Warn().Str("containerID", resp.ID).Err(rmErr).
 					Msg("failed to clean up container after injection failure")
 			}
 			return nil, fmt.Errorf("inject onboarding: %w", err)
@@ -1656,7 +1658,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		}); err != nil {
 			cleanupCtx := context.Background()
 			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-				logger.Warn().Str("containerID", resp.ID).Err(rmErr).
+				log.Warn().Str("containerID", resp.ID).Err(rmErr).
 					Msg("failed to clean up container after injection failure")
 			}
 			return nil, fmt.Errorf("inject post-init script: %w", err)
@@ -1705,7 +1707,7 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // --- Internal helpers (absorbed from init.go) ---
 
 // resolveWorkDir determines the working directory for the container.
-func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *config.Project, agentName string, gitMgr func() (*git.GitManager, error)) (wd string, projectRootDir string, err error) {
+func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *config.Project, agentName string, gitMgr func() (*git.GitManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
@@ -1721,7 +1723,7 @@ func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *con
 		if err != nil {
 			return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 		}
-		logger.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
+		log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
 		return wd, cfg.RootDir(), nil
 	}
 
@@ -1736,9 +1738,9 @@ func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *con
 }
 
 // setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
-func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerOptions, hostProxyFn func() hostproxy.HostProxyService) bool {
+func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerOptions, hostProxyFn func() hostproxy.HostProxyService, log iostreams.Logger) bool {
 	if !cfg.Security.HostProxyEnabled() {
-		logger.Debug().Msg("host proxy disabled by config")
+		log.Debug().Msg("host proxy disabled by config")
 		return false
 	}
 
@@ -1754,7 +1756,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 	sendInfo(ctx, events, "environment", "Configuring host proxy")
 
 	if err := hp.EnsureRunning(); err != nil {
-		logger.Warn().Err(err).Msg("failed to start host proxy server")
+		log.Warn().Err(err).Msg("failed to start host proxy server")
 		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
 		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in clawker.yaml")
 		return false
@@ -1762,14 +1764,14 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 
 	envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
 	containerOpts.Env = append(containerOpts.Env, envVar)
-	logger.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
+	log.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
 
 	return true
 }
 
 // buildRuntimeEnv constructs container runtime environment variables.
 // Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string) ([]string, []string, error) {
+func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg *config.Project, containerOpts *ContainerOptions, agentName, wd string, log iostreams.Logger) ([]string, []string, error) {
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
 		workspaceMode = projectCfg.Workspace.DefaultMode
@@ -1781,7 +1783,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 	}
 
 	monitoringActive := cfg.Client.IsMonitoringActive(ctx)
-	logger.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
+	log.Debug().Bool("monitoring_active", monitoringActive).Msg("telemetry state")
 
 	envOpts := docker.RuntimeEnvOpts{
 		Version:          cfg.Version,

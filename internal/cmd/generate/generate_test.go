@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewCmdGenerate(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *GenerateOptions
@@ -50,7 +50,7 @@ func TestNewCmdGenerate(t *testing.T) {
 }
 
 func TestNewCmdGenerate_NoArgs(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *GenerateOptions
@@ -75,7 +75,7 @@ func TestNewCmdGenerate_NoArgs(t *testing.T) {
 }
 
 func TestNewCmdGenerate_Flags(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *GenerateOptions
