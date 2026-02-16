@@ -1,0 +1,9 @@
+# Test fixture data — not real secrets
+80bf434888751b4c03238f16417e370d20e21f49:internal/hostproxy/git_credential_test.go:generic-api-key:266
+80bf434888751b4c03238f16417e370d20e21f49:internal/hostproxy/git_credential_test.go:generic-api-key:270
+18b145fd8360479629093830e5db581ec90f6689:pkg/whail/engine_test.go:generic-api-key:20
+
+# Gitleaks report file — contains redacted findings, not real secrets
+gitleaks-report.json:generic-api-key:10
+gitleaks-report.json:generic-api-key:31
+gitleaks-report.json:generic-api-key:52

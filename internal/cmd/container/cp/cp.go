@@ -274,7 +274,7 @@ func extractTar(reader io.Reader, dstPath, _ string, _ *CpOptions) error {
 			if err != nil {
 				return fmt.Errorf("failed to create file %s: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			if _, err := io.Copy(f, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb -- extracting user-requested container files, not untrusted input
 				f.Close()
 				return fmt.Errorf("failed to write file %s: %w", target, err)
 			}

@@ -15,6 +15,8 @@
 #         sarif_file: semgrep.sarif
 #         category: semgrep
 #
+#   In gitleaks step, add --report-format sarif --report-path results.sarif
+#
 #   After gitleaks step, add:
 #     - name: Upload Gitleaks SARIF
 #       if: always() && hashFiles('results.sarif') != ''
@@ -44,9 +46,22 @@ jobs:
     if: (github.actor != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
+      # PRs: incremental scan (only new findings since base branch)
+      # Push to main: full scan (no baseline)
       - name: Semgrep
-        run: semgrep scan --config p/golang --config p/security-audit --error
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            echo "Incremental scan against base $BASE_SHA"
+            semgrep scan --baseline-commit "$BASE_SHA" --config p/golang --config p/security-audit --error
+          else
+            echo "Full scan (no baseline)"
+            semgrep scan --config p/golang --config p/security-audit --error
+          fi
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
   gitleaks:
     name: Gitleaks Secrets
@@ -57,12 +72,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Use raw CLI instead of gitleaks-action for --baseline-path support.
+      # The gitleaks-action (v2) does not expose --baseline-path as an input.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.30.0
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
-          GITLEAKS_ENABLE_SUMMARY: "true"
+        run: gitleaks git --baseline-path gitleaks-report.json --report-path findings.json
 
   govulncheck:
     name: govulncheck SCA

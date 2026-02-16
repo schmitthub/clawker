@@ -3,7 +3,8 @@
         fawker \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean golden-update \
         licenses licenses-check \
-        docs docs-check
+        docs docs-check \
+        pre-commit pre-commit-install
 
 # Go Clawker variables
 BINARY_NAME := clawker
@@ -62,6 +63,10 @@ help:
 	@echo "Docs targets:"
 	@echo "  docs                Generate CLI reference docs"
 	@echo "  docs-check          Check CLI docs are up to date (CI)"
+	@echo ""
+	@echo "Pre-commit targets:"
+	@echo "  pre-commit-install  Install pre-commit hooks (run once after clone)"
+	@echo "  pre-commit          Run all pre-commit hooks against all files"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make clawker"
@@ -325,3 +330,14 @@ docs-check:
 	fi
 	@echo "CLI docs are up to date."
 
+# ============================================================================
+# Pre-commit Targets
+# ============================================================================
+
+# Install pre-commit hooks (run once after clone)
+pre-commit-install:
+	@bash scripts/install-hooks.sh
+
+# Run all pre-commit hooks against all files
+pre-commit:
+	@pre-commit run --all-files

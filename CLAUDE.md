@@ -143,6 +143,11 @@ go test ./test/cli/... -v -timeout 15m           # CLI workflow tests
 go test ./test/commands/... -v -timeout 10m      # Command integration tests
 go test ./test/internals/... -v -timeout 10m     # Internal integration tests
 go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
+
+# Pre-commit hooks (mirrors CI quality gates locally)
+bash scripts/install-hooks.sh          # Install pre-commit hooks (run once after clone)
+make pre-commit                        # Run all hooks against entire repo
+pre-commit run gitleaks --all-files    # Run a single hook
 ```
 
 ## Key Concepts
@@ -341,4 +346,4 @@ security:
 
 - `bash scripts/check-claude-freshness.sh` — Check if CLAUDE.md files are stale vs Go source
 - `/audit-memory` — Comprehensive documentation health audit (in Claude Code)
-- `bash scripts/install-hooks.sh` — Install advisory pre-commit freshness check
+- `bash scripts/install-hooks.sh` — Install pre-commit hooks (all CI quality gates)
