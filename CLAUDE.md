@@ -148,6 +148,11 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 bash scripts/install-hooks.sh          # Install pre-commit hooks (run once after clone)
 make pre-commit                        # Run all hooks against entire repo
 pre-commit run gitleaks --all-files    # Run a single hook
+
+# Semgrep version: 1.146.0
+# Pre-commit uses system semgrep with --baseline-commit HEAD (diff-only scanning).
+# CI uses semgrep/semgrep:1.146.0 Docker image.
+# When upgrading, update both .pre-commit-config.yaml comment AND security.yml image tag.
 ```
 
 ## Key Concepts

@@ -23,7 +23,8 @@ repos:
     hooks:
       - id: semgrep
         name: Semgrep SAST
-        entry: semgrep scan --config p/golang --config p/security-audit --error
+        # Expected version: 1.146.0 (must match CI image tag in security.yml)
+        entry: semgrep scan --baseline-commit HEAD --config p/golang --config p/security-audit --error
         language: system
         types: [go]
         pass_filenames: false

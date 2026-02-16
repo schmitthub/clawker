@@ -39,7 +39,10 @@ jobs:
     name: Semgrep SAST
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      # Pin version for reproducibility. Update periodically:
+      #   1. Check latest: https://hub.docker.com/r/semgrep/semgrep/tags
+      #   2. Update tag here AND expected version in .pre-commit-config.yaml
+      image: semgrep/semgrep:1.146.0
     timeout-minutes: 10
     # Dependabot PRs have limited token permissions and only change
     # go.mod/go.sum — SAST scanning is not useful on dependency changes
