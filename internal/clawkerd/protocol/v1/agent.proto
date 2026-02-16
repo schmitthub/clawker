@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package clawker.agent.v1;
+
+option go_package = "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1";
+
+// AgentReportingService — clawkerd calls these on the control plane.
+// Used for registration and event reporting.
+service AgentReportingService {
+  // Register authenticates and registers an agent with the control plane.
+  // clawkerd calls this on startup, providing its listen address for callbacks.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+}
+
+// AgentCommandService — the control plane calls these on clawkerd.
+// Each operation is its own RPC with own types (containerd shim v2 pattern).
+service AgentCommandService {
+  // RunInit sends an init spec to the agent. The agent executes the steps
+  // and streams progress events back to the control plane.
+  rpc RunInit(RunInitRequest) returns (stream RunInitResponse);
+}
+
+// RegisterRequest is sent by clawkerd to the control plane on startup.
+message RegisterRequest {
+  // container_id is the Docker container ID (hostname inside container).
+  string container_id = 1;
+  // secret is the shared secret for authentication.
+  string secret = 2;
+  // version is the clawkerd binary version.
+  string version = 3;
+  // listen_port is the gRPC port clawkerd is listening on inside the container.
+  // The control plane resolves the container's IP via Docker inspect and connects
+  // back to <container_ip>:<listen_port> for AgentCommandService RPCs.
+  uint32 listen_port = 4;
+}
+
+// RegisterResponse indicates whether registration was accepted.
+message RegisterResponse {
+  // accepted is true if the agent was registered successfully.
+  bool accepted = 1;
+  // reason provides context when registration is rejected.
+  string reason = 2;
+}
+
+// RunInitRequest is the declarative init specification sent by the control plane.
+// clawkerd owns execution — it runs the steps and reports progress.
+message RunInitRequest {
+  // steps is the ordered list of init steps to execute.
+  repeated InitStep steps = 1;
+}
+
+// InitStep is a single init command to execute.
+message InitStep {
+  // name identifies this step (e.g. "firewall", "git-config").
+  string name = 1;
+  // command is the bash command to execute.
+  string command = 2;
+}
+
+// RunInitResponse is streamed from clawkerd back to the control plane
+// as each init step progresses.
+message RunInitResponse {
+  // step_name identifies which step this event is for.
+  string step_name = 1;
+  // status is the current status of this step.
+  InitEventStatus status = 2;
+  // output contains captured stdout from the command.
+  string output = 3;
+  // error contains stderr or error message if the step failed.
+  string error = 4;
+}
+
+// InitEventStatus tracks the lifecycle of an init step.
+enum InitEventStatus {
+  INIT_EVENT_STATUS_UNSPECIFIED = 0;
+  // STARTED indicates a step has begun execution.
+  INIT_EVENT_STATUS_STARTED = 1;
+  // COMPLETED indicates a step finished successfully.
+  INIT_EVENT_STATUS_COMPLETED = 2;
+  // FAILED indicates a step encountered an error.
+  INIT_EVENT_STATUS_FAILED = 3;
+  // READY is the final event — all init steps are complete.
+  INIT_EVENT_STATUS_READY = 4;
+}
