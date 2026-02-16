@@ -23,7 +23,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Constants
 
-- **Identity (`identity.go`):** `Domain` (`clawker.dev`), `LabelDomain` (`dev.clawker`) — reverse-DNS for Docker/OCI labels. Label key constants (`LabelPrefix`, `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`, `LabelBaseImage`, `LabelFlavor`, `LabelTest`, `LabelE2ETest`), `ManagedLabelValue` (`"true"`), `EngineLabelPrefix`, `EngineManagedLabel` — canonical source of truth, re-exported by `internal/docker/labels.go`. `ContainerUID` / `ContainerGID` (`1001`) — single source of truth for container user UID/GID, used by bundler, docker, containerfs, and test harness.
+- **Identity (`identity.go`):** `Domain` (`clawker.dev`), `LabelDomain` (`dev.clawker`). Label key constants (`LabelPrefix`, `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName`, `LabelBaseImage`, `LabelFlavor`, `LabelTest`, `LabelE2ETest`), `EngineLabelPrefix`, `EngineManagedLabel` — re-exported by `internal/docker/labels.go`. `ContainerUID`/`ContainerGID` (`1001`) — container user UID/GID.
 - **Filenames:** `ConfigFileName` (`clawker.yaml`), `IgnoreFileName` (`.clawkerignore`), `SettingsFileName` (`settings.yaml`), `ProjectSettingsFileName` (`.clawker.settings.yaml`), `RegistryFileName` (`projects.yaml`)
 - **Home:** `ClawkerHomeEnv` (`CLAWKER_HOME`), `DefaultClawkerDir` (`.local/clawker`), `ClawkerNetwork` (`clawker-net`)
 - **Subdirs:** `MonitorSubdir`, `BuildSubdir`, `DockerfilesSubdir`, `LogsSubdir`, `ShareSubdir`, `BridgesSubdir`
@@ -31,11 +31,11 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Path Helpers (`home.go`)
 
-`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`), `MonitorDir()`, `BuildDir()`, `DockerfilesDir()`, `LogsDir()`, `HostProxyPIDFile()`, `HostProxyLogFile()`, `BridgesDir()`, `BridgePIDFile(containerID)`, `ShareDir()` — all return `(string, error)`. `EnsureDir(path) error`.
+`ClawkerHome()` (`~/.local/clawker` or `$CLAWKER_HOME`) + subdir helpers (`MonitorDir`, `BuildDir`, `DockerfilesDir`, `LogsDir`, `ShareDir`, `BridgesDir`, `HostProxyPIDFile`, `HostProxyLogFile`, `BridgePIDFile`) — all `(string, error)`. `EnsureDir(path) error`.
 
 ## Defaults
 
-`DefaultProject()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile`
+`DefaultProject()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`
 
 ## Config Facade (`config.go`)
 
@@ -53,22 +53,13 @@ Load order: hardcoded defaults → user clawker.yaml → project clawker.yaml �
 
 ## Post-Merge Reconciliation (`merge.go`)
 
-After viper loads and unmarshals configs, `postMerge()` re-reads both raw YAML files and reconciles viper's lossy merge behavior:
+After viper loads/unmarshals, `postMerge()` re-reads raw YAML to fix viper's lossy merge:
 
-**Slice unions** (deduplicated, sorted — accumulate across user + project):
-- `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
-
-**Map merges** (project wins conflicts, case preserved):
-- `agent.env`, `build.build_args`
-
-**Env var map overrides** (e.g. `CLAWKER_AGENT_ENV_FOO=val` → `agent.env["FOO"] = "val"`):
-- Scans `CLAWKER_AGENT_ENV_*` and `CLAWKER_BUILD_BUILD_ARGS_*` env vars
-
-**Env var list appends** (e.g. `CLAWKER_SECURITY_FIREWALL_ADD_DOMAINS=a,b`):
-- Splits by comma, unions with existing list for `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
-
-**Fields that KEEP viper's replace behavior** (project-specific, not accumulated):
-- `build.packages`, `build.instructions.*`, `build.inject.*`, `security.firewall.override_domains`, `security.firewall.remove_domains`, `security.cap_add`, all scalar fields
+- **Slice unions** (dedup, sorted, accumulate user+project): `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
+- **Map merges** (project wins): `agent.env`, `build.build_args`
+- **Env var map overrides**: `CLAWKER_AGENT_ENV_FOO=val` → `agent.env["FOO"]`; also `CLAWKER_BUILD_BUILD_ARGS_*`
+- **Env var list appends**: `CLAWKER_SECURITY_FIREWALL_ADD_DOMAINS=a,b` → unions with existing
+- **Replace behavior** (not accumulated): `build.packages`, `build.instructions.*`, `build.inject.*`, `security.firewall.override_domains`, `security.firewall.remove_domains`, `security.cap_add`, all scalars
 
 ## Validation (`validator.go`)
 
@@ -97,16 +88,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ## Agent Environment Resolution (`agentenv.go`)
 
-`ResolveAgentEnv(agent AgentConfig, projectDir string) (map[string]string, []string, error)` — Merges `env_file`, `from_env`, and `env` into a single map. Returns env map, warnings, error. Precedence (lowest→highest): `env_file` < `from_env` < `env`.
-
-- **env_file**: Env files (`KEY=VALUE` lines, `#` comments, blank lines skipped). Bare `KEY` lines (no `=`) set the key to an empty string (note: Docker's `--env-file` looks up bare KEYs from host env instead). Paths support `~`, `$VAR`/`${VAR}` expansion (unset vars are errors); relative paths resolved against `projectDir`.
-- **from_env**: Host environment variable names. Unset vars skipped with warning (returned in warnings slice + debug log). Set-but-empty vars (`""`) are included.
-- **env**: Static key-value pairs (highest precedence, always win).
-- Returns `nil, warnings, nil` when all sources produce zero entries.
-
-**Internal helpers**: `readEnvFile(path)` (line-number tracked), `resolvePath(path, projectDir) (string, error)`, `expandPath(path) (string, error)` — path expansion for `~`, `$VAR`, relative→absolute. All return errors on failure (no silent swallowing).
-
-**Injectable**: `var userHomeDir = os.UserHomeDir` — override in tests to avoid writing to real home dir.
+`ResolveAgentEnv(agent AgentConfig, projectDir string) (map[string]string, []string, error)` — Merges `env_file`, `from_env`, and `env` into a single map. Precedence (lowest→highest): `env_file` < `from_env` < `env`. Env file paths support `~`, `$VAR` expansion; relative resolved against `projectDir`. Unset `from_env` vars produce warnings. Injectable `var userHomeDir = os.UserHomeDir` for testing.
 
 **Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
 - `SecurityConfig`: `HostProxyEnabled() bool` (default: true), `FirewallEnabled() bool` (convenience delegate)
@@ -137,59 +119,29 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ### MonitoringConfig
 
-`MonitoringConfig{OtelCollectorPort int, OtelCollectorHost string, OtelCollectorInternal string, OtelGRPCPort int, LokiPort int, PrometheusPort int, JaegerPort int, GrafanaPort int, PrometheusMetricsPort int, Telemetry TelemetryConfig}`.
+`MonitoringConfig{OtelCollectorPort, OtelCollectorHost, OtelCollectorInternal, OtelGRPCPort, LokiPort, PrometheusPort, JaegerPort, GrafanaPort, PrometheusMetricsPort, Telemetry TelemetryConfig}`. Single source of truth for monitoring stack — consumed by logger, monitor templates, Dockerfile templates, and monitor commands.
 
-Configures monitoring stack ports, OTEL endpoints, and Claude Code telemetry env vars. Single source of truth — consumed by the logger (host-side), monitor templates, Dockerfile templates (container-side), and monitor commands.
+**Defaults**: OtelCollectorPort=4318, Host="localhost", Internal="otel-collector", GRPC=4317, Loki=3100, Prometheus=9090, Jaeger=16686, Grafana=3000, Metrics=8889.
 
-**Defaults**: OtelCollectorPort=4318, OtelCollectorHost="localhost", OtelCollectorInternal="otel-collector", OtelGRPCPort=4317, LokiPort=3100, PrometheusPort=9090, JaegerPort=16686, GrafanaPort=3000, PrometheusMetricsPort=8889.
-
-**Port getter**: `GetOtelGRPCPort() int` — returns OtelGRPCPort or 4317 if zero.
-
-**Endpoint constructors** (combine infrastructure + telemetry parts):
-- `GetMetricsEndpoint() string` — OTLP metrics endpoint for containers (e.g. `"http://otel-collector:4318/v1/metrics"`)
-- `GetLogsEndpoint() string` — OTLP logs endpoint for containers (e.g. `"http://otel-collector:4318/v1/logs"`)
-
-**Derived URL helpers** (nil-safe, fallback to defaults for zero values):
-- `OtelCollectorEndpoint() string` — host-side OTLP HTTP endpoint (e.g. `"localhost:4318"`)
-- `OtelCollectorInternalURL() string` — docker-network-side OTLP HTTP URL (e.g. `"http://otel-collector:4318"`)
-- `LokiInternalURL() string` — Loki OTLP push URL on docker network (e.g. `"http://loki:3100/otlp"`)
-- `GrafanaURL() string` — Grafana dashboard URL (e.g. `"http://localhost:3000"`)
-- `JaegerURL() string` — Jaeger UI URL (e.g. `"http://localhost:16686"`)
-- `PrometheusURL() string` — Prometheus UI URL (e.g. `"http://localhost:9090"`)
+**URL constructors** (nil-safe, defaults for zero): `OtelCollectorEndpoint()` (host-side), `OtelCollectorInternalURL()` (docker-network), `LokiInternalURL()`, `GrafanaURL()`, `JaegerURL()`, `PrometheusURL()`, `GetMetricsEndpoint()`, `GetLogsEndpoint()`, `GetOtelGRPCPort()`.
 
 ### TelemetryConfig
 
-`TelemetryConfig{MetricsPath string, LogsPath string, MetricExportIntervalMs int, LogsExportIntervalMs int, LogToolDetails *bool, LogUserPrompts *bool, IncludeAccountUUID *bool, IncludeSessionID *bool}`.
-
-Configures Claude Code OTEL env vars baked into container images via Dockerfile template. Nested under `MonitoringConfig.Telemetry`.
-
-**Defaults**: MetricsPath="/v1/metrics", LogsPath="/v1/logs", MetricExportIntervalMs=10000, LogsExportIntervalMs=5000, LogToolDetails=true, LogUserPrompts=true, IncludeAccountUUID=true, IncludeSessionID=true.
-
-**Getters** (nil-safe, return defaults for zero values):
-- `GetMetricsPath() string`, `GetLogsPath() string`
-- `GetMetricExportIntervalMs() int`, `GetLogsExportIntervalMs() int`
-- `IsLogToolDetailsEnabled() bool`, `IsLogUserPromptsEnabled() bool`
-- `IsIncludeAccountUUIDEnabled() bool`, `IsIncludeSessionIDEnabled() bool`
+Nested under `MonitoringConfig.Telemetry`. Configures Claude Code OTEL env vars for container images. Fields: `MetricsPath`, `LogsPath`, `MetricExportIntervalMs`, `LogsExportIntervalMs`, `LogToolDetails`, `LogUserPrompts`, `IncludeAccountUUID`, `IncludeSessionID` (all with nil-safe getters and sensible defaults).
 
 ### DefaultSettings()
 
-Returns a fully populated `*Settings` with all nested defaults (was previously empty). Used by `FileSettingsLoader` to register Viper defaults.
+Returns fully populated `*Settings` with all nested defaults. Used by `FileSettingsLoader` to register Viper defaults.
 
-### SettingsLoader Interface & Viper Migration
+### SettingsLoader Interface
 
-**Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`. Matches the `Registry`/`InMemoryRegistry` pattern.
+**Interface**: `SettingsLoader` — `Path()`, `ProjectSettingsPath()`, `Exists()`, `Load()`, `Save()`, `EnsureExists()`.
 
-**Implementation**: `FileSettingsLoader` (Viper-based, three-layer hierarchy). `NewSettingsLoader(opts...)` returns `(SettingsLoader, error)`. `NewSettingsLoaderForTest(dir)` returns `*FileSettingsLoader`. `SettingsLoaderOption func(*FileSettingsLoader)`. Option: `WithProjectSettingsRoot(path)`.
+**Implementation**: `FileSettingsLoader` (Viper-based). `NewSettingsLoader(opts...)`, `NewSettingsLoaderForTest(dir)`. Option: `WithProjectSettingsRoot(path)`.
 
-**Loading order** (lowest→highest precedence): `DefaultSettings()` → `$CLAWKER_HOME/settings.yaml` → `<project-root>/.clawker.settings.yaml` → `CLAWKER_*` env vars.
+**Loading order** (lowest→highest): `DefaultSettings()` → `settings.yaml` → `.clawker.settings.yaml` → `CLAWKER_*` env vars (e.g. `CLAWKER_LOGGING_COMPRESS=false`).
 
-**ENV override**: Uses `CLAWKER_` prefix with `_` as nested key separator (via `viper.SetEnvKeyReplacer`). Same pattern as `ProjectLoader` for `clawker.yaml`. Examples:
-- `CLAWKER_MONITORING_GRAFANA_PORT=4000` → `monitoring.grafana_port`
-- `CLAWKER_LOGGING_COMPRESS=false` → `logging.compress`
-- `CLAWKER_LOGGING_OTEL_ENABLED=false` → `logging.otel.enabled`
-- `CLAWKER_DEFAULT_IMAGE=node:22` → `default_image`
-
-**Config gateway**: `Config.SettingsLoader()` returns `SettingsLoader` (interface). `Config.SetSettingsLoader(sl SettingsLoader)` injects custom loader.
+**Config gateway**: `Config.SettingsLoader()`, `Config.SetSettingsLoader(sl)`.
 
 ## Registry (`registry.go`)
 
@@ -245,6 +197,4 @@ See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBui
 
 ## Notes
 
-- `Project.Project` has `yaml:"-"` — computed by loader, not persisted
-- `config.Config` is facade; `config.Project` is YAML schema
-- `FirewallConfig.Enable` defaults to `true`
+- `Project.Project` has `yaml:"-"` — computed by loader, not persisted. `config.Config` is facade; `config.Project` is YAML schema

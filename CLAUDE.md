@@ -66,18 +66,27 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
 │   ├── config/                # Config loading, validation, project registry + resolver
+│   │   └── configtest/        # InMemoryRegistry, InMemorySettingsLoader, ProjectBuilder
+│   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
+│   │   └── dockertest/        # FakeClient, test helpers
+│   ├── docs/                  # CLI doc generation (man, markdown, rst, yaml)
 │   ├── git/                   # Git operations, worktree management (leaf — no internal imports, uses go-git)
+│   │   └── gittest/           # InMemoryGitManager for testing
 │   ├── hostproxy/             # Host proxy for container-to-host communication
-│   │   ├── hostproxytest/    # MockHostProxy for integration tests
-│   │   └── internals/        # Container-side hostproxy client scripts
+│   │   ├── hostproxytest/     # MockHostProxy for integration tests
+│   │   └── internals/         # Container-side hostproxy client scripts
 │   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
+│   │   └── iostreamstest/     # TestIOStreams constructor: New()
+│   ├── keyring/               # Keyring service for credential storage
 │   ├── logger/                # Zerolog setup (file + optional OTEL bridge)
 │   │   └── loggertest/        # Test doubles: TestLogger, New(), NewNop()
+│   ├── monitor/               # Monitoring stack templates (Grafana, Prometheus, Loki)
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
 │   ├── socketbridge/          # SSH/GPG agent forwarding via muxrpc over docker exec
+│   │   └── socketbridgetest/  # MockManager for testing
 │   ├── term/                  # Terminal capabilities + raw mode (leaf — sole x/term gateway)
 │   ├── text/                  # Pure text utilities (leaf — stdlib only)
 │   ├── tui/                   # Interactive TUI layer: BubbleTea models, viewports, panels (imports iostreams for styles)

@@ -74,7 +74,7 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
-| `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
+| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
 ### The Agent Obligation
 

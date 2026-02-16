@@ -31,7 +31,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
-| `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
+| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
 ## Test Categories
 
