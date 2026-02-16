@@ -138,8 +138,9 @@ Testable I/O abstraction following the GitHub CLI pattern.
 
 **Key types:**
 - `IOStreams` - Core I/O with TTY detection, color support, progress indicators
+- `Logger` - Interface (`Debug/Info/Warn/Error() *zerolog.Event`) decoupling commands from `internal/logger`; set on IOStreams by factory
 - `ColorScheme` - Color formatting that bridges to `tui/styles.go`
-- `TestIOStreams` - Test helper with in-memory buffers
+- `TestIOStreams` - Test helper with in-memory buffers (constructor: `iostreamstest.New()` in `iostreamstest/` subpackage)
 
 **Features:**
 - TTY detection (`IsInputTTY`, `IsOutputTTY`, `IsInteractive`, `CanPrompt`)
@@ -171,7 +172,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`) |
+| `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`). `SettingsLoader` interface with `FileSettingsLoader` (filesystem) and `configtest.InMemorySettingsLoader` (testing) |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -432,6 +433,20 @@ Domain packages in `internal/` form a directed acyclic graph with four tiers:
 ```
 
 **Lateral imports** between unrelated middle packages are the most common violation. If two middle packages need shared behavior, extract the shared part into a leaf package.
+
+### Test Subpackages
+
+Test doubles follow a `<package>/<package>test/` naming convention. Each provides fakes/mocks/builders for its parent package:
+
+| Subpackage | Provides |
+|------------|----------|
+| `config/configtest/` | `InMemoryRegistry`, `InMemorySettingsLoader`, `ProjectBuilder` |
+| `docker/dockertest/` | `FakeClient`, test helpers |
+| `git/gittest/` | `InMemoryGitManager` |
+| `hostproxy/hostproxytest/` | `MockManager` (implements `HostProxyService`) |
+| `iostreams/iostreamstest/` | `New()` → `*TestIOStreams` constructor |
+| `logger/loggertest/` | `TestLogger` (captures output), `New()`, `NewNop()` |
+| `socketbridge/socketbridgetest/` | `MockManager` |
 
 ### Where `cmdutil` Fits
 

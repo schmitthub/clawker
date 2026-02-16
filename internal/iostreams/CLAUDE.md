@@ -28,7 +28,7 @@ fmt.Fprintln(ios.ErrOut, "Processing...")   // stderr for status (humans)
 
 ### IOStreams
 
-Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`, `Logger Logger`. Constructors: `System()` (production), `NewTestIOStreams()` (testing, non-TTY, no colors). The `Logger` field is set by the factory during construction; commands access it via `ios.Logger.Debug()`, etc.
+Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`, `Logger Logger`. Constructors: `System()` (production), `iostreamstest.New()` (testing, non-TTY, no colors — in `internal/iostreams/iostreamstest/`). The `Logger` field is set by the factory during construction; commands access it via `ios.Logger.Debug()`, etc.
 
 ### Logger (interface, `logger.go`)
 
@@ -83,7 +83,7 @@ ios.StopSpinner()                                  // stop and clear line
 ios.RunWithSpinner(label, func() error) error      // auto start/stop lifecycle
 ```
 
-Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`, `SpinnerGlobe`, `SpinnerMoon`. Pure function: `SpinnerFrame(type, tick, label, cs)`. Internal goroutine at 120ms, cyan, stderr. Text fallback: `CLAWKER_SPINNER_DISABLED=1`. Thread-safe.
+Types: `SpinnerBraille` (default), `SpinnerDots`, `SpinnerLine`, `SpinnerPulse`, `SpinnerGlobe`, `SpinnerMoon`. Pure functions: `SpinnerFrame(type, tick, label, cs)` renders a single frame; `SpinnerFrames(type) []string` returns all frame strings for a spinner type. Internal goroutine at 120ms, cyan, stderr. Text fallback: `CLAWKER_SPINNER_DISABLED=1`. Thread-safe.
 
 ### Progress Bar
 

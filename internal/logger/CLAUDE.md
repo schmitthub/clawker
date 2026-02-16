@@ -149,12 +149,19 @@ Test infrastructure for logger consumers, following the project's DAG test utili
 package loggertest
 
 type TestLogger struct {
-    zerolog.Logger           // Embeds zerolog.Logger — satisfies iostreams.Logger directly
-    buf *bytes.Buffer        // Captured output buffer
+    logger zerolog.Logger    // Unexported field (NOT embedded); delegate methods below
+    buf    *bytes.Buffer     // Captured output buffer
 }
 
 func New() *TestLogger       // Creates a test logger that captures all output to a buffer
 func NewNop() *TestLogger    // Creates a test logger that discards all output (zerolog.Nop)
+
+// Delegate methods — satisfy iostreams.Logger interface
+func (tl *TestLogger) Debug() *zerolog.Event
+func (tl *TestLogger) Info()  *zerolog.Event
+func (tl *TestLogger) Warn()  *zerolog.Event
+func (tl *TestLogger) Error() *zerolog.Event
+
 func (tl *TestLogger) Output() string  // Returns captured log output as a string
 func (tl *TestLogger) Reset()          // Clears captured output
 ```
@@ -163,7 +170,7 @@ Usage in command tests:
 ```go
 tl := loggertest.New()
 tio := iostreamstest.New()
-tio.IOStreams.Logger = tl  // zerolog.Logger satisfies iostreams.Logger
+tio.IOStreams.Logger = tl  // *TestLogger satisfies iostreams.Logger via delegate methods
 // ... run command ...
 assert.Contains(t, tl.Output(), "expected log message")
 ```

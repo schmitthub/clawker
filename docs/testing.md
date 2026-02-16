@@ -84,7 +84,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
-| `internal/iostreams` | (built-in) | `NewTestIOStreams()` |
+| `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
 **Rule**: If a dependency node lacks test infrastructure, add it before writing tests that depend on it.
 

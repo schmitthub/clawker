@@ -11,14 +11,13 @@ Project registration in the user's project registry.
 ## RegisterProject (`register.go`)
 
 ```go
-func RegisterProject(ios *iostreams.IOStreams, registryLoader func() (*config.RegistryLoader, error), workDir string, projectName string) (string, error)
+func RegisterProject(ios *iostreams.IOStreams, registryLoader config.Registry, workDir string, projectName string) (string, error)
 ```
 
 Registers a project in `~/.local/clawker/projects.yaml`:
-1. Ensures settings file exists
-2. Loads registry via provided loader function
-3. Calls `rl.Register(projectName, workDir)`
-4. Returns the slug on success
+1. Calls `registryLoader.Register(projectName, workDir)` via the `config.Registry` interface
+2. Returns the slug on success
+3. On errors, prints warnings to stderr and returns the error
 
 Used by `project init` and `project register` commands.
 
