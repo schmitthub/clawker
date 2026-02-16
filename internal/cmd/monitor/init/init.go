@@ -96,6 +96,7 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate, true},
 		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate, false},
 		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate, false},
+		{monitor.GrafanaCPDashboardFileName, monitor.GrafanaCPDashboardTemplate, false},
 	}
 
 	// Write each file

@@ -114,6 +114,7 @@ func TestMonitoringConfig_DerivedURLs(t *testing.T) {
 		want string
 	}{
 		{"OtelCollectorEndpoint", cfg.OtelCollectorEndpoint(), "localhost:4318"},
+		{"OtelCollectorInternalEndpoint", cfg.OtelCollectorInternalEndpoint(), "otel-collector:4318"},
 		{"OtelCollectorInternalURL", cfg.OtelCollectorInternalURL(), "http://otel-collector:4318"},
 		{"LokiInternalURL", cfg.LokiInternalURL(), "http://loki:3100/otlp"},
 		{"GrafanaURL", cfg.GrafanaURL(), "http://localhost:3000"},
@@ -328,6 +329,49 @@ func TestTelemetryConfig_CustomValues(t *testing.T) {
 	if cfg.IsIncludeSessionIDEnabled() {
 		t.Error("explicit false IncludeSessionID should be false")
 	}
+}
+
+func TestMonitoringConfig_OtelCollectorInternalEndpoint(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg := MonitoringConfig{}
+		if got := cfg.OtelCollectorInternalEndpoint(); got != "otel-collector:4318" {
+			t.Errorf("default OtelCollectorInternalEndpoint = %q, want %q", got, "otel-collector:4318")
+		}
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		cfg := MonitoringConfig{
+			OtelCollectorInternal: "my-collector",
+			OtelCollectorPort:     5318,
+		}
+		if got := cfg.OtelCollectorInternalEndpoint(); got != "my-collector:5318" {
+			t.Errorf("custom OtelCollectorInternalEndpoint = %q, want %q", got, "my-collector:5318")
+		}
+	})
+
+	t.Run("mirrors OtelCollectorEndpoint pattern", func(t *testing.T) {
+		cfg := MonitoringConfig{
+			OtelCollectorPort:     4318,
+			OtelCollectorHost:     "localhost",
+			OtelCollectorInternal: "otel-collector",
+		}
+		// Host endpoint: host:port without scheme
+		hostEndpoint := cfg.OtelCollectorEndpoint()
+		// Internal endpoint: host:port without scheme (same pattern, different host)
+		internalEndpoint := cfg.OtelCollectorInternalEndpoint()
+		// Internal URL: http://host:port (full URL with scheme)
+		internalURL := cfg.OtelCollectorInternalURL()
+
+		if hostEndpoint != "localhost:4318" {
+			t.Errorf("OtelCollectorEndpoint = %q", hostEndpoint)
+		}
+		if internalEndpoint != "otel-collector:4318" {
+			t.Errorf("OtelCollectorInternalEndpoint = %q", internalEndpoint)
+		}
+		if internalURL != "http://otel-collector:4318" {
+			t.Errorf("OtelCollectorInternalURL = %q", internalURL)
+		}
+	})
 }
 
 func TestMonitoringConfig_GetOtelGRPCPort(t *testing.T) {

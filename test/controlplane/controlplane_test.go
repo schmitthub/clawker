@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -57,10 +58,18 @@ func TestRegisterAndRunInit(t *testing.T) {
 		},
 	}
 
+	// Use shorter OTEL export interval so clawkerd's batch flushes before container cleanup.
+	// Default is 5s, but the container only lives ~2s during tests.
+	settings := config.DefaultSettings()
+	settings.Logging.Otel.ExportIntervalSeconds = 1
+
 	cp := controlplane.NewServer(controlplane.Config{
 		Secret:       secret,
 		InitSpec:     initSpec,
 		DockerClient: dc,
+		Settings:     settings,
+		Project:      "test-project",
+		Agent:        "test-agent",
 	})
 
 	lis, err := net.Listen("tcp", "0.0.0.0:0")
@@ -153,5 +162,21 @@ func TestRegisterAndRunInit(t *testing.T) {
 	// --- 8. Verify ready file exists ---
 	assert.True(t, ctr.FileExists(ctx, dc, "/var/run/clawker/ready"), "ready file should exist")
 
-	t.Log("POC validation complete: Register + RunInit flow works end-to-end")
+	// --- 9. Verify clawkerd log file was created from CP-delivered config ---
+	assert.True(t, ctr.DirExists(ctx, dc, "/var/log/clawkerd"), "clawkerd log directory should exist")
+	assert.True(t, ctr.FileExists(ctx, dc, "/var/log/clawkerd/clawker.log"), "clawkerd log file should exist")
+
+	// Verify the log contains structured entries with project/agent context.
+	logContent, err := ctr.ReadFile(ctx, dc, "/var/log/clawkerd/clawker.log")
+	require.NoError(t, err, "read clawkerd log file")
+	assert.Contains(t, logContent, `"component":"clawkerd"`, "log should contain component field")
+	assert.Contains(t, logContent, `"project":"test-project"`, "log should contain project context")
+	assert.Contains(t, logContent, `"agent":"test-agent"`, "log should contain agent context")
+
+	// Brief pause to let clawkerd's OTEL batch processor flush logs to the collector.
+	// The batch fires every 1s (configured above); without this, container cleanup
+	// SIGKILL's the process before the batch exports.
+	time.Sleep(2 * time.Second)
+
+	t.Log("POC validation complete: Register + RunInit flow with CP-delivered logger config works end-to-end")
 }

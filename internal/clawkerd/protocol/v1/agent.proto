@@ -35,11 +35,58 @@ message RegisterRequest {
 }
 
 // RegisterResponse indicates whether registration was accepted.
+// On success, includes ClawkerdConfiguration for logger initialization.
 message RegisterResponse {
   // accepted is true if the agent was registered successfully.
   bool accepted = 1;
   // reason provides context when registration is rejected.
   string reason = 2;
+  // config is the operational configuration for clawkerd (identity, OTEL, file logging).
+  // Only populated when accepted is true.
+  ClawkerdConfiguration config = 3;
+}
+
+// ClawkerdConfiguration is the operational config delivered by the control plane
+// during registration. clawkerd uses this to initialize its logger with structured
+// logging, OTEL bridge, and project/agent context fields.
+// Named "Clawkerd" (not "Agent") because "agent" means Claude Code instance in our domain.
+message ClawkerdConfiguration {
+  // project is the project name for logger context fields.
+  string project = 1;
+  // agent is the agent name for logger context fields.
+  string agent = 2;
+  // otel configures the OTEL logging bridge (endpoint, timeouts, batching).
+  OtelLogConfig otel = 3;
+  // file_logging configures file-based log rotation.
+  FileLogConfig file_logging = 4;
+}
+
+// OtelLogConfig configures the OTEL zerolog bridge for streaming logs to the collector.
+message OtelLogConfig {
+  // endpoint is the OTLP HTTP endpoint (host:port, no scheme). e.g. "otel-collector:4318"
+  string endpoint = 1;
+  // insecure disables TLS (true for local collector).
+  bool insecure = 2;
+  // timeout_seconds is the export timeout (default: 5).
+  int32 timeout_seconds = 3;
+  // max_queue_size is the batch processor queue size (default: 2048).
+  int32 max_queue_size = 4;
+  // export_interval_seconds is the batch export interval (default: 5).
+  int32 export_interval_seconds = 5;
+}
+
+// FileLogConfig configures file-based logging with rotation.
+message FileLogConfig {
+  // enabled enables file logging.
+  bool enabled = 1;
+  // max_size_mb is the max log file size in MB before rotation (default: 50).
+  int32 max_size_mb = 2;
+  // max_age_days is the max days to retain old logs (default: 7).
+  int32 max_age_days = 3;
+  // max_backups is the max number of old log files to keep (default: 3).
+  int32 max_backups = 4;
+  // compress enables gzip compression of rotated log files (default: true).
+  bool compress = 5;
 }
 
 // RunInitRequest is the declarative init specification sent by the control plane.

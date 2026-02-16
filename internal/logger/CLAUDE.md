@@ -60,11 +60,17 @@ type OtelLogConfig struct {
 
 ```go
 type Options struct {
-    LogsDir    string         // directory for log files
-    FileConfig *LoggingConfig // file rotation settings
-    OtelConfig *OtelLogConfig // nil = file-only, no OTEL bridge
+    LogsDir     string         // directory for log files
+    ServiceName string         // OTEL service.name resource attribute (e.g. "clawker")
+    ScopeName   string         // OTEL scope name — becomes scope_name label in Loki (default: "clawker")
+    FileConfig  *LoggingConfig // file rotation settings
+    OtelConfig  *OtelLogConfig // nil = file-only, no OTEL bridge
 }
 ```
+
+`ServiceName` sets the `service.name` OTEL resource attribute on the `LoggerProvider`. This determines how logs appear in Loki's `service_name` stream label. Without it, logs default to `unknown_service:go`. Uses `resource.NewSchemaless()` during merge with `resource.Default()` to avoid SchemaURL conflicts between semconv versions.
+
+`ScopeName` sets the OTEL instrumentation scope name (first arg to `otelzerolog.NewHook`). In Loki, this appears as the `scope_name` structured metadata label. Used to differentiate log sources: host-side uses `"clawker"` (default), container-side clawkerd uses `"clawkerd"`. The CP dashboard filters on `scope_name` to separate panels.
 
 ## Initialization
 
@@ -133,6 +139,14 @@ func ClearContext()                     // Remove project/agent context
 func GetLogFilePath() string  // Returns log file path (empty if file logging disabled)
 ```
 
+## OTEL Limitation: Zerolog Fields Not Propagated
+
+**Critical**: zerolog's `Hook` interface (`Run(e *Event, level Level, msg string)`) provides a **write-only** `Event`. The otelzerolog bridge can capture level (→ severity), message (→ body), and scope name, but **cannot read** fields added via `Str()`, `Int()`, etc. — those only appear in the file writer JSON.
+
+Consequence: zerolog fields like `Str("component", "controlplane")` are NOT available as OTEL log record attributes in Loki. Only `service_name`, `scope_name`, `severity_text`, and `detected_level` are queryable labels. Use `scope_name` for component-level filtering (set via `Options.ScopeName`), and `|=` line filters for message-based filtering.
+
+This is a fundamental limitation of zerolog's design (write-only event buffer for zero-allocation performance). Other bridges (otelzap, otellogrus) don't have this issue because zap's `Core` and logrus's `Entry.Data` expose fields.
+
 ## OTEL Resilience
 
 The OTEL SDK handles resilience natively — no custom health checking is needed:
@@ -197,8 +211,10 @@ assert.Contains(t, tl.Output(), "expected log message")
 ## Dependencies
 
 - `github.com/rs/zerolog` — structured logging
-- `gopkg.in/natefinished/lumberjack.v2` — log rotation
+- `gopkg.in/natefinch/lumberjack.v2` — log rotation
 - `go.opentelemetry.io/contrib/bridges/otelzerolog` — zerolog-to-OTEL hook bridge
 - `go.opentelemetry.io/otel` — OTEL API (global error handler via `otel.SetErrorHandler`)
 - `go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp` — OTLP HTTP log exporter
 - `go.opentelemetry.io/otel/sdk/log` — OTEL log SDK (LoggerProvider, BatchProcessor)
+- `go.opentelemetry.io/otel/sdk/resource` — OTEL resource definition (service.name)
+- `go.opentelemetry.io/otel/semconv/v1.26.0` — semantic conventions (ServiceNameKey, SchemaURL)

@@ -229,6 +229,22 @@ func (c *MonitoringConfig) OtelCollectorEndpoint() string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
+// OtelCollectorInternalEndpoint returns the docker-network-side OTLP HTTP endpoint
+// as host:port without scheme (e.g. "otel-collector:4318").
+// Use this for otlploghttp.WithEndpoint() which expects host:port, not a full URL.
+// Compare: OtelCollectorInternalURL() returns "http://otel-collector:4318" (full URL with scheme).
+func (c *MonitoringConfig) OtelCollectorInternalEndpoint() string {
+	internal := c.OtelCollectorInternal
+	if internal == "" {
+		internal = "otel-collector"
+	}
+	port := c.OtelCollectorPort
+	if port == 0 {
+		port = 4318
+	}
+	return fmt.Sprintf("%s:%d", internal, port)
+}
+
 // OtelCollectorInternalURL returns the docker-network-side OTLP HTTP URL.
 func (c *MonitoringConfig) OtelCollectorInternalURL() string {
 	internal := c.OtelCollectorInternal

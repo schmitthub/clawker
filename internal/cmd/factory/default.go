@@ -71,7 +71,8 @@ func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 	}
 
 	if err := logger.NewLogger(&logger.Options{
-		LogsDir: logsDir,
+		LogsDir:     logsDir,
+		ServiceName: "clawker",
 		FileConfig: &logger.LoggingConfig{
 			FileEnabled: settings.Logging.FileEnabled,
 			MaxSizeMB:   settings.Logging.MaxSizeMB,
