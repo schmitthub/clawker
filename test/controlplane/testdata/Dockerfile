@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY clawkerd/ ./clawkerd/
 COPY internal/clawkerd/ ./internal/clawkerd/
+COPY internal/logger/ ./internal/logger/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/clawkerd ./clawkerd
 
 # Final stage

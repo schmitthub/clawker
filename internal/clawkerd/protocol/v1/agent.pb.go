@@ -157,12 +157,16 @@ func (x *RegisterRequest) GetListenPort() uint32 {
 }
 
 // RegisterResponse indicates whether registration was accepted.
+// On success, includes ClawkerdConfiguration for logger initialization.
 type RegisterResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// accepted is true if the agent was registered successfully.
 	Accepted bool `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
 	// reason provides context when registration is rejected.
-	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	// config is the operational configuration for clawkerd (identity, OTEL, file logging).
+	// Only populated when accepted is true.
+	Config        *ClawkerdConfiguration `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -211,6 +215,253 @@ func (x *RegisterResponse) GetReason() string {
 	return ""
 }
 
+func (x *RegisterResponse) GetConfig() *ClawkerdConfiguration {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+// ClawkerdConfiguration is the operational config delivered by the control plane
+// during registration. clawkerd uses this to initialize its logger with structured
+// logging, OTEL bridge, and project/agent context fields.
+// Named "Clawkerd" (not "Agent") because "agent" means Claude Code instance in our domain.
+type ClawkerdConfiguration struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// project is the project name for logger context fields.
+	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	// agent is the agent name for logger context fields.
+	Agent string `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	// otel configures the OTEL logging bridge (endpoint, timeouts, batching).
+	Otel *OtelLogConfig `protobuf:"bytes,3,opt,name=otel,proto3" json:"otel,omitempty"`
+	// file_logging configures file-based log rotation.
+	FileLogging   *FileLogConfig `protobuf:"bytes,4,opt,name=file_logging,json=fileLogging,proto3" json:"file_logging,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClawkerdConfiguration) Reset() {
+	*x = ClawkerdConfiguration{}
+	mi := &file_v1_agent_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClawkerdConfiguration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClawkerdConfiguration) ProtoMessage() {}
+
+func (x *ClawkerdConfiguration) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_agent_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClawkerdConfiguration.ProtoReflect.Descriptor instead.
+func (*ClawkerdConfiguration) Descriptor() ([]byte, []int) {
+	return file_v1_agent_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ClawkerdConfiguration) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ClawkerdConfiguration) GetAgent() string {
+	if x != nil {
+		return x.Agent
+	}
+	return ""
+}
+
+func (x *ClawkerdConfiguration) GetOtel() *OtelLogConfig {
+	if x != nil {
+		return x.Otel
+	}
+	return nil
+}
+
+func (x *ClawkerdConfiguration) GetFileLogging() *FileLogConfig {
+	if x != nil {
+		return x.FileLogging
+	}
+	return nil
+}
+
+// OtelLogConfig configures the OTEL zerolog bridge for streaming logs to the collector.
+type OtelLogConfig struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// endpoint is the OTLP HTTP endpoint (host:port, no scheme). e.g. "otel-collector:4318"
+	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	// insecure disables TLS (true for local collector).
+	Insecure bool `protobuf:"varint,2,opt,name=insecure,proto3" json:"insecure,omitempty"`
+	// timeout_seconds is the export timeout (default: 5).
+	TimeoutSeconds int32 `protobuf:"varint,3,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	// max_queue_size is the batch processor queue size (default: 2048).
+	MaxQueueSize int32 `protobuf:"varint,4,opt,name=max_queue_size,json=maxQueueSize,proto3" json:"max_queue_size,omitempty"`
+	// export_interval_seconds is the batch export interval (default: 5).
+	ExportIntervalSeconds int32 `protobuf:"varint,5,opt,name=export_interval_seconds,json=exportIntervalSeconds,proto3" json:"export_interval_seconds,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *OtelLogConfig) Reset() {
+	*x = OtelLogConfig{}
+	mi := &file_v1_agent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OtelLogConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OtelLogConfig) ProtoMessage() {}
+
+func (x *OtelLogConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_agent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OtelLogConfig.ProtoReflect.Descriptor instead.
+func (*OtelLogConfig) Descriptor() ([]byte, []int) {
+	return file_v1_agent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *OtelLogConfig) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *OtelLogConfig) GetInsecure() bool {
+	if x != nil {
+		return x.Insecure
+	}
+	return false
+}
+
+func (x *OtelLogConfig) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+func (x *OtelLogConfig) GetMaxQueueSize() int32 {
+	if x != nil {
+		return x.MaxQueueSize
+	}
+	return 0
+}
+
+func (x *OtelLogConfig) GetExportIntervalSeconds() int32 {
+	if x != nil {
+		return x.ExportIntervalSeconds
+	}
+	return 0
+}
+
+// FileLogConfig configures file-based logging with rotation.
+type FileLogConfig struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// enabled enables file logging.
+	Enabled bool `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// max_size_mb is the max log file size in MB before rotation (default: 50).
+	MaxSizeMb int32 `protobuf:"varint,2,opt,name=max_size_mb,json=maxSizeMb,proto3" json:"max_size_mb,omitempty"`
+	// max_age_days is the max days to retain old logs (default: 7).
+	MaxAgeDays int32 `protobuf:"varint,3,opt,name=max_age_days,json=maxAgeDays,proto3" json:"max_age_days,omitempty"`
+	// max_backups is the max number of old log files to keep (default: 3).
+	MaxBackups int32 `protobuf:"varint,4,opt,name=max_backups,json=maxBackups,proto3" json:"max_backups,omitempty"`
+	// compress enables gzip compression of rotated log files (default: true).
+	Compress      bool `protobuf:"varint,5,opt,name=compress,proto3" json:"compress,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileLogConfig) Reset() {
+	*x = FileLogConfig{}
+	mi := &file_v1_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileLogConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileLogConfig) ProtoMessage() {}
+
+func (x *FileLogConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_v1_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileLogConfig.ProtoReflect.Descriptor instead.
+func (*FileLogConfig) Descriptor() ([]byte, []int) {
+	return file_v1_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *FileLogConfig) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *FileLogConfig) GetMaxSizeMb() int32 {
+	if x != nil {
+		return x.MaxSizeMb
+	}
+	return 0
+}
+
+func (x *FileLogConfig) GetMaxAgeDays() int32 {
+	if x != nil {
+		return x.MaxAgeDays
+	}
+	return 0
+}
+
+func (x *FileLogConfig) GetMaxBackups() int32 {
+	if x != nil {
+		return x.MaxBackups
+	}
+	return 0
+}
+
+func (x *FileLogConfig) GetCompress() bool {
+	if x != nil {
+		return x.Compress
+	}
+	return false
+}
+
 // RunInitRequest is the declarative init specification sent by the control plane.
 // clawkerd owns execution — it runs the steps and reports progress.
 type RunInitRequest struct {
@@ -223,7 +474,7 @@ type RunInitRequest struct {
 
 func (x *RunInitRequest) Reset() {
 	*x = RunInitRequest{}
-	mi := &file_v1_agent_proto_msgTypes[2]
+	mi := &file_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -235,7 +486,7 @@ func (x *RunInitRequest) String() string {
 func (*RunInitRequest) ProtoMessage() {}
 
 func (x *RunInitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_agent_proto_msgTypes[2]
+	mi := &file_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -248,7 +499,7 @@ func (x *RunInitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunInitRequest.ProtoReflect.Descriptor instead.
 func (*RunInitRequest) Descriptor() ([]byte, []int) {
-	return file_v1_agent_proto_rawDescGZIP(), []int{2}
+	return file_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RunInitRequest) GetSteps() []*InitStep {
@@ -271,7 +522,7 @@ type InitStep struct {
 
 func (x *InitStep) Reset() {
 	*x = InitStep{}
-	mi := &file_v1_agent_proto_msgTypes[3]
+	mi := &file_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -283,7 +534,7 @@ func (x *InitStep) String() string {
 func (*InitStep) ProtoMessage() {}
 
 func (x *InitStep) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_agent_proto_msgTypes[3]
+	mi := &file_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -296,7 +547,7 @@ func (x *InitStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitStep.ProtoReflect.Descriptor instead.
 func (*InitStep) Descriptor() ([]byte, []int) {
-	return file_v1_agent_proto_rawDescGZIP(), []int{3}
+	return file_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *InitStep) GetName() string {
@@ -331,7 +582,7 @@ type RunInitResponse struct {
 
 func (x *RunInitResponse) Reset() {
 	*x = RunInitResponse{}
-	mi := &file_v1_agent_proto_msgTypes[4]
+	mi := &file_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +594,7 @@ func (x *RunInitResponse) String() string {
 func (*RunInitResponse) ProtoMessage() {}
 
 func (x *RunInitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_agent_proto_msgTypes[4]
+	mi := &file_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +607,7 @@ func (x *RunInitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunInitResponse.ProtoReflect.Descriptor instead.
 func (*RunInitResponse) Descriptor() ([]byte, []int) {
-	return file_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RunInitResponse) GetStepName() string {
@@ -397,10 +648,30 @@ const file_v1_agent_proto_rawDesc = "" +
 	"\x06secret\x18\x02 \x01(\tR\x06secret\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversion\x12\x1f\n" +
 	"\vlisten_port\x18\x04 \x01(\rR\n" +
-	"listenPort\"F\n" +
+	"listenPort\"\x87\x01\n" +
 	"\x10RegisterResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"B\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12?\n" +
+	"\x06config\x18\x03 \x01(\v2'.clawker.agent.v1.ClawkerdConfigurationR\x06config\"\xc0\x01\n" +
+	"\x15ClawkerdConfiguration\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x14\n" +
+	"\x05agent\x18\x02 \x01(\tR\x05agent\x123\n" +
+	"\x04otel\x18\x03 \x01(\v2\x1f.clawker.agent.v1.OtelLogConfigR\x04otel\x12B\n" +
+	"\ffile_logging\x18\x04 \x01(\v2\x1f.clawker.agent.v1.FileLogConfigR\vfileLogging\"\xce\x01\n" +
+	"\rOtelLogConfig\x12\x1a\n" +
+	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12\x1a\n" +
+	"\binsecure\x18\x02 \x01(\bR\binsecure\x12'\n" +
+	"\x0ftimeout_seconds\x18\x03 \x01(\x05R\x0etimeoutSeconds\x12$\n" +
+	"\x0emax_queue_size\x18\x04 \x01(\x05R\fmaxQueueSize\x126\n" +
+	"\x17export_interval_seconds\x18\x05 \x01(\x05R\x15exportIntervalSeconds\"\xa8\x01\n" +
+	"\rFileLogConfig\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1e\n" +
+	"\vmax_size_mb\x18\x02 \x01(\x05R\tmaxSizeMb\x12 \n" +
+	"\fmax_age_days\x18\x03 \x01(\x05R\n" +
+	"maxAgeDays\x12\x1f\n" +
+	"\vmax_backups\x18\x04 \x01(\x05R\n" +
+	"maxBackups\x12\x1a\n" +
+	"\bcompress\x18\x05 \x01(\bR\bcompress\"B\n" +
 	"\x0eRunInitRequest\x120\n" +
 	"\x05steps\x18\x01 \x03(\v2\x1a.clawker.agent.v1.InitStepR\x05steps\"8\n" +
 	"\bInitStep\x12\x12\n" +
@@ -435,27 +706,33 @@ func file_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_v1_agent_proto_goTypes = []any{
-	(InitEventStatus)(0),     // 0: clawker.agent.v1.InitEventStatus
-	(*RegisterRequest)(nil),  // 1: clawker.agent.v1.RegisterRequest
-	(*RegisterResponse)(nil), // 2: clawker.agent.v1.RegisterResponse
-	(*RunInitRequest)(nil),   // 3: clawker.agent.v1.RunInitRequest
-	(*InitStep)(nil),         // 4: clawker.agent.v1.InitStep
-	(*RunInitResponse)(nil),  // 5: clawker.agent.v1.RunInitResponse
+	(InitEventStatus)(0),          // 0: clawker.agent.v1.InitEventStatus
+	(*RegisterRequest)(nil),       // 1: clawker.agent.v1.RegisterRequest
+	(*RegisterResponse)(nil),      // 2: clawker.agent.v1.RegisterResponse
+	(*ClawkerdConfiguration)(nil), // 3: clawker.agent.v1.ClawkerdConfiguration
+	(*OtelLogConfig)(nil),         // 4: clawker.agent.v1.OtelLogConfig
+	(*FileLogConfig)(nil),         // 5: clawker.agent.v1.FileLogConfig
+	(*RunInitRequest)(nil),        // 6: clawker.agent.v1.RunInitRequest
+	(*InitStep)(nil),              // 7: clawker.agent.v1.InitStep
+	(*RunInitResponse)(nil),       // 8: clawker.agent.v1.RunInitResponse
 }
 var file_v1_agent_proto_depIdxs = []int32{
-	4, // 0: clawker.agent.v1.RunInitRequest.steps:type_name -> clawker.agent.v1.InitStep
-	0, // 1: clawker.agent.v1.RunInitResponse.status:type_name -> clawker.agent.v1.InitEventStatus
-	1, // 2: clawker.agent.v1.AgentReportingService.Register:input_type -> clawker.agent.v1.RegisterRequest
-	3, // 3: clawker.agent.v1.AgentCommandService.RunInit:input_type -> clawker.agent.v1.RunInitRequest
-	2, // 4: clawker.agent.v1.AgentReportingService.Register:output_type -> clawker.agent.v1.RegisterResponse
-	5, // 5: clawker.agent.v1.AgentCommandService.RunInit:output_type -> clawker.agent.v1.RunInitResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	3, // 0: clawker.agent.v1.RegisterResponse.config:type_name -> clawker.agent.v1.ClawkerdConfiguration
+	4, // 1: clawker.agent.v1.ClawkerdConfiguration.otel:type_name -> clawker.agent.v1.OtelLogConfig
+	5, // 2: clawker.agent.v1.ClawkerdConfiguration.file_logging:type_name -> clawker.agent.v1.FileLogConfig
+	7, // 3: clawker.agent.v1.RunInitRequest.steps:type_name -> clawker.agent.v1.InitStep
+	0, // 4: clawker.agent.v1.RunInitResponse.status:type_name -> clawker.agent.v1.InitEventStatus
+	1, // 5: clawker.agent.v1.AgentReportingService.Register:input_type -> clawker.agent.v1.RegisterRequest
+	6, // 6: clawker.agent.v1.AgentCommandService.RunInit:input_type -> clawker.agent.v1.RunInitRequest
+	2, // 7: clawker.agent.v1.AgentReportingService.Register:output_type -> clawker.agent.v1.RegisterResponse
+	8, // 8: clawker.agent.v1.AgentCommandService.RunInit:output_type -> clawker.agent.v1.RunInitResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_v1_agent_proto_init() }
@@ -469,7 +746,7 @@ func file_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_agent_proto_rawDesc), len(file_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

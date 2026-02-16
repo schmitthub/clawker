@@ -5,6 +5,10 @@
 // the control plane connects back and calls RunInit with an init spec.
 // clawkerd executes the steps, streams progress, and writes a ready file
 // when init is complete.
+//
+// Logger initialization happens AFTER registration — the control plane delivers
+// ClawkerdConfiguration (identity, OTEL config, file logging config) in the
+// RegisterResponse. Pre-registration failures use fmt.Fprintf to stderr.
 package main
 
 import (
@@ -18,8 +22,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
+	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -27,6 +33,10 @@ import (
 const (
 	readyFilePath   = "/var/run/clawker/ready"
 	defaultGRPCPort = "50051"
+
+	// logsDir is the container-side log directory (Linux FHS convention for daemon logs).
+	// Hardcoded — clawkerd does NOT import internal/config.
+	logsDir = "/var/log/clawkerd"
 )
 
 // agentServer implements AgentCommandService.
@@ -36,7 +46,7 @@ type agentServer struct {
 
 // RunInit executes the init steps and streams progress back.
 func (s *agentServer) RunInit(req *v1.RunInitRequest, stream v1.AgentCommandService_RunInitServer) error {
-	logf("RunInit: received %d steps", len(req.Steps))
+	logger.Info().Str("component", "clawkerd").Int("step_count", len(req.Steps)).Msg("RunInit received")
 
 	for _, step := range req.Steps {
 		// Send STARTED event.
@@ -51,7 +61,12 @@ func (s *agentServer) RunInit(req *v1.RunInitRequest, stream v1.AgentCommandServ
 		stdout, stderr, execErr := executeCommand(stream.Context(), step.Command)
 
 		if execErr != nil {
-			logf("RunInit: step %q failed: %v (stderr: %s)", step.Name, execErr, stderr)
+			logger.Error().
+				Str("component", "clawkerd").
+				Str("step", step.Name).
+				Err(execErr).
+				Str("stderr", stderr).
+				Msg("init step failed")
 			// Send FAILED event.
 			if err := stream.Send(&v1.RunInitResponse{
 				StepName: step.Name,
@@ -65,7 +80,11 @@ func (s *agentServer) RunInit(req *v1.RunInitRequest, stream v1.AgentCommandServ
 			continue
 		}
 
-		logf("RunInit: step %q completed (output: %s)", step.Name, strings.TrimSpace(stdout))
+		logger.Info().
+			Str("component", "clawkerd").
+			Str("step", step.Name).
+			Str("output", strings.TrimSpace(stdout)).
+			Msg("init step completed")
 
 		// Send COMPLETED event.
 		if err := stream.Send(&v1.RunInitResponse{
@@ -79,7 +98,7 @@ func (s *agentServer) RunInit(req *v1.RunInitRequest, stream v1.AgentCommandServ
 
 	// Write ready file before sending the READY event.
 	if err := writeReadyFile(); err != nil {
-		logf("WARNING: failed to write ready file: %v", err)
+		logger.Warn().Str("component", "clawkerd").Err(err).Msg("failed to write ready file")
 	}
 
 	// Send final READY event.
@@ -89,7 +108,7 @@ func (s *agentServer) RunInit(req *v1.RunInitRequest, stream v1.AgentCommandServ
 		return fmt.Errorf("send ready event: %w", err)
 	}
 
-	logf("RunInit: all steps complete, ready")
+	logger.Info().Str("component", "clawkerd").Msg("all init steps complete, ready")
 	return nil
 }
 
@@ -108,7 +127,16 @@ func writeReadyFile() error {
 	return os.WriteFile(readyFilePath, []byte("ready\n"), 0644)
 }
 
+// fatalf writes a fatal error to stderr and exits.
+// Used for pre-registration failures where the logger is not yet initialized.
+func fatalf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "[clawkerd] fatal: "+format+"\n", args...)
+	os.Exit(1)
+}
+
 func main() {
+	// Pre-logger phase: parse env, start gRPC server, register with CP.
+	// Fatal errors in this phase go to stderr — logger is not initialized yet.
 	cpAddr := os.Getenv("CLAWKER_CONTROL_PLANE")
 	secret := os.Getenv("CLAWKER_CONTROL_PLANE_SECRET")
 	port := os.Getenv("CLAWKER_AGENT_PORT")
@@ -117,20 +145,17 @@ func main() {
 	}
 
 	if cpAddr == "" {
-		logf("FATAL: CLAWKER_CONTROL_PLANE not set")
-		os.Exit(1)
+		fatalf("CLAWKER_CONTROL_PLANE not set")
 	}
 	if secret == "" {
-		logf("FATAL: CLAWKER_CONTROL_PLANE_SECRET not set")
-		os.Exit(1)
+		fatalf("CLAWKER_CONTROL_PLANE_SECRET not set")
 	}
 
 	// Start gRPC server for AgentCommandService.
 	listenAddr := "0.0.0.0:" + port
 	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		logf("FATAL: failed to listen on %s: %v", listenAddr, err)
-		os.Exit(1)
+		fatalf("failed to listen on %s: %v", listenAddr, err)
 	}
 
 	grpcServer := grpc.NewServer()
@@ -138,53 +163,63 @@ func main() {
 
 	// Serve in background.
 	go func() {
-		logf("gRPC server listening on %s", lis.Addr().String())
+		// Pre-logger — this goroutine starts before registration completes.
+		fmt.Fprintf(os.Stderr, "[clawkerd] gRPC server listening on %s\n", lis.Addr().String())
 		if err := grpcServer.Serve(lis); err != nil {
-			logf("gRPC server error: %v", err)
+			// Post-logger may be available by now, but Serve error is fatal either way.
+			logger.Error().Str("component", "clawkerd").Err(err).Msg("gRPC server error")
 		}
 	}()
 
 	// Get container ID (hostname).
 	containerID, err := os.Hostname()
 	if err != nil {
-		logf("FATAL: failed to get hostname: %v", err)
-		os.Exit(1)
+		fatalf("failed to get hostname: %v", err)
 	}
 
 	// Resolve the listen port from the bound address.
 	_, portStr, err := net.SplitHostPort(lis.Addr().String())
 	if err != nil {
-		logf("FATAL: failed to parse listen address: %v", err)
-		os.Exit(1)
+		fatalf("failed to parse listen address: %v", err)
 	}
 	listenPort, err := strconv.ParseUint(portStr, 10, 32)
 	if err != nil {
-		logf("FATAL: failed to parse port: %v", err)
-		os.Exit(1)
+		fatalf("failed to parse port: %v", err)
 	}
 
-	// Register with control plane. CP resolves our container IP via Docker inspect.
-	if err := registerWithCP(cpAddr, secret, containerID, uint32(listenPort)); err != nil {
-		logf("FATAL: failed to register with control plane: %v", err)
-		os.Exit(1)
+	// Register with control plane — returns ClawkerdConfiguration for logger init.
+	resp, err := registerWithCP(cpAddr, secret, containerID, uint32(listenPort))
+	if err != nil {
+		fatalf("failed to register with control plane at %s — is the control plane running? (clawker monitor status): %v", cpAddr, err)
 	}
+
+	// --- Post-registration: initialize structured logger from CP-delivered config ---
+	initLogger(resp.Config)
+	defer logger.Close()
+
+	logger.Info().
+		Str("component", "clawkerd").
+		Str("container_id", containerID).
+		Str("cp_addr", cpAddr).
+		Msg("registered with control plane, logger initialized")
 
 	// Wait for SIGTERM/SIGINT.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-sigCh
-	logf("received signal %v, shutting down", sig)
+	logger.Info().Str("component", "clawkerd").Str("signal", sig.String()).Msg("shutting down")
 	grpcServer.GracefulStop()
 }
 
 // registerWithCP connects to the control plane and calls Register.
-func registerWithCP(cpAddr, secret, containerID string, listenPort uint32) error {
+// Returns the full RegisterResponse so the caller can extract ClawkerdConfiguration.
+func registerWithCP(cpAddr, secret, containerID string, listenPort uint32) (*v1.RegisterResponse, error) {
 	conn, err := grpc.NewClient(
 		cpAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		return fmt.Errorf("connect to control plane at %s: %w", cpAddr, err)
+		return nil, fmt.Errorf("connect to control plane at %s: %w", cpAddr, err)
 	}
 	defer conn.Close()
 
@@ -196,17 +231,74 @@ func registerWithCP(cpAddr, secret, containerID string, listenPort uint32) error
 		ListenPort:  listenPort,
 	})
 	if err != nil {
-		return fmt.Errorf("register RPC: %w", err)
+		return nil, fmt.Errorf("register RPC: %w", err)
 	}
 	if !resp.Accepted {
-		return fmt.Errorf("registration rejected: %s", resp.Reason)
+		return nil, fmt.Errorf("registration rejected: %s", resp.Reason)
 	}
 
-	logf("registered with control plane at %s", cpAddr)
-	return nil
+	return resp, nil
 }
 
-// logf logs to stderr (container-side diagnostic output).
-func logf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[clawkerd] "+format+"\n", args...)
+// initLogger initializes the structured logger from CP-delivered ClawkerdConfiguration.
+// If config is nil or missing, falls back to file-only logging with defaults.
+func initLogger(cfg *v1.ClawkerdConfiguration) {
+	if cfg == nil {
+		// No config from CP — initialize with defaults (file-only).
+		logger.NewLogger(&logger.Options{
+			LogsDir:     logsDir,
+			ServiceName: "clawker",
+			ScopeName:   "clawkerd",
+			FileConfig: &logger.LoggingConfig{
+				// defaults: file enabled, 50MB, 7 days, 3 backups, compress
+			},
+		})
+		return
+	}
+
+	// Build file config from CP-delivered settings.
+	var fileConfig *logger.LoggingConfig
+	if fl := cfg.FileLogging; fl != nil {
+		enabled := fl.Enabled
+		compress := fl.Compress
+		fileConfig = &logger.LoggingConfig{
+			FileEnabled: &enabled,
+			MaxSizeMB:   int(fl.MaxSizeMb),
+			MaxAgeDays:  int(fl.MaxAgeDays),
+			MaxBackups:  int(fl.MaxBackups),
+			Compress:    &compress,
+		}
+	} else {
+		// No file logging config — use defaults.
+		fileConfig = &logger.LoggingConfig{}
+	}
+
+	// Build OTEL config from CP-delivered settings.
+	var otelConfig *logger.OtelLogConfig
+	if otel := cfg.Otel; otel != nil {
+		otelConfig = &logger.OtelLogConfig{
+			Endpoint:       otel.Endpoint,
+			Insecure:       otel.Insecure,
+			Timeout:        time.Duration(otel.TimeoutSeconds) * time.Second,
+			MaxQueueSize:   int(otel.MaxQueueSize),
+			ExportInterval: time.Duration(otel.ExportIntervalSeconds) * time.Second,
+		}
+	}
+
+	if err := logger.NewLogger(&logger.Options{
+		LogsDir:     logsDir,
+		ServiceName: "clawker",
+		ScopeName:   "clawkerd",
+		FileConfig:  fileConfig,
+		OtelConfig:  otelConfig,
+	}); err != nil {
+		// Logger init failure is non-fatal — fall back to nop.
+		fmt.Fprintf(os.Stderr, "[clawkerd] warning: logger init failed: %v\n", err)
+		logger.Init()
+	}
+
+	// Set project/agent context for all subsequent log entries.
+	if cfg.Project != "" || cfg.Agent != "" {
+		logger.SetContext(cfg.Project, cfg.Agent)
+	}
 }

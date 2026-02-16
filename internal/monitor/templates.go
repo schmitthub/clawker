@@ -31,6 +31,9 @@ var GrafanaDashboardsTemplate string
 //go:embed templates/grafana-dashboard.json
 var GrafanaDashboardTemplate string
 
+//go:embed templates/grafana-cp-dashboard.json
+var GrafanaCPDashboardTemplate string
+
 // Template file names for writing to disk
 const (
 	ComposeFileName            = "compose.yaml"
@@ -38,7 +41,8 @@ const (
 	GrafanaDatasourcesFileName = "grafana-datasources.yaml"
 	PrometheusFileName         = "prometheus.yaml"
 	GrafanaDashboardsFileName  = "grafana-dashboards.yaml"
-	GrafanaDashboardFileName   = "grafana-dashboard.json"
+	GrafanaDashboardFileName     = "grafana-dashboard.json"
+	GrafanaCPDashboardFileName   = "grafana-cp-dashboard.json"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "github.com/schmitthub/clawker/internal/clawkerd/protocol/v1"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	mobyclient "github.com/moby/moby/client"
@@ -23,6 +24,13 @@ type Config struct {
 	InitSpec *v1.RunInitRequest
 	// DockerClient is used to inspect containers for IP resolution.
 	DockerClient *docker.Client
+	// Settings provides resolved user settings (logging, monitoring, OTEL config).
+	// Used to populate ClawkerdConfiguration in RegisterResponse.
+	Settings *config.Settings
+	// Project is the project name for clawkerd logger context.
+	Project string
+	// Agent is the agent name for clawkerd logger context.
+	Agent string
 }
 
 // Server is the control plane gRPC server.
@@ -51,7 +59,7 @@ func NewServer(cfg Config) *Server {
 // Serve starts serving gRPC on the given listener.
 // Blocks until Stop is called or the listener is closed.
 func (s *Server) Serve(lis net.Listener) error {
-	logger.Info().Str("addr", lis.Addr().String()).Msg("control plane serving")
+	logger.Info().Str("component", "controlplane").Str("addr", lis.Addr().String()).Msg("control plane serving")
 	return s.grpc.Serve(lis)
 }
 
@@ -72,6 +80,7 @@ func (s *Server) Registry() *Registry {
 // to call RunInit asynchronously.
 func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.RegisterResponse, error) {
 	logger.Info().
+		Str("component", "controlplane").
 		Str("container_id", req.ContainerId).
 		Uint32("listen_port", req.ListenPort).
 		Str("version", req.Version).
@@ -80,6 +89,7 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 	// Validate secret.
 	if req.Secret != s.config.Secret {
 		logger.Warn().
+			Str("component", "controlplane").
 			Str("container_id", req.ContainerId).
 			Msg("agent registration rejected: invalid secret")
 		return &v1.RegisterResponse{
@@ -95,6 +105,7 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 	agentAddr, err := s.resolveAgentAddress(ctx, req.ContainerId, req.ListenPort)
 	if err != nil {
 		logger.Error().Err(err).
+			Str("component", "controlplane").
 			Str("container_id", req.ContainerId).
 			Msg("failed to resolve container IP")
 		return &v1.RegisterResponse{
@@ -104,6 +115,7 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 	}
 
 	logger.Info().
+		Str("component", "controlplane").
 		Str("container_id", req.ContainerId).
 		Str("agent_addr", agentAddr).
 		Msg("agent registered, connecting back for RunInit")
@@ -111,7 +123,46 @@ func (s *Server) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.Reg
 	// Connect back to the agent's gRPC server and call RunInit asynchronously.
 	go s.runInitOnAgent(req.ContainerId, agentAddr)
 
-	return &v1.RegisterResponse{Accepted: true}, nil
+	return &v1.RegisterResponse{
+		Accepted: true,
+		Config:   s.buildClawkerdConfig(),
+	}, nil
+}
+
+// buildClawkerdConfig constructs the ClawkerdConfiguration proto from resolved settings.
+// Returns nil if settings are not available (graceful degradation — clawkerd falls back to defaults).
+func (s *Server) buildClawkerdConfig() *v1.ClawkerdConfiguration {
+	cfg := &v1.ClawkerdConfiguration{
+		Project: s.config.Project,
+		Agent:   s.config.Agent,
+	}
+
+	settings := s.config.Settings
+	if settings == nil {
+		return cfg
+	}
+
+	// OTEL config — uses InternalEndpoint (host:port, no scheme) for container-side collector.
+	if settings.Logging.Otel.IsEnabled() {
+		cfg.Otel = &v1.OtelLogConfig{
+			Endpoint:              settings.Monitoring.OtelCollectorInternalEndpoint(),
+			Insecure:              true,
+			TimeoutSeconds:        int32(settings.Logging.Otel.GetTimeoutSeconds()),
+			MaxQueueSize:          int32(settings.Logging.Otel.GetMaxQueueSize()),
+			ExportIntervalSeconds: int32(settings.Logging.Otel.GetExportIntervalSeconds()),
+		}
+	}
+
+	// File logging config.
+	cfg.FileLogging = &v1.FileLogConfig{
+		Enabled:    settings.Logging.IsFileEnabled(),
+		MaxSizeMb:  int32(settings.Logging.GetMaxSizeMB()),
+		MaxAgeDays: int32(settings.Logging.GetMaxAgeDays()),
+		MaxBackups: int32(settings.Logging.GetMaxBackups()),
+		Compress:   settings.Logging.IsCompressEnabled(),
+	}
+
+	return cfg
 }
 
 // resolveAgentAddress inspects the container to determine how to reach the
@@ -132,6 +183,7 @@ func (s *Server) resolveAgentAddress(ctx context.Context, containerID string, po
 			if hostPort != "" {
 				addr := fmt.Sprintf("127.0.0.1:%s", hostPort)
 				logger.Debug().
+					Str("component", "controlplane").
 					Str("container_id", containerID).
 					Str("addr", addr).
 					Msg("resolved agent via port mapping")
@@ -144,6 +196,7 @@ func (s *Server) resolveAgentAddress(ctx context.Context, containerID string, po
 	for networkName, endpoint := range result.Container.NetworkSettings.Networks {
 		if endpoint.IPAddress.IsValid() {
 			logger.Debug().
+				Str("component", "controlplane").
 				Str("container_id", containerID).
 				Str("network", networkName).
 				Str("ip", endpoint.IPAddress.String()).
@@ -167,6 +220,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 	)
 	if err != nil {
 		logger.Error().Err(err).
+			Str("component", "controlplane").
 			Str("container_id", containerID).
 			Str("agent_addr", agentAddr).
 			Msg("failed to connect to agent")
@@ -186,6 +240,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 	stream, err := client.RunInit(ctx, initSpec)
 	if err != nil {
 		logger.Error().Err(err).
+			Str("component", "controlplane").
 			Str("container_id", containerID).
 			Msg("RunInit RPC failed")
 		s.registry.SetInitFailed(containerID)
@@ -200,6 +255,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 		}
 		if err != nil {
 			logger.Error().Err(err).
+				Str("component", "controlplane").
 				Str("container_id", containerID).
 				Msg("RunInit stream error")
 			s.registry.SetInitFailed(containerID)
@@ -207,6 +263,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 		}
 
 		logger.Info().
+			Str("component", "controlplane").
 			Str("container_id", containerID).
 			Str("step", event.StepName).
 			Str("status", event.Status.String()).
@@ -218,6 +275,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 		if event.Status == v1.InitEventStatus_INIT_EVENT_STATUS_READY {
 			s.registry.SetInitCompleted(containerID)
 			logger.Info().
+				Str("component", "controlplane").
 				Str("container_id", containerID).
 				Msg("agent init completed")
 			return
@@ -226,6 +284,7 @@ func (s *Server) runInitOnAgent(containerID, agentAddr string) {
 		if event.Status == v1.InitEventStatus_INIT_EVENT_STATUS_FAILED {
 			s.registry.SetInitFailed(containerID)
 			logger.Error().
+				Str("component", "controlplane").
 				Str("container_id", containerID).
 				Str("step", event.StepName).
 				Str("error", event.Error).
