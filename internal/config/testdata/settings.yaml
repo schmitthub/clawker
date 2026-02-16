@@ -1,0 +1,19 @@
+monitoring:
+  otel_collector_port: 5318
+  otel_collector_host: "monitoring.internal"
+  otel_collector_internal: "custom-collector"
+  otel_grpc_port: 5317
+  loki_port: 4100
+  prometheus_port: 10090
+  jaeger_port: 17686
+  grafana_port: 4000
+  prometheus_metrics_port: 9889
+  telemetry:
+    metrics_path: "/v1/metrics"
+    logs_path: "/v1/logs"
+    metric_export_interval_ms: 30000
+    logs_export_interval_ms: 10000
+    log_tool_details: false
+    log_user_prompts: false
+    include_account_uuid: false
+    include_session_id: false

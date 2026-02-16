@@ -92,7 +92,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cfgGateway := opts.Config()
 
 	// Check if configuration already exists
-	loader := config.NewLoader(wd)
+	loader := config.NewProjectLoader(wd)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
 			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)

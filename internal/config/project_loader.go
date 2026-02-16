@@ -9,7 +9,6 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -19,14 +18,14 @@ const (
 	IgnoreFileName = ".clawkerignore"
 )
 
-// LoaderOption configures a Loader.
-type LoaderOption func(*Loader)
+// ProjectLoaderOption configures a ProjectLoader.
+type ProjectLoaderOption func(*ProjectLoader)
 
 // WithUserDefaults enables loading user-level $CLAWKER_HOME/clawker.yaml as a base layer.
 // The user config is loaded first, then project config overrides it.
 // If userConfigDir is empty, ClawkerHome() is used.
-func WithUserDefaults(userConfigDir string) LoaderOption {
-	return func(l *Loader) {
+func WithUserDefaults(userConfigDir string) ProjectLoaderOption {
+	return func(l *ProjectLoader) {
 		l.loadUserDefaults = true
 		l.userConfigDir = userConfigDir
 	}
@@ -36,21 +35,21 @@ func WithUserDefaults(userConfigDir string) LoaderOption {
 // This is typically resolved from the registry — the project root may differ from the working
 // directory when the user is in a subdirectory.
 // If not set, falls back to workDir.
-func WithProjectRoot(projectRoot string) LoaderOption {
-	return func(l *Loader) {
+func WithProjectRoot(projectRoot string) ProjectLoaderOption {
+	return func(l *ProjectLoader) {
 		l.projectRoot = projectRoot
 	}
 }
 
 // WithProjectKey sets the project key to inject into Config.Project after loading.
-func WithProjectKey(key string) LoaderOption {
-	return func(l *Loader) {
+func WithProjectKey(key string) ProjectLoaderOption {
+	return func(l *ProjectLoader) {
 		l.projectKey = key
 	}
 }
 
-// Loader handles loading and parsing of clawker configuration
-type Loader struct {
+// ProjectLoader handles loading and parsing of clawker project configuration.
+type ProjectLoader struct {
 	workDir          string
 	projectRoot      string // resolved from registry; defaults to workDir
 	loadUserDefaults bool
@@ -59,9 +58,9 @@ type Loader struct {
 	viper            *viper.Viper
 }
 
-// NewLoader creates a new configuration loader for the given working directory.
-func NewLoader(workDir string, opts ...LoaderOption) *Loader {
-	l := &Loader{
+// NewProjectLoader creates a new project configuration loader for the given working directory.
+func NewProjectLoader(workDir string, opts ...ProjectLoaderOption) *ProjectLoader {
+	l := &ProjectLoader{
 		workDir: workDir,
 		viper:   viper.New(),
 	}
@@ -72,15 +71,15 @@ func NewLoader(workDir string, opts ...LoaderOption) *Loader {
 }
 
 // effectiveProjectRoot returns the directory to look for project-level clawker.yaml.
-func (l *Loader) effectiveProjectRoot() string {
+func (l *ProjectLoader) effectiveProjectRoot() string {
 	if l.projectRoot != "" {
 		return l.projectRoot
 	}
 	return l.workDir
 }
 
-// resolveUserConfigDir returns the user config directory.
-func (l *Loader) resolveUserConfigDir() string {
+// resolveClawkerHomeDir returns the user config directory.
+func (l *ProjectLoader) resolveClawkerHomeDir() string {
 	if l.userConfigDir != "" {
 		return l.userConfigDir
 	}
@@ -93,8 +92,8 @@ func (l *Loader) resolveUserConfigDir() string {
 }
 
 // Load reads and parses the clawker.yaml configuration file.
-// Loading order: hardcoded defaults → user clawker.yaml → project clawker.yaml → env vars
-func (l *Loader) Load() (*Project, error) {
+// Loading order: hardcoded defaults → user clawker.yaml → project clawker.yaml → env vars → postMerge reconciliation
+func (l *ProjectLoader) Load() (*Project, error) {
 	projectConfigPath := filepath.Join(l.effectiveProjectRoot(), ConfigFileName)
 	hasProjectConfig := fileExists(projectConfigPath)
 
@@ -102,7 +101,7 @@ func (l *Loader) Load() (*Project, error) {
 	userConfigPath := ""
 	hasUserConfig := false
 	if l.loadUserDefaults {
-		userDir := l.resolveUserConfigDir()
+		userDir := l.resolveClawkerHomeDir()
 		if userDir != "" {
 			userConfigPath = filepath.Join(userDir, ConfigFileName)
 			hasUserConfig = fileExists(userConfigPath)
@@ -114,6 +113,23 @@ func (l *Loader) Load() (*Project, error) {
 		return nil, &ConfigNotFoundError{Path: projectConfigPath}
 	}
 
+	// Capture raw YAML bytes for postMerge reconciliation
+	var userYAMLRaw, projectYAMLRaw []byte
+	if hasUserConfig {
+		data, err := os.ReadFile(userConfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read user config file: %w", err)
+		}
+		userYAMLRaw = data
+	}
+	if hasProjectConfig {
+		data, err := os.ReadFile(projectConfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read project config file: %w", err)
+		}
+		projectYAMLRaw = data
+	}
+
 	// Configure viper
 	l.viper.SetConfigType("yaml")
 
@@ -122,8 +138,8 @@ func (l *Loader) Load() (*Project, error) {
 	l.viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	l.viper.AutomaticEnv()
 
-	// Set defaults from DefaultConfig
-	defaults := DefaultConfig()
+	// Set defaults from DefaultProject
+	defaults := DefaultProject()
 	l.viper.SetDefault("version", defaults.Version)
 	l.viper.SetDefault("build.image", defaults.Build.Image)
 	l.viper.SetDefault("build.packages", defaults.Build.Packages)
@@ -166,15 +182,10 @@ func (l *Loader) Load() (*Project, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Fix env map key case — prefer project config, fall back to user config
-	if hasProjectConfig {
-		if err := l.fixEnvKeyCase(&cfg, projectConfigPath); err != nil {
-			logger.Debug().Err(err).Str("path", projectConfigPath).Msg("failed to fix env key case; env keys may be lowercased")
-		}
-	} else if hasUserConfig {
-		if err := l.fixEnvKeyCase(&cfg, userConfigPath); err != nil {
-			logger.Debug().Err(err).Str("path", userConfigPath).Msg("failed to fix env key case; env keys may be lowercased")
-		}
+	// Post-merge reconciliation: fix viper's lossy merge behavior for slices,
+	// maps, env var overrides, and env var list appends.
+	if err := postMerge(&cfg, userYAMLRaw, projectYAMLRaw); err != nil {
+		logger.Debug().Err(err).Msg("post-merge reconciliation failed; some config values may be incomplete")
 	}
 
 	// Inject project key from registry resolution
@@ -185,44 +196,18 @@ func (l *Loader) Load() (*Project, error) {
 	return &cfg, nil
 }
 
-// fixEnvKeyCase re-reads the YAML to preserve original case for env var keys
-// Viper/mapstructure lowercases all map keys, but env vars are case-sensitive
-func (l *Loader) fixEnvKeyCase(cfg *Project, configPath string) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	// Partial struct just for extracting env with original case
-	var raw struct {
-		Agent struct {
-			Env map[string]string `yaml:"env"`
-		} `yaml:"agent"`
-	}
-
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	if len(raw.Agent.Env) > 0 {
-		cfg.Agent.Env = raw.Agent.Env
-	}
-
-	return nil
-}
-
 // ConfigPath returns the full path to the project config file.
-func (l *Loader) ConfigPath() string {
+func (l *ProjectLoader) ConfigPath() string {
 	return filepath.Join(l.effectiveProjectRoot(), ConfigFileName)
 }
 
 // IgnorePath returns the full path to the ignore file
-func (l *Loader) IgnorePath() string {
+func (l *ProjectLoader) IgnorePath() string {
 	return filepath.Join(l.effectiveProjectRoot(), IgnoreFileName)
 }
 
 // Exists checks if the project configuration file exists
-func (l *Loader) Exists() bool {
+func (l *ProjectLoader) Exists() bool {
 	return fileExists(l.ConfigPath())
 }
 

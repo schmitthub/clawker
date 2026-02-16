@@ -44,7 +44,7 @@ const (
 // MonitorTemplateData provides values for rendering monitoring stack templates.
 type MonitorTemplateData struct {
 	OtelCollectorPort     int
-	OtelGRPCPort          int    // always OtelCollectorPort - 1
+	OtelGRPCPort          int // independent of HTTP port — from config.GetOtelGRPCPort()
 	LokiPort              int
 	PrometheusPort        int
 	JaegerPort            int
@@ -57,7 +57,7 @@ type MonitorTemplateData struct {
 func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
 	return MonitorTemplateData{
 		OtelCollectorPort:     cfg.OtelCollectorPort,
-		OtelGRPCPort:          cfg.OtelCollectorPort - 1, // gRPC is always HTTP port - 1
+		OtelGRPCPort:          cfg.GetOtelGRPCPort(),
 		LokiPort:              cfg.LokiPort,
 		PrometheusPort:        cfg.PrometheusPort,
 		JaegerPort:            cfg.JaegerPort,

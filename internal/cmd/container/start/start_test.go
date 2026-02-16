@@ -192,7 +192,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 	t.Helper()
 	tio := iostreamstest.New()
 	disableHP := false
-	project := config.DefaultConfig()
+	project := config.DefaultProject()
 	project.Security.EnableHostProxy = &disableHP
 
 	return &cmdutil.Factory{

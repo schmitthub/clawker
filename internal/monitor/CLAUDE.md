@@ -37,7 +37,7 @@ Struct providing values for `{{.FieldName}}` placeholders in `.tmpl` files:
 | Field | Type | Description |
 |-------|------|-------------|
 | `OtelCollectorPort` | `int` | OTEL collector HTTP port |
-| `OtelGRPCPort` | `int` | OTEL collector gRPC port (always `OtelCollectorPort - 1`) |
+| `OtelGRPCPort` | `int` | OTEL collector gRPC port (from `config.GetOtelGRPCPort()`, default 4317) |
 | `LokiPort` | `int` | Loki port |
 | `PrometheusPort` | `int` | Prometheus port |
 | `JaegerPort` | `int` | Jaeger UI port |
@@ -47,7 +47,7 @@ Struct providing values for `{{.FieldName}}` placeholders in `.tmpl` files:
 
 ### NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData
 
-Constructor that populates `MonitorTemplateData` from a `config.MonitoringConfig`. Derives `OtelGRPCPort` as `OtelCollectorPort - 1`.
+Constructor that populates `MonitorTemplateData` from a `config.MonitoringConfig`. Uses `cfg.GetOtelGRPCPort()` for the gRPC port (independent of HTTP port).
 
 ### RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error)
 

@@ -62,6 +62,9 @@ type MonitoringConfig struct {
 	OtelCollectorHost string `yaml:"otel_collector_host,omitempty" mapstructure:"otel_collector_host"`
 	// OtelCollectorInternal is the docker-network-side collector hostname (default: "otel-collector")
 	OtelCollectorInternal string `yaml:"otel_collector_internal,omitempty" mapstructure:"otel_collector_internal"`
+	// OtelGRPCPort is the OTLP gRPC port (default: 4317).
+	// Independent of OtelCollectorPort (HTTP) — not derived.
+	OtelGRPCPort int `yaml:"otel_grpc_port,omitempty" mapstructure:"otel_grpc_port"`
 	// LokiPort is the Loki HTTP port (default: 3100)
 	LokiPort int `yaml:"loki_port,omitempty" mapstructure:"loki_port"`
 	// PrometheusPort is the Prometheus HTTP port (default: 9090)
@@ -72,6 +75,44 @@ type MonitoringConfig struct {
 	GrafanaPort int `yaml:"grafana_port,omitempty" mapstructure:"grafana_port"`
 	// PrometheusMetricsPort is the otel-collector Prometheus exporter port (default: 8889)
 	PrometheusMetricsPort int `yaml:"prometheus_metrics_port,omitempty" mapstructure:"prometheus_metrics_port"`
+
+	// Telemetry configures Claude Code OTEL env vars baked into container images.
+	// These control what telemetry data Claude Code exports and at what frequency.
+	// Reference: https://docs.claude.ai/en/docs/monitoring-usage
+	Telemetry TelemetryConfig `yaml:"telemetry,omitempty" mapstructure:"telemetry"`
+}
+
+// TelemetryConfig configures Claude Code OTEL env vars for container images.
+// Values flow through to the Dockerfile template as ENV directives.
+type TelemetryConfig struct {
+	// MetricsPath is the URL path appended to the collector URL for per-signal metrics.
+	// Default: "/v1/metrics" (http/protobuf convention). Set to "" for gRPC.
+	// Constructed endpoint: http://<otel_collector_internal>:<port><metrics_path>
+	// Maps to: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT (constructed)
+	MetricsPath string `yaml:"metrics_path,omitempty" mapstructure:"metrics_path"`
+	// LogsPath is the URL path appended to the collector URL for per-signal logs.
+	// Default: "/v1/logs" (http/protobuf convention). Set to "" for gRPC.
+	// Constructed endpoint: http://<otel_collector_internal>:<port><logs_path>
+	// Maps to: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT (constructed)
+	LogsPath string `yaml:"logs_path,omitempty" mapstructure:"logs_path"`
+	// MetricExportIntervalMs is metrics export interval in milliseconds (default: 10000)
+	// Maps to: OTEL_METRIC_EXPORT_INTERVAL
+	MetricExportIntervalMs int `yaml:"metric_export_interval_ms,omitempty" mapstructure:"metric_export_interval_ms"`
+	// LogsExportIntervalMs is logs export interval in milliseconds (default: 5000)
+	// Maps to: OTEL_LOGS_EXPORT_INTERVAL
+	LogsExportIntervalMs int `yaml:"logs_export_interval_ms,omitempty" mapstructure:"logs_export_interval_ms"`
+	// LogToolDetails enables logging MCP server/tool names in tool events (default: true)
+	// Maps to: OTEL_LOG_TOOL_DETAILS
+	LogToolDetails *bool `yaml:"log_tool_details,omitempty" mapstructure:"log_tool_details"`
+	// LogUserPrompts enables logging user prompt content (default: true)
+	// Maps to: OTEL_LOG_USER_PROMPTS
+	LogUserPrompts *bool `yaml:"log_user_prompts,omitempty" mapstructure:"log_user_prompts"`
+	// IncludeAccountUUID includes user.account_uuid attribute in metrics (default: true)
+	// Maps to: OTEL_METRICS_INCLUDE_ACCOUNT_UUID
+	IncludeAccountUUID *bool `yaml:"include_account_uuid,omitempty" mapstructure:"include_account_uuid"`
+	// IncludeSessionID includes session.id attribute in metrics (default: true)
+	// Maps to: OTEL_METRICS_INCLUDE_SESSION_ID
+	IncludeSessionID *bool `yaml:"include_session_id,omitempty" mapstructure:"include_session_id"`
 }
 
 // IsFileEnabled returns whether file logging is enabled.
@@ -149,6 +190,28 @@ func (c *OtelConfig) GetExportIntervalSeconds() int {
 	return c.ExportIntervalSeconds
 }
 
+// GetOtelGRPCPort returns the OTEL gRPC port, defaulting to 4317 if not set.
+func (c *MonitoringConfig) GetOtelGRPCPort() int {
+	if c.OtelGRPCPort == 0 {
+		return 4317
+	}
+	return c.OtelGRPCPort
+}
+
+// GetMetricsEndpoint constructs the OTLP metrics endpoint for containers.
+// Combines: OtelCollectorInternalURL() + Telemetry.GetMetricsPath()
+// e.g. "http://otel-collector:4318/v1/metrics"
+func (c *MonitoringConfig) GetMetricsEndpoint() string {
+	return c.OtelCollectorInternalURL() + c.Telemetry.GetMetricsPath()
+}
+
+// GetLogsEndpoint constructs the OTLP logs endpoint for containers.
+// Combines: OtelCollectorInternalURL() + Telemetry.GetLogsPath()
+// e.g. "http://otel-collector:4318/v1/logs"
+func (c *MonitoringConfig) GetLogsEndpoint() string {
+	return c.OtelCollectorInternalURL() + c.Telemetry.GetLogsPath()
+}
+
 // OtelCollectorEndpoint returns the host-side OTLP HTTP endpoint (e.g. "localhost:4318").
 func (c *MonitoringConfig) OtelCollectorEndpoint() string {
 	host := c.OtelCollectorHost
@@ -209,4 +272,72 @@ func (c *MonitoringConfig) PrometheusURL() string {
 		port = 9090
 	}
 	return fmt.Sprintf("http://localhost:%d", port)
+}
+
+// GetMetricsPath returns the metrics URL path, defaulting to "/v1/metrics" if not set.
+func (c *TelemetryConfig) GetMetricsPath() string {
+	if c.MetricsPath == "" {
+		return "/v1/metrics"
+	}
+	return c.MetricsPath
+}
+
+// GetLogsPath returns the logs URL path, defaulting to "/v1/logs" if not set.
+func (c *TelemetryConfig) GetLogsPath() string {
+	if c.LogsPath == "" {
+		return "/v1/logs"
+	}
+	return c.LogsPath
+}
+
+// GetMetricExportIntervalMs returns the metrics export interval, defaulting to 10000 if not set.
+func (c *TelemetryConfig) GetMetricExportIntervalMs() int {
+	if c.MetricExportIntervalMs <= 0 {
+		return 10000
+	}
+	return c.MetricExportIntervalMs
+}
+
+// GetLogsExportIntervalMs returns the logs export interval, defaulting to 5000 if not set.
+func (c *TelemetryConfig) GetLogsExportIntervalMs() int {
+	if c.LogsExportIntervalMs <= 0 {
+		return 5000
+	}
+	return c.LogsExportIntervalMs
+}
+
+// IsLogToolDetailsEnabled returns whether tool detail logging is enabled.
+// Defaults to true if not explicitly set.
+func (c *TelemetryConfig) IsLogToolDetailsEnabled() bool {
+	if c.LogToolDetails == nil {
+		return true
+	}
+	return *c.LogToolDetails
+}
+
+// IsLogUserPromptsEnabled returns whether user prompt logging is enabled.
+// Defaults to true if not explicitly set.
+func (c *TelemetryConfig) IsLogUserPromptsEnabled() bool {
+	if c.LogUserPrompts == nil {
+		return true
+	}
+	return *c.LogUserPrompts
+}
+
+// IsIncludeAccountUUIDEnabled returns whether account UUID is included in metrics.
+// Defaults to true if not explicitly set.
+func (c *TelemetryConfig) IsIncludeAccountUUIDEnabled() bool {
+	if c.IncludeAccountUUID == nil {
+		return true
+	}
+	return *c.IncludeAccountUUID
+}
+
+// IsIncludeSessionIDEnabled returns whether session ID is included in metrics.
+// Defaults to true if not explicitly set.
+func (c *TelemetryConfig) IsIncludeSessionIDEnabled() bool {
+	if c.IncludeSessionID == nil {
+		return true
+	}
+	return *c.IncludeSessionID
 }

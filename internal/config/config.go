@@ -28,7 +28,7 @@ type Config struct {
 	Registry Registry
 
 	// Internal loaders for operations that need them
-	projectLoader   *Loader
+	projectLoader   *ProjectLoader
 	settingsLoader  SettingsLoader
 	registryInitErr error // stored for later diagnostics
 }
@@ -52,7 +52,7 @@ func NewConfig() *Config {
 //     to a temp directory containing clawker.yaml and a registered project
 func NewConfigForTest(project *Project, settings *Settings) *Config {
 	if project == nil {
-		project = DefaultConfig()
+		project = DefaultProject()
 	}
 	if settings == nil {
 		settings = DefaultSettings()
@@ -80,7 +80,7 @@ func NewConfigForTest(project *Project, settings *Settings) *Config {
 // The configDir is used for registry operations (worktree directory management).
 func NewConfigForTestWithEntry(project *Project, settings *Settings, entry *ProjectEntry, configDir string) *Config {
 	if project == nil {
-		project = DefaultConfig()
+		project = DefaultProject()
 	}
 	if settings == nil {
 		settings = DefaultSettings()
@@ -167,7 +167,7 @@ func (c *Config) resolveProject(wd string) *Resolution {
 
 // loadProject loads the project configuration from clawker.yaml.
 func (c *Config) loadProject(wd string) {
-	var opts []LoaderOption
+	var opts []ProjectLoaderOption
 
 	if c.Resolution.Found() {
 		opts = append(opts,
@@ -177,14 +177,14 @@ func (c *Config) loadProject(wd string) {
 	}
 
 	opts = append(opts, WithUserDefaults(""))
-	c.projectLoader = NewLoader(wd, opts...)
+	c.projectLoader = NewProjectLoader(wd, opts...)
 
 	project, err := c.projectLoader.Load()
 	if err != nil {
 		if IsConfigNotFound(err) {
 			// No config file is fine - use defaults
 			logger.Debug().Msg("no clawker.yaml found; using defaults")
-			c.Project = DefaultConfig()
+			c.Project = DefaultProject()
 			return
 		}
 		// Config exists but is invalid - this is a fatal error
@@ -228,7 +228,7 @@ func (c *Config) SettingsLoader() SettingsLoader {
 
 // ProjectLoader returns the underlying project loader.
 // May return nil if project loading was skipped.
-func (c *Config) ProjectLoader() *Loader {
+func (c *Config) ProjectLoader() *ProjectLoader {
 	return c.projectLoader
 }
 

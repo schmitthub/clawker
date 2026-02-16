@@ -22,7 +22,7 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) 
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 	}
 	return f, tio
 }
@@ -30,13 +30,13 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) 
 func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	project := config.DefaultConfig()
+	project := config.DefaultProject()
 	project.Project = "testproject"
 	cfg := config.NewConfigForTest(project, nil)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Config:   func() *config.Config { return cfg },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Config:    func() *config.Config { return cfg },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("docker not available in tests")
 		},

@@ -126,6 +126,12 @@ type DockerfileContext struct {
 	OtelLogsEndpoint         string // e.g. "http://otel-collector:4318/v1/logs"
 	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
 	OtelMetricExportInterval int    // milliseconds, e.g. 10000
+
+	// OTEL feature flags — populated from config.TelemetryConfig
+	OtelLogToolDetails     bool // OTEL_LOG_TOOL_DETAILS=1
+	OtelLogUserPrompts     bool // OTEL_LOG_USER_PROMPTS=1
+	OtelIncludeAccountUUID bool // OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -252,9 +258,9 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 	isAlpine := m.config.IsAlpine(variant)
 	baseImage := m.variantToBaseImage(variant)
 
-	// OTEL endpoint defaults from monitoring config
+	// OTEL telemetry from monitoring config defaults
 	defaults := config.DefaultSettings()
-	otelInternalURL := defaults.Monitoring.OtelCollectorInternalURL()
+	mon := &defaults.Monitoring
 
 	return &DockerfileContext{
 		BaseImage:                baseImage,
@@ -270,10 +276,14 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
 		Inject:                   nil,
-		OtelMetricsEndpoint:      otelInternalURL + "/v1/metrics",
-		OtelLogsEndpoint:         otelInternalURL + "/v1/logs",
-		OtelLogsExportInterval:   5000,
-		OtelMetricExportInterval: 10000,
+		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
+		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
+		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
+		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
+		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
+		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
+		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
+		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
 	}, nil
 }
 
@@ -561,9 +571,9 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 
 	isAlpine := strings.Contains(strings.ToLower(baseImage), "alpine")
 
-	// OTEL endpoints from effective settings (user overrides respected)
+	// OTEL telemetry from effective settings (user overrides respected)
 	settings := g.effectiveSettings()
-	otelInternalURL := settings.Monitoring.OtelCollectorInternalURL()
+	mon := &settings.Monitoring
 
 	ctx := &DockerfileContext{
 		BaseImage:                baseImage,
@@ -577,10 +587,14 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		IsAlpine:                 isAlpine,
 		EnableFirewall:           p.Security.FirewallEnabled(),
 		BuildKitEnabled:          g.BuildKitEnabled,
-		OtelMetricsEndpoint:      otelInternalURL + "/v1/metrics",
-		OtelLogsEndpoint:         otelInternalURL + "/v1/logs",
-		OtelLogsExportInterval:   5000,
-		OtelMetricExportInterval: 10000,
+		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
+		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
+		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
+		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
+		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
+		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
+		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
+		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
 	}
 
 	// Populate Instructions if present (structural only — Copy, Args, RUN)

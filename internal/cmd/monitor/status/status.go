@@ -16,11 +16,13 @@ import (
 
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
+	Config   func() *config.Config
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams: f.IOStreams,
+		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -85,16 +87,19 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	fmt.Fprintln(ios.ErrOut, outputStr)
 	fmt.Fprintln(ios.ErrOut)
 
+	// Resolve monitoring URLs from settings
+	mon := &opts.Config().Settings.Monitoring
+
 	// Check which services are actually running and print relevant URLs
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, "grafana") {
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan("http://localhost:3000"))
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(mon.GrafanaURL()))
 	}
 	if strings.Contains(outputStr, "jaeger") {
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan("http://localhost:16686"))
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(mon.JaegerURL()))
 	}
 	if strings.Contains(outputStr, "prometheus") {
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan("http://localhost:9090"))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(mon.PrometheusURL()))
 	}
 
 	// Check network status

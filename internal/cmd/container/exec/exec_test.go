@@ -242,7 +242,7 @@ func TestCmdExec_ArgsParsing(t *testing.T) {
 // to avoid nil pointer issues when HostProxy/SocketBridge functions aren't set.
 func testConfig() *config.Config {
 	hostProxyDisabled := false
-	project := config.DefaultConfig()
+	project := config.DefaultProject()
 	project.Security.EnableHostProxy = &hostProxyDisabled
 	project.Security.GitCredentials = nil
 	return config.NewConfigForTest(project, nil)

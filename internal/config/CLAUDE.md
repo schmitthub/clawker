@@ -8,7 +8,8 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 |------|---------|
 | `config.go` | `Config` facade — eager container for Project, Settings, Resolution, Registry |
 | `schema.go` | `Project` struct (YAML schema + runtime context) and nested types |
-| `loader.go` | `Loader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
+| `project_loader.go` | `ProjectLoader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
+| `merge.go` | Post-merge reconciliation: `postMerge()`, `sortedUnion()`, `mergeMaps()`, `applyEnvMapOverrides()`, `applyEnvSliceAppend()` |
 | `settings.go` | `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig` structs + method receivers |
 | `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — Viper-based, loads/saves `settings.yaml`, merges project-level overrides, supports `CLAWKER_*` env vars |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
@@ -34,7 +35,7 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Defaults
 
-`DefaultConfig()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile`
+`DefaultProject()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`, `DefaultIgnoreFile`
 
 ## Config Facade (`config.go`)
 
@@ -44,11 +45,30 @@ Eagerly loads all configuration. Project, Settings, and Resolution are never nil
 
 Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → defaults.
 
-## Loader (`loader.go`)
+## ProjectLoader (`project_loader.go`)
 
-`NewLoader(workDir, opts ...LoaderOption)`. Options: `WithUserDefaults(dir)`, `WithProjectRoot(path)`, `WithProjectKey(key)`. Methods: `Load() (*Project, error)`, `ConfigPath()`, `IgnorePath()`, `Exists()`.
+`NewProjectLoader(workDir, opts ...ProjectLoaderOption)`. Options: `WithUserDefaults(dir)`, `WithProjectRoot(path)`, `WithProjectKey(key)`. Methods: `Load() (*Project, error)`, `ConfigPath()`, `IgnorePath()`, `Exists()`.
 
-Load order: read project config → merge user defaults → inject project key. `Project.Project` is `yaml:"-"` — injected by loader.
+Load order: hardcoded defaults → user clawker.yaml → project clawker.yaml → env vars → postMerge reconciliation → inject project key. `Project.Project` is `yaml:"-"` — injected by loader.
+
+## Post-Merge Reconciliation (`merge.go`)
+
+After viper loads and unmarshals configs, `postMerge()` re-reads both raw YAML files and reconciles viper's lossy merge behavior:
+
+**Slice unions** (deduplicated, sorted — accumulate across user + project):
+- `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
+
+**Map merges** (project wins conflicts, case preserved):
+- `agent.env`, `build.build_args`
+
+**Env var map overrides** (e.g. `CLAWKER_AGENT_ENV_FOO=val` → `agent.env["FOO"] = "val"`):
+- Scans `CLAWKER_AGENT_ENV_*` and `CLAWKER_BUILD_BUILD_ARGS_*` env vars
+
+**Env var list appends** (e.g. `CLAWKER_SECURITY_FIREWALL_ADD_DOMAINS=a,b`):
+- Splits by comma, unions with existing list for `agent.from_env`, `agent.includes`, `agent.env_file`, `security.firewall.add_domains`
+
+**Fields that KEEP viper's replace behavior** (project-specific, not accumulated):
+- `build.packages`, `build.instructions.*`, `build.inject.*`, `security.firewall.override_domains`, `security.firewall.remove_domains`, `security.cap_add`, all scalar fields
 
 ## Validation (`validator.go`)
 
@@ -117,11 +137,17 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 ### MonitoringConfig
 
-`MonitoringConfig{OtelCollectorPort int, OtelCollectorHost string, OtelCollectorInternal string, LokiPort int, PrometheusPort int, JaegerPort int, GrafanaPort int, PrometheusMetricsPort int}`.
+`MonitoringConfig{OtelCollectorPort int, OtelCollectorHost string, OtelCollectorInternal string, OtelGRPCPort int, LokiPort int, PrometheusPort int, JaegerPort int, GrafanaPort int, PrometheusMetricsPort int, Telemetry TelemetryConfig}`.
 
-Configures monitoring stack ports and OTEL endpoints. Values are shared by the logger (host-side), monitor templates, and Dockerfile templates (container-side).
+Configures monitoring stack ports, OTEL endpoints, and Claude Code telemetry env vars. Single source of truth — consumed by the logger (host-side), monitor templates, Dockerfile templates (container-side), and monitor commands.
 
-**Defaults**: OtelCollectorPort=4318, OtelCollectorHost="localhost", OtelCollectorInternal="otel-collector", LokiPort=3100, PrometheusPort=9090, JaegerPort=16686, GrafanaPort=3000, PrometheusMetricsPort=8889.
+**Defaults**: OtelCollectorPort=4318, OtelCollectorHost="localhost", OtelCollectorInternal="otel-collector", OtelGRPCPort=4317, LokiPort=3100, PrometheusPort=9090, JaegerPort=16686, GrafanaPort=3000, PrometheusMetricsPort=8889.
+
+**Port getter**: `GetOtelGRPCPort() int` — returns OtelGRPCPort or 4317 if zero.
+
+**Endpoint constructors** (combine infrastructure + telemetry parts):
+- `GetMetricsEndpoint() string` — OTLP metrics endpoint for containers (e.g. `"http://otel-collector:4318/v1/metrics"`)
+- `GetLogsEndpoint() string` — OTLP logs endpoint for containers (e.g. `"http://otel-collector:4318/v1/logs"`)
 
 **Derived URL helpers** (nil-safe, fallback to defaults for zero values):
 - `OtelCollectorEndpoint() string` — host-side OTLP HTTP endpoint (e.g. `"localhost:4318"`)
@@ -130,6 +156,20 @@ Configures monitoring stack ports and OTEL endpoints. Values are shared by the l
 - `GrafanaURL() string` — Grafana dashboard URL (e.g. `"http://localhost:3000"`)
 - `JaegerURL() string` — Jaeger UI URL (e.g. `"http://localhost:16686"`)
 - `PrometheusURL() string` — Prometheus UI URL (e.g. `"http://localhost:9090"`)
+
+### TelemetryConfig
+
+`TelemetryConfig{MetricsPath string, LogsPath string, MetricExportIntervalMs int, LogsExportIntervalMs int, LogToolDetails *bool, LogUserPrompts *bool, IncludeAccountUUID *bool, IncludeSessionID *bool}`.
+
+Configures Claude Code OTEL env vars baked into container images via Dockerfile template. Nested under `MonitoringConfig.Telemetry`.
+
+**Defaults**: MetricsPath="/v1/metrics", LogsPath="/v1/logs", MetricExportIntervalMs=10000, LogsExportIntervalMs=5000, LogToolDetails=true, LogUserPrompts=true, IncludeAccountUUID=true, IncludeSessionID=true.
+
+**Getters** (nil-safe, return defaults for zero values):
+- `GetMetricsPath() string`, `GetLogsPath() string`
+- `GetMetricExportIntervalMs() int`, `GetLogsExportIntervalMs() int`
+- `IsLogToolDetailsEnabled() bool`, `IsLogUserPromptsEnabled() bool`
+- `IsIncludeAccountUUIDEnabled() bool`, `IsIncludeSessionIDEnabled() bool`
 
 ### DefaultSettings()
 
@@ -143,7 +183,7 @@ Returns a fully populated `*Settings` with all nested defaults (was previously e
 
 **Loading order** (lowest→highest precedence): `DefaultSettings()` → `$CLAWKER_HOME/settings.yaml` → `<project-root>/.clawker.settings.yaml` → `CLAWKER_*` env vars.
 
-**ENV override**: Uses `CLAWKER_` prefix with `_` as nested key separator (via `viper.SetEnvKeyReplacer`). Same pattern as `Loader` for `clawker.yaml`. Examples:
+**ENV override**: Uses `CLAWKER_` prefix with `_` as nested key separator (via `viper.SetEnvKeyReplacer`). Same pattern as `ProjectLoader` for `clawker.yaml`. Examples:
 - `CLAWKER_MONITORING_GRAFANA_PORT=4000` → `monitoring.grafana_port`
 - `CLAWKER_LOGGING_COMPRESS=false` → `logging.compress`
 - `CLAWKER_LOGGING_OTEL_ENABLED=false` → `logging.otel.enabled`

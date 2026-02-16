@@ -12,6 +12,7 @@ func TestNewMonitorTemplateData(t *testing.T) {
 		OtelCollectorPort:     4318,
 		OtelCollectorHost:     "localhost",
 		OtelCollectorInternal: "otel-collector",
+		OtelGRPCPort:          4317,
 		LokiPort:              3100,
 		PrometheusPort:        9090,
 		JaegerPort:            16686,
@@ -25,10 +26,35 @@ func TestNewMonitorTemplateData(t *testing.T) {
 		t.Errorf("OtelCollectorPort = %d, want 4318", data.OtelCollectorPort)
 	}
 	if data.OtelGRPCPort != 4317 {
-		t.Errorf("OtelGRPCPort = %d, want 4317 (HTTP port - 1)", data.OtelGRPCPort)
+		t.Errorf("OtelGRPCPort = %d, want 4317 (from config)", data.OtelGRPCPort)
 	}
 	if data.OtelCollectorInternal != "otel-collector" {
 		t.Errorf("OtelCollectorInternal = %q, want %q", data.OtelCollectorInternal, "otel-collector")
+	}
+}
+
+func TestNewMonitorTemplateData_CustomGRPCPort(t *testing.T) {
+	// gRPC port is independent — not derived from HTTP port
+	cfg := &config.MonitoringConfig{
+		OtelCollectorPort: 5318,
+		OtelGRPCPort:      5317,
+	}
+
+	data := NewMonitorTemplateData(cfg)
+	if data.OtelGRPCPort != 5317 {
+		t.Errorf("OtelGRPCPort = %d, want 5317", data.OtelGRPCPort)
+	}
+}
+
+func TestNewMonitorTemplateData_DefaultGRPCPort(t *testing.T) {
+	// Zero OtelGRPCPort should use default 4317 via getter
+	cfg := &config.MonitoringConfig{
+		OtelCollectorPort: 4318,
+	}
+
+	data := NewMonitorTemplateData(cfg)
+	if data.OtelGRPCPort != 4317 {
+		t.Errorf("OtelGRPCPort = %d, want 4317 (default from getter)", data.OtelGRPCPort)
 	}
 }
 

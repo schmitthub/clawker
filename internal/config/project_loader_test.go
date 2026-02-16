@@ -29,48 +29,48 @@ func clearClawkerEnv(t *testing.T) {
 	})
 }
 
-func TestNewLoader(t *testing.T) {
-	loader := NewLoader("/test/path")
+func TestNewProjectLoader(t *testing.T) {
+	loader := NewProjectLoader("/test/path")
 	if loader.workDir != "/test/path" {
-		t.Errorf("NewLoader().workDir = %q, want %q", loader.workDir, "/test/path")
+		t.Errorf("NewProjectLoader().workDir = %q, want %q", loader.workDir, "/test/path")
 	}
 }
 
-func TestLoaderConfigPath(t *testing.T) {
-	loader := NewLoader("/test/path")
+func TestProjectLoaderConfigPath(t *testing.T) {
+	loader := NewProjectLoader("/test/path")
 	expected := "/test/path/clawker.yaml"
 	if loader.ConfigPath() != expected {
-		t.Errorf("Loader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
+		t.Errorf("ProjectLoader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
 	}
 }
 
-func TestLoaderConfigPath_WithProjectRoot(t *testing.T) {
-	loader := NewLoader("/test/workdir", WithProjectRoot("/test/project"))
+func TestProjectLoaderConfigPath_WithProjectRoot(t *testing.T) {
+	loader := NewProjectLoader("/test/workdir", WithProjectRoot("/test/project"))
 	expected := "/test/project/clawker.yaml"
 	if loader.ConfigPath() != expected {
-		t.Errorf("Loader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
+		t.Errorf("ProjectLoader.ConfigPath() = %q, want %q", loader.ConfigPath(), expected)
 	}
 }
 
-func TestLoaderIgnorePath(t *testing.T) {
-	loader := NewLoader("/test/path")
+func TestProjectLoaderIgnorePath(t *testing.T) {
+	loader := NewProjectLoader("/test/path")
 	expected := "/test/path/.clawkerignore"
 	if loader.IgnorePath() != expected {
-		t.Errorf("Loader.IgnorePath() = %q, want %q", loader.IgnorePath(), expected)
+		t.Errorf("ProjectLoader.IgnorePath() = %q, want %q", loader.IgnorePath(), expected)
 	}
 }
 
-func TestLoaderExists(t *testing.T) {
+func TestProjectLoaderExists(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 
 	if loader.Exists() {
-		t.Error("Loader.Exists() should return false when config doesn't exist")
+		t.Error("ProjectLoader.Exists() should return false when config doesn't exist")
 	}
 
 	configPath := filepath.Join(tmpDir, ConfigFileName)
@@ -79,11 +79,11 @@ func TestLoaderExists(t *testing.T) {
 	}
 
 	if !loader.Exists() {
-		t.Error("Loader.Exists() should return true when config exists")
+		t.Error("ProjectLoader.Exists() should return true when config exists")
 	}
 }
 
-func TestLoaderLoadMissingFile(t *testing.T) {
+func TestProjectLoaderLoadMissingFile(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -91,19 +91,19 @@ func TestLoaderLoadMissingFile(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 	_, err = loader.Load()
 
 	if err == nil {
-		t.Error("Loader.Load() should return error when config file is missing")
+		t.Error("ProjectLoader.Load() should return error when config file is missing")
 	}
 
 	if !IsConfigNotFound(err) {
-		t.Errorf("Loader.Load() error should be ConfigNotFoundError, got %T", err)
+		t.Errorf("ProjectLoader.Load() error should be ConfigNotFoundError, got %T", err)
 	}
 }
 
-func TestLoaderLoadValidConfig(t *testing.T) {
+func TestProjectLoaderLoadValidConfig(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -131,11 +131,11 @@ security:
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	if cfg.Version != "1" {
@@ -156,7 +156,7 @@ security:
 	}
 }
 
-func TestLoaderLoadPostInitMultiline(t *testing.T) {
+func TestProjectLoaderLoadPostInitMultiline(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -180,10 +180,10 @@ agent:
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 	cfg, err := loader.Load()
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	// YAML literal block (|) preserves newlines, adds trailing newline
@@ -193,7 +193,7 @@ agent:
 	}
 }
 
-func TestLoaderLoadWithDefaults(t *testing.T) {
+func TestProjectLoaderLoadWithDefaults(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -209,11 +209,11 @@ version: "1"
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	if cfg.Build.Image != "node:20-slim" {
@@ -230,7 +230,7 @@ version: "1"
 	}
 }
 
-func TestLoaderLoadWithProjectKey(t *testing.T) {
+func TestProjectLoaderLoadWithProjectKey(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -244,11 +244,11 @@ func TestLoaderLoadWithProjectKey(t *testing.T) {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	loader := NewLoader(tmpDir, WithProjectKey("my-project"))
+	loader := NewProjectLoader(tmpDir, WithProjectKey("my-project"))
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	if cfg.Project != "my-project" {
@@ -256,7 +256,7 @@ func TestLoaderLoadWithProjectKey(t *testing.T) {
 	}
 }
 
-func TestLoaderLoadWithUserDefaults(t *testing.T) {
+func TestProjectLoaderLoadWithUserDefaults(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -290,11 +290,11 @@ build:
 		t.Fatalf("failed to write project config: %v", err)
 	}
 
-	loader := NewLoader(projectDir, WithUserDefaults(userDir))
+	loader := NewProjectLoader(projectDir, WithUserDefaults(userDir))
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	// ProjectCfg config should override user config for image
@@ -308,7 +308,7 @@ build:
 	}
 }
 
-func TestLoaderLoadUserOnlyConfig(t *testing.T) {
+func TestProjectLoaderLoadUserOnlyConfig(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -332,11 +332,11 @@ build:
 	os.MkdirAll(projectDir, 0755)
 	// No project config file
 
-	loader := NewLoader(projectDir, WithUserDefaults(userDir))
+	loader := NewProjectLoader(projectDir, WithUserDefaults(userDir))
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	if cfg.Build.Image != "alpine:latest" {
@@ -344,7 +344,7 @@ build:
 	}
 }
 
-func TestLoaderLoadWithProjectRoot(t *testing.T) {
+func TestProjectLoaderLoadWithProjectRoot(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -368,11 +368,11 @@ build:
 	workDir := filepath.Join(projectRoot, "src", "pkg")
 	os.MkdirAll(workDir, 0755)
 
-	loader := NewLoader(workDir, WithProjectRoot(projectRoot))
+	loader := NewProjectLoader(workDir, WithProjectRoot(projectRoot))
 	cfg, err := loader.Load()
 
 	if err != nil {
-		t.Fatalf("Loader.Load() returned error: %v", err)
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
 	}
 
 	if cfg.Build.Image != "custom:latest" {
@@ -380,7 +380,7 @@ build:
 	}
 }
 
-func TestLoaderLoadInvalidYAML(t *testing.T) {
+func TestProjectLoaderLoadInvalidYAML(t *testing.T) {
 	clearClawkerEnv(t)
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
@@ -398,11 +398,11 @@ project: "test
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	loader := NewProjectLoader(tmpDir)
 	_, err = loader.Load()
 
 	if err == nil {
-		t.Error("Loader.Load() should return error for invalid YAML")
+		t.Error("ProjectLoader.Load() should return error for invalid YAML")
 	}
 }
 
@@ -457,5 +457,185 @@ func TestConfigFileName(t *testing.T) {
 func TestIgnoreFileName(t *testing.T) {
 	if IgnoreFileName != ".clawkerignore" {
 		t.Errorf("IgnoreFileName = %q, want %q", IgnoreFileName, ".clawkerignore")
+	}
+}
+
+func TestProjectLoaderLoadWithUserDefaults_SliceUnion(t *testing.T) {
+	clearClawkerEnv(t)
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// User config with some from_env vars
+	userDir := filepath.Join(tmpDir, "user")
+	os.MkdirAll(userDir, 0755)
+	userConfig := `
+version: "1"
+agent:
+  from_env:
+    - GH_TOKEN
+    - FARTS
+`
+	if err := os.WriteFile(filepath.Join(userDir, ConfigFileName), []byte(userConfig), 0644); err != nil {
+		t.Fatalf("failed to write user config: %v", err)
+	}
+
+	// Project config with overlapping + different from_env
+	projectDir := filepath.Join(tmpDir, "project")
+	os.MkdirAll(projectDir, 0755)
+	projectConfig := `
+version: "1"
+agent:
+  from_env:
+    - GH_TOKEN
+    - CONTEXT7_API_KEY
+    - IDONTEXIST
+`
+	if err := os.WriteFile(filepath.Join(projectDir, ConfigFileName), []byte(projectConfig), 0644); err != nil {
+		t.Fatalf("failed to write project config: %v", err)
+	}
+
+	loader := NewProjectLoader(projectDir, WithUserDefaults(userDir))
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
+	}
+
+	// Should be a sorted, deduplicated union of both configs
+	want := []string{"CONTEXT7_API_KEY", "FARTS", "GH_TOKEN", "IDONTEXIST"}
+	if len(cfg.Agent.FromEnv) != len(want) {
+		t.Fatalf("cfg.Agent.FromEnv = %v, want %v", cfg.Agent.FromEnv, want)
+	}
+	for i, v := range want {
+		if cfg.Agent.FromEnv[i] != v {
+			t.Errorf("cfg.Agent.FromEnv[%d] = %q, want %q", i, cfg.Agent.FromEnv[i], v)
+		}
+	}
+}
+
+func TestProjectLoaderLoadWithUserDefaults_MapMerge(t *testing.T) {
+	clearClawkerEnv(t)
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// User config with some env vars
+	userDir := filepath.Join(tmpDir, "user")
+	os.MkdirAll(userDir, 0755)
+	userConfig := `
+version: "1"
+agent:
+  env:
+    USER_ONLY: from-user
+    SHARED: from-user
+`
+	if err := os.WriteFile(filepath.Join(userDir, ConfigFileName), []byte(userConfig), 0644); err != nil {
+		t.Fatalf("failed to write user config: %v", err)
+	}
+
+	// Project config with overlapping + different env
+	projectDir := filepath.Join(tmpDir, "project")
+	os.MkdirAll(projectDir, 0755)
+	projectConfig := `
+version: "1"
+agent:
+  env:
+    SHARED: from-project
+    PROJECT_ONLY: from-project
+`
+	if err := os.WriteFile(filepath.Join(projectDir, ConfigFileName), []byte(projectConfig), 0644); err != nil {
+		t.Fatalf("failed to write project config: %v", err)
+	}
+
+	loader := NewProjectLoader(projectDir, WithUserDefaults(userDir))
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
+	}
+
+	// Project wins conflict, user-only keys preserved, case preserved
+	if cfg.Agent.Env["SHARED"] != "from-project" {
+		t.Errorf("SHARED = %q, want %q (project wins)", cfg.Agent.Env["SHARED"], "from-project")
+	}
+	if cfg.Agent.Env["USER_ONLY"] != "from-user" {
+		t.Errorf("USER_ONLY = %q, want %q (user key preserved)", cfg.Agent.Env["USER_ONLY"], "from-user")
+	}
+	if cfg.Agent.Env["PROJECT_ONLY"] != "from-project" {
+		t.Errorf("PROJECT_ONLY = %q, want %q (project key)", cfg.Agent.Env["PROJECT_ONLY"], "from-project")
+	}
+}
+
+func TestProjectLoaderLoad_EnvMapOverride(t *testing.T) {
+	clearClawkerEnv(t)
+	t.Setenv("CLAWKER_AGENT_ENV_FOO", "from-env")
+
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configContent := `
+version: "1"
+agent:
+  env:
+    FOO: from-yaml
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	loader := NewProjectLoader(tmpDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
+	}
+
+	if cfg.Agent.Env["FOO"] != "from-env" {
+		t.Errorf("cfg.Agent.Env[FOO] = %q, want %q (env override)", cfg.Agent.Env["FOO"], "from-env")
+	}
+}
+
+func TestProjectLoaderLoad_EnvListAppend(t *testing.T) {
+	clearClawkerEnv(t)
+	t.Setenv("CLAWKER_SECURITY_FIREWALL_ADD_DOMAINS", "env-a.com,env-b.com")
+
+	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configContent := `
+version: "1"
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - yaml-domain.com
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	loader := NewProjectLoader(tmpDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
+	}
+
+	// Should contain union of YAML + env values, sorted
+	want := []string{"env-a.com", "env-b.com", "yaml-domain.com"}
+	if len(cfg.Security.Firewall.AddDomains) != len(want) {
+		t.Fatalf("cfg.Security.Firewall.AddDomains = %v, want %v", cfg.Security.Firewall.AddDomains, want)
+	}
+	for i, v := range want {
+		if cfg.Security.Firewall.AddDomains[i] != v {
+			t.Errorf("AddDomains[%d] = %q, want %q", i, cfg.Security.Firewall.AddDomains[i], v)
+		}
 	}
 }

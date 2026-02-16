@@ -83,7 +83,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	cfgGateway := opts.Config()
 
 	// Require an existing clawker.yaml
-	loader := config.NewLoader(wd)
+	loader := config.NewProjectLoader(wd)
 	if !loader.Exists() {
 		cmdutil.PrintError(ios, "No %s found in the current directory", config.ConfigFileName)
 		cmdutil.PrintNextSteps(ios,

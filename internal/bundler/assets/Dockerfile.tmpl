@@ -278,12 +278,20 @@ ENV OTEL_LOGS_EXPORTER=otlp
 # Per-signal endpoints (no traces — traces are not exported from containers)
 ENV OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={{.OtelMetricsEndpoint}}
 ENV OTEL_EXPORTER_OTLP_LOGS_ENDPOINT={{.OtelLogsEndpoint}}
+{{- if .OtelIncludeAccountUUID}}
 ENV OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+{{- end}}
+{{- if .OtelIncludeSessionID}}
 ENV OTEL_METRICS_INCLUDE_SESSION_ID=true
+{{- end}}
 ENV OTEL_LOGS_EXPORT_INTERVAL={{.OtelLogsExportInterval}}
 ENV OTEL_METRIC_EXPORT_INTERVAL={{.OtelMetricExportInterval}}
+{{- if .OtelLogToolDetails}}
 ENV OTEL_LOG_TOOL_DETAILS=1
+{{- end}}
+{{- if .OtelLogUserPrompts}}
 ENV OTEL_LOG_USER_PROMPTS=1
+{{- end}}
 
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}

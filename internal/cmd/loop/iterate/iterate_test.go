@@ -28,7 +28,7 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) 
 func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	project := config.DefaultConfig()
+	project := config.DefaultProject()
 	project.Project = "testproject"
 	cfg := config.NewConfigForTest(project, nil)
 	f := &cmdutil.Factory{
