@@ -55,7 +55,7 @@ func TestInMemoryRegistry_SetWorktreePathError(t *testing.T) {
 	registry := NewInMemoryRegistry()
 
 	// Add a project with a worktree
-	_, err := registry.Register("Test ProjectCfg", "/fake/project")
+	_, err := registry.Register("Test Project", "/fake/project")
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}

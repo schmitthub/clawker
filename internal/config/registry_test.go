@@ -13,7 +13,7 @@ func TestSlugify(t *testing.T) {
 		name string
 		want string
 	}{
-		{"My ProjectCfg", "my-project"},
+		{"My Project", "my-project"},
 		{"hello world", "hello-world"},
 		{"UPPER_CASE", "upper-case"},
 		{"  spaces  ", "spaces"},
@@ -50,14 +50,14 @@ func TestUniqueSlug(t *testing.T) {
 	}
 
 	// Collision
-	got = UniqueSlug("My ProjectCfg", existing)
+	got = UniqueSlug("My Project", existing)
 	if got != "my-project-2" {
 		t.Errorf("UniqueSlug collision = %q, want %q", got, "my-project-2")
 	}
 
 	// Double collision
 	existing["my-project-2"] = true
-	got = UniqueSlug("My ProjectCfg", existing)
+	got = UniqueSlug("My Project", existing)
 	if got != "my-project-3" {
 		t.Errorf("UniqueSlug double collision = %q, want %q", got, "my-project-3")
 	}
@@ -303,7 +303,7 @@ func TestRegistryLoader_Register_Collision(t *testing.T) {
 	os.MkdirAll(root2, 0755)
 
 	// Register first project
-	slug1, err := loader.Register("My ProjectCfg", root1)
+	slug1, err := loader.Register("My Project", root1)
 	if err != nil {
 		t.Fatalf("Register first error: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestRegistryLoader_Register_Collision(t *testing.T) {
 	}
 
 	// Register second project with same name but different root
-	slug2, err := loader.Register("My ProjectCfg", root2)
+	slug2, err := loader.Register("My Project", root2)
 	if err != nil {
 		t.Fatalf("Register second error: %v", err)
 	}
