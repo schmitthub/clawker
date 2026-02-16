@@ -83,7 +83,7 @@ agent:
     - CONTEXT7_API_KEY
   # env: static key-value pairs (highest precedence, always win)
   env:
-    # FOO: bar
+    FOO: poo
   claude_code:
     # Use host authentication tokens in container
     use_host_auth: true

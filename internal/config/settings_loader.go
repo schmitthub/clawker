@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,10 +29,12 @@ type SettingsLoader interface {
 }
 
 // FileSettingsLoader handles loading and saving of user settings from the filesystem.
-// It supports a two-layer hierarchy:
+// It supports a two-layer hierarchy with ENV override:
 //
-//	$CLAWKER_HOME/settings.yaml       (global, lower precedence)
-//	<project-root>/.clawker.settings.yaml  (project override, higher precedence)
+//	CLAWKER_* env vars                     (highest precedence)
+//	<project-root>/.clawker.settings.yaml  (project override)
+//	$CLAWKER_HOME/settings.yaml            (global settings)
+//	DefaultSettings()                      (defaults, lowest precedence)
 type FileSettingsLoader struct {
 	path        string // global settings path
 	projectRoot string // optional project root for project-level override
@@ -98,77 +102,76 @@ func (l *FileSettingsLoader) Exists() bool {
 	return false
 }
 
-// Load reads and parses the settings, merging project-level overrides if present.
-// Loading order: defaults → $CLAWKER_HOME/settings.yaml → <project-root>/.clawker.settings.yaml
-// If the global file doesn't exist, returns default settings (not an error).
+// Load reads and parses the settings using Viper for ENV > config > defaults precedence.
+// Loading order: DefaultSettings() → $CLAWKER_HOME/settings.yaml → <project-root>/.clawker.settings.yaml → CLAWKER_* env vars
+// If the global file doesn't exist, returns defaults with env overrides (not an error).
 func (l *FileSettingsLoader) Load() (*Settings, error) {
-	// Start with global settings
-	settings, err := l.loadFile(l.path)
-	if err != nil {
-		return nil, err
+	v := viper.New()
+	v.SetConfigType("yaml")
+
+	// Same pattern as Loader (loader.go) — env prefix + auto env
+	v.SetEnvPrefix("CLAWKER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Register defaults — primitive values for mapstructure compatibility.
+	// *bool fields use raw bool; struct fields get non-zero defaults.
+	defaults := DefaultSettings()
+	v.SetDefault("logging.file_enabled", true)
+	v.SetDefault("logging.max_size_mb", defaults.Logging.MaxSizeMB)
+	v.SetDefault("logging.max_age_days", defaults.Logging.MaxAgeDays)
+	v.SetDefault("logging.max_backups", defaults.Logging.MaxBackups)
+	v.SetDefault("logging.compress", true)
+	v.SetDefault("logging.otel.enabled", true)
+	v.SetDefault("logging.otel.timeout_seconds", defaults.Logging.Otel.TimeoutSeconds)
+	v.SetDefault("logging.otel.max_queue_size", defaults.Logging.Otel.MaxQueueSize)
+	v.SetDefault("logging.otel.export_interval_seconds", defaults.Logging.Otel.ExportIntervalSeconds)
+	v.SetDefault("monitoring.otel_collector_port", defaults.Monitoring.OtelCollectorPort)
+	v.SetDefault("monitoring.otel_collector_host", defaults.Monitoring.OtelCollectorHost)
+	v.SetDefault("monitoring.otel_collector_internal", defaults.Monitoring.OtelCollectorInternal)
+	v.SetDefault("monitoring.otel_grpc_port", defaults.Monitoring.OtelGRPCPort)
+	v.SetDefault("monitoring.loki_port", defaults.Monitoring.LokiPort)
+	v.SetDefault("monitoring.prometheus_port", defaults.Monitoring.PrometheusPort)
+	v.SetDefault("monitoring.jaeger_port", defaults.Monitoring.JaegerPort)
+	v.SetDefault("monitoring.grafana_port", defaults.Monitoring.GrafanaPort)
+	v.SetDefault("monitoring.prometheus_metrics_port", defaults.Monitoring.PrometheusMetricsPort)
+	v.SetDefault("monitoring.telemetry.metrics_path", defaults.Monitoring.Telemetry.MetricsPath)
+	v.SetDefault("monitoring.telemetry.logs_path", defaults.Monitoring.Telemetry.LogsPath)
+	v.SetDefault("monitoring.telemetry.metric_export_interval_ms", defaults.Monitoring.Telemetry.MetricExportIntervalMs)
+	v.SetDefault("monitoring.telemetry.logs_export_interval_ms", defaults.Monitoring.Telemetry.LogsExportIntervalMs)
+	v.SetDefault("monitoring.telemetry.log_tool_details", true)
+	v.SetDefault("monitoring.telemetry.log_user_prompts", true)
+	v.SetDefault("monitoring.telemetry.include_account_uuid", true)
+	v.SetDefault("monitoring.telemetry.include_session_id", true)
+	v.SetDefault("default_image", defaults.DefaultImage)
+
+	// Load global settings file
+	v.SetConfigFile(l.path)
+	if err := v.ReadInConfig(); err != nil {
+		// File not found is OK — defaults apply
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to read settings file %s: %w", l.path, err)
+			}
+		}
 	}
 
 	// Merge project-level override if present
-	projectPath := l.ProjectSettingsPath()
-	if projectPath != "" {
-		if _, statErr := os.Stat(projectPath); statErr == nil {
-			projectSettings, err := l.loadFile(projectPath)
-			if err != nil {
+	if projectPath := l.ProjectSettingsPath(); projectPath != "" {
+		if fileExists(projectPath) {
+			v.SetConfigFile(projectPath)
+			if err := v.MergeInConfig(); err != nil {
 				return nil, fmt.Errorf("failed to load project settings: %w", err)
 			}
-			mergeSettings(settings, projectSettings)
-		} else if !os.IsNotExist(statErr) {
-			logger.Debug().Err(statErr).Str("path", projectPath).Msg("unexpected error checking project settings file")
 		}
 	}
 
-	return settings, nil
-}
-
-// loadFile reads and parses a single settings file.
-// Returns default settings if the file doesn't exist.
-func (l *FileSettingsLoader) loadFile(path string) (*Settings, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return DefaultSettings(), nil
-		}
-		return nil, fmt.Errorf("failed to read settings file %s: %w", path, err)
-	}
-
+	// Unmarshal — Viper has already resolved ENV > config > defaults
 	var settings Settings
-	if err := yaml.Unmarshal(data, &settings); err != nil {
-		return nil, fmt.Errorf("failed to parse settings file %s: %w", path, err)
+	if err := v.Unmarshal(&settings); err != nil {
+		return nil, fmt.Errorf("failed to parse settings: %w", err)
 	}
-
 	return &settings, nil
-}
-
-// mergeSettings applies project-level overrides onto base settings.
-// Only non-zero/non-nil fields in override take effect.
-func mergeSettings(base, override *Settings) {
-	if override == nil {
-		return
-	}
-
-	// Merge logging — override individual fields if set
-	if override.Logging.FileEnabled != nil {
-		base.Logging.FileEnabled = override.Logging.FileEnabled
-	}
-	if override.Logging.MaxSizeMB > 0 {
-		base.Logging.MaxSizeMB = override.Logging.MaxSizeMB
-	}
-	if override.Logging.MaxAgeDays > 0 {
-		base.Logging.MaxAgeDays = override.Logging.MaxAgeDays
-	}
-	if override.Logging.MaxBackups > 0 {
-		base.Logging.MaxBackups = override.Logging.MaxBackups
-	}
-
-	// Merge default image
-	if override.DefaultImage != "" {
-		base.DefaultImage = override.DefaultImage
-	}
 }
 
 // Save writes the settings to the global settings file.
@@ -209,3 +212,5 @@ func (l *FileSettingsLoader) EnsureExists() (bool, error) {
 
 	return true, nil
 }
+
+// fileExists is defined in loader.go — shared across this package.

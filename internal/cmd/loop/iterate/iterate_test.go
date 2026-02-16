@@ -5,36 +5,36 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 	}
 	return f, tio
 }
 
-func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
-	project := config.DefaultConfig()
+	tio := iostreamstest.New()
+	project := config.DefaultProject()
 	project.Project = "testproject"
 	cfg := config.NewConfigForTest(project, nil)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Config:   func() *config.Config { return cfg },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Config:    func() *config.Config { return cfg },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("docker not available in tests")
 		},

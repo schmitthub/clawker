@@ -72,7 +72,8 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   │   ├── hostproxytest/    # MockHostProxy for integration tests
 │   │   └── internals/        # Container-side hostproxy client scripts
 │   ├── iostreams/             # I/O streams, colors, styles, spinners, progress, layout
-│   ├── logger/                # Zerolog setup
+│   ├── logger/                # Zerolog setup (file + optional OTEL bridge)
+│   │   └── loggertest/        # Test doubles: TestLogger, New(), NewNop()
 │   ├── project/               # Project registration in user registry
 │   ├── prompter/              # Interactive prompts (String, Confirm, Select)
 │   ├── signals/               # OS signal utilities (leaf — stdlib only)
@@ -160,7 +161,8 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E tests
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
-| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |
+| `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout. `Logger` field for diagnostic file logging |
+| `iostreams.Logger` | Interface matching `*zerolog.Logger` — `Debug/Info/Warn/Error() *zerolog.Event`. Decouples commands from `internal/logger` |
 | `iostreams.ColorScheme` | Color palette + semantic colors + icons; canonical style source for all clawker output |
 | `iostreams.SpinnerFrame` | Pure spinner rendering function used by the iostreams goroutine spinner |
 | `text.*` | Pure ANSI-aware text utilities (leaf package): Truncate, PadRight, CountVisibleWidth, StripANSI, etc. |
@@ -289,7 +291,7 @@ security:
 10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
 11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
-13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams
+13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
 
 ## Important Gotchas
 

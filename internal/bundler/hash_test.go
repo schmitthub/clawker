@@ -105,7 +105,7 @@ func TestContentHash_PermissionError(t *testing.T) {
 // These values are now injected at container creation time or via build API labels,
 // keeping the Dockerfile (and hash) purely structural.
 func TestContentHash_MetadataStability(t *testing.T) {
-	baseConfig := func() *config.Project {
+	baseProject := func() *config.Project {
 		return &config.Project{
 			Version: "1",
 			Project: "testproj",
@@ -121,16 +121,16 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	}
 
 	// Generate baseline Dockerfile and hash
-	gen1 := NewProjectGenerator(baseConfig(), "/tmp/test")
+	gen1 := NewProjectGenerator(&config.Config{Project: baseProject()}, "/tmp/test")
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
 	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
 	// Change env vars — hash should NOT change
-	cfg2 := baseConfig()
-	cfg2.Agent.Env = map[string]string{"FOO": "bar", "BAZ": "qux"}
-	gen2 := NewProjectGenerator(cfg2, "/tmp/test")
+	p2 := baseProject()
+	p2.Agent.Env = map[string]string{"FOO": "bar", "BAZ": "qux"}
+	gen2 := NewProjectGenerator(&config.Config{Project: p2}, "/tmp/test")
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
 	hash2, err := ContentHash(df2, nil, "", nil)
@@ -138,10 +138,10 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	assert.Equal(t, hash1, hash2, "changing agent env should not change hash")
 
 	// Change editor — hash should NOT change
-	cfg3 := baseConfig()
-	cfg3.Agent.Editor = "vim"
-	cfg3.Agent.Visual = "code"
-	gen3 := NewProjectGenerator(cfg3, "/tmp/test")
+	p3 := baseProject()
+	p3.Agent.Editor = "vim"
+	p3.Agent.Visual = "code"
+	gen3 := NewProjectGenerator(&config.Config{Project: p3}, "/tmp/test")
 	df3, err := gen3.Generate()
 	require.NoError(t, err)
 	hash3, err := ContentHash(df3, nil, "", nil)
@@ -149,9 +149,9 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	assert.Equal(t, hash1, hash3, "changing editor should not change hash")
 
 	// Change firewall domains — hash should NOT change
-	cfg4 := baseConfig()
-	cfg4.Security.Firewall.AddDomains = []string{"custom.com"}
-	gen4 := NewProjectGenerator(cfg4, "/tmp/test")
+	p4 := baseProject()
+	p4.Security.Firewall.AddDomains = []string{"custom.com"}
+	gen4 := NewProjectGenerator(&config.Config{Project: p4}, "/tmp/test")
 	df4, err := gen4.Generate()
 	require.NoError(t, err)
 	hash4, err := ContentHash(df4, nil, "", nil)
@@ -159,12 +159,12 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	assert.Equal(t, hash1, hash4, "changing firewall domains should not change hash")
 
 	// Change labels — hash should NOT change
-	cfg5 := baseConfig()
-	cfg5.Build.Instructions = &config.DockerInstructions{
+	p5 := baseProject()
+	p5.Build.Instructions = &config.DockerInstructions{
 		Labels: map[string]string{"app": "myapp"},
 		Env:    map[string]string{"NODE_ENV": "production"},
 	}
-	gen5 := NewProjectGenerator(cfg5, "/tmp/test")
+	gen5 := NewProjectGenerator(&config.Config{Project: p5}, "/tmp/test")
 	df5, err := gen5.Generate()
 	require.NoError(t, err)
 	hash5, err := ContentHash(df5, nil, "", nil)
@@ -172,9 +172,9 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	assert.Equal(t, hash1, hash5, "changing labels and instruction env should not change hash")
 
 	// Change project name — hash should NOT change (labels are via API)
-	cfg6 := baseConfig()
-	cfg6.Project = "different-project"
-	gen6 := NewProjectGenerator(cfg6, "/tmp/test")
+	p6 := baseProject()
+	p6.Project = "different-project"
+	gen6 := NewProjectGenerator(&config.Config{Project: p6}, "/tmp/test")
 	df6, err := gen6.Generate()
 	require.NoError(t, err)
 	hash6, err := ContentHash(df6, nil, "", nil)
@@ -182,9 +182,9 @@ func TestContentHash_MetadataStability(t *testing.T) {
 	assert.Equal(t, hash1, hash6, "changing project name should not change hash")
 
 	// Change packages — hash SHOULD change (structural)
-	cfg7 := baseConfig()
-	cfg7.Build.Packages = []string{"ripgrep", "jq-extra-tools"}
-	gen7 := NewProjectGenerator(cfg7, "/tmp/test")
+	p7 := baseProject()
+	p7.Build.Packages = []string{"ripgrep", "jq-extra-tools"}
+	gen7 := NewProjectGenerator(&config.Config{Project: p7}, "/tmp/test")
 	df7, err := gen7.Generate()
 	require.NoError(t, err)
 	hash7, err := ContentHash(df7, nil, "", nil)
@@ -196,7 +196,7 @@ func TestContentHash_MetadataStability(t *testing.T) {
 // produce different content hashes because the Dockerfile structure differs
 // (--mount=type=cache directives vs plain RUN commands).
 func TestContentHash_BuildKitVsLegacy(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -207,7 +207,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: true},
 		},
-	}
+	}}
 
 	// BuildKit mode
 	genBK := NewProjectGenerator(cfg, "/tmp/test")
@@ -237,7 +237,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 // TestContentHash_StableBuildKit verifies that BuildKit Dockerfiles produce
 // stable hashes across multiple generations with the same config.
 func TestContentHash_StableBuildKit(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -248,7 +248,7 @@ func TestContentHash_StableBuildKit(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: true},
 		},
-	}
+	}}
 
 	gen1 := NewProjectGenerator(cfg, "/tmp/test")
 	gen1.BuildKitEnabled = true
@@ -270,7 +270,7 @@ func TestContentHash_StableBuildKit(t *testing.T) {
 // TestContentHash_StableLegacy verifies that legacy Dockerfiles produce
 // stable hashes across multiple generations with the same config.
 func TestContentHash_StableLegacy(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -281,7 +281,7 @@ func TestContentHash_StableLegacy(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: true},
 		},
-	}
+	}}
 
 	gen1 := NewProjectGenerator(cfg, "/tmp/test")
 	gen1.BuildKitEnabled = false
@@ -303,7 +303,7 @@ func TestContentHash_StableLegacy(t *testing.T) {
 // TestContentHash_BuildKitAlpineVsLegacy verifies BuildKit vs legacy divergence
 // on Alpine base images (different cache mount paths than Debian).
 func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
-	cfg := &config.Project{
+	cfg := &config.Config{Project: &config.Project{
 		Version: "1",
 		Project: "testproj",
 		Build: config.BuildConfig{
@@ -313,7 +313,7 @@ func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
 		Security: config.SecurityConfig{
 			Firewall: &config.FirewallConfig{Enable: true},
 		},
-	}
+	}}
 
 	genBK := NewProjectGenerator(cfg, "/tmp/test")
 	genBK.BuildKitEnabled = true

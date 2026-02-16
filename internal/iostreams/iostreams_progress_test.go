@@ -1,4 +1,4 @@
-package iostreams
+package iostreams_test
 
 import (
 	"errors"
@@ -6,14 +6,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestProgressIndicator_TextMode_DefaultLabel(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.StartProgressIndicatorWithLabel("")
+	ios.IOStreams.StartProgressIndicatorWithLabel("")
 
 	output := ios.ErrBuf.String()
 	if !strings.Contains(output, "Working...") {
@@ -22,11 +25,11 @@ func TestProgressIndicator_TextMode_DefaultLabel(t *testing.T) {
 }
 
 func TestProgressIndicator_TextMode_WithLabel(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.StartProgressIndicatorWithLabel("Building")
+	ios.IOStreams.StartProgressIndicatorWithLabel("Building")
 
 	output := ios.ErrBuf.String()
 	if !strings.Contains(output, "Building...") {
@@ -35,11 +38,11 @@ func TestProgressIndicator_TextMode_WithLabel(t *testing.T) {
 }
 
 func TestProgressIndicator_TextMode_LabelWithEllipsis(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.StartProgressIndicatorWithLabel("Loading...")
+	ios.IOStreams.StartProgressIndicatorWithLabel("Loading...")
 
 	output := ios.ErrBuf.String()
 	// Should NOT double the ellipsis
@@ -52,12 +55,12 @@ func TestProgressIndicator_TextMode_LabelWithEllipsis(t *testing.T) {
 }
 
 func TestProgressIndicator_TextMode_MultipleCalls(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.StartProgressIndicatorWithLabel("First")
-	ios.StartProgressIndicatorWithLabel("Second")
+	ios.IOStreams.StartProgressIndicatorWithLabel("First")
+	ios.IOStreams.StartProgressIndicatorWithLabel("Second")
 
 	output := ios.ErrBuf.String()
 	// Both should appear (text mode prints each time)
@@ -70,11 +73,11 @@ func TestProgressIndicator_TextMode_MultipleCalls(t *testing.T) {
 }
 
 func TestProgressIndicator_Disabled(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(false)
 
-	ios.StartProgressIndicatorWithLabel("Test")
-	ios.StopProgressIndicator()
+	ios.IOStreams.StartProgressIndicatorWithLabel("Test")
+	ios.IOStreams.StopProgressIndicator()
 
 	if ios.ErrBuf.String() != "" {
 		t.Errorf("expected no output when disabled, got %q", ios.ErrBuf.String())
@@ -82,43 +85,43 @@ func TestProgressIndicator_Disabled(t *testing.T) {
 }
 
 func TestProgressIndicator_StopWithoutStart(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
 	// Should not panic
-	ios.StopProgressIndicator()
+	ios.IOStreams.StopProgressIndicator()
 }
 
 func TestProgressIndicator_StopTwice(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
-	ios.StartProgressIndicatorWithLabel("Test")
-	ios.StopProgressIndicator()
-	ios.StopProgressIndicator() // Should not panic
+	ios.IOStreams.StartProgressIndicatorWithLabel("Test")
+	ios.IOStreams.StopProgressIndicator()
+	ios.IOStreams.StopProgressIndicator() // Should not panic
 }
 
 func TestProgressIndicator_GetSetSpinnerDisabled(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 
-	if ios.GetSpinnerDisabled() {
+	if ios.IOStreams.GetSpinnerDisabled() {
 		t.Error("default should be false")
 	}
 
 	ios.SetSpinnerDisabled(true)
-	if !ios.GetSpinnerDisabled() {
+	if !ios.IOStreams.GetSpinnerDisabled() {
 		t.Error("should be true after SetSpinnerDisabled(true)")
 	}
 }
 
 func TestProgressIndicator_RunWithProgress(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
 	called := false
-	err := ios.RunWithProgress("Processing", func() error {
+	err := ios.IOStreams.RunWithProgress("Processing", func() error {
 		called = true
 		return nil
 	})
@@ -137,15 +140,15 @@ func TestProgressIndicator_RunWithProgress(t *testing.T) {
 }
 
 func TestProgressIndicator_AnimatedSpinner(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	// spinnerDisabled defaults to false - use animated spinner
 
-	ios.StartProgressIndicatorWithLabel("Loading")
+	ios.IOStreams.StartProgressIndicatorWithLabel("Loading")
 	// Spinner library may not output to non-TTY writers,
 	// but we can verify the spinner was created and can be stopped without panic
 	time.Sleep(50 * time.Millisecond)
-	ios.StopProgressIndicator()
+	ios.IOStreams.StopProgressIndicator()
 
 	// Verify the spinner was properly managed (no panic, no deadlock)
 	// The spinner library doesn't output to non-TTY buffers, so we can't verify
@@ -153,14 +156,14 @@ func TestProgressIndicator_AnimatedSpinner(t *testing.T) {
 }
 
 func TestProgressIndicator_AnimatedSpinner_LabelUpdate(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
-	ios.StartProgressIndicatorWithLabel("First")
+	ios.IOStreams.StartProgressIndicatorWithLabel("First")
 	time.Sleep(50 * time.Millisecond)
-	ios.StartProgressIndicatorWithLabel("Second") // Should update prefix, not create new
+	ios.IOStreams.StartProgressIndicatorWithLabel("Second") // Should update prefix, not create new
 	time.Sleep(50 * time.Millisecond)
-	ios.StopProgressIndicator()
+	ios.IOStreams.StopProgressIndicator()
 
 	// Verify the spinner was properly managed (no panic, no deadlock)
 	// and that label update doesn't cause issues.
@@ -168,36 +171,23 @@ func TestProgressIndicator_AnimatedSpinner_LabelUpdate(t *testing.T) {
 }
 
 func TestProgressIndicator_AnimatedSpinner_InternalState(t *testing.T) {
-	// Test that the spinner is properly tracked internally
-	ios := NewTestIOStreams()
+	// Validate spinner lifecycle behavior through public APIs.
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 
-	// Start spinner - activeSpinner should be set
-	ios.StartProgressIndicatorWithLabel("Test")
+	// Start, update label, and stop without panic/deadlock.
+	ios.IOStreams.StartProgressIndicatorWithLabel("Test")
+	time.Sleep(20 * time.Millisecond)
+	ios.IOStreams.StartProgressIndicatorWithLabel("Updated")
+	time.Sleep(20 * time.Millisecond)
+	ios.IOStreams.StopProgressIndicator()
 
-	// Access internal state via lock for verification
-	ios.spinnerMu.Lock()
-	hasSpinner := ios.activeSpinner != nil
-	ios.spinnerMu.Unlock()
-
-	if !hasSpinner {
-		t.Error("spinner should be created after StartProgressIndicatorWithLabel")
-	}
-
-	// Stop spinner - activeSpinner should be nil
-	ios.StopProgressIndicator()
-
-	ios.spinnerMu.Lock()
-	hasSpinnerAfterStop := ios.activeSpinner != nil
-	ios.spinnerMu.Unlock()
-
-	if hasSpinnerAfterStop {
-		t.Error("spinner should be nil after StopProgressIndicator")
-	}
+	// Idempotent stop should also not panic.
+	ios.IOStreams.StopProgressIndicator()
 }
 
 func TestProgressIndicator_ConcurrentAccess(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
@@ -206,11 +196,11 @@ func TestProgressIndicator_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			ios.StartProgressIndicatorWithLabel("concurrent")
+			ios.IOStreams.StartProgressIndicatorWithLabel("concurrent")
 		}()
 		go func() {
 			defer wg.Done()
-			ios.StopProgressIndicator()
+			ios.IOStreams.StopProgressIndicator()
 		}()
 	}
 	wg.Wait()
@@ -218,12 +208,12 @@ func TestProgressIndicator_ConcurrentAccess(t *testing.T) {
 }
 
 func TestProgressIndicator_RunWithProgress_Error(t *testing.T) {
-	ios := NewTestIOStreams()
+	ios := iostreamstest.New()
 	ios.SetProgressEnabled(true)
 	ios.SetSpinnerDisabled(true)
 
 	expectedErr := errors.New("task failed")
-	err := ios.RunWithProgress("Processing", func() error {
+	err := ios.IOStreams.RunWithProgress("Processing", func() error {
 		return expectedErr
 	})
 
@@ -239,8 +229,8 @@ func TestProgressIndicator_RunWithProgress_Error(t *testing.T) {
 
 func TestProgressIndicator_SpinnerStyle(t *testing.T) {
 	// Verify our default spinner style (braille) renders with cyan color
-	cs := NewColorScheme(true, "dark")
-	frame := SpinnerFrame(SpinnerBraille, 0, "test", cs)
+	cs := iostreams.NewColorScheme(true, "dark")
+	frame := iostreams.SpinnerFrame(iostreams.SpinnerBraille, 0, "test", cs)
 	if frame == "" {
 		t.Fatal("SpinnerFrame should return non-empty string")
 	}

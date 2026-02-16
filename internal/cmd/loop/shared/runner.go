@@ -12,7 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // Result represents the outcome of running the loop.
@@ -112,6 +112,9 @@ type Options struct {
 	// WorkDir is the host working directory for this session.
 	WorkDir string
 
+	// Logger is the diagnostic file logger (from IOStreams.Logger).
+	Logger iostreams.Logger
+
 	// Verbose enables verbose logging.
 	Verbose bool
 
@@ -204,16 +207,16 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	// Load or create session (with expiration check)
 	session, expired, err := r.store.LoadSessionWithExpiration(opts.ProjectCfg.Project, opts.Agent, opts.SessionExpirationHours)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to load session")
+		opts.Logger.Error().Err(err).Msg("failed to load session")
 		return &Result{
 			ExitReason: "failed to load session",
 			Error:      fmt.Errorf("failed to load session (use --reset-circuit --all to start fresh): %w", err),
 		}, nil
 	}
 	if expired {
-		logger.Debug().Msg("session expired, starting fresh")
+		opts.Logger.Debug().Msg("session expired, starting fresh")
 		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "expired", "", "", 0); histErr != nil {
-			logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
+			opts.Logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
 		}
 	}
 	sessionCreated := session == nil
@@ -222,10 +225,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if sessionCreated {
 		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
-			logger.Warn().Err(histErr).Msg("failed to record session creation in history")
+			opts.Logger.Warn().Err(histErr).Msg("failed to record session creation in history")
 		}
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
-			logger.Error().Err(saveErr).Msg("failed to save initial session")
+			opts.Logger.Error().Err(saveErr).Msg("failed to save initial session")
 			return &Result{
 				Session:    session,
 				ExitReason: "failed to save initial session",
@@ -238,7 +241,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	rateLimiter := NewRateLimiter(opts.CallsPerHour)
 	if session.RateLimitState != nil {
 		if !rateLimiter.RestoreState(*session.RateLimitState) {
-			logger.Warn().Msg("rate limit state expired or invalid, starting fresh window")
+			opts.Logger.Warn().Msg("rate limit state expired or invalid, starting fresh window")
 		}
 	}
 
@@ -255,7 +258,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	// Reset circuit if requested
 	if opts.ResetCircuit {
 		if err := r.store.DeleteCircuitState(opts.ProjectCfg.Project, opts.Agent); err != nil {
-			logger.Warn().Err(err).Msg("failed to delete circuit state")
+			opts.Logger.Warn().Err(err).Msg("failed to delete circuit state")
 			return &Result{
 				Session:    session,
 				ExitReason: "failed to reset circuit breaker",
@@ -263,12 +266,12 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 			}, nil
 		}
 		if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
-			logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
+			opts.Logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
 		}
 	} else {
 		circuitState, err := r.store.LoadCircuitState(opts.ProjectCfg.Project, opts.Agent)
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
+			opts.Logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
 			return &Result{
 				Session:    session,
 				ExitReason: "failed to load circuit state",
@@ -313,7 +316,7 @@ mainLoop:
 
 		// Check rate limiter
 		if rateLimiter.IsEnabled() && !rateLimiter.Allow() {
-			logger.Warn().
+			opts.Logger.Warn().
 				Int("limit", rateLimiter.Limit()).
 				Time("reset_time", rateLimiter.ResetTime()).
 				Msg("rate limit reached")
@@ -354,7 +357,7 @@ mainLoop:
 			break
 		}
 
-		logger.Debug().
+		opts.Logger.Debug().
 			Int("loop", loopNum).
 			Int("max_loops", opts.MaxLoops).
 			Str("container", containerCfg.ContainerID).
@@ -362,7 +365,7 @@ mainLoop:
 
 		// Execute with timeout
 		loopCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		text, resultEvent, exitCode, loopErr := r.StartContainer(loopCtx, opts.ProjectCfg, containerCfg, opts.OnOutput, opts.OnStreamEvent)
+		text, resultEvent, exitCode, loopErr := r.StartContainer(loopCtx, opts.Logger, opts.ProjectCfg, containerCfg, opts.OnOutput, opts.OnStreamEvent)
 		cancel()
 
 		// Always cleanup the container after each iteration
@@ -379,7 +382,7 @@ mainLoop:
 		// Check for Claude's API rate limit
 		if analysis.RateLimitHit {
 			result.RateLimitHit = true
-			logger.Warn().Msg("Claude API rate limit detected")
+			opts.Logger.Warn().Msg("Claude API rate limit detected")
 
 			if opts.Monitor != nil {
 				isInteractive := opts.OnRateLimitHit != nil
@@ -408,7 +411,7 @@ mainLoop:
 		rlState := rateLimiter.State()
 		session.RateLimitState = &rlState
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
-			logger.Error().Err(saveErr).Msg("failed to save session - progress may be lost")
+			opts.Logger.Error().Err(saveErr).Msg("failed to save session - progress may be lost")
 			if opts.Monitor != nil {
 				fmt.Fprintf(opts.Monitor.opts.Writer, "WARNING: Failed to save session: %v\n", saveErr)
 			}
@@ -422,7 +425,7 @@ mainLoop:
 				statusStr = status.Status
 			}
 			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
-				logger.Warn().Err(histErr).Msg("failed to record session update in history")
+				opts.Logger.Warn().Err(histErr).Msg("failed to record session update in history")
 			}
 		}
 
@@ -433,7 +436,7 @@ mainLoop:
 			opts.Monitor.PrintLoopEnd(loopNum, status, loopErr, analysis.OutputSize, loopDuration)
 		}
 
-		logger.Debug().
+		opts.Logger.Debug().
 			Int("loop", loopNum).
 			Int("exit_code", exitCode).
 			Str("status", status.String()).
@@ -446,13 +449,13 @@ mainLoop:
 		// Surface repeated errors in history before they trip the circuit.
 		if sameCount := circuit.SameErrorCount(); sameCount >= 3 && analysis != nil && analysis.ErrorSignature != "" {
 			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
-				logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
+				opts.Logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
 			}
 		}
 
 		if updateResult.IsComplete {
 			result.ExitReason = "agent signaled completion"
-			logger.Debug().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
+			opts.Logger.Debug().Str("completion", updateResult.CompletionMsg).Msg("completion detected")
 			break
 		}
 
@@ -468,7 +471,7 @@ mainLoop:
 		}
 
 		if exitCode != 0 {
-			logger.Warn().Int("exit_code", exitCode).Msg("non-zero exit code from claude")
+			opts.Logger.Warn().Int("exit_code", exitCode).Msg("non-zero exit code from claude")
 		}
 
 		if updateResult.Tripped {
@@ -485,7 +488,7 @@ mainLoop:
 				TrippedAt:       &now,
 			}
 			if saveErr := r.store.SaveCircuitState(circuitState); saveErr != nil {
-				logger.Error().Err(saveErr).Msg("CRITICAL: failed to save circuit state")
+				opts.Logger.Error().Err(saveErr).Msg("CRITICAL: failed to save circuit state")
 				result.ExitReason = fmt.Sprintf("stagnation: %s (WARNING: circuit state not persisted)", updateResult.Reason)
 				result.Error = fmt.Errorf("circuit breaker tripped (%s) and state save failed: %w", updateResult.Reason, saveErr)
 			}
@@ -493,7 +496,7 @@ mainLoop:
 			state := circuit.State()
 			if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "closed", "tripped", updateResult.Reason,
 				state.NoProgressCount, state.SameErrorCount, state.ConsecutiveTestLoops, state.ConsecutiveCompletionCount); histErr != nil {
-				logger.Warn().Err(histErr).Msg("failed to record circuit trip in history")
+				opts.Logger.Warn().Err(histErr).Msg("failed to record circuit trip in history")
 			}
 			break
 		}
@@ -537,7 +540,7 @@ mainLoop:
 // (tool starts, text deltas). Text deltas are also forwarded to onOutput
 // for simple text display. Complete assistant messages are accumulated
 // via TextAccumulator for LOOP_STATUS parsing.
-func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte), onStreamEvent func(*StreamDeltaEvent)) (string, *ResultEvent, int, error) {
+func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, projectCfg *config.Project, containerConfig *ContainerStartConfig, onOutput func([]byte), onStreamEvent func(*StreamDeltaEvent)) (string, *ResultEvent, int, error) {
 	// Set up stream-json parsing pipeline: stdcopy → io.Pipe → ParseStream
 	pr, pw := io.Pipe()
 	textAcc, handler := NewTextAccumulator()
@@ -563,19 +566,19 @@ func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project,
 		Stdout: true,
 		Stderr: true,
 	}
-	logger.Debug().Msg("attaching to container before start")
+	log.Debug().Msg("attaching to container before start")
 	hijacked, err := r.client.ContainerAttach(ctx, containerConfig.ContainerID, attachOpts)
 	if err != nil {
 		pw.Close()
-		logger.Debug().Err(err).Msg("container attach failed")
+		log.Debug().Err(err).Msg("container attach failed")
 		return "", nil, -1, fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
-	logger.Debug().Msg("container attach succeeded")
+	log.Debug().Msg("container attach succeeded")
 
 	// Set up wait channel for container exit
-	logger.Debug().Msg("setting up container wait")
-	statusCh := waitForContainerExit(ctx, r.client, containerConfig.ContainerID, false)
+	log.Debug().Msg("setting up container wait")
+	statusCh := waitForContainerExit(ctx, log, r.client, containerConfig.ContainerID, false)
 
 	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream into the pipe
 	streamDone := make(chan error, 1)
@@ -597,12 +600,12 @@ func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project,
 	}()
 
 	// Start the container
-	logger.Debug().Msg("starting container")
+	log.Debug().Msg("starting container")
 	if _, err := r.client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerConfig.ContainerID}); err != nil {
 		pw.Close()
 		return "", nil, -1, fmt.Errorf("start container failed: %w", err)
 	}
-	logger.Debug().Msg("container started successfully")
+	log.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding if needed
 	if containershared.NeedsSocketBridge(projectCfg) {
@@ -611,16 +614,16 @@ func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project,
 		// holds a socketBridge field since it's wired through CreateContainer.
 		// For now, log a warning if socket bridge is needed but not available.
 		// The socket bridge setup is handled in the CreateContainer callback.
-		logger.Debug().Bool("gpg_enabled", gpgEnabled).Msg("socket bridge may be needed (handled by container factory)")
+		log.Debug().Bool("gpg_enabled", gpgEnabled).Msg("socket bridge may be needed (handled by container factory)")
 	}
 
 	// Wait for stream completion and parse result
 	var streamErr error
 	select {
 	case streamErr = <-streamDone:
-		logger.Debug().Err(streamErr).Msg("stream completed")
+		log.Debug().Err(streamErr).Msg("stream completed")
 	case exitCode := <-statusCh:
-		logger.Debug().Int("exitCode", exitCode).Msg("container exited before stream completed")
+		log.Debug().Int("exitCode", exitCode).Msg("container exited before stream completed")
 		// Container exited — wait for stream to finish draining
 		streamErr = <-streamDone
 	}
@@ -643,7 +646,7 @@ func (r *Runner) StartContainer(ctx context.Context, projectCfg *config.Project,
 	if parsed.err != nil && streamErr == nil {
 		// ParseStream error but stream was clean — container may have crashed
 		// before emitting a result event. Return text we have.
-		logger.Warn().Err(parsed.err).Msg("stream parse error (container may have crashed)")
+		log.Warn().Err(parsed.err).Msg("stream parse error (container may have crashed)")
 		return text, nil, exitCode, nil
 	}
 	if streamErr != nil {
@@ -680,7 +683,7 @@ func (r *Runner) GetCircuitState(project, agent string) (*CircuitState, error) {
 }
 
 // waitForContainerExit sets up a channel that receives the container's exit status code.
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int {
+func waitForContainerExit(ctx context.Context, log iostreams.Logger, client *docker.Client, containerID string, autoRemove bool) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {
 		condition = container.WaitConditionRemoved
@@ -695,13 +698,13 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 			return
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				logger.Error().Str("message", result.Error.Message).Msg("container wait error")
+				log.Error().Str("message", result.Error.Message).Msg("container wait error")
 				statusCh <- 125
 			} else {
 				statusCh <- int(result.StatusCode)
 			}
 		case err := <-waitResult.Error:
-			logger.Error().Err(err).Msg("error waiting for container")
+			log.Error().Err(err).Msg("error waiting for container")
 			statusCh <- 125
 		}
 	}()

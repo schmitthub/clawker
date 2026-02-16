@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,7 +66,7 @@ func TestNewCmdRemove(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 			var gotOpts *RemoveOptions
@@ -101,7 +101,7 @@ func TestNewCmdRemove(t *testing.T) {
 }
 
 func TestCmdRemove_Properties(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdRemove(f, nil)
 

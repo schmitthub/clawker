@@ -120,6 +120,18 @@ type DockerfileContext struct {
 	BuildKitEnabled bool
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
+
+	// OTEL telemetry endpoints — populated from config.MonitoringConfig
+	OtelMetricsEndpoint      string // e.g. "http://otel-collector:4318/v1/metrics"
+	OtelLogsEndpoint         string // e.g. "http://otel-collector:4318/v1/logs"
+	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
+	OtelMetricExportInterval int    // milliseconds, e.g. 10000
+
+	// OTEL feature flags — populated from config.TelemetryConfig
+	OtelLogToolDetails     bool // OTEL_LOG_TOOL_DETAILS=1
+	OtelLogUserPrompts     bool // OTEL_LOG_USER_PROMPTS=1
+	OtelIncludeAccountUUID bool // OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
+	OtelIncludeSessionID   bool // OTEL_METRICS_INCLUDE_SESSION_ID=true
 }
 
 // DockerfileInstructions contains type-safe Dockerfile instructions.
@@ -246,20 +258,32 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 	isAlpine := m.config.IsAlpine(variant)
 	baseImage := m.variantToBaseImage(variant)
 
+	// OTEL telemetry from monitoring config defaults
+	defaults := config.DefaultSettings()
+	mon := &defaults.Monitoring
+
 	return &DockerfileContext{
-		BaseImage:       baseImage,
-		Packages:        []string{}, // Base packages are in template
-		Username:        DefaultUsername,
-		UID:             DefaultUID,
-		GID:             DefaultGID,
-		Shell:           "/bin/zsh",
-		WorkspacePath:   "/workspace",
-		ClaudeVersion:   version,
-		IsAlpine:        isAlpine,
-		EnableFirewall:  true,
-		BuildKitEnabled: m.BuildKitEnabled,
-		Instructions:    nil,
-		Inject:          nil,
+		BaseImage:                baseImage,
+		Packages:                 []string{}, // Base packages are in template
+		Username:                 DefaultUsername,
+		UID:                      DefaultUID,
+		GID:                      DefaultGID,
+		Shell:                    "/bin/zsh",
+		WorkspacePath:            "/workspace",
+		ClaudeVersion:            version,
+		IsAlpine:                 isAlpine,
+		EnableFirewall:           true,
+		BuildKitEnabled:          m.BuildKitEnabled,
+		Instructions:             nil,
+		Inject:                   nil,
+		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
+		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
+		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
+		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
+		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
+		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
+		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
+		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
 	}, nil
 }
 
@@ -290,17 +314,26 @@ func (m *DockerfileManager) DockerfilesDir() string {
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
-	config          *config.Project
+	config          *config.Config // gateway — provides Project and Settings
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
-func NewProjectGenerator(cfg *config.Project, workDir string) *ProjectGenerator {
+func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator {
 	return &ProjectGenerator{
 		config:  cfg,
 		workDir: workDir,
 	}
+}
+
+// effectiveSettings returns the loaded settings from the config gateway,
+// falling back to DefaultSettings() when no gateway is available (e.g. tests).
+func (g *ProjectGenerator) effectiveSettings() *config.Settings {
+	if g.config != nil && g.config.Settings != nil {
+		return g.config.Settings
+	}
+	return config.DefaultSettings()
 }
 
 // Generate creates a Dockerfile based on the project configuration.
@@ -360,7 +393,7 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	}
 
 	// Add firewall script if enabled
-	if g.config.Security.FirewallEnabled() {
+	if g.config.Project.Security.FirewallEnabled() {
 		if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
 			return nil, err
 		}
@@ -387,7 +420,7 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	}
 
 	// Add any include files from agent config
-	for _, include := range g.config.Agent.Includes {
+	for _, include := range g.config.Project.Agent.Includes {
 		includePath := include
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(g.workDir, includePath)
@@ -442,14 +475,14 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	}
 
 	// Write firewall script if enabled
-	if g.config.Security.FirewallEnabled() {
+	if g.config.Project.Security.FirewallEnabled() {
 		if err := os.WriteFile(filepath.Join(dir, "init-firewall.sh"), []byte(FirewallScript), 0755); err != nil {
 			return fmt.Errorf("failed to write init-firewall.sh: %w", err)
 		}
 	}
 
 	// Write include files from agent config
-	for _, include := range g.config.Agent.Includes {
+	for _, include := range g.config.Project.Agent.Includes {
 		includePath := include
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(g.workDir, includePath)
@@ -470,12 +503,12 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 
 // UseCustomDockerfile checks if a custom Dockerfile should be used.
 func (g *ProjectGenerator) UseCustomDockerfile() bool {
-	return g.config.Build.Dockerfile != ""
+	return g.config.Project.Build.Dockerfile != ""
 }
 
 // GetCustomDockerfilePath returns the path to the custom Dockerfile.
 func (g *ProjectGenerator) GetCustomDockerfilePath() string {
-	path := g.config.Build.Dockerfile
+	path := g.config.Project.Build.Dockerfile
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(g.workDir, path)
 	}
@@ -484,8 +517,8 @@ func (g *ProjectGenerator) GetCustomDockerfilePath() string {
 
 // GetBuildContext returns the build context path.
 func (g *ProjectGenerator) GetBuildContext() string {
-	if g.config.Build.Context != "" {
-		path := g.config.Build.Context
+	if g.config.Project.Build.Context != "" {
+		path := g.config.Project.Build.Context
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(g.workDir, path)
 		}
@@ -530,30 +563,43 @@ func filterBasePackages(packages []string, isAlpine bool) []string {
 
 // buildContext creates the template context from config.
 func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
-	baseImage := g.config.Build.Image
+	p := g.config.Project
+	baseImage := p.Build.Image
 	if baseImage == "" {
 		baseImage = "buildpack-deps:bookworm-scm"
 	}
 
 	isAlpine := strings.Contains(strings.ToLower(baseImage), "alpine")
 
+	// OTEL telemetry from effective settings (user overrides respected)
+	settings := g.effectiveSettings()
+	mon := &settings.Monitoring
+
 	ctx := &DockerfileContext{
-		BaseImage:       baseImage,
-		Packages:        filterBasePackages(g.config.Build.Packages, isAlpine),
-		Username:        DefaultUsername,
-		UID:             DefaultUID,
-		GID:             DefaultGID,
-		Shell:           DefaultShell,
-		WorkspacePath:   g.config.Workspace.RemotePath,
-		ClaudeVersion:   DefaultClaudeCodeVersion,
-		IsAlpine:        isAlpine,
-		EnableFirewall:  g.config.Security.FirewallEnabled(),
-		BuildKitEnabled: g.BuildKitEnabled,
+		BaseImage:                baseImage,
+		Packages:                 filterBasePackages(p.Build.Packages, isAlpine),
+		Username:                 DefaultUsername,
+		UID:                      DefaultUID,
+		GID:                      DefaultGID,
+		Shell:                    DefaultShell,
+		WorkspacePath:            p.Workspace.RemotePath,
+		ClaudeVersion:            DefaultClaudeCodeVersion,
+		IsAlpine:                 isAlpine,
+		EnableFirewall:           p.Security.FirewallEnabled(),
+		BuildKitEnabled:          g.BuildKitEnabled,
+		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
+		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
+		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
+		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
+		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
+		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
+		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
+		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
 	}
 
 	// Populate Instructions if present (structural only — Copy, Args, RUN)
-	if g.config.Build.Instructions != nil {
-		inst := g.config.Build.Instructions
+	if p.Build.Instructions != nil {
+		inst := p.Build.Instructions
 		ctx.Instructions = &DockerfileInstructions{
 			Copy:    convertCopyInstructions(inst.Copy),
 			Args:    convertArgInstructions(inst.Args),
@@ -563,8 +609,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	}
 
 	// Populate Inject if present
-	if g.config.Build.Inject != nil {
-		inj := g.config.Build.Inject
+	if p.Build.Inject != nil {
+		inj := p.Build.Inject
 		ctx.Inject = &DockerfileInject{
 			AfterFrom:          inj.AfterFrom,
 			AfterPackages:      inj.AfterPackages,

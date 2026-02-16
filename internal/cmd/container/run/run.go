@@ -16,7 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
@@ -205,6 +204,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Version:     opts.Version,
 			GitManager:  opts.GitManager,
 			HostProxy:   opts.HostProxy,
+			Logger:      ios.Logger,
 			Is256Color:  ios.Is256ColorSupported(),
 			IsTrueColor: ios.IsTrueColorSupported(),
 		}, events)
@@ -245,7 +245,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 			gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 			if err := opts.SocketBridge().EnsureBridge(o.result.ContainerID, gpgEnabled); err != nil {
-				logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
+				ios.Logger.Warn().Err(err).Msg("failed to start socket bridge for detached container")
 			}
 		}
 		fmt.Fprintln(ios.Out, o.result.ContainerID[:12])
@@ -284,21 +284,21 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// Attach to container BEFORE starting it
 	// This is critical for short-lived containers (especially with --rm) where the container
 	// might exit and be removed before we can attach if we start first.
-	logger.Debug().Msg("attaching to container before start")
+	ios.Logger.Debug().Msg("attaching to container before start")
 	hijacked, err := client.ContainerAttach(ctx, containerID, attachOpts)
 	if err != nil {
-		logger.Debug().Err(err).Msg("container attach failed")
+		ios.Logger.Debug().Err(err).Msg("container attach failed")
 		return fmt.Errorf("attaching to container: %w", err)
 	}
 	defer hijacked.Close()
-	logger.Debug().Msg("container attach succeeded")
+	ios.Logger.Debug().Msg("container attach succeeded")
 
 	// Set up wait channel for container exit following Docker CLI's waitExitOrRemoved pattern.
 	// This wraps the dual-channel ContainerWait into a single status channel.
 	// Must use WaitConditionNextExit (not WaitConditionNotRunning) because this is called
 	// before the container starts — a "created" container is already not-running.
-	logger.Debug().Msg("setting up container wait")
-	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove)
+	ios.Logger.Debug().Msg("setting up container wait")
+	statusCh := waitForContainerExit(ctx, client, containerID, containerOpts.AutoRemove, ios.Logger)
 
 	// Start I/O streaming BEFORE starting the container.
 	// This ensures we're ready to receive output immediately when the container starts.
@@ -327,19 +327,19 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	}
 
 	// Now start the container — the I/O streaming goroutines are already running
-	logger.Debug().Msg("starting container")
+	ios.Logger.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
-		logger.Debug().Err(err).Msg("container start failed")
+		ios.Logger.Debug().Err(err).Msg("container start failed")
 		return fmt.Errorf("starting container: %w", err)
 	}
-	logger.Debug().Msg("container started successfully")
+	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
 	cfg := opts.Config().Project
 	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-			logger.Warn().Err(err).Msg("failed to start socket bridge")
+			ios.Logger.Warn().Err(err).Msg("failed to start socket bridge")
 		} else {
 			defer opts.SocketBridge().StopBridge(containerID)
 		}
@@ -356,13 +356,13 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set actual container TTY size")
 				}
 			}
 
@@ -378,7 +378,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	// when exit status arrives first, drain the stream.
 	select {
 	case err := <-streamDone:
-		logger.Debug().Err(err).Msg("stream completed")
+		ios.Logger.Debug().Err(err).Msg("stream completed")
 		if err != nil {
 			return err
 		}
@@ -390,18 +390,18 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 		// detection (Docker CLI uses term.EscapeError for this).
 		select {
 		case status := <-statusCh:
-			logger.Debug().Int("exitCode", status).Msg("container exited")
+			ios.Logger.Debug().Int("exitCode", status).Msg("container exited")
 			if status != 0 {
 				return &cmdutil.ExitError{Code: status}
 			}
 			return nil
 		case <-time.After(2 * time.Second):
 			// No exit status within timeout — stream ended due to detach, not exit.
-			logger.Debug().Msg("no exit status received after stream ended, assuming detach")
+			ios.Logger.Debug().Msg("no exit status received after stream ended, assuming detach")
 			return nil
 		}
 	case status := <-statusCh:
-		logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
+		ios.Logger.Debug().Int("exitCode", status).Msg("container exited before stream completed")
 		// Wait for stream to finish flushing buffered output.
 		// Docker CLI does the same: "we need to keep the streamer running
 		// until all output is read." The daemon closes the hijacked connection
@@ -420,7 +420,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 //     BEFORE the container starts without returning immediately for "created" containers.
 //   - Uses WaitConditionRemoved when autoRemove is true (--rm) so the wait doesn't fail
 //     when the container is removed after exit.
-func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool) <-chan int {
+func waitForContainerExit(ctx context.Context, client *docker.Client, containerID string, autoRemove bool, log iostreams.Logger) <-chan int {
 	condition := container.WaitConditionNextExit
 	if autoRemove {
 		condition = container.WaitConditionRemoved
@@ -435,13 +435,13 @@ func waitForContainerExit(ctx context.Context, client *docker.Client, containerI
 			return
 		case result := <-waitResult.Result:
 			if result.Error != nil {
-				logger.Error().Str("message", result.Error.Message).Msg("container wait error")
+				log.Error().Str("message", result.Error.Message).Msg("container wait error")
 				statusCh <- 125
 			} else {
 				statusCh <- int(result.StatusCode)
 			}
 		case err := <-waitResult.Error:
-			logger.Error().Err(err).Msg("error waiting for container")
+			log.Error().Err(err).Msg("error waiting for container")
 			statusCh <- 125
 		}
 	}()

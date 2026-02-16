@@ -9,7 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -20,7 +20,7 @@ import (
 // --- RebuildMissingDefaultImage tests ---
 
 func TestRebuildMissingImage_NonInteractive(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	// Non-interactive by default
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
@@ -36,7 +36,7 @@ func TestRebuildMissingImage_NonInteractive(t *testing.T) {
 }
 
 func TestRebuildMissingImage_UserDeclines(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.InBuf.SetInput("2\n") // "No"
 
@@ -52,7 +52,7 @@ func TestRebuildMissingImage_UserDeclines(t *testing.T) {
 }
 
 func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
 
@@ -85,7 +85,7 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 }
 
 func TestRebuildMissingImage_BuildFailure(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
 
@@ -108,7 +108,7 @@ func TestRebuildMissingImage_BuildFailure(t *testing.T) {
 }
 
 func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true)
 	tio.InBuf.SetInput("1\n1\n") // "Yes" then "bookworm"
 

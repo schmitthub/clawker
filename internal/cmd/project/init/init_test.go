@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestNewCmdProjectInit(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 	var gotOpts *ProjectInitOptions
@@ -106,7 +106,7 @@ func TestNewCmdProjectInit_FlagParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 			var gotOpts *ProjectInitOptions

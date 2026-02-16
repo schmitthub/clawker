@@ -9,7 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -26,10 +26,11 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
-			fake := dockertest.NewFakeClient()
+			testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+			fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
 				IOStreams: tio.IOStreams,
 				TUI:      tui.NewTUI(tio.IOStreams),
@@ -37,7 +38,7 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 					return fake.Client, nil
 				},
 				Config: func() *config.Config {
-					return config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+					return testCfg
 				},
 			}
 
@@ -81,10 +82,11 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 func TestBuildProgress_SimplePipeline(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	fake := dockertest.NewFakeClient()
+	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -92,7 +94,7 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 			return fake.Client, nil
 		},
 		Config: func() *config.Config {
-			return config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+			return testCfg
 		},
 	}
 
@@ -120,10 +122,11 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 func TestBuildProgress_Suppressed(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	fake := dockertest.NewFakeClient()
+	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -131,7 +134,7 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 			return fake.Client, nil
 		},
 		Config: func() *config.Config {
-			return config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+			return testCfg
 		},
 	}
 
@@ -154,10 +157,11 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 func TestBuildProgress_CaptureCallCount(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	fake := dockertest.NewFakeClient()
+	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
 	capture := fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -165,7 +169,7 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 			return fake.Client, nil
 		},
 		Config: func() *config.Config {
-			return config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
+			return testCfg
 		},
 	}
 

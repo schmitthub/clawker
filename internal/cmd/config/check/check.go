@@ -3,32 +3,33 @@ package check
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	internalconfig "github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v3"
 )
 
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
+	Config    func() *config.Config
 }
 
 // NewCmdCheck creates the config check command.
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "check",
-		Short: "Validate clawker.yaml configuration",
-		Long: `Validates the clawker.yaml configuration file in the current directory.
+		Short: "Validate your clawker configuration from the current project's context",
+		Long: `Validates the clawker configuration from this project's context'.
 
-Checks for:
+Checks resolution and validation between $CLAWKER_HOME/settings.yaml, $CLAWKER_HOME/clawker.yaml, and ./clawker.yaml: 
   - Required fields (version, project, build.image)
   - Valid field values and formats
   - File existence for referenced paths (dockerfile, includes)
@@ -47,88 +48,25 @@ Checks for:
 }
 
 func checkRun(_ context.Context, opts *CheckOptions) error {
-	ios := opts.IOStreams
+	io := opts.IOStreams
+	cfg := opts.Config()
 
-	// Get current working directory (where to look for clawker.yaml)
-	wd, err := os.Getwd()
+	settings, err := yaml.Marshal(cfg.Settings)
+
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-	logger.Debug().Str("workdir", wd).Msg("checking configuration")
-
-	// Load configuration
-	loader := internalconfig.NewLoader(wd)
-
-	if !loader.Exists() {
-		cmdutil.PrintError(ios, "%s not found", internalconfig.ConfigFileName)
-		cmdutil.PrintNextSteps(ios,
-			"Run 'clawker init' to create a configuration file",
-			"Or create clawker.yaml manually",
-		)
-		return fmt.Errorf("configuration file not found")
+		return fmt.Errorf("failed to marshal project configuration: %w", err)
 	}
 
-	cfg, err := loader.Load()
+	project, err := yaml.Marshal(cfg.Project)
+
 	if err != nil {
-		cmdutil.PrintError(ios, "Failed to load configuration")
-		fmt.Fprintf(ios.ErrOut, "  %s\n", err)
-		cmdutil.PrintNextSteps(ios,
-			"Check YAML syntax (indentation, colons, quotes)",
-			"Ensure all required fields are present",
-		)
-		return err
+		return fmt.Errorf("failed to marshal project configuration: %w", err)
 	}
 
-	logger.Debug().
-		Str("project", cfg.Project).
-		Str("image", cfg.Build.Image).
-		Msg("configuration loaded")
-
-	// Validate configuration
-	validator := internalconfig.NewValidator(wd)
-	if err := validator.Validate(cfg); err != nil {
-		cmdutil.PrintError(ios, "Configuration validation failed")
-		fmt.Fprintln(ios.ErrOut)
-
-		if multiErr, ok := err.(*internalconfig.MultiValidationError); ok {
-			for _, e := range multiErr.ValidationErrors() {
-				fmt.Fprintf(ios.ErrOut, "  - %s\n", e)
-			}
-		} else {
-			fmt.Fprintf(ios.ErrOut, "  %s\n", err)
-		}
-
-		cmdutil.PrintNextSteps(ios,
-			"Review the errors above",
-			"Edit clawker.yaml to fix the issues",
-			"Run 'clawker config check' again",
-		)
-		return err
-	}
-
-	// Print any warnings
-	for _, warning := range validator.Warnings() {
-		cmdutil.PrintWarning(ios, "%s", warning)
-	}
-
-	// Success output
-	fmt.Fprintln(ios.ErrOut, "Configuration is valid!")
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "  ProjectCfg:    %s\n", cfg.Project)
-	fmt.Fprintf(ios.ErrOut, "  Image:      %s\n", cfg.Build.Image)
-	if cfg.Build.Dockerfile != "" {
-		fmt.Fprintf(ios.ErrOut, "  Dockerfile: %s\n", cfg.Build.Dockerfile)
-	}
-	fmt.Fprintf(ios.ErrOut, "  Mode:       %s\n", cfg.Workspace.DefaultMode)
-	fmt.Fprintf(ios.ErrOut, "  Firewall:   %t\n", cfg.Security.FirewallEnabled())
-
-	if len(cfg.Build.Packages) > 0 {
-		fmt.Fprintf(ios.ErrOut, "  Packages:   %v\n", cfg.Build.Packages)
-	}
-
-	if len(cfg.Agent.Includes) > 0 {
-		fmt.Fprintf(ios.ErrOut, "  Includes:   %d file(s)\n", len(cfg.Agent.Includes))
-	}
+	fmt.Fprintln(io.Out, "Settings:")
+	fmt.Fprintln(io.Out, string(settings))
+	fmt.Fprintln(io.Out, "Project:")
+	fmt.Fprintln(io.Out, string(project))
 
 	return nil
 }

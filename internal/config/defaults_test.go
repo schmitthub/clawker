@@ -6,44 +6,44 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 
 	// Test version
 	if cfg.Version != "1" {
-		t.Errorf("DefaultConfig().Version = %q, want %q", cfg.Version, "1")
+		t.Errorf("DefaultProject().Version = %q, want %q", cfg.Version, "1")
 	}
 
 	// Test build defaults
 	if cfg.Build.Image != "node:20-slim" {
-		t.Errorf("DefaultConfig().Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")
+		t.Errorf("DefaultProject().Build.Image = %q, want %q", cfg.Build.Image, "node:20-slim")
 	}
 
 	expectedPackages := []string{"git", "curl", "ripgrep"}
 	if len(cfg.Build.Packages) != len(expectedPackages) {
-		t.Errorf("DefaultConfig().Build.Packages length = %d, want %d", len(cfg.Build.Packages), len(expectedPackages))
+		t.Errorf("DefaultProject().Build.Packages length = %d, want %d", len(cfg.Build.Packages), len(expectedPackages))
 	}
 	for i, pkg := range expectedPackages {
 		if i < len(cfg.Build.Packages) && cfg.Build.Packages[i] != pkg {
-			t.Errorf("DefaultConfig().Build.Packages[%d] = %q, want %q", i, cfg.Build.Packages[i], pkg)
+			t.Errorf("DefaultProject().Build.Packages[%d] = %q, want %q", i, cfg.Build.Packages[i], pkg)
 		}
 	}
 
 	// Test workspace defaults
 	if cfg.Workspace.RemotePath != "/workspace" {
-		t.Errorf("DefaultConfig().Workspace.RemotePath = %q, want %q", cfg.Workspace.RemotePath, "/workspace")
+		t.Errorf("DefaultProject().Workspace.RemotePath = %q, want %q", cfg.Workspace.RemotePath, "/workspace")
 	}
 	if cfg.Workspace.DefaultMode != "bind" {
-		t.Errorf("DefaultConfig().Workspace.DefaultMode = %q, want %q", cfg.Workspace.DefaultMode, "bind")
+		t.Errorf("DefaultProject().Workspace.DefaultMode = %q, want %q", cfg.Workspace.DefaultMode, "bind")
 	}
 
 	// Test security defaults - firewall should be enabled by default
 	if !cfg.Security.FirewallEnabled() {
-		t.Error("DefaultConfig().Security.FirewallEnabled() should be true (security-first)")
+		t.Error("DefaultProject().Security.FirewallEnabled() should be true (security-first)")
 	}
 
 	// Docker socket should be disabled by default
 	if cfg.Security.DockerSocket {
-		t.Error("DefaultConfig().Security.DockerSocket should be false (security-first)")
+		t.Error("DefaultProject().Security.DockerSocket should be false (security-first)")
 	}
 
 	// Check CapAdd for firewall support
@@ -58,10 +58,10 @@ func TestDefaultConfig(t *testing.T) {
 		}
 	}
 	if !hasNetAdmin {
-		t.Error("DefaultConfig().Security.CapAdd should include NET_ADMIN")
+		t.Error("DefaultProject().Security.CapAdd should include NET_ADMIN")
 	}
 	if !hasNetRaw {
-		t.Error("DefaultConfig().Security.CapAdd should include NET_RAW")
+		t.Error("DefaultProject().Security.CapAdd should include NET_RAW")
 	}
 }
 

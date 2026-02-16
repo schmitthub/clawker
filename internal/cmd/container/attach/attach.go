@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/spf13/cobra"
 )
@@ -118,7 +117,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	if opts.HostProxy != nil {
 		if hp := opts.HostProxy(); hp != nil {
 			if err := hp.EnsureRunning(); err != nil {
-				logger.Warn().Err(err).Msg("failed to start host proxy for attach")
+				ios.Logger.Warn().Err(err).Msg("failed to start host proxy for attach")
 			}
 		}
 	}
@@ -173,14 +172,14 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				// +1/-1 trick forces SIGWINCH to trigger TUI redraw on re-attach
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set artificial container TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set actual container TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set actual container TTY size")
 				}
 			}
 

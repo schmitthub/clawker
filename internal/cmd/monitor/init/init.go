@@ -9,13 +9,13 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
 
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
+	Config   func() *config.Config
 
 	Force bool
 }
@@ -23,6 +23,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
+		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -69,7 +70,11 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
+	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
+
+	// Get monitoring config for template rendering
+	settings := opts.Config().Settings
+	tmplData := monitor.NewMonitorTemplateData(&settings.Monitoring)
 
 	// Ensure directory exists
 	fmt.Fprintf(ios.ErrOut, "%s Checking configuration directory...\n", cs.InfoIcon())
@@ -78,17 +83,19 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	}
 	fmt.Fprintf(ios.ErrOut, "%s Created directory: %s\n", cs.InfoIcon(), monitorDir)
 
-	// Define files to write
-	files := []struct {
-		name    string
-		content string
-	}{
-		{monitor.ComposeFileName, monitor.ComposeTemplate},
-		{monitor.OtelConfigFileName, monitor.OtelConfigTemplate},
-		{monitor.PrometheusFileName, monitor.PrometheusTemplate},
-		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate},
-		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate},
-		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate},
+	// Define files to write — templates are rendered, static files are written as-is
+	type fileEntry struct {
+		name     string
+		content  string
+		template bool // true = Go template, false = static content
+	}
+	files := []fileEntry{
+		{monitor.ComposeFileName, monitor.ComposeTemplate, true},
+		{monitor.OtelConfigFileName, monitor.OtelConfigTemplate, true},
+		{monitor.PrometheusFileName, monitor.PrometheusTemplate, true},
+		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate, true},
+		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate, false},
+		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate, false},
 	}
 
 	// Write each file
@@ -101,20 +108,29 @@ func initRun(_ context.Context, opts *InitOptions) error {
 			continue
 		}
 
-		if err := os.WriteFile(filePath, []byte(file.content), 0644); err != nil {
+		content := file.content
+		if file.template {
+			rendered, err := monitor.RenderTemplate(file.name, file.content, tmplData)
+			if err != nil {
+				return fmt.Errorf("failed to render %s: %w", file.name, err)
+			}
+			content = rendered
+		}
+
+		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", file.name, err)
 		}
 		fmt.Fprintf(ios.ErrOut, "%s Generated %s\n", cs.InfoIcon(), file.name)
 	}
 
-	// Success message
+	// Success message — use config-derived URLs
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack initialized.\n", cs.SuccessIcon())
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
 	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
-	fmt.Fprintln(ios.ErrOut, "  2. Open Grafana at http://localhost:3000 (No login required)")
-	fmt.Fprintln(ios.ErrOut, "  3. Open Jaeger at http://localhost:16686")
+	fmt.Fprintf(ios.ErrOut, "  2. Open Grafana at %s (No login required)\n", settings.Monitoring.GrafanaURL())
+	fmt.Fprintf(ios.ErrOut, "  3. Open Jaeger at %s\n", settings.Monitoring.JaegerURL())
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
 	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")

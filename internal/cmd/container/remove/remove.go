@@ -8,7 +8,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/cobra"
 )
@@ -132,7 +131,7 @@ func removeContainer(ctx context.Context, client *docker.Client, name string, op
 	if opts.SocketBridge != nil {
 		if mgr := opts.SocketBridge(); mgr != nil {
 			if err := mgr.StopBridge(container.ID); err != nil {
-				logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
+				opts.IOStreams.Logger.Warn().Err(err).Str("container", container.ID).Msg("failed to stop socket bridge")
 			}
 		}
 	}

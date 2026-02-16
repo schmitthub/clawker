@@ -100,7 +100,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 ### Factory Testing (factory.go)
 
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreams.TestIOStreams)` — fully-wired with cleanup.
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup.
 
 ### Content-Addressed Caching (hash.go)
 

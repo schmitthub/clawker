@@ -11,7 +11,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
@@ -93,7 +92,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	cfgGateway := opts.Config()
 
 	// Check if configuration already exists
-	loader := config.NewLoader(wd)
+	loader := config.NewProjectLoader(wd)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
 			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
@@ -123,7 +122,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 			registryLoader := cfgGateway.Registry
 			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
 			if err != nil {
-				logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
+				ios.Logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
 			if slug != "" {
 				fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
@@ -246,7 +245,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		workspaceMode = options[idx].Label
 	}
 
-	logger.Debug().
+	ios.Logger.Debug().
 		Str("project", projectName).
 		Str("build_image", buildImage).
 		Str("default_image", defaultImage).
@@ -263,7 +262,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", config.ConfigFileName, err)
 	}
-	logger.Debug().Str("file", configPath).Msg("created configuration file")
+	ios.Logger.Debug().Str("file", configPath).Msg("created configuration file")
 
 	// Create .clawkerignore
 	ignorePath := loader.IgnorePath()
@@ -271,12 +270,12 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
 		}
-		logger.Debug().Str("file", ignorePath).Msg("created ignore file")
+		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
 	// Register project in user settings
 	if _, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName); err != nil {
-		logger.Debug().Err(err).Msg("failed to register project during init")
+		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 
 	// Success output

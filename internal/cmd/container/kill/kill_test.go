@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,7 +109,7 @@ func TestNewCmdKill(t *testing.T) {
 }
 
 func TestNewCmdKill_ErrorPropagation(t *testing.T) {
-	f := &cmdutil.Factory{IOStreams: iostreams.NewTestIOStreams().IOStreams}
+	f := &cmdutil.Factory{IOStreams: iostreamstest.New().IOStreams}
 	expectedErr := fmt.Errorf("simulated failure")
 	cmd := NewCmdKill(f, func(_ context.Context, _ *KillOptions) error {
 		return expectedErr
@@ -144,7 +144,7 @@ func TestCmdKill_Properties(t *testing.T) {
 }
 
 func TestKillRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {
@@ -204,9 +204,9 @@ func TestKillRun_ContainerNotFound(t *testing.T) {
 	require.Contains(t, tio.ErrBuf.String(), "clawker.myapp.dev")
 }
 
-func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,

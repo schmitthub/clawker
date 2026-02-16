@@ -13,7 +13,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/workspace"
@@ -151,13 +150,13 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if cfg.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()
 		if hp == nil {
-			logger.Debug().Msg("host proxy function returned nil")
+			ios.Logger.Debug().Msg("host proxy function returned nil")
 		} else if err := hp.EnsureRunning(); err != nil {
-			logger.Warn().Err(err).Msg("failed to start host proxy for exec")
+			ios.Logger.Warn().Err(err).Msg("failed to start host proxy for exec")
 		} else if hp.IsRunning() {
 			hostProxyRunning = true
 			opts.Env = append(opts.Env, "CLAWKER_HOST_PROXY="+hp.ProxyURL())
-			logger.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
+			ios.Logger.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
 		}
 	}
 
@@ -170,7 +169,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
-			logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
+			ios.Logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
 		}
 	}
 
@@ -252,14 +251,14 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 		if pty.IsTerminal() {
 			width, height, err := pty.GetSize()
 			if err != nil {
-				logger.Debug().Err(err).Msg("failed to get initial terminal size")
+				ios.Logger.Debug().Err(err).Msg("failed to get initial terminal size")
 			} else {
 				// +1/-1 trick forces SIGWINCH to trigger TUI redraw
 				if err := resizeFunc(uint(height+1), uint(width+1)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set artificial exec TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set artificial exec TTY size")
 				}
 				if err := resizeFunc(uint(height), uint(width)); err != nil {
-					logger.Debug().Err(err).Msg("failed to set actual exec TTY size")
+					ios.Logger.Debug().Err(err).Msg("failed to set actual exec TTY size")
 				}
 			}
 
@@ -273,7 +272,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 			return err
 		}
 		// Check exit code after TTY mode completes
-		return checkExecExitCode(ctx, client, execID)
+		return checkExecExitCode(ctx, client, execID, ios.Logger)
 	}
 
 	// Non-TTY mode: demux the multiplexed stream
@@ -300,15 +299,15 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	}
 
 	// Check exit code
-	return checkExecExitCode(ctx, client, execID)
+	return checkExecExitCode(ctx, client, execID, ios.Logger)
 }
 
 // checkExecExitCode inspects the exec and returns an error if exit code is non-zero.
-func checkExecExitCode(ctx context.Context, client *docker.Client, execID string) error {
+func checkExecExitCode(ctx context.Context, client *docker.Client, execID string, log iostreams.Logger) error {
 	inspect, err := client.ExecInspect(ctx, execID, docker.ExecInspectOptions{})
 	if err != nil {
 		// If we can't inspect, don't fail - the command may have completed
-		logger.Debug().Err(err).Str("execID", execID).Msg("failed to inspect exec")
+		log.Debug().Err(err).Str("execID", execID).Msg("failed to inspect exec")
 		return nil
 	}
 	if inspect.ExitCode != 0 {

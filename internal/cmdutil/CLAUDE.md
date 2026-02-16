@@ -58,7 +58,7 @@ type Factory struct {
 
 **Testing:** Construct minimal Factory structs directly:
 ```go
-tio := iostreams.NewTestIOStreams()
+tio := iostreamstest.New()
 f := &cmdutil.Factory{
     IOStreams: tio.IOStreams,
     TUI:      tui.NewTUI(tio.IOStreams),

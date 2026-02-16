@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config/configtest"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 func testProject(name string) *configtest.ProjectBuilder {
@@ -275,7 +274,7 @@ func TestSendEvent_FullChannel(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterStart(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -288,7 +287,7 @@ func TestDrainLoopEventsAsText_IterStart(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -312,7 +311,7 @@ func TestDrainLoopEventsAsText_IterEnd(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -330,7 +329,7 @@ func TestDrainLoopEventsAsText_IterEnd_WithError(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -343,7 +342,7 @@ func TestDrainLoopEventsAsText_IterEnd_NoStatus(t *testing.T) {
 
 func TestDrainLoopEventsAsText_RateLimit(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -356,7 +355,7 @@ func TestDrainLoopEventsAsText_RateLimit(t *testing.T) {
 
 func TestDrainLoopEventsAsText_Complete(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -369,7 +368,7 @@ func TestDrainLoopEventsAsText_Complete(t *testing.T) {
 
 func TestDrainLoopEventsAsText_CompleteWithError(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)
@@ -388,7 +387,7 @@ func TestDrainLoopEventsAsText_CompleteWithError(t *testing.T) {
 
 func TestDrainLoopEventsAsText_MultipleEvents(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 8)
@@ -419,7 +418,7 @@ func TestDrainLoopEventsAsText_MultipleEvents(t *testing.T) {
 
 func TestDrainLoopEventsAsText_IgnoresOutputEvents(t *testing.T) {
 	var buf bytes.Buffer
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cs := tio.IOStreams.ColorScheme()
 
 	ch := make(chan LoopDashEvent, 4)

@@ -101,7 +101,7 @@ Non-interactive mode prints instructions and returns an error. Interactive mode 
 | Type | Purpose |
 |------|---------|
 | `ContainerOptions` | All container CLI flags — basic, env, volumes, networking, resources, security, health, runtime, devices |
-| `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, GitManager, HostProxy, Version, color flags |
+| `CreateContainerConfig` | All inputs: Client, Config, Options, Flags, GitManager, HostProxy, Logger, Version, color flags |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
 | `StepStatus` | Step lifecycle: `StepRunning`, `StepComplete`, `StepCached` |

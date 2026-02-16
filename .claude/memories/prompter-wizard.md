@@ -96,7 +96,7 @@ All prompts write to `ios.ErrOut` (stderr) — keeps stdout clean for data outpu
 ### Test Pattern
 
 ```go
-tio := iostreams.NewTestIOStreams()
+tio := iostreamstest.New()
 tio.SetInteractive(true)
 tio.InBuf.SetInput("y\n")
 

@@ -61,7 +61,7 @@ func (m *DockerfileManager) DockerfilesDir() string  // outputDir/dockerfiles
 ### ProjectGenerator -- single project builds from clawker.yaml
 
 ```go
-func NewProjectGenerator(cfg *config.Project, workDir string) *ProjectGenerator
+func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator
 func (g *ProjectGenerator) Generate() ([]byte, error)                                  // Render Dockerfile
 func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error)                   // Tar archive (legacy)
 func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error)
@@ -81,6 +81,10 @@ type DockerfileContext struct {
     BaseImage, Username, Shell, WorkspacePath, ClaudeVersion string
     Packages []string; UID, GID int; IsAlpine, EnableFirewall, BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
+    // OTEL telemetry — from config.MonitoringConfig
+    OtelMetricsEndpoint, OtelLogsEndpoint string
+    OtelLogsExportInterval, OtelMetricExportInterval int
+    OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
 }
 ```
 

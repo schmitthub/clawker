@@ -15,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/spf13/pflag"
 )
@@ -140,6 +139,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				Version:     cfg.Version,
 				GitManager:  cfg.GitManager,
 				HostProxy:   cfg.HostProxy,
+				Logger:      cfg.IOStreams.Logger,
 				Is256Color:  cfg.IOStreams.Is256ColorSupported(),
 				IsTrueColor: cfg.IOStreams.IsTrueColorSupported(),
 			}, events)
@@ -158,7 +158,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 		containerID := o.result.ContainerID
 
 		// Inject hooks into the container
-		if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client)); err != nil {
+		if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true)
@@ -173,7 +173,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 				if len(shortID) > 12 {
 					shortID = shortID[:12]
 				}
-				logger.Warn().Err(err).Str("container", shortID).Msg("failed to clean up iteration container")
+				cfg.IOStreams.Logger.Warn().Err(err).Str("container", shortID).Msg("failed to clean up iteration container")
 			}
 		}
 
@@ -250,6 +250,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 			Version:     cfg.Version,
 			GitManager:  cfg.GitManager,
 			HostProxy:   cfg.HostProxy,
+			Logger:      ios.Logger,
 			Is256Color:  ios.Is256ColorSupported(),
 			IsTrueColor: ios.IsTrueColorSupported(),
 		}, events)
@@ -287,17 +288,17 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true); err != nil {
-			logger.Warn().Err(err).Str("container", containerName).Msg("failed to clean up loop container")
+			ios.Logger.Warn().Err(err).Str("container", containerName).Msg("failed to clean up loop container")
 			fmt.Fprintf(ios.ErrOut, "%s Failed to clean up container %s: %v\n",
 				cs.WarningIcon(), containerName, err)
 		} else {
-			logger.Debug().Str("container", containerName).Msg("cleaned up loop container")
+			ios.Logger.Debug().Str("container", containerName).Msg("cleaned up loop container")
 		}
 	}
 
 	// --- Phase C: Inject hooks ---
 	ios.StartSpinner("Injecting loop hooks")
-	if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client)); err != nil {
+	if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), ios.Logger); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("injecting hooks: %w", err)
@@ -316,7 +317,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 // InjectLoopHooks injects hook configuration and scripts into a created (not started) container.
 // If hooksFile is empty, default hooks are used. If provided, the file is read as a
 // complete replacement. Hook scripts referenced by default hooks are also injected.
-func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn) error {
+func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, log iostreams.Logger) error {
 	hooks, hookFiles, err := ResolveHooks(hooksFile)
 	if err != nil {
 		return err
@@ -353,7 +354,7 @@ func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, 
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
-	logger.Debug().Str("containerID", shortID).Msg("injected loop hooks into container")
+	log.Debug().Str("containerID", shortID).Msg("injected loop hooks into container")
 	return nil
 }
 

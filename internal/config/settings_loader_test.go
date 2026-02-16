@@ -426,49 +426,6 @@ func TestSettingsLoader_Load_NoProjectOverride(t *testing.T) {
 	}
 }
 
-func TestMergeSettings(t *testing.T) {
-	fileEnabled := true
-	fileDisabled := false
-
-	base := &Settings{
-		Logging: LoggingConfig{
-			FileEnabled: &fileEnabled,
-			MaxSizeMB:   50,
-			MaxAgeDays:  7,
-			MaxBackups:  3,
-		},
-	}
-
-	override := &Settings{
-		Logging: LoggingConfig{
-			FileEnabled: &fileDisabled,
-			MaxSizeMB:   200,
-			// MaxAgeDays and MaxBackups not set (zero value) — should NOT override
-		},
-	}
-
-	mergeSettings(base, override)
-
-	if base.Logging.IsFileEnabled() {
-		t.Error("FileEnabled should be false after merge")
-	}
-	if base.Logging.MaxSizeMB != 200 {
-		t.Errorf("MaxSizeMB = %d, want 200", base.Logging.MaxSizeMB)
-	}
-	if base.Logging.MaxAgeDays != 7 {
-		t.Errorf("MaxAgeDays = %d, want 7 (not overridden)", base.Logging.MaxAgeDays)
-	}
-	if base.Logging.MaxBackups != 3 {
-		t.Errorf("MaxBackups = %d, want 3 (not overridden)", base.Logging.MaxBackups)
-	}
-}
-
-func TestMergeSettings_NilOverride(t *testing.T) {
-	base := &Settings{
-		Logging: LoggingConfig{MaxSizeMB: 50},
-	}
-	mergeSettings(base, nil)
-	if base.Logging.MaxSizeMB != 50 {
-		t.Errorf("MaxSizeMB = %d, want 50 (nil override should be no-op)", base.Logging.MaxSizeMB)
-	}
-}
+// mergeSettings tests removed — Viper handles merge natively via MergeInConfig.
+// The project-override merge test in TestSettingsLoader_Load_ProjectOverride
+// validates the same behavior through the Viper-based Load().

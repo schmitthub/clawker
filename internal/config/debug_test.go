@@ -7,7 +7,7 @@ import (
 
 func TestLoadActualConfig(t *testing.T) {
 	t.Skip("Debug test: requires developer's local clawker installation")
-	loader := NewLoader("/Users/andrew/Code/clawker")
+	loader := NewProjectLoader("/Users/andrew/Code/clawker")
 	cfg, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)

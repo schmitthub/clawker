@@ -6,8 +6,8 @@ services:
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
     ports:
-      - "4317:4317" # OTLP gRPC receiver
-      - "4318:4318" # OTLP HTTP receiver
+      - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}" # OTLP gRPC receiver
+      - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}" # OTLP HTTP receiver
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:
@@ -20,8 +20,8 @@ services:
     container_name: jaeger
     image: jaegertracing/all-in-one:latest
     ports:
-      - "16686:16686" # UI
-      - "4317"        # OTLP gRPC internal
+      - "{{.JaegerPort}}:{{.JaegerPort}}" # UI
+      - "{{.OtelGRPCPort}}"        # OTLP gRPC internal
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     labels:
@@ -37,7 +37,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-remote-write-receiver"
     ports:
-      - "9090:9090"
+      - "{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
     labels:
@@ -50,7 +50,7 @@ services:
     container_name: loki
     image: grafana/loki:latest
     ports:
-      - "3100:3100"
+      - "{{.LokiPort}}:{{.LokiPort}}"
     command: -config.file=/etc/loki/local-config.yaml
     labels:
       dev.clawker.managed: "true"
@@ -62,7 +62,7 @@ services:
     container_name: grafana
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "{{.GrafanaPort}}:{{.GrafanaPort}}"
     environment:
       # Enable anonymous access so users don't need to login locally
       - GF_AUTH_ANONYMOUS_ENABLED=true

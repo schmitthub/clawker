@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +53,7 @@ func TestNewCmd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				IOStreams: iostreams.NewTestIOStreams().IOStreams,
+				IOStreams: iostreamstest.New().IOStreams,
 				Prompter:  func() *prompter.Prompter { return nil },
 			}
 
@@ -82,7 +82,7 @@ func TestNewCmd(t *testing.T) {
 
 func TestCmd_Properties(t *testing.T) {
 	f := &cmdutil.Factory{
-		IOStreams: iostreams.NewTestIOStreams().IOStreams,
+		IOStreams: iostreamstest.New().IOStreams,
 		Prompter:  func() *prompter.Prompter { return nil },
 	}
 	cmd := NewCmdPrune(f, nil)

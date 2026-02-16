@@ -28,7 +28,7 @@ func TestValidatorValidVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = tt.version
 			cfg.Project = "test-project"
 
@@ -51,7 +51,7 @@ func TestValidatorEmptyProjectPasses(t *testing.T) {
 	validator := NewValidator(tmpDir)
 
 	// Empty project should pass validation — project comes from registry, not YAML
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Version = "1"
 	cfg.Project = ""
 
@@ -99,7 +99,7 @@ func TestValidatorValidBuild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Build.Image = tt.image
@@ -139,7 +139,7 @@ func TestValidatorValidWorkspace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Workspace.RemotePath = tt.remotePath
@@ -187,7 +187,7 @@ func TestValidatorValidAgent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			if tt.includes != nil {
@@ -239,7 +239,7 @@ func TestValidatorAgentEnvFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Agent.EnvFile = tt.envFile
@@ -262,7 +262,7 @@ func TestValidatorAgentEnvFile_DirectoryErrorMessage(t *testing.T) {
 
 	validator := NewValidator(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Version = "1"
 	cfg.Project = "test-project"
 	cfg.Agent.EnvFile = []string{tmpDir}
@@ -314,7 +314,7 @@ func TestValidatorAgentFromEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Agent.FromEnv = tt.fromEnv
@@ -349,7 +349,7 @@ func TestValidatorValidSecurity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			if cfg.Security.Firewall == nil {
@@ -713,7 +713,7 @@ func TestValidatorValidInstructions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Build.Instructions = tt.instructions
@@ -836,7 +836,7 @@ func TestValidatorValidInject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Build.Inject = tt.inject
@@ -929,7 +929,7 @@ func TestValidatorIPRangeSources(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			if cfg.Security.Firewall == nil {
@@ -955,7 +955,7 @@ func TestValidatorIPRangeSourcesWithOverrideWarning(t *testing.T) {
 
 	validator := NewValidator(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Version = "1"
 	cfg.Project = "test-project"
 	cfg.Security.Firewall = &FirewallConfig{
@@ -999,7 +999,7 @@ func TestValidatorClaudeCodeStrategy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			validator := NewValidator(tmpDir)
-			cfg := DefaultConfig()
+			cfg := DefaultProject()
 			cfg.Version = "1"
 			cfg.Project = "test-project"
 			cfg.Agent.ClaudeCode = &ClaudeCodeConfig{
@@ -1110,7 +1110,7 @@ func TestValidatorLoop_NilLoop(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Loop = nil
 
 	v := NewValidator(tmpDir)
@@ -1127,7 +1127,7 @@ func TestValidatorLoop_ValidConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Loop = &LoopConfig{
 		MaxLoops:               100,
 		StagnationThreshold:    5,
@@ -1184,7 +1184,7 @@ func TestValidatorLoop_NegativeValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := DefaultConfig()
+			c := DefaultProject()
 			c.Loop = tt.cfg
 
 			v := NewValidator(tmpDir)
@@ -1233,7 +1233,7 @@ func TestValidatorLoop_OutputDeclineThresholdRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := DefaultConfig()
+			c := DefaultProject()
 			c.Loop = &LoopConfig{OutputDeclineThreshold: tt.value}
 
 			v := NewValidator(tmpDir)
@@ -1253,7 +1253,7 @@ func TestValidatorLoop_HooksFileNotFound(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Loop = &LoopConfig{HooksFile: "nonexistent-hooks.json"}
 
 	v := NewValidator(tmpDir)
@@ -1292,7 +1292,7 @@ func TestValidatorLoop_HooksFileExists(t *testing.T) {
 		t.Fatalf("failed to create hooks file: %v", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Loop = &LoopConfig{HooksFile: "hooks.json"}
 
 	v := NewValidator(tmpDir)
@@ -1309,7 +1309,7 @@ func TestValidatorLoop_WhitespaceOnlySystemPrompt(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cfg := DefaultConfig()
+	cfg := DefaultProject()
 	cfg.Loop = &LoopConfig{AppendSystemPrompt: "   \t  "}
 
 	v := NewValidator(tmpDir)

@@ -3,13 +3,13 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    url: http://prometheus:{{.PrometheusPort}}
     isDefault: true
   - name: Jaeger
     type: jaeger
     access: proxy
-    url: http://jaeger:16686
+    url: http://jaeger:{{.JaegerPort}}
   - name: Loki
     type: loki
     access: proxy
-    url: http://loki:3100
+    url: http://loki:{{.LokiPort}}

@@ -1,21 +1,29 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/bridges/otelzerolog"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var (
-	// Log is the global logger instance (file-only; nop before InitWithFile)
+	// Log is the global logger instance (file-only; nop before Init/NewLogger)
 	Log zerolog.Logger
 
 	// fileWriter is the file output for logging (with rotation)
 	fileWriter *lumberjack.Logger
+
+	// loggerProvider is the OTEL log provider (nil when OTEL is not enabled)
+	loggerProvider *sdklog.LoggerProvider
 
 	// logContext holds project/agent context for log entries (optional, may be empty)
 	logContext   logContextData
@@ -71,6 +79,7 @@ type LoggingConfig struct {
 	MaxSizeMB   int
 	MaxAgeDays  int
 	MaxBackups  int
+	Compress    *bool
 }
 
 // IsFileEnabled returns whether file logging is enabled.
@@ -80,6 +89,15 @@ func (c *LoggingConfig) IsFileEnabled() bool {
 		return true // enabled by default
 	}
 	return *c.FileEnabled
+}
+
+// IsCompressEnabled returns whether rotated log compression is enabled.
+// Defaults to true if not explicitly set.
+func (c *LoggingConfig) IsCompressEnabled() bool {
+	if c.Compress == nil {
+		return true
+	}
+	return *c.Compress
 }
 
 // GetMaxSizeMB returns the max size in MB, defaulting to 50 if not set.
@@ -106,61 +124,157 @@ func (c *LoggingConfig) GetMaxBackups() int {
 	return c.MaxBackups
 }
 
+// OtelLogConfig configures the OTEL zerolog bridge.
+type OtelLogConfig struct {
+	Endpoint       string        // e.g. "localhost:4318"
+	Insecure       bool          // default: true (local collector)
+	Timeout        time.Duration // export timeout
+	MaxQueueSize   int           // batch processor queue size
+	ExportInterval time.Duration // batch export interval
+}
+
+// Options configures the logger via NewLogger.
+type Options struct {
+	LogsDir    string         // directory for log files
+	FileConfig *LoggingConfig // file rotation settings
+	OtelConfig *OtelLogConfig // nil = file-only, no OTEL bridge
+}
+
 // Init initializes the global logger as a nop logger.
 // This is the pre-file-logging placeholder — all log output is discarded
-// until InitWithFile is called with a valid logs directory.
+// until InitWithFile or NewLogger is called.
 func Init() {
 	Log = zerolog.Nop()
 }
 
 // InitWithFile initializes the logger with file-only output.
-// Zerolog never writes to the console — user-visible output uses
-// fmt.Fprintf to IOStreams (see code style guide).
-// If logsDir is empty or cfg indicates file logging is disabled,
-// the logger remains a nop.
+// Deprecated: Use NewLogger() for new code. This is retained for backwards compatibility.
 func InitWithFile(logsDir string, cfg *LoggingConfig) error {
-	level := zerolog.DebugLevel
+	return NewLogger(&Options{
+		LogsDir:    logsDir,
+		FileConfig: cfg,
+	})
+}
 
-	if logsDir == "" || cfg == nil || !cfg.IsFileEnabled() {
+// NewLogger initializes the global logger with file output and optional OTEL bridge.
+//
+// With OtelConfig nil: file-only logging via lumberjack.
+// With OtelConfig set: file logging + OTEL hook that streams to the collector.
+// OTEL SDK handles resilience natively — buffer, retry, drop on overflow.
+//
+// If opts is nil or file logging is disabled, the logger becomes a nop.
+func NewLogger(opts *Options) error {
+	if opts == nil || opts.LogsDir == "" || opts.FileConfig == nil || !opts.FileConfig.IsFileEnabled() {
 		Log = zerolog.Nop()
 		return nil
 	}
 
 	// Create logs directory
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
+	if err := os.MkdirAll(opts.LogsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
-	logPath := filepath.Join(logsDir, "clawker.log")
+	logPath := filepath.Join(opts.LogsDir, "clawker.log")
 
 	// Configure lumberjack for rotation
 	fileWriter = &lumberjack.Logger{
 		Filename:   logPath,
-		MaxSize:    cfg.GetMaxSizeMB(),  // MB
-		MaxAge:     cfg.GetMaxAgeDays(), // days
-		MaxBackups: cfg.GetMaxBackups(),
+		MaxSize:    opts.FileConfig.GetMaxSizeMB(),
+		MaxAge:     opts.FileConfig.GetMaxAgeDays(),
+		MaxBackups: opts.FileConfig.GetMaxBackups(),
 		LocalTime:  true,
-		Compress:   false,
+		Compress:   opts.FileConfig.IsCompressEnabled(),
 	}
 
-	Log = zerolog.New(fileWriter).
-		Level(level).
+	// Base logger writes to file
+	logger := zerolog.New(fileWriter).
+		Level(zerolog.DebugLevel).
 		With().
 		Timestamp().
 		Logger()
 
+	// Add OTEL hook if configured
+	if opts.OtelConfig != nil {
+		provider, err := createOtelProvider(opts.OtelConfig)
+		if err != nil {
+			// OTEL failure is non-fatal — log to file only
+			logger.Warn().Err(err).Msg("OTEL bridge unavailable, continuing with file-only logging")
+		} else {
+			loggerProvider = provider
+			hook := otelzerolog.NewHook("clawker",
+				otelzerolog.WithLoggerProvider(provider),
+			)
+			logger = logger.Hook(hook)
+		}
+	}
+
+	Log = logger
 	return nil
 }
 
-// CloseFileWriter closes the file writer if it exists.
-// Call this on program shutdown for clean log file closure.
-func CloseFileWriter() error {
-	if fileWriter != nil {
-		err := fileWriter.Close()
-		fileWriter = nil // Prevent double-close and writes to closed file
-		return err
+// createOtelProvider creates an OTLP HTTP log exporter and batch processor.
+func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
+	ctx := context.Background()
+
+	exporterOpts := []otlploghttp.Option{
+		otlploghttp.WithEndpoint(cfg.Endpoint),
 	}
-	return nil
+	if cfg.Insecure {
+		exporterOpts = append(exporterOpts, otlploghttp.WithInsecure())
+	}
+	if cfg.Timeout > 0 {
+		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(cfg.Timeout))
+	}
+
+	exporter, err := otlploghttp.New(ctx, exporterOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP log exporter: %w", err)
+	}
+
+	processorOpts := []sdklog.BatchProcessorOption{}
+	if cfg.MaxQueueSize > 0 {
+		processorOpts = append(processorOpts, sdklog.WithMaxQueueSize(cfg.MaxQueueSize))
+	}
+	if cfg.ExportInterval > 0 {
+		processorOpts = append(processorOpts, sdklog.WithExportInterval(cfg.ExportInterval))
+	}
+
+	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
+
+	return provider, nil
+}
+
+// Close shuts down the logger, flushing any pending OTEL logs and closing the file writer.
+// Call this on program shutdown for clean resource cleanup.
+func Close() error {
+	var firstErr error
+
+	// Flush OTEL provider first (may have pending batches)
+	if loggerProvider != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := loggerProvider.Shutdown(ctx); err != nil {
+			firstErr = fmt.Errorf("failed to shutdown OTEL provider: %w", err)
+		}
+		loggerProvider = nil
+	}
+
+	// Close file writer
+	if fileWriter != nil {
+		if err := fileWriter.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		fileWriter = nil
+	}
+
+	return firstErr
+}
+
+// CloseFileWriter closes the file writer if it exists.
+// Deprecated: Use Close() which handles both file + OTEL shutdown.
+func CloseFileWriter() error {
+	return Close()
 }
 
 // GetLogFilePath returns the path to the current log file, or empty string if file logging is disabled.

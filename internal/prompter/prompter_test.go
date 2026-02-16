@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestPromptForConfirmation(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPromptForConfirmation(t *testing.T) {
 }
 
 func TestNewPrompter(t *testing.T) {
-	ios := iostreams.NewTestIOStreams()
+	ios := iostreamstest.New()
 	p := NewPrompter(ios.IOStreams)
 	if p == nil {
 		t.Fatal("NewPrompter() returned nil")
@@ -125,7 +125,7 @@ func TestPrompter_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
+			ios := iostreamstest.New()
 			ios.InBuf.SetInput(tt.input)
 			ios.SetInteractive(tt.interactive)
 
@@ -233,7 +233,7 @@ func TestPrompter_Confirm(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
+			ios := iostreamstest.New()
 			ios.InBuf.SetInput(tt.input)
 			ios.SetInteractive(tt.interactive)
 
@@ -384,7 +384,7 @@ func TestPrompter_Select(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ios := iostreams.NewTestIOStreams()
+			ios := iostreamstest.New()
 			ios.InBuf.SetInput(tt.input)
 			ios.SetInteractive(tt.interactive)
 

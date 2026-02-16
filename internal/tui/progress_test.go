@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -230,7 +231,7 @@ func TestBuildStageTree_AllInternal(t *testing.T) {
 
 // noColorScheme returns a ColorScheme that doesn't apply colors.
 func noColorScheme() *iostreams.ColorScheme {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return tio.IOStreams.ColorScheme()
 }
 
@@ -604,7 +605,7 @@ func TestRenderStageChildren_WithLogLines(t *testing.T) {
 // tracks line count between frames — if the final frame is shorter, old lines
 // remain as artifacts and the cursor position is wrong.
 func TestViewFrameHeight_StableAcrossGroupCollapse(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cfg := ProgressDisplayConfig{
 		Title:      "Building test",
 		Subtitle:   "test:latest",
@@ -698,7 +699,7 @@ func testDisplayConfig() ProgressDisplayConfig {
 }
 
 func TestPlainMode_Header(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch)
@@ -713,7 +714,7 @@ func TestPlainMode_Header(t *testing.T) {
 }
 
 func TestPlainMode_StepTransitions(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -731,7 +732,7 @@ func TestPlainMode_StepTransitions(t *testing.T) {
 }
 
 func TestPlainMode_CachedStep(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -747,7 +748,7 @@ func TestPlainMode_CachedStep(t *testing.T) {
 }
 
 func TestPlainMode_ErrorStep(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -764,7 +765,7 @@ func TestPlainMode_ErrorStep(t *testing.T) {
 }
 
 func TestPlainMode_InternalStepsHidden(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -782,7 +783,7 @@ func TestPlainMode_InternalStepsHidden(t *testing.T) {
 }
 
 func TestPlainMode_NoDuplicateRunLines(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -803,7 +804,7 @@ func TestPlainMode_NoDuplicateRunLines(t *testing.T) {
 }
 
 func TestPlainMode_PendingNotRendered(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -820,7 +821,7 @@ func TestPlainMode_PendingNotRendered(t *testing.T) {
 }
 
 func TestPlainMode_Summary_Success(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -836,7 +837,7 @@ func TestPlainMode_Summary_Success(t *testing.T) {
 }
 
 func TestPlainMode_Summary_Cached(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -853,7 +854,7 @@ func TestPlainMode_Summary_Cached(t *testing.T) {
 }
 
 func TestPlainMode_LogEventsIgnored(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -874,9 +875,9 @@ func TestPlainMode_LogEventsIgnored(t *testing.T) {
 // TTY model unit tests (no BubbleTea program)
 // ---------------------------------------------------------------------------
 
-func newTestProgressModel(t *testing.T) (progressModel, *iostreams.TestIOStreams) {
+func newTestProgressModel(t *testing.T) (progressModel, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10) // channel not used in direct model tests
 	cfg := ProgressDisplayConfig{
 		Title:          "Building myproject",
@@ -1044,7 +1045,7 @@ func TestProgressModel_View_InternalStepsHidden(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenderProgressSummary_Success(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "FROM node:20", status: StepComplete},
@@ -1058,7 +1059,7 @@ func TestRenderProgressSummary_Success(t *testing.T) {
 }
 
 func TestRenderProgressSummary_Error(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "RUN exit 1", status: StepError, errMsg: "exit code 1"},
@@ -1071,7 +1072,7 @@ func TestRenderProgressSummary_Error(t *testing.T) {
 }
 
 func TestRenderProgressSummary_Cached(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	cfg := testDisplayConfig()
 	steps := []*progressStep{
 		{name: "FROM node:20", status: StepCached, cached: true},
@@ -1116,7 +1117,7 @@ func TestDefaultFormatDuration(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPlainMode_NilHook_Unchanged(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1133,7 +1134,7 @@ func TestPlainMode_NilHook_Unchanged(t *testing.T) {
 }
 
 func TestPlainMode_Hook_AbortSkipsSummary(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1156,7 +1157,7 @@ func TestPlainMode_Hook_AbortSkipsSummary(t *testing.T) {
 }
 
 func TestPlainMode_Hook_ErrorPropagates(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1174,7 +1175,7 @@ func TestPlainMode_Hook_ErrorPropagates(t *testing.T) {
 }
 
 func TestPlainMode_Hook_AbortNoMessage(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1215,7 +1216,7 @@ func TestHandleHookResult_AbortEmpty(t *testing.T) {
 }
 
 func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	hookCalled := false
@@ -1242,7 +1243,7 @@ func TestPlainMode_Hook_ContinueRendersSummary(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRunProgress_PlainModeForced(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	tio.SetInteractive(true) // TTY available, but "plain" overrides
 	ch := make(chan ProgressStep, 10)
 
@@ -1260,7 +1261,7 @@ func TestRunProgress_PlainModeForced(t *testing.T) {
 }
 
 func TestRunProgress_AutoFallsBackToPlain(t *testing.T) {
-	tio := iostreams.NewTestIOStreams() // non-TTY by default
+	tio := iostreamstest.New() // non-TTY by default
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1276,7 +1277,7 @@ func TestRunProgress_AutoFallsBackToPlain(t *testing.T) {
 }
 
 func TestRunProgress_UnknownModeFallsToAuto(t *testing.T) {
-	tio := iostreams.NewTestIOStreams() // non-TTY → plain
+	tio := iostreamstest.New() // non-TTY → plain
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,
@@ -1292,7 +1293,7 @@ func TestRunProgress_UnknownModeFallsToAuto(t *testing.T) {
 }
 
 func TestRunProgress_EmptyChannel(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep)
 	close(ch) // immediately closed = no events
 
@@ -1302,7 +1303,7 @@ func TestRunProgress_EmptyChannel(t *testing.T) {
 }
 
 func TestRunProgress_ZeroValueConfig(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	ch := make(chan ProgressStep, 10)
 
 	go sendProgressSteps(ch,

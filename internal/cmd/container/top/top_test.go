@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,9 +188,9 @@ func TestCmdTop_ArgsParsing(t *testing.T) {
 
 // --- Tier 2 tests (Cobra+Factory, real run function) ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -234,7 +234,7 @@ func TestTopRun_HappyPath(t *testing.T) {
 }
 
 func TestTopRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),

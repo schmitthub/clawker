@@ -19,7 +19,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/require"
@@ -367,7 +367,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultConfig())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultProject())
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -434,9 +434,9 @@ func testConfig() *config.Project {
 }
 
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
@@ -602,7 +602,7 @@ func TestCreateRun(t *testing.T) {
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 
-		tio := iostreams.NewTestIOStreams()
+		tio := iostreamstest.New()
 		f := &cmdutil.Factory{
 			IOStreams: tio.IOStreams,
 			TUI:       tui.NewTUI(tio.IOStreams),

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 )
 
 func TestLoopDashEventKind_String(t *testing.T) {
@@ -33,7 +34,7 @@ func TestLoopDashEventKind_String(t *testing.T) {
 }
 
 func newTestRenderer() (*loopDashRenderer, *iostreams.IOStreams) {
-	ios := iostreams.NewTestIOStreams()
+	ios := iostreamstest.New()
 	cfg := LoopDashboardConfig{
 		AgentName: "loop-brave-turing",
 		Project:   "myapp",
@@ -363,7 +364,7 @@ func TestLoopDash_FormatElapsed(t *testing.T) {
 }
 
 func TestLoopDash_FormatStatusText(t *testing.T) {
-	cs := iostreams.NewTestIOStreams().IOStreams.ColorScheme()
+	cs := iostreamstest.New().IOStreams.ColorScheme()
 
 	tests := []struct {
 		status string

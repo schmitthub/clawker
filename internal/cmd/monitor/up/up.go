@@ -10,14 +10,14 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
 	"github.com/spf13/cobra"
 )
 
 type UpOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
+	Client   func(context.Context) (*docker.Client, error)
+	Config   func() *config.Config
 
 	Detach bool
 }
@@ -25,7 +25,8 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
 		IOStreams: f.IOStreams,
-		Client:    f.Client,
+		Client:   f.Client,
+		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -70,7 +71,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
 
-	logger.Debug().Str("monitor_dir", monitorDir).Msg("starting monitor stack")
+	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("starting monitor stack")
 
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
@@ -94,7 +95,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}); err != nil {
 		return fmt.Errorf("failed to ensure Docker network '%s': %w", config.ClawkerNetwork, err)
 	}
-	logger.Debug().Str("network", config.ClawkerNetwork).Msg("network ready")
+	ios.Logger.Debug().Str("network", config.ClawkerNetwork).Msg("network ready")
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "up"}
@@ -102,7 +103,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		composeArgs = append(composeArgs, "-d")
 	}
 
-	logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
+	ios.Logger.Debug().Strs("args", composeArgs).Msg("running docker compose")
 
 	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdout = ios.Out
@@ -117,16 +118,17 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 
 	if opts.Detach {
+		mon := &opts.Config().Settings.Monitoring
+
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Service URLs:")
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan("http://localhost:3000"))
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan("http://localhost:16686"))
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan("http://localhost:9090"))
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(mon.GrafanaURL()))
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(mon.JaegerURL()))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(mon.PrometheusURL()))
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
-
 	}
 
 	return nil

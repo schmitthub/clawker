@@ -2,9 +2,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:4317
+        endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: 0.0.0.0:{{.OtelCollectorPort}}
 
 processors:
   batch:
@@ -20,13 +20,13 @@ processors:
 
 exporters:
   otlp/jaeger:
-    endpoint: jaeger:4317
+    endpoint: jaeger:{{.OtelGRPCPort}}
     tls:
       insecure: true
   prometheus:
-    endpoint: "0.0.0.0:8889"
+    endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
   otlphttp/loki:
-    endpoint: "http://loki:3100/otlp"
+    endpoint: "http://loki:{{.LokiPort}}/otlp"
 
 service:
   pipelines:

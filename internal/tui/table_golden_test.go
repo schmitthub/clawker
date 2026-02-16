@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/test/harness/golden"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ func TestTablePlain_Golden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			tui := NewTUI(tio.IOStreams)
 
 			tp := tui.NewTable(tt.headers...)
@@ -95,7 +95,7 @@ func TestTableStyled_Golden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			tio.SetInteractive(true)
 			tio.SetColorEnabled(true)
 			tio.SetTerminalSize(tt.termWidth, 24)

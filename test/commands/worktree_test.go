@@ -13,7 +13,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	gitpkg "github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
@@ -261,10 +261,10 @@ func registerWorktreeInRegistry(t *testing.T, h *harness.Harness, branch, slug s
 }
 
 // newWorktreeTestFactory creates a factory with GitManager for worktree tests.
-func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	// Create a project config with the harness project name
 	project := &config.Project{

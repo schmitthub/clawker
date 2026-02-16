@@ -9,6 +9,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/logger/loggertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +27,7 @@ func TestInjectLoopHooks_DefaultHooks(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn)
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
 	require.NoError(t, err)
 
 	// Expect 2 copies: settings.json + hook script files
@@ -77,7 +78,7 @@ func TestInjectLoopHooks_CustomHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err = InjectLoopHooks(context.Background(), "xyz789", hooksFile, copyFn)
+	err = InjectLoopHooks(context.Background(), "xyz789", hooksFile, copyFn, loggertest.NewNop())
 	require.NoError(t, err)
 
 	// Custom hooks: only 1 copy (settings.json, no hook files)
@@ -96,7 +97,7 @@ func TestInjectLoopHooks_InvalidHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "/nonexistent/hooks.json", copyFn)
+	err := InjectLoopHooks(context.Background(), "abc123", "/nonexistent/hooks.json", copyFn, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading hooks file")
 }
@@ -111,7 +112,7 @@ func TestInjectLoopHooks_CopySettingsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn)
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting settings.json")
 }
@@ -126,7 +127,7 @@ func TestInjectLoopHooks_CopyScriptsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn)
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting hook scripts")
 }

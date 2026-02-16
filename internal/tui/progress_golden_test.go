@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/schmitthub/clawker/test/harness/golden"
@@ -21,7 +21,7 @@ import (
 func TestProgressPlain_Golden(t *testing.T) {
 	for _, scenario := range whailtest.AllBuildScenarios() {
 		t.Run(scenario.Name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			ch := make(chan ProgressStep, 64)
 
 			go func() {

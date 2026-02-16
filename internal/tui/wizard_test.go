@@ -4,10 +4,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
 // ---------------------------------------------------------------------------
@@ -360,7 +359,7 @@ func TestWizard_TextFieldInWizard(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWizard_EmptyFields(t *testing.T) {
-	ios := iostreams.NewTestIOStreams()
+	ios := iostreamstest.New()
 	tui := NewTUI(ios.IOStreams)
 
 	result, err := tui.RunWizard(nil)

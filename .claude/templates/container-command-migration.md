@@ -119,9 +119,9 @@ Container commands in `internal/cmd/container/*/` are being migrated to canonica
 
 **Cobra+Factory Test Pattern (Tier 2):**
 ```go
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
     t.Helper()
-    tio := iostreams.NewTestIOStreams()
+    tio := iostreamstest.New()
     return &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         TUI:      tui.NewTUI(tio.IOStreams),
@@ -303,7 +303,7 @@ These 3 commands already have Tier 2 tests. Migration is HandleError replacement
 6. Review existing Tier 2 tests — add a test for the Docker connection error path if missing:
    ```go
    func TestStopRun_DockerConnectionError(t *testing.T) {
-       tio := iostreams.NewTestIOStreams()
+       tio := iostreamstest.New()
        f := &cmdutil.Factory{
            IOStreams: tio.IOStreams,
            Client: func(_ context.Context) (*docker.Client, error) {
@@ -365,9 +365,9 @@ These 4 commands have Tier 1 tests (flag parsing) but NO Tier 2 tests. Each need
 3. Replace `fmt.Fprintf(ios.ErrOut, "Error: %v\n", err)` → `cs.FailureIcon()` pattern
 4. Create a per-package `testFactory` helper (copy from `stop_test.go`, remove SocketBridge since these don't need it):
    ```go
-   func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+   func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
        t.Helper()
-       tio := iostreams.NewTestIOStreams()
+       tio := iostreamstest.New()
        return &cmdutil.Factory{
            IOStreams: tio.IOStreams,
            Client: func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },

@@ -247,7 +247,7 @@ func TestHarness_UpdateConfig(t *testing.T) {
 	assert.Equal(t, "new:image", h.Config.Build.Image)
 
 	// Verify file was rewritten - reload and check
-	loader := config.NewLoader(h.ProjectDir)
+	loader := config.NewProjectLoader(h.ProjectDir)
 	reloaded, err := loader.Load()
 	require.NoError(t, err)
 	assert.Equal(t, "new:image", reloaded.Build.Image)

@@ -10,7 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,9 +95,9 @@ func TestCmdUnpause_Properties(t *testing.T) {
 
 // --- Tier 2: Cobra+Factory integration tests ---
 
-func testUnpauseFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testUnpauseFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
@@ -132,7 +132,7 @@ func TestUnpauseRun_Success(t *testing.T) {
 }
 
 func TestUnpauseRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {

@@ -25,12 +25,16 @@ import (
 // newTestClient creates a *Client backed by a whailtest.FakeAPIClient for
 // builder tests. Returns both the client and the fake for wiring behavior.
 func newTestClient() (*Client, *whailtest.FakeAPIClient) {
+	return newTestClientWithConfig(nil)
+}
+
+func newTestClientWithConfig(cfg *config.Config) (*Client, *whailtest.FakeAPIClient) {
 	fakeAPI := whailtest.NewFakeAPIClient()
 	engine := whail.NewFromExisting(fakeAPI, whail.EngineOptions{
 		LabelPrefix:  EngineLabelPrefix,
 		ManagedLabel: EngineManagedLabel,
 	})
-	return &Client{Engine: engine}, fakeAPI
+	return &Client{Engine: engine, cfg: cfg}, fakeAPI
 }
 
 // managedImageInspect returns an ImageInspectResult with the managed label set,
@@ -149,10 +153,10 @@ func ensureImageTestConfig() *config.Project {
 
 func TestEnsureImage_CacheHit(t *testing.T) {
 	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClient()
+	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
 
 	// Pre-compute the expected hash tag by generating the Dockerfile and hashing it
-	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -193,10 +197,10 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 
 func TestEnsureImage_CacheMiss(t *testing.T) {
 	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClient()
+	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
 
 	// Pre-compute the expected hash tag
-	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -232,7 +236,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 
 func TestEnsureImage_ForceBuild(t *testing.T) {
 	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClient()
+	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
 
 	// Wire legacy ImageBuild to succeed
 	var buildCalled bool
@@ -255,10 +259,10 @@ func TestEnsureImage_ForceBuild(t *testing.T) {
 
 func TestEnsureImage_TagImageFailure(t *testing.T) {
 	cfg := ensureImageTestConfig()
-	client, fakeAPI := newTestClient()
+	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
 
 	// Pre-compute the expected hash tag
-	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen := bundler.NewProjectGenerator(&config.Config{Project: cfg}, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -306,7 +310,7 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 		},
 	}
 
-	client, fakeAPI := newTestClient()
+	client, fakeAPI := newTestClientWithConfig(&config.Config{Project: cfg})
 
 	// Wire legacy ImageBuild to succeed and capture the labels
 	var buildLabels map[string]string
@@ -333,7 +337,7 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 func TestEnsureImage_ContentHashError(t *testing.T) {
 	cfg := ensureImageTestConfig()
 	cfg.Agent.Includes = []string{"nonexistent-file.txt"}
-	client, _ := newTestClient()
+	client, _ := newTestClientWithConfig(&config.Config{Project: cfg})
 	builder := NewBuilder(client, cfg, t.TempDir())
 	imageTag := ImageTag(cfg.Project)
 

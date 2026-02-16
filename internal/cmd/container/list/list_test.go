@@ -12,15 +12,15 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreams.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),
@@ -76,7 +76,7 @@ func TestNewCmdList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 			var gotOpts *ListOptions
@@ -140,7 +140,7 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tio := iostreams.NewTestIOStreams()
+			tio := iostreamstest.New()
 			f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 
 			cmd := NewCmdList(f, func(_ context.Context, _ *ListOptions) error {
@@ -166,7 +166,7 @@ func TestNewCmdList_FormatFlags(t *testing.T) {
 }
 
 func TestCmdList_Properties(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
 	cmd := NewCmdList(f, nil)
 
@@ -379,7 +379,7 @@ func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
 }
 
 func TestListRun_DockerConnectionError(t *testing.T) {
-	tio := iostreams.NewTestIOStreams()
+	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:      tui.NewTUI(tio.IOStreams),

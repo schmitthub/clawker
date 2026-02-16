@@ -16,7 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	internalconfig "github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
 )
@@ -44,9 +43,7 @@ Workspace modes:
 			"versionInfo": versioncmd.Format(version, buildDate),
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Initialize logger with file logging if possible
-			initializeLogger()
-
+			// Logger is initialized by factory.ioStreams() during Factory construction.
 			logger.Debug().
 				Str("version", f.Version).
 				Bool("debug", debug).
@@ -90,49 +87,4 @@ Workspace modes:
 	cmd.AddCommand(versioncmd.NewCmdVersion(f, version, buildDate))
 
 	return cmd, nil
-}
-
-// initializeLogger sets up the logger with file logging if possible.
-// Falls back to console-only logging on any errors.
-func initializeLogger() {
-	// Try to load settings for logging config
-	loader, err := internalconfig.NewSettingsLoader()
-	if err != nil {
-		// Fall back to console-only logging
-		logger.Init()
-		logger.Warn().Err(err).Msg("file logging unavailable: failed to create settings loader")
-		return
-	}
-
-	settings, err := loader.Load()
-	if err != nil {
-		// Fall back to console-only logging
-		logger.Init()
-		logger.Warn().Err(err).Msg("file logging unavailable: failed to load settings")
-		return
-	}
-
-	// Get logs directory
-	logsDir, err := internalconfig.LogsDir()
-	if err != nil {
-		// Fall back to console-only logging
-		logger.Init()
-		logger.Warn().Err(err).Msg("file logging unavailable: failed to get logs directory")
-		return
-	}
-
-	// Convert settings.Logging to logger.LoggingConfig
-	logCfg := &logger.LoggingConfig{
-		FileEnabled: settings.Logging.FileEnabled,
-		MaxSizeMB:   settings.Logging.MaxSizeMB,
-		MaxAgeDays:  settings.Logging.MaxAgeDays,
-		MaxBackups:  settings.Logging.MaxBackups,
-	}
-
-	// Initialize with file logging
-	if err := logger.InitWithFile(logsDir, logCfg); err != nil {
-		// Fall back to console-only on error
-		logger.Init()
-		logger.Warn().Err(err).Msg("file logging unavailable: failed to initialize file writer")
-	}
 }
