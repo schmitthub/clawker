@@ -42,9 +42,9 @@ loop:                           # Optional autonomous loop settings
   timeout_minutes: 15
 ```
 
-## Critical: inject vs instructions.env
+## Critical: inject vs build.instructions.env
 
-`instructions.env` sets ENV vars at **container runtime** (`docker run`). These vars do **NOT** exist during `docker build`. Any build step (`root_run`/`user_run`) referencing them will fail.
+`build.instructions.env` sets ENV vars at **container runtime** (`docker run`). These vars do **NOT** exist during `docker build`. Any build step (`root_run`/`user_run`) referencing them will fail.
 
 Use `build.inject.*` to emit `ENV` directives directly into the Dockerfile at build time.
 
@@ -77,7 +77,7 @@ ENTRYPOINT
 |---|---|
 | `root_run` | `inject.after_packages` |
 | `user_run` | `inject.after_user_switch` |
-| Container runtime only | `agent.env` or `instructions.env` |
+| Container runtime only | `agent.env` or `build.instructions.env` |
 
 ## inject Syntax
 
@@ -189,7 +189,7 @@ See sibling files for complete, working configurations:
 
 ## Common Mistakes
 
-1. Using `instructions.env` for build-time vars (use `inject.*` instead)
+1. Using `build.instructions.env` for build-time vars (use `build.inject.*` instead)
 2. Putting user-space ENV in `after_packages` (use `after_user_switch` instead — keeps ENV declarations near the `user_run` commands that reference them, improving readability and cache efficiency)
 3. Forgetting firewall `add_domains` for package registries
 4. Missing `ca-certificates` in packages (needed for HTTPS downloads)

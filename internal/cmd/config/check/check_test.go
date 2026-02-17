@@ -116,7 +116,7 @@ func TestCheckRun_validFile(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     filepath.Join(dir, "clawker.yaml"),
+		File:      filepath.Join(dir, "clawker.yaml"),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -139,7 +139,7 @@ workspace:
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     filepath.Join(dir, "clawker.yaml"),
+		File:      filepath.Join(dir, "clawker.yaml"),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -164,7 +164,7 @@ workspace:
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     filepath.Join(dir, "clawker.yaml"),
+		File:      filepath.Join(dir, "clawker.yaml"),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -179,7 +179,7 @@ func TestCheckRun_fileNotFound(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     filepath.Join(t.TempDir(), "nonexistent.yaml"),
+		File:      filepath.Join(t.TempDir(), "nonexistent.yaml"),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -197,7 +197,7 @@ func TestCheckRun_fileFlag(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     filepath.Join(dir, "clawker.yaml"),
+		File:      filepath.Join(dir, "clawker.yaml"),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -294,7 +294,7 @@ func TestCheckRun_customFilename(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:     path,
+		File:      path,
 	}
 
 	err := checkRun(context.Background(), opts)

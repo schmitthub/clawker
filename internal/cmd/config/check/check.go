@@ -16,7 +16,7 @@ import (
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
-	File     string
+	File      string
 }
 
 // NewCmdCheck creates the config check command.
