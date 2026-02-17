@@ -35,6 +35,10 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// CLAWKER_FIREWALL_ENABLED should be set
+	assert.Contains(t, env, "CLAWKER_FIREWALL_ENABLED=true",
+		"CLAWKER_FIREWALL_ENABLED should be set when firewall is enabled")
+
 	var found bool
 	for _, e := range env {
 		if val, ok := strings.CutPrefix(e, "CLAWKER_FIREWALL_DOMAINS="); ok {
@@ -72,6 +76,8 @@ func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
 	for _, e := range env {
 		assert.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS=",
 			"should not set firewall domains when disabled")
+		assert.False(t, strings.HasPrefix(e, "CLAWKER_FIREWALL_ENABLED="),
+			"should not set CLAWKER_FIREWALL_ENABLED when disabled")
 	}
 }
 

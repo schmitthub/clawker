@@ -16,8 +16,8 @@ emit_error() {
     exit 1
 }
 
-# Initialize firewall if script exists and we have capabilities
-if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
+# Initialize firewall if enabled at runtime and we have capabilities
+if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ] && [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
     # Write firewall config to file since sudo strips environment variables
     mkdir -p /tmp/clawker
     echo "${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}" > /tmp/clawker/firewall-ip-range-sources

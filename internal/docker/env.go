@@ -89,8 +89,10 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["COLORTERM"] = "truecolor"
 	}
 
-	// Firewall domains (consumed by entrypoint/init-firewall.sh)
+	// Firewall (consumed by entrypoint/init-firewall.sh)
 	if opts.FirewallEnabled {
+		m["CLAWKER_FIREWALL_ENABLED"] = "true"
+
 		domains := opts.FirewallDomains
 		if domains == nil {
 			domains = []string{}

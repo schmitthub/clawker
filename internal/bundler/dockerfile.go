@@ -116,7 +116,6 @@ type DockerfileContext struct {
 	WorkspacePath   string
 	ClaudeVersion   string
 	IsAlpine        bool
-	EnableFirewall  bool
 	BuildKitEnabled bool
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
@@ -272,7 +271,6 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		WorkspacePath:            "/workspace",
 		ClaudeVersion:            version,
 		IsAlpine:                 isAlpine,
-		EnableFirewall:           true,
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
 		Inject:                   nil,
@@ -392,11 +390,9 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add firewall script if enabled
-	if g.config.Project.Security.FirewallEnabled() {
-		if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
-			return nil, err
-		}
+	// Add firewall script (always included; execution gated at runtime)
+	if err := addFileToTar(tw, "init-firewall.sh", []byte(FirewallScript)); err != nil {
+		return nil, err
 	}
 
 	// Add host-open script for opening URLs on host machine
@@ -460,6 +456,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		mode    os.FileMode
 	}{
 		{"entrypoint.sh", EntrypointScript, 0755},
+		{"init-firewall.sh", FirewallScript, 0755},
 		{"statusline.sh", StatuslineScript, 0755},
 		{"claude-settings.json", SettingsFile, 0644},
 		{"host-open.sh", HostOpenScript, 0755},
@@ -471,13 +468,6 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	for _, s := range scripts {
 		if err := os.WriteFile(filepath.Join(dir, s.name), []byte(s.content), s.mode); err != nil {
 			return fmt.Errorf("failed to write %s: %w", s.name, err)
-		}
-	}
-
-	// Write firewall script if enabled
-	if g.config.Project.Security.FirewallEnabled() {
-		if err := os.WriteFile(filepath.Join(dir, "init-firewall.sh"), []byte(FirewallScript), 0755); err != nil {
-			return fmt.Errorf("failed to write init-firewall.sh: %w", err)
 		}
 	}
 
@@ -585,7 +575,6 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		WorkspacePath:            p.Workspace.RemotePath,
 		ClaudeVersion:            DefaultClaudeCodeVersion,
 		IsAlpine:                 isAlpine,
-		EnableFirewall:           p.Security.FirewallEnabled(),
 		BuildKitEnabled:          g.BuildKitEnabled,
 		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
 		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
