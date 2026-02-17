@@ -121,6 +121,29 @@ When I'm done I easily remove the worktree
 clawker worktree remove a/example --delete-branch  # this deletes the worktree and the branch since it was only for this worktree, if you want to keep the branch just omit the flag. Delete won't work if the branch isn't fully merged
 ```
 
+If I want to iterate over a prompt with a fresh containerized claude code each time (aka "ralph wiggum")
+
+> Note: I've decided to commit [sadboy.md](docs/sadboy.md) so that the world can know his story
+
+<img src="docs/assets/sadboy.png" alt="TUI Dashboard" width="600">
+
+```bash
+# Start a new autonomous loop; TUI tracks output, tool use, costs etc via Agent SDK streaming events
+LOOP_PROMPT=$(cat <<'EOF'
+Write a story in @docs/sadboy.md about a sad boy who struggles with context window 
+management, token costs, and genai hallucinations.
+
+If the file doesn't exist, create it with:
+- Title and table of contents with chapters "The Struggle" and "A Sad Conclusion"
+- Author section (use make up an author name for yourself and write a short bio about your tragic life inspired by artists like Edgar Allen Poe, Van Gogh, etc)
+- Two opening paragraphs to start the story
+
+If the file exists, add two new chapter paragraphs that continue the story and update the sad conclusion.
+EOF
+)
+clawker loop iterate --prompt "$LOOP_PROMPT" --max-loops 5 --skip-permissions
+```
+
 If I have too many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack
 
 ```bash

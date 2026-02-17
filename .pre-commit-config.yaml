@@ -13,7 +13,7 @@ repos:
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
-    rev: v2.8.0
+    rev: v2.9.0
     hooks:
       - id: golangci-lint
         args: [--config, .golangci.yml]
@@ -59,7 +59,7 @@ repos:
 
       - id: claude-freshness
         name: Claude doc freshness (advisory)
-        entry: bash -c 'bash scripts/check-claude-freshness.sh --no-color | head -50 || true'
+        entry: bash -c 'bash scripts/check-claude-freshness.sh --strict --non-interactive --no-color | head -50 || true'
         language: system
         files: \.go$
         pass_filenames: false

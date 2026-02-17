@@ -9,6 +9,8 @@ set -euo pipefail
 FRESHNESS_DAYS="${FRESHNESS_DAYS:-30}"
 STRICT=false
 NO_COLOR=false
+NON_INTERACTIVE=false
+WARN_LINES=()
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 usage() {
@@ -18,23 +20,29 @@ Usage: check-claude-freshness.sh [OPTIONS]
 Compare CLAUDE.md and rules file timestamps against Go source files.
 
 Options:
-  --strict      Exit 1 if any warnings are found
-  --no-color    Disable colored output
-  --days=N      Set freshness threshold (default: 30, or $FRESHNESS_DAYS)
-  --help        Show this help message
+  --strict            Exit 1 if any warnings are found
+  --no-color          Disable colored output
+  --non-interactive   Suppress normal output; only print warnings when exiting 1
+  --days=N            Set freshness threshold (default: 30, or $FRESHNESS_DAYS)
+  --help              Show this help message
 EOF
     exit 0
 }
 
 for arg in "$@"; do
     case "$arg" in
-        --strict)    STRICT=true ;;
-        --no-color)  NO_COLOR=true ;;
-        --days=*)    FRESHNESS_DAYS="${arg#--days=}" ;;
-        --help)      usage ;;
-        *)           echo "Unknown option: $arg" >&2; exit 1 ;;
+        --strict)           STRICT=true ;;
+        --no-color)         NO_COLOR=true ;;
+        --non-interactive)  NON_INTERACTIVE=true ;;
+        --days=*)           FRESHNESS_DAYS="${arg#--days=}" ;;
+        --help)             usage ;;
+        *)                  echo "Unknown option: $arg" >&2; exit 1 ;;
     esac
 done
+
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    NO_COLOR=true
+fi
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 if [[ "$NO_COLOR" == "true" ]] || [[ ! -t 1 ]]; then
@@ -109,9 +117,11 @@ check_doc() {
     local doc_ts
     doc_ts=$(git_timestamp "$doc_path")
     if [[ "$doc_ts" == "0" ]]; then
-        echo -e "${BOLD}${doc_path}${RESET}"
-        echo "  Status:        SKIPPED (not committed)"
-        echo ""
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo -e "${BOLD}${doc_path}${RESET}"
+            echo "  Status:        SKIPPED (not committed)"
+            echo ""
+        fi
         return
     fi
 
@@ -122,44 +132,57 @@ check_doc() {
     go_file="${result#* }"
 
     if [[ "$go_ts" == "0" ]] || [[ -z "$go_file" ]]; then
-        echo -e "${BOLD}${doc_path}${RESET}"
-        echo "  Doc updated:   $(format_date "$doc_ts")"
-        echo "  Newest Go:     (none found in ${go_dir}/)"
-        echo -e "  Status:        ${GREEN}OK${RESET} (no Go files)"
-        echo ""
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo -e "${BOLD}${doc_path}${RESET}"
+            echo "  Doc updated:   $(format_date "$doc_ts")"
+            echo "  Newest Go:     (none found in ${go_dir}/)"
+            echo -e "  Status:        ${GREEN}OK${RESET} (no Go files)"
+            echo ""
+        fi
         return
     fi
 
     local behind
     behind=$(days_between "$doc_ts" "$go_ts")
 
-    echo -e "${BOLD}${doc_path}${RESET}"
-    echo "  Doc updated:   $(format_date "$doc_ts")"
-    echo "  Newest Go:     ${go_file} ($(format_date "$go_ts"))"
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        echo -e "${BOLD}${doc_path}${RESET}"
+        echo "  Doc updated:   $(format_date "$doc_ts")"
+        echo "  Newest Go:     ${go_file} ($(format_date "$go_ts"))"
+    fi
 
     if (( behind > FRESHNESS_DAYS )); then
         WARNINGS=$((WARNINGS + 1))
-        echo -e "  Status:        ${YELLOW}WARNING${RESET} - ${behind} days behind (threshold: ${FRESHNESS_DAYS})"
+        WARN_LINES+=("${doc_path}: ${behind} days behind (threshold: ${FRESHNESS_DAYS})")
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo -e "  Status:        ${YELLOW}WARNING${RESET} - ${behind} days behind (threshold: ${FRESHNESS_DAYS})"
+        fi
     else
         if (( behind < 0 )); then behind=0; fi
-        echo -e "  Status:        ${GREEN}OK${RESET} (${behind} days behind)"
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo -e "  Status:        ${GREEN}OK${RESET} (${behind} days behind)"
+        fi
     fi
-    echo ""
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        echo ""
+    fi
 }
 
 # ── Check root CLAUDE.md ─────────────────────────────────────────────────────
-echo -e "${BOLD}=== Claude Documentation Freshness Check ===${RESET}"
-echo ""
+if [[ "$NON_INTERACTIVE" != "true" ]]; then
+    echo -e "${BOLD}=== Claude Documentation Freshness Check ===${RESET}"
+    echo ""
+fi
 
 if [[ -f "CLAUDE.md" ]]; then
     check_doc "CLAUDE.md" "."
 fi
 
-# ── Check internal/*/CLAUDE.md ────────────────────────────────────────────────
+# ── Check Lazy Loaded CLAUDE.md ────────────────────────────────────────────────
 while IFS= read -r doc; do
     dir=$(dirname "$doc")
     check_doc "$doc" "$dir"
-done < <(git ls-files 'internal/*/CLAUDE.md' 'internal/*/*/CLAUDE.md' 'pkg/*/CLAUDE.md' 2>/dev/null)
+done < <(git ls-files 'internal/*/CLAUDE.md' 'internal/*/*/CLAUDE.md' 'pkg/*/CLAUDE.md' 'test/CLAUDE.md' 'test/*/CLAUDE.md' 'test/*/*/CLAUDE.md' 2>/dev/null)
 
 # ── Check .claude/rules/*.md with paths: frontmatter ─────────────────────────
 while IFS= read -r rule; do
@@ -187,9 +210,11 @@ while IFS= read -r rule; do
     CHECKED=$((CHECKED + 1))
     local_doc_ts=$(git_timestamp "$rule")
     if [[ "$local_doc_ts" == "0" ]]; then
-        echo -e "${BOLD}${rule}${RESET}"
-        echo "  Status:        SKIPPED (not committed)"
-        echo ""
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo -e "${BOLD}${rule}${RESET}"
+            echo "  Status:        SKIPPED (not committed)"
+            echo ""
+        fi
         continue
     fi
 
@@ -214,27 +239,49 @@ while IFS= read -r rule; do
         newest_file=$(echo "$local_result" | tail -n +2 | grep '\.go$' | head -1)
     fi
 
-    echo -e "${BOLD}${rule}${RESET}"
-    echo "  Doc updated:   $(format_date "$local_doc_ts")"
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        echo -e "${BOLD}${rule}${RESET}"
+        echo "  Doc updated:   $(format_date "$local_doc_ts")"
+    fi
 
     if [[ "$newest_ts" == "0" ]] || [[ -z "$newest_file" ]]; then
-        echo "  Newest Go:     (none found for paths: ${globs})"
-        echo -e "  Status:        ${GREEN}OK${RESET} (no Go files)"
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo "  Newest Go:     (none found for paths: ${globs})"
+            echo -e "  Status:        ${GREEN}OK${RESET} (no Go files)"
+        fi
     else
         behind=$(days_between "$local_doc_ts" "$newest_ts")
-        echo "  Newest Go:     ${newest_file} ($(format_date "$newest_ts"))"
+        if [[ "$NON_INTERACTIVE" != "true" ]]; then
+            echo "  Newest Go:     ${newest_file} ($(format_date "$newest_ts"))"
+        fi
         if (( behind > FRESHNESS_DAYS )); then
             WARNINGS=$((WARNINGS + 1))
-            echo -e "  Status:        ${YELLOW}WARNING${RESET} - ${behind} days behind (threshold: ${FRESHNESS_DAYS})"
+            WARN_LINES+=("${rule}: ${behind} days behind (threshold: ${FRESHNESS_DAYS})")
+            if [[ "$NON_INTERACTIVE" != "true" ]]; then
+                echo -e "  Status:        ${YELLOW}WARNING${RESET} - ${behind} days behind (threshold: ${FRESHNESS_DAYS})"
+            fi
         else
             if (( behind < 0 )); then behind=0; fi
-            echo -e "  Status:        ${GREEN}OK${RESET} (${behind} days behind)"
+            if [[ "$NON_INTERACTIVE" != "true" ]]; then
+                echo -e "  Status:        ${GREEN}OK${RESET} (${behind} days behind)"
+            fi
         fi
     fi
-    echo ""
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        echo ""
+    fi
+
 done < <(git ls-files '.claude/rules/*.md' 2>/dev/null)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    if [[ "$STRICT" == "true" ]] && (( WARNINGS > 0 )); then
+        printf '%s\n' "${WARN_LINES[@]}"
+        exit 1
+    fi
+    exit 0
+fi
+
 echo "---"
 if (( WARNINGS > 0 )); then
     echo -e "Checked ${CHECKED} files, ${YELLOW}${WARNINGS} warning(s)${RESET} (threshold: ${FRESHNESS_DAYS} days)"
