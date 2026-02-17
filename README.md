@@ -7,11 +7,35 @@
   <a href="#"><img src="https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff" alt="Claude"></a>
 </p>
 
-To sum `clawker` up, its basically what would happen if `devcontainers` and `k8s` had a baby that was raised by a pack of wild `Claude Code` agents. It's a container orchestration and automation tool for running Claude Code agents in isolated environments on any host with docker installed, exposing a ton of convenience features to make using claude code in containers seamless, secure/safe, and powerful.
+<p align="center">
+<code>clawker</code> is basically what would happen if <code>devcontainers</code> and <code>k8s</code> had a <code>Claude Code</code> baby. It's a container orchestration and automation tool for running Claude Code agents in isolated containers on any host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
+</p>
 
-##### Boring TLDR backstory/diary entry, skip this paragraph if you value your time or don't care about the "why" and just want to know what it does and how to use it.
+---
+
+## Table of Contents
+
+- [High-Level Feature Overview](#high-level-feature-overview)
+- [Roadmap / Known Issues](#roadmap--known-issues)
+- [Installation](#installation)
+- [Walkthrough](#walkthrough)
+- [Creating and Using Containers](#creating-and-using-containers)
+- [The `@` Image Shortcut](#the--image-shortcut)
+- [Working with Worktrees](#working-with-worktrees)
+- [Managing Resources](#managing-resources)
+- [Monitoring](#monitoring)
+- [Autonomous Loops (Experimental)](#autonomous-loops-experimental)
+- [Known Issues](#known-issues)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+<details>
+<summary>Boring TLDR backstory/diary entry, skip this if you value your time</summary>
 
 When I began experimenting with Claude Code to keep up with the Agentic AI trend, I was surprised by the total absence of local development container offerings for using it. Claude Code's sandbox mode is lackluster; the only other options for isolation and orchestration involve paid remote services, which seems silly to me—we've had containers for over a decade now. The Claude Code docs recommend using containers, but they only offer a devcontainer example, which is a step in the right direction but leaves you coupled to the IDE. The DIY approach results in managing multiple Claude Code Dockerfiles, maybe a container registry, per language stack/project, which also sucks, and there are a lot of internals that devcontainers offer that vanilla containers don't have. So I decided to build something that abstracts away all the complexity of creating, managing, automating, and running Claude Code in containers with Docker. It served as a good project to learn the ways of "Agentic Engineering" and "vibing" (exhausting btw, beware of some hilarious slop I've been cleaning up in this code base), but Clawker has become very useful for me, so I've decided to open source it for anyone yearning for a better local development container experience.
+</details>
 
 ## High-Level Feature Overview
 
@@ -49,12 +73,18 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 
 **Prerequisites:** Docker must be installed and running on your machine. I've only tested on macOS so far, but it should work on Linux as well. Windows is not currently supported but I might in the future (yucky).
 
+**Homebrew** (macOS):
+```bash
+brew install schmitthub/tap/clawker
+```
+
+**Install script** (macOS / Linux):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
 ```
 
 <details>
-<summary>Other installation methods</summary>
+<summary>More options</summary>
 
 **Specific version:**
 ```bash
@@ -109,7 +139,7 @@ So to do that let's say you're working on a feature branch with host claude code
 clawker run -it --agent example --worktree hotfix/example:main @ --dangerously-skip-permissions
 ```
 
-This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `CLAWKER_HOME` off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent example`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you. For free.  
+This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `CLAWKER_HOME` off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent example`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
 
 I can see my worktree paths and open them in an IDE if I want to do some manual work or review the code.  
 
