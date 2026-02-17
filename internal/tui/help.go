@@ -12,7 +12,7 @@ import (
 // HelpConfig configures the help bar component.
 type HelpConfig struct {
 	Width     int
-	ShowAll   bool  // Show all bindings vs short help
+	ShowAll   bool // Show all bindings vs short help
 	Separator string
 }
 

@@ -20,7 +20,7 @@ import (
 // StatsOptions defines the options for the stats command.
 type StatsOptions struct {
 	IOStreams *iostreams.IOStreams
-	TUI      *tui.TUI
+	TUI       *tui.TUI
 	Client    func(context.Context) (*docker.Client, error)
 	Config    func() *config.Config
 
@@ -34,7 +34,7 @@ type StatsOptions struct {
 func NewCmdStats(f *cmdutil.Factory, runF func(context.Context, *StatsOptions) error) *cobra.Command {
 	opts := &StatsOptions{
 		IOStreams: f.IOStreams,
-		TUI:      f.TUI,
+		TUI:       f.TUI,
 		Client:    f.Client,
 		Config:    f.Config,
 	}

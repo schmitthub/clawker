@@ -29,10 +29,10 @@ const (
 
 // WizardField defines a single step in the wizard.
 type WizardField struct {
-	ID    string
-	Title string // StepperBar label
+	ID     string
+	Title  string // StepperBar label
 	Prompt string // Question text
-	Kind  WizardFieldKind
+	Kind   WizardFieldKind
 
 	// Select-specific fields.
 	Options    []FieldOption

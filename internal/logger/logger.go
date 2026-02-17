@@ -149,6 +149,7 @@ func Init() {
 }
 
 // InitWithFile initializes the logger with file-only output.
+//
 // Deprecated: Use NewLogger() for new code. This is retained for backwards compatibility.
 func InitWithFile(logsDir string, cfg *LoggingConfig) error {
 	return NewLogger(&Options{
@@ -280,6 +281,7 @@ func Close() error {
 }
 
 // CloseFileWriter closes the file writer if it exists.
+//
 // Deprecated: Use Close() which handles both file + OTEL shutdown.
 func CloseFileWriter() error {
 	return Close()

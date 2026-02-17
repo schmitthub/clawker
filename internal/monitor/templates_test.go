@@ -114,11 +114,11 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 	}
 
 	checks := []string{
-		"0.0.0.0:5317",     // gRPC endpoint
-		"0.0.0.0:5318",     // HTTP endpoint
-		"jaeger:5317",      // jaeger exporter
-		"0.0.0.0:9889",     // prometheus exporter
-		"loki:4100/otlp",   // loki exporter
+		"0.0.0.0:5317",   // gRPC endpoint
+		"0.0.0.0:5318",   // HTTP endpoint
+		"jaeger:5317",    // jaeger exporter
+		"0.0.0.0:9889",   // prometheus exporter
+		"loki:4100/otlp", // loki exporter
 	}
 
 	for _, check := range checks {

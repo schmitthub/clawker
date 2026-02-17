@@ -19,9 +19,9 @@ func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
 	})
 	require.NoError(t, err)
@@ -36,9 +36,9 @@ func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
 	})
 	require.NoError(t, err)
@@ -54,9 +54,9 @@ func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
 	tio := iostreamstest.New()
 	// Non-interactive: no Prompter set
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
 	})
 	require.NoError(t, err)
@@ -85,11 +85,11 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
-		Prompter: testPrompterWithSelection(tio, 0), // "Use a worktree"
+		Prompter:  testPrompterWithSelection(tio, 0), // "Use a worktree"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionWorktree, action)
@@ -103,11 +103,11 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
-		Prompter: testPrompterWithSelection(tio, 1), // "Proceed anyway"
+		Prompter:  testPrompterWithSelection(tio, 1), // "Proceed anyway"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionProceed, action)
@@ -121,11 +121,11 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
-		Prompter: testPrompterWithSelection(tio, 2), // "Abort"
+		Prompter:  testPrompterWithSelection(tio, 2), // "Abort"
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ActionAbort, action)
@@ -137,9 +137,9 @@ func TestCheckConcurrency_DockerListError(t *testing.T) {
 
 	tio := iostreamstest.New()
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
 	})
 	require.Error(t, err)
@@ -158,9 +158,9 @@ func TestCheckConcurrency_MultipleRunning_WarnsAndProceeds(t *testing.T) {
 	tio := iostreamstest.New()
 	// Non-interactive should still warn and proceed
 	action, err := CheckConcurrency(context.Background(), &ConcurrencyCheckConfig{
-		Client:   fake.Client,
-		Project:  "myproj",
-		WorkDir:  "/workspace",
+		Client:    fake.Client,
+		Project:   "myproj",
+		WorkDir:   "/workspace",
 		IOStreams: tio.IOStreams,
 	})
 	require.NoError(t, err)

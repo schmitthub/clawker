@@ -103,7 +103,6 @@ func seedCredentialsFile(t *testing.T, hostDir string) {
 // boolPtr returns a pointer to a bool value.
 func boolPtr(b bool) *bool { return &b }
 
-
 // createConfigVolume creates a config volume, registers cleanup, and returns
 // the volume name. This is the standard setup for tests that need to populate
 // a volume via InitContainerConfig before starting a container.

@@ -5,12 +5,10 @@
 package acceptance
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,77 +110,6 @@ func registerDefer(scriptDir string, cmd string) {
 	deferredCleanupsMu.Lock()
 	defer deferredCleanupsMu.Unlock()
 	deferredCleanups[scriptDir] = append(deferredCleanups[scriptDir], cmd)
-}
-
-// runDeferred executes all deferred cleanups for a script in LIFO order
-func runDeferred(ts *testscript.TestScript, scriptDir string) {
-	deferredCleanupsMu.Lock()
-	cleanups := deferredCleanups[scriptDir]
-	delete(deferredCleanups, scriptDir)
-	deferredCleanupsMu.Unlock()
-
-	if len(cleanups) == 0 {
-		return
-	}
-
-	env := parseTestEnv()
-	if env.SkipDefer {
-		ts.Logf("Skipping %d deferred cleanups (CLAWKER_ACCEPTANCE_SKIP_DEFER=true)", len(cleanups))
-		return
-	}
-
-	// Execute in LIFO order (reverse)
-	ts.Logf("Running %d deferred cleanups", len(cleanups))
-	for i := len(cleanups) - 1; i >= 0; i-- {
-		cmd := cleanups[i]
-		ts.Logf("defer: %s", cmd)
-		// Run cleanup via shell, capture but don't fail on errors
-		args := strings.Fields(cmd)
-		if len(args) > 0 {
-			// Run clawker command directly using Main
-			runClawkerInline(ts, args, true /* ignore errors */)
-		}
-	}
-}
-
-// runClawkerInline runs clawker with args, optionally ignoring errors
-func runClawkerInline(ts *testscript.TestScript, args []string, ignoreErrors bool) {
-	// Save original os.Args and restore after
-	origArgs := os.Args
-	os.Args = append([]string{"clawker"}, args...)
-	defer func() { os.Args = origArgs }()
-
-	// Capture stdout/stderr
-	origStdout := os.Stdout
-	origStderr := os.Stderr
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	code := clawker.Main()
-
-	wOut.Close()
-	wErr.Close()
-	os.Stdout = origStdout
-	os.Stderr = origStderr
-
-	var outBuf, errBuf bytes.Buffer
-	io.Copy(&outBuf, rOut)
-	io.Copy(&errBuf, rErr)
-	rOut.Close()
-	rErr.Close()
-
-	if outBuf.Len() > 0 {
-		ts.Logf("stdout: %s", outBuf.String())
-	}
-	if errBuf.Len() > 0 {
-		ts.Logf("stderr: %s", errBuf.String())
-	}
-
-	if code != 0 && !ignoreErrors {
-		ts.Fatalf("clawker %v failed with code %d", args, code)
-	}
 }
 
 // sharedSetup returns a setup function that injects environment variables

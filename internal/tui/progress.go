@@ -20,7 +20,7 @@ import (
 type ProgressStepStatus int
 
 const (
-	StepPending  ProgressStepStatus = iota
+	StepPending ProgressStepStatus = iota
 	StepRunning
 	StepComplete
 	StepCached
@@ -51,9 +51,9 @@ type ProgressDisplayConfig struct {
 	LogLines   int // per-step log buffer capacity (default: 3)
 
 	// Callbacks — all optional. nil = passthrough / no-op.
-	IsInternal     func(string) bool         // filter function (nil = show all)
-	CleanName      func(string) string       // name cleaning (nil = passthrough)
-	ParseGroup     func(string) string       // group/stage detection (nil = no groups)
+	IsInternal     func(string) bool          // filter function (nil = show all)
+	CleanName      func(string) string        // name cleaning (nil = passthrough)
+	ParseGroup     func(string) string        // group/stage detection (nil = no groups)
 	FormatDuration func(time.Duration) string // duration formatting (nil = default)
 
 	// Lifecycle hook — called at key moments. nil = no-op.
@@ -191,7 +191,7 @@ type progressStep struct {
 	errMsg    string
 	startTime time.Time
 	endTime   time.Time
-	group     string // parsed group name (e.g., stage name)
+	group     string      // parsed group name (e.g., stage name)
 	logBuf    *ringBuffer // per-step log buffer (nil until first log received)
 }
 
@@ -775,7 +775,6 @@ func renderTreeSection(buf *strings.Builder, cs *iostreams.ColorScheme, cfg *Pro
 		buf.WriteByte('\n')
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // TTY mode — BubbleTea

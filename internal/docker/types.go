@@ -72,9 +72,9 @@ type (
 
 // Container configuration types.
 type (
-	Resources       = whail.Resources
-	RestartPolicy   = whail.RestartPolicy
-	UpdateConfig    = whail.UpdateConfig
+	Resources             = whail.Resources
+	RestartPolicy         = whail.RestartPolicy
+	UpdateConfig          = whail.UpdateConfig
 	ContainerUpdateResult = whail.ContainerUpdateResult
 )
 

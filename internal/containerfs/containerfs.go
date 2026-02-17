@@ -508,4 +508,3 @@ func copyFile(src, dst string) error {
 
 	return os.WriteFile(dst, data, info.Mode())
 }
-

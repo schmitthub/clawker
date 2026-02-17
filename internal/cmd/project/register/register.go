@@ -85,7 +85,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	// Require an existing clawker.yaml
 	loader := config.NewProjectLoader(wd)
 	if !loader.Exists() {
-		cmdutil.PrintError(ios, "No %s found in the current directory", config.ConfigFileName)
+		cmdutil.PrintErrorf(ios, "No %s found in the current directory", config.ConfigFileName)
 		cmdutil.PrintNextSteps(ios,
 			"Run 'clawker project init' to create a new project configuration",
 		)

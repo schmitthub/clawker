@@ -36,29 +36,6 @@ func (m *mockContainerLister) Close() error {
 	return nil
 }
 
-// mockContainerListerWithItems returns actual containers.
-type mockContainerListerWithItems struct {
-	items     []mockContainer
-	err       error
-	callCount atomic.Int32
-}
-
-type mockContainer struct{}
-
-func (m *mockContainerListerWithItems) ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error) {
-	m.callCount.Add(1)
-	if m.err != nil {
-		return client.ContainerListResult{}, m.err
-	}
-	// The real ContainerListResult has Items []container.Summary
-	// We need to simulate this behavior
-	return client.ContainerListResult{}, nil
-}
-
-func (m *mockContainerListerWithItems) Close() error {
-	return nil
-}
-
 func TestDaemonOptions_Defaults(t *testing.T) {
 	opts := DefaultDaemonOptions()
 

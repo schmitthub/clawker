@@ -48,25 +48,8 @@ func PrintNextSteps(ios *iostreams.IOStreams, steps ...string) {
 // Deprecated: Use fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...) directly.
 // Errors should be returned to Main() for centralized rendering.
 // This function will be removed once all commands are migrated.
-func PrintError(ios *iostreams.IOStreams, format string, args ...any) {
+func PrintErrorf(ios *iostreams.IOStreams, format string, args ...any) {
 	fmt.Fprintf(ios.ErrOut, "Error: "+format+"\n", args...)
-}
-
-// Deprecated: Use fmt.Fprintf(ios.ErrOut, "%s "+format+"\n", cs.WarningIcon(), args...) directly.
-// This function will be removed once all commands are migrated.
-func PrintWarning(ios *iostreams.IOStreams, format string, args ...any) {
-	fmt.Fprintf(ios.ErrOut, "Warning: "+format+"\n", args...)
-}
-
-// Deprecated: Inline the quiet check and fprintf in the command's run function:
-//
-//	if !quiet { fmt.Fprintf(ios.ErrOut, format+"\n", args...) }
-//
-// This function will be removed once all commands are migrated.
-func PrintStatus(ios *iostreams.IOStreams, quiet bool, format string, args ...any) {
-	if !quiet {
-		fmt.Fprintf(ios.ErrOut, format+"\n", args...)
-	}
 }
 
 // Deprecated: Inline the JSON encoding in the command's run function:

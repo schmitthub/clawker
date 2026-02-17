@@ -86,4 +86,3 @@ func progressStatus(s whail.BuildStepStatus) ProgressStepStatus {
 		return StepPending
 	}
 }
-

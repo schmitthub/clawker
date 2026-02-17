@@ -30,10 +30,10 @@ func New(version string) *cmdutil.Factory {
 		SocketBridge: socketBridgeFunc(),
 	}
 
-	f.IOStreams = ioStreams(f)           // needs f.Config() for logger settings
-	f.TUI = tui.NewTUI(f.IOStreams)     // needs IOStreams
-	f.Client = clientFunc(f)            // depends on Config
-	f.GitManager = gitManagerFunc(f)    // depends on Config
+	f.IOStreams = ioStreams(f)       // needs f.Config() for logger settings
+	f.TUI = tui.NewTUI(f.IOStreams)  // needs IOStreams
+	f.Client = clientFunc(f)         // depends on Config
+	f.GitManager = gitManagerFunc(f) // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f

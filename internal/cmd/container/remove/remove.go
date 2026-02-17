@@ -14,7 +14,7 @@ import (
 
 // RemoveOptions holds options for the remove command.
 type RemoveOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -29,7 +29,7 @@ type RemoveOptions struct {
 // NewCmdRemove creates the container remove command.
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
-		IOStreams:     f.IOStreams,
+		IOStreams:    f.IOStreams,
 		Client:       f.Client,
 		Config:       f.Config,
 		SocketBridge: f.SocketBridge,

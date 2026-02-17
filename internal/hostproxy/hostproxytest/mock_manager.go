@@ -36,5 +36,5 @@ func (m *MockManager) EnsureRunning() error {
 	}
 	return m.EnsureErr
 }
-func (m *MockManager) IsRunning() bool { return m.Running }
+func (m *MockManager) IsRunning() bool  { return m.Running }
 func (m *MockManager) ProxyURL() string { return m.URL }

@@ -22,12 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestClient creates a *Client backed by a whailtest.FakeAPIClient for
-// builder tests. Returns both the client and the fake for wiring behavior.
-func newTestClient() (*Client, *whailtest.FakeAPIClient) {
-	return newTestClientWithConfig(nil)
-}
-
 func newTestClientWithConfig(cfg *config.Config) (*Client, *whailtest.FakeAPIClient) {
 	fakeAPI := whailtest.NewFakeAPIClient()
 	engine := whail.NewFromExisting(fakeAPI, whail.EngineOptions{
@@ -115,8 +109,8 @@ func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 		Build: config.BuildConfig{
 			Instructions: &config.DockerInstructions{
 				Labels: map[string]string{
-					LabelProject: "attacker-project", // attempt to override
-					"custom-label":        "custom-value",
+					LabelProject:   "attacker-project", // attempt to override
+					"custom-label": "custom-value",
 				},
 			},
 		},

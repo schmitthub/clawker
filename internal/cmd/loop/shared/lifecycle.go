@@ -185,6 +185,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 }
 
 // SetupLoopContainer creates, configures, and starts a container for loop execution.
+//
 // Deprecated: Use ResolveLoopImage + MakeCreateContainerFunc for per-iteration containers.
 //
 // The cleanup function uses context.Background() so it runs even after cancellation.

@@ -14,13 +14,13 @@ import (
 // MockHostProxy provides a mock implementation of the clawker host proxy
 // for testing container scripts that communicate with the host.
 type MockHostProxy struct {
-	Server      *httptest.Server
-	mu          sync.Mutex
+	Server     *httptest.Server
+	mu         sync.Mutex
 	OpenedURLs []string                 // URLs received at /open/url
 	Callbacks  map[string]*CallbackData // Registered callback sessions
 	GitCreds   []GitCredRequest         // Git credential requests
 	healthOK   bool                     // Health check response
-	t           *testing.T
+	t          *testing.T
 }
 
 // CallbackData holds data for an OAuth callback session.

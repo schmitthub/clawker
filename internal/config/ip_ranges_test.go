@@ -172,7 +172,6 @@ func TestBuiltinIPRangeSources_URLs(t *testing.T) {
 	assert.Equal(t, "https://ip-ranges.amazonaws.com/ip-ranges.json", BuiltinIPRangeSources["aws"].URL)
 }
 
-
 func TestIPRangeSource_JSONSerialization(t *testing.T) {
 	// Regression test: JSON tags must produce lowercase field names
 	// matching what init-firewall.sh jq queries expect (.name, .url, etc.)

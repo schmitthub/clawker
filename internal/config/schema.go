@@ -19,7 +19,7 @@ type Project struct {
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
-	Loop        *LoopConfig    `yaml:"loop,omitempty" mapstructure:"loop"`
+	Loop         *LoopConfig     `yaml:"loop,omitempty" mapstructure:"loop"`
 
 	// Runtime context (not persisted, injected after loading)
 	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)

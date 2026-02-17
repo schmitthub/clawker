@@ -18,8 +18,8 @@ var containerListValidFilterKeys = []string{"name", "status", "agent"}
 // ListOptions holds options for the list command.
 type ListOptions struct {
 	IOStreams *iostreams.IOStreams
-	TUI      *tui.TUI
-	Client   func(context.Context) (*docker.Client, error)
+	TUI       *tui.TUI
+	Client    func(context.Context) (*docker.Client, error)
 
 	Format  *cmdutil.FormatFlags
 	Filter  *cmdutil.FilterFlags
@@ -42,8 +42,8 @@ type containerRow struct {
 func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
 	opts := &ListOptions{
 		IOStreams: f.IOStreams,
-		TUI:      f.TUI,
-		Client:   f.Client,
+		TUI:       f.TUI,
+		Client:    f.Client,
 	}
 
 	cmd := &cobra.Command{

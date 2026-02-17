@@ -35,10 +35,10 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions,
 
 	return &InitOptions{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() *config.Config { return cfg },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() *config.Config { return cfg },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}, sl
 }
 
@@ -50,10 +50,10 @@ func TestNewCmdInit(t *testing.T) {
 	fake := dockertest.NewFakeClient()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() *config.Config { return cfg },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() *config.Config { return cfg },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
 	var gotOpts *InitOptions
@@ -181,10 +181,10 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 
 	opts := &InitOptions{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() *config.Config { return cfg },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() *config.Config { return cfg },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
 	err := performSetup(context.Background(), opts, true, "bookworm")

@@ -24,10 +24,19 @@ echo "Running go-licenses report..." >&2
 # Extract own module path to exclude from output.
 OWN_MODULE=$(awk '/^module / { print $2; exit }' go.mod)
 
-# go-licenses report outputs CSV: module,license_url,license_type
-# Stderr may contain warnings about unrecognised licenses; capture stdout only.
-# Filter out our own module.
-RAW=$(go-licenses report ./... 2>/dev/null | grep -v "^${OWN_MODULE}," || true)
+# Collect from both target platforms so NOTICE is identical on macOS and Linux.
+# go-licenses resolves build constraints per GOOS — platform-conditional imports
+# (e.g. go-keyring: shellescape on darwin, godbus/dbus on linux) produce different
+# dependency graphs. Merging both ensures complete attribution.
+RAW=""
+for goos in linux darwin; do
+  PLATFORM_RAW=$(GOOS=$goos go-licenses report ./... 2>/dev/null \
+    | grep -v "^${OWN_MODULE}," || true)
+  if [[ -n "$PLATFORM_RAW" ]]; then
+    RAW+="${PLATFORM_RAW}"$'\n'
+  fi
+done
+RAW=$(printf '%s\n' "$RAW" | LC_ALL=C sort -u | sed '/^$/d')
 
 if [[ -z "$RAW" ]]; then
     echo "ERROR: go-licenses produced no output" >&2

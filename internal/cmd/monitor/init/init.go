@@ -15,7 +15,7 @@ import (
 
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() *config.Config
+	Config    func() *config.Config
 
 	Force bool
 }
@@ -23,7 +23,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{

@@ -93,16 +93,16 @@ func NewRegistryLoaderForTest(dir string) *config.RegistryLoader {
 // FakeWorktreeFS sets up filesystem artifacts for a worktree.
 // Call this to make DirExists() and GitExists() return specific values.
 type FakeWorktreeFS struct {
-	homeDir     string
-	projectKey  string
+	homeDir      string
+	projectKey   string
 	worktreeSlug string
 }
 
 // NewFakeWorktreeFS creates helpers for setting up worktree filesystem state.
 func NewFakeWorktreeFS(homeDir, projectKey, worktreeSlug string) *FakeWorktreeFS {
 	return &FakeWorktreeFS{
-		homeDir:     homeDir,
-		projectKey:  projectKey,
+		homeDir:      homeDir,
+		projectKey:   projectKey,
 		worktreeSlug: worktreeSlug,
 	}
 }

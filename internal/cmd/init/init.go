@@ -17,10 +17,10 @@ import (
 // InitOptions contains the options for the init command.
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	TUI      *tui.TUI
-	Prompter func() *prompterpkg.Prompter
-	Config   func() *config.Config
-	Client   func(context.Context) (*docker.Client, error)
+	TUI       *tui.TUI
+	Prompter  func() *prompterpkg.Prompter
+	Config    func() *config.Config
+	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode
 }
@@ -29,10 +29,10 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command {
 	opts := &InitOptions{
 		IOStreams: f.IOStreams,
-		TUI:      f.TUI,
-		Prompter: f.Prompter,
-		Config:   f.Config,
-		Client:   f.Client,
+		TUI:       f.TUI,
+		Prompter:  f.Prompter,
+		Config:    f.Config,
+		Client:    f.Client,
 	}
 
 	cmd := &cobra.Command{
@@ -245,13 +245,13 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		go func() {
 			defer close(ch)
 			ch <- tui.ProgressStep{
-				ID:   "build",
-				Name: "Building base image (" + selectedFlavor + ")",
+				ID:     "build",
+				Name:   "Building base image (" + selectedFlavor + ")",
 				Status: tui.StepRunning,
 			}
 			err := client.BuildImage(ctx, buildContext, docker.BuildImageOpts{
-				Tags:            []string{docker.DefaultImageTag},
-				SuppressOutput:  true,
+				Tags:           []string{docker.DefaultImageTag},
+				SuppressOutput: true,
 				Labels: map[string]string{
 					docker.LabelManaged:   docker.ManagedLabelValue,
 					docker.LabelBaseImage: docker.ManagedLabelValue,

@@ -93,8 +93,8 @@ func (f SelectField) Update(msg tea.Msg) (SelectField, tea.Cmd) {
 // View renders the select field with prompt and compact option list.
 // Each option shows label and description on one line:
 //
-//	  > bookworm     Debian stable (Recommended)
-//	    trixie       Debian testing
+//	> bookworm     Debian stable (Recommended)
+//	  trixie       Debian testing
 func (f SelectField) View() string {
 	promptStyle := iostreams.PanelTitleStyle
 	selectedStyle := iostreams.ListItemSelectedStyle

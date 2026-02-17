@@ -71,10 +71,10 @@ func TestPanelModel_SetPadding(t *testing.T) {
 
 func TestPanelModel_View(t *testing.T) {
 	tests := []struct {
-		name       string
-		cfg        PanelConfig
-		content    string
-		wantParts  []string
+		name      string
+		cfg       PanelConfig
+		content   string
+		wantParts []string
 	}{
 		{
 			name: "with title and content",

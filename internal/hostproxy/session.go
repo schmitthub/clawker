@@ -17,7 +17,7 @@ const SessionIDLength = 16
 // It stores common metadata and provides thread-safe access to session data.
 type Session struct {
 	ID        string
-	Type      string    // e.g., "callback", "webhook", "message"
+	Type      string // e.g., "callback", "webhook", "message"
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Metadata  map[string]any // Channel-specific data

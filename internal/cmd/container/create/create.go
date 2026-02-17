@@ -23,7 +23,7 @@ import (
 type CreateOptions struct {
 	*shared.ContainerOptions
 
-	IOStreams   *iostreams.IOStreams
+	IOStreams  *iostreams.IOStreams
 	TUI        *tui.TUI
 	Client     func(context.Context) (*docker.Client, error)
 	Config     func() *config.Config

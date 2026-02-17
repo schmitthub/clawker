@@ -95,7 +95,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	loader := config.NewProjectLoader(wd)
 	if loader.Exists() && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
-			cmdutil.PrintError(ios, "%s already exists", config.ConfigFileName)
+			cmdutil.PrintErrorf(ios, "%s already exists", config.ConfigFileName)
 			cmdutil.PrintNextSteps(ios,
 				"Use --force to overwrite the existing configuration",
 				"Or edit the existing clawker.yaml manually",
@@ -115,8 +115,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 			// Don't overwrite config, but still register the project using directory name
 			absPath, absErr := filepath.Abs(wd)
 			if absErr != nil {
-				fmt.Fprintln(ios.ErrOut, "Aborted.")
-				return nil
+				return fmt.Errorf("resolving project path: %w", absErr)
 			}
 			dirName := filepath.Base(absPath)
 			registryLoader := cfgGateway.Registry
