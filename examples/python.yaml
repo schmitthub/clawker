@@ -1,17 +1,14 @@
-# Python Project Build Configuration
-#
-# This example sets up Python using uv - the fast Python package manager and installer.
-# uv handles both Python version management and package installation.
+# Python Developer Image
+# Sets up Python via uv with ruff linter and common build dependencies.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages needed for Python compilation
+  # Build dependencies for compiled Python extensions
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
     - libssl-dev
     - zlib1g-dev
@@ -27,36 +24,71 @@ build:
     - liblzma-dev
 
   instructions:
-    # Environment variables for Python
     env:
       UV_PYTHON_PREFERENCE: "managed"
       PYTHON_VERSION: "3.12"
 
     # Install uv and Python as the claude user
     user_run:
-      # Install uv (fast Python package manager)
       - cmd: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      # Add uv to PATH and install Python
       - cmd: |
           export PATH="$HOME/.local/bin:$PATH" && \
           uv python install $PYTHON_VERSION
-
-      # Add uv to shell profile
+      - cmd: |
+          export PATH="$HOME/.local/bin:$PATH" && \
+          uv tool install ruff
       - cmd: |
           echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
-# Alternative: Use pyenv for Python version management
-# This approach is more traditional but slower than uv:
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - PYPI_TOKEN             # for private PyPI uploads
+  # env:
+  #   PYTHONDONTWRITEBYTECODE: "1"
+  post_init: |
+    cd /workspace
+    if [ -f pyproject.toml ]; then
+      uv sync
+    elif [ -f requirements.txt ]; then
+      uv pip install -r requirements.txt
+    fi
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "pypi.org"
+      - "files.pythonhosted.org"
+    ip_range_sources:
+      - name: github
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use pyenv for version management ──────────────────────────
 # build:
 #   image: "buildpack-deps:bookworm-scm"
-#   packages:
-#     - git
-#     - curl
-#     - ripgrep
-#     - [... same build deps as above ...]
+#   packages: [ca-certificates, libssl-dev, zlib1g-dev, libbz2-dev,
+#     libreadline-dev, libsqlite3-dev, libncursesw5-dev, xz-utils,
+#     tk-dev, libxml2-dev, libxmlsec1-dev, libffi-dev, liblzma-dev]
 #   instructions:
 #     env:
 #       PYENV_ROOT: "/home/claude/.pyenv"

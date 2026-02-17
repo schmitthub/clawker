@@ -1,57 +1,84 @@
-# TypeScript/React Project Build Configuration
-#
-# This example sets up a Node.js environment using nvm for version management
-# and pnpm as the package manager. Ideal for React, Next.js, or any TypeScript project.
+# TypeScript/React Developer Image
+# Sets up Node.js via nvm with pnpm, ideal for React, Next.js, or any TypeScript project.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages needed for Node.js compilation and common tools
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
 
   instructions:
-    # Environment variables for nvm and Node.js
     env:
       NVM_DIR: "/home/claude/.nvm"
       NODE_VERSION: "22"
 
-    # Install nvm and Node.js as the claude user
+    # Install nvm, Node.js, and pnpm as the claude user
     user_run:
-      # Install nvm
       - cmd: |
           curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-
-      # Install Node.js via nvm and set up shell integration
       - cmd: |
           . "$NVM_DIR/nvm.sh" && \
           nvm install $NODE_VERSION && \
           nvm use $NODE_VERSION && \
           nvm alias default $NODE_VERSION
-
-      # Install pnpm globally
       - cmd: |
           . "$NVM_DIR/nvm.sh" && \
-          npm install -g pnpm
-
-      # Add nvm to shell profile for interactive sessions
+          npm install -g pnpm typescript
       - cmd: |
           echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc && \
           echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.bashrc && \
           echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.bashrc
 
-# Alternative: Use the official Node.js image as base instead of building from scratch
-# This is simpler but less flexible for version management:
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - NPM_TOKEN              # for private npm packages
+  # env:
+  #   NODE_ENV: "development"
+  post_init: |
+    cd /workspace
+    if [ -f pnpm-lock.yaml ]; then
+      pnpm install
+    elif [ -f package-lock.json ]; then
+      npm ci
+    elif [ -f package.json ]; then
+      npm install
+    fi
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "registry.yarnpkg.com"
+    # registry.npmjs.org is already in the default firewall allowlist
+    ip_range_sources:
+      - name: github
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use official Node.js image ────────────────────────────────
 # build:
 #   image: "node:22-bookworm"
-#   packages:
-#     - git
-#     - ripgrep
 #   instructions:
 #     user_run:
 #       - cmd: "npm install -g pnpm typescript"
