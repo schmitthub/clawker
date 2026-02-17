@@ -45,6 +45,60 @@ For methods on types:
 grep -E '^\s*func \([^)]+\) [A-Z]' *.go | sed 's/.*) \([A-Za-z0-9]*\).*/\1/' | sort -u
 ```
 
+## Mintlify Documentation Files
+
+### Directory Structure
+
+```
+docs/
+├── docs.json              # Mintlify config (theme, nav, colors, integrations)
+├── custom.css             # Dark terminal theme overrides
+├── favicon.svg            # >_ terminal prompt icon (amber on dark)
+├── index.mdx              # Homepage
+├── quickstart.mdx         # Hand-authored guide
+├── installation.mdx       # Hand-authored guide
+├── configuration.mdx      # Hand-authored guide
+├── architecture.md        # Developer docs (with Mintlify frontmatter)
+├── design.md              # Developer docs (with Mintlify frontmatter)
+├── testing.md             # Developer docs (with Mintlify frontmatter)
+├── assets/                # Image assets
+└── cli-reference/         # Auto-generated (82 files, NEVER edit directly)
+    ├── clawker.md
+    ├── clawker_container.md
+    └── ...
+```
+
+### Auto-generated vs Hand-authored
+
+| Type | Extension | Editable | Source |
+|------|-----------|----------|--------|
+| CLI reference | `.md` | No — regenerate via Makefile, checked in, freshness verified in CI | `internal/docs/markdown.go` + `cmd/gen-docs/main.go` |
+| Hand-authored pages | `.mdx` | Yes | Direct edit |
+| Developer docs | `.md` | Yes | Direct edit (have Mintlify frontmatter) |
+| Site config | `.json` | Yes | Direct edit |
+| Theme CSS | `.css` | Yes | Direct edit |
+
+### Regeneration Command
+
+```bash
+go run ./cmd/gen-docs --doc-path docs --markdown --website
+```
+
+### Navigation Validation
+
+Compare `docs.json` nav entries against actual files:
+
+```bash
+# Extract page refs from docs.json
+grep -oE '"cli-reference/[^"]+' docs/docs.json | sed 's/"//' | sort > /tmp/nav-pages.txt
+
+# List actual CLI reference files (without extension)
+ls docs/cli-reference/*.md | sed 's|docs/||;s|\.md$||' | sort > /tmp/actual-pages.txt
+
+# Diff
+diff /tmp/nav-pages.txt /tmp/actual-pages.txt
+```
+
 ## Context Budget Guidelines
 
 From the memory consolidation plan:
