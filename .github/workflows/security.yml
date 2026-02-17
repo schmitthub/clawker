@@ -1,30 +1,3 @@
-# SARIF uploads (re-enable when repo goes public):
-#
-#   permissions:
-#     security-events: write
-#     actions: read
-#
-#   In semgrep step, add flags:
-#     semgrep scan --sarif --output semgrep.sarif --config p/golang --config p/security-audit --error
-#
-#   After semgrep step, add:
-#     - name: Upload Semgrep SARIF
-#       if: always() && hashFiles('semgrep.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
-#       with:
-#         sarif_file: semgrep.sarif
-#         category: semgrep
-#
-#   In gitleaks step, add --report-format sarif --report-path results.sarif
-#
-#   After gitleaks step, add:
-#     - name: Upload Gitleaks SARIF
-#       if: always() && hashFiles('results.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
-#       with:
-#         sarif_file: results.sarif
-#         category: gitleaks
-
 name: Security
 
 on:
@@ -33,6 +6,8 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  security-events: write
+  actions: read
 
 jobs:
   semgrep:
@@ -58,13 +33,20 @@ jobs:
         run: |
           if [ -n "$BASE_SHA" ]; then
             echo "Incremental scan against base $BASE_SHA"
-            semgrep scan --baseline-commit "$BASE_SHA" --config p/golang --config p/security-audit --error
+            semgrep scan --sarif --output semgrep.sarif --baseline-commit "$BASE_SHA" --config p/golang --config p/security-audit --error
           else
             echo "Full scan (no baseline)"
-            semgrep scan --config p/golang --config p/security-audit --error
+            semgrep scan --sarif --output semgrep.sarif --config p/golang --config p/security-audit --error
           fi
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+      - name: Upload Semgrep SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
 
   gitleaks:
     name: Gitleaks Secrets
@@ -85,7 +67,14 @@ jobs:
           gitleaks version
 
       - name: Gitleaks
-        run: gitleaks git --baseline-path gitleaks-report.json --report-path findings.json
+        run: gitleaks git --baseline-path gitleaks-report.json --report-format sarif --report-path results.sarif
+
+      - name: Upload Gitleaks SARIF
+        if: always() && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
+        with:
+          sarif_file: results.sarif
+          category: gitleaks
 
   govulncheck:
     name: govulncheck SCA
