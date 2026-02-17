@@ -61,9 +61,16 @@ jobs:
       # The gitleaks-action (v2) does not expose --baseline-path as an input.
       - name: Install gitleaks
         run: |
+          set -euo pipefail
           GITLEAKS_VERSION=8.30.0
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | sudo tar xz -C /usr/local/bin gitleaks
+          ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+
+          curl -sSfL "${BASE_URL}/${ARCHIVE}" -o "${ARCHIVE}"
+          curl -sSfL "${BASE_URL}/checksums.txt" -o checksums.txt
+          grep " ${ARCHIVE}$" checksums.txt | sha256sum --check
+          sudo tar xzf "${ARCHIVE}" -C /usr/local/bin gitleaks
+          rm -f "${ARCHIVE}" checksums.txt
           gitleaks version
 
       - name: Gitleaks
