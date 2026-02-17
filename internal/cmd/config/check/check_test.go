@@ -227,7 +227,7 @@ func TestCheckRun_directoryFlag(t *testing.T) {
 func TestResolveConfigTarget_empty(t *testing.T) {
 	target, err := resolveConfigTarget("")
 	require.NoError(t, err)
-	defer target.cleanup()
+	defer target.close()
 
 	cwd, _ := os.Getwd()
 	assert.Equal(t, cwd, target.loaderDir)
@@ -241,7 +241,7 @@ func TestResolveConfigTarget_clawkerYaml(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.cleanup()
+	defer target.close()
 
 	assert.Equal(t, dir, target.loaderDir)
 	assert.Equal(t, path, target.displayPath)
@@ -254,7 +254,7 @@ func TestResolveConfigTarget_customFilename(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.cleanup()
+	defer target.close()
 
 	// Should create a temp dir with symlink
 	assert.NotEqual(t, dir, target.loaderDir)
@@ -279,7 +279,7 @@ func TestResolveConfigTarget_nonexistent(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.cleanup()
+	defer target.close()
 
 	assert.Equal(t, dir, target.loaderDir)
 	assert.Equal(t, path, target.displayPath)

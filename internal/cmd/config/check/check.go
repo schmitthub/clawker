@@ -16,7 +16,6 @@ import (
 // CheckOptions holds options for the config check command.
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() *config.Config
 	File     string
 }
 
@@ -24,7 +23,6 @@ type CheckOptions struct {
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -34,7 +32,7 @@ func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) e
 
 Checks for:
   - Unknown or misspelled fields
-  - Required fields (version, project, build.image)
+  - Required fields (version, build.image or build.dockerfile)
   - Valid field values and formats
   - File existence for referenced paths (dockerfile, includes)
   - Security configuration consistency`,
@@ -58,9 +56,16 @@ Checks for:
 
 // configTarget holds the resolved paths for config validation.
 type configTarget struct {
-	loaderDir  string // directory to pass to NewProjectLoader
+	loaderDir   string // directory to pass to NewProjectLoader
 	displayPath string // original path for user-facing messages
-	cleanup    func() // cleanup function (e.g. remove temp dir)
+	cleanup     func() // cleanup function (e.g. remove temp dir)
+}
+
+// close calls cleanup if set. Nil-safe for use in defer.
+func (t *configTarget) close() {
+	if t != nil && t.cleanup != nil {
+		t.cleanup()
+	}
 }
 
 // resolveConfigTarget resolves the --file flag into a configTarget.
@@ -87,7 +92,10 @@ func resolveConfigTarget(filePath string) (*configTarget, error) {
 	// Resolve symlinks for accurate stat
 	resolved, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		// File doesn't exist — return unresolved path for error message
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to access %s: %w", absPath, err)
+		}
+		// File doesn't exist — return unresolved path for "not found" message
 		return &configTarget{
 			loaderDir:   filepath.Dir(absPath),
 			displayPath: absPath,
@@ -97,6 +105,9 @@ func resolveConfigTarget(filePath string) (*configTarget, error) {
 
 	info, err := os.Stat(resolved)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to access %s: %w", resolved, err)
+		}
 		return &configTarget{
 			loaderDir:   filepath.Dir(absPath),
 			displayPath: absPath,
@@ -145,7 +156,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 	if err != nil {
 		return err
 	}
-	defer target.cleanup()
+	defer target.close()
 
 	// Create loader: skip user defaults when --file is set (validate in isolation)
 	var loaderOpts []config.ProjectLoaderOption
@@ -163,7 +174,7 @@ func checkRun(_ context.Context, opts *CheckOptions) error {
 	// Load config — catches YAML errors and unknown fields
 	project, err := loader.Load()
 	if err != nil {
-		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.FailureIcon(), err)
+		fmt.Fprintf(ios.ErrOut, "%s %s: %s\n", cs.FailureIcon(), target.displayPath, err)
 		return cmdutil.SilentError
 	}
 

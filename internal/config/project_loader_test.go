@@ -639,3 +639,82 @@ security:
 		}
 	}
 }
+
+func TestProjectLoaderLoad_ErrorUnused_RejectsUnknownFields(t *testing.T) {
+	clearClawkerEnv(t)
+	tmpDir := t.TempDir()
+
+	configContent := `
+version: "1"
+build:
+  image: "node:20-slim"
+biuld:
+  image: "typo"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	loader := NewProjectLoader(tmpDir)
+	_, err := loader.Load()
+	if err == nil {
+		t.Fatal("ProjectLoader.Load() should reject unknown field 'biuld'")
+	}
+	if !strings.Contains(err.Error(), "biuld") {
+		t.Errorf("error should mention unknown field 'biuld', got: %v", err)
+	}
+}
+
+func TestProjectLoaderLoad_ErrorUnused_AcceptsProjectKey(t *testing.T) {
+	clearClawkerEnv(t)
+	tmpDir := t.TempDir()
+
+	// The "project:" key in YAML must not be rejected as unknown.
+	// This works because Project has mapstructure:"project" (not "-").
+	configContent := `
+version: "1"
+project: "my-project"
+build:
+  image: "node:20-slim"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	loader := NewProjectLoader(tmpDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() should accept 'project:' key, got error: %v", err)
+	}
+
+	// The YAML-decoded value should be in cfg.Project
+	if cfg.Project != "my-project" {
+		t.Errorf("cfg.Project = %q, want %q", cfg.Project, "my-project")
+	}
+}
+
+func TestProjectLoaderLoad_ErrorUnused_ProjectKeyOverriddenByOption(t *testing.T) {
+	clearClawkerEnv(t)
+	tmpDir := t.TempDir()
+
+	configContent := `
+version: "1"
+project: "yaml-project"
+build:
+  image: "node:20-slim"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ConfigFileName), []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// WithProjectKey should override the YAML value
+	loader := NewProjectLoader(tmpDir, WithProjectKey("registry-project"))
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("ProjectLoader.Load() returned error: %v", err)
+	}
+
+	if cfg.Project != "registry-project" {
+		t.Errorf("cfg.Project = %q, want %q (WithProjectKey should override YAML)", cfg.Project, "registry-project")
+	}
+}

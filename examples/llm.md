@@ -190,7 +190,7 @@ See sibling files for complete, working configurations:
 ## Common Mistakes
 
 1. Using `instructions.env` for build-time vars (use `inject.*` instead)
-2. Putting user-space ENV in `after_packages` (use `after_user_switch` — vars won't be visible to `user_run` otherwise since USER switch resets env context)
+2. Putting user-space ENV in `after_packages` (use `after_user_switch` instead — keeps ENV declarations near the `user_run` commands that reference them, improving readability and cache efficiency)
 3. Forgetting firewall `add_domains` for package registries
 4. Missing `ca-certificates` in packages (needed for HTTPS downloads)
-5. Not quoting ENV values in inject blocks (`ENV FOO="bar"` not `ENV FOO=bar`)
+5. Forgetting to quote ENV values containing spaces or special characters (`ENV FOO="bar baz"` not `ENV FOO=bar baz`)
