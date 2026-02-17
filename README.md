@@ -89,10 +89,14 @@ This is going to create a `~/.local/clawker` directory (configurable with `CLAWK
 #### Start a project
 
 ```bash
-cd your-project # this changes directories to your project, that is what `cd` stands for. If you didn't already know this then you might want to stop here and just install claude cowork. trust me you're gonna enjoy it more   
-clawker project init    # Creates a clawker.yaml, .clawkerignore, and registers your project in the $CLAWKER_HOME registry
-# Customize your clawker.yaml (see examples/ for language-specific configs) or let claude take a stab at it. I dogfood clawker to build clawker so you can check out my clawker.yaml to see how I customized the image for golang development and other config strats
-clawker build           # Builds your project's image. This image's latest build can now be referenced using a reserved special character "@" when you are in a project directory path. Or you can give a full image name or ID
+cd your-project         # This changes directories to your project
+clawker project init    # Creates clawker.yaml, .clawkerignore, and registers your project
+```
+
+> **Tip:** Customize your `clawker.yaml` (see `examples/` for claude generated language-specific inspiration). I dogfood clawker to build clawker, so check out my `clawker.yaml` to see how I customized the build config for golang development.
+
+```bash
+clawker build           # Builds your project's image (referenced as "@" when in project directory)
 ```
 
 #### Run a container 
@@ -123,10 +127,6 @@ clawker worktree remove a/example --delete-branch  # this deletes the worktree a
 
 If I want to iterate over a prompt with a fresh containerized claude code each time (aka "ralph wiggum")
 
-> Note: I've decided to commit [sadboy.md](docs/sadboy.md) so that the world can know his story
-
-<img src="docs/assets/sadboy.png" alt="TUI Dashboard" width="600">
-
 ```bash
 # Start a new autonomous loop; TUI tracks output, tool use, costs etc via Agent SDK streaming events
 LOOP_PROMPT=$(cat <<'EOF'
@@ -135,7 +135,7 @@ management, token costs, and genai hallucinations.
 
 If the file doesn't exist, create it with:
 - Title and table of contents with chapters "The Struggle" and "A Sad Conclusion"
-- Author section (use make up an author name for yourself and write a short bio about your tragic life inspired by artists like Edgar Allen Poe, Van Gogh, etc)
+- Author section (make up an author name for yourself and write a short bio about your tragic life inspired by artists like Edgar Allen Poe, Van Gogh, etc)
 - Two opening paragraphs to start the story
 
 If the file exists, add two new chapter paragraphs that continue the story and update the sad conclusion.
@@ -143,6 +143,8 @@ EOF
 )
 clawker loop iterate --prompt "$LOOP_PROMPT" --max-loops 5 --skip-permissions
 ```
+> Note: I've decided to commit ["The Sorrows of Token Boy"](docs/sadboy.md) so that the world can know his story. But be warned, you will weep uncontrollably.
+>> "And each morning, the machine would respond with supreme confidence about things that had never happened, places that did not exist, and APIs that were fabricated from whole cloth. "The fs.readFileSync method accepts a feelings parameter," it once told him, with the calm authority of a professor." - AI Author: Cornelius Vex Holloway 
 
 If I have too many agents ripping through features and fixes and want a high level overview of my coding armada I start the monitoring stack
 
@@ -291,6 +293,7 @@ clawker loop iterate --prompt "write a small poem to a file @test.txt" --max-loo
 ### A TUI will open showing you the agent's progress, decisions, tool calls, and more in real time
 
 <img src="docs/assets/tui-dashboard.png" alt="TUI Dashboard" width="600">
+<img src="docs/assets/sadboy.png" alt="TUI Dashboard" width="600">
 
 See `clawker loop --help` for all options and configuration.
 
