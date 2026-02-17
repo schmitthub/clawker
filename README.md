@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-<code>clawker</code> is basically what would happen if <code>devcontainers</code> and <code>k8s</code> had a <code>Claude Code</code> baby. It's a container orchestration and automation tool for running Claude Code agents in isolated containers on any host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with `--dangerously-skip-permissions` when containers have been around for a decade. <code>clawker</code> offers convenience features beyond just building and running claude code in a container using a Dockerfile.
+<code>clawker</code> is basically what would happen if <code>devcontainers</code> and <code>k8s</code> had a <code>Claude Code</code> baby. It's a container orchestration and automation tool for running Claude Code agents in isolated containers on any host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
 </p>
 
 ---
