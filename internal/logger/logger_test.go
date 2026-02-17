@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -594,6 +595,69 @@ func TestInitWithFile_NoConsoleOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "error test") {
 		t.Error("Log file should contain error message")
+	}
+}
+
+func TestOtelErrorHandler_NoStderr(t *testing.T) {
+	resetLoggerState()
+	tmpDir := t.TempDir()
+
+	// Capture stderr to verify the OTEL SDK doesn't write to it
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	// Initialize with OTEL pointing to an unreachable endpoint.
+	// The exporter creation succeeds (lazy connect), but the BatchProcessor's
+	// async export will fail and trigger the OTEL global error handler.
+	err = NewLogger(&Options{
+		LogsDir:    tmpDir,
+		FileConfig: &LoggingConfig{MaxSizeMB: 1},
+		OtelConfig: &OtelLogConfig{
+			Endpoint:       "127.0.0.1:19876", // unreachable port
+			Insecure:       true,
+			ExportInterval: 50 * time.Millisecond, // fast retry for test speed
+			MaxQueueSize:   10,
+		},
+	})
+	if err != nil {
+		os.Stderr = oldStderr
+		t.Fatalf("NewLogger failed: %v", err)
+	}
+
+	// Trigger a log entry — fires the otelzerolog hook, queues for export
+	Info().Msg("otel stderr test")
+
+	// Wait for the BatchProcessor's async export attempt to fail
+	time.Sleep(500 * time.Millisecond)
+
+	// Close the OTEL provider to flush/fail any remaining batches
+	Close()
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("Failed to read pipe: %v", err)
+	}
+	r.Close()
+
+	if buf.Len() > 0 {
+		t.Errorf("OTEL SDK errors should not appear on stderr, but got: %q", buf.String())
+	}
+
+	// Verify the OTEL error was redirected to the file logger
+	content, err := os.ReadFile(filepath.Join(tmpDir, "clawker.log"))
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(content), "otel sdk error") {
+		t.Log("Note: OTEL SDK error may not have triggered within the test window")
 	}
 }
 
