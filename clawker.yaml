@@ -35,6 +35,7 @@ build:
     - locales
     - locales-all
     - iputils-ping
+    - shellcheck
     - nodejs
     - npm
   instructions:
