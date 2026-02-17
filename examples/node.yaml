@@ -5,16 +5,17 @@ version: "1"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  image: "buildpack-deps:bookworm-scm"
+  image: "node:bookworm-slim"
 
   packages:
     - ca-certificates
 
-  instructions:
-    env:
-      NVM_DIR: "/home/claude/.nvm"
-      NODE_VERSION: "22"
+  inject:
+    after_user_switch: |
+      ENV NVM_DIR="/home/claude/.nvm"
+      ENV NODE_VERSION="24"
 
+  instructions:
     # Install nvm, Node.js, and pnpm as the claude user
     user_run:
       - cmd: |
