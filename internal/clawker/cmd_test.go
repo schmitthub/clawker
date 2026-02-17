@@ -61,8 +61,11 @@ func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
 	if !strings.Contains(output, "A new release of clawker is available:") {
 		t.Errorf("output should contain announcement text, got %q", output)
 	}
-	if !strings.Contains(output, "To upgrade, run:") {
-		t.Errorf("output should contain upgrade instructions, got %q", output)
+	if !strings.Contains(output, "To upgrade:") {
+		t.Errorf("output should contain upgrade header, got %q", output)
+	}
+	if !strings.Contains(output, "brew upgrade clawker") {
+		t.Errorf("output should contain brew upgrade instructions, got %q", output)
 	}
 	if !strings.Contains(output, "install.sh") {
 		t.Errorf("output should contain install script reference, got %q", output)

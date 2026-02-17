@@ -385,6 +385,9 @@ main() {
     esac
 
     msg ""
+    msg "Also available via Homebrew:"
+    msg "  ${BOLD}brew tap schmitthub/clawker && brew install clawker${RESET}"
+    msg ""
     success "Run 'clawker --help' to get started."
 }
 

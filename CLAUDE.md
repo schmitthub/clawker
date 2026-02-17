@@ -112,6 +112,9 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 ## Build Commands
 
 ```bash
+# Install via Homebrew
+brew tap schmitthub/clawker && brew install clawker
+
 # Install pre-built binary (no Go required)
 curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
 bash scripts/install.sh --version v0.1.3 --dir $HOME/.local/bin  # Pin version + custom dir

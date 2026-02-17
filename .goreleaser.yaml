@@ -33,6 +33,14 @@ archives:
       - LICENSE
       - README.md
 
+homebrew_casks:
+  - name: clawker
+    repository:
+      owner: schmitthub
+      name: homebrew-clawker
+    homepage: https://github.com/schmitthub/clawker
+    description: "Development containers for AI coding agents"
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
