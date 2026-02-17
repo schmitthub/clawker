@@ -159,7 +159,8 @@ clawker monitor down
 Now I can go to the grafana dashboard at http://localhost:3000 and see all my agents, containers, resource usage, costs, tool executions, decisions, prompts, api calls, etc from every agent. (you can also set env vars in your host shell and it will report to this stack)
 
 ```bash
-# Add this to your shell profile 
+# Host ENV var example
+# Add these to your shell profile / .env etc
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_METRICS_EXPORTER=otlp
 OTEL_LOGS_EXPORT_INTERVAL=5000
