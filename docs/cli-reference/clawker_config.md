@@ -8,7 +8,7 @@ Commands for managing and validating clawker configuration.
 
 ### Subcommands
 
-* [clawker config check](clawker_config_check.md) - Validate your clawker configuration from the current project's context
+* [clawker config check](clawker_config_check.md) - Validate your clawker configuration
 
 ### Options
 

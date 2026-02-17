@@ -148,7 +148,6 @@ github.com/subosito/gotenv                                                     M
 github.com/tonistiigi/fsutil                                                   MIT
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
-go.yaml.in/yaml/v3                                                             MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 

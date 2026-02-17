@@ -13,9 +13,7 @@ import (
 // project identity lookup.
 type Project struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
-	// Project is yaml:"-" (injected by loader, not persisted) but mapstructure:"project"
-	// so ErrorUnused in ProjectLoader.Load() won't reject "project:" as an unknown field.
-	Project string `yaml:"-" mapstructure:"project"`
+	Project      string          `yaml:"-" mapstructure:"project"` // mapstructure:"project" (not "-") so ErrorUnused won't reject "project:" key
 	DefaultImage string          `yaml:"default_image,omitempty" mapstructure:"default_image"`
 	Build        BuildConfig     `yaml:"build" mapstructure:"build"`
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
