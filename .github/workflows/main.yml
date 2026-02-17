@@ -11,6 +11,7 @@ concurrency:
 permissions:
   contents: read
   security-events: write
+  actions: read
 
 jobs:
   security:
@@ -19,6 +20,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
     secrets: inherit
 
   lint:
@@ -27,6 +29,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
 
   test:
     name: Test

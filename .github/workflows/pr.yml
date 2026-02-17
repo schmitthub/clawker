@@ -13,6 +13,7 @@ permissions:
   contents: read
   pull-requests: read
   security-events: write
+  actions: read
 
 jobs:
   security:
@@ -22,6 +23,7 @@ jobs:
       contents: read
       pull-requests: read
       security-events: write
+      actions: read
     secrets: inherit
 
   lint:
@@ -30,6 +32,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
 
   test:
     name: Test
