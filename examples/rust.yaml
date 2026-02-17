@@ -12,11 +12,12 @@ build:
     - pkg-config
     - libssl-dev
 
-  instructions:
-    env:
-      CARGO_HOME: "/home/claude/.cargo"
-      RUSTUP_HOME: "/home/claude/.rustup"
+  inject:
+    after_user_switch: |
+      ENV CARGO_HOME="/home/claude/.cargo"
+      ENV RUSTUP_HOME="/home/claude/.rustup"
 
+  instructions:
     # Install Rust toolchain as the claude user
     user_run:
       - cmd: |

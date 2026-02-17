@@ -123,7 +123,7 @@ cd your-project         # This changes directories to your project
 clawker project init    # Creates clawker.yaml, .clawkerignore, and registers your project
 ```
 
-> **Tip:** Customize your `clawker.yaml` (see `examples/` for claude generated language-specific inspiration). I dogfood clawker to build clawker, so check out my `clawker.yaml` to see how I customized the build config for golang development.
+> **Tip:** Customize your `clawker.yaml` (see `examples/` for language-specific templates). If you use Claude Code or another LLM to help author your config, paste [`examples/llm.md`](examples/llm.md) ([raw](https://raw.githubusercontent.com/schmitthub/clawker/main/examples/llm.md)) into context — it covers the schema, build-time inject points, and common pitfalls. I dogfood clawker to build clawker, so check out my `clawker.yaml` to see how I customized the build config for golang development.
 
 ```bash
 clawker build           # Builds your project's image (referenced as "@" when in project directory)

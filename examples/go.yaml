@@ -10,12 +10,14 @@ build:
   packages:
     - ca-certificates
 
-  instructions:
-    env:
-      GO_VERSION: "1.24.1"
-      GOPATH: "/home/claude/go"
-      GOBIN: "/home/claude/go/bin"
+  inject:
+    after_packages: |
+      ENV GO_VERSION="1.24.1"
+    after_user_switch: |
+      ENV GOPATH="/home/claude/go"
+      ENV GOBIN="/home/claude/go/bin"
 
+  instructions:
     # Install Go binary (system-wide, arch-aware)
     root_run:
       - cmd: |

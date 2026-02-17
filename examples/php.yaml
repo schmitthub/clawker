@@ -12,11 +12,13 @@ build:
     - lsb-release
     - apt-transport-https
 
-  instructions:
-    env:
-      COMPOSER_HOME: "/home/claude/.composer"
-      PHP_VERSION: "8.3"
+  inject:
+    after_packages: |
+      ENV PHP_VERSION="8.3"
+    after_user_switch: |
+      ENV COMPOSER_HOME="/home/claude/.composer"
 
+  instructions:
     # Install PHP and extensions (system-wide)
     root_run:
       - cmd: |

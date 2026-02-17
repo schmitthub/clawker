@@ -23,11 +23,12 @@ build:
     - libffi-dev
     - liblzma-dev
 
-  instructions:
-    env:
-      UV_PYTHON_PREFERENCE: "managed"
-      PYTHON_VERSION: "3.12"
+  inject:
+    after_user_switch: |
+      ENV UV_PYTHON_PREFERENCE="managed"
+      ENV PYTHON_VERSION="3.12"
 
+  instructions:
     # Install uv and Python as the claude user
     user_run:
       - cmd: |
@@ -89,10 +90,11 @@ security:
 #   packages: [ca-certificates, libssl-dev, zlib1g-dev, libbz2-dev,
 #     libreadline-dev, libsqlite3-dev, libncursesw5-dev, xz-utils,
 #     tk-dev, libxml2-dev, libxmlsec1-dev, libffi-dev, liblzma-dev]
+#   inject:
+#     after_user_switch: |
+#       ENV PYENV_ROOT="/home/claude/.pyenv"
+#       ENV PYTHON_VERSION="3.12"
 #   instructions:
-#     env:
-#       PYENV_ROOT: "/home/claude/.pyenv"
-#       PYTHON_VERSION: "3.12"
 #     user_run:
 #       - cmd: |
 #           curl https://pyenv.run | bash
