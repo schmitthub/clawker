@@ -173,12 +173,17 @@ func (l *ProjectLoader) Load() (*Project, error) {
 		}
 	}
 
-	// Unmarshal into Config struct
+	// Unmarshal into Config struct with strict field checking
 	var cfg Project
-	if err := l.viper.Unmarshal(&cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-	))); err != nil {
+	if err := l.viper.Unmarshal(&cfg,
+		viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+		)),
+		func(c *mapstructure.DecoderConfig) {
+			c.ErrorUnused = true
+		},
+	); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 

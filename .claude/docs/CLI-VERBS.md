@@ -995,7 +995,22 @@ clawker run -it --rm clawker-myapp:latest -- -p "Fix bugs"
 
 ### `clawker config check`
 
-Validate the clawker.yaml configuration file.
+Validate a clawker.yaml configuration file. Checks for unknown/misspelled fields, required fields, valid values, file existence for referenced paths, and security configuration consistency.
+
+**Flags:**
+
+| Flag | Shorthand | Type | Default | Description |
+|------|-----------|------|---------|-------------|
+| `--file` | `-f` | string | | Path to clawker.yaml file to validate |
+
+**Examples:**
+```bash
+# Validate configuration in current directory
+clawker config check
+
+# Validate a specific file
+clawker config check --file examples/go.yaml
+```
 
 ### `clawker monitor`
 

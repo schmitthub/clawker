@@ -10,12 +10,13 @@ build:
   packages:
     - ca-certificates
 
-  instructions:
-    env:
-      DOTNET_ROOT: "/usr/share/dotnet"
-      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-      DOTNET_NOLOGO: "1"
+  inject:
+    after_user_switch: |
+      ENV DOTNET_ROOT="/usr/share/dotnet"
+      ENV DOTNET_CLI_TELEMETRY_OPTOUT="1"
+      ENV DOTNET_NOLOGO="1"
 
+  instructions:
     # Install .NET SDK (system-wide)
     root_run:
       - cmd: |
