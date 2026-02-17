@@ -210,7 +210,7 @@ func TestTextField_Required(t *testing.T) {
 	for _, r := range "   " {
 		f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
-	f, cmd = f.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.False(t, f.IsConfirmed(), "whitespace-only should not pass required check")
 	assert.Equal(t, "This field is required", f.Err())
 

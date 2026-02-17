@@ -1,56 +1,87 @@
-# Go Project Build Configuration
-#
-# This example sets up Go using the official binary distribution.
-# Go has excellent tooling built-in (go mod, go test, gofmt, etc.).
+# Go Developer Image
+# Sets up Go toolchain with gopls, delve, gotestsum, and golangci-lint.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
 
   instructions:
-    # Environment variables for Go
     env:
       GO_VERSION: "1.24.1"
       GOPATH: "/home/claude/go"
       GOBIN: "/home/claude/go/bin"
 
-    # Install Go as root (system-wide)
+    # Install Go binary (system-wide, arch-aware)
     root_run:
       - cmd: |
-          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
+          ARCH=$(dpkg --print-architecture) && \
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
+            | tar -C /usr/local -xzf -
 
-    # Configure Go paths for the claude user
+    # Configure Go paths and install dev tools
     user_run:
-      # Create Go directories and add to PATH
       - cmd: |
           mkdir -p "$GOPATH/bin" "$GOPATH/src" "$GOPATH/pkg"
-
-      # Add Go to shell profile
       - cmd: |
           echo 'export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"' >> ~/.bashrc
-
-      # Install common Go tools
       - cmd: |
           export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH" && \
           go install golang.org/x/tools/gopls@latest && \
-          go install github.com/go-delve/delve/cmd/dlv@latest
+          go install github.com/go-delve/delve/cmd/dlv@latest && \
+          go install gotest.tools/gotestsum@latest && \
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-# Alternative: Use the official Go image as base
-# Simpler but you get the Go version bundled with that image:
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - GOPRIVATE              # for private module repos
+  # env:
+  #   GOFLAGS: "-count=1"   # disable test caching
+  post_init: |
+    cd /workspace && go mod download
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "golang.org"
+      - "go.dev"
+      - "proxy.golang.org"
+      - "sum.golang.org"
+      - "storage.googleapis.com"
+    ip_range_sources:
+      - name: github
+      - name: google          # proxy.golang.org uses Google Cloud Storage
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use official Go image ─────────────────────────────────────
 # build:
 #   image: "golang:1.24-bookworm"
-#   packages:
-#     - git
-#     - ripgrep
 #   instructions:
 #     user_run:
 #       - cmd: |
-#           go install golang.org/x/tools/gopls@latest
+#           go install golang.org/x/tools/gopls@latest && \
+#           go install github.com/go-delve/delve/cmd/dlv@latest

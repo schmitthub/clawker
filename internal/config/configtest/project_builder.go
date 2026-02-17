@@ -91,6 +91,6 @@ func (b *ProjectBuilder) Build() *config.Project {
 		Agent:        b.cfg.Agent,
 		Workspace:    b.cfg.Workspace,
 		Security:     b.cfg.Security,
-		Loop:        b.cfg.Loop,
+		Loop:         b.cfg.Loop,
 	}
 }

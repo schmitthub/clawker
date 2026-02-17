@@ -31,9 +31,9 @@ func New() *TestIOStreams {
 
 	return &TestIOStreams{
 		IOStreams: ios,
-		InBuf:    in,
-		OutBuf:   out,
-		ErrBuf:   errOut,
+		InBuf:     in,
+		OutBuf:    out,
+		ErrBuf:    errOut,
 	}
 }
 

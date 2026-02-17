@@ -45,13 +45,17 @@ github.com/shibumi/go-pathspec                                                 A
 github.com/spf13/afero                                                         Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
+go.opentelemetry.io/contrib/bridges/otelzerolog                                Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc    Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace   Apache-2.0
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp                  Apache-2.0
 go.opentelemetry.io/otel                                                       Apache-2.0
+go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp                    Apache-2.0
 go.opentelemetry.io/otel/exporters/otlp/otlptrace                              Apache-2.0
+go.opentelemetry.io/otel/log                                                   Apache-2.0
 go.opentelemetry.io/otel/metric                                                Apache-2.0
 go.opentelemetry.io/otel/sdk                                                   Apache-2.0
+go.opentelemetry.io/otel/sdk/log                                               Apache-2.0
 go.opentelemetry.io/otel/trace                                                 Apache-2.0
 go.opentelemetry.io/proto/otlp                                                 Apache-2.0
 google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
@@ -64,6 +68,7 @@ BSD-2-Clause
 ================================================================================
 
 github.com/emirpasic/gods                                                      BSD-2-Clause
+github.com/godbus/dbus/v5                                                      BSD-2-Clause
 github.com/magiconair/properties                                               BSD-2-Clause
 github.com/pkg/errors                                                          BSD-2-Clause
 github.com/russross/blackfriday/v2                                             BSD-2-Clause
@@ -108,6 +113,7 @@ MIT
 
 al.essio.dev/pkg/shellescape                                                   MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
+github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT
 github.com/charmbracelet/bubbletea                                             MIT
@@ -142,6 +148,7 @@ github.com/subosito/gotenv                                                     M
 github.com/tonistiigi/fsutil                                                   MIT
 github.com/xo/terminfo                                                         MIT
 github.com/zalando/go-keyring                                                  MIT
+go.yaml.in/yaml/v3                                                             MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 

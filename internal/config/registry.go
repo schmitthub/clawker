@@ -440,7 +440,6 @@ func UniqueSlug(name string, existing map[string]bool) string {
 	}
 }
 
-
 // projectHandleImpl provides operations on a single project entry.
 // It is a lightweight handle - actual data loaded on demand.
 // Thread safety: mutations delegate to RegistryLoader which has a mutex.

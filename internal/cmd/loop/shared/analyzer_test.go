@@ -473,11 +473,11 @@ func TestDetectRateLimitError(t *testing.T) {
 
 func TestExtractErrorSignature(t *testing.T) {
 	tests := []struct {
-		name          string
-		output        string
-		expectEmpty   bool
-		expectSameAs  string // If non-empty, compare signature with this output
-		expectDiffAs  string // If non-empty, signature should differ from this output
+		name         string
+		output       string
+		expectEmpty  bool
+		expectSameAs string // If non-empty, compare signature with this output
+		expectDiffAs string // If non-empty, signature should differ from this output
 	}{
 		{
 			name:        "no error",
@@ -500,13 +500,13 @@ func TestExtractErrorSignature(t *testing.T) {
 			expectEmpty: false,
 		},
 		{
-			name:       "same error different line numbers",
-			output:     "Error: file not found at line 123",
+			name:         "same error different line numbers",
+			output:       "Error: file not found at line 123",
 			expectSameAs: "Error: file not found at line 456",
 		},
 		{
-			name:       "different errors",
-			output:     "Error: file not found",
+			name:         "different errors",
+			output:       "Error: file not found",
 			expectDiffAs: "Error: permission denied",
 		},
 	}
@@ -595,10 +595,10 @@ RECOMMENDATION: All done
 ---END_LOOP_STATUS---`
 
 	resultEvent := &ResultEvent{
-		Subtype:   ResultSubtypeSuccess,
-		NumTurns:  5,
-		IsError:   false,
-		Result:    "Done",
+		Subtype:  ResultSubtypeSuccess,
+		NumTurns: 5,
+		IsError:  false,
+		Result:   "Done",
 	}
 
 	analysis := AnalyzeStreamResult(text, resultEvent)

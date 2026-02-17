@@ -14,7 +14,7 @@ import (
 
 // StopOptions holds options for the stop command.
 type StopOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -29,7 +29,7 @@ type StopOptions struct {
 // NewCmdStop creates the container stop command.
 func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
 	opts := &StopOptions{
-		IOStreams:     f.IOStreams,
+		IOStreams:    f.IOStreams,
 		Client:       f.Client,
 		Config:       f.Config,
 		SocketBridge: f.SocketBridge,

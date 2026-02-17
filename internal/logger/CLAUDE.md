@@ -140,6 +140,7 @@ The OTEL SDK handles resilience natively — no custom health checking is needed
 - Retries on transient failures (429, 503, 504)
 - Buffer overflow drops oldest entries (no OOM, no blocking)
 - Collector down at startup: buffer, retry, drop. Comes up later: auto-recovers.
+- **Custom error handler**: `otel.SetErrorHandler()` is called in `createOtelProvider()` to redirect OTEL SDK internal errors (e.g., BatchProcessor export failures) to the file logger via `Log.Warn()` instead of the default `log.Println()` to stderr. This preserves clawker's rule that zerolog is file-only and no library output leaks to the console.
 
 ## Test Subpackage: `loggertest/`
 
@@ -198,5 +199,6 @@ assert.Contains(t, tl.Output(), "expected log message")
 - `github.com/rs/zerolog` — structured logging
 - `gopkg.in/natefinished/lumberjack.v2` — log rotation
 - `go.opentelemetry.io/contrib/bridges/otelzerolog` — zerolog-to-OTEL hook bridge
+- `go.opentelemetry.io/otel` — OTEL API (global error handler via `otel.SetErrorHandler`)
 - `go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp` — OTLP HTTP log exporter
 - `go.opentelemetry.io/otel/sdk/log` — OTEL log SDK (LoggerProvider, BatchProcessor)

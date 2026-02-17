@@ -11,10 +11,10 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/loop/iterate"
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
+	loopshared "github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmd/loop/status"
 	"github.com/schmitthub/clawker/internal/cmd/loop/tasks"
 	"github.com/schmitthub/clawker/internal/config"
-	loopshared "github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/assert"

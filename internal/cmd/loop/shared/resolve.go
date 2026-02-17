@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/pflag"
 )
 
@@ -89,6 +90,7 @@ func BuildRunnerOptions(
 	createContainer func(ctx context.Context) (*ContainerStartConfig, error),
 	flags *pflag.FlagSet,
 	loopCfg *config.LoopConfig,
+	log iostreams.Logger,
 ) Options {
 	opts := Options{
 		ProjectCfg:                project,
@@ -96,6 +98,7 @@ func BuildRunnerOptions(
 		Prompt:                    prompt,
 		WorkDir:                   workDir,
 		CreateContainer:           createContainer,
+		Logger:                    log,
 		MaxLoops:                  loopOpts.MaxLoops,
 		StagnationThreshold:       loopOpts.StagnationThreshold,
 		Timeout:                   time.Duration(loopOpts.TimeoutMinutes) * time.Minute,

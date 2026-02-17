@@ -21,7 +21,7 @@ import (
 
 // StartOptions holds options for the start command.
 type StartOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	HostProxy    func() hostproxy.HostProxyService
@@ -36,7 +36,7 @@ type StartOptions struct {
 // NewCmdStart creates the container start command.
 func NewCmdStart(f *cmdutil.Factory, runF func(context.Context, *StartOptions) error) *cobra.Command {
 	opts := &StartOptions{
-		IOStreams:     f.IOStreams,
+		IOStreams:    f.IOStreams,
 		Client:       f.Client,
 		Config:       f.Config,
 		HostProxy:    f.HostProxy,

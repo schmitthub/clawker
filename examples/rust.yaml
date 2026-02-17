@@ -1,46 +1,80 @@
-# Rust Project Build Configuration
-#
-# This example sets up Rust using rustup - the official Rust toolchain installer.
-# Includes cargo and common development tools.
+# Rust Developer Image
+# Sets up Rust via rustup with rust-analyzer, clippy, rustfmt, and cargo-watch.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages needed for Rust compilation
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
     - pkg-config
     - libssl-dev
 
   instructions:
-    # Environment variables for Rust
     env:
       CARGO_HOME: "/home/claude/.cargo"
       RUSTUP_HOME: "/home/claude/.rustup"
 
     # Install Rust toolchain as the claude user
     user_run:
-      # Install rustup and stable toolchain
       - cmd: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-
-      # Install common development tools
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable
       - cmd: |
           . "$HOME/.cargo/env" && \
           rustup component add rust-analyzer clippy rustfmt
-
-      # Add cargo to shell profile
+      - cmd: |
+          . "$HOME/.cargo/env" && \
+          cargo install cargo-watch
       - cmd: |
           echo '. "$HOME/.cargo/env"' >> ~/.bashrc
 
-# To add additional toolchains (e.g., nightly):
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - CARGO_REGISTRY_TOKEN   # for crates.io publishes
+  # env:
+  #   RUST_BACKTRACE: "1"
+  post_init: |
+    cd /workspace && cargo fetch
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "static.rust-lang.org"
+      - "crates.io"
+      - "static.crates.io"
+      - "index.crates.io"
+    ip_range_sources:
+      - name: github
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use nightly toolchain ──────────────────────────────────────
 #   user_run:
 #     - cmd: |
+#         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+#           | sh -s -- -y --default-toolchain nightly
+#     - cmd: |
 #         . "$HOME/.cargo/env" && \
-#         rustup toolchain install nightly && \
 #         rustup component add rust-analyzer clippy rustfmt --toolchain nightly

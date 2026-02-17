@@ -1,37 +1,30 @@
-# PHP Project Build Configuration
-#
-# This example sets up PHP with Composer using the sury.org repository,
-# which provides up-to-date PHP versions for Debian.
+# PHP Developer Image
+# Sets up PHP 8.3 via sury.org with Composer and common extensions.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
     - lsb-release
     - apt-transport-https
 
   instructions:
-    # Environment variables for PHP and Composer
     env:
       COMPOSER_HOME: "/home/claude/.composer"
       PHP_VERSION: "8.3"
 
-    # Install PHP as root (system-wide)
+    # Install PHP and extensions (system-wide)
     root_run:
-      # Add sury.org PHP repository
       - cmd: |
-          curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb && \
+          curl -sSLo /tmp/debsuryorg-archive-keyring.deb \
+            https://packages.sury.org/debsuryorg-archive-keyring.deb && \
           dpkg -i /tmp/debsuryorg-archive-keyring.deb && \
           sh -c 'echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/sury-php.list' && \
           apt-get update
-
-      # Install PHP and common extensions
       - cmd: |
           apt-get install -y \
             php${PHP_VERSION} \
@@ -45,26 +38,61 @@ build:
             php${PHP_VERSION}-pgsql \
             php${PHP_VERSION}-sqlite3
 
-    # Install Composer as the claude user
+    # Install Composer
     user_run:
-      # Install Composer
       - cmd: |
-          curl -sS https://getcomposer.org/installer | php -- --install-dir=$HOME/.local/bin --filename=composer
-
-      # Add Composer bin to PATH
+          curl -sS https://getcomposer.org/installer \
+            | php -- --install-dir=$HOME/.local/bin --filename=composer
       - cmd: |
           echo 'export PATH="$HOME/.local/bin:$HOME/.composer/vendor/bin:$PATH"' >> ~/.bashrc
 
-# Alternative: Use the official PHP image as base
-# Simpler but may need extension installation:
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - COMPOSER_AUTH           # for private Packagist repos
+  # env:
+  #   APP_ENV: "local"
+  post_init: |
+    cd /workspace
+    if [ -f composer.json ]; then
+      composer install
+    fi
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "packages.sury.org"
+      - "packagist.org"
+      - "repo.packagist.org"
+      - "getcomposer.org"
+    ip_range_sources:
+      - name: github
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use official PHP image ─────────────────────────────────────
 # build:
 #   image: "php:8.3-cli-bookworm"
-#   packages:
-#     - git
-#     - ripgrep
-#     - unzip
 #   instructions:
 #     user_run:
 #       - cmd: |
-#           curl -sS https://getcomposer.org/installer | php -- --install-dir=$HOME/.local/bin --filename=composer
+#           curl -sS https://getcomposer.org/installer \
+#             | php -- --install-dir=$HOME/.local/bin --filename=composer

@@ -25,8 +25,6 @@ import (
 )
 
 func main() {
-	defer logger.CloseFileWriter()
-
 	f, scenario := fawkerFactory()
 	noPause := false
 	step := false
@@ -48,10 +46,12 @@ func main() {
 		fmt.Fprintf(f.IOStreams.ErrOut, "\nError: %s\n", err)
 		fmt.Fprintf(f.IOStreams.ErrOut, "Run '%s --help' for more information.\n", cmd.CommandPath())
 		pauseForReview(f, noPause)
+		logger.CloseFileWriter()
 		os.Exit(1)
 	}
 
 	pauseForReview(f, noPause)
+	logger.CloseFileWriter()
 }
 
 // pauseForReview is an exit hook — pauses after command completion so UAT

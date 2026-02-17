@@ -1,0 +1,26 @@
+# .semgrepignore — project-specific exclusions (uses .gitignore syntax)
+
+# Build artifacts
+bin/
+dist/
+
+# Test fixtures and golden files — not production code
+**/testdata/
+**/*.golden
+**/*.txtar
+
+# Documentation and config (not executable Go code)
+docs/
+templates/
+.claude/
+.serena/
+
+# Shell scripts — p/golang rules don't apply; p/security-audit may
+# flag intentional patterns (e.g. curl|bash in installer)
+scripts/
+
+# Vendor (future-proofing)
+vendor/
+
+# Generated files
+*_generated.go

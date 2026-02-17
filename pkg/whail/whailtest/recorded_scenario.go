@@ -17,7 +17,7 @@ import (
 type RecordedBuildEvent struct {
 	// DelayMs is the delay in milliseconds since the previous event.
 	// Stored as int64 for clean JSON (avoids float precision issues).
-	DelayMs int64                   `json:"delay_ms"`
+	DelayMs int64                    `json:"delay_ms"`
 	Event   whail.BuildProgressEvent `json:"event"`
 }
 

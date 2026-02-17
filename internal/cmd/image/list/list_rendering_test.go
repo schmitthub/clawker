@@ -20,7 +20,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 	tio := iostreamstest.New()
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},

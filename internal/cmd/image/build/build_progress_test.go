@@ -33,7 +33,7 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 			tio := iostreamstest.New()
 			f := &cmdutil.Factory{
 				IOStreams: tio.IOStreams,
-				TUI:      tui.NewTUI(tio.IOStreams),
+				TUI:       tui.NewTUI(tio.IOStreams),
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
@@ -50,15 +50,9 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 
 			err := cmd.Execute()
 
-			// Error scenarios produce a build error (the last step has StepError).
-			if scenario.Name == "error" {
-				// The build itself succeeds (fake returns nil), but the progress
-				// display should still render the error step. The build command
-				// succeeds because the fake builder returns nil error.
-				require.NoError(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			// The build itself succeeds (fake returns nil), but the progress
+			// display should still render the error step.
+			require.NoError(t, err)
 
 			output := tio.ErrBuf.String()
 
@@ -89,7 +83,7 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -129,7 +123,7 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -164,7 +158,7 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},

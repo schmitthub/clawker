@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# install-hooks.sh — Install advisory pre-commit freshness check for Claude docs.
+# install-hooks.sh — Install pre-commit hooks for all CI quality gates.
+#
+# Usage: bash scripts/install-hooks.sh
 #
 set -euo pipefail
-
-HOOK_MARKER="# clawker-freshness-check"
 
 # ── Verify git repo ──────────────────────────────────────────────────────────
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -12,45 +12,41 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
     exit 1
 }
 
-HOOK_DIR=$(git rev-parse --git-path hooks 2>/dev/null)
-HOOK_FILE="${HOOK_DIR}/pre-commit"
-SCRIPT_PATH="scripts/check-claude-freshness.sh"
-
-# ── Check script exists ──────────────────────────────────────────────────────
-if [[ ! -f "${REPO_ROOT}/${SCRIPT_PATH}" ]]; then
-    echo "Error: ${SCRIPT_PATH} not found in repo root." >&2
+# ── Check pre-commit is installed ────────────────────────────────────────────
+if ! command -v pre-commit >/dev/null 2>&1; then
+    echo "Error: pre-commit is not installed." >&2
+    echo "" >&2
+    echo "Install with one of:" >&2
+    echo "  brew install pre-commit" >&2
+    echo "  pip install pre-commit" >&2
+    echo "  pipx install pre-commit" >&2
     exit 1
 fi
 
-# ── Build hook snippet ───────────────────────────────────────────────────────
-HOOK_SNIPPET=$(cat <<'HOOKEOF'
+# ── Check optional tool binaries ─────────────────────────────────────────────
+MISSING=()
+command -v gitleaks    >/dev/null 2>&1 || MISSING+=("gitleaks    — brew install gitleaks")
+command -v semgrep     >/dev/null 2>&1 || MISSING+=("semgrep     — pip install semgrep")
+command -v govulncheck >/dev/null 2>&1 || MISSING+=("govulncheck — go install golang.org/x/vuln/cmd/govulncheck@latest")
+command -v golangci-lint >/dev/null 2>&1 || MISSING+=("golangci-lint — brew install golangci-lint")
 
-# clawker-freshness-check
-# Advisory freshness check — never blocks commits
-if git diff --cached --name-only --diff-filter=ACM -- '*.go' | grep -q '.'; then
-    echo ""
-    echo "=== Claude Doc Freshness (advisory) ==="
-    bash scripts/check-claude-freshness.sh --no-color 2>/dev/null | head -50 || true
-    echo ""
-fi
-HOOKEOF
-)
-
-# ── Check for existing hook ──────────────────────────────────────────────────
-if [[ -f "$HOOK_FILE" ]]; then
-    if grep -q "$HOOK_MARKER" "$HOOK_FILE"; then
-        echo "Freshness hook already installed in ${HOOK_FILE}. Skipping."
-        exit 0
-    fi
-    echo "Existing pre-commit hook found. Appending freshness check."
-    echo "$HOOK_SNIPPET" >> "$HOOK_FILE"
-else
-    echo "Creating pre-commit hook."
-    cat > "$HOOK_FILE" <<'SHEBANG'
-#!/usr/bin/env bash
-SHEBANG
-    echo "$HOOK_SNIPPET" >> "$HOOK_FILE"
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    echo "Warning: some hook binaries are not installed. Those hooks will fail until installed:" >&2
+    for m in "${MISSING[@]}"; do
+        echo "  $m" >&2
+    done
+    echo "" >&2
 fi
 
-chmod +x "$HOOK_FILE"
-echo "Done. Freshness check installed in ${HOOK_FILE}."
+# ── Install hooks ────────────────────────────────────────────────────────────
+cd "$REPO_ROOT"
+pre-commit install
+
+echo ""
+echo "Pre-commit hooks installed. They will run automatically on 'git commit'."
+echo ""
+echo "Useful commands:"
+echo "  pre-commit run --all-files          Run all hooks against entire repo"
+echo "  pre-commit run gitleaks --all-files  Run a single hook"
+echo "  make pre-commit                      Alias for run --all-files"
+echo "  git commit --no-verify               Skip hooks (emergency only)"

@@ -67,7 +67,7 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:       "test-image:latest",
 		IOStreams:      tio.IOStreams,
-		TUI:           nil, // spinner fallback
+		TUI:            nil, // spinner fallback
 		Prompter:       func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
 		SettingsLoader: func() config.SettingsLoader { return sl },
 		BuildImage:     buildFn,
@@ -96,7 +96,7 @@ func TestRebuildMissingImage_BuildFailure(t *testing.T) {
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:    "test-image:latest",
 		IOStreams:   tio.IOStreams,
-		TUI:        nil,
+		TUI:         nil,
 		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
 		BuildImage:  buildFn,
 		CommandVerb: "run",
@@ -119,7 +119,7 @@ func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
 		ImageRef:       "test-image:latest",
 		IOStreams:      tio.IOStreams,
-		TUI:           nil,
+		TUI:            nil,
 		Prompter:       func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
 		SettingsLoader: func() config.SettingsLoader { return &failSaveSettingsLoader{} },
 		BuildImage:     buildFn,
@@ -190,19 +190,23 @@ func TestProgressStatus(t *testing.T) {
 // failLoadSettingsLoader is a SettingsLoader that fails on Load.
 type failLoadSettingsLoader struct{}
 
-func (f *failLoadSettingsLoader) Path() string                        { return "" }
-func (f *failLoadSettingsLoader) ProjectSettingsPath() string         { return "" }
-func (f *failLoadSettingsLoader) Exists() bool                        { return false }
-func (f *failLoadSettingsLoader) Load() (*config.Settings, error)     { return nil, fmt.Errorf("load failed") }
-func (f *failLoadSettingsLoader) Save(*config.Settings) error         { return nil }
-func (f *failLoadSettingsLoader) EnsureExists() (bool, error)         { return false, nil }
+func (f *failLoadSettingsLoader) Path() string                { return "" }
+func (f *failLoadSettingsLoader) ProjectSettingsPath() string { return "" }
+func (f *failLoadSettingsLoader) Exists() bool                { return false }
+func (f *failLoadSettingsLoader) Load() (*config.Settings, error) {
+	return nil, fmt.Errorf("load failed")
+}
+func (f *failLoadSettingsLoader) Save(*config.Settings) error { return nil }
+func (f *failLoadSettingsLoader) EnsureExists() (bool, error) { return false, nil }
 
 // failSaveSettingsLoader is a SettingsLoader that loads OK but fails on Save.
 type failSaveSettingsLoader struct{}
 
-func (f *failSaveSettingsLoader) Path() string                        { return "" }
-func (f *failSaveSettingsLoader) ProjectSettingsPath() string         { return "" }
-func (f *failSaveSettingsLoader) Exists() bool                        { return false }
-func (f *failSaveSettingsLoader) Load() (*config.Settings, error)     { return config.DefaultSettings(), nil }
-func (f *failSaveSettingsLoader) Save(*config.Settings) error         { return fmt.Errorf("save failed") }
-func (f *failSaveSettingsLoader) EnsureExists() (bool, error)         { return false, nil }
+func (f *failSaveSettingsLoader) Path() string                { return "" }
+func (f *failSaveSettingsLoader) ProjectSettingsPath() string { return "" }
+func (f *failSaveSettingsLoader) Exists() bool                { return false }
+func (f *failSaveSettingsLoader) Load() (*config.Settings, error) {
+	return config.DefaultSettings(), nil
+}
+func (f *failSaveSettingsLoader) Save(*config.Settings) error { return fmt.Errorf("save failed") }
+func (f *failSaveSettingsLoader) EnsureExists() (bool, error) { return false, nil }

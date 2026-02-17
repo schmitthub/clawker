@@ -111,8 +111,8 @@ func makeCreateContainer(t *testing.T, dockerClient *docker.Client, project, age
 		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: name,
 			Config: &container.Config{
-				Image:  "alpine:latest",
-				Cmd:    containerCmd(output),
+				Image: "alpine:latest",
+				Cmd:   containerCmd(output),
 				Labels: map[string]string{
 					docker.LabelProject: project,
 					docker.LabelAgent:   agent,
@@ -148,8 +148,8 @@ func makeMultiCreateContainer(t *testing.T, dockerClient *docker.Client, project
 		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: name,
 			Config: &container.Config{
-				Image:  "alpine:latest",
-				Cmd:    containerCmd(outputs[idx]),
+				Image: "alpine:latest",
+				Cmd:   containerCmd(outputs[idx]),
 				Labels: map[string]string{
 					docker.LabelProject: project,
 					docker.LabelAgent:   agent,
@@ -181,8 +181,8 @@ func makeSlowCreateContainer(t *testing.T, dockerClient *docker.Client, project,
 		resp, err := dockerClient.ContainerCreate(ctx, whail.ContainerCreateOptions{
 			Name: name,
 			Config: &container.Config{
-				Image:  "alpine:latest",
-				Cmd:    []string{"sh", "-c", fmt.Sprintf("sleep %d", sleepSeconds)},
+				Image: "alpine:latest",
+				Cmd:   []string{"sh", "-c", fmt.Sprintf("sleep %d", sleepSeconds)},
 				Labels: map[string]string{
 					docker.LabelProject: project,
 					docker.LabelAgent:   agent,

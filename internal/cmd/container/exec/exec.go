@@ -21,7 +21,7 @@ import (
 
 // ExecOptions holds options for the exec command.
 type ExecOptions struct {
-	IOStreams     *iostreams.IOStreams
+	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() *config.Config
 	HostProxy    func() hostproxy.HostProxyService
@@ -43,7 +43,7 @@ type ExecOptions struct {
 // NewCmdExec creates a new exec command.
 func NewCmdExec(f *cmdutil.Factory, runF func(context.Context, *ExecOptions) error) *cobra.Command {
 	opts := &ExecOptions{
-		IOStreams:     f.IOStreams,
+		IOStreams:    f.IOStreams,
 		Client:       f.Client,
 		Config:       f.Config,
 		HostProxy:    f.HostProxy,

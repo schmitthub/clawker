@@ -107,7 +107,7 @@ func writeTestMessage(buf *bytes.Buffer, msg Message) {
 type nopWriteCloser struct{}
 
 func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
-func (nopWriteCloser) Close() error                 { return nil }
+func (nopWriteCloser) Close() error                { return nil }
 
 // nopFlushWriteCloser wraps a writer for sendMessage testing.
 type nopFlushWriteCloser struct {
@@ -115,4 +115,4 @@ type nopFlushWriteCloser struct {
 }
 
 func (n *nopFlushWriteCloser) Write(p []byte) (int, error) { return n.w.Write(p) }
-func (n *nopFlushWriteCloser) Close() error                 { return nil }
+func (n *nopFlushWriteCloser) Close() error                { return nil }

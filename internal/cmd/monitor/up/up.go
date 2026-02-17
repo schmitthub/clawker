@@ -16,8 +16,8 @@ import (
 
 type UpOptions struct {
 	IOStreams *iostreams.IOStreams
-	Client   func(context.Context) (*docker.Client, error)
-	Config   func() *config.Config
+	Client    func(context.Context) (*docker.Client, error)
+	Config    func() *config.Config
 
 	Detach bool
 }
@@ -25,8 +25,8 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
 		IOStreams: f.IOStreams,
-		Client:   f.Client,
-		Config:   f.Config,
+		Client:    f.Client,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -77,7 +77,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); err != nil {
 		if os.IsNotExist(err) {
-			cmdutil.PrintError(ios, "Monitoring stack not initialized")
+			cmdutil.PrintErrorf(ios, "Monitoring stack not initialized")
 			cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
 			return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 		}

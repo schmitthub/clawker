@@ -16,13 +16,13 @@ import (
 
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config   func() *config.Config
+	Config    func() *config.Config
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams: f.IOStreams,
-		Config:   f.Config,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{

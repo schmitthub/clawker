@@ -1,0 +1,66 @@
+# Pre-commit hooks — mirrors CI quality gates locally.
+# Install: bash scripts/install-hooks.sh
+# Run all: pre-commit run --all-files
+# Run one: pre-commit run gitleaks --all-files
+
+repos:
+  # ── Security ──────────────────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        args: [--baseline-path, gitleaks-report.json]
+
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.9.0
+    hooks:
+      - id: golangci-lint-full
+        args: [--config, .golangci.yml]
+
+  # ── Local hooks ───────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep SAST
+        # Expected version: 1.146.0 (must match CI image tag in security.yml)
+        entry: semgrep scan --baseline-commit HEAD --config p/golang --config p/security-audit --error
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: govulncheck
+        name: govulncheck SCA
+        entry: govulncheck ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: Unit tests
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: docs-check
+        name: CLI docs freshness
+        entry: make docs-check
+        language: system
+        files: ^(cmd/|internal/cmd/|internal/docs/)
+        pass_filenames: false
+
+      - id: licenses-check
+        name: NOTICE freshness
+        entry: make licenses-check
+        language: system
+        files: ^go\.(mod|sum)$
+        pass_filenames: false
+
+      - id: claude-freshness
+        name: Claude doc freshness (advisory)
+        entry: bash -c 'bash scripts/check-claude-freshness.sh --strict --non-interactive --no-color | head -50 || true'
+        language: system
+        files: \.go$
+        pass_filenames: false
+        verbose: true

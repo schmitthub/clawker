@@ -15,7 +15,7 @@ func TestNewCmdLoop(t *testing.T) {
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 	}
 	cmd := NewCmdLoop(f)
 
@@ -33,7 +33,7 @@ func TestNewCmdLoop_Subcommands(t *testing.T) {
 	tio := iostreamstest.New()
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
+		TUI:       tui.NewTUI(tio.IOStreams),
 	}
 	cmd := NewCmdLoop(f)
 

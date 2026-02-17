@@ -86,11 +86,3 @@ func (p *pagerWriter) Close() error {
 	}
 	return p.cmd.Wait()
 }
-
-// process returns the underlying pager process, or nil if not active.
-func (p *pagerWriter) process() *os.Process {
-	if p.cmd == nil {
-		return nil
-	}
-	return p.cmd.Process
-}

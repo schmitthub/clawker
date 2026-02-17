@@ -10,8 +10,7 @@ import (
 
 // testModel is a minimal BubbleTea model for testing RunProgram.
 type testModel struct {
-	initialized bool
-	quitted     bool
+	quitted bool
 }
 
 func (m testModel) Init() tea.Cmd {

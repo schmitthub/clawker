@@ -27,9 +27,9 @@ func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) e
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Validate your clawker configuration from the current project's context",
-		Long: `Validates the clawker configuration from this project's context'.
+		Long: `Validates the clawker configuration from this project's context.
 
-Checks resolution and validation between $CLAWKER_HOME/settings.yaml, $CLAWKER_HOME/clawker.yaml, and ./clawker.yaml: 
+Checks resolution and validation between $CLAWKER_HOME/settings.yaml, $CLAWKER_HOME/clawker.yaml, and ./clawker.yaml:
   - Required fields (version, project, build.image)
   - Valid field values and formats
   - File existence for referenced paths (dockerfile, includes)

@@ -21,17 +21,17 @@ type Builder struct {
 
 // BuilderOptions contains options for build operations.
 type BuilderOptions struct {
-	ForceBuild      bool               // Force rebuild even if image exists
-	NoCache         bool               // Build without Docker cache
-	Labels          map[string]string  // Labels to apply to the built image
-	Target          string             // Multi-stage build target
-	Pull            bool               // Always pull base image
-	SuppressOutput  bool               // Suppress build output
-	NetworkMode     string             // Network mode for build
-	BuildArgs       map[string]*string // Build-time variables
-	Tags            []string           // Additional tags for the image (merged with imageTag)
-	Dockerfile      []byte             // Pre-rendered Dockerfile bytes (avoids re-generation)
-	BuildKitEnabled bool               // Use BuildKit builder for cache mount support
+	ForceBuild      bool                    // Force rebuild even if image exists
+	NoCache         bool                    // Build without Docker cache
+	Labels          map[string]string       // Labels to apply to the built image
+	Target          string                  // Multi-stage build target
+	Pull            bool                    // Always pull base image
+	SuppressOutput  bool                    // Suppress build output
+	NetworkMode     string                  // Network mode for build
+	BuildArgs       map[string]*string      // Build-time variables
+	Tags            []string                // Additional tags for the image (merged with imageTag)
+	Dockerfile      []byte                  // Pre-rendered Dockerfile bytes (avoids re-generation)
+	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 }
 

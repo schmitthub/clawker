@@ -1,57 +1,83 @@
-# C# / .NET Project Build Configuration
-#
-# This example sets up .NET SDK using Microsoft's official package repository.
-# Includes the full SDK for building, running, and testing .NET applications.
+# C# / .NET Developer Image
+# Sets up .NET SDK 8.0 via Microsoft's package repo with dotnet-ef and dotnet-format.
 
+version: "1"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
 build:
-  # Base image - Debian bookworm with build essentials
   image: "buildpack-deps:bookworm-scm"
 
-  # System packages
   packages:
-    - git
-    - curl
-    - ripgrep
     - ca-certificates
-    - wget
 
   instructions:
-    # Environment variables for .NET
     env:
       DOTNET_ROOT: "/usr/share/dotnet"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
 
-    # Install .NET SDK as root (system-wide)
+    # Install .NET SDK (system-wide)
     root_run:
-      # Add Microsoft package repository and install .NET SDK
       - cmd: |
-          wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+          wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
+            -O packages-microsoft-prod.deb && \
           dpkg -i packages-microsoft-prod.deb && \
           rm packages-microsoft-prod.deb && \
           apt-get update && \
           apt-get install -y dotnet-sdk-8.0
 
-    # Configure .NET for the claude user
+    # Install .NET tools and configure PATH
     user_run:
-      # Add dotnet tools to PATH
       - cmd: |
           echo 'export PATH="$HOME/.dotnet/tools:$PATH"' >> ~/.bashrc
-
-      # Install common .NET tools
       - cmd: |
           dotnet tool install --global dotnet-format && \
           dotnet tool install --global dotnet-ef
 
-# Alternative: Use the official .NET SDK image as base
-# Simpler and ensures you get a properly configured environment:
-#
+# ─── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  from_env:
+    - GH_TOKEN
+    - NUGET_API_KEY          # for NuGet publishes
+  # env:
+  #   ASPNETCORE_ENVIRONMENT: "Development"
+  post_init: |
+    cd /workspace && dotnet restore
+
+# ─── Workspace ───────────────────────────────────────────────────────────────
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+
+# ─── Security ────────────────────────────────────────────────────────────────
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "packages.microsoft.com"
+      - "api.nuget.org"
+      - "azureedge.net"
+      - "dotnetcli.azureedge.net"
+    ip_range_sources:
+      - name: github
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# ─── Loop (optional) ────────────────────────────────────────────────────────
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+
+# ─── Alternative: Use official .NET SDK image ───────────────────────────────
 # build:
 #   image: "mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim"
-#   packages:
-#     - git
-#     - ripgrep
 #   instructions:
 #     user_run:
 #       - cmd: |
-#           dotnet tool install --global dotnet-format
+#           dotnet tool install --global dotnet-format && \
+#           dotnet tool install --global dotnet-ef

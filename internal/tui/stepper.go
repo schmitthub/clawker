@@ -40,8 +40,8 @@ func (s StepState) String() string {
 
 // Step represents a single step in a stepper bar.
 type Step struct {
-	Title string    // Short label for the bar
-	Value string    // Displayed next to completed steps (e.g., "bookworm")
+	Title string // Short label for the bar
+	Value string // Displayed next to completed steps (e.g., "bookworm")
 	State StepState
 }
 

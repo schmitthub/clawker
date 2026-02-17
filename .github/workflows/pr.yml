@@ -12,6 +12,8 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  security-events: write
+  actions: read
 
 jobs:
   security:
@@ -20,6 +22,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      security-events: write
+      actions: read
     secrets: inherit
 
   lint:
@@ -27,6 +31,8 @@ jobs:
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
+      security-events: write
+      actions: read
 
   test:
     name: Test

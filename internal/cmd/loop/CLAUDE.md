@@ -59,7 +59,7 @@ Prompt resolution and option building helpers:
 
 - `ResolvePrompt(prompt, promptFile string) (string, error)` — returns inline prompt or reads from file, trims whitespace, errors on empty
 - `ResolveTasksPrompt(tasksFile, taskPrompt, taskPromptFile string) (string, error)` — reads tasks file, wraps in default template or applies custom template (`%s` placeholder or appended)
-- `BuildRunnerOptions(loopOpts, project, agent, containerName, prompt, workDir, flags, loopCfg) Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern)
+- `BuildRunnerOptions(loopOpts, project, agent, prompt, workDir, createContainer, flags, loopCfg, log) Options` — maps CLI options to runner options with config override support (`flags.Changed()` pattern). The `log` parameter (`iostreams.Logger`) is required — `Runner.Run` returns an error if `opts.Logger` is nil.
 - `ApplyLoopConfigDefaults(loopOpts, flags, loopCfg)` — applies config overrides to `LoopOptions` for pre-runner fields (`hooks_file`, `append_system_prompt`). Called in iterate/tasks run functions after loading config but before `SetupLoopContainer` and `BuildRunnerOptions`.
 
 **Config override pattern**: Two layers of config-to-flag override:

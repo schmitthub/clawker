@@ -37,18 +37,18 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 	configFn := fawkerConfigFunc()
 
 	f := &cmdutil.Factory{
-		Version:  "0.0.0-fawker",
+		Version:   "0.0.0-fawker",
 		IOStreams: ios,
-		TUI:      tui.NewTUI(ios),
-		Config: configFn,
+		TUI:       tui.NewTUI(ios),
+		Config:    configFn,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			// Mirror real factory: inject config into client for image resolution.
 			return fawkerClient(scenario, configFn())
 		},
-		GitManager:        func() (*git.GitManager, error) { return nil, nil },
-		HostProxy:         func() hostproxy.HostProxyService { return nil },
-		SocketBridge:      func() socketbridge.SocketBridgeManager { return nil },
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(ios) },
+		GitManager:   func() (*git.GitManager, error) { return nil, nil },
+		HostProxy:    func() hostproxy.HostProxyService { return nil },
+		SocketBridge: func() socketbridge.SocketBridgeManager { return nil },
+		Prompter:     func() *prompter.Prompter { return prompter.NewPrompter(ios) },
 	}
 
 	return f, &scenario

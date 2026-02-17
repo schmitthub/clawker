@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/bridges/otelzerolog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -148,6 +149,7 @@ func Init() {
 }
 
 // InitWithFile initializes the logger with file-only output.
+//
 // Deprecated: Use NewLogger() for new code. This is retained for backwards compatibility.
 func InitWithFile(logsDir string, cfg *LoggingConfig) error {
 	return NewLogger(&Options{
@@ -214,6 +216,13 @@ func NewLogger(opts *Options) error {
 
 // createOtelProvider creates an OTLP HTTP log exporter and batch processor.
 func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
+	// Redirect OTEL SDK internal errors to the file logger instead of stderr.
+	// The closure captures Log by reference — at invocation time (async error),
+	// Log is already the file-backed logger set by NewLogger.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		Log.Warn().Err(err).Msg("otel sdk error")
+	}))
+
 	ctx := context.Background()
 
 	exporterOpts := []otlploghttp.Option{
@@ -272,6 +281,7 @@ func Close() error {
 }
 
 // CloseFileWriter closes the file writer if it exists.
+//
 // Deprecated: Use Close() which handles both file + OTEL shutdown.
 func CloseFileWriter() error {
 	return Close()

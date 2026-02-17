@@ -13,8 +13,9 @@
 //     [{"path": "/home/claude/.gnupg/S.gpg-agent", "type": "gpg-agent"}]
 //
 // Protocol:
-//   Message format: [4-byte length][1-byte type][4-byte stream][payload]
-//   Types: DATA=1, OPEN=2, CLOSE=3, PUBKEY=4, READY=5, ERROR=6
+//
+//	Message format: [4-byte length][1-byte type][4-byte stream][payload]
+//	Types: DATA=1, OPEN=2, CLOSE=3, PUBKEY=4, READY=5, ERROR=6
 package main
 
 import (
@@ -172,6 +173,10 @@ func killExistingGPGAgent(gnupgDir string) {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cleanupLog := initLogging()
 	defer cleanupLog()
 
@@ -179,18 +184,18 @@ func main() {
 	socketsJSON := os.Getenv("CLAWKER_REMOTE_SOCKETS")
 	if socketsJSON == "" {
 		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS not set")
-		os.Exit(1)
+		return 1
 	}
 
 	var sockets []SocketConfig
 	if err := json.Unmarshal([]byte(socketsJSON), &sockets); err != nil {
 		logf("[socket-forwarder] error: failed to parse CLAWKER_REMOTE_SOCKETS: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if len(sockets) == 0 {
 		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS is empty")
-		os.Exit(1)
+		return 1
 	}
 
 	f := &Forwarder{
@@ -216,17 +221,17 @@ func main() {
 		if err != nil {
 			logf("[socket-forwarder] error: failed to read pubkey: %v\n", err)
 			f.sendError(0, "failed to read pubkey: "+err.Error())
-			os.Exit(1)
+			return 1
 		}
 		if msg.Type != MsgPubkey {
 			logf("[socket-forwarder] error: expected PUBKEY message, got type %d\n", msg.Type)
 			f.sendError(0, "expected PUBKEY message")
-			os.Exit(1)
+			return 1
 		}
 		if err := f.setupGPGPubkey(msg.Payload); err != nil {
 			logf("[socket-forwarder] error: failed to setup GPG pubkey: %v\n", err)
 			f.sendError(0, "failed to setup GPG pubkey: "+err.Error())
-			os.Exit(1)
+			return 1
 		}
 
 		// Kill any existing gpg-agent that may have been auto-started before
@@ -246,7 +251,7 @@ func main() {
 		if err != nil {
 			logf("[socket-forwarder] error: failed to create socket %s: %v\n", sock.Path, err)
 			f.sendError(0, fmt.Sprintf("failed to create socket %s: %v", sock.Path, err))
-			os.Exit(1)
+			return 1
 		}
 		listeners[sock.Type] = listener
 
@@ -258,7 +263,7 @@ func main() {
 	logln("[socket-forwarder] ready, listening on sockets")
 	if err := f.sendMessage(Message{Type: MsgReady, StreamID: 0}); err != nil {
 		logf("[socket-forwarder] error: failed to send READY: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Main loop: read messages from host and dispatch to streams
@@ -287,6 +292,7 @@ func main() {
 	for _, l := range listeners {
 		l.Close()
 	}
+	return 0
 }
 
 func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {

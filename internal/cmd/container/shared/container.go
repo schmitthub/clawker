@@ -1429,8 +1429,8 @@ type StepStatus int
 
 const (
 	StepRunning  StepStatus = iota // Step in progress
-	StepComplete                    // Step finished successfully
-	StepCached                      // Step skipped (already done)
+	StepComplete                   // Step finished successfully
+	StepCached                     // Step skipped (already done)
 )
 
 // MessageType classifies the severity of a step message.
@@ -1438,7 +1438,7 @@ type MessageType int
 
 const (
 	MessageInfo    MessageType = iota // Informational substep update
-	MessageWarning                     // Non-fatal issue
+	MessageWarning                    // Non-fatal issue
 )
 
 // CreateContainerEvent is sent on the events channel during CreateContainer.

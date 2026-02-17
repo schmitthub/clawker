@@ -231,7 +231,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
 		opts.LoopOptions, cfgGateway.Project, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, cfgGateway.Project.Loop,
+		createContainer, opts.flags, cfgGateway.Project.Loop, ios.Logger,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)

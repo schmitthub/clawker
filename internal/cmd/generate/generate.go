@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/signals"
-	"github.com/schmitthub/clawker/internal/bundler"
-	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +113,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	if opts.SkipFetch {
 		vf, err := bundler.LoadVersionsFile(versionsFile)
 		if err != nil {
-			cmdutil.PrintError(ios, "Failed to load versions.json from %s", outputDir)
+			cmdutil.PrintErrorf(ios, "Failed to load versions.json from %s", outputDir)
 			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker generate <versions...>' to fetch versions from npm",
 				fmt.Sprintf("Ensure versions.json exists in %s", outputDir),
@@ -143,7 +143,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	// Save updated versions.json
 	if err := bundler.SaveVersionsFile(versionsFile, vf); err != nil {
-		cmdutil.PrintError(ios, "Failed to save versions.json")
+		cmdutil.PrintErrorf(ios, "Failed to save versions.json")
 		return err
 	}
 
@@ -152,7 +152,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 	// Generate Dockerfiles
 	dfMgr := bundler.NewDockerfileManager(outputDir, nil)
 	if err := dfMgr.GenerateDockerfiles(vf); err != nil {
-		cmdutil.PrintError(ios, "Failed to generate Dockerfiles")
+		cmdutil.PrintErrorf(ios, "Failed to generate Dockerfiles")
 		return err
 	}
 	fmt.Fprintf(ios.ErrOut, "Generated Dockerfiles in %s\n", dfMgr.DockerfilesDir())
@@ -164,7 +164,7 @@ func showVersions(ios *iostreams.IOStreams, path string) error {
 	vf, err := bundler.LoadVersionsFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cmdutil.PrintError(ios, "No versions.json found")
+			cmdutil.PrintErrorf(ios, "No versions.json found")
 			cmdutil.PrintNextSteps(ios,
 				"Run 'clawker generate latest' to fetch the latest version",
 				"Run 'clawker generate 2.1.2' to fetch a specific version",

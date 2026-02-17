@@ -4,50 +4,50 @@ import "time"
 
 // Default configuration values.
 const (
-	DefaultMaxLoops                    = 50
-	DefaultStagnationThreshold         = 3
-	DefaultTimeoutMinutes              = 15
-	DefaultCallsPerHour                = 100
-	DefaultCompletionThreshold         = 2
-	DefaultSessionExpirationHours      = 24
-	DefaultSameErrorThreshold          = 5
-	DefaultOutputDeclineThreshold      = 70
-	DefaultMaxConsecutiveTestLoops     = 3
-	DefaultSafetyCompletionThreshold   = 5  // Force exit after N consecutive loops with completion indicators
-	DefaultLoopDelaySeconds            = 3  // Seconds to wait between loop iterations
+	DefaultMaxLoops                  = 50
+	DefaultStagnationThreshold       = 3
+	DefaultTimeoutMinutes            = 15
+	DefaultCallsPerHour              = 100
+	DefaultCompletionThreshold       = 2
+	DefaultSessionExpirationHours    = 24
+	DefaultSameErrorThreshold        = 5
+	DefaultOutputDeclineThreshold    = 70
+	DefaultMaxConsecutiveTestLoops   = 3
+	DefaultSafetyCompletionThreshold = 5 // Force exit after N consecutive loops with completion indicators
+	DefaultLoopDelaySeconds          = 3 // Seconds to wait between loop iterations
 )
 
 // Config holds loop-specific configuration.
 type Config struct {
-	MaxLoops                   int  `yaml:"max_loops" mapstructure:"max_loops"`
-	StagnationThreshold        int  `yaml:"stagnation_threshold" mapstructure:"stagnation_threshold"`
-	TimeoutMinutes             int  `yaml:"timeout_minutes" mapstructure:"timeout_minutes"`
-	AutoConfirm                bool `yaml:"auto_confirm" mapstructure:"auto_confirm"`
-	CallsPerHour               int  `yaml:"calls_per_hour" mapstructure:"calls_per_hour"`
-	CompletionThreshold        int  `yaml:"completion_threshold" mapstructure:"completion_threshold"`
-	SessionExpirationHours     int  `yaml:"session_expiration_hours" mapstructure:"session_expiration_hours"`
-	SameErrorThreshold         int  `yaml:"same_error_threshold" mapstructure:"same_error_threshold"`
-	OutputDeclineThreshold     int  `yaml:"output_decline_threshold" mapstructure:"output_decline_threshold"`
-	MaxConsecutiveTestLoops    int  `yaml:"max_consecutive_test_loops" mapstructure:"max_consecutive_test_loops"`
-	LoopDelaySeconds           int  `yaml:"loop_delay_seconds" mapstructure:"loop_delay_seconds"`
-	SafetyCompletionThreshold  int  `yaml:"safety_completion_threshold" mapstructure:"safety_completion_threshold"`
+	MaxLoops                  int  `yaml:"max_loops" mapstructure:"max_loops"`
+	StagnationThreshold       int  `yaml:"stagnation_threshold" mapstructure:"stagnation_threshold"`
+	TimeoutMinutes            int  `yaml:"timeout_minutes" mapstructure:"timeout_minutes"`
+	AutoConfirm               bool `yaml:"auto_confirm" mapstructure:"auto_confirm"`
+	CallsPerHour              int  `yaml:"calls_per_hour" mapstructure:"calls_per_hour"`
+	CompletionThreshold       int  `yaml:"completion_threshold" mapstructure:"completion_threshold"`
+	SessionExpirationHours    int  `yaml:"session_expiration_hours" mapstructure:"session_expiration_hours"`
+	SameErrorThreshold        int  `yaml:"same_error_threshold" mapstructure:"same_error_threshold"`
+	OutputDeclineThreshold    int  `yaml:"output_decline_threshold" mapstructure:"output_decline_threshold"`
+	MaxConsecutiveTestLoops   int  `yaml:"max_consecutive_test_loops" mapstructure:"max_consecutive_test_loops"`
+	LoopDelaySeconds          int  `yaml:"loop_delay_seconds" mapstructure:"loop_delay_seconds"`
+	SafetyCompletionThreshold int  `yaml:"safety_completion_threshold" mapstructure:"safety_completion_threshold"`
 }
 
 // DefaultConfig returns the default loop configuration.
 func DefaultConfig() Config {
 	return Config{
-		MaxLoops:                   DefaultMaxLoops,
-		StagnationThreshold:        DefaultStagnationThreshold,
-		TimeoutMinutes:             DefaultTimeoutMinutes,
-		AutoConfirm:                false,
-		CallsPerHour:               DefaultCallsPerHour,
-		CompletionThreshold:        DefaultCompletionThreshold,
-		SessionExpirationHours:     DefaultSessionExpirationHours,
-		SameErrorThreshold:         DefaultSameErrorThreshold,
-		OutputDeclineThreshold:     DefaultOutputDeclineThreshold,
-		MaxConsecutiveTestLoops:    DefaultMaxConsecutiveTestLoops,
-		LoopDelaySeconds:           DefaultLoopDelaySeconds,
-		SafetyCompletionThreshold:  DefaultSafetyCompletionThreshold,
+		MaxLoops:                  DefaultMaxLoops,
+		StagnationThreshold:       DefaultStagnationThreshold,
+		TimeoutMinutes:            DefaultTimeoutMinutes,
+		AutoConfirm:               false,
+		CallsPerHour:              DefaultCallsPerHour,
+		CompletionThreshold:       DefaultCompletionThreshold,
+		SessionExpirationHours:    DefaultSessionExpirationHours,
+		SameErrorThreshold:        DefaultSameErrorThreshold,
+		OutputDeclineThreshold:    DefaultOutputDeclineThreshold,
+		MaxConsecutiveTestLoops:   DefaultMaxConsecutiveTestLoops,
+		LoopDelaySeconds:          DefaultLoopDelaySeconds,
+		SafetyCompletionThreshold: DefaultSafetyCompletionThreshold,
 	}
 }
 

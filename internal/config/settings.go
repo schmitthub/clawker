@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+	"strconv"
+)
 
 // Settings represents user-level configuration stored in ~/.local/clawker/settings.yaml.
 // Settings are global and apply across all clawker projects.
@@ -235,7 +239,7 @@ func (c *MonitoringConfig) OtelCollectorInternalURL() string {
 	if port == 0 {
 		port = 4318
 	}
-	return fmt.Sprintf("http://%s:%d", internal, port)
+	return "http://" + net.JoinHostPort(internal, strconv.Itoa(port))
 }
 
 // LokiInternalURL returns the Loki OTLP push URL on the docker network.

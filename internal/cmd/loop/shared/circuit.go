@@ -15,33 +15,33 @@ import (
 //   - Safety completion: N consecutive loops with completion indicators but no EXIT_SIGNAL (safetyCompletionThreshold)
 //   - Blocked status: Trips immediately when agent reports BLOCKED
 type CircuitBreaker struct {
-	mu                      sync.Mutex
-	threshold               int
-	noProgressCount         int
-	tripped                 bool
-	tripReason              string
+	mu              sync.Mutex
+	threshold       int
+	noProgressCount int
+	tripped         bool
+	tripReason      string
 
 	// Same-error tracking
-	sameErrorThreshold      int
-	lastErrorSignature      string
-	sameErrorCount          int
+	sameErrorThreshold int
+	lastErrorSignature string
+	sameErrorCount     int
 
 	// Output decline tracking
-	outputDeclineThreshold  int // Percentage (0-100)
-	lastOutputSize          int
-	declineCount            int
+	outputDeclineThreshold int // Percentage (0-100)
+	lastOutputSize         int
+	declineCount           int
 
 	// Test loop tracking
 	maxConsecutiveTestLoops int
 	consecutiveTestLoops    int
 
 	// Completion tracking (for strict mode)
-	completionThreshold     int
+	completionThreshold int
 
 	// Safety completion tracking - force exit after N consecutive loops with completion indicators
 	// This catches cases where EXIT_SIGNAL parsing fails but Claude outputs completion-like text
-	safetyCompletionThreshold   int
-	consecutiveCompletionCount  int
+	safetyCompletionThreshold  int
+	consecutiveCompletionCount int
 }
 
 // CircuitBreakerConfig holds configuration for the circuit breaker.
@@ -72,24 +72,24 @@ func NewCircuitBreaker(threshold int) *CircuitBreaker {
 		threshold = DefaultStagnationThreshold
 	}
 	return &CircuitBreaker{
-		threshold:                   threshold,
-		sameErrorThreshold:          DefaultSameErrorThreshold,
-		outputDeclineThreshold:      DefaultOutputDeclineThreshold,
-		maxConsecutiveTestLoops:     DefaultMaxConsecutiveTestLoops,
-		completionThreshold:         DefaultCompletionThreshold,
-		safetyCompletionThreshold:   DefaultSafetyCompletionThreshold,
+		threshold:                 threshold,
+		sameErrorThreshold:        DefaultSameErrorThreshold,
+		outputDeclineThreshold:    DefaultOutputDeclineThreshold,
+		maxConsecutiveTestLoops:   DefaultMaxConsecutiveTestLoops,
+		completionThreshold:       DefaultCompletionThreshold,
+		safetyCompletionThreshold: DefaultSafetyCompletionThreshold,
 	}
 }
 
 // NewCircuitBreakerWithConfig creates a circuit breaker with full configuration.
 func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker {
 	cb := &CircuitBreaker{
-		threshold:                   cfg.StagnationThreshold,
-		sameErrorThreshold:          cfg.SameErrorThreshold,
-		outputDeclineThreshold:      cfg.OutputDeclineThreshold,
-		maxConsecutiveTestLoops:     cfg.MaxConsecutiveTestLoops,
-		completionThreshold:         cfg.CompletionThreshold,
-		safetyCompletionThreshold:   cfg.SafetyCompletionThreshold,
+		threshold:                 cfg.StagnationThreshold,
+		sameErrorThreshold:        cfg.SameErrorThreshold,
+		outputDeclineThreshold:    cfg.OutputDeclineThreshold,
+		maxConsecutiveTestLoops:   cfg.MaxConsecutiveTestLoops,
+		completionThreshold:       cfg.CompletionThreshold,
+		safetyCompletionThreshold: cfg.SafetyCompletionThreshold,
 	}
 
 	// Apply defaults for zero values
@@ -117,10 +117,10 @@ func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker {
 
 // UpdateResult contains the result of a circuit breaker update.
 type UpdateResult struct {
-	Tripped        bool
-	Reason         string
-	IsComplete     bool // True if strict completion criteria met
-	CompletionMsg  string
+	Tripped       bool
+	Reason        string
+	IsComplete    bool // True if strict completion criteria met
+	CompletionMsg string
 }
 
 // Update evaluates the status and updates the circuit breaker state.
@@ -168,7 +168,7 @@ func (cb *CircuitBreaker) UpdateWithAnalysis(status *Status, analysis *AnalysisR
 	// Check for strict completion
 	if status != nil && status.ExitSignal && status.CompletionIndicators >= cb.completionThreshold {
 		return UpdateResult{
-			IsComplete:    true,
+			IsComplete: true,
 			CompletionMsg: fmt.Sprintf("completion criteria met: EXIT_SIGNAL=true, indicators=%d (threshold=%d)",
 				status.CompletionIndicators, cb.completionThreshold),
 		}
@@ -324,15 +324,15 @@ func (cb *CircuitBreaker) State() CircuitBreakerState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return CircuitBreakerState{
-		NoProgressCount:             cb.noProgressCount,
-		Tripped:                     cb.tripped,
-		TripReason:                  cb.tripReason,
-		SameErrorCount:              cb.sameErrorCount,
-		LastErrorSignature:          cb.lastErrorSignature,
-		DeclineCount:                cb.declineCount,
-		LastOutputSize:              cb.lastOutputSize,
-		ConsecutiveTestLoops:        cb.consecutiveTestLoops,
-		ConsecutiveCompletionCount:  cb.consecutiveCompletionCount,
+		NoProgressCount:            cb.noProgressCount,
+		Tripped:                    cb.tripped,
+		TripReason:                 cb.tripReason,
+		SameErrorCount:             cb.sameErrorCount,
+		LastErrorSignature:         cb.lastErrorSignature,
+		DeclineCount:               cb.declineCount,
+		LastOutputSize:             cb.lastOutputSize,
+		ConsecutiveTestLoops:       cb.consecutiveTestLoops,
+		ConsecutiveCompletionCount: cb.consecutiveCompletionCount,
 	}
 }
 
@@ -353,13 +353,13 @@ func (cb *CircuitBreaker) RestoreState(state CircuitBreakerState) {
 
 // CircuitBreakerState holds the state for persistence.
 type CircuitBreakerState struct {
-	NoProgressCount             int    `json:"no_progress_count"`
-	Tripped                     bool   `json:"tripped"`
-	TripReason                  string `json:"trip_reason,omitempty"`
-	SameErrorCount              int    `json:"same_error_count"`
-	LastErrorSignature          string `json:"last_error_signature,omitempty"`
-	DeclineCount                int    `json:"decline_count"`
-	LastOutputSize              int    `json:"last_output_size"`
-	ConsecutiveTestLoops        int    `json:"consecutive_test_loops"`
-	ConsecutiveCompletionCount  int    `json:"consecutive_completion_count"`
+	NoProgressCount            int    `json:"no_progress_count"`
+	Tripped                    bool   `json:"tripped"`
+	TripReason                 string `json:"trip_reason,omitempty"`
+	SameErrorCount             int    `json:"same_error_count"`
+	LastErrorSignature         string `json:"last_error_signature,omitempty"`
+	DeclineCount               int    `json:"decline_count"`
+	LastOutputSize             int    `json:"last_output_size"`
+	ConsecutiveTestLoops       int    `json:"consecutive_test_loops"`
+	ConsecutiveCompletionCount int    `json:"consecutive_completion_count"`
 }

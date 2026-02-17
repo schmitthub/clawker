@@ -17,14 +17,6 @@ type Term struct {
 	is256Enabled bool
 	hasTrueColor bool
 	width        int
-
-	// widthOverride allows callers to override the detected terminal width.
-	// Reserved for future use (e.g., responsive table formatting).
-	widthOverride int
-
-	// widthPercent expresses a percentage of terminal width for layout calculations.
-	// Reserved for future use (e.g., column width allocation in table output).
-	widthPercent int
 }
 
 // FromEnv creates a Term by reading from the real system environment.

@@ -1,20 +1,3 @@
-# SARIF uploads (re-enable when repo goes public):
-#
-#   permissions:
-#     security-events: write
-#     actions: read
-#
-#   In golangci-lint step, add:
-#     args: --output.sarif.path=golangci-lint.sarif
-#
-#   After golangci-lint step, add:
-#     - name: Upload golangci-lint SARIF
-#       if: always() && hashFiles('golangci-lint.sarif') != ''
-#       uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
-#       with:
-#         sarif_file: golangci-lint.sarif
-#         category: golangci-lint
-
 name: Lint
 
 on:
@@ -22,6 +5,8 @@ on:
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
 
 jobs:
   golangci-lint:
@@ -39,3 +24,11 @@ jobs:
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
         with:
           version: v2.9.0
+          args: --output.sarif.path=golangci-lint.sarif
+
+      - name: Upload golangci-lint SARIF
+        if: always() && hashFiles('golangci-lint.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
+        with:
+          sarif_file: golangci-lint.sarif
+          category: golangci-lint

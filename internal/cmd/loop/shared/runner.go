@@ -175,6 +175,10 @@ func NewRunnerWith(client *docker.Client, store *SessionStore, history *HistoryS
 // Each iteration creates a new container via opts.CreateContainer, attaches,
 // parses stream-json output, and cleans up the container.
 func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
+	if opts.Logger == nil {
+		return nil, fmt.Errorf("opts.Logger is required")
+	}
+
 	// Set defaults
 	if opts.MaxLoops <= 0 {
 		opts.MaxLoops = DefaultMaxLoops
