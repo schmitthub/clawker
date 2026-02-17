@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 func TestBuildWorktreeGitMount_Success(t *testing.T) {
@@ -120,6 +121,36 @@ func TestBuildWorktreeGitMount_SymlinkResolution(t *testing.T) {
 	if m.Target != expectedGitDir {
 		t.Errorf("mount.Target = %q, want %q (should match resolved Source)", m.Target, expectedGitDir)
 	}
+}
+
+func TestResolveIgnoreFile(t *testing.T) {
+	t.Run("prefers project root when available", func(t *testing.T) {
+		projectRoot := "/home/user/myproject"
+		hostPath := "/home/user/myproject/worktree"
+
+		got := resolveIgnoreFile(projectRoot, hostPath)
+		want := filepath.Join(projectRoot, config.IgnoreFileName)
+		if got != want {
+			t.Errorf("resolveIgnoreFile(%q, %q) = %q, want %q", projectRoot, hostPath, got, want)
+		}
+	})
+
+	t.Run("falls back to hostPath when project root is empty", func(t *testing.T) {
+		hostPath := "/home/user/myproject"
+
+		got := resolveIgnoreFile("", hostPath)
+		want := filepath.Join(hostPath, config.IgnoreFileName)
+		if got != want {
+			t.Errorf("resolveIgnoreFile(%q, %q) = %q, want %q", "", hostPath, got, want)
+		}
+	})
+
+	t.Run("uses correct ignore filename", func(t *testing.T) {
+		got := resolveIgnoreFile("/root", "/host")
+		if !strings.HasSuffix(got, ".clawkerignore") {
+			t.Errorf("expected path to end with .clawkerignore, got %q", got)
+		}
+	})
 }
 
 // containsAll checks if s contains all the given substrings

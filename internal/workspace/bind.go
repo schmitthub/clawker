@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
@@ -42,9 +44,12 @@ func (s *BindStrategy) Prepare(ctx context.Context, cli *docker.Client) error {
 	return nil
 }
 
-// GetMounts returns the Docker mount configuration
-func (s *BindStrategy) GetMounts() []mount.Mount {
-	return []mount.Mount{
+// GetMounts returns the Docker mount configuration.
+// In addition to the primary bind mount, generates tmpfs overlay mounts for
+// directories matching .clawkerignore patterns. File-level patterns (*.env,
+// *.pem) cannot be enforced in bind mode — only directory-level masking.
+func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
+	mounts := []mount.Mount{
 		{
 			Type:   mount.TypeBind,
 			Source: s.config.HostPath,
@@ -55,6 +60,26 @@ func (s *BindStrategy) GetMounts() []mount.Mount {
 			},
 		},
 	}
+
+	// Overlay tmpfs mounts on ignored directories to mask them inside the container.
+	// File-level patterns (*.env, *.pem) cannot be enforced with overlays.
+	if len(s.config.IgnorePatterns) > 0 {
+		dirs, err := docker.FindIgnoredDirs(s.config.HostPath, s.config.IgnorePatterns)
+		if err != nil {
+			return nil, fmt.Errorf("scanning for ignored directories: %w", err)
+		}
+		for _, dir := range dirs {
+			mounts = append(mounts, mount.Mount{
+				Type:   mount.TypeTmpfs,
+				Target: filepath.Join(s.config.RemotePath, dir),
+			})
+		}
+		if len(dirs) > 0 {
+			logger.Debug().Int("overlays", len(dirs)).Msg("added tmpfs overlays for ignored directories")
+		}
+	}
+
+	return mounts, nil
 }
 
 // Cleanup removes resources (no-op for bind mode)

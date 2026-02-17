@@ -14,7 +14,7 @@ type Strategy interface {
     Name() string
     Mode() config.Mode
     Prepare(ctx context.Context, cli *docker.Client) error
-    GetMounts() []mount.Mount
+    GetMounts() ([]mount.Mount, error)
     Cleanup(ctx context.Context, cli *docker.Client) error
     ShouldPreserve() bool
 }
@@ -24,15 +24,15 @@ type Config struct {
     RemotePath     string   // Container path
     ProjectName    string   // For volume naming
     AgentName      string   // For agent-specific volumes
-    IgnorePatterns []string // Patterns to exclude (snapshot mode)
+    IgnorePatterns []string // Patterns to exclude (snapshot + bind modes)
 }
 ```
 
 ### Strategies
 
-`BindStrategy` — Direct host mount (live sync). Prepare/Cleanup are no-ops. `ShouldPreserve()` returns true.
+`BindStrategy` — Direct host mount (live sync). `GetMounts()` generates tmpfs overlays for directories matching `.clawkerignore` patterns (file-level patterns like `*.env` cannot be enforced in bind mode). Prepare/Cleanup are no-ops. `ShouldPreserve()` returns true.
 
-`SnapshotStrategy` — Ephemeral volume copy (isolated). Creates volume and copies files on Prepare. `ShouldPreserve()` returns false. Extra methods: `VolumeName() string`, `WasCreated() bool`.
+`SnapshotStrategy` — Ephemeral volume copy (isolated). Creates volume and copies files on Prepare. `IgnorePatterns` are applied during tar archive creation to exclude matching files/directories. `ShouldPreserve()` returns false. Extra methods: `VolumeName() string`, `WasCreated() bool`.
 
 ### Constructors
 
@@ -66,7 +66,7 @@ func EnsureShareDir() (string, error)
 func GetShareVolumeMount(hostPath string) mount.Mount
 ```
 
-`SetupMounts` is the main entry point -- combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `resolveIgnoreFile` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved from `ProjectRootDir` first, falling back to `WorkDir`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 `ConfigVolumeResult` tracks which config volumes were newly created vs pre-existing (`ConfigCreated`, `HistoryCreated` bool fields). Returned by `EnsureConfigVolumes` for use by container init orchestration. When `ConfigCreated` is true, callers should run `opts.InitContainerConfig` to populate the volume.
 

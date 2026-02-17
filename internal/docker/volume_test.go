@@ -194,6 +194,132 @@ func TestShouldIgnore(t *testing.T) {
 	}
 }
 
+func TestFindIgnoredDirs(t *testing.T) {
+	// Helper to create a directory tree
+	mkdirs := func(t *testing.T, root string, dirs ...string) {
+		t.Helper()
+		for _, d := range dirs {
+			if err := os.MkdirAll(filepath.Join(root, d), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	t.Run("matches directory patterns", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "node_modules/foo", "src", "dist", ".venv/lib")
+
+		dirs, err := FindIgnoredDirs(root, []string{"node_modules/", "dist/", ".venv/"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := map[string]bool{"node_modules": true, "dist": true, ".venv": true}
+		got := make(map[string]bool)
+		for _, d := range dirs {
+			got[d] = true
+		}
+		for w := range want {
+			if !got[w] {
+				t.Errorf("expected %q in results, got %v", w, dirs)
+			}
+		}
+		if got["src"] {
+			t.Error("src should not be matched")
+		}
+	})
+
+	t.Run("skips .git directory", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, ".git/objects", "node_modules")
+
+		// Even with a pattern that would match .git, it should be skipped
+		dirs, err := FindIgnoredDirs(root, []string{".git/", "node_modules/"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, d := range dirs {
+			if d == ".git" {
+				t.Error(".git should never be in results (bind mode needs git)")
+			}
+		}
+		found := false
+		for _, d := range dirs {
+			if d == "node_modules" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected node_modules in results")
+		}
+	})
+
+	t.Run("skips recursion into matched directories", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "node_modules/deep/nested")
+
+		dirs, err := FindIgnoredDirs(root, []string{"node_modules/"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(dirs) != 1 {
+			t.Fatalf("expected 1 result, got %d: %v", len(dirs), dirs)
+		}
+		if dirs[0] != "node_modules" {
+			t.Errorf("expected node_modules, got %q", dirs[0])
+		}
+	})
+
+	t.Run("returns empty for no patterns", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "node_modules", "dist")
+
+		dirs, err := FindIgnoredDirs(root, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(dirs) != 0 {
+			t.Errorf("expected empty, got %v", dirs)
+		}
+	})
+
+	t.Run("returns empty when no directories match", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "src", "lib")
+
+		dirs, err := FindIgnoredDirs(root, []string{"node_modules/", "dist/"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(dirs) != 0 {
+			t.Errorf("expected empty, got %v", dirs)
+		}
+	})
+
+	t.Run("matches patterns without trailing slash", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "vendor/pkg", "build/output")
+
+		dirs, err := FindIgnoredDirs(root, []string{"vendor", "build"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := map[string]bool{"vendor": true, "build": true}
+		got := make(map[string]bool)
+		for _, d := range dirs {
+			got[d] = true
+		}
+		for w := range want {
+			if !got[w] {
+				t.Errorf("expected %q in results, got %v", w, dirs)
+			}
+		}
+	})
+}
+
 func TestLoadIgnorePatterns(t *testing.T) {
 	t.Run("file not found returns empty slice", func(t *testing.T) {
 		patterns, err := LoadIgnorePatterns(filepath.Join(t.TempDir(), "nonexistent"))

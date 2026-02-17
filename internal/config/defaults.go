@@ -225,7 +225,9 @@ projects: {}
 
 // DefaultIgnoreFile returns the default .clawkerignore content
 const DefaultIgnoreFile = `# Clawker Ignore File
-# Files matching these patterns will not be copied in snapshot mode
+# Snapshot mode: matching files/directories are excluded from the copy
+# Bind mode: matching directories are masked with empty tmpfs overlays
+#            (file-level patterns like *.env cannot be enforced in bind mode)
 # Syntax follows .gitignore conventions
 
 # Dependencies

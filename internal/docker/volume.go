@@ -383,3 +383,81 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 
 	return patterns, scanner.Err()
 }
+
+// FindIgnoredDirs walks hostPath and returns relative paths of directories
+// matching the given ignore patterns. Used by bind mode to generate tmpfs
+// overlay mounts that mask ignored directories inside the container.
+//
+// Key differences from snapshot's shouldIgnore:
+//   - Only returns directories (file patterns like *.log are not actionable)
+//   - Does NOT mask .git/ (bind mode needs git for live development)
+//   - Skips recursion into matched directories (performance)
+func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return nil, nil
+	}
+
+	var dirs []string
+	err := filepath.Walk(hostPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Only interested in directories
+		if !info.IsDir() {
+			return nil
+		}
+
+		// Skip root directory itself
+		rel, err := filepath.Rel(hostPath, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Never mask .git — bind mode needs it for live development
+		if rel == ".git" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+			return filepath.SkipDir
+		}
+
+		// Check user patterns (directory-aware matching)
+		if shouldIgnoreForBind(rel, patterns) {
+			dirs = append(dirs, rel)
+			return filepath.SkipDir // don't recurse into matched directories
+		}
+
+		return nil
+	})
+
+	return dirs, err
+}
+
+// shouldIgnoreForBind checks if a directory path matches any of the given patterns.
+// Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it)
+// and only matches directory entries.
+func shouldIgnoreForBind(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+
+		// Skip empty lines and comments
+		if pattern == "" || strings.HasPrefix(pattern, "#") {
+			continue
+		}
+
+		// Handle negation patterns (not fully implemented)
+		if strings.HasPrefix(pattern, "!") {
+			continue
+		}
+
+		// Strip trailing slash for matching (directory patterns like "node_modules/")
+		cleanPattern := strings.TrimSuffix(pattern, "/")
+
+		if matchPattern(path, cleanPattern) {
+			return true
+		}
+	}
+
+	return false
+}
