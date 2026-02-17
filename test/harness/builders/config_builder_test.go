@@ -302,13 +302,11 @@ func TestSecurityConfigPresets(t *testing.T) {
 		},
 		{
 			name:   "SecurityWithFirewallDomains",
-			preset: SecurityWithFirewallDomains([]string{"api.openai.com"}, []string{"blocked.com"}, nil),
+			preset: SecurityWithFirewallDomains([]string{"api.openai.com"}),
 			verify: func(t *testing.T, cfg config.SecurityConfig) {
 				require.NotNil(t, cfg.Firewall)
 				assert.True(t, cfg.Firewall.Enable)
 				assert.Equal(t, []string{"api.openai.com"}, cfg.Firewall.AddDomains)
-				assert.Equal(t, []string{"blocked.com"}, cfg.Firewall.RemoveDomains)
-				assert.Nil(t, cfg.Firewall.OverrideDomains)
 			},
 		},
 		{

@@ -183,11 +183,9 @@ func (s *IPRangeSource) IsRequired() bool {
 
 // FirewallConfig defines network firewall settings
 type FirewallConfig struct {
-	Enable          bool            `yaml:"enable" mapstructure:"enable"`
-	AddDomains      []string        `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
-	RemoveDomains   []string        `yaml:"remove_domains,omitempty" mapstructure:"remove_domains"`
-	OverrideDomains []string        `yaml:"override_domains,omitempty" mapstructure:"override_domains"`
-	IPRangeSources  []IPRangeSource `yaml:"ip_range_sources,omitempty" mapstructure:"ip_range_sources"`
+	Enable         bool            `yaml:"enable" mapstructure:"enable"`
+	AddDomains     []string        `yaml:"add_domains,omitempty" mapstructure:"add_domains"`
+	IPRangeSources []IPRangeSource `yaml:"ip_range_sources,omitempty" mapstructure:"ip_range_sources"`
 }
 
 // FirewallEnabled returns whether the firewall should be enabled.
@@ -196,28 +194,16 @@ func (f *FirewallConfig) FirewallEnabled() bool {
 	return f != nil && f.Enable
 }
 
-// GetFirewallDomains resolves the final domain list based on config mode.
-// If OverrideDomains is set, returns it directly (complete replacement).
-// Otherwise, applies AddDomains and RemoveDomains to the default list.
-func (f *FirewallConfig) GetFirewallDomains(defaults []string) []string {
+// GetFirewallDomains returns required domains merged with user's add_domains.
+func (f *FirewallConfig) GetFirewallDomains(requiredDomains []string) []string {
 	if f == nil {
-		return defaults
+		return requiredDomains
 	}
 
-	// Override mode: return override list directly
-	if len(f.OverrideDomains) > 0 {
-		return f.OverrideDomains
-	}
-
-	// Build a set from defaults
+	// Build a set from required domains
 	domainSet := make(map[string]bool)
-	for _, d := range defaults {
+	for _, d := range requiredDomains {
 		domainSet[d] = true
-	}
-
-	// Remove domains
-	for _, d := range f.RemoveDomains {
-		delete(domainSet, d)
 	}
 
 	// Add domains
@@ -233,11 +219,6 @@ func (f *FirewallConfig) GetFirewallDomains(defaults []string) []string {
 	sort.Strings(result)
 
 	return result
-}
-
-// IsOverrideMode returns true if using override_domains (complete replacement mode).
-func (f *FirewallConfig) IsOverrideMode() bool {
-	return f != nil && len(f.OverrideDomains) > 0
 }
 
 type SecurityConfig struct {

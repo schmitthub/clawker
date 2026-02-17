@@ -48,17 +48,10 @@ func IsKnownIPRangeSource(name string) bool {
 
 // GetIPRangeSources returns the IP range sources to use.
 // If IPRangeSources is explicitly set (even to empty slice), returns it.
-// If OverrideDomains is set (override mode), returns empty slice (user controls everything).
 // Otherwise returns DefaultIPRangeSources().
 func (f *FirewallConfig) GetIPRangeSources() []IPRangeSource {
 	if f == nil {
 		return DefaultIPRangeSources()
-	}
-
-	// If override_domains is set, skip IP range sources entirely
-	// (user is in full control mode)
-	if len(f.OverrideDomains) > 0 {
-		return []IPRangeSource{}
 	}
 
 	// If ip_range_sources is explicitly configured, use it

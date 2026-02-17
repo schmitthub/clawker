@@ -574,8 +574,8 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:          true,
-		OverrideDomains: []string{"example.com"},
+		Enable:     true,
+		AddDomains: []string{"example.com"},
 	}
 
 	result, err := CreateContainer(context.Background(),
@@ -608,8 +608,8 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:          true,
-		OverrideDomains: []string{"example.com"},
+		Enable:     true,
+		AddDomains: []string{"example.com"},
 	}
 
 	result, err := CreateContainer(context.Background(),

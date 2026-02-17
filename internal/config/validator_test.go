@@ -946,7 +946,7 @@ func TestValidatorIPRangeSources(t *testing.T) {
 	}
 }
 
-func TestValidatorIPRangeSourcesWithOverrideWarning(t *testing.T) {
+func TestValidatorFirewallWithAddDomainsAndIPRangeSources(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "clawker-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -959,21 +959,20 @@ func TestValidatorIPRangeSourcesWithOverrideWarning(t *testing.T) {
 	cfg.Version = "1"
 	cfg.Project = "test-project"
 	cfg.Security.Firewall = &FirewallConfig{
-		Enable:          true,
-		OverrideDomains: []string{"custom.com"},
-		IPRangeSources:  []IPRangeSource{{Name: "github"}},
+		Enable:         true,
+		AddDomains:     []string{"custom.com"},
+		IPRangeSources: []IPRangeSource{{Name: "github"}},
 	}
 
-	// Validation should pass, but we expect a warning
+	// Validation should pass with no warnings
 	err = validator.Validate(cfg)
 	if err != nil {
 		t.Errorf("Validate() returned error: %v", err)
 	}
 
-	// Check that a warning was generated
 	warnings := validator.Warnings()
-	if len(warnings) == 0 {
-		t.Error("expected a warning about ip_range_sources being ignored in override mode")
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got: %v", warnings)
 	}
 }
 

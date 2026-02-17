@@ -121,14 +121,6 @@ func TestFirewallConfig_GetIPRangeSources(t *testing.T) {
 			want: []IPRangeSource{},
 		},
 		{
-			name: "override mode skips IP range sources",
-			config: &FirewallConfig{
-				OverrideDomains: []string{"custom.com"},
-				IPRangeSources:  []IPRangeSource{{Name: "github"}},
-			},
-			want: []IPRangeSource{},
-		},
-		{
 			name: "custom source with URL",
 			config: &FirewallConfig{
 				IPRangeSources: []IPRangeSource{

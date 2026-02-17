@@ -133,6 +133,7 @@ security:
       - code.claude.com
       - mcp.deepwiki.com
       - mcp.context7.com
+      - pypi.org
   # Git credential forwarding
   git_credentials:
     forward_https: true

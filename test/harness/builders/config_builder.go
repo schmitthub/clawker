@@ -200,13 +200,11 @@ func SecurityWithDockerSocket() config.SecurityConfig {
 }
 
 // SecurityWithFirewallDomains returns a security config with custom firewall domains.
-func SecurityWithFirewallDomains(addDomains []string, removeDomains []string, overrideDomains []string) config.SecurityConfig {
+func SecurityWithFirewallDomains(addDomains []string) config.SecurityConfig {
 	return config.SecurityConfig{
 		Firewall: &config.FirewallConfig{
-			Enable:          true,
-			AddDomains:      addDomains,
-			RemoveDomains:   removeDomains,
-			OverrideDomains: overrideDomains,
+			Enable:     true,
+			AddDomains: addDomains,
 		},
 	}
 }

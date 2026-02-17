@@ -49,22 +49,6 @@ func TestRuntimeEnv_FirewallDomains(t *testing.T) {
 	}
 	require.True(t, found, "expected CLAWKER_FIREWALL_DOMAINS env var")
 
-	// Should NOT have override flag
-	for _, e := range env {
-		assert.NotEqual(t, "CLAWKER_FIREWALL_OVERRIDE=true", e,
-			"should not set override when not in override mode")
-	}
-}
-
-func TestRuntimeEnv_FirewallOverride(t *testing.T) {
-	env, err := RuntimeEnv(RuntimeEnvOpts{
-		FirewallEnabled:  true,
-		FirewallDomains:  []string{"only-this.com"},
-		FirewallOverride: true,
-	})
-	require.NoError(t, err)
-
-	assert.Contains(t, env, "CLAWKER_FIREWALL_OVERRIDE=true")
 }
 
 func TestRuntimeEnv_FirewallDisabled(t *testing.T) {
