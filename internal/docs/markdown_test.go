@@ -162,6 +162,122 @@ func TestGenMarkdownTreeCustom(t *testing.T) {
 	checkStringContains(t, string(content), "---\nlayout: docs\n---")
 }
 
+// --- Website (MDX-safe) generation tests ---
+
+func TestEscapeMDXProse(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no angle brackets",
+			input: "Simple text without placeholders",
+			want:  "Simple text without placeholders",
+		},
+		{
+			name:  "single placeholder",
+			input: "Container name is clawker.<project>.<agent>",
+			want:  "Container name is clawker.`<project>`.`<agent>`",
+		},
+		{
+			name:  "multiple placeholders",
+			input: "Resolves <project> and <agent> from context",
+			want:  "Resolves `<project>` and `<agent>` from context",
+		},
+		{
+			name:  "hyphenated placeholder",
+			input: "Use <my-value> as the argument",
+			want:  "Use `<my-value>` as the argument",
+		},
+		{
+			name:  "html-like tag is escaped",
+			input: "Output is <div> formatted",
+			want:  "Output is `<div>` formatted",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "path with angle brackets",
+			input: "$CLAWKER_HOME/projects/<project>/worktrees/",
+			want:  "$CLAWKER_HOME/projects/`<project>`/worktrees/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EscapeMDXProse(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGenMarkdownWebsite(t *testing.T) {
+	// Create a command with angle brackets in descriptions
+	root := &cobra.Command{
+		Use:   "clawker",
+		Short: "Claude Code in Docker containers",
+	}
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run a container for <project>.<agent>",
+		Long:  "When --agent is provided, the container is named clawker.<project>.<agent>",
+		RunE:  func(cmd *cobra.Command, args []string) error { return nil },
+		Example: `  clawker run -it --agent dev @
+  clawker run --detach --agent test @`,
+	}
+	root.AddCommand(runCmd)
+
+	buf := new(bytes.Buffer)
+	err := GenMarkdownWebsite(runCmd, buf, defaultLinkHandler)
+	require.NoError(t, err)
+
+	output := buf.String()
+
+	// Short description should have escaped angle brackets
+	checkStringContains(t, output, "Run a container for `<project>`.`<agent>`")
+
+	// Long description should have escaped angle brackets
+	checkStringContains(t, output, "clawker.`<project>`.`<agent>`")
+
+	// Examples in code block should NOT be escaped (they're inside ```)
+	checkStringContains(t, output, "clawker run -it --agent dev @")
+}
+
+func TestGenMarkdownTreeWebsite(t *testing.T) {
+	root := &cobra.Command{
+		Use:   "clawker",
+		Short: "Claude Code in Docker containers",
+	}
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run a container for <project>.<agent>",
+		Long:  "When --agent is provided, the container is named clawker.<project>.<agent>",
+		RunE:  func(cmd *cobra.Command, args []string) error { return nil },
+	}
+	root.AddCommand(runCmd)
+
+	dir := t.TempDir()
+	prepender := func(filename string) string {
+		return "---\ntitle: test\n---\n\n"
+	}
+
+	err := GenMarkdownTreeWebsite(root, dir, prepender, defaultLinkHandler)
+	require.NoError(t, err)
+
+	// Read the run command file and verify escaping
+	content, err := os.ReadFile(filepath.Join(dir, "clawker_run.md"))
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	checkStringContains(t, contentStr, "---\ntitle: test\n---")
+	checkStringContains(t, contentStr, "`<project>`")
+	checkStringContains(t, contentStr, "`<agent>`")
+}
+
 func TestCmdManualPath(t *testing.T) {
 	t.Run("root command", func(t *testing.T) {
 		cmd := &cobra.Command{Use: "clawker"}

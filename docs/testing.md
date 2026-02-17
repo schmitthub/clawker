@@ -1,3 +1,8 @@
+---
+title: "Testing Guide"
+description: "Test strategy, how to run tests, golden files, and writing new tests"
+---
+
 # Testing Guide
 
 ## Overview

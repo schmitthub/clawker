@@ -33,11 +33,11 @@ func TestRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(manContent), `\fBclawker container run`)
 
-	// Verify markdown with Jekyll front matter
+	// Verify markdown with Mintlify front matter
 	mdContent, err := os.ReadFile(filepath.Join(dir, "cli-reference", "clawker_container_run.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(mdContent), "## clawker container run")
-	require.Contains(t, string(mdContent), "layout: manual")
+	require.Contains(t, string(mdContent), `title: "clawker container run"`)
 }
 
 func TestRunValidation(t *testing.T) {
@@ -111,46 +111,40 @@ func TestRunAllFormats(t *testing.T) {
 	}
 }
 
-func TestJekyllFilePrepender(t *testing.T) {
+func TestMintlifyFilePrepender(t *testing.T) {
 	tests := []struct {
-		name     string
-		filename string
-		wantPath string
-		wantName string
+		name      string
+		filename  string
+		wantTitle string
 	}{
 		{
-			name:     "root command",
-			filename: "/docs/clawker.md",
-			wantPath: "/cli/clawker/",
-			wantName: "clawker",
+			name:      "root command",
+			filename:  "/docs/clawker.md",
+			wantTitle: `title: "clawker"`,
 		},
 		{
-			name:     "subcommand",
-			filename: "/docs/clawker_container.md",
-			wantPath: "/cli/clawker/container/",
-			wantName: "clawker container",
+			name:      "subcommand",
+			filename:  "/docs/clawker_container.md",
+			wantTitle: `title: "clawker container"`,
 		},
 		{
-			name:     "deep subcommand",
-			filename: "/docs/clawker_container_run.md",
-			wantPath: "/cli/clawker/container/run/",
-			wantName: "clawker container run",
+			name:      "deep subcommand",
+			filename:  "/docs/clawker_container_run.md",
+			wantTitle: `title: "clawker container run"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := jekyllFilePrepender(tt.filename)
+			result := mintlifyFilePrepender(tt.filename)
 
 			require.Contains(t, result, "---")
-			require.Contains(t, result, "layout: manual")
-			require.Contains(t, result, "permalink: "+tt.wantPath)
-			require.Contains(t, result, "title: "+tt.wantName)
+			require.Contains(t, result, tt.wantTitle)
 		})
 	}
 }
 
-func TestJekyllLinkHandler(t *testing.T) {
+func TestMintlifyLinkHandler(t *testing.T) {
 	tests := []struct {
 		name    string
 		cmdPath string
@@ -159,23 +153,23 @@ func TestJekyllLinkHandler(t *testing.T) {
 		{
 			name:    "root command",
 			cmdPath: "clawker",
-			want:    "clawker.md",
+			want:    "clawker",
 		},
 		{
 			name:    "subcommand",
 			cmdPath: "clawker container",
-			want:    "clawker_container.md",
+			want:    "clawker_container",
 		},
 		{
 			name:    "deep subcommand",
 			cmdPath: "clawker container run",
-			want:    "clawker_container_run.md",
+			want:    "clawker_container_run",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := jekyllLinkHandler(tt.cmdPath)
+			result := mintlifyLinkHandler(tt.cmdPath)
 			require.Equal(t, tt.want, result)
 		})
 	}
@@ -203,15 +197,14 @@ func TestRunMarkdownOnly(t *testing.T) {
 	_, err = os.Stat(rootFile)
 	require.NoError(t, err, "clawker.md should exist")
 
-	// Verify content has expected structure (no Jekyll front matter)
+	// Verify content has expected structure (no front matter)
 	content, err := os.ReadFile(rootFile)
 	require.NoError(t, err)
 	require.Contains(t, string(content), "## clawker")
-	// Should NOT have Jekyll front matter
-	require.False(t, strings.HasPrefix(string(content), "---"), "should not have Jekyll front matter without --website")
+	require.False(t, strings.HasPrefix(string(content), "---"), "should not have front matter without --website")
 }
 
-func TestRunJekyllWebsite(t *testing.T) {
+func TestRunWebsite(t *testing.T) {
 	dir := t.TempDir()
 
 	args := []string{
@@ -224,14 +217,12 @@ func TestRunJekyllWebsite(t *testing.T) {
 	err := run(args)
 	require.NoError(t, err)
 
-	// Verify Jekyll front matter in generated files
+	// Verify Mintlify front matter in generated files
 	rootFile := filepath.Join(dir, "cli-reference", "clawker.md")
 	content, err := os.ReadFile(rootFile)
 	require.NoError(t, err)
 
 	contentStr := string(content)
-	require.True(t, strings.HasPrefix(contentStr, "---"), "should start with Jekyll front matter")
-	require.Contains(t, contentStr, "layout: manual")
-	require.Contains(t, contentStr, "permalink:")
-	require.Contains(t, contentStr, "title: clawker")
+	require.True(t, strings.HasPrefix(contentStr, "---"), "should start with Mintlify front matter")
+	require.Contains(t, contentStr, `title: "clawker"`)
 }

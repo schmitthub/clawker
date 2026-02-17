@@ -1,0 +1,69 @@
+/* clawker.dev design alignment — dark terminal aesthetic with amber accents */
+
+/* ── Surface colors ─────────────────────────────────────────────────── */
+
+/* Sidebar */
+#sidebar,
+.sidebar,
+[class*="sidebar"] nav {
+  background: #111113 !important;
+}
+
+/* Navbar — glassmorphism */
+#navbar,
+nav[class*="navbar"],
+header[class*="navbar"],
+[class*="TopbarContainer"] {
+  background: rgba(9, 9, 11, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* Footer */
+footer,
+[class*="footer"] {
+  background: #111113 !important;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+
+[class*="Card"],
+.card,
+[class*="card-"] {
+  background: #111113 !important;
+  border-color: rgba(139, 139, 158, 0.15) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+[class*="Card"]:hover,
+.card:hover,
+[class*="card-"]:hover {
+  border-color: rgba(245, 158, 11, 0.4) !important;
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.08) !important;
+}
+
+/* ── Code blocks ────────────────────────────────────────────────────── */
+
+pre,
+pre[class*="code"],
+[class*="codeblock"],
+[class*="CodeBlock"] {
+  background: #1a1a1f !important;
+}
+
+code {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", monospace !important;
+}
+
+/* ── Borders ────────────────────────────────────────────────────────── */
+
+[class*="sidebar"] nav,
+#sidebar {
+  border-color: rgba(139, 139, 158, 0.15) !important;
+}
+
+nav[class*="navbar"],
+header[class*="navbar"],
+[class*="TopbarContainer"] {
+  border-color: rgba(139, 139, 158, 0.15) !important;
+}

@@ -123,7 +123,9 @@ go build -o bin/clawker ./cmd/clawker  # Build CLI
 make fawker                               # Build fawker demo CLI (faked deps, no Docker)
 make test                                 # Unit tests (no Docker, excludes test/cli,internals,agents)
 ./bin/clawker --debug run @              # Debug logging
-go run ./cmd/gen-docs --doc-path docs --markdown  # Regenerate CLI docs
+go run ./cmd/gen-docs --doc-path docs --markdown            # Regenerate CLI docs
+go run ./cmd/gen-docs --doc-path docs --markdown --website   # Regenerate CLI docs for Mintlify (MDX-safe + frontmatter)
+npx mintlify dev --docs-directory docs                       # Local Mintlify preview (http://localhost:3000)
 
 # Fawker demo CLI (visual UAT without Docker)
 ./bin/fawker image build                          # Default scenario (multi-stage)
@@ -349,6 +351,24 @@ security:
 - `.serena/memories/` — Active work-in-progress tracking
 
 **Critical**: After code changes, update README.md (user-facing), CLAUDE.md (developer-facing), and memories as appropriate.
+
+### Mintlify Documentation Site (docs.clawker.dev)
+
+User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in the `docs/` directory.
+
+- `docs/docs.json` — Mintlify site config (theme, nav, colors, integrations)
+- `docs/index.mdx` — Homepage
+- `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
+- `docs/cli-reference/*.md` — Auto-generated CLI reference (82 files, **never edit directly**)
+- `docs/architecture.md`, `docs/design.md`, `docs/testing.md` — Developer docs with Mintlify frontmatter
+
+**Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
+- `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter
+- Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`)
+
+**Local preview**: `npx mintlify dev --docs-directory docs` (requires Node.js)
+
+**Deployment**: Mintlify-hosted with GitHub App auto-deploy. Custom domain via Cloudflare CNAME → `cname.vercel-dns.com`.
 
 ## Documentation Maintenance
 

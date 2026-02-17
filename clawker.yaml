@@ -45,24 +45,17 @@ build:
             && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
     user_run:
       - cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - cmd: uv tool install pre-commit --with pre-commit-uv
       - cmd: /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
       - cmd: /usr/local/go/bin/go install gotest.tools/gotestsum@latest
+      - cmd: /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
   inject:
     # after_from: # docker instructions to run after the base image FROM instruction
     # after_packages: # docker instructions to run after installing system packages
     # after_user_setup: # docker instructions to run after creation of the non-root user but before switching to it
     after_user_switch: ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin" # docker instructions to run after switching to the non-root user
-    after_claude_install: |
-      RUN claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
-      Run # Currently you can't run docker mcp client connect inside a container due to a check docker does to see if docker desktop is running. see: https://github.com/docker/mcp-gateway/issues/112
-        # Install Docker MCP
-        # ARG DOCKER_MCP_VERSION=0.35.0
-        # RUN ARCH=$(dpkg --print-architecture) && \
-        #   mkdir -p /home/node/.docker/cli-plugins && \
-        #   curl -fsSL "https://github.com/docker/mcp-gateway/releases/download/v${DOCKER_MCP_VERSION}/docker-mcp-linux-${ARCH}.tar.gz" | tar -C ~/.docker/cli-plugins -xzf - && \
-        #   chmod +x /home/node/.docker/cli-plugins/docker-mcp
-        # RUN docker mcp client connect claude-code
+    # after_claude_install: 
     # before_entrypoint: # docker instructions to run before the container entrypoint
 
 agent:
@@ -74,16 +67,15 @@ agent:
   # visual: "vim"    # defaults to "nano" if not set
 
   # Environment variable injection (precedence: env_file < from_env < env)
-#  env_file:
-#    - ".env"
+  #  env_file:
+  #    - ".env"
   # from_env: passthrough host env vars by name (unset vars skipped with warning)
   from_env:
     - GH_TOKEN
-    - IDONTEXIST
     - CONTEXT7_API_KEY
   # env: static key-value pairs (highest precedence, always win)
-  env:
-    FOO: poo
+  # env:
+  #   FOO: bar
   claude_code:
     # Use host authentication tokens in container
     use_host_auth: true

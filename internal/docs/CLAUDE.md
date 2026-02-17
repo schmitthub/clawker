@@ -33,6 +33,9 @@ type OptionDoc struct {
 - `GenMarkdownTreeCustom(cmd, dir, filePrepender, linkHandler)` — with custom prepender/link callbacks
 - `GenMarkdown(cmd, w)` — write single command markdown to writer
 - `GenMarkdownCustom(cmd, w, linkHandler)` — single command with custom link handler
+- `GenMarkdownTreeWebsite(cmd, dir, filePrepender, linkHandler)` — like `GenMarkdownTreeCustom` but produces MDX-safe output via `GenMarkdownWebsite`
+- `GenMarkdownWebsite(cmd, w, linkHandler)` — single command markdown with `EscapeMDXProse` applied to description/long/example text
+- `EscapeMDXProse(s)` — escapes bare `<word>` angle brackets to `` `<word>` `` so MDX parsers don't treat them as JSX tags
 
 ## Man Page Generation (man.go)
 
@@ -59,7 +62,8 @@ type OptionDoc struct {
 Called by `cmd/gen-docs` to regenerate CLI documentation:
 
 ```bash
-go run ./cmd/gen-docs --doc-path docs --markdown
+go run ./cmd/gen-docs --doc-path docs --markdown            # Standard markdown
+go run ./cmd/gen-docs --doc-path docs --markdown --website   # Mintlify-safe (MDX-escaped + frontmatter)
 ```
 
 ## Tests

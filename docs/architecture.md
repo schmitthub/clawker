@@ -1,3 +1,8 @@
+---
+title: "Architecture"
+description: "System layers, package DAG, and key abstractions"
+---
+
 # Architecture
 
 > For detailed method/type exploration, use Serena or your IDE's Go tooling. This document provides the high-level picture.

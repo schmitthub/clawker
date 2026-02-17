@@ -1,0 +1,45 @@
+---
+title: "Introduction"
+description: "Claude Code agent-in-container orchestration and automation"
+---
+
+# Clawker
+
+Clawker is a container orchestration and automation tool for running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in isolated Docker environments. It wraps Docker with security, convenience, and multi-agent features so you can run autonomous coding agents safely on any machine with Docker installed.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="terminal" href="/quickstart">
+    Get up and running with Clawker in minutes
+  </Card>
+  <Card title="Installation" icon="square-terminal" href="/installation">
+    All installation methods: Homebrew, curl, source build
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Configure projects with clawker.yaml
+  </Card>
+  <Card title="CLI Reference" icon="code" href="/cli-reference/clawker">
+    Complete command reference for all CLI commands
+  </Card>
+</CardGroup>
+
+## What Clawker Does
+
+- **Isolated agent environments** — Each Claude Code agent runs in its own Docker container with configurable security controls
+- **Embedded Dockerfile template** — Parameterized images with common dev tools preinstalled, supporting Alpine or Debian bases
+- **Bind or snapshot workspaces** — Mount your repo for live editing, or copy it for pure isolation
+- **Seamless credential forwarding** — SSH agent, GPG agent, and Git HTTPS credentials forwarded from your host
+- **Default-on firewall** — Blocks outbound traffic except allowlisted domains (GitHub, package registries)
+- **Project-scoped namespacing** — Multi-agent, multi-project isolation via Docker labels and naming conventions
+- **Git worktree integration** — Spin up agents on separate branches with automatic worktree management
+- **Monitoring stack** — Optional Prometheus + Loki + Grafana for real-time agent observability
+- **Autonomous loop mode** — Run Claude Code in iterative loops with stagnation detection and circuit breakers
+
+## How It Works
+
+Clawker sits between your CLI and Docker, adding a security and convenience layer:
+
+```
+You (CLI) → Clawker → pkg/whail (label-isolated Docker engine) → Docker SDK → Docker
+```
+
+Every container, volume, network, and image created by Clawker is tagged with `dev.clawker.*` labels. Clawker only sees and manages its own resources — it cannot touch anything outside its label scope.

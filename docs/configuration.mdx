@@ -1,0 +1,155 @@
+---
+title: "Configuration"
+description: "Reference for clawker.yaml project configuration"
+icon: "gear"
+---
+
+Every Clawker project has a `clawker.yaml` file in the project root. Create one with:
+
+```bash
+clawker project init
+```
+
+## Full Reference
+
+```yaml
+version: "1"
+project: "my-app"
+
+build:
+  # Base image for the container
+  image: "node:20-slim"
+  # Optional: path to custom Dockerfile (relative to project root)
+  # dockerfile: "./.devcontainer/Dockerfile"
+  # System packages to install (apt-get on Debian, apk on Alpine)
+  packages:
+    - git
+    - curl
+    - ripgrep
+  # Build-time instructions for image customization
+  instructions:
+    env: {}
+    copy: []
+    root_run: []
+    user_run: []
+  # Raw Dockerfile injection points
+  inject:
+    after_from: []
+    after_packages: []
+
+agent:
+  # Files to make available to Claude (prompts, docs, memory)
+  includes: []
+  # Environment variable files to load
+  env_file: []
+  # Environment variables to copy from host
+  from_env: []
+  # Environment variables to set
+  env: {}
+  # Shell commands to run after container init, before Claude Code starts
+  # post_init: |
+  #   claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
+  #   npm install -g typescript
+  # Enable read-only shared directory (~/.clawker-share in container)
+  # enable_shared_dir: true
+
+workspace:
+  # Container path where your code is mounted
+  remote_path: "/workspace"
+  # "bind" (live sync) or "snapshot" (isolated copy)
+  default_mode: "bind"
+
+security:
+  firewall:
+    # Enable network firewall (blocks outbound by default)
+    enable: true
+    # Add domains to the default allowed list
+    # add_domains:
+    #   - "api.openai.com"
+    # Remove domains from the default allowed list
+    # remove_domains:
+    #   - "registry.npmjs.org"
+    # Override the entire allowed list
+    # override_domains:
+    #   - "api.anthropic.com"
+    # IP range sources for cloud provider allowlisting
+    # ip_range_sources:
+    #   - name: github        # Required by default
+    #   - name: google-cloud  # For Go proxy
+    #   - name: custom
+    #     url: "https://example.com/ranges.json"
+    #     jq_filter: ".cidrs[]"
+  # Mount Docker socket (security risk if enabled)
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+# Autonomous loop settings
+loop:
+  max_loops: 50
+  stagnation_threshold: 3
+  timeout_minutes: 15
+  # loop_delay_seconds: 3
+  skip_permissions: false
+  # hooks_file: ""
+  # append_system_prompt: ""
+```
+
+## Key Sections
+
+### build
+
+Controls how the Docker image is built. The `image` field sets the base image. Use `packages` for system-level dependencies, and `instructions` for more complex customization.
+
+The `inject` field provides raw Dockerfile injection points for advanced use cases like adding custom APT repositories or multi-stage build layers.
+
+### agent
+
+Configures the Claude Code agent inside the container. Use `post_init` to run shell commands after the container starts but before Claude Code launches — useful for installing MCP servers, language tools, or other setup.
+
+The `includes` field makes host files available inside the container for Claude to reference.
+
+### workspace
+
+Controls how your source code gets into the container:
+
+- **bind** — Live mount of your project directory. Changes sync both ways.
+- **snapshot** — One-time copy at container creation. The container gets its own isolated copy.
+
+### security
+
+The firewall is enabled by default and blocks all outbound traffic except allowlisted domains. The default allowlist includes GitHub and common package registries.
+
+Built-in IP range sources: `github`, `google-cloud`, `google`, `cloudflare`, `aws`.
+
+<Warning>
+The `google` IP range source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. Only add it if your project requires it (e.g., Go modules via `proxy.golang.org`).
+</Warning>
+
+### loop
+
+Settings for autonomous loop mode (`clawker loop iterate`). The circuit breaker trips after `stagnation_threshold` iterations without progress.
+
+## User Settings
+
+Global settings live at `~/.local/clawker/settings.yaml`:
+
+```yaml
+default_image: "node:20-slim"
+```
+
+## Project Registry
+
+The project registry at `~/.local/clawker/projects.yaml` maps project slugs to filesystem paths:
+
+```yaml
+projects:
+  my-app:
+    name: "my-app"
+    root: "/Users/dev/my-app"
+```
+
+Managed by `clawker project init` and `clawker project register`.
