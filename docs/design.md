@@ -1,3 +1,8 @@
+---
+title: "Design Philosophy"
+description: "Security model, core concepts, and key design decisions"
+---
+
 # Design Philosophy
 
 ## The Padded Cell

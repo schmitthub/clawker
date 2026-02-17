@@ -39,7 +39,7 @@ func run(args []string) error {
 	flags.BoolVar(&flagManPage, "man-page", false, "Generate man pages")
 	flags.BoolVar(&flagYAML, "yaml", false, "Generate YAML reference")
 	flags.BoolVar(&flagRST, "rst", false, "Generate reStructuredText documentation")
-	flags.BoolVar(&flagWebsite, "website", false, "Add Jekyll front matter (requires --markdown)")
+	flags.BoolVar(&flagWebsite, "website", false, "Generate MDX-safe output with Mintlify front matter (requires --markdown)")
 
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n%s", filepath.Base(args[0]), flags.FlagUsages())
@@ -83,7 +83,7 @@ func run(args []string) error {
 
 		var err error
 		if flagWebsite {
-			err = docs.GenMarkdownTreeCustom(rootCmd, dir, jekyllFilePrepender, jekyllLinkHandler)
+			err = docs.GenMarkdownTreeWebsite(rootCmd, dir, mintlifyFilePrepender, mintlifyLinkHandler)
 		} else {
 			err = docs.GenMarkdownTree(rootCmd, dir)
 		}
@@ -132,27 +132,17 @@ func run(args []string) error {
 	return nil
 }
 
-// jekyllFilePrepender returns Jekyll front matter for a given filename.
-func jekyllFilePrepender(filename string) string {
-	// Extract command name from filename (e.g., "clawker_container_run.md" -> "clawker container run")
+// mintlifyFilePrepender returns Mintlify-compatible front matter for a given filename.
+func mintlifyFilePrepender(filename string) string {
 	base := filepath.Base(filename)
 	name := strings.TrimSuffix(base, ".md")
 	cmdPath := strings.ReplaceAll(name, "_", " ")
 
-	// Create permalink path (e.g., "/cli/clawker/container/run/")
-	permalink := "/cli/" + strings.ReplaceAll(name, "_", "/") + "/"
-
-	return fmt.Sprintf(`---
-layout: manual
-permalink: %s
-title: %s
----
-
-`, permalink, cmdPath)
+	return fmt.Sprintf("---\ntitle: \"%s\"\n---\n\n", cmdPath)
 }
 
-// jekyllLinkHandler creates relative markdown links for Jekyll sites.
-func jekyllLinkHandler(cmdPath string) string {
-	// Transform command path to relative link (e.g., "clawker container" -> "clawker_container.md")
-	return strings.ReplaceAll(cmdPath, " ", "_") + ".md"
+// mintlifyLinkHandler creates relative links for Mintlify docs.
+// Mintlify uses the file path without extension as the page slug.
+func mintlifyLinkHandler(cmdPath string) string {
+	return strings.ReplaceAll(cmdPath, " ", "_")
 }

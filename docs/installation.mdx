@@ -1,0 +1,69 @@
+---
+title: "Installation"
+description: "All methods for installing Clawker"
+icon: "download"
+---
+
+## Prerequisites
+
+- **Docker** must be installed and running
+- macOS is the primary supported platform; Linux should also work
+- Windows is not currently supported
+
+## Homebrew (Recommended)
+
+```bash
+brew install schmitthub/tap/clawker
+```
+
+## Install Script
+
+Downloads a pre-built binary from GitHub releases. No Go toolchain required.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
+```
+
+### Options
+
+Pin a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_VERSION=v0.1.3 bash
+```
+
+Install to a custom directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
+```
+
+## Build from Source
+
+Requires Go 1.25+.
+
+```bash
+git clone https://github.com/schmitthub/clawker.git
+cd clawker && make clawker
+export PATH="$PWD/bin:$PATH"
+```
+
+## Verify Installation
+
+```bash
+clawker version
+```
+
+## First-Time Setup
+
+After installing, initialize Clawker:
+
+```bash
+clawker init
+```
+
+This creates the `~/.local/clawker/` directory structure with:
+- Logs directory
+- User settings (`settings.yaml`)
+- Project registry (`projects.yaml`)
+- Optional default fallback image build

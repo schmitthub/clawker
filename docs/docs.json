@@ -1,0 +1,226 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Clawker",
+  "description": "Claude Code agent-in-container orchestration and automation",
+  "appearance": {
+    "default": "dark",
+    "strict": true
+  },
+  "colors": {
+    "primary": "#f59e0b",
+    "light": "#fbbf24",
+    "dark": "#d97706"
+  },
+  "background": {
+    "color": {
+      "dark": "#09090b"
+    },
+    "decoration": "grid"
+  },
+  "font": {
+    "heading": {
+      "url": "https://cdn.fontshare.com/wf/DK2FOA46SRWJ5HXWWU5TK4N4CMHYD236/FPEAXZZSH5L2K5MTJFRIWD2MC32IJMN3/THOOS4VOCKT7H2XEB27NQDYM2NYS4AAR.woff2",
+      "format": "woff2",
+      "weight": "600"
+    },
+    "body": {
+      "url": "https://cdn.fontshare.com/wf/NWBQYJIM7GCZ5XWD7D26ARB3VDY55ZRT/K63EV2KZIGKLE7RANQ2U42S6SVHU5RJ7/X6XYTKIVDUW7GZTZPZNN4EUM5KH54KHF.woff2",
+      "format": "woff2",
+      "weight": "400"
+    }
+  },
+  "styling": {
+    "codeblocks": "dark",
+    "eyebrows": "breadcrumbs"
+  },
+  "contextual": {
+    "options": ["copy", "view", "claude"]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Home",
+        "href": "https://clawker.dev"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/schmitthub/clawker"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Install",
+      "href": "/installation"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/schmitthub/clawker",
+      "website": "https://clawker.dev"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "index",
+          "quickstart",
+          "installation"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "configuration"
+        ]
+      },
+      {
+        "group": "CLI Reference",
+        "pages": [
+          "cli-reference/clawker",
+          {
+            "group": "Top-Level Shortcuts",
+            "pages": [
+              "cli-reference/clawker_init",
+              "cli-reference/clawker_build",
+              "cli-reference/clawker_run",
+              "cli-reference/clawker_start",
+              "cli-reference/clawker_generate",
+              "cli-reference/clawker_ps",
+              "cli-reference/clawker_attach",
+              "cli-reference/clawker_exec",
+              "cli-reference/clawker_logs",
+              "cli-reference/clawker_stop",
+              "cli-reference/clawker_kill",
+              "cli-reference/clawker_rm",
+              "cli-reference/clawker_rmi",
+              "cli-reference/clawker_cp",
+              "cli-reference/clawker_create",
+              "cli-reference/clawker_pause",
+              "cli-reference/clawker_unpause",
+              "cli-reference/clawker_rename",
+              "cli-reference/clawker_restart",
+              "cli-reference/clawker_stats",
+              "cli-reference/clawker_top",
+              "cli-reference/clawker_wait"
+            ]
+          },
+          {
+            "group": "Container",
+            "pages": [
+              "cli-reference/clawker_container",
+              "cli-reference/clawker_container_run",
+              "cli-reference/clawker_container_create",
+              "cli-reference/clawker_container_start",
+              "cli-reference/clawker_container_stop",
+              "cli-reference/clawker_container_restart",
+              "cli-reference/clawker_container_kill",
+              "cli-reference/clawker_container_remove",
+              "cli-reference/clawker_container_list",
+              "cli-reference/clawker_container_inspect",
+              "cli-reference/clawker_container_logs",
+              "cli-reference/clawker_container_exec",
+              "cli-reference/clawker_container_attach",
+              "cli-reference/clawker_container_cp",
+              "cli-reference/clawker_container_rename",
+              "cli-reference/clawker_container_pause",
+              "cli-reference/clawker_container_unpause",
+              "cli-reference/clawker_container_stats",
+              "cli-reference/clawker_container_top",
+              "cli-reference/clawker_container_update",
+              "cli-reference/clawker_container_wait"
+            ]
+          },
+          {
+            "group": "Image",
+            "pages": [
+              "cli-reference/clawker_image",
+              "cli-reference/clawker_image_build",
+              "cli-reference/clawker_image_list",
+              "cli-reference/clawker_image_inspect",
+              "cli-reference/clawker_image_prune",
+              "cli-reference/clawker_image_remove"
+            ]
+          },
+          {
+            "group": "Volume",
+            "pages": [
+              "cli-reference/clawker_volume",
+              "cli-reference/clawker_volume_create",
+              "cli-reference/clawker_volume_list",
+              "cli-reference/clawker_volume_inspect",
+              "cli-reference/clawker_volume_prune",
+              "cli-reference/clawker_volume_remove"
+            ]
+          },
+          {
+            "group": "Network",
+            "pages": [
+              "cli-reference/clawker_network",
+              "cli-reference/clawker_network_create",
+              "cli-reference/clawker_network_list",
+              "cli-reference/clawker_network_inspect",
+              "cli-reference/clawker_network_prune",
+              "cli-reference/clawker_network_remove"
+            ]
+          },
+          {
+            "group": "Worktree",
+            "pages": [
+              "cli-reference/clawker_worktree",
+              "cli-reference/clawker_worktree_add",
+              "cli-reference/clawker_worktree_list",
+              "cli-reference/clawker_worktree_prune",
+              "cli-reference/clawker_worktree_remove"
+            ]
+          },
+          {
+            "group": "Loop",
+            "pages": [
+              "cli-reference/clawker_loop",
+              "cli-reference/clawker_loop_iterate",
+              "cli-reference/clawker_loop_tasks",
+              "cli-reference/clawker_loop_status",
+              "cli-reference/clawker_loop_reset"
+            ]
+          },
+          {
+            "group": "Monitor",
+            "pages": [
+              "cli-reference/clawker_monitor",
+              "cli-reference/clawker_monitor_init",
+              "cli-reference/clawker_monitor_up",
+              "cli-reference/clawker_monitor_down",
+              "cli-reference/clawker_monitor_status"
+            ]
+          },
+          {
+            "group": "Project",
+            "pages": [
+              "cli-reference/clawker_project",
+              "cli-reference/clawker_project_init",
+              "cli-reference/clawker_project_register"
+            ]
+          },
+          {
+            "group": "Config",
+            "pages": [
+              "cli-reference/clawker_config",
+              "cli-reference/clawker_config_check"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Contributing",
+        "pages": [
+          "architecture",
+          "design",
+          "testing"
+        ]
+      }
+    ]
+  }
+}

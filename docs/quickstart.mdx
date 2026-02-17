@@ -1,0 +1,77 @@
+---
+title: "Quick Start"
+description: "Get up and running with Clawker in under 5 minutes"
+icon: "rocket"
+---
+
+## Prerequisites
+
+- **Docker** must be installed and running on your machine
+- An **Anthropic API key** or Claude subscription for Claude Code
+
+## Install Clawker
+
+<CodeGroup>
+```bash Homebrew
+brew install schmitthub/tap/clawker
+```
+
+```bash curl
+curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash
+```
+</CodeGroup>
+
+## Initialize Clawker
+
+```bash
+clawker init
+```
+
+This creates `~/.local/clawker/` with logs, settings, and project registry. It also prompts you to build a default fallback image.
+
+## Start a Project
+
+```bash
+cd your-project
+clawker project init    # Creates clawker.yaml, .clawkerignore, registers project
+clawker build           # Builds your project's Docker image
+```
+
+## Run Your First Agent
+
+```bash
+clawker run -it --agent dev @
+```
+
+The `@` shortcut resolves to your project's image (`clawker-<project>:latest`). This creates and attaches to a new Claude Code agent running in an isolated container.
+
+<Steps>
+  <Step title="Interact with Claude Code">
+    You're now inside a containerized Claude Code session. Work as you normally would — your code is mounted, credentials forwarded, and the firewall is active.
+  </Step>
+  <Step title="Detach without stopping">
+    Press `Ctrl+P`, then `Ctrl+Q` to detach from the container while keeping it running.
+  </Step>
+  <Step title="Re-attach later">
+    ```bash
+    clawker attach --agent dev
+    ```
+  </Step>
+  <Step title="Stop the agent">
+    Exit Claude Code with `/exit`, or from another terminal:
+    ```bash
+    clawker stop --agent dev
+    ```
+  </Step>
+</Steps>
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Customize your clawker.yaml for your project's needs
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli-reference/clawker">
+    Explore the full command reference
+  </Card>
+</CardGroup>
