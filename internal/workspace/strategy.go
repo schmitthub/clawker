@@ -46,8 +46,7 @@ type Config struct {
 	// AgentName is used for naming agent-specific volumes
 	AgentName string
 
-	// IgnorePatterns are patterns to exclude when copying (snapshot mode)
-	IgnorePatterns []string
+	IgnorePatterns []string // Patterns to exclude (snapshot: tar filtering, bind: tmpfs overlays)
 }
 
 // NewStrategy creates a Strategy based on the mode

@@ -380,8 +380,23 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 			patterns = append(patterns, line)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
-	return patterns, scanner.Err()
+	// Validate glob syntax so malformed patterns return an error instead of
+	// silently not matching at runtime.
+	for _, p := range patterns {
+		clean := strings.TrimSuffix(strings.TrimSpace(p), "/")
+		if clean == "" || strings.HasPrefix(clean, "#") || strings.HasPrefix(clean, "!") {
+			continue
+		}
+		if _, err := filepath.Match(clean, "test"); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q in ignore file: %w", p, err)
+		}
+	}
+
+	return patterns, nil
 }
 
 // FindIgnoredDirs walks hostPath and returns relative paths of directories
@@ -395,6 +410,14 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, nil
+	}
+
+	// Warn once if any negation patterns are present (not yet supported)
+	for _, p := range patterns {
+		if strings.HasPrefix(strings.TrimSpace(p), "!") {
+			logger.Warn().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
+			break // warn once
+		}
 	}
 
 	var dirs []string
@@ -435,8 +458,8 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 }
 
 // shouldIgnoreForBind checks if a directory path matches any of the given patterns.
-// Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it)
-// and only matches directory entries.
+// Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it).
+// The caller is responsible for passing only directory paths.
 func shouldIgnoreForBind(path string, patterns []string) bool {
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)

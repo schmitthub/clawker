@@ -129,6 +129,19 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			t.Errorf("expected 1 mount (bind only, .git never masked), got %d", len(mounts))
 		}
 	})
+
+	t.Run("returns error when host path does not exist", func(t *testing.T) {
+		s := NewBindStrategy(Config{
+			HostPath:       "/nonexistent/path/that/does/not/exist",
+			RemotePath:     "/workspace",
+			IgnorePatterns: []string{"node_modules/"},
+		})
+
+		_, err := s.GetMounts()
+		if err == nil {
+			t.Error("expected error for nonexistent host path with patterns, got nil")
+		}
+	})
 }
 
 func TestSnapshotStrategy_GetMounts(t *testing.T) {

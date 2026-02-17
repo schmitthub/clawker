@@ -54,7 +54,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 			Type:   mount.TypeBind,
 			Source: s.config.HostPath,
 			Target: s.config.RemotePath,
-			// Use delegated consistency for better performance on macOS
+			// rprivate propagation prevents mount events from leaking between namespaces
 			BindOptions: &mount.BindOptions{
 				Propagation: mount.PropagationRPrivate,
 			},

@@ -318,6 +318,29 @@ func TestFindIgnoredDirs(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("returns error for nonexistent path", func(t *testing.T) {
+		dirs, err := FindIgnoredDirs("/nonexistent/path/that/does/not/exist", []string{"node_modules/"})
+		if err == nil {
+			t.Fatal("expected error for nonexistent path, got nil")
+		}
+		if dirs != nil {
+			t.Errorf("expected nil dirs on error, got %v", dirs)
+		}
+	})
+
+	t.Run("file-glob patterns do not match similarly named directories", func(t *testing.T) {
+		root := t.TempDir()
+		mkdirs(t, root, "src", "logs")
+
+		dirs, err := FindIgnoredDirs(root, []string{"*.log", "*.env"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(dirs) != 0 {
+			t.Errorf("file-glob patterns should not match directories, got %v", dirs)
+		}
+	})
 }
 
 func TestLoadIgnorePatterns(t *testing.T) {
@@ -396,6 +419,18 @@ func TestLoadIgnorePatterns(t *testing.T) {
 		_, err := LoadIgnorePatterns(path)
 		if err == nil {
 			t.Error("expected permission error, got nil")
+		}
+	})
+
+	t.Run("returns error for malformed pattern", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		ignoreFile := filepath.Join(tmpDir, ".clawkerignore")
+		if err := os.WriteFile(ignoreFile, []byte("[invalid-pattern\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadIgnorePatterns(ignoreFile)
+		if err == nil {
+			t.Fatal("expected error for malformed glob pattern, got nil")
 		}
 	})
 }

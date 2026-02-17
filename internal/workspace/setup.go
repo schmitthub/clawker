@@ -47,6 +47,9 @@ func resolveIgnoreFile(projectRootDir, hostPath string) string {
 	root := projectRootDir
 	if root == "" {
 		root = hostPath
+		logger.Debug().Str("path", root).Msg("no project root dir; resolving .clawkerignore from host workdir")
+	} else {
+		logger.Debug().Str("path", root).Msg("resolving .clawkerignore from project root")
 	}
 	return filepath.Join(root, config.IgnoreFileName)
 }
