@@ -87,7 +87,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	ignoreFile := resolveIgnoreFile(cfg.ProjectRootDir, hostPath)
 	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load %s: %w", config.IgnoreFileName, err)
+		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
 	}
 
 	// Create workspace strategy

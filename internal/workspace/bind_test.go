@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -78,7 +79,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 		}
 
 		for _, dir := range []string{"node_modules", "dist", ".venv"} {
-			target := filepath.Join("/workspace", dir)
+			target := path.Join("/workspace", dir)
 			if !tmpfsTargets[target] {
 				t.Errorf("expected tmpfs overlay for %q, not found in %v", target, tmpfsTargets)
 			}

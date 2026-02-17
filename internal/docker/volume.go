@@ -447,7 +447,7 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 
 		// Check user patterns (directory-aware matching)
 		if shouldIgnoreForBind(rel, patterns) {
-			dirs = append(dirs, rel)
+			dirs = append(dirs, filepath.ToSlash(rel))
 			return filepath.SkipDir // don't recurse into matched directories
 		}
 

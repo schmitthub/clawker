@@ -3,7 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"path"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
@@ -71,7 +71,7 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 		for _, dir := range dirs {
 			mounts = append(mounts, mount.Mount{
 				Type:   mount.TypeTmpfs,
-				Target: filepath.Join(s.config.RemotePath, dir),
+				Target: path.Join(s.config.RemotePath, dir),
 			})
 		}
 		if len(dirs) > 0 {
