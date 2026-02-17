@@ -113,7 +113,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 
 ```bash
 # Install via Homebrew
-brew tap schmitthub/clawker && brew install clawker
+brew install schmitthub/tap/clawker
 
 # Install pre-built binary (no Go required)
 curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash

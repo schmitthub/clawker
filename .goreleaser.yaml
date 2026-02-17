@@ -37,7 +37,8 @@ homebrew_casks:
   - name: clawker
     repository:
       owner: schmitthub
-      name: homebrew-clawker
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/schmitthub/clawker
     description: "Development containers for AI coding agents"
 
