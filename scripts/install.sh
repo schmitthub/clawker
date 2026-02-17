@@ -8,7 +8,7 @@
 #   curl -fsSL ... | CLAWKER_INSTALL_DIR=$HOME/.local/bin bash
 #   bash scripts/install.sh --version v0.1.3 --dir /usr/local/bin
 #
-set -euo pipefail
+set -eu
 
 # ── Constants ────────────────────────────────────────────────────────────────
 REPO_OWNER="schmitthub"
@@ -101,6 +101,7 @@ cleanup() {
     fi
 }
 trap cleanup EXIT INT TERM
+trap 'error "Unexpected failure at line ${LINENO}. Re-run with bash -x for details."; cleanup' ERR
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 check_http_tool() {
@@ -159,6 +160,17 @@ detect_arch() {
     esac
 }
 
+detect_rosetta() {
+    local os="$1" arch="$2"
+    if [[ "$os" == "darwin" ]] && [[ "$arch" == "amd64" ]]; then
+        if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" == "1" ]]; then
+            echo "arm64"
+            return
+        fi
+    fi
+    echo "$arch"
+}
+
 # ── Version resolution ───────────────────────────────────────────────────────
 resolve_version() {
     if [[ -n "$VERSION" ]]; then
@@ -179,14 +191,17 @@ resolve_version() {
             msg "  CLAWKER_VERSION=v0.1.3 bash install.sh"
         else
             error "Failed to fetch latest release from GitHub API."
+            [[ -n "$response" ]] && msg "  ${response}"
             msg "Check your internet connection, or specify a version:"
             msg "  CLAWKER_VERSION=v0.1.3 bash install.sh"
         fi
         exit 1
     fi
 
-    local tag
-    tag=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//;s/"//')
+    local tag=""
+    if [[ "$response" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+        tag="${BASH_REMATCH[1]}"
+    fi
     if [[ -z "$tag" ]]; then
         error "Could not determine latest version from GitHub API response."
         msg "Specify a version manually:"
@@ -203,10 +218,10 @@ verify_checksum() {
 
     # Find the expected checksum for this archive
     local expected
-    expected=$(grep "  ${archive_name}$" "$checksums_file" | awk '{print $1}')
+    expected=$(grep "  ${archive_name}$" "$checksums_file" | awk '{print $1}' || true)
     if [[ -z "$expected" ]]; then
         # Try without leading spaces (some formats use tab or single space)
-        expected=$(grep "${archive_name}" "$checksums_file" | awk '{print $1}')
+        expected=$(grep "${archive_name}" "$checksums_file" | awk '{print $1}' || true)
     fi
 
     if [[ -z "$expected" ]]; then
@@ -216,13 +231,12 @@ verify_checksum() {
     fi
 
     local actual=""
-    if has_cmd sha256sum; then
-        actual=$(sha256sum "$archive" | awk '{print $1}')
-    elif has_cmd shasum; then
-        actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    local os_name
+    os_name="$(uname -s)"
+    if [[ "$os_name" == "Darwin" ]]; then
+        actual=$(shasum -a 256 "$archive" | cut -d' ' -f1)
     else
-        warn "Neither sha256sum nor shasum found — skipping checksum verification."
-        return 0
+        actual=$(sha256sum "$archive" | cut -d' ' -f1)
     fi
 
     if [[ "$actual" != "$expected" ]]; then
@@ -249,11 +263,11 @@ get_installed_version() {
     elif has_cmd "$BINARY_NAME"; then
         bin="$BINARY_NAME"
     else
-        return
+        return 0
     fi
 
     # clawker version output: "clawker version 0.1.3 (2025-01-15)"
-    "$bin" version 2>/dev/null | sed -n 's/clawker version \([^ ]*\).*/\1/p'
+    "$bin" version 2>/dev/null | sed -n 's/clawker version \([^ ]*\).*/\1/p' || true
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -266,6 +280,7 @@ main() {
     local os arch
     os=$(detect_os)
     arch=$(detect_arch)
+    arch=$(detect_rosetta "$os" "$arch")
     info "Detected platform: ${os}/${arch}"
 
     local version_tag
@@ -298,8 +313,10 @@ main() {
 
     # Download archive
     info "Downloading ${archive_name}..."
-    if ! http_download "$download_url" "$archive_path"; then
+    local dl_err=""
+    if ! dl_err=$(http_download "$download_url" "$archive_path" 2>&1); then
         error "Failed to download ${archive_name}"
+        [[ -n "$dl_err" ]] && msg "  ${dl_err}"
         msg "URL: ${download_url}"
         msg ""
         msg "Check that version ${version_tag} exists:"
@@ -317,7 +334,11 @@ main() {
 
     # Extract
     info "Extracting..."
-    tar -xzf "$archive_path" -C "$WORK_DIR"
+    if ! tar -xzf "$archive_path" -C "$WORK_DIR"; then
+        error "Failed to extract ${archive_name}. The archive may be corrupted."
+        msg "Download manually from: ${GITHUB_RELEASES}"
+        exit 1
+    fi
 
     if [[ ! -f "${WORK_DIR}/${BINARY_NAME}" ]]; then
         error "Expected binary '${BINARY_NAME}' not found in archive."
@@ -363,6 +384,9 @@ main() {
             ;;
     esac
 
+    msg ""
+    msg "Also available via Homebrew:"
+    msg "  ${BOLD}brew install schmitthub/tap/clawker${RESET}"
     msg ""
     success "Run 'clawker --help' to get started."
 }

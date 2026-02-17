@@ -107,14 +107,14 @@ func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResul
 	}
 
 	cs := ios.ColorScheme()
-	fmt.Fprintf(ios.ErrOut, "\n%s A new release of clawker is available: %s → %s\n",
-		cs.InfoIcon(),
+	fmt.Fprintf(ios.ErrOut, "\n%s %s → %s\n",
+		cs.Yellow("A new release of clawker is available:"),
 		cs.Cyan(result.CurrentVersion),
 		cs.Cyan(result.LatestVersion))
-	fmt.Fprintf(ios.ErrOut, "%s To upgrade: %s\n",
-		cs.InfoIcon(),
-		cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
-	fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.InfoIcon(), result.ReleaseURL)
+	fmt.Fprintf(ios.ErrOut, "To upgrade:\n")
+	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
+	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
+	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(result.ReleaseURL))
 }
 
 // updateStatePath returns the path to the update state cache file.
