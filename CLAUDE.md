@@ -357,10 +357,14 @@ security:
 User-facing docs are powered by [Mintlify](https://mintlify.com/) and live in the `docs/` directory.
 
 - `docs/docs.json` — Mintlify site config (theme, nav, colors, integrations)
+- `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
+- `docs/favicon.svg` — `>_` terminal prompt favicon (amber on dark)
+- `docs/assets/` — Image assets directory
 - `docs/index.mdx` — Homepage
 - `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
-- `docs/cli-reference/*.md` — Auto-generated CLI reference (82 files, **never edit directly**)
+- `docs/cli-reference/*.md` — Auto-generated via Makefile, checked in, freshness verified separately in CI (**never edit directly**)
 - `docs/architecture.md`, `docs/design.md`, `docs/testing.md` — Developer docs with Mintlify frontmatter
+- See `.claude/rules/mintlify-docs.md` for full conventions (theming, MDX parsing, navigation)
 
 **Regenerating CLI reference**: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
 - `--website` flag produces MDX-safe output (escapes bare `<word>` angle brackets) with Mintlify frontmatter

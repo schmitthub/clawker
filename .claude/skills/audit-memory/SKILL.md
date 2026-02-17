@@ -21,6 +21,9 @@ Glob all documentation files and build a summary table:
 - `.claude/docs/*.md`
 - `.claude/memories/*.md`
 - `.serena/memories/*.md`
+- `docs/docs.json`, `docs/custom.css`, `docs/favicon.svg` — Mintlify site config, theme, and favicon
+- `docs/*.mdx` — Hand-authored Mintlify pages
+- `docs/cli-reference/*.md` — Auto-generated CLI reference (82 files, never edit directly; generated via Makefile, freshness checked in CI)
 
 For each file, report: **path**, **line count** (`wc -l`), **estimated tokens** (lines × 4).
 
@@ -29,6 +32,7 @@ Group into categories:
 - **Lazy-loaded**: `cmd/*/CLAUDE.md`, `internal/*/CLAUDE.md`, `test/*/CLAUDE.md`, `pkg/*/CLAUDE.md`
 - **On-demand**: `.claude/docs/*.md`, `.claude/memories/*.md`
 - **WIP tracking**: `.serena/memories/*.md`
+- **Mintlify site**: `docs/docs.json`, `docs/custom.css`, `docs/*.mdx`, `docs/cli-reference/*.md`
 
 ### 2. Freshness Check
 
@@ -57,21 +61,27 @@ For each `.claude/rules/*.md` file with a `paths:` frontmatter field:
 2. Run `git ls-files '<glob>'` for each pattern
 3. Flag rules where no files match any glob (dead rule)
 
-### 5. Serena Memory Staleness
+### 5. Mintlify Docs Consistency
+
+1. Check if `docs/docs.json` navigation groups reference files that actually exist in `docs/` and `docs/cli-reference/`
+2. Flag hand-authored pages (`docs/*.mdx`) that reference outdated commands or config keys (spot-check against `clawker.yaml` schema and CLI command tree)
+3. Skip `docs/cli-reference/*.md` for content accuracy — they are auto-generated
+
+### 6. Serena Memory Staleness
 
 Read each `.serena/memories/*.md` file and flag:
 
 - Files containing "COMPLETE", "Status: Complete", "Status: Done", or "DONE" — these track finished work and should be cleaned up
 - Files with no updates in >30 days (check `git log --format=%at -1`)
 
-### 6. Architecture and Design Accuracy
+### 7. Architecture and Design Accuracy
 
 1. Identify changes in architecture, design, CLI commands, test harnesses, or test doubles from the freshness check output, git statuses, or commit messages
 2. For each `.claude/docs/*.md` files:
    - Check for mentions of outdated components, patterns, or practices
    - Flag files that likely need updates based on the nature of the changes (e.g., if a major refactor is detected, all architecture/design docs may need review)
 
-### 7. Context Budget
+### 8. Context Budget
 
 Report totals against budgets:
 
@@ -83,7 +93,7 @@ Report totals against budgets:
 
 Flag any files exceeding their budget.
 
-### 8. Recommendations
+### 9. Recommendations
 
 Output a prioritized action list using these categories:
 
