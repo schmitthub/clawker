@@ -399,6 +399,57 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 	return patterns, nil
 }
 
+// BindOverlayDirsFromPatterns derives directory overlay targets from ignore
+// patterns for bind mode. It intentionally only returns deterministic directory
+// paths and skips file-glob patterns.
+func BindOverlayDirsFromPatterns(patterns []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var dirs []string
+
+	for _, raw := range patterns {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" || strings.HasPrefix(pattern, "#") || strings.HasPrefix(pattern, "!") {
+			continue
+		}
+
+		hadTrailingSlash := strings.HasSuffix(pattern, "/")
+		clean := strings.TrimSuffix(pattern, "/")
+		clean = strings.TrimPrefix(clean, "./")
+		clean = strings.TrimPrefix(clean, "/")
+		clean = filepath.ToSlash(clean)
+
+		if clean == "" || clean == "." {
+			continue
+		}
+
+		if clean == ".git" || strings.HasPrefix(clean, ".git/") {
+			continue
+		}
+
+		if strings.ContainsAny(clean, "*?[") {
+			continue
+		}
+
+		base := filepath.Base(clean)
+		isLikelyDirPattern := hadTrailingSlash || strings.Contains(clean, "/") || !strings.Contains(base, ".")
+		if !isLikelyDirPattern {
+			continue
+		}
+
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		dirs = append(dirs, clean)
+	}
+
+	return dirs
+}
+
 // FindIgnoredDirs walks hostPath and returns relative paths of directories
 // matching the given ignore patterns. Used by bind mode to generate tmpfs
 // overlay mounts that mask ignored directories inside the container.
@@ -412,11 +463,11 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 		return nil, nil
 	}
 
-	// Warn once if any negation patterns are present (not yet supported)
+	// fail fast if any negation patterns are present (not yet supported)
 	for _, p := range patterns {
 		if strings.HasPrefix(strings.TrimSpace(p), "!") {
-			logger.Warn().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
-			break // warn once
+			logger.Error().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
+			return nil, fmt.Errorf("negation patterns in .clawkerignore are not yet supported: %q", p)
 		}
 	}
 
@@ -428,6 +479,7 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 
 		// Only interested in directories
 		if !info.IsDir() {
+			logger.Warn().Str("path", path).Msg("files in .clawkerignore are not supported for bind mode")
 			return nil
 		}
 

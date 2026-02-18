@@ -343,6 +343,56 @@ func TestFindIgnoredDirs(t *testing.T) {
 	})
 }
 
+func TestBindOverlayDirsFromPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		want     map[string]bool
+	}{
+		{
+			name:     "extracts literal directory patterns",
+			patterns: []string{"node_modules/", "build", "vendor/pkg"},
+			want:     map[string]bool{"node_modules": true, "build": true, "vendor/pkg": true},
+		},
+		{
+			name:     "skips file globs and likely file paths",
+			patterns: []string{"*.log", "**/*.env", ".env", "credentials.json", "dist/"},
+			want:     map[string]bool{"dist": true},
+		},
+		{
+			name:     "skips comments blanks negation and git",
+			patterns: []string{"", "  ", "# comment", "!keep.txt", ".git/", "./.git/hooks", ".venv/"},
+			want:     map[string]bool{".venv": true},
+		},
+		{
+			name:     "dedupes repeated patterns",
+			patterns: []string{"node_modules/", "./node_modules", "node_modules/"},
+			want:     map[string]bool{"node_modules": true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BindOverlayDirsFromPatterns(tt.patterns)
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("BindOverlayDirsFromPatterns(%v) returned %d items (%v), want %d", tt.patterns, len(got), got, len(tt.want))
+			}
+
+			gotSet := make(map[string]bool)
+			for _, d := range got {
+				gotSet[d] = true
+			}
+
+			for wantDir := range tt.want {
+				if !gotSet[wantDir] {
+					t.Errorf("expected %q in result, got %v", wantDir, got)
+				}
+			}
+		})
+	}
+}
+
 func TestLoadIgnorePatterns(t *testing.T) {
 	t.Run("file not found returns empty slice", func(t *testing.T) {
 		patterns, err := LoadIgnorePatterns(filepath.Join(t.TempDir(), "nonexistent"))

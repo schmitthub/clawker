@@ -143,6 +143,64 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			t.Error("expected error for nonexistent host path with patterns, got nil")
 		}
 	})
+
+	t.Run("adds overlay for directory pattern that does not yet exist", func(t *testing.T) {
+		hostDir := t.TempDir()
+
+		s := NewBindStrategy(Config{
+			HostPath:       hostDir,
+			RemotePath:     "/workspace",
+			IgnorePatterns: []string{"node_modules/"},
+		})
+
+		mounts, err := s.GetMounts()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(mounts) != 2 {
+			t.Fatalf("expected 2 mounts (1 bind + 1 tmpfs), got %d", len(mounts))
+		}
+
+		if mounts[1].Type != mount.TypeTmpfs {
+			t.Fatalf("expected second mount to be tmpfs, got %v", mounts[1].Type)
+		}
+
+		wantTarget := path.Join("/workspace", "node_modules")
+		if mounts[1].Target != wantTarget {
+			t.Errorf("tmpfs target = %q, want %q", mounts[1].Target, wantTarget)
+		}
+	})
+
+	t.Run("dedupes overlays from static and discovered directories", func(t *testing.T) {
+		hostDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(hostDir, "node_modules/cache"), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		s := NewBindStrategy(Config{
+			HostPath:       hostDir,
+			RemotePath:     "/workspace",
+			IgnorePatterns: []string{"node_modules/"},
+		})
+
+		mounts, err := s.GetMounts()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		tmpfsCount := 0
+		wantTarget := path.Join("/workspace", "node_modules")
+		for _, m := range mounts {
+			if m.Type == mount.TypeTmpfs && m.Target == wantTarget {
+				tmpfsCount++
+			}
+		}
+
+		if tmpfsCount != 1 {
+			t.Fatalf("expected exactly one tmpfs mount for %q, got %d (mounts=%v)", wantTarget, tmpfsCount, mounts)
+		}
+	})
 }
 
 func TestSnapshotStrategy_GetMounts(t *testing.T) {

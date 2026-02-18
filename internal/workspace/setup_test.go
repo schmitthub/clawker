@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,96 @@ func TestResolveIgnoreFile(t *testing.T) {
 			t.Errorf("expected path to end with .clawkerignore, got %q", got)
 		}
 	})
+}
+
+func TestSetupMounts_IgnoreFileSelectionAndLoadErrorPropagation(t *testing.T) {
+	writeIgnoreFile := func(t *testing.T, dir, content string) string {
+		t.Helper()
+		path := filepath.Join(dir, config.IgnoreFileName)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed writing %s: %v", path, err)
+		}
+		return path
+	}
+
+	projectCfg := &config.Project{
+		Project: "my-project",
+		Workspace: config.WorkspaceConfig{
+			RemotePath:  "/workspace",
+			DefaultMode: "bind",
+		},
+	}
+
+	tests := []struct {
+		name             string
+		projectRootSet   bool
+		invalidAtProject bool
+	}{
+		{
+			name:             "prefers project root ignore file",
+			projectRootSet:   true,
+			invalidAtProject: true,
+		},
+		{
+			name:             "falls back to workdir ignore file",
+			projectRootSet:   false,
+			invalidAtProject: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			projectRoot := t.TempDir()
+
+			workIgnore := writeIgnoreFile(t, workDir, "node_modules/\n")
+			projectIgnore := writeIgnoreFile(t, projectRoot, "dist/\n")
+
+			var selectedIgnore string
+			if tt.projectRootSet {
+				selectedIgnore = projectIgnore
+			} else {
+				selectedIgnore = workIgnore
+			}
+
+			if tt.invalidAtProject {
+				selectedIgnore = projectIgnore
+			}
+
+			if err := os.WriteFile(selectedIgnore, []byte("[invalid-pattern\n"), 0644); err != nil {
+				t.Fatalf("failed writing malformed ignore file: %v", err)
+			}
+
+			cfg := SetupMountsConfig{
+				ModeOverride: "bind",
+				Config:       projectCfg,
+				AgentName:    "dev",
+				WorkDir:      workDir,
+			}
+			if tt.projectRootSet {
+				cfg.ProjectRootDir = projectRoot
+			}
+
+			result, err := SetupMounts(context.Background(), nil, cfg)
+			if err == nil {
+				t.Fatal("expected error from malformed ignore pattern, got nil")
+			}
+			if result != nil {
+				t.Fatalf("expected nil result on error, got %+v", result)
+			}
+
+			errStr := err.Error()
+			if !strings.Contains(errStr, "failed to load") {
+				t.Fatalf("expected wrapped load error, got %q", errStr)
+			}
+			if !strings.Contains(errStr, selectedIgnore) {
+				t.Fatalf("expected selected ignore path %q in error, got %q", selectedIgnore, errStr)
+			}
+			if !strings.Contains(errStr, "invalid pattern") {
+				t.Fatalf("expected invalid pattern detail in error, got %q", errStr)
+			}
+		})
+	}
 }
 
 // containsAll checks if s contains all the given substrings

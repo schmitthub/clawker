@@ -64,10 +64,29 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 	// Overlay tmpfs mounts on ignored directories to mask them inside the container.
 	// File-level patterns (*.env, *.pem) cannot be enforced with overlays.
 	if len(s.config.IgnorePatterns) > 0 {
-		dirs, err := docker.FindIgnoredDirs(s.config.HostPath, s.config.IgnorePatterns)
+		staticDirs := docker.BindOverlayDirsFromPatterns(s.config.IgnorePatterns)
+		discoveredDirs, err := docker.FindIgnoredDirs(s.config.HostPath, s.config.IgnorePatterns)
 		if err != nil {
 			return nil, fmt.Errorf("scanning for ignored directories: %w", err)
 		}
+
+		seen := make(map[string]struct{})
+		var dirs []string
+		for _, dir := range staticDirs {
+			if _, ok := seen[dir]; ok {
+				continue
+			}
+			seen[dir] = struct{}{}
+			dirs = append(dirs, dir)
+		}
+		for _, dir := range discoveredDirs {
+			if _, ok := seen[dir]; ok {
+				continue
+			}
+			seen[dir] = struct{}{}
+			dirs = append(dirs, dir)
+		}
+
 		for _, dir := range dirs {
 			mounts = append(mounts, mount.Mount{
 				Type:   mount.TypeTmpfs,
