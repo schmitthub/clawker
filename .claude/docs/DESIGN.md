@@ -42,7 +42,7 @@ Higher precedence wins silently (no warnings on override).
 | `~/.local/clawker/settings.yaml` | User settings (`Settings`: default_image, logging) |
 | `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
 
-**Project Resolution**: The `Resolver` uses the project registry to resolve the current working directory to a registered project via longest-prefix path matching. This replaces directory walking. The result is a `Resolution` containing `ProjectKey`, `ProjectEntry`, and `WorkDir`. `Config.Project` is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
+**Project Resolution**: The `config.Config` gateway (implementing `config.Provider`) resolves the current working directory to a registered project via longest-prefix path matching during lazy initialization. Resolution results are accessed via `Provider.ProjectKey()`, `Provider.WorkDir()`, and `Provider.ProjectFound()`. The `Project` schema struct's `Project` field is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
 
 ### 2.2 Agent
 
@@ -86,7 +86,7 @@ dev.clawker.agent=<agent-name>
 ### Project Registry Lifecycle
 
 1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `projects.yaml`
-2. **Lookup**: `Factory.Resolution()` calls `Resolver.Resolve(workDir)` to find the matching project by longest-prefix path match
+2. **Lookup**: `Factory.Config()` returns a `config.Provider` that internally resolves the project from `os.Getwd()` via longest-prefix path match against the registry
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 
 ## 3. System Architecture
@@ -198,7 +198,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Lazy**: `Config` (`func() config.Provider`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 

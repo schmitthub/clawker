@@ -16,7 +16,7 @@ type InitOptions struct {
     IOStreams *iostreams.IOStreams
     TUI      *tui.TUI
     Prompter func() *prompter.Prompter  // retained for backward compat; unused by wizard path
-    Config   func() *config.Config
+    Config   func() config.Provider
     Client   func(context.Context) (*docker.Client, error)
     Yes      bool
 }
@@ -63,7 +63,10 @@ Run()
 
 ## Behavior
 
-1. Creates/updates user settings file via `Config().SettingsLoader()`
+1. Creates/updates user settings file via config gateway:
+   - Loads SettingsLoader via `Config().SettingsLoader()`
+   - Falls back to `config.NewSettingsLoader()` if nil (e.g., first run)
+   - Sets it via `Config().SetSettingsLoader()` for subsequent use
 2. Interactive wizard (unless `--yes` or non-TTY):
    - Build initial base image? (Select: Yes/No)
    - Select Linux flavor (Debian/Alpine) via `bundler.DefaultFlavorOptions()`
@@ -74,7 +77,8 @@ Run()
    - Progress displayed via `TUI.RunProgress("auto", ...)` with single "build" step; result checked for errors
 4. On progress display error (e.g., Ctrl+C): returns error immediately
 5. On build failure: prints error + manual recovery steps (does not return error)
-6. On build success: updates `settings.DefaultImage` to `docker.DefaultImageTag`
+6. Ensures shared directory at `config.ShareDir()` exists via `config.EnsureDir()`
+7. On build success: updates `settings.DefaultImage` to `docker.DefaultImageTag`
 7. Prints next steps guidance to stderr
 
 ## Factory Wiring

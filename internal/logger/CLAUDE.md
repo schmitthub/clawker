@@ -196,9 +196,4 @@ assert.Contains(t, tl.Output(), "expected log message")
 
 ## Dependencies
 
-- `github.com/rs/zerolog` — structured logging
-- `gopkg.in/natefinished/lumberjack.v2` — log rotation
-- `go.opentelemetry.io/contrib/bridges/otelzerolog` — zerolog-to-OTEL hook bridge
-- `go.opentelemetry.io/otel` — OTEL API (global error handler via `otel.SetErrorHandler`)
-- `go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp` — OTLP HTTP log exporter
-- `go.opentelemetry.io/otel/sdk/log` — OTEL log SDK (LoggerProvider, BatchProcessor)
+`zerolog` (structured logging), `lumberjack` (rotation), `otelzerolog` (OTEL bridge), `otlploghttp` (OTLP exporter), `otel/sdk/log` (LoggerProvider).

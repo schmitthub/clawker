@@ -169,8 +169,8 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     tio := iostreamstest.New()
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
-        Resolution: func() *config.Resolution {
-            return &config.Resolution{ProjectKey: "testproject"}
+        Config: func() config.Provider {
+            return config.NewConfigForTest(nil, nil)
         },
     }
 
@@ -192,7 +192,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
 
 **What this tests**: flag registration, defaults, enum validation, mutual exclusion, required args, positional arg mapping.
 **What this does NOT test**: Docker calls, output formatting, error handling in the run function.
-**Factory needs**: minimal — often just `IOStreams`. Add `Resolution` if the command uses `--agent` flag (it calls `opts.Resolution().ProjectKey` in RunE).
+**Factory needs**: minimal — often just `IOStreams`. Add `Config` if the command uses `--agent` flag (it calls `opts.Config().ProjectKey()` in RunE).
 
 ### Hybrid Injection Test
 
@@ -225,11 +225,8 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
         Client: func(_ context.Context) (*docker.Client, error) {
             return mockClient, nil
         },
-        Config: func() (*config.Config, error) {
-            return testConfig(), nil
-        },
-        Resolution: func() *config.Resolution {
-            return &config.Resolution{ProjectKey: "testproject"}
+        Config: func() config.Provider {
+            return config.NewConfigForTest(testConfig(), nil)
         },
     }
 
@@ -274,47 +271,27 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
     t.Helper()
     tio := iostreamstest.New()
-    tmpDir := t.TempDir()
-    return &cmdutil.Factory{
+
+    f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
-        WorkDir:  tmpDir,
         Client: func(_ context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
-        Config: func() (*config.Config, error) {
-            return testConfig(tmpDir), nil
-        },
-        Settings: func() (*config.Settings, error) {
-            return config.DefaultSettings(), nil
-        },
-        EnsureHostProxy:         func() error { return nil },
-        HostProxyEnvVar:         func() string { return "" },
-        SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
-        InvalidateSettingsCache: func() {},
-        Prompter:                func() *prompts.Prompter { return nil },
-    }, tio
-}
-
-// testConfig returns a minimal *config.Config for test use.
-func testConfig(workDir string) *config.Config {
-    hostProxyDisabled := false
-    return &config.Config{
-        Version: "1",
-        Project: "",
-        Workspace: config.WorkspaceConfig{
-            RemotePath:  "/workspace",
-            DefaultMode: "bind",
-        },
-        Security: config.SecurityConfig{
-            EnableHostProxy: &hostProxyDisabled,
-            Firewall: &config.FirewallConfig{
-                Enable: false,
-            },
+        Config: func() config.Provider {
+            return config.NewConfigForTest(nil, nil)
         },
     }
+
+    if mock != nil {
+        f.SocketBridge = func() socketbridge.SocketBridgeManager {
+            return mock
+        }
+    }
+
+    return f, tio
 }
 ```
 

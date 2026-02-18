@@ -65,7 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # Config loading, validation, project registry + resolver
+│   ├── config/                # Config gateway (Provider interface), project registry, settings, schema
 │   │   └── configtest/        # InMemoryRegistry, InMemorySettingsLoader, ProjectBuilder
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
@@ -165,7 +165,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | Abstraction | Purpose |
 |-------------|---------|
 | `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
-| `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
+| `config.Provider` | Gateway interface — `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectRegistry()`, `SettingsLoader()`, `Reload()`. Concrete: `config.Config` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
@@ -216,7 +216,6 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
-| `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
 | `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
@@ -254,7 +253,7 @@ projects:
 
 Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
 
-**Type distinction:** `config.Project` is the YAML schema struct (was `config.Config` pre-refactor). `config.Config` is now the gateway type that lazily provides `Project()`, `Settings()`, `Resolution()`, `Registry()`, and `SettingsLoader()`. Commands access config via `f.Config().Project()` rather than `f.Config()` directly.
+**Type distinction:** `config.Project` is the YAML schema struct. `config.Provider` is the gateway interface (`config.Config` implements it) — lazily provides `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectRegistry()`, `SettingsLoader()`. Factory field: `Config func() config.Provider`. Commands access config via `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, etc.
 
 ### Project Config (clawker.yaml)
 
@@ -273,7 +272,7 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 ```
 
 **Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `LoopConfig`
-**Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
+**Gateway type** (internal/config/config.go, provider.go): `Provider` interface — lazy accessor via `Config` concrete type. Methods: `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectFound()`, `ProjectRegistry()`, `SettingsLoader()`, `Reload()`
 
 ### Firewall IP Range Sources
 
@@ -311,7 +310,7 @@ security:
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
+9. `config.Provider` interface — Factory's `Config` field returns this. `config.Config` implements it, absorbing project lookup, settings, and registry into one lazy-loading gateway. No more separate Resolution/SettingsLoader fields on Factory
 10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
 11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
@@ -330,7 +329,7 @@ security:
 - Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
-- `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
+- `config.Config` (gateway) is NOT the YAML schema — it implements `config.Provider`. Use `cfg.ProjectCfg()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
 - Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 

@@ -1,19 +1,19 @@
 # Config Package
 
-Configuration loading, validation, project registry, resolver, and the `Config` facade type.
+Configuration gateway (`Provider` interface / `Config` concrete), project registry, settings loading, schema, and validation.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `config.go` | `Config` facade — eager container for Project, Settings, Resolution, Registry |
+| `config.go` | `Config` struct (implements `Provider`) — lazy gateway for project, settings, registry |
+| `provider.go` | `Provider` interface — the public contract for config access |
 | `schema.go` | `Project` struct (YAML schema + runtime context) and nested types |
 | `project_loader.go` | `ProjectLoader` with functional options: `WithUserDefaults`, `WithProjectRoot`, `WithProjectKey` |
 | `merge.go` | Post-merge reconciliation: `postMerge()`, `sortedUnion()`, `mergeMaps()`, `applyEnvMapOverrides()`, `applyEnvSliceAppend()` |
 | `settings.go` | `Settings`, `LoggingConfig`, `OtelConfig`, `MonitoringConfig` structs + method receivers |
 | `settings_loader.go` | `SettingsLoader` interface + `FileSettingsLoader` — Viper-based, loads/saves `settings.yaml`, merges project-level overrides, supports `CLAWKER_*` env vars |
 | `registry.go` | `ProjectRegistry`, `ProjectEntry`, `RegistryLoader` — persistent slug-to-path map |
-| `resolver.go` | `Resolution`, `Resolver` — resolves working directory to registered project |
 | `project_runtime.go` | `Project` runtime methods — project context + worktree directory management |
 | `validator.go` | Config validation rules |
 | `defaults.go` | Default config values |
@@ -35,15 +35,17 @@ Configuration loading, validation, project registry, resolver, and the `Config` 
 
 ## Defaults
 
-`DefaultProject()`, `DefaultSettings()`, `DefaultFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`
+`DefaultProject()`, `DefaultSettings()`, `RequiredFirewallDomains`, `DefaultConfigYAML`, `DefaultSettingsYAML`, `DefaultRegistryYAML`
 
-## Config Facade (`config.go`)
+## Config Gateway (`config.go`, `provider.go`)
 
-Eagerly loads all configuration. Project, Settings, and Resolution are never nil (defaults used). Registry may be nil if initialization failed — check RegistryInitErr().
+`Provider` is the public interface for all config access. `Config` is the concrete implementation using lazy `sync.Once` loading.
 
-`Config{Project *Project, Settings *Settings, Resolution *Resolution, Registry Registry}`. Constructors: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O), `NewConfigForTestWithEntry(project, settings, entry, configDir)` (integration tests — provides ProjectEntry + registry directory for worktree method support). Methods: `SettingsLoader()`, `ProjectLoader()`, `RegistryInitErr()`.
+**Interface** (`Provider`): `ProjectCfg() *Project`, `UserSettings() *Settings`, `ProjectKey() string`, `ProjectFound() bool`, `WorkDir() string`, `ProjectRegistry() (Registry, error)`, `SettingsLoader() SettingsLoader`, `ProjectLoader() *ProjectLoader`, `Reload() error`, `SetSettingsLoader(SettingsLoader)`.
 
-Fatal if `os.Getwd()` fails or `clawker.yaml` invalid. Config not found → defaults.
+**Constructors**: `NewConfig()` (uses `os.Getwd()`), `NewConfigForTest(project, settings)` (no I/O), `NewConfigForTestWithEntry(project, settings, entry, configDir)` (integration tests).
+
+Factory field: `Config func() config.Provider`. Commands access: `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, `f.Config().ProjectKey()`, etc.
 
 ## ProjectLoader (`project_loader.go`)
 
@@ -92,7 +94,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 **Security:** `SecurityConfig` → `FirewallConfig`, `GitCredentialsConfig`, `IPRangeSource`
 - `SecurityConfig`: `HostProxyEnabled() bool` (default: true), `FirewallEnabled() bool` (convenience delegate)
-- `FirewallConfig`: `FirewallEnabled()`, `GetFirewallDomains(defaults []string)`, `IsOverrideMode()`, `GetIPRangeSources()`
+- `FirewallConfig`: `FirewallEnabled()`, `GetFirewallDomains(defaults []string)`, `GetIPRangeSources()`
 - `IPRangeSource`: `IsRequired() bool` (default: true for github)
 - `GitCredentialsConfig`: `GitHTTPSEnabled()`, `GitSSHEnabled()`, `GPGEnabled()`, `CopyGitConfigEnabled()`
 
@@ -185,10 +187,6 @@ Navigation: `registry.Project("key")` → `handle.Get()`, `handle.Exists()`, `ha
 
 See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBuilder` (fluent `*config.Project` builder — pointer-safe, no mutex copy), `FakeRegistryBuilder` (file-based, `FakeProjectBuilder` for adding worktrees), `InMemoryRegistryBuilder` (no I/O, `InMemoryProjectBuilder` for fluent worktree setup: `WithWorktree`, `WithHealthyWorktree`, `WithStaleWorktree`, `WithPartialWorktree`, `WithErrorWorktree`), `WorktreeState` (controllable DirExists/GitExists/DeleteError/PathError), `FakeWorktreeFS` (filesystem state control), `InMemorySettingsLoader` (no I/O settings), `NewRegistryLoaderForTest(dir)`. The harness `ConfigBuilder` in `test/harness/builders/` delegates to `configtest.ProjectBuilder`.
 
-## Resolver (`resolver.go`)
-
-`Resolution{ProjectKey, ProjectEntry, WorkDir}`. `NewResolver(registry)`, `Resolve(workDir) *Resolution`, `Found()`, `ProjectRoot()`.
-
 ## IP Range Sources (`ip_ranges.go`)
 
 `IPRangeSource{Name, URL, JQFilter, Required *bool}`. Built-in: `github`, `google-cloud`, `google`, `cloudflare`, `aws`. `DefaultIPRangeSources()` → `[{Name: "github"}]`; empty in override mode.
@@ -197,4 +195,4 @@ See `.claude/rules/testing.md` for detailed patterns. Key utilities: `ProjectBui
 
 ## Notes
 
-- `Project.Project` has `yaml:"-"` — computed by loader, not persisted. `config.Config` is facade; `config.Project` is YAML schema
+- `Project.Project` has `yaml:"-"` — computed by loader, not persisted. `config.Provider` is the interface; `config.Config` is the gateway implementation; `config.Project` is the YAML schema

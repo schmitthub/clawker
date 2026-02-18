@@ -39,7 +39,7 @@ Creates a git worktree for a specified branch.
 type AddOptions struct {
     IOStreams  *iostreams.IOStreams
     GitManager func() (*git.GitManager, error)
-    Config     func() *config.Config
+    Config     func() config.Provider
     Branch     string
     Base       string
 }
@@ -63,7 +63,7 @@ Lists all git worktrees for the current project.
 type ListOptions struct {
     IOStreams  *iostreams.IOStreams
     GitManager func() (*git.GitManager, error)
-    Config     func() *config.Config
+    Config     func() config.Provider
     Quiet      bool
 }
 ```
@@ -71,7 +71,7 @@ type ListOptions struct {
 **Output columns:** Branch, Path, HEAD, Modified, Status
 
 **Status values:**
-- (empty) — healthy worktree
+- `healthy` — healthy worktree
 - `dir missing` — worktree directory doesn't exist
 - `git missing` — .git file missing or invalid
 - `dir missing, git missing` — stale entry (prunable)
@@ -89,7 +89,7 @@ Removes stale worktree entries from the project registry.
 ```go
 type PruneOptions struct {
     IOStreams *iostreams.IOStreams
-    Config    func() *config.Config
+    Config    func() config.Provider
     DryRun    bool
 }
 ```
@@ -114,7 +114,7 @@ Removes git worktrees by branch name.
 type RemoveOptions struct {
     IOStreams    *iostreams.IOStreams
     GitManager   func() (*git.GitManager, error)
-    Config       func() *config.Config
+    Config       func() config.Provider
     Prompter     func() *prompter.Prompter
     Force        bool
     DeleteBranch bool
@@ -152,7 +152,7 @@ opts := &ListOptions{
 ## Dependencies
 
 - `f.GitManager()` — Access to git operations via `internal/git.GitManager`
-- `f.Config().Project()` — Project info and worktree directory management
+- `f.Config().ProjectCfg()` — Project config and worktree directory management
 
 ## Testing
 

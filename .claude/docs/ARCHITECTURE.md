@@ -52,7 +52,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 │  Layer 2: CONTRACT (internal/cmdutil/factory.go)                        │
 │                                                                         │
 │  Factory struct — pure data with closure fields, no methods             │
-│    • Defines WHAT dependencies exist (Client, Config, Resolution, etc.) │
+│    • Defines WHAT dependencies exist (Client, Config, GitManager, etc.) │
 │    • Importable by all cmd/* packages without cycles                    │
 │    • Also provides error handling, name resolution, project utilities   │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -172,7 +172,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/config` | Config loading, validation, project registry (`registry.go`) + resolver (`resolver.go`). `SettingsLoader` interface with `FileSettingsLoader` (filesystem) and `configtest.InMemorySettingsLoader` (testing) |
+| `internal/config` | Config gateway (`Provider` interface, `Config` concrete), project registry, settings loader, schema (`Project`). `SettingsLoader` interface with `FileSettingsLoader` (filesystem) and `configtest.InMemorySettingsLoader` (testing) |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -247,20 +247,22 @@ Commands follow the gh CLI's NewCmd/Options/runF pattern. Factory closure fields
 
 **Step 1**: NewCmd receives Factory, cherry-picks closures into Options:
 ```go
-func NewCmdStop(f *cmdutil.Factory, runF func(*StopOptions) error) *cobra.Command {
+func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
     opts := &StopOptions{
-        IOStreams:   f.IOStreams,    // value field
-        Client:     f.Client,       // closure field
-        Resolution: f.Resolution,   // closure field
+        IOStreams:     f.IOStreams,     // value field
+        Client:       f.Client,        // closure field
+        Config:       f.Config,        // closure field
+        SocketBridge: f.SocketBridge,  // closure field
     }
 ```
 
 **Step 2**: Options struct declares only what this command needs:
 ```go
 type StopOptions struct {
-    IOStreams   *iostreams.IOStreams
-    Client     func(context.Context) (*docker.Client, error)
-    Resolution func() *config.Resolution
+    IOStreams     *iostreams.IOStreams
+    Client       func(context.Context) (*docker.Client, error)
+    Config       func() config.Provider
+    SocketBridge func() socketbridge.SocketBridgeManager
     // command-specific fields...
 }
 ```
@@ -284,9 +286,10 @@ Every command follows this 4-step pattern. No exceptions.
 ```go
 type StopOptions struct {
     // From Factory (assigned in constructor)
-    IOStreams   *iostreams.IOStreams
-    Client     func(context.Context) (*docker.Client, error)
-    Resolution func() *config.Resolution
+    IOStreams     *iostreams.IOStreams
+    Client       func(context.Context) (*docker.Client, error)
+    Config       func() config.Provider
+    SocketBridge func() socketbridge.SocketBridgeManager
 
     // From flags (bound by Cobra)
     Force bool
@@ -301,9 +304,10 @@ type StopOptions struct {
 ```go
 func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) error) *cobra.Command {
     opts := &StopOptions{
-        IOStreams:   f.IOStreams,
-        Client:     f.Client,
-        Resolution: f.Resolution,
+        IOStreams:     f.IOStreams,
+        Client:       f.Client,
+        Config:       f.Config,
+        SocketBridge: f.SocketBridge,
     }
 ```
 

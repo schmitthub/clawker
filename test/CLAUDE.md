@@ -61,7 +61,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 | `NewTestClient(t)` | Label-injected `*docker.Client` |
 | `AddTestLabels(labels)` / `AddClawkerLabels(labels, project, agent, testName)` | Label injection |
 | `CleanupTestResources(ctx, cli)` / `CleanupProjectResources(ctx, cli, project)` | Label-filtered removal |
-| `ContainerExists/IsRunning(ctx, client, name)` | State checks |
+| `ContainerExists/ContainerIsRunning(ctx, client, name)` | State checks |
 | `WaitForContainerRunning(ctx, client, name)` | Fails fast on exit |
 | `VolumeExists/NetworkExists(ctx, client, name)` | Resource checks |
 | `GetContainerExitDiagnostics(ctx, client, id, logLines)` | Debug info |
@@ -116,7 +116,7 @@ Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
 
 ### Socket Bridge Helpers
 
-`SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) []string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
+`SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
 
 ## Debugging Resource Leaks
 
