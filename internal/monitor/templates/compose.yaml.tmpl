@@ -74,6 +74,7 @@ services:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
       - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
+      - ./grafana-cp-dashboard.json:/etc/grafana/provisioning/dashboards/clawker-controlplane.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:

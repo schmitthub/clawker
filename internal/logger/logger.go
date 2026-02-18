@@ -13,6 +13,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -136,9 +138,11 @@ type OtelLogConfig struct {
 
 // Options configures the logger via NewLogger.
 type Options struct {
-	LogsDir    string         // directory for log files
-	FileConfig *LoggingConfig // file rotation settings
-	OtelConfig *OtelLogConfig // nil = file-only, no OTEL bridge
+	LogsDir     string         // directory for log files
+	ServiceName string         // OTEL service.name resource attribute (e.g. "clawker")
+	ScopeName   string         // OTEL scope name — becomes scope_name label in Loki (default: "clawker")
+	FileConfig  *LoggingConfig // file rotation settings
+	OtelConfig  *OtelLogConfig // nil = file-only, no OTEL bridge
 }
 
 // Init initializes the global logger as a nop logger.
@@ -197,13 +201,17 @@ func NewLogger(opts *Options) error {
 
 	// Add OTEL hook if configured
 	if opts.OtelConfig != nil {
-		provider, err := createOtelProvider(opts.OtelConfig)
+		provider, err := createOtelProvider(opts.OtelConfig, opts.ServiceName)
 		if err != nil {
 			// OTEL failure is non-fatal — log to file only
 			logger.Warn().Err(err).Msg("OTEL bridge unavailable, continuing with file-only logging")
 		} else {
 			loggerProvider = provider
-			hook := otelzerolog.NewHook("clawker",
+			scopeName := opts.ScopeName
+			if scopeName == "" {
+				scopeName = "clawker"
+			}
+			hook := otelzerolog.NewHook(scopeName,
 				otelzerolog.WithLoggerProvider(provider),
 			)
 			logger = logger.Hook(hook)
@@ -215,14 +223,14 @@ func NewLogger(opts *Options) error {
 }
 
 // createOtelProvider creates an OTLP HTTP log exporter and batch processor.
-func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
+// serviceName sets the OTEL service.name resource attribute for log queryability.
+func createOtelProvider(cfg *OtelLogConfig, serviceName string) (*sdklog.LoggerProvider, error) {
 	// Redirect OTEL SDK internal errors to the file logger instead of stderr.
 	// The closure captures Log by reference — at invocation time (async error),
 	// Log is already the file-backed logger set by NewLogger.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
 		Log.Warn().Err(err).Msg("otel sdk error")
 	}))
-
 	ctx := context.Background()
 
 	exporterOpts := []otlploghttp.Option{
@@ -249,7 +257,20 @@ func createOtelProvider(cfg *OtelLogConfig) (*sdklog.LoggerProvider, error) {
 	}
 
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
-	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
+
+	providerOpts := []sdklog.LoggerProviderOption{sdklog.WithProcessor(processor)}
+	if serviceName != "" {
+		// Use NewSchemaless to avoid SchemaURL conflicts with resource.Default()
+		// (Default uses SDK's internal semconv version which may differ from our import).
+		res, err := resource.Merge(
+			resource.Default(),
+			resource.NewSchemaless(semconv.ServiceNameKey.String(serviceName)),
+		)
+		if err == nil {
+			providerOpts = append(providerOpts, sdklog.WithResource(res))
+		}
+	}
+	provider := sdklog.NewLoggerProvider(providerOpts...)
 
 	return provider, nil
 }

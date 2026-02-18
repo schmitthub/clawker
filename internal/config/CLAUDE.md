@@ -123,7 +123,7 @@ Runtime methods on `*Project` after facade injects context. Implements `git.Work
 
 **Defaults**: OtelCollectorPort=4318, Host="localhost", Internal="otel-collector", GRPC=4317, Loki=3100, Prometheus=9090, Jaeger=16686, Grafana=3000, Metrics=8889.
 
-**URL constructors** (nil-safe, defaults for zero): `OtelCollectorEndpoint()` (host-side), `OtelCollectorInternalURL()` (docker-network), `LokiInternalURL()`, `GrafanaURL()`, `JaegerURL()`, `PrometheusURL()`, `GetMetricsEndpoint()`, `GetLogsEndpoint()`, `GetOtelGRPCPort()`.
+**URL constructors** (nil-safe, defaults for zero): `OtelCollectorEndpoint()` (host-side), `OtelCollectorInternalEndpoint()` (docker-network, host:port without scheme — for `otlploghttp.WithEndpoint()`), `OtelCollectorInternalURL()` (docker-network), `LokiInternalURL()`, `GrafanaURL()`, `JaegerURL()`, `PrometheusURL()`, `GetMetricsEndpoint()`, `GetLogsEndpoint()`, `GetOtelGRPCPort()`.
 
 ### TelemetryConfig
 

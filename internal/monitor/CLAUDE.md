@@ -14,6 +14,7 @@ Template source files live in `templates/`. Files with `.tmpl` extension are Go 
 | `PrometheusTemplate` | `templates/prometheus.yaml.tmpl` | Yes |
 | `GrafanaDashboardsTemplate` | `templates/grafana-dashboards.yaml` | No |
 | `GrafanaDashboardTemplate` | `templates/grafana-dashboard.json` | No |
+| `GrafanaCPDashboardTemplate` | `templates/grafana-cp-dashboard.json` | No |
 
 ## Filename Constants
 
@@ -27,6 +28,7 @@ Output filenames for writing rendered content to disk:
 | `PrometheusFileName` | `prometheus.yaml` |
 | `GrafanaDashboardsFileName` | `grafana-dashboards.yaml` |
 | `GrafanaDashboardFileName` | `grafana-dashboard.json` |
+| `GrafanaCPDashboardFileName` | `grafana-cp-dashboard.json` |
 
 ## Template Rendering
 
@@ -55,6 +57,6 @@ Renders a Go `text/template` string with the given `MonitorTemplateData`. Return
 
 ## Usage
 
-The `monitor init` command constructs `MonitorTemplateData` via `NewMonitorTemplateData`, then calls `RenderTemplate` for each `.tmpl` template before writing the rendered output to disk. Static templates (`GrafanaDashboardsTemplate`, `GrafanaDashboardTemplate`) are written directly without rendering.
+The `monitor init` command constructs `MonitorTemplateData` via `NewMonitorTemplateData`, then calls `RenderTemplate` for each `.tmpl` template before writing the rendered output to disk. Static templates (`GrafanaDashboardsTemplate`, `GrafanaDashboardTemplate`, `GrafanaCPDashboardTemplate`) are written directly without rendering.
 
 All symbols are in `templates.go`.
