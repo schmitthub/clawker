@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strconv"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
@@ -91,6 +92,13 @@ func (s *BindStrategy) GetMounts() ([]mount.Mount, error) {
 			mounts = append(mounts, mount.Mount{
 				Type:   mount.TypeTmpfs,
 				Target: path.Join(s.config.RemotePath, dir),
+				TmpfsOptions: &mount.TmpfsOptions{
+					Mode: 0o755,
+					Options: [][]string{
+						{"uid", strconv.Itoa(config.ContainerUID)},
+						{"gid", strconv.Itoa(config.ContainerGID)},
+					},
+				},
 			})
 		}
 		if len(dirs) > 0 {
