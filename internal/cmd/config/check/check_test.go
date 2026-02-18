@@ -236,6 +236,9 @@ func TestResolveConfigTarget_empty(t *testing.T) {
 
 func TestResolveConfigTarget_clawkerYaml(t *testing.T) {
 	dir := t.TempDir()
+	// Resolve symlinks so assertions match on macOS where /var → /private/var.
+	dir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
 	path := filepath.Join(dir, "clawker.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
 
@@ -249,6 +252,9 @@ func TestResolveConfigTarget_clawkerYaml(t *testing.T) {
 
 func TestResolveConfigTarget_customFilename(t *testing.T) {
 	dir := t.TempDir()
+	// Resolve symlinks so assertions match on macOS where /var → /private/var.
+	dir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
 	path := filepath.Join(dir, "go.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("version: '1'"), 0o644))
 
