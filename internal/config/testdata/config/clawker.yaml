@@ -1,0 +1,61 @@
+# Clawker Configuration
+# Documentation: https://github.com/schmitthub/clawker
+
+version: "1"
+
+build:
+  # Base image for the container
+  image: "someother:someother"
+
+agent:
+  # Files to make available to Claude (prompts, docs, memory)
+  # includes:
+  #   - "./README.md"
+  # - "./.claude/memory.md"
+  # editor: "vim"    # defaults to "nano" if not set
+  # visual: "vim"    # defaults to "nano" if not set
+
+  # Environment variable injection (precedence: env_file < from_env < env)
+  #  env_file:
+  #    - ".env"
+  # from_env: passthrough host env vars by name (unset vars skipped with warning)
+  from_env:
+    - SOME_OTHER
+  # env: static key-value pairs (highest precedence, always win)
+  # env:
+  #   FOO: bar
+  claude_code:
+    # Use host authentication tokens in container
+    use_host_auth: false
+    config:
+      # "copy" copies host ~/.claude/ config, "fresh" starts clean
+      strategy: "fresh"
+  # Enable shared directory (read-only, mounted at ~/.clawker-share)
+  enable_shared_dir: false
+
+security:
+  # Mount Docker socket for Docker-in-Docker (security risk if enabled)
+  docker_socket: false
+  # Domains allowed through firewall (only when enable_firewall: true)
+  firewall:
+    # Enable network firewall (blocks outbound traffic by default)
+    enable: false
+  git_credentials:
+    forward_https: false
+    forward_ssh: false
+    forward_gpg: false
+    copy_git_config: false
+
+loop:
+  max_loops: 50                   # Maximum loops before stopping (default: 50)
+  stagnation_threshold: 3         # Loops without progress before circuit trips (default: 3)
+  timeout_minutes: 15             # Per-loop timeout in minutes (default: 15)
+  calls_per_hour: 100             # Rate limit: max calls per hour, 0 to disable (default: 100)
+  completion_threshold: 2         # Completion indicators required for strict mode (default: 2)
+  session_expiration_hours: 24    # Session TTL, auto-reset if older (default: 24)
+  same_error_threshold: 5         # Same error repetitions before circuit trips (default: 5)
+  output_decline_threshold: 70    # Output decline percentage that triggers trip (default: 70)
+  max_consecutive_test_loops: 3   # Test-only loops before circuit trips (default: 3)
+  loop_delay_seconds: 3           # Seconds to wait between loop iterations (default: 3)
+  safety_completion_threshold: 5  # Force exit after N loops with completion indicators (default: 5)
+  skip_permissions: false         # Pass --dangerously-skip-permissions to claude (default: false)

@@ -1,220 +1,157 @@
 // Package config provides types for interacting with clawker configuration files.
 // It loads clawker.yaml (project) and settings.yaml (user) into one merged
 // in-memory Config backed by viper, with key-path traversal via Get/Set/Keys/Remove.
+// Most of this code is based on [github.com/cli/cli/blob/trunk/pkg/config/config.go](github.com/cli/cli/blob/trunk/pkg/config/config.go).
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/spf13/viper"
 )
 
 const (
-	// ClawkerHomeEnv is the environment variable for the clawker home directory.
-	ClawkerHomeEnv = "CLAWKER_HOME"
-	// DefaultClawkerDir is the default directory path under user home.
-	DefaultClawkerDir = ".local/clawker"
+	appData          = "AppData"
+	clawkerConfigDir = "CLAWKER_CONFIG"
+	xdgConfigHome    = "XDG_CONFIG_HOME"
 )
 
-var (
-	cfg     *Config
-	once    sync.Once
-	loadErr error
-)
-
-// defaultConfigStr is the YAML string used by NewBlankConfig to seed defaults.
-var defaultConfigStr = DefaultConfigYAML
-
-// Config is an in-memory representation of clawker configuration files.
-// It can be thought of as a map where entries consist of a key that
-// corresponds to either a string value or a map value, allowing for
-// multi-level maps.
-type Config struct {
-	v  *viper.Viper
-	mu sync.RWMutex
+// Config is the public configuration contract.
+// Add methods here as the config contract grows.
+type Config interface {
+	RequiredFirewallDomains() []string
 }
 
-// Get retrieves a string value from Config.
-// The keys argument is a sequence of key values so that nested
-// entries can be retrieved. Returns "", KeyNotFoundError if any
-// of the keys cannot be found.
-func (c *Config) Get(keys []string) (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	path := strings.Join(keys, ".")
-	if !c.v.IsSet(path) {
-		return "", &KeyNotFoundError{Key: keys[len(keys)-1]}
-	}
-	return c.v.GetString(path), nil
+type configImpl struct {
+	v *viper.Viper
 }
 
-// Keys enumerates a Config's immediate child keys.
-// The keys argument is a sequence of key values so that nested
-// map values can have their keys enumerated.
-// Returns nil, KeyNotFoundError if any of the keys cannot be found.
-func (c *Config) Keys(keys []string) ([]string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var allKeys []string
-	if len(keys) == 0 {
-		allKeys = c.v.AllKeys()
-	} else {
-		path := strings.Join(keys, ".")
-		sub := c.v.Sub(path)
-		if sub == nil {
-			return nil, &KeyNotFoundError{Key: keys[len(keys)-1]}
-		}
-		allKeys = sub.AllKeys()
-	}
-
-	// Extract immediate children (first segment before ".")
-	seen := make(map[string]bool)
-	var result []string
-	for _, k := range allKeys {
-		top := k
-		if i := strings.Index(k, "."); i >= 0 {
-			top = k[:i]
-		}
-		if !seen[top] {
-			seen[top] = true
-			result = append(result, top)
-		}
-	}
-	sort.Strings(result)
-	return result, nil
+func newViperConfig() *viper.Viper {
+	v := viper.New()
+	v.SetEnvPrefix("CLAWKER")
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	setDefaults(v)
+	return v
 }
 
-// Set sets a string value in Config.
-// The keys argument is a sequence of key values so that nested
-// entries can be set. If any of the keys do not exist they will
-// be created.
-func (c *Config) Set(keys []string, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	path := strings.Join(keys, ".")
-	c.v.Set(path, value)
+func newConfig(v *viper.Viper) *configImpl {
+	return &configImpl{
+		v: v,
+	}
 }
 
-// Remove removes an entry from Config.
-// The keys argument is a sequence of key values so that nested
-// entries can be removed. Returns KeyNotFoundError if any key
-// is not found.
-func (c *Config) Remove(keys []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	path := strings.Join(keys, ".")
-	if !c.v.IsSet(path) {
-		return &KeyNotFoundError{Key: keys[len(keys)-1]}
+// NewConfig loads all clawker configuration files into a single Config.
+// Precedence (highest to lowest): project config > project registry > user config > settings
+func NewConfig() (Config, error) {
+	c := newConfig(newViperConfig())
+	if err := c.load(loadOptions{
+		settingsFile:          settingsConfigFile(),
+		userProjectConfigFile: userProjectConfigFile(),
+		projectRegistryPath:   projectRegistryPath(),
+	}); err != nil {
+		return nil, err
 	}
-
-	// Viper lacks native remove; rebuild from the settings map.
-	all := c.v.AllSettings()
-	if err := removeFromMap(all, keys); err != nil {
-		return err
-	}
-
-	newV := viper.New()
-	newV.SetConfigType("yaml")
-	if err := newV.MergeConfigMap(all); err != nil {
-		return err
-	}
-	c.v = newV
-	return nil
-}
-
-// removeFromMap deletes a nested key from a map[string]interface{}.
-func removeFromMap(m map[string]interface{}, keys []string) error {
-	if len(keys) == 1 {
-		delete(m, keys[0])
-		return nil
-	}
-	child, ok := m[keys[0]]
-	if !ok {
-		return &KeyNotFoundError{Key: keys[0]}
-	}
-	childMap, ok := child.(map[string]interface{})
-	if !ok {
-		return &KeyNotFoundError{Key: keys[0]}
-	}
-	return removeFromMap(childMap, keys[1:])
+	return c, nil
 }
 
 // ReadFromString takes a YAML string and returns a Config.
-func ReadFromString(str string) *Config {
-	v := viper.New()
+// Useful for testing or constructing configs programmatically.
+func ReadFromString(str string) (Config, error) {
+	v := newViperConfig()
 	v.SetConfigType("yaml")
 	if str != "" {
-		_ = v.ReadConfig(strings.NewReader(str))
+		err := v.ReadConfig(strings.NewReader(str))
+		if err != nil {
+			return nil, fmt.Errorf("parsing config from string: %w", err)
+		}
 	}
-	return &Config{v: v}
+	return newConfig(v), nil
 }
 
-// Read loads configuration files from the local filesystem and
-// returns a Config. A copy of the fallback configuration will
-// be returned when there are no configuration files to load.
-var Read = func(fallback *Config) (*Config, error) {
-	once.Do(func() {
-		cfg, loadErr = load(fallback)
-	})
-	return cfg, loadErr
+func (c *configImpl) RequiredFirewallDomains() []string {
+	return append([]string(nil), requiredFirewallDomains...)
 }
 
-// Write writes Config to the clawker home directory.
-func Write(c *Config) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	home := clawkerHome()
-	path := filepath.Join(home, "clawker.yaml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o771); err != nil {
-		return err
+type loadOptions struct {
+	settingsFile          string
+	userProjectConfigFile string
+	projectRegistryPath   string
+}
+
+func (c *configImpl) load(opts loadOptions) error {
+	files := []string{
+		opts.settingsFile,
+		opts.userProjectConfigFile,
+		opts.projectRegistryPath,
 	}
-	return c.v.WriteConfigAs(path)
-}
 
-// load reads clawker.yaml from the current directory and merges
-// settings.yaml from clawkerHome(). Returns fallback if no files found.
-func load(fallback *Config) (*Config, error) {
-	v := viper.New()
-	v.SetConfigType("yaml")
-
-	// clawker.yaml from current directory
-	v.SetConfigName("clawker")
-	v.AddConfigPath(".")
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, err
+	for i, f := range files {
+		c.v.SetConfigFile(f)
+		var err error
+		if i == 0 {
+			err = c.v.ReadInConfig()
+		} else {
+			err = c.v.MergeInConfig()
+		}
+		if err != nil {
+			return fmt.Errorf("loading config %s: %w", f, err)
 		}
 	}
 
-	// settings.yaml from clawker home
-	home := clawkerHome()
-	settingsFile := filepath.Join(home, "settings.yaml")
-	if _, err := os.Stat(settingsFile); err == nil {
-		v.SetConfigFile(settingsFile)
-		if err := v.MergeInConfig(); err != nil {
-			return nil, err
+	return c.mergeProjectConfig()
+}
+
+func (c *configImpl) mergeProjectConfig() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting cwd: %w", err)
+	}
+
+	projects := c.v.GetStringMap("projects")
+	for key := range projects {
+		root := c.v.GetString(fmt.Sprintf("projects.%s.root", key))
+		if filepath.Clean(root) == filepath.Clean(cwd) {
+			c.v.SetConfigFile(filepath.Join(root, "clawker.yaml"))
+			if err := c.v.MergeInConfig(); err != nil {
+				return fmt.Errorf("loading project config for %s: %w", key, err)
+			}
+			return nil
 		}
 	}
 
-	// If nothing loaded, use fallback
-	if len(v.AllKeys()) == 0 && fallback != nil {
-		return ReadFromString(defaultConfigStr), nil
-	}
-
-	return &Config{v: v}, nil
+	return nil
 }
 
-// clawkerHome returns the clawker home directory.
-// Checks CLAWKER_HOME env var first, then defaults to ~/.local/clawker.
-func clawkerHome() string {
-	if home := os.Getenv(ClawkerHomeEnv); home != "" {
-		return home
+// ConfigDir returns the clawker config directory.
+func ConfigDir() string {
+	if a := os.Getenv(clawkerConfigDir); a != "" {
+		return a
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, DefaultClawkerDir)
+	if b := os.Getenv(xdgConfigHome); b != "" {
+		return filepath.Join(b, "clawker")
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv(appData); c != "" {
+			return filepath.Join(c, "clawker")
+		}
+	}
+	d, _ := os.UserHomeDir()
+	return filepath.Join(d, ".config", "clawker")
+}
+
+func settingsConfigFile() string {
+	return filepath.Join(ConfigDir(), "settings.yaml")
+}
+
+func userProjectConfigFile() string {
+	return filepath.Join(ConfigDir(), "clawker.yaml")
+}
+
+func projectRegistryPath() string {
+	return filepath.Join(ConfigDir(), "projects.yaml")
 }

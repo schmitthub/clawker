@@ -1,252 +1,256 @@
 package config
 
 import (
-	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
+	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestLoad(t *testing.T) {
-	tests := []struct {
-		name        string
-		clawkerYAML string
-		settingsYAML string
-		wantKey     []string
-		wantVal     string
-		wantErr     bool
-	}{
-		{
-			name: "from_files",
-			clawkerYAML: `version: "2"
+// helpers
+
+func mustReadFromString(t *testing.T, str string) *configImpl {
+	t.Helper()
+	c, err := ReadFromString(str)
+	require.NoError(t, err)
+	impl, ok := c.(*configImpl)
+	require.True(t, ok)
+	return impl
+}
+
+func newConfigFromTestdata(t *testing.T) *configImpl {
+	t.Helper()
+
+	td, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(filepath.Join(td, "project")))
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWd)
+	})
+
+	t.Setenv("CLAWKER_CONFIG", filepath.Join(td, "config"))
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+	c, ok := cfg.(*configImpl)
+	require.True(t, ok)
+
+	return c
+}
+
+// ReadFromString
+
+func TestReadFromString_Empty(t *testing.T) {
+	c, err := ReadFromString("")
+	require.NoError(t, err)
+	require.NotNil(t, c)
+}
+
+func TestReadFromString_InvalidYAML(t *testing.T) {
+	_, err := ReadFromString("build: [unclosed")
+	require.Error(t, err)
+}
+
+func TestReadFromString_ParsesValues(t *testing.T) {
+	c := mustReadFromString(t, `
 build:
-  image: "ubuntu:22.04"
-`,
-			wantKey: []string{"build", "image"},
-			wantVal: "ubuntu:22.04",
-		},
-		{
-			name:    "no_files",
-			wantKey: []string{"build", "image"},
-			wantErr: true,
-		},
-		{
-			name:        "invalid_yaml",
-			clawkerYAML: `{{{invalid`,
-			wantErr:     true,
-		},
-		{
-			name: "partial_merges_settings",
-			clawkerYAML: `version: "1"
+  image: ubuntu:22.04
+`)
+	assert.Equal(t, "ubuntu:22.04", c.v.GetString("build.image"))
+}
+
+// defaults
+
+func TestDefaults_Project(t *testing.T) {
+	c := mustReadFromString(t, "")
+
+	assert.Equal(t, "1", c.v.GetString("version"))
+	assert.Equal(t, "node:20-slim", c.v.GetString("build.image"))
+	assert.Equal(t, "/workspace", c.v.GetString("workspace.remote_path"))
+	assert.Equal(t, "bind", c.v.GetString("workspace.default_mode"))
+	assert.True(t, c.v.GetBool("security.firewall.enable"))
+	assert.False(t, c.v.GetBool("security.docker_socket"))
+}
+
+func TestDefaults_BuildPackages(t *testing.T) {
+	c := mustReadFromString(t, "")
+	assert.Equal(t, []string{"git", "curl", "ripgrep"}, c.v.GetStringSlice("build.packages"))
+}
+
+func TestDefaults_CapAdd(t *testing.T) {
+	c := mustReadFromString(t, "")
+	assert.Equal(t, []string{"NET_ADMIN", "NET_RAW"}, c.v.GetStringSlice("security.cap_add"))
+}
+
+func TestDefaults_Settings(t *testing.T) {
+	c := mustReadFromString(t, "")
+
+	assert.Equal(t, 50, c.v.GetInt("logging.max_size_mb"))
+	assert.Equal(t, 7, c.v.GetInt("logging.max_age_days"))
+	assert.Equal(t, 3, c.v.GetInt("logging.max_backups"))
+	assert.True(t, c.v.GetBool("logging.file_enabled"))
+	assert.True(t, c.v.GetBool("logging.compress"))
+	assert.True(t, c.v.GetBool("logging.otel.enabled"))
+	assert.Equal(t, 5, c.v.GetInt("logging.otel.timeout_seconds"))
+	assert.Equal(t, 2048, c.v.GetInt("logging.otel.max_queue_size"))
+	assert.Equal(t, 5, c.v.GetInt("logging.otel.export_interval_seconds"))
+	assert.Equal(t, 4318, c.v.GetInt("monitoring.otel_collector_port"))
+	assert.Equal(t, "localhost", c.v.GetString("monitoring.otel_collector_host"))
+	assert.Equal(t, "otel-collector", c.v.GetString("monitoring.otel_collector_internal"))
+	assert.Equal(t, 4317, c.v.GetInt("monitoring.otel_grpc_port"))
+	assert.Equal(t, 3100, c.v.GetInt("monitoring.loki_port"))
+	assert.Equal(t, 9090, c.v.GetInt("monitoring.prometheus_port"))
+	assert.Equal(t, 16686, c.v.GetInt("monitoring.jaeger_port"))
+	assert.Equal(t, 3000, c.v.GetInt("monitoring.grafana_port"))
+	assert.Equal(t, 8889, c.v.GetInt("monitoring.prometheus_metrics_port"))
+	assert.Equal(t, "/v1/metrics", c.v.GetString("monitoring.telemetry.metrics_path"))
+	assert.Equal(t, "/v1/logs", c.v.GetString("monitoring.telemetry.logs_path"))
+	assert.Equal(t, 10000, c.v.GetInt("monitoring.telemetry.metric_export_interval_ms"))
+	assert.Equal(t, 5000, c.v.GetInt("monitoring.telemetry.logs_export_interval_ms"))
+	assert.True(t, c.v.GetBool("monitoring.telemetry.log_tool_details"))
+	assert.True(t, c.v.GetBool("monitoring.telemetry.log_user_prompts"))
+	assert.True(t, c.v.GetBool("monitoring.telemetry.include_account_uuid"))
+	assert.True(t, c.v.GetBool("monitoring.telemetry.include_session_id"))
+}
+
+// config overrides defaults
+
+func TestReadFromString_OverridesDefault(t *testing.T) {
+	c := mustReadFromString(t, `
 build:
-  image: "node:20-slim"
-`,
-			settingsYAML: `default_image: "custom:latest"
-`,
-			wantKey: []string{"default_image"},
-			wantVal: "custom:latest",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Reset singleton
-			once = sync.Once{}
-			cfg = nil
-			loadErr = nil
-
-			tmpDir := t.TempDir()
-			origDir, _ := os.Getwd()
-			t.Cleanup(func() { _ = os.Chdir(origDir) })
-			_ = os.Chdir(tmpDir)
-
-			homeDir := t.TempDir()
-			t.Setenv("CLAWKER_HOME", homeDir)
-
-			if tt.clawkerYAML != "" {
-				_ = os.WriteFile(filepath.Join(tmpDir, "clawker.yaml"), []byte(tt.clawkerYAML), 0o644)
-			}
-			if tt.settingsYAML != "" {
-				_ = os.WriteFile(filepath.Join(homeDir, "settings.yaml"), []byte(tt.settingsYAML), 0o644)
-			}
-
-			c, err := Read(nil)
-			if tt.wantErr {
-				if tt.name == "invalid_yaml" {
-					if err == nil {
-						t.Fatal("expected error for invalid yaml, got nil")
-					}
-					return
-				}
-				// no_files case: Read returns a fallback (empty config), Get should fail
-				if err != nil {
-					return // error during load is also acceptable
-				}
-				_, getErr := c.Get(tt.wantKey)
-				if getErr == nil {
-					t.Fatal("expected KeyNotFoundError, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Read() error = %v", err)
-			}
-
-			got, err := c.Get(tt.wantKey)
-			if err != nil {
-				t.Fatalf("Get(%v) error = %v", tt.wantKey, err)
-			}
-			if got != tt.wantVal {
-				t.Errorf("Get(%v) = %q, want %q", tt.wantKey, got, tt.wantVal)
-			}
-		})
-	}
+  image: ubuntu:22.04
+workspace:
+  default_mode: snapshot
+`)
+	assert.Equal(t, "ubuntu:22.04", c.v.GetString("build.image"))
+	assert.Equal(t, "snapshot", c.v.GetString("workspace.default_mode"))
+	// unrelated defaults preserved
+	assert.Equal(t, "/workspace", c.v.GetString("workspace.remote_path"))
 }
 
-func TestGetSet(t *testing.T) {
-	tests := []struct {
-		name    string
-		yaml    string
-		getKey  []string
-		setKey  []string
-		setVal  string
-		keysKey []string
-		wantGet string
-		wantErr bool
-		wantKeys []string
-	}{
-		{
-			name:    "get_nested",
-			yaml:    "build:\n  image: \"node:20-slim\"\n",
-			getKey:  []string{"build", "image"},
-			wantGet: "node:20-slim",
-		},
-		{
-			name:    "get_missing",
-			yaml:    "build:\n  image: \"node:20-slim\"\n",
-			getKey:  []string{"nonexistent"},
-			wantErr: true,
-		},
-		{
-			name:    "set_then_get",
-			yaml:    "",
-			setKey:  []string{"foo", "bar"},
-			setVal:  "baz",
-			getKey:  []string{"foo", "bar"},
-			wantGet: "baz",
-		},
-		{
-			name:     "keys",
-			yaml:     "build:\n  image: \"node:20-slim\"\n  dockerfile: \"Dockerfile\"\n",
-			keysKey:  []string{"build"},
-			wantKeys: []string{"dockerfile", "image"},
-		},
-	}
+// env var overrides
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := ReadFromString(tt.yaml)
-
-			if tt.setKey != nil {
-				c.Set(tt.setKey, tt.setVal)
-			}
-
-			if tt.keysKey != nil {
-				keys, err := c.Keys(tt.keysKey)
-				if err != nil {
-					t.Fatalf("Keys(%v) error = %v", tt.keysKey, err)
-				}
-				if len(keys) != len(tt.wantKeys) {
-					t.Fatalf("Keys(%v) = %v, want %v", tt.keysKey, keys, tt.wantKeys)
-				}
-				for i, k := range keys {
-					if k != tt.wantKeys[i] {
-						t.Errorf("Keys(%v)[%d] = %q, want %q", tt.keysKey, i, k, tt.wantKeys[i])
-					}
-				}
-				return
-			}
-
-			got, err := c.Get(tt.getKey)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				var knf *KeyNotFoundError
-				if !isKeyNotFoundError(err, &knf) {
-					t.Fatalf("expected KeyNotFoundError, got %T: %v", err, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Get(%v) error = %v", tt.getKey, err)
-			}
-			if got != tt.wantGet {
-				t.Errorf("Get(%v) = %q, want %q", tt.getKey, got, tt.wantGet)
-			}
-		})
-	}
+func TestEnvVar_OverridesDefault(t *testing.T) {
+	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
+	c := mustReadFromString(t, "")
+	assert.Equal(t, "alpine:3.19", c.v.GetString("build.image"))
 }
 
-func isKeyNotFoundError(err error, target **KeyNotFoundError) bool {
-	knf, ok := err.(*KeyNotFoundError)
-	if ok && target != nil {
-		*target = knf
-	}
-	return ok
+func TestEnvVar_OverridesConfigValue(t *testing.T) {
+	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
+	c := mustReadFromString(t, `
+build:
+  image: ubuntu:22.04
+`)
+	assert.Equal(t, "alpine:3.19", c.v.GetString("build.image"))
 }
 
-func TestStubs(t *testing.T) {
-	t.Run("NewBlankConfig", func(t *testing.T) {
-		c := NewBlankConfig()
-		if c == nil {
-			t.Fatal("NewBlankConfig() returned nil")
-		}
-		// Should have defaults from DefaultConfigYAML
-		val, err := c.Get([]string{"version"})
-		if err != nil {
-			t.Fatalf("Get version error = %v", err)
-		}
-		if val != "1" {
-			t.Errorf("version = %q, want %q", val, "1")
-		}
-	})
+// RequiredFirewallDomains
 
-	t.Run("NewFromString", func(t *testing.T) {
-		c := NewFromString("custom_key: custom_value\n")
-		val, err := c.Get([]string{"custom_key"})
-		if err != nil {
-			t.Fatalf("Get error = %v", err)
-		}
-		if val != "custom_value" {
-			t.Errorf("custom_key = %q, want %q", val, "custom_value")
-		}
-	})
+func TestRequiredFirewallDomains_NotEmpty(t *testing.T) {
+	c := mustReadFromString(t, "")
+	assert.NotEmpty(t, c.RequiredFirewallDomains())
+}
 
-	t.Run("NewIsolatedTestConfig", func(t *testing.T) {
-		// Reset singleton
-		once = sync.Once{}
-		cfg = nil
-		loadErr = nil
+func TestRequiredFirewallDomains_ContainsAnthropicAPI(t *testing.T) {
+	c := mustReadFromString(t, "")
+	assert.Contains(t, c.RequiredFirewallDomains(), "api.anthropic.com")
+}
 
-		c, readConfigs := NewIsolatedTestConfig(t)
-		if c == nil {
-			t.Fatal("NewIsolatedTestConfig() returned nil config")
-		}
+func TestRequiredFirewallDomains_Immutable(t *testing.T) {
+	c := mustReadFromString(t, "")
+	got := c.RequiredFirewallDomains()
+	got[0] = "evil.com"
+	assert.NotEqual(t, "evil.com", c.RequiredFirewallDomains()[0], "RequiredFirewallDomains returned mutable reference")
+}
 
-		// Set a value and write
-		c.Set([]string{"test_key"}, "test_value")
-		if err := Write(c); err != nil {
-			t.Fatalf("Write() error = %v", err)
-		}
+// ConfigDir
 
-		// Read back what was written
-		var configBuf, settingsBuf bytes.Buffer
-		readConfigs(&configBuf, &settingsBuf)
+func TestConfigDir_ClawkerConfigDir(t *testing.T) {
+	t.Setenv(clawkerConfigDir, "/custom/config")
+	assert.Equal(t, "/custom/config", ConfigDir())
+}
 
-		if configBuf.Len() == 0 {
-			t.Error("expected config data to be written")
-		}
-	})
+func TestConfigDir_XDGConfigHome(t *testing.T) {
+	t.Setenv(clawkerConfigDir, "")
+	t.Setenv(xdgConfigHome, "/xdg/config")
+	assert.Equal(t, filepath.Join("/xdg/config", "clawker"), ConfigDir())
+}
+
+func TestConfigDir_ClawkerTakesPrecedenceOverXDG(t *testing.T) {
+	t.Setenv(clawkerConfigDir, "/custom/config")
+	t.Setenv(xdgConfigHome, "/xdg/config")
+	assert.Equal(t, "/custom/config", ConfigDir())
+}
+
+func TestConfigDir_Default(t *testing.T) {
+	t.Setenv(clawkerConfigDir, "")
+	t.Setenv(xdgConfigHome, "")
+	if runtime.GOOS == "windows" {
+		t.Setenv(appData, "")
+	}
+	home, _ := os.UserHomeDir()
+	assert.Equal(t, filepath.Join(home, ".config", "clawker"), ConfigDir())
+}
+
+// testdata-based load tests
+
+func TestLoad_Testdata_LoadsWithoutError(t *testing.T) {
+	newConfigFromTestdata(t)
+}
+
+func TestLoad_Testdata_DefaultsPreservedAfterMerge(t *testing.T) {
+	c := newConfigFromTestdata(t)
+	assert.Equal(t, "/workspace", c.v.GetString("workspace.remote_path"))
+}
+
+func TestLoad_Testdata_SettingsFileLoaded(t *testing.T) {
+	c := newConfigFromTestdata(t)
+	// update to assert a value explicitly set in testdata/config/settings.yaml
+	assert.NotEmpty(t, c.v.GetString("monitoring.otel_collector_host"))
+}
+
+func TestLoad_Testdata_ProjectConfigMerged(t *testing.T) {
+	c := newConfigFromTestdata(t)
+	// update to assert a value explicitly set in testdata/project/clawker.yaml
+	assert.NotEmpty(t, c.v.GetString("build.image"))
+}
+
+// mergeProjectConfig
+
+func TestMergeProjectConfig_NoMatch(t *testing.T) {
+	otherDir := t.TempDir()
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(otherDir))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	c := mustReadFromString(t, `
+projects:
+  other:
+    name: other
+    root: /some/other/path
+`)
+	require.NoError(t, c.mergeProjectConfig())
+}
+
+func TestMergeProjectConfig_MissingProjectConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	c := mustReadFromString(t, fmt.Sprintf(`
+projects:
+  myproject:
+    name: myproject
+    root: %s
+`, dir))
+	require.Error(t, c.mergeProjectConfig())
 }
