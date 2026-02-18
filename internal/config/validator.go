@@ -157,35 +157,14 @@ func (v *Validator) validateSecurity(cfg *Project) {
 	if cfg.Security.Firewall != nil {
 		fw := cfg.Security.Firewall
 
-		// Warn if override_domains is set alongside add_domains or remove_domains
-		// The behavior is well-defined (override wins), but user should know their add/remove are ignored
-		if len(fw.OverrideDomains) > 0 && (len(fw.AddDomains) > 0 || len(fw.RemoveDomains) > 0) {
-			v.addWarning("security.firewall", "override_domains is set; add_domains and remove_domains will be ignored")
-		}
-
 		// Validate add_domains format
 		for i, domain := range fw.AddDomains {
 			v.validateDomainFormat(fmt.Sprintf("security.firewall.add_domains[%d]", i), domain)
 		}
 
-		// Validate remove_domains format
-		for i, domain := range fw.RemoveDomains {
-			v.validateDomainFormat(fmt.Sprintf("security.firewall.remove_domains[%d]", i), domain)
-		}
-
-		// Validate override_domains format
-		for i, domain := range fw.OverrideDomains {
-			v.validateDomainFormat(fmt.Sprintf("security.firewall.override_domains[%d]", i), domain)
-		}
-
 		// Validate IP range sources
 		for i, source := range fw.IPRangeSources {
 			v.validateIPRangeSource(fmt.Sprintf("security.firewall.ip_range_sources[%d]", i), source)
-		}
-
-		// Warn if override_domains is set alongside ip_range_sources
-		if len(fw.OverrideDomains) > 0 && len(fw.IPRangeSources) > 0 {
-			v.addWarning("security.firewall", "override_domains is set; ip_range_sources will be ignored")
 		}
 	}
 }

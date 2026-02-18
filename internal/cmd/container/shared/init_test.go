@@ -574,8 +574,8 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:          true,
-		OverrideDomains: []string{"example.com"},
+		Enable:     true,
+		AddDomains: []string{"example.com"},
 	}
 
 	result, err := CreateContainer(context.Background(),
@@ -588,6 +588,8 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 	for _, e := range containerOpts.Env {
 		require.NotContains(t, e, "CLAWKER_FIREWALL_DOMAINS",
 			"firewall env var should not be set when DisableFirewall=true")
+		require.NotContains(t, e, "CLAWKER_FIREWALL_ENABLED",
+			"CLAWKER_FIREWALL_ENABLED should not be set when DisableFirewall=true")
 	}
 	fake.AssertCalled(t, "ContainerCreate")
 }
@@ -606,8 +608,8 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.Security.Firewall = &config.FirewallConfig{
-		Enable:          true,
-		OverrideDomains: []string{"example.com"},
+		Enable:     true,
+		AddDomains: []string{"example.com"},
 	}
 
 	result, err := CreateContainer(context.Background(),
@@ -617,15 +619,19 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 	require.NotNil(t, result)
 
 	// Verify firewall env vars were injected (firewall enabled, not disabled)
-	var firewallFound bool
+	var firewallDomainsFound, firewallEnabledFound bool
 	for _, e := range containerOpts.Env {
 		if strings.HasPrefix(e, "CLAWKER_FIREWALL_DOMAINS=") {
-			firewallFound = true
-			break
+			firewallDomainsFound = true
+		}
+		if e == "CLAWKER_FIREWALL_ENABLED=true" {
+			firewallEnabledFound = true
 		}
 	}
-	require.True(t, firewallFound,
-		"firewall env var should be set when DisableFirewall=false and config has firewall enabled")
+	require.True(t, firewallDomainsFound,
+		"CLAWKER_FIREWALL_DOMAINS should be set when DisableFirewall=false and config has firewall enabled")
+	require.True(t, firewallEnabledFound,
+		"CLAWKER_FIREWALL_ENABLED=true should be set when DisableFirewall=false and config has firewall enabled")
 }
 
 func TestCreateContainer_EventsSequence(t *testing.T) {

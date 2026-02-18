@@ -34,18 +34,6 @@ func TestFirewallDomainsDeterministicOrder(t *testing.T) {
 			want:     []string{"apple.com", "banana.com", "zebra.com"}, // sorted with addition
 		},
 		{
-			name:     "remove domains returns sorted result",
-			config:   &config.FirewallConfig{Enable: true, RemoveDomains: []string{"apple.com"}},
-			defaults: []string{"zebra.com", "apple.com", "mango.com"},
-			want:     []string{"mango.com", "zebra.com"}, // sorted after removal
-		},
-		{
-			name:     "override mode returns override list unchanged",
-			config:   &config.FirewallConfig{Enable: true, OverrideDomains: []string{"custom.com", "another.com"}},
-			defaults: []string{"default.com"},
-			want:     []string{"custom.com", "another.com"}, // override returns as-is (user controls order)
-		},
-		{
 			name: "duplicate domains in add are deduplicated",
 			config: &config.FirewallConfig{
 				Enable:     true,

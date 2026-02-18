@@ -16,8 +16,16 @@ emit_error() {
     exit 1
 }
 
-# Initialize firewall if script exists and we have capabilities
-if [ -x /usr/local/bin/init-firewall.sh ] && [ -f /proc/net/ip_tables_names ]; then
+# Initialize firewall if enabled at runtime
+if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ]; then
+    # Fail fast if prerequisites are missing — silent degradation of a security control is dangerous
+    if [ ! -x /usr/local/bin/init-firewall.sh ]; then
+        emit_error "firewall" "init-firewall.sh not found or not executable"
+    fi
+    if [ ! -f /proc/net/ip_tables_names ]; then
+        emit_error "firewall" "iptables not available (missing NET_ADMIN/NET_RAW capabilities)"
+    fi
+
     # Write firewall config to file since sudo strips environment variables
     mkdir -p /tmp/clawker
     echo "${CLAWKER_FIREWALL_IP_RANGE_SOURCES:-}" > /tmp/clawker/firewall-ip-range-sources

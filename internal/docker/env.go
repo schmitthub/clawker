@@ -27,7 +27,6 @@ type RuntimeEnvOpts struct {
 	// Firewall
 	FirewallEnabled        bool
 	FirewallDomains        []string
-	FirewallOverride       bool
 	FirewallIPRangeSources []config.IPRangeSource
 
 	// Monitoring stack
@@ -89,8 +88,10 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m["COLORTERM"] = "truecolor"
 	}
 
-	// Firewall domains (consumed by entrypoint/init-firewall.sh)
+	// Firewall (consumed by entrypoint/init-firewall.sh)
 	if opts.FirewallEnabled {
+		m["CLAWKER_FIREWALL_ENABLED"] = "true"
+
 		domains := opts.FirewallDomains
 		if domains == nil {
 			domains = []string{}
@@ -100,10 +101,6 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			return nil, fmt.Errorf("failed to marshal firewall domains: %w", err)
 		}
 		m["CLAWKER_FIREWALL_DOMAINS"] = string(jsonBytes)
-
-		if opts.FirewallOverride {
-			m["CLAWKER_FIREWALL_OVERRIDE"] = "true"
-		}
 
 		// IP range sources (consumed by entrypoint/init-firewall.sh)
 		ipSources := opts.FirewallIPRangeSources

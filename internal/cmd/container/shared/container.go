@@ -1800,8 +1800,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 	}
 	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
 		envOpts.FirewallEnabled = true
-		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(config.DefaultFirewallDomains)
-		envOpts.FirewallOverride = projectCfg.Security.Firewall.IsOverrideMode()
+		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(config.RequiredFirewallDomains)
 		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.GetIPRangeSources()
 	}
 	if projectCfg.Security.GitCredentials != nil {

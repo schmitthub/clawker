@@ -62,6 +62,7 @@ func TestWriteBuildContextToDir(t *testing.T) {
 }
 
 func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
+	// Firewall script is always included regardless of config — execution is gated at runtime.
 	cfg := &config.Config{Project: &config.Project{
 		Build: config.BuildConfig{
 			Image: "buildpack-deps:bookworm-scm",
@@ -80,9 +81,10 @@ func TestWriteBuildContextToDir_NoFirewall(t *testing.T) {
 	err := gen.WriteBuildContextToDir(dir, []byte("FROM alpine\n"))
 	require.NoError(t, err)
 
-	// Firewall script should NOT be written
-	_, err = os.Stat(filepath.Join(dir, "init-firewall.sh"))
-	assert.True(t, os.IsNotExist(err), "init-firewall.sh should not exist when firewall disabled")
+	// Firewall script should always be written (runtime-gated, not build-gated)
+	info, err := os.Stat(filepath.Join(dir, "init-firewall.sh"))
+	require.NoError(t, err, "init-firewall.sh should always exist in build context")
+	assert.NotZero(t, info.Mode()&0111, "init-firewall.sh should be executable")
 }
 
 func TestWriteBuildContextToDir_WithIncludes(t *testing.T) {

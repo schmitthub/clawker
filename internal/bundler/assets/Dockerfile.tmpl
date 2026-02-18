@@ -238,13 +238,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
 
-# Copy and set up firewall script
-{{if .EnableFirewall -}}
+# Copy and set up firewall script (always included; execution gated at runtime via CLAWKER_FIREWALL_ENABLED)
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
     echo "${USERNAME} ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/${USERNAME}-firewall && \
     chmod 0440 /etc/sudoers.d/${USERNAME}-firewall
-{{end}}
 
 # Host proxy client scripts for container-to-host communication
 COPY host-open.sh /usr/local/bin/host-open

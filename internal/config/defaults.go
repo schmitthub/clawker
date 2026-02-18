@@ -1,16 +1,12 @@
 package config
 
-// DefaultFirewallDomains is the default list of domains allowed through the firewall.
+// RequiredFirewallDomains is the default list of domains allowed through the firewall.
 // These are essential for Claude Code and common development tools.
-var DefaultFirewallDomains = []string{
-	"registry.npmjs.org",
+var RequiredFirewallDomains = []string{
 	"api.anthropic.com",
 	"sentry.io",
 	"statsig.anthropic.com",
 	"statsig.com",
-	"marketplace.visualstudio.com",
-	"vscode.blob.core.windows.net",
-	"update.code.visualstudio.com",
 	"registry-1.docker.io",
 	"production.cloudflare.docker.com",
 	"docker.io",

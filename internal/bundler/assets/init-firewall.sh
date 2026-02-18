@@ -167,12 +167,12 @@ process_ip_range_source() {
         [[ "$cidr" =~ : ]] && continue
         # Validate and add IPv4 CIDR
         if [[ "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
-            # Capture ipset errors but only warn on unexpected ones
+            # Fail fast on unexpected ipset errors (-exist handles duplicates)
             local ipset_err
             if ! ipset_err=$(ipset add allowed-domains "$cidr" -exist 2>&1); then
-                # Only warn on unexpected errors (not "already added")
-                if [[ ! "$ipset_err" =~ "already added" && -n "$ipset_err" ]]; then
-                    echo "WARNING: Failed to add CIDR $cidr: $ipset_err"
+                if [[ -n "$ipset_err" ]]; then
+                    echo "ERROR: Failed to add CIDR $cidr from $name: $ipset_err"
+                    exit 1
                 fi
             fi
         fi
@@ -262,8 +262,8 @@ if [ -n "$CLAWKER_FIREWALL_DOMAINS" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]
         echo "Resolving $domain..."
         ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
         if [ -z "$ips" ]; then
-            echo "WARNING: Failed to resolve $domain, skipping"
-            continue
+            echo "ERROR: Failed to resolve required domain $domain"
+            exit 1
         fi
 
         while read -r ip; do
@@ -272,7 +272,13 @@ if [ -n "$CLAWKER_FIREWALL_DOMAINS" ] && [ "$CLAWKER_FIREWALL_DOMAINS" != "[]" ]
                 continue
             fi
             echo "Adding $ip for $domain"
-            ipset add allowed-domains "$ip" -exist 2>/dev/null || true
+            # Fail fast on unexpected ipset errors (-exist handles duplicates)
+            if ! ipset_err=$(ipset add allowed-domains "$ip" -exist 2>&1); then
+                if [[ -n "$ipset_err" ]]; then
+                    echo "ERROR: Failed to add $ip for $domain: $ipset_err"
+                    exit 1
+                fi
+            fi
         done < <(echo "$ips")
     done < <(echo "$CLAWKER_FIREWALL_DOMAINS" | jq -r '.[]')
 else
@@ -324,43 +330,6 @@ while read -r network; do
         iptables -A OUTPUT -d "$network" -j ACCEPT
     fi
 done < <(ip route | grep -v default | grep -v "dev lo" | awk '{print $1}' | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$")
-
-# Resolve and add other allowed domains
-for domain in \
-    "registry.npmjs.org" \
-    "api.anthropic.com" \
-    "sentry.io" \
-    "statsig.anthropic.com" \
-    "statsig.com" \
-    "marketplace.visualstudio.com" \
-    "vscode.blob.core.windows.net" \
-    "update.code.visualstudio.com" \
-    "registry-1.docker.io" \
-    "production.cloudflare.docker.com" \
-    "proxy.golang.org" \
-    "sum.golang.org" \
-    "docker.io" \
-    "pypi.org"; do
-    echo "Resolving $domain..."
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
-    if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
-    fi
-
-    while read -r ip; do
-        if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "ERROR: Invalid IP from DNS for $domain: $ip"
-            exit 1
-        fi
-        echo "Adding $ip for $domain"
-        if ! ipset_err=$(ipset add allowed-domains "$ip" -exist 2>&1); then
-            if [[ -n "$ipset_err" ]]; then
-                echo "WARNING: Failed to add $ip for $domain: $ipset_err"
-            fi
-        fi
-    done < <(echo "$ips")
-done
 
 
 # Set default policies to DROP first

@@ -79,7 +79,7 @@ func CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  /
 ```go
 type DockerfileContext struct {
     BaseImage, Username, Shell, WorkspacePath, ClaudeVersion string
-    Packages []string; UID, GID int; IsAlpine, EnableFirewall, BuildKitEnabled bool
+    Packages []string; UID, GID int; IsAlpine, BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
     OtelMetricsEndpoint, OtelLogsEndpoint string
