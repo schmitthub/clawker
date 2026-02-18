@@ -4,35 +4,22 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
-	"github.com/schmitthub/clawker/internal/config"
 )
 
-func assertTmpfsOwnedByContainer(t *testing.T, m mount.Mount) {
+func assertTmpfsWritableForNonRoot(t *testing.T, m mount.Mount) {
 	t.Helper()
 
 	if m.TmpfsOptions == nil {
 		t.Fatal("expected tmpfs options, got nil")
 	}
-	if m.TmpfsOptions.Mode != 0o755 {
-		t.Fatalf("tmpfs mode = %o, want %o", m.TmpfsOptions.Mode, 0o755)
+	if m.TmpfsOptions.Mode != 0o1777 {
+		t.Fatalf("tmpfs mode = %o, want %o", m.TmpfsOptions.Mode, 0o1777)
 	}
-
-	got := map[string]string{}
-	for _, opt := range m.TmpfsOptions.Options {
-		if len(opt) == 2 {
-			got[opt[0]] = opt[1]
-		}
-	}
-
-	if got["uid"] != strconv.Itoa(config.ContainerUID) {
-		t.Fatalf("tmpfs uid option = %q, want %q", got["uid"], strconv.Itoa(config.ContainerUID))
-	}
-	if got["gid"] != strconv.Itoa(config.ContainerGID) {
-		t.Fatalf("tmpfs gid option = %q, want %q", got["gid"], strconv.Itoa(config.ContainerGID))
+	if len(m.TmpfsOptions.Options) != 0 {
+		t.Fatalf("tmpfs options = %v, want empty for daemon compatibility", m.TmpfsOptions.Options)
 	}
 }
 
@@ -102,7 +89,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 			if m.Type != mount.TypeTmpfs {
 				t.Errorf("expected tmpfs mount, got %v", m.Type)
 			}
-			assertTmpfsOwnedByContainer(t, m)
+			assertTmpfsWritableForNonRoot(t, m)
 			tmpfsTargets[m.Target] = true
 		}
 
@@ -193,7 +180,7 @@ func TestBindStrategy_GetMounts(t *testing.T) {
 		if mounts[1].Type != mount.TypeTmpfs {
 			t.Fatalf("expected second mount to be tmpfs, got %v", mounts[1].Type)
 		}
-		assertTmpfsOwnedByContainer(t, mounts[1])
+		assertTmpfsWritableForNonRoot(t, mounts[1])
 
 		wantTarget := path.Join("/workspace", "node_modules")
 		if mounts[1].Target != wantTarget {
