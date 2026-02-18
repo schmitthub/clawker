@@ -81,7 +81,7 @@ func streamJSONLines(text string) string {
 		"total_cost_usd":  0.01,
 	})
 
-	return string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
+	return shared.ReadyLogPrefix + "\n" + string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
 }
 
 // setupContainerFakes wires the Docker API fakes needed for Runner.StartContainer:

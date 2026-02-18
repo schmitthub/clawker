@@ -86,7 +86,7 @@ func ndjsonOutput(text string) string {
 		"num_turns":       1,
 		"total_cost_usd":  0.01,
 	})
-	return string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
+	return loopshared.ReadyLogPrefix + "\n" + string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
 }
 
 // ---------------------------------------------------------------------------

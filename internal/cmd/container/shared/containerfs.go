@@ -23,6 +23,10 @@ type CopyToVolumeFn func(ctx context.Context, volumeName, srcDir, destPath strin
 // Wraps the lower-level Docker CopyToContainer API into a simpler interface.
 type CopyToContainerFn func(ctx context.Context, containerID, destPath string, content io.Reader) error
 
+// CopyFromContainerFn is the signature for reading a tar archive from a container.
+// Returns a ReadCloser for the tar stream; caller must close it.
+type CopyFromContainerFn func(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error)
+
 // InitConfigOpts holds options for container init orchestration.
 type InitConfigOpts struct {
 	// ProjectName is the project name for volume naming.
@@ -180,5 +184,18 @@ func NewCopyToContainerFn(client *docker.Client) CopyToContainerFn {
 			Content:         content,
 		})
 		return err
+	}
+}
+
+// NewCopyFromContainerFn creates a CopyFromContainerFn that delegates to the docker client.
+func NewCopyFromContainerFn(client *docker.Client) CopyFromContainerFn {
+	return func(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error) {
+		result, err := client.CopyFromContainer(ctx, containerID, docker.CopyFromContainerOptions{
+			SourcePath: srcPath,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result.Content, nil
 	}
 }

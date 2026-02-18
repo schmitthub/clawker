@@ -27,7 +27,7 @@ func TestInjectLoopHooks_DefaultHooks(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, nil, loggertest.NewNop())
 	require.NoError(t, err)
 
 	// Expect 2 copies: settings.json + hook script files
@@ -78,7 +78,7 @@ func TestInjectLoopHooks_CustomHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err = InjectLoopHooks(context.Background(), "xyz789", hooksFile, copyFn, loggertest.NewNop())
+	err = InjectLoopHooks(context.Background(), "xyz789", hooksFile, copyFn, nil, loggertest.NewNop())
 	require.NoError(t, err)
 
 	// Custom hooks: only 1 copy (settings.json, no hook files)
@@ -97,7 +97,7 @@ func TestInjectLoopHooks_InvalidHooksFile(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "/nonexistent/hooks.json", copyFn, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), "abc123", "/nonexistent/hooks.json", copyFn, nil, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading hooks file")
 }
@@ -112,7 +112,7 @@ func TestInjectLoopHooks_CopySettingsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, nil, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting settings.json")
 }
@@ -127,9 +127,72 @@ func TestInjectLoopHooks_CopyScriptsFails(t *testing.T) {
 		return nil
 	}
 
-	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, loggertest.NewNop())
+	err := InjectLoopHooks(context.Background(), "abc123", "", copyFn, nil, loggertest.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injecting hook scripts")
+}
+
+func TestInjectLoopHooks_MergesExistingSettings(t *testing.T) {
+	// Build a fake existing settings.json as a tar (simulating CopyFromContainer)
+	existingSettings := map[string]any{
+		"permissions": map[string]any{"allow": []string{"Read", "Write"}},
+		"mcpServers":  map[string]any{"serena": map[string]any{"command": "uvx serena"}},
+	}
+	existingJSON, err := json.Marshal(existingSettings)
+	require.NoError(t, err)
+
+	existingTar := buildTestSettingsTar(t, existingJSON)
+
+	readFn := func(_ context.Context, _, _ string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(existingTar)), nil
+	}
+
+	var copies []copyCall
+	copyFn := func(_ context.Context, containerID, destPath string, content io.Reader) error {
+		data, err := io.ReadAll(content)
+		require.NoError(t, err)
+		copies = append(copies, copyCall{
+			containerID: containerID,
+			destPath:    destPath,
+			data:        data,
+		})
+		return nil
+	}
+
+	err = InjectLoopHooks(context.Background(), "abc123", "", copyFn, readFn, loggertest.NewNop())
+	require.NoError(t, err)
+
+	// Extract the written settings.json
+	settingsFile := extractTarFile(t, copies[0].data, "settings.json")
+	require.NotNil(t, settingsFile)
+
+	var merged map[string]json.RawMessage
+	err = json.Unmarshal(settingsFile, &merged)
+	require.NoError(t, err)
+
+	// Hooks should be present (injected by InjectLoopHooks)
+	assert.Contains(t, string(merged["hooks"]), EventStop)
+
+	// Existing settings should be preserved
+	assert.Contains(t, string(merged["permissions"]), "Read")
+	assert.Contains(t, string(merged["mcpServers"]), "serena")
+}
+
+// buildTestSettingsTar creates a tar archive containing a settings.json with the given content.
+func buildTestSettingsTar(t *testing.T, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{
+		Name: "settings.json",
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}
+	require.NoError(t, tw.WriteHeader(hdr))
+	_, err := tw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	return buf.Bytes()
 }
 
 func TestBuildSettingsTar(t *testing.T) {

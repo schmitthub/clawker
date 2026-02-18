@@ -584,10 +584,13 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	log.Debug().Msg("setting up container wait")
 	statusCh := waitForContainerExit(ctx, log, r.client, containerConfig.ContainerID, false)
 
-	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream into the pipe
+	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream.
+	// Capture stderr (capped at 4KB) for diagnostics when Claude Code fails silently.
+	var stderrBuf limitedBuffer
+	stderrBuf.limit = 4096
 	streamDone := make(chan error, 1)
 	go func() {
-		_, err := stdcopy.StdCopy(pw, io.Discard, hijacked.Reader)
+		_, err := stdcopy.StdCopy(pw, &stderrBuf, hijacked.Reader)
 		pw.CloseWithError(err) // Signal EOF to ParseStream
 		streamDone <- err
 	}()
@@ -636,6 +639,24 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	parsed := <-parseDone
 	text := textAcc.Text()
 
+	// Diagnostic logging: what did ParseStream return?
+	if parsed.result != nil {
+		log.Debug().
+			Str("subtype", parsed.result.Subtype).
+			Bool("is_error", parsed.result.IsError).
+			Int("num_turns", parsed.result.NumTurns).
+			Float64("cost_usd", parsed.result.TotalCostUSD).
+			Str("result_text", truncateForLog(parsed.result.Result, 200)).
+			Int("num_errors", len(parsed.result.Errors)).
+			Msg("ParseStream returned result event")
+	} else if parsed.err == nil {
+		log.Warn().Msg("ParseStream returned nil result AND nil error")
+	}
+	if stderr := stderrBuf.String(); stderr != "" {
+		log.Debug().Str("stderr", truncateForLog(stderr, 500)).Msg("container stderr output")
+	}
+	log.Debug().Int("text_len", len(text)).Int("tool_calls", textAcc.ToolCallCount()).Msg("text accumulator state")
+
 	// Determine exit code
 	var exitCode int
 	select {
@@ -648,10 +669,15 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 
 	// Handle errors
 	if parsed.err != nil && streamErr == nil {
-		// ParseStream error but stream was clean — container may have crashed
-		// before emitting a result event. Return text we have.
-		log.Warn().Err(parsed.err).Msg("stream parse error (container may have crashed)")
-		return text, nil, exitCode, nil
+		// ParseStream error but stream was clean — container exited without
+		// producing a result event. Include captured stderr for diagnostics.
+		stderr := stderrBuf.String()
+		if stderr != "" {
+			log.Warn().Err(parsed.err).Str("stderr", stderr).Msg("stream parse error with stderr output")
+			return text, nil, exitCode, fmt.Errorf("%w (stderr: %s)", parsed.err, stderr)
+		}
+		log.Warn().Err(parsed.err).Msg("stream parse error (no stderr captured)")
+		return text, nil, exitCode, parsed.err
 	}
 	if streamErr != nil {
 		return text, parsed.result, -1, streamErr
@@ -661,6 +687,37 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	}
 
 	return text, parsed.result, exitCode, nil
+}
+
+// limitedBuffer is a bytes.Buffer that stops accepting writes after limit bytes.
+// Used to capture stderr without unbounded memory growth.
+type limitedBuffer struct {
+	buf   []byte
+	limit int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - len(b.buf)
+	if remaining <= 0 {
+		return len(p), nil // discard but report success
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string {
+	return string(b.buf)
+}
+
+// truncateForLog trims a string for safe inclusion in log fields.
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // ResetCircuit resets the circuit breaker for a project/agent.

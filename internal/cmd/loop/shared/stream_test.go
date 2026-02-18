@@ -10,11 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Helper ---
+// --- Helpers ---
 
-// ndjson joins lines into an NDJSON stream with trailing newline.
+// readyLine is the ready signal prepended to NDJSON streams.
+const readyLine = "[clawker] ready\n"
+
+// ndjson joins lines into an NDJSON stream with the ready signal prefix.
 func ndjson(lines ...string) string {
-	return strings.Join(lines, "\n") + "\n"
+	return readyLine + strings.Join(lines, "\n") + "\n"
 }
 
 // --- ParseStream tests ---
@@ -223,12 +226,10 @@ func TestParseStream_EmptyStream(t *testing.T) {
 	result, err := ParseStream(context.Background(), strings.NewReader(""), nil)
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "stream ended without result event")
+	assert.Contains(t, err.Error(), "stream ended before ready signal")
 }
 
 func TestParseStream_ContextCancellation(t *testing.T) {
-	// Create a stream that would block (never ends).
-	// We use a pipe so the reader blocks until context is cancelled.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Pre-cancel the context so ParseStream checks immediately.
@@ -241,7 +242,7 @@ func TestParseStream_ContextCancellation(t *testing.T) {
 	)
 
 	result, err := ParseStream(ctx, strings.NewReader(stream), nil)
-	// The first scan succeeds (system event), then context check triggers.
+	// The first scan succeeds (ready line), then context check triggers.
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -268,7 +269,7 @@ func TestParseStream_MalformedLinesSkipped(t *testing.T) {
 }
 
 func TestParseStream_EmptyLinesSkipped(t *testing.T) {
-	stream := "\n\n" + `{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}` + "\n\n"
+	stream := readyLine + "\n\n" + `{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}` + "\n\n"
 
 	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
 	require.NoError(t, err)
@@ -837,6 +838,65 @@ func TestStreamDeltaEvent_MessageDelta_Parse(t *testing.T) {
 	assert.Equal(t, "end_turn", streamEvent.Event.Message.StopReason)
 	require.NotNil(t, streamEvent.Event.Usage)
 	assert.Equal(t, 500, streamEvent.Event.Usage.InputTokens)
+}
+
+// --- Ready signal gating tests ---
+
+func TestParseStream_WaitsForReadySignal(t *testing.T) {
+	// Lines before the ready signal should be skipped; JSON parsed after.
+	stream := "[clawker] installing packages...\n" +
+		"[clawker] setting up workspace\n" +
+		"[clawker] ready\n" +
+		ndjson(
+			`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-6"}`,
+			`{"type":"result","subtype":"success","session_id":"s1","is_error":false,"duration_ms":100,"duration_api_ms":80,"num_turns":1,"result":"ok","total_cost_usd":0.01}`,
+		)
+
+	var sys *SystemEvent
+	handler := &StreamHandler{
+		OnSystem: func(e *SystemEvent) { sys = e },
+	}
+
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, sys)
+	assert.Equal(t, "s1", sys.SessionID)
+	assert.True(t, result.IsSuccess())
+}
+
+func TestParseStream_ErrorSignalDuringInit(t *testing.T) {
+	stream := "[clawker] installing packages...\n" +
+		"[clawker] error: entrypoint failed: exit code 1\n" +
+		"[clawker] ready\n" // should never reach this
+
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "container init failed")
+	assert.Contains(t, err.Error(), "entrypoint failed")
+}
+
+func TestParseStream_StreamEndsBeforeReady(t *testing.T) {
+	stream := "[clawker] installing packages...\n" +
+		"[clawker] setting up workspace\n"
+
+	result, err := ParseStream(context.Background(), strings.NewReader(stream), nil)
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stream ended before ready signal")
+}
+
+func TestParseStream_ContextCancelledDuringGate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	stream := "[clawker] installing packages...\n" +
+		"[clawker] ready\n"
+
+	result, err := ParseStream(ctx, strings.NewReader(stream), nil)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 // --- UUID on other event types ---

@@ -477,9 +477,9 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 			return err
 		}
 
-		// Only interested in directories
+		// Only interested in directories — files are silently skipped
+		// because bind mode can only mask directories via tmpfs overlays.
 		if !info.IsDir() {
-			logger.Warn().Str("path", path).Msg("files in .clawkerignore are not supported for bind mode")
 			return nil
 		}
 
