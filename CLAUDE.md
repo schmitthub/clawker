@@ -65,8 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # Config gateway (Provider interface), project registry, settings, schema
-│   │   └── configtest/        # InMemoryRegistry, InMemorySettingsLoader, ProjectBuilder
+│   ├── config/                # BUILD ME FOLLOWING THE MANTRA AND PROMPT INSTRUCTIONS 
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── dockertest/        # FakeClient, test helpers
@@ -165,7 +164,6 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | Abstraction | Purpose |
 |-------------|---------|
 | `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
-| `config.Provider` | Gateway interface — `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectRegistry()`, `SettingsLoader()`, `Reload()`. Concrete: `config.Config` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
@@ -253,8 +251,6 @@ projects:
 
 Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
 
-**Type distinction:** `config.Project` is the YAML schema struct. `config.Provider` is the gateway interface (`config.Config` implements it) — lazily provides `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectRegistry()`, `SettingsLoader()`. Factory field: `Config func() config.Provider`. Commands access config via `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, etc.
-
 ### Project Config (clawker.yaml)
 
 ```yaml
@@ -271,34 +267,10 @@ security: { firewall: { enable: true }, docker_socket: false, git_credentials: {
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `LoopConfig`
-**Gateway type** (internal/config/config.go, provider.go): `Provider` interface — lazy accessor via `Config` concrete type. Methods: `ProjectCfg()`, `UserSettings()`, `ProjectKey()`, `WorkDir()`, `ProjectFound()`, `ProjectRegistry()`, `SettingsLoader()`, `Reload()`
-
 ### Firewall IP Range Sources
 
-IP range sources fetch CIDR blocks from cloud provider APIs (not DNS) to allow traffic to services like GitHub:
-
-```yaml
-security:
-  firewall:
-    enable: true
-    # Default: [{name: github}]
-    ip_range_sources:
-      - name: github          # Required by default
-      - name: google          # For Go proxy (proxy.golang.org uses GCS)
-      - name: custom
-        url: "https://example.com/ranges.json"
-        jq_filter: ".cidrs[]"
-        required: false
-```
-
-**Built-in sources**: `github`, `google-cloud`, `google`, `cloudflare`, `aws` — each has pre-configured URL and jq filter.
-
-**Default behavior**: `ip_range_sources` defaults to `[{name: github}]` only.
 
 **Security warning**: The `google` source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk — an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`).
-
-**Override mode**: When `override_domains` is set, IP range sources are skipped entirely (user controls all network access).
 
 ## Design Decisions
 
@@ -310,11 +282,10 @@ security:
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9. `config.Provider` interface — Factory's `Config` field returns this. `config.Config` implements it, absorbing project lookup, settings, and registry into one lazy-loading gateway. No more separate Resolution/SettingsLoader fields on Factory
-10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
-11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
-12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
-13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
+9.  Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
+10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
+11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
+12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
 
 ## Important Gotchas
 
@@ -329,7 +300,6 @@ security:
 - Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
 - `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
-- `config.Config` (gateway) is NOT the YAML schema — it implements `config.Provider`. Use `cfg.ProjectCfg()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
 - Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 
