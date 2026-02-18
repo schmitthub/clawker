@@ -23,7 +23,7 @@ import (
 type StartOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() config.Provider
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 
@@ -87,7 +87,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	defer cancelFun()
 	ios := opts.IOStreams
 	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfg := cfgGateway.ProjectCfg()
 
 	// --- Phase A: Config + Docker connect + host proxy ---
 
@@ -117,7 +117,7 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(cfgGateway.Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(cfgGateway.ProjectKey(), containers)
 		if err != nil {
 			return err
 		}
@@ -241,7 +241,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, client *docke
 	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
-	cfg := opts.Config().Project
+	cfg := opts.Config().ProjectCfg()
 	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
@@ -377,7 +377,7 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 			fmt.Fprintln(ios.Out, name)
 
 			// Start socket bridge for GPG/SSH forwarding (fire-and-forget for detached)
-			cfg := opts.Config().Project
+			cfg := opts.Config().ProjectCfg()
 			if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 				gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
 				// Inspect to get full container ID — EnsureBridge must use the same key

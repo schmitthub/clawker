@@ -19,7 +19,7 @@ type InitOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() *config.Config
+	Config    func() config.Provider
 	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode
@@ -174,7 +174,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	}
 
 	// Load existing settings or create defaults
-	settings := cfg.Settings
+	settings := cfg.UserSettings()
 	if settings == nil {
 		settings = config.DefaultSettings()
 	}
@@ -224,7 +224,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 
 		initCfg := &config.Config{
 			Project:  project,
-			Settings: cfg.Settings, // effective settings from the gateway
+			Settings: cfg.UserSettings(), // effective settings from the gateway
 		}
 		gen := intbuild.NewProjectGenerator(initCfg, "")
 		buildContext, err := gen.GenerateBuildContext()

@@ -49,7 +49,7 @@ func (c *Client) findProjectImage(ctx context.Context) (string, error) {
 	}
 
 	cfg := c.cfg.Project
-	if cfg.Project == "" {
+	if cfg == nil || cfg.Project == "" {
 		return "", nil
 	}
 

@@ -31,7 +31,7 @@ type RunOptions struct {
 	IOStreams    *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() config.Provider
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -136,7 +136,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
 	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfg := cfgGateway.ProjectCfg()
 
 	// --- Phase A: Pre-progress (synchronous) ---
 	// Config + Docker connect + image resolution — may trigger interactive prompts.
@@ -335,7 +335,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
-	cfg := opts.Config().Project
+	cfg := opts.Config().ProjectCfg()
 	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
 		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {

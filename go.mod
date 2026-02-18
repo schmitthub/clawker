@@ -36,7 +36,6 @@ require (
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.16.0
 	go.opentelemetry.io/otel/sdk/log v0.16.0
-	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/term v0.39.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1

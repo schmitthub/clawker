@@ -15,7 +15,7 @@ import (
 
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Force bool
 }
@@ -73,7 +73,7 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	ios.Logger.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
 	// Get monitoring config for template rendering
-	settings := opts.Config().Settings
+	settings := opts.Config().UserSettings()
 	tmplData := monitor.NewMonitorTemplateData(&settings.Monitoring)
 
 	// Ensure directory exists

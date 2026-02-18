@@ -37,7 +37,7 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
-				Config: func() *config.Config {
+				Config: func() config.Provider {
 					return testCfg
 				},
 			}
@@ -87,7 +87,7 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return testCfg
 		},
 	}
@@ -127,7 +127,7 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return testCfg
 		},
 	}
@@ -162,7 +162,7 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return testCfg
 		},
 	}

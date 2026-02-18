@@ -37,7 +37,7 @@ func TestListRun_NotInProject(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -79,7 +79,7 @@ func TestListRun_GitManagerError(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = loader
 			return cfg
@@ -149,7 +149,7 @@ func TestNewCmdList(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -191,7 +191,7 @@ func TestListRun_HealthyWorktree(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = registry
 			return cfg
@@ -237,7 +237,7 @@ func TestListRun_StaleWorktree(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = registry
 			return cfg
@@ -281,7 +281,7 @@ func TestListRun_MixedWorktrees(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = registry
 			return cfg
@@ -325,7 +325,7 @@ func TestListRun_QuietMode(t *testing.T) {
 	opts := &ListOptions{
 		IOStreams: ios,
 		Quiet:     true,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = registry
 			return cfg
@@ -372,7 +372,7 @@ func TestListRun_PathError(t *testing.T) {
 
 	opts := &ListOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = registry
 			return cfg

@@ -19,7 +19,7 @@ import (
 type RegisterOptions struct {
 	IOStreams *iostreams.IOStreams
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Name string // Positional arg: project name
 	Yes  bool
@@ -81,6 +81,10 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 	}
 
 	cfgGateway := opts.Config()
+	registry, err := cfgGateway.ProjectRegistry()
+	if err != nil {
+		return fmt.Errorf("loading project registry: %w", err)
+	}
 
 	// Require an existing clawker.yaml
 	loader := config.NewProjectLoader(wd)
@@ -116,7 +120,7 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		}
 	}
 
-	slug, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName)
+	slug, err := project.RegisterProject(ios, registry, wd, projectName)
 	if err != nil {
 		return err
 	}

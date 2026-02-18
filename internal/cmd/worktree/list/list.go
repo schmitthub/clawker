@@ -19,7 +19,7 @@ import (
 type ListOptions struct {
 	IOStreams  *iostreams.IOStreams
 	GitManager func() (*git.GitManager, error)
-	Config     func() *config.Config
+	Config     func() config.Provider
 
 	Quiet bool
 }
@@ -63,16 +63,21 @@ for each worktree.`,
 
 func listRun(ctx context.Context, opts *ListOptions) error {
 	cfg := opts.Config()
+	projectCfg := cfg.ProjectCfg()
 
 	// Check if we're in a registered project
-	if !cfg.Project.Found() {
+	if !cfg.ProjectFound() {
 		return fmt.Errorf("not in a registered project directory")
 	}
 
 	// Get worktree handles from registry
 	var worktreeHandles []config.WorktreeHandle
-	if cfg.Registry != nil {
-		projectHandle := cfg.Registry.Project(cfg.Project.Key())
+	registry, err := cfg.ProjectRegistry()
+	if err != nil {
+		return fmt.Errorf("loading project registry: %w", err)
+	}
+	if registry != nil {
+		projectHandle := registry.Project(projectCfg.Key())
 		handles, err := projectHandle.ListWorktrees()
 		if err != nil {
 			return fmt.Errorf("listing worktrees from registry: %w", err)

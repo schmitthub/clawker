@@ -443,7 +443,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -609,7 +609,7 @@ func TestCreateRun(t *testing.T) {
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
-			Config: func() *config.Config {
+			Config: func() config.Provider {
 				return config.NewConfigForTest(cfg, config.DefaultSettings())
 			},
 			GitManager: func() (*git.GitManager, error) {

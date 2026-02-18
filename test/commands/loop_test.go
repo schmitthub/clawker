@@ -415,6 +415,9 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	}()
 
 	f, tio := harness.NewTestFactory(t, h)
+	cfgProvider := f.Config()
+	cfg, ok := cfgProvider.(*config.Config)
+	require.True(t, ok, "expected *config.Config provider, got %T", cfgProvider)
 
 	dockerClient, err := f.Client(ctx)
 	require.NoError(t, err)
@@ -430,7 +433,7 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 
 	setup, cleanup, err := shared.SetupLoopContainer(ctx, &shared.LoopContainerConfig{
 		Client:    dockerClient,
-		Config:    f.Config(),
+		Config:    cfg,
 		LoopOpts:  loopOpts,
 		IOStreams: tio.IOStreams,
 	})
@@ -442,7 +445,7 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	assert.NotEmpty(t, setup.ContainerID)
 	assert.NotEmpty(t, setup.ContainerName)
 	assert.Equal(t, agentName, setup.AgentName)
-	assert.Equal(t, project, setup.ProjectCfg)
+	assert.Equal(t, project, setup.ProjectCfg.Project)
 
 	running := harness.ContainerIsRunning(ctx, client, setup.ContainerName)
 	assert.True(t, running, "container should be running after SetupLoopContainer")

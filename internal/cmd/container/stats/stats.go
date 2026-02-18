@@ -22,7 +22,7 @@ type StatsOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent      bool // if set to true, treat arguments as agent name
 	NoStream   bool
@@ -89,7 +89,7 @@ func statsRun(ctx context.Context, opts *StatsOptions) error {
 	// Resolve container names if --agent provided
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), containers)
 		if err != nil {
 			return err
 		}

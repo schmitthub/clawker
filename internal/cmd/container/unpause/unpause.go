@@ -15,7 +15,7 @@ import (
 type UnpauseOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent bool
 
@@ -70,7 +70,7 @@ func unpauseRun(ctx context.Context, opts *UnpauseOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		resolved, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), containers)
 		if err != nil {
 			return err
 		}

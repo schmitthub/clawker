@@ -36,7 +36,7 @@ func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestI
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
-		Config:    func() *config.Config { return cfg },
+		Config:    func() config.Provider { return cfg },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("docker not available in tests")
 		},

@@ -20,7 +20,7 @@ import (
 type AttachOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 	HostProxy func() hostproxy.HostProxyService
 
 	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
@@ -88,7 +88,7 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	container := opts.container
 	if opts.Agent {
 		var err error
-		container, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, container)
+		container, err = docker.ContainerName(opts.Config().ProjectKey(), container)
 		if err != nil {
 			return err
 		}

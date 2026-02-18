@@ -51,7 +51,7 @@ func TestNewCmdRename(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
+				Config: func() config.Provider {
 					return config.NewConfigForTest(nil, nil)
 				},
 			}
@@ -116,7 +116,7 @@ func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 	}, tio
@@ -150,7 +150,7 @@ func TestRenameRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 	}

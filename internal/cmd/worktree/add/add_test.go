@@ -37,7 +37,7 @@ func TestAddRun_NotInProject(t *testing.T) {
 
 	opts := &AddOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -61,7 +61,7 @@ func TestAddRun_GitManagerError(t *testing.T) {
 
 	opts := &AddOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -80,7 +80,7 @@ func TestNewCmdAdd(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -106,7 +106,7 @@ func TestNewCmdAdd_RequiresArg(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -141,7 +141,7 @@ func TestAddRun_BaseFlag_WorksViaCommand(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -177,7 +177,7 @@ func TestAddRun_SuccessOutput(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -261,7 +261,7 @@ func TestAddRun_Integration_CreatesWorktree(t *testing.T) {
 
 	opts := &AddOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return cfg
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -325,7 +325,7 @@ func TestAddRun_Integration_SlashedBranchName(t *testing.T) {
 	// Test with deeply slashed branch name
 	opts := &AddOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return cfg
 		},
 		GitManager: func() (*git.GitManager, error) {

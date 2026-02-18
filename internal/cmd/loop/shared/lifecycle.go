@@ -315,6 +315,15 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 	}
 	ios.StopSpinner()
 
+	// --- Phase D: Start container ---
+	ios.StartSpinner("Starting loop container")
+	if _, err := cfg.Client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		ios.StopSpinner()
+		cleanup()
+		return nil, nil, fmt.Errorf("starting loop container: %w", err)
+	}
+	ios.StopSpinner()
+
 	return &LoopContainerResult{
 		ContainerID:   containerID,
 		ContainerName: containerName,

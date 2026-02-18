@@ -14,7 +14,7 @@ import (
 // PruneOptions contains the options for the prune command.
 type PruneOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	DryRun bool
 }
@@ -58,19 +58,24 @@ Use 'clawker worktree list' to see which entries are stale before pruning.`,
 
 func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	cfg := opts.Config()
+	projectCfg := cfg.ProjectCfg()
 
 	// Check if we're in a registered project
-	if !cfg.Project.Found() {
+	if !cfg.ProjectFound() {
 		return fmt.Errorf("not in a registered project directory")
 	}
 
 	// Check if registry is available
-	if cfg.Registry == nil {
+	registry, err := cfg.ProjectRegistry()
+	if err != nil {
+		return fmt.Errorf("loading project registry: %w", err)
+	}
+	if registry == nil {
 		return fmt.Errorf("registry not available")
 	}
 
 	// Get project handle
-	projectHandle := cfg.Registry.Project(cfg.Project.Key())
+	projectHandle := registry.Project(projectCfg.Key())
 
 	// Get worktree handles
 	handles, err := projectHandle.ListWorktrees()

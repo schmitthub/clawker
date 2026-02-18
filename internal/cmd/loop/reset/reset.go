@@ -14,7 +14,7 @@ import (
 // ResetOptions holds options for the loop reset command.
 type ResetOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent    string
 	ClearAll bool
@@ -66,7 +66,7 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	cs := ios.ColorScheme()
 
 	// Get config
-	cfg := opts.Config().Project
+	cfg := opts.Config().ProjectCfg()
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()

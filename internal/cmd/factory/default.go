@@ -49,7 +49,7 @@ func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 	}
 
 	// Initialize logger from settings — config gateway resolves ENV > config > defaults
-	settings := f.Config().Settings
+	settings := f.Config().UserSettings()
 
 	logsDir, err := config.LogsDir()
 	if err != nil {
@@ -97,7 +97,12 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 	)
 	return func(ctx context.Context) (*docker.Client, error) {
 		once.Do(func() {
-			client, clientErr = docker.NewClient(ctx, f.Config())
+			cfg, ok := f.Config().(*config.Config)
+			if !ok {
+				clientErr = fmt.Errorf("factory config provider must be *config.Config")
+				return
+			}
+			client, clientErr = docker.NewClient(ctx, cfg)
 			if clientErr == nil {
 				docker.WireBuildKit(client)
 			}
@@ -136,14 +141,19 @@ func socketBridgeFunc() func() socketbridge.SocketBridgeManager {
 
 // configFunc returns a lazy closure that creates a Config gateway once.
 // Config uses os.Getwd internally for project resolution.
-func configFunc() func() *config.Config {
+func configFunc() func() config.Provider {
 	var (
 		once sync.Once
-		cfg  *config.Config
+		cfg  config.Provider
 	)
-	return func() *config.Config {
+	return func() config.Provider {
 		once.Do(func() {
-			cfg = config.NewConfig()
+			loaded, err := config.NewConfig()
+			if err != nil {
+				cfg = config.NewConfigForTest(nil, nil)
+				return
+			}
+			cfg = loaded
 		})
 		return cfg
 	}
@@ -168,11 +178,11 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	return func() (*git.GitManager, error) {
 		once.Do(func() {
 			cfg := f.Config()
-			if cfg.Project == nil {
+			if cfg.ProjectCfg() == nil {
 				mgrErr = fmt.Errorf("no project configuration found; run 'clawker init' or ensure clawker.yaml exists")
 				return
 			}
-			projectRoot := cfg.Project.RootDir()
+			projectRoot := cfg.ProjectCfg().RootDir()
 			if projectRoot == "" {
 				mgrErr = fmt.Errorf("not in a registered project directory")
 				return

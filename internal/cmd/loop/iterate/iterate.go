@@ -29,7 +29,7 @@ type IterateOptions struct {
 	IOStreams    *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() config.Provider
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -145,7 +145,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	cfgGateway := opts.Config()
 
 	// 3a. Apply config file defaults for pre-runner fields (hooks_file, append_system_prompt)
-	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, cfgGateway.Project.Loop)
+	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, cfgGateway.ProjectCfg().Loop)
 
 	client, err := opts.Client(ctx)
 	if err != nil {
@@ -156,7 +156,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// Use the project root (same as resolveWorkDir in CreateContainer) so that
 	// the concurrency check matches the LabelWorkdir stored on containers.
 	// TODO: Does this rely on the assumption that the command is being ran from within a project dir? ProjectCfg worktrees are not in the original root dir so this is a poor assumption. What if a user runs a loop in the same worktree?
-	workDir := cfgGateway.Project.RootDir()
+	workDir := cfgGateway.ProjectCfg().RootDir()
 	if workDir == "" {
 		workDir, err = os.Getwd()
 		if err != nil {
@@ -166,7 +166,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
 		Client:    client,
-		Project:   cfgGateway.Project.Project,
+		Project:   cfgGateway.ProjectCfg().Project,
 		WorkDir:   workDir,
 		IOStreams: ios,
 		Prompter:  opts.Prompter,
@@ -209,10 +209,15 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	}
 
 	// 5. Build per-iteration container factory
+	concreteCfg, ok := cfgGateway.(*config.Config)
+	if !ok {
+		return fmt.Errorf("unexpected config provider type %T", cfgGateway)
+	}
+
 	createContainer := shared.MakeCreateContainerFunc(&shared.LoopContainerConfig{
 		Client:       client,
 		Command:      cmd,
-		Config:       cfgGateway,
+		Config:       concreteCfg,
 		LoopOpts:     opts.LoopOptions,
 		Flags:        opts.flags,
 		Version:      opts.Version,
@@ -230,14 +235,14 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, cfgGateway.Project, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, cfgGateway.Project.Loop, ios.Logger,
+		opts.LoopOptions, cfgGateway.ProjectCfg(), opts.Agent, prompt, workDir,
+		createContainer, opts.flags, cfgGateway.ProjectCfg().Loop, ios.Logger,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)
 	setup := &shared.LoopContainerResult{
 		AgentName:  opts.Agent,
-		ProjectCfg: cfgGateway.Project,
+		ProjectCfg: cfgGateway.ProjectCfg(),
 		WorkDir:    workDir,
 	}
 

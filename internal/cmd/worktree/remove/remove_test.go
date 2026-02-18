@@ -37,7 +37,7 @@ func TestRemoveRun_NotInProject(t *testing.T) {
 
 	opts := &RemoveOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -61,7 +61,7 @@ func TestRemoveRun_GitManagerError(t *testing.T) {
 
 	opts := &RemoveOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -80,7 +80,7 @@ func TestNewCmdRemove(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -110,7 +110,7 @@ func TestNewCmdRemove_RequiresArgs(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -156,7 +156,7 @@ func TestRemoveRun_ForceRemovesCorruptedWorktree(t *testing.T) {
 	// Test without --force (should fail)
 	opts := &RemoveOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -292,7 +292,7 @@ func TestRemoveRun_DeleteBranchFlag_WorksViaCommand(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {
@@ -329,7 +329,7 @@ func TestRemoveRun_ForceFlag_WorksViaCommand(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(proj, nil)
 		},
 		GitManager: func() (*git.GitManager, error) {

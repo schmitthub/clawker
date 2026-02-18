@@ -16,7 +16,7 @@ import (
 
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() config.Provider
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
@@ -88,7 +88,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 
 	// Resolve monitoring URLs from settings
-	mon := &opts.Config().Settings.Monitoring
+	mon := &opts.Config().UserSettings().Monitoring
 
 	// Check which services are actually running and print relevant URLs
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")

@@ -41,14 +41,10 @@ func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	f := New("1.0.0")
 
 	cfg := f.Config()
-	res := cfg.Resolution
-	if res == nil {
-		t.Fatal("Resolution() returned nil")
-	}
 	// Current working directory is unlikely to be a registered project
 	// so Found() should be false
-	if res.Found() {
-		t.Error("Resolution().Found() should be false when no projects registered")
+	if cfg.ProjectFound() {
+		t.Error("ProjectFound() should be false when no projects registered")
 	}
 }
 
@@ -79,15 +75,11 @@ func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	f := New("1.0.0")
 
 	cfg := f.Config()
-	res := cfg.Resolution
-	if res == nil {
-		t.Fatal("Resolution() returned nil")
+	if !cfg.ProjectFound() {
+		t.Error("ProjectFound() should be true for registered project")
 	}
-	if !res.Found() {
-		t.Error("Resolution().Found() should be true for registered project")
-	}
-	if res.ProjectKey != "cwd-project" {
-		t.Errorf("Resolution().ProjectKey = %q, want %q", res.ProjectKey, "cwd-project")
+	if cfg.ProjectKey() != "cwd-project" {
+		t.Errorf("ProjectKey() = %q, want %q", cfg.ProjectKey(), "cwd-project")
 	}
 }
 

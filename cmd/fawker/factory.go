@@ -43,7 +43,12 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		Config:    configFn,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			// Mirror real factory: inject config into client for image resolution.
-			return fawkerClient(scenario, configFn())
+			cfgProvider := configFn()
+			cfg, ok := cfgProvider.(*config.Config)
+			if !ok {
+				return nil, fmt.Errorf("unexpected config provider type %T", cfgProvider)
+			}
+			return fawkerClient(scenario, cfg)
 		},
 		GitManager:   func() (*git.GitManager, error) { return nil, nil },
 		HostProxy:    func() hostproxy.HostProxyService { return nil },
@@ -56,12 +61,12 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 
 // fawkerConfigFunc returns a lazy Config constructor with sync.Once semantics.
 // Uses InMemorySettingsLoader to avoid temp directory creation and filesystem leaks.
-func fawkerConfigFunc() func() *config.Config {
+func fawkerConfigFunc() func() config.Provider {
 	var (
 		once sync.Once
 		cfg  *config.Config
 	)
-	return func() *config.Config {
+	return func() config.Provider {
 		once.Do(func() {
 			settings := config.DefaultSettings()
 			settings.DefaultImage = docker.DefaultImageTag // Triggers rebuild flow on "@"

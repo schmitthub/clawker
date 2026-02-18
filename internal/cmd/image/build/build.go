@@ -21,7 +21,7 @@ import (
 type BuildOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
-	Config    func() *config.Config
+	Config    func() config.Provider
 	Client    func(context.Context) (*docker.Client, error)
 
 	File      string   // -f, --file (Dockerfile path)
@@ -112,7 +112,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// Get configuration
 	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfg := cfgGateway.ProjectCfg()
 
 	// Get working directory from project root, or fall back to current directory
 	wd := cfg.RootDir()

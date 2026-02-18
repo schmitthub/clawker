@@ -33,7 +33,7 @@ func TestPruneRun_NotInProject(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 	}
@@ -68,7 +68,7 @@ func TestPruneRun_NoWorktrees(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = loader
 			return cfg
@@ -124,7 +124,7 @@ func TestPruneRun_NoStaleEntries(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = loader
 			return cfg
@@ -171,7 +171,7 @@ func TestPruneRun_StaleEntry_DryRun(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = loader
 			return cfg
@@ -227,7 +227,7 @@ func TestPruneRun_StaleEntry_ActualPrune(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = loader
 			return cfg
@@ -253,7 +253,7 @@ func TestNewCmdPrune(t *testing.T) {
 
 	f := &cmdutil.Factory{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return config.NewConfigForTest(nil, nil)
 		},
 	}
@@ -280,7 +280,7 @@ func TestPruneRun_RegistryNil(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = nil // Explicitly nil
 			return cfg
@@ -325,7 +325,7 @@ func TestPruneRun_PartialDeleteFailure(t *testing.T) {
 
 	opts := &PruneOptions{
 		IOStreams: ios,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			cfg := config.NewConfigForTest(proj, nil)
 			cfg.Registry = inMemRegistry
 			return cfg

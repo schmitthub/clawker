@@ -16,7 +16,7 @@ import (
 type AddOptions struct {
 	IOStreams  *iostreams.IOStreams
 	GitManager func() (*git.GitManager, error)
-	Config     func() *config.Config
+	Config     func() config.Provider
 
 	Branch string
 	Base   string
@@ -63,9 +63,10 @@ If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
 
 func addRun(_ context.Context, opts *AddOptions) error {
 	cfg := opts.Config()
+	projectCfg := cfg.ProjectCfg()
 
 	// Check if we're in a registered project
-	if !cfg.Project.Found() {
+	if !cfg.ProjectFound() {
 		return fmt.Errorf("not in a registered project directory")
 	}
 
@@ -79,7 +80,7 @@ func addRun(_ context.Context, opts *AddOptions) error {
 	// - If worktree exists, returns the existing path
 	// - If branch exists, checks it out in new worktree
 	// - If branch doesn't exist, creates it from base
-	wtPath, err := gitMgr.SetupWorktree(cfg.Project, opts.Branch, opts.Base)
+	wtPath, err := gitMgr.SetupWorktree(projectCfg, opts.Branch, opts.Base)
 	if err != nil {
 		return fmt.Errorf("creating worktree: %w", err)
 	}

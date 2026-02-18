@@ -17,7 +17,7 @@ import (
 type UpOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Detach bool
 }
@@ -118,7 +118,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 
 	if opts.Detach {
-		mon := &opts.Config().Settings.Monitoring
+		mon := &opts.Config().UserSettings().Monitoring
 
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())

@@ -43,7 +43,7 @@ func TestBuildProgress_Golden(t *testing.T) {
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
-				Config: func() *config.Config {
+				Config: func() config.Provider {
 					return testCfg
 				},
 			}

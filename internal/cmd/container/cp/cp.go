@@ -21,7 +21,7 @@ import (
 type CpOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent      bool
 	Archive    bool
@@ -118,7 +118,7 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 	if opts.Agent {
 		if srcIsContainer && srcContainer != "" {
 			var err error
-			srcContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, srcContainer)
+			srcContainer, err = docker.ContainerName(opts.Config().ProjectKey(), srcContainer)
 			if err != nil {
 				return err
 			}
@@ -126,7 +126,7 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 
 		if dstIsContainer && dstContainer != "" {
 			var err error
-			dstContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, dstContainer)
+			dstContainer, err = docker.ContainerName(opts.Config().ProjectKey(), dstContainer)
 			if err != nil {
 				return err
 			}

@@ -37,7 +37,7 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions,
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
 		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:    func() *config.Config { return cfg },
+		Config:    func() config.Provider { return cfg },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}, sl
 }
@@ -52,7 +52,7 @@ func TestNewCmdInit(t *testing.T) {
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
 		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:    func() *config.Config { return cfg },
+		Config:    func() config.Provider { return cfg },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
@@ -183,7 +183,7 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
 		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:    func() *config.Config { return cfg },
+		Config:    func() config.Provider { return cfg },
 		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 

@@ -23,7 +23,7 @@ import (
 type ExecOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() config.Provider
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 
@@ -89,7 +89,7 @@ Container name can be:
 			opts.containerName = args[0]
 			if opts.Agent {
 				var err error
-				opts.containerName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
+				opts.containerName, err = docker.ContainerName(opts.Config().ProjectKey(), args[0])
 				if err != nil {
 					return err
 				}
@@ -145,7 +145,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 
 	// Setup git credential forwarding for exec sessions
 	// This enables GPG signing and git credential helpers in exec'd commands
-	cfg := opts.Config().Project
+	cfg := opts.Config().ProjectCfg()
 	hostProxyRunning := false
 	if cfg.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()

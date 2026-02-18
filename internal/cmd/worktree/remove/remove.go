@@ -18,7 +18,7 @@ import (
 type RemoveOptions struct {
 	IOStreams  *iostreams.IOStreams
 	GitManager func() (*git.GitManager, error)
-	Config     func() *config.Config
+	Config     func() config.Provider
 	Prompter   func() *prompter.Prompter
 
 	Force        bool
@@ -75,9 +75,10 @@ If the worktree has uncommitted changes, the command will fail unless
 
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	cfg := opts.Config()
+	projectCfg := cfg.ProjectCfg()
 
 	// Check if we're in a registered project
-	if !cfg.Project.Found() {
+	if !cfg.ProjectFound() {
 		return fmt.Errorf("not in a registered project directory")
 	}
 
@@ -90,7 +91,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	var removeErrors []error
 
 	for _, branch := range opts.Branches {
-		if err := removeSingleWorktree(ctx, opts, gitMgr, cfg.Project, branch); err != nil {
+		if err := removeSingleWorktree(ctx, opts, gitMgr, projectCfg, branch); err != nil {
 			removeErrors = append(removeErrors, fmt.Errorf("%s: %w", branch, err))
 		}
 	}

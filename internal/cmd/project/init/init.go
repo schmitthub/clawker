@@ -20,7 +20,7 @@ import (
 type ProjectInitOptions struct {
 	IOStreams *iostreams.IOStreams
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Name  string // Positional arg: project name
 	Force bool
@@ -90,6 +90,10 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	}
 
 	cfgGateway := opts.Config()
+	registry, err := cfgGateway.ProjectRegistry()
+	if err != nil {
+		return fmt.Errorf("loading project registry: %w", err)
+	}
 
 	// Check if configuration already exists
 	loader := config.NewProjectLoader(wd)
@@ -118,7 +122,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 				return fmt.Errorf("resolving project path: %w", absErr)
 			}
 			dirName := filepath.Base(absPath)
-			registryLoader := cfgGateway.Registry
+			registryLoader := registry
 			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
 			if err != nil {
 				ios.Logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
@@ -165,7 +169,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings := cfgGateway.Settings
+	settings := cfgGateway.UserSettings()
 	if settings != nil && settings.DefaultImage != "" {
 		userDefaultImage = settings.DefaultImage
 	}
@@ -273,7 +277,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	}
 
 	// Register project in user settings
-	if _, err := project.RegisterProject(ios, cfgGateway.Registry, wd, projectName); err != nil {
+	if _, err := project.RegisterProject(ios, registry, wd, projectName); err != nil {
 		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 

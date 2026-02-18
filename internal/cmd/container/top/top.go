@@ -16,7 +16,7 @@ import (
 type TopOptions struct {
 	TUI    *tui.TUI
 	Client func(context.Context) (*docker.Client, error)
-	Config func() *config.Config
+	Config func() config.Provider
 
 	Agent bool
 
@@ -77,7 +77,7 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 
 	if opts.Agent {
 		// Resolve agent name to full container name
-		containers, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, []string{containerName})
+		containers, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), []string{containerName})
 		if err != nil {
 			return err
 		}

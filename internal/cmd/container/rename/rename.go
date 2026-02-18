@@ -16,7 +16,7 @@ import (
 type RenameOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	container string
@@ -70,7 +70,7 @@ func renameRun(ctx context.Context, opts *RenameOptions) error {
 
 	if opts.Agent {
 		var err error
-		oldName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, oldName)
+		oldName, err = docker.ContainerName(opts.Config().ProjectKey(), oldName)
 		if err != nil {
 			return err
 		}

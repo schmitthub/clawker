@@ -57,13 +57,16 @@ security:
 	}
 
 	testChdir(t, projectDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	if cfg.Project.Build.Image != "node:20-slim" {
-		t.Errorf("ProjectCfg.Build.Image = %q, want %q", cfg.Project.Build.Image, "node:20-slim")
+		t.Errorf("Project.Build.Image = %q, want %q", cfg.Project.Build.Image, "node:20-slim")
 	}
 	if cfg.Project.Workspace.RemotePath != "/workspace" {
-		t.Errorf("ProjectCfg.Workspace.RemotePath = %q, want %q", cfg.Project.Workspace.RemotePath, "/workspace")
+		t.Errorf("Project.Workspace.RemotePath = %q, want %q", cfg.Project.Workspace.RemotePath, "/workspace")
 	}
 }
 
@@ -77,7 +80,10 @@ func TestConfig_Settings(t *testing.T) {
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
 	testChdir(t, tmpDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	if cfg.Settings == nil {
 		t.Fatal("Config.Settings is nil")
@@ -106,16 +112,16 @@ func TestConfig_Resolution_NoRegistry(t *testing.T) {
 	}
 
 	testChdir(t, workDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
-	if cfg.Resolution == nil {
-		t.Fatal("Config.Resolution is nil")
+	if cfg.ProjectFound() {
+		t.Error("ProjectFound() should be false when no registry exists")
 	}
-	if cfg.Resolution.Found() {
-		t.Error("Resolution.Found() should be false when no registry exists")
-	}
-	if cfg.Resolution.WorkDir != workDir {
-		t.Errorf("Resolution.WorkDir = %q, want %q", cfg.Resolution.WorkDir, workDir)
+	if cfg.WorkDir() != workDir {
+		t.Errorf("WorkDir() = %q, want %q", cfg.WorkDir(), workDir)
 	}
 }
 
@@ -129,7 +135,10 @@ func TestConfig_SettingsLoader(t *testing.T) {
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
 	testChdir(t, tmpDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	loader := cfg.SettingsLoader()
 	// May be nil if settings loading failed, but that's ok for this test
@@ -146,10 +155,13 @@ func TestConfig_Registry(t *testing.T) {
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
 	testChdir(t, tmpDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	// Registry may be nil if initialization failed
-	if cfg.Registry == nil {
+	if reg, _ := cfg.ProjectRegistry(); reg == nil {
 		t.Log("Config.Registry is nil (registry initialization may have failed)")
 	}
 }
@@ -164,7 +176,10 @@ func TestConfig_ProjectRuntimeMethods(t *testing.T) {
 	t.Setenv(ClawkerHomeEnv, clawkerHome)
 
 	testChdir(t, tmpDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	// ProjectCfg should have runtime methods available
 	if cfg.Project == nil {
@@ -191,7 +206,10 @@ func TestConfig_DefaultsWhenNoConfigFile(t *testing.T) {
 
 	// No config file in this directory
 	testChdir(t, tmpDir)
-	cfg := NewConfig()
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
 
 	// Should get defaults
 	if cfg.Project == nil {
@@ -221,11 +239,11 @@ func TestNewConfigForTest(t *testing.T) {
 	if cfg.Settings != settings {
 		t.Error("NewConfigForTest did not set Settings correctly")
 	}
-	if cfg.Resolution == nil {
-		t.Fatal("NewConfigForTest did not set Resolution")
+	if !cfg.ProjectFound() {
+		t.Fatal("NewConfigForTest did not set project context")
 	}
-	if cfg.Resolution.ProjectKey != "test-project" {
-		t.Errorf("Resolution.ProjectKey = %q, want %q", cfg.Resolution.ProjectKey, "test-project")
+	if cfg.ProjectKey() != "test-project" {
+		t.Errorf("ProjectKey() = %q, want %q", cfg.ProjectKey(), "test-project")
 	}
 	// ProjectCfg should have runtime context set
 	if cfg.Project.Key() != "test-project" {

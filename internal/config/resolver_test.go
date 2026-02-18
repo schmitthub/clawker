@@ -1,84 +1,135 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-func TestResolver_Resolve_Found(t *testing.T) {
-	registry := &ProjectRegistry{
+func TestConfig_ProjectContext_Found(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv(ClawkerHomeEnv, tmpDir)
+
+	projectRoot := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(projectRoot, 0755); err != nil {
+		t.Fatalf("failed to create project root: %v", err)
+	}
+
+	registry := ProjectRegistry{
 		Projects: map[string]ProjectEntry{
-			"my-app": {Name: "My App", Root: "/home/user/myapp"},
+			"my-app": {Name: "My App", Root: projectRoot},
 		},
 	}
-
-	resolver := NewResolver(registry)
-	res := resolver.Resolve("/home/user/myapp")
-
-	if !res.Found() {
-		t.Error("expected Found() to be true for exact match")
+	data, err := yaml.Marshal(registry)
+	if err != nil {
+		t.Fatalf("failed to marshal registry: %v", err)
 	}
-	if res.ProjectKey != "my-app" {
-		t.Errorf("ProjectKey = %q, want %q", res.ProjectKey, "my-app")
+	if err := os.WriteFile(filepath.Join(tmpDir, RegistryFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write registry: %v", err)
 	}
-	if res.ProjectRoot() != "/home/user/myapp" {
-		t.Errorf("ProjectRoot() = %q, want %q", res.ProjectRoot(), "/home/user/myapp")
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(orig)
+	}()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	if !cfg.ProjectFound() {
+		t.Error("expected ProjectFound() to be true for exact match")
+	}
+	if cfg.ProjectKey() != "my-app" {
+		t.Errorf("ProjectKey() = %q, want %q", cfg.ProjectKey(), "my-app")
 	}
 }
 
-func TestResolver_Resolve_ChildDir(t *testing.T) {
-	registry := &ProjectRegistry{
+func TestConfig_ProjectContext_ChildDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv(ClawkerHomeEnv, tmpDir)
+
+	projectRoot := filepath.Join(tmpDir, "myapp")
+	childDir := filepath.Join(projectRoot, "src", "pkg")
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatalf("failed to create child dir: %v", err)
+	}
+
+	registry := ProjectRegistry{
 		Projects: map[string]ProjectEntry{
-			"my-app": {Name: "My App", Root: "/home/user/myapp"},
+			"my-app": {Name: "My App", Root: projectRoot},
 		},
 	}
-
-	resolver := NewResolver(registry)
-	res := resolver.Resolve("/home/user/myapp/src/pkg")
-
-	if !res.Found() {
-		t.Error("expected Found() to be true for child directory")
+	data, err := yaml.Marshal(registry)
+	if err != nil {
+		t.Fatalf("failed to marshal registry: %v", err)
 	}
-	if res.ProjectKey != "my-app" {
-		t.Errorf("ProjectKey = %q, want %q", res.ProjectKey, "my-app")
-	}
-}
-
-func TestResolver_Resolve_NotFound(t *testing.T) {
-	registry := &ProjectRegistry{
-		Projects: map[string]ProjectEntry{
-			"my-app": {Name: "My App", Root: "/home/user/myapp"},
-		},
+	if err := os.WriteFile(filepath.Join(tmpDir, RegistryFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write registry: %v", err)
 	}
 
-	resolver := NewResolver(registry)
-	res := resolver.Resolve("/home/user/other")
-
-	if res.Found() {
-		t.Error("expected Found() to be false for non-matching directory")
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
 	}
-	if res.ProjectRoot() != "" {
-		t.Errorf("ProjectRoot() should be empty, got %q", res.ProjectRoot())
+	defer func() {
+		_ = os.Chdir(orig)
+	}()
+	if err := os.Chdir(childDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
 	}
-}
 
-func TestResolver_Resolve_NilRegistry(t *testing.T) {
-	resolver := NewResolver(nil)
-	res := resolver.Resolve("/any/dir")
-
-	if res.Found() {
-		t.Error("expected Found() to be false for nil registry")
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
 	}
-	if res.WorkDir != "/any/dir" {
-		t.Errorf("WorkDir = %q, want %q", res.WorkDir, "/any/dir")
+
+	if !cfg.ProjectFound() {
+		t.Error("expected ProjectFound() to be true for child directory")
+	}
+	if cfg.ProjectKey() != "my-app" {
+		t.Errorf("ProjectKey() = %q, want %q", cfg.ProjectKey(), "my-app")
 	}
 }
 
-func TestResolution_NilReceiver(t *testing.T) {
-	var res *Resolution
-	if res.Found() {
-		t.Error("nil Resolution.Found() should return false")
+func TestConfig_ProjectContext_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv(ClawkerHomeEnv, tmpDir)
+
+	workDir := filepath.Join(tmpDir, "other")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("failed to create work dir: %v", err)
 	}
-	if res.ProjectRoot() != "" {
-		t.Error("nil Resolution.ProjectRoot() should return empty string")
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(orig)
+	}()
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	if cfg.ProjectFound() {
+		t.Error("expected ProjectFound() to be false for non-matching directory")
+	}
+	if cfg.ProjectKey() != "" {
+		t.Errorf("ProjectKey() should be empty, got %q", cfg.ProjectKey())
 	}
 }

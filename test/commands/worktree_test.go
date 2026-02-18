@@ -309,7 +309,7 @@ func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory,
 
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return cfg
 		},
 		GitManager: func() (*gitpkg.GitManager, error) {

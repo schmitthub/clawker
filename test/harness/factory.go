@@ -50,7 +50,7 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreamstest.
 			c.ChownImage = TestChownImage
 			return c, nil
 		},
-		Config: func() *config.Config {
+		Config: func() config.Provider {
 			return cfg
 		},
 		HostProxy: func() hostproxy.HostProxyService {

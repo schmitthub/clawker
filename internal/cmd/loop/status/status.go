@@ -14,7 +14,7 @@ import (
 // StatusOptions holds options for the loop status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() config.Provider
 
 	Agent string
 	JSON  bool
@@ -63,7 +63,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	cs := ios.ColorScheme()
 
 	// Get config
-	cfg := opts.Config().Project
+	cfg := opts.Config().ProjectCfg()
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()
