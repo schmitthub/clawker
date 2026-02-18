@@ -255,9 +255,6 @@ build/
 .DS_Store
 Thumbs.db
 
-# Git
-.git/
-
 # Secrets (never copy these)
 .env
 .env.*
