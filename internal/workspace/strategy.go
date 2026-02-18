@@ -20,8 +20,10 @@ type Strategy interface {
 	// Prepare sets up any required resources (volumes, etc.)
 	Prepare(ctx context.Context, cli *docker.Client) error
 
-	// GetMounts returns the Docker mount configuration for the workspace
-	GetMounts() []mount.Mount
+	// GetMounts returns the Docker mount configuration for the workspace.
+	// Returns an error if mount generation requires I/O that fails (e.g. scanning
+	// for ignored directories in bind mode).
+	GetMounts() ([]mount.Mount, error)
 
 	// Cleanup removes any temporary resources
 	Cleanup(ctx context.Context, cli *docker.Client) error
@@ -44,8 +46,7 @@ type Config struct {
 	// AgentName is used for naming agent-specific volumes
 	AgentName string
 
-	// IgnorePatterns are patterns to exclude when copying (snapshot mode)
-	IgnorePatterns []string
+	IgnorePatterns []string // Patterns to exclude (snapshot: tar filtering, bind: tmpfs overlays)
 }
 
 // NewStrategy creates a Strategy based on the mode

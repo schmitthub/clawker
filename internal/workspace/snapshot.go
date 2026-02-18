@@ -108,15 +108,15 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 	return nil
 }
 
-// GetMounts returns the Docker mount configuration
-func (s *SnapshotStrategy) GetMounts() []mount.Mount {
+// GetMounts returns the volume mount. Never returns an error.
+func (s *SnapshotStrategy) GetMounts() ([]mount.Mount, error) {
 	return []mount.Mount{
 		{
 			Type:   mount.TypeVolume,
 			Source: s.volumeName,
 			Target: s.config.RemotePath,
 		},
-	}
+	}, nil
 }
 
 // Cleanup removes the snapshot volume

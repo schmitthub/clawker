@@ -111,7 +111,6 @@ func TestDefaultIgnoreFile(t *testing.T) {
 	// Check for critical patterns that should always be ignored
 	criticalPatterns := []string{
 		"node_modules/",
-		".git/",
 		".env",
 		"*.pem",
 		"*.key",

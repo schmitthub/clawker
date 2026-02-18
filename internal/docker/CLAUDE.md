@@ -66,7 +66,9 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 ## Volume Utilities (`volume.go`)
 
-`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`). Tests use `harness.TestChownImage`.
+`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`). Tests use `harness.TestChownImage`.
+
+`FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
 
 ## Opts Types (`opts.go`)
 

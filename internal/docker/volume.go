@@ -380,6 +380,159 @@ func LoadIgnorePatterns(ignoreFile string) ([]string, error) {
 			patterns = append(patterns, line)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
-	return patterns, scanner.Err()
+	// Validate glob syntax so malformed patterns return an error instead of
+	// silently not matching at runtime.
+	for _, p := range patterns {
+		clean := strings.TrimSuffix(strings.TrimSpace(p), "/")
+		if clean == "" || strings.HasPrefix(clean, "#") || strings.HasPrefix(clean, "!") {
+			continue
+		}
+		if _, err := filepath.Match(clean, "test"); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q in ignore file: %w", p, err)
+		}
+	}
+
+	return patterns, nil
+}
+
+// BindOverlayDirsFromPatterns derives directory overlay targets from ignore
+// patterns for bind mode. It intentionally only returns deterministic directory
+// paths and skips file-glob patterns.
+func BindOverlayDirsFromPatterns(patterns []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var dirs []string
+
+	for _, raw := range patterns {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" || strings.HasPrefix(pattern, "#") || strings.HasPrefix(pattern, "!") {
+			continue
+		}
+
+		hadTrailingSlash := strings.HasSuffix(pattern, "/")
+		clean := strings.TrimSuffix(pattern, "/")
+		clean = strings.TrimPrefix(clean, "./")
+		clean = strings.TrimPrefix(clean, "/")
+		clean = filepath.ToSlash(clean)
+
+		if clean == "" || clean == "." {
+			continue
+		}
+
+		if clean == ".git" || strings.HasPrefix(clean, ".git/") {
+			continue
+		}
+
+		if strings.ContainsAny(clean, "*?[") {
+			continue
+		}
+
+		base := filepath.Base(clean)
+		isLikelyDirPattern := hadTrailingSlash || strings.Contains(clean, "/") || !strings.Contains(base, ".")
+		if !isLikelyDirPattern {
+			continue
+		}
+
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		dirs = append(dirs, clean)
+	}
+
+	return dirs
+}
+
+// FindIgnoredDirs walks hostPath and returns relative paths of directories
+// matching the given ignore patterns. Used by bind mode to generate tmpfs
+// overlay mounts that mask ignored directories inside the container.
+//
+// Key differences from snapshot's shouldIgnore:
+//   - Only returns directories (file patterns like *.log are not actionable)
+//   - Does NOT mask .git/ (bind mode needs git for live development)
+//   - Skips recursion into matched directories (performance)
+func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return nil, nil
+	}
+
+	// fail fast if any negation patterns are present (not yet supported)
+	for _, p := range patterns {
+		if strings.HasPrefix(strings.TrimSpace(p), "!") {
+			logger.Error().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
+			return nil, fmt.Errorf("negation patterns in .clawkerignore are not yet supported: %q", p)
+		}
+	}
+
+	var dirs []string
+	err := filepath.Walk(hostPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Only interested in directories
+		if !info.IsDir() {
+			logger.Warn().Str("path", path).Msg("files in .clawkerignore are not supported for bind mode")
+			return nil
+		}
+
+		// Skip root directory itself
+		rel, err := filepath.Rel(hostPath, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Never mask .git — bind mode needs it for live development
+		if rel == ".git" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+			return filepath.SkipDir
+		}
+
+		// Check user patterns (directory-aware matching)
+		if shouldIgnoreForBind(rel, patterns) {
+			dirs = append(dirs, filepath.ToSlash(rel))
+			return filepath.SkipDir // don't recurse into matched directories
+		}
+
+		return nil
+	})
+
+	return dirs, err
+}
+
+// shouldIgnoreForBind checks if a directory path matches any of the given patterns.
+// Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it).
+// The caller is responsible for passing only directory paths.
+func shouldIgnoreForBind(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+
+		// Skip empty lines and comments
+		if pattern == "" || strings.HasPrefix(pattern, "#") {
+			continue
+		}
+
+		// Handle negation patterns (not fully implemented)
+		if strings.HasPrefix(pattern, "!") {
+			continue
+		}
+
+		// Strip trailing slash for matching (directory patterns like "node_modules/")
+		cleanPattern := strings.TrimSuffix(pattern, "/")
+
+		if matchPattern(path, cleanPattern) {
+			return true
+		}
+	}
+
+	return false
 }

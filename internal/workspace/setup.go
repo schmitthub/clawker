@@ -41,9 +41,22 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 }
 
+// resolveIgnoreFile returns the path to the .clawkerignore file.
+// Prefers project root (where clawker.yaml lives); falls back to host workdir.
+func resolveIgnoreFile(projectRootDir, hostPath string) string {
+	root := projectRootDir
+	if root == "" {
+		root = hostPath
+		logger.Debug().Str("path", root).Msg("no project root dir; resolving .clawkerignore from host workdir")
+	} else {
+		logger.Debug().Str("path", root).Msg("resolving .clawkerignore from project root")
+	}
+	return filepath.Join(root, config.IgnoreFileName)
+}
+
 // SetupMounts prepares workspace mounts for container creation.
 // It handles workspace mode resolution, strategy creation/preparation,
-// config volumes, and docker socket mounting.
+// .clawkerignore pattern loading, config volumes, and docker socket mounting.
 //
 // Returns a result containing the mounts and config volume creation state.
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error) {
@@ -70,12 +83,20 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
 
+	// Load .clawkerignore patterns
+	ignoreFile := resolveIgnoreFile(cfg.ProjectRootDir, hostPath)
+	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+	}
+
 	// Create workspace strategy
 	wsCfg := Config{
-		HostPath:    hostPath,
-		RemotePath:  cfg.Config.Workspace.RemotePath,
-		ProjectName: cfg.Config.Project,
-		AgentName:   cfg.AgentName,
+		HostPath:       hostPath,
+		RemotePath:     cfg.Config.Workspace.RemotePath,
+		ProjectName:    cfg.Config.Project,
+		AgentName:      cfg.AgentName,
+		IgnorePatterns: ignorePatterns,
 	}
 
 	strategy, err := NewStrategy(mode, wsCfg)
@@ -100,7 +121,11 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Get workspace mount
-	mounts = append(mounts, strategy.GetMounts()...)
+	wsMounts, err := strategy.GetMounts()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace mounts: %w", err)
+	}
+	mounts = append(mounts, wsMounts...)
 
 	// Mount main repo's .git directory for worktree support
 	if cfg.ProjectRootDir != "" {
