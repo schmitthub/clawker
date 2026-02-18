@@ -135,6 +135,7 @@ security:
       - mcp.context7.com
       - pypi.org
       - semgrep.dev
+      - registry.npmjs.org
   # Git credential forwarding
   git_credentials:
     forward_https: true

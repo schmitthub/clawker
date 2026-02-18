@@ -60,7 +60,8 @@ security:
   firewall:
     enable: true
     add_domains:
-      - "registry.yarnpkg.com"
+      - registry.yarnpkg.com
+      - registry.npmjs.org
     # registry.npmjs.org is already in the default firewall allowlist
     ip_range_sources:
       - name: github
