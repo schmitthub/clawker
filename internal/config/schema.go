@@ -404,6 +404,7 @@ type OtelConfig struct {
 
 // MonitoringConfig configures monitoring stack ports and OTEL endpoints.
 type MonitoringConfig struct {
+	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" mapstructure:"otel_collector_endpoint"`
 	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" mapstructure:"otel_collector_port"`
 	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" mapstructure:"otel_collector_host"`
 	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" mapstructure:"otel_collector_internal"`
