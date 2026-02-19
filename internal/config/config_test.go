@@ -177,6 +177,20 @@ build:
 	assert.Equal(t, "ubuntu:22.04", c.Project().Build.Image)
 }
 
+func TestReadFromString_PreservesAgentIncludesList(t *testing.T) {
+	t.Setenv("CLAWKER_AGENT", "from-env")
+
+	c := mustReadFromString(t, `
+agent:
+  includes:
+    - ~/.claude/agents
+`)
+
+	v, err := c.Get("agent.includes")
+	require.NoError(t, err)
+	assert.Equal(t, []any{"~/.claude/agents"}, v)
+}
+
 func TestGet_ReturnsValue(t *testing.T) {
 	c := mustReadFromString(t, `
 build:
@@ -642,21 +656,77 @@ workspace:
 	assert.Equal(t, "/workspace", p.Workspace.RemotePath)
 }
 
-// env var overrides
+// ReadFromString ignores env var overrides
 
-func TestEnvVar_OverridesDefault(t *testing.T) {
+func TestReadFromString_DoesNotApplyEnvOverrideToDefault(t *testing.T) {
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
 	c := mustReadFromString(t, "")
-	assert.Equal(t, "alpine:3.19", c.Project().Build.Image)
+	assert.Equal(t, "node:20-slim", c.Project().Build.Image)
 }
 
-func TestEnvVar_OverridesConfigValue(t *testing.T) {
+func TestReadFromString_DoesNotApplyEnvOverrideToConfigValue(t *testing.T) {
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
 	c := mustReadFromString(t, `
 build:
   image: ubuntu:22.04
 `)
+	assert.Equal(t, "ubuntu:22.04", c.Project().Build.Image)
+}
+
+func TestNewMockConfig_AppliesEnvOverride(t *testing.T) {
+	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
+	c := NewMockConfig()
 	assert.Equal(t, "alpine:3.19", c.Project().Build.Image)
+}
+
+func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
+	registryYAML := "projects: {}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv("CLAWKER_AGENT", "from-env")
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	v, err := cfg.Get("agent.includes")
+	require.NoError(t, err)
+	assert.Equal(t, []any{"~/.claude/agents"}, v)
+}
+
+func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
+	registryYAML := "projects: {}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+
+	assert.Equal(t, "alpine:3.19", cfg.Project().Build.Image)
 }
 
 // RequiredFirewallDomains
@@ -679,18 +749,33 @@ func TestRequiredFirewallDomains_Immutable(t *testing.T) {
 }
 
 func TestConstantAccessors(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
 	c := mustReadFromString(t, "")
 
 	assert.Equal(t, "clawker.dev", c.Domain())
 	assert.Equal(t, "dev.clawker", c.LabelDomain())
 	assert.Equal(t, "CLAWKER_CONFIG_DIR", c.ConfigDirEnvVar())
-	assert.Equal(t, "monitor", c.MonitorSubdir())
-	assert.Equal(t, "build", c.BuildSubdir())
-	assert.Equal(t, "dockerfiles", c.DockerfilesSubdir())
+	monitorSubdirPath, err := c.MonitorSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "monitor"), monitorSubdirPath)
+	buildSubdirPath, err := c.BuildSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "build"), buildSubdirPath)
+	dockerfilesSubdirPath, err := c.DockerfilesSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "dockerfiles"), dockerfilesSubdirPath)
 	assert.Equal(t, "clawker-net", c.ClawkerNetwork())
-	assert.Equal(t, "logs", c.LogsSubdir())
-	assert.Equal(t, "bridges", c.BridgesSubdir())
-	assert.Equal(t, ".clawker-share", c.ShareSubdir())
+	logsSubdirPath, err := c.LogsSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "logs"), logsSubdirPath)
+	bridgesSubdirPath, err := c.BridgesSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "bridges"), bridgesSubdirPath)
+	shareSubdirPath, err := c.ShareSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, ".clawker-share"), shareSubdirPath)
 	assert.Equal(t, "dev.clawker.", c.LabelPrefix())
 	assert.Equal(t, "dev.clawker.managed", c.LabelManaged())
 	assert.Equal(t, "dev.clawker.monitoring", c.LabelMonitoringStack())

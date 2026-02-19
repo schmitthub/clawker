@@ -51,17 +51,18 @@ Note: `DefaultImageTag` constant and `BuildDefaultImage` function have moved to 
 ### DockerfileManager -- multi-version/variant matrix builds
 
 ```go
-func NewDockerfileManager(outputDir string, cfg *VariantConfig) *DockerfileManager
+type DockerFileManagerOptions struct { OutputDir string; VariantCfg *VariantConfig }
+func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager
 func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error
 func (m *DockerfileManager) DockerfilesDir() string  // outputDir/dockerfiles
 ```
 
-`BuildKitEnabled` field controls cache mount emission. Writes scripts once, renders Dockerfile per version/variant.
+`cfg config.Config` (interface) provides `DockerfilesSubdir()`, `MonitoringConfig()`, `ContainerUID()`, `ContainerGID()`. `BuildKitEnabled` field controls cache mount emission. Writes scripts once, renders Dockerfile per version/variant.
 
 ### ProjectGenerator -- single project builds from clawker.yaml
 
 ```go
-func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator
+func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator
 func (g *ProjectGenerator) Generate() ([]byte, error)                                  // Render Dockerfile
 func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error)                   // Tar archive (legacy)
 func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error)
@@ -72,7 +73,7 @@ func (g *ProjectGenerator) GetBuildContext() string
 func CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  // Tar from directory
 ```
 
-`BuildKitEnabled` field mirrors DockerfileManager. `WriteBuildContextToDir` for BuildKit's fsutil mount; `GenerateBuildContextFromDockerfile` for legacy tar stream.
+`cfg config.Config` (interface) — replaces old `*config.Config` struct pointer. `BuildKitEnabled` field mirrors DockerfileManager. `WriteBuildContextToDir` for BuildKit's fsutil mount; `GenerateBuildContextFromDockerfile` for legacy tar stream.
 
 ### DockerfileContext -- template data
 
@@ -98,12 +99,21 @@ type ArgInstruction struct { Name, Default string }
 type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware RUN
 ```
 
+### Helpers
+
+```go
+func otelBaseEndpoint(mon config.MonitoringConfig) string  // Constructs OTEL base URL from config components
+```
+
+Falls back from `mon.OtelCollectorEndpoint` (explicit override) to `http://<OtelCollectorInternal>:<OtelCollectorPort>`.
+
 ### Constants and Embedded Assets
 
 ```go
 const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claude", "/bin/zsh"
-const DefaultUID, DefaultGID = 1001, 1001
 ```
+
+UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
 Embedded: `DockerfileTemplate`, `EntrypointScript`, `FirewallScript`, `StatuslineScript`, `SettingsFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`.
 
@@ -173,4 +183,6 @@ Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semve
 
 ## Tests
 
-Unit tests: `bundler_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+
+Test helper: `testConfig(t, yaml) config.Config` wraps `config.ReadFromString(yaml)` — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

@@ -1,5 +1,11 @@
 package config
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 // Used in help text, URLs, and user-facing output.
 const domain = "clawker.dev"
 
@@ -100,18 +106,27 @@ const containerUID = 1001
 // containerGID is the default GID for the non-root user inside clawker containers.
 const containerGID = 1001
 
-func (c *configImpl) Domain() string            { return domain }
-func (c *configImpl) LabelDomain() string       { return labelDomain }
-func (c *configImpl) ConfigDirEnvVar() string   { return clawkerConfigDirEnv }
-func (c *configImpl) MonitorSubdir() string     { return monitorSubdir }
-func (c *configImpl) BuildSubdir() string       { return buildSubdir }
-func (c *configImpl) DockerfilesSubdir() string { return dockerfilesSubdir }
-func (c *configImpl) ClawkerNetwork() string    { return clawkerNetwork }
-func (c *configImpl) LogsSubdir() string        { return logsSubdir }
-func (c *configImpl) BridgesSubdir() string     { return bridgesSubdir }
-func (c *configImpl) ShareSubdir() string       { return shareSubdir }
-func (c *configImpl) LabelPrefix() string       { return labelPrefix }
-func (c *configImpl) LabelManaged() string      { return labelManaged }
+func subdirPath(subdir string) (string, error) {
+	configDir := ConfigDir()
+	fullPath := filepath.Join(configDir, subdir)
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
+	}
+	return fullPath, nil
+}
+
+func (c *configImpl) Domain() string                     { return domain }
+func (c *configImpl) LabelDomain() string                { return labelDomain }
+func (c *configImpl) ConfigDirEnvVar() string            { return clawkerConfigDirEnv }
+func (c *configImpl) MonitorSubdir() (string, error)     { return subdirPath(monitorSubdir) }
+func (c *configImpl) BuildSubdir() (string, error)       { return subdirPath(buildSubdir) }
+func (c *configImpl) DockerfilesSubdir() (string, error) { return subdirPath(dockerfilesSubdir) }
+func (c *configImpl) ClawkerNetwork() string             { return clawkerNetwork }
+func (c *configImpl) LogsSubdir() (string, error)        { return subdirPath(logsSubdir) }
+func (c *configImpl) BridgesSubdir() (string, error)     { return subdirPath(bridgesSubdir) }
+func (c *configImpl) ShareSubdir() (string, error)       { return subdirPath(shareSubdir) }
+func (c *configImpl) LabelPrefix() string                { return labelPrefix }
+func (c *configImpl) LabelManaged() string               { return labelManaged }
 func (c *configImpl) LabelMonitoringStack() string {
 	return labelMonitoringStack
 }

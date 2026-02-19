@@ -17,7 +17,7 @@
 
 Viper-backed configuration with merged multi-file loading. One `Config` interface, one private `configImpl` struct wrapping `*viper.Viper`.
 
-**Precedence** (highest → lowest): env vars (`CLAWKER_*`) > project `clawker.yaml` > project registry > user config > settings > defaults
+**Precedence** (highest → lowest): supported env vars (`CLAWKER_*` leaf keys only) > project `clawker.yaml` > project registry > user config > settings > defaults
 
 **Files loaded by `NewConfig()`**:
 
@@ -64,13 +64,13 @@ All constants are **private** — callers access them exclusively through `Confi
 | `domain` | `Domain()` | `"clawker.dev"` |
 | `labelDomain` | `LabelDomain()` | `"dev.clawker"` |
 | `clawkerConfigDirEnv` | `ConfigDirEnvVar()` | `"CLAWKER_CONFIG_DIR"` |
-| `monitorSubdir` | `MonitorSubdir()` | `"monitor"` |
-| `buildSubdir` | `BuildSubdir()` | `"build"` |
-| `dockerfilesSubdir` | `DockerfilesSubdir()` | `"dockerfiles"` |
+| `monitorSubdir` | `MonitorSubdir()` | `"<ConfigDir()>/monitor"` |
+| `buildSubdir` | `BuildSubdir()` | `"<ConfigDir()>/build"` |
+| `dockerfilesSubdir` | `DockerfilesSubdir()` | `"<ConfigDir()>/dockerfiles"` |
 | `clawkerNetwork` | `ClawkerNetwork()` | `"clawker-net"` |
-| `logsSubdir` | `LogsSubdir()` | `"logs"` |
-| `bridgesSubdir` | `BridgesSubdir()` | `"bridges"` |
-| `shareSubdir` | `ShareSubdir()` | `".clawker-share"` |
+| `logsSubdir` | `LogsSubdir()` | `"<ConfigDir()>/logs"` |
+| `bridgesSubdir` | `BridgesSubdir()` | `"<ConfigDir()>/bridges"` |
+| `shareSubdir` | `ShareSubdir()` | `"<ConfigDir()>/.clawker-share"` |
 | `labelPrefix` | `LabelPrefix()` | `"dev.clawker."` |
 | `labelManaged` | `LabelManaged()` | `"dev.clawker.managed"` |
 | `labelMonitoringStack` | `LabelMonitoringStack()` | `"dev.clawker.monitoring"` |
@@ -109,9 +109,9 @@ type Config interface {
     // Schema accessors
     Logging() map[string]any          // raw logging config map
     Project() *Project                // full project schema (unmarshalled from viper)
-    Settings() Settings               // typed user settings (logging, monitoring, default_image)
-    LoggingConfig() LoggingConfig     // typed logging config with bool pointers
-    MonitoringConfig() MonitoringConfig // typed monitoring config
+    Settings() Settings               // typed user settings (logging, monitoring, default_image); bool fields are materialized to concrete true/false via non-nil pointers
+    LoggingConfig() LoggingConfig     // typed logging config; bool pointer fields are materialized (non-nil)
+    MonitoringConfig() MonitoringConfig // typed monitoring config; bool pointer fields are materialized (non-nil)
     Get(key string) (any, error)      // low-level dotted key read (returns KeyNotFoundError if not set)
     Set(key string, value any) error  // low-level dotted key write + in-memory dirty tracking
     Write(opts WriteOptions) error    // scoped/key/global selective persistence of dirty sections (thread-safe)
@@ -123,13 +123,13 @@ type Config interface {
     Domain() string                   // "clawker.dev"
     LabelDomain() string              // "dev.clawker"
     ConfigDirEnvVar() string          // "CLAWKER_CONFIG_DIR"
-    MonitorSubdir() string            // "monitor"
-    BuildSubdir() string              // "build"
-    DockerfilesSubdir() string        // "dockerfiles"
+    MonitorSubdir() (string, error)   // ensures + returns "<ConfigDir()>/monitor"
+    BuildSubdir() (string, error)     // ensures + returns "<ConfigDir()>/build"
+    DockerfilesSubdir() (string, error) // ensures + returns "<ConfigDir()>/dockerfiles"
     ClawkerNetwork() string           // "clawker-net"
-    LogsSubdir() string               // "logs"
-    BridgesSubdir() string            // "bridges"
-    ShareSubdir() string              // ".clawker-share"
+    LogsSubdir() (string, error)      // ensures + returns "<ConfigDir()>/logs"
+    BridgesSubdir() (string, error)   // ensures + returns "<ConfigDir()>/bridges"
+    ShareSubdir() (string, error)     // ensures + returns "<ConfigDir()>/.clawker-share"
     LabelPrefix() string              // "dev.clawker."
     LabelManaged() string             // "dev.clawker.managed"
     LabelMonitoringStack() string     // "dev.clawker.monitoring"
@@ -450,7 +450,10 @@ Key differences:
 
 - No `Exists()` check — use `os.ReadFile` + `os.ErrNotExist` instead
 - No `WithUserDefaults` option — `ReadFromString` always applies viper defaults
+- `ReadFromString` does not apply `CLAWKER_*` environment overrides (it parses YAML + defaults only)
 - Returns `Config` interface, call `.Project()` to get `*Project`
+
+For `NewConfig()`, environment overrides are key-level for supported leaf keys (for example `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace entire nested objects.
 
 ### Pattern 2: Validator → UnmarshalExact validation
 
@@ -506,11 +509,11 @@ The ownership-aware file mapper routes writes to the correct underlying file. Ca
 
 ```go
 cfg, _ := config.NewConfig()
-logsDir := filepath.Join(config.ConfigDir(), cfg.LogsSubdir())
+logsDir, _ := cfg.LogsSubdir()
 os.MkdirAll(logsDir, 0o755)
 ```
 
-All subdir constants are private — access them through `Config` methods (`LogsSubdir()`, `BridgesSubdir()`, `MonitorSubdir()`, etc.). `EnsureDir` hasn't been rebuilt — use `os.MkdirAll` directly.
+All subdir constants are private — access them through `Config` methods (`LogsSubdir()`, `BridgesSubdir()`, `MonitorSubdir()`, etc.), which ensure the directory exists and return `(string, error)`.
 
 ### Pattern 6: Label/PID constants → Config interface methods
 
@@ -584,8 +587,9 @@ See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_
 ## Gotchas
 
 - **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact` to catch unknown/misspelled keys (e.g. `biuld:` → `unknown keys: biuld`). Validation structs (`readFromStringValidation`, `projectRegistryValidation`) mirror the schema with `mapstructure` tags. Error messages are reformatted by `formatDecodeError` into user-friendly dot-path notation.
-- **Env vars override everything** — `CLAWKER_BUILD_IMAGE` overrides both defaults and config file values. Tests must clear `CLAWKER_*` env vars for isolation (see `clearClawkerEnv` pattern in check tests).
-- **`*bool` pointers** — `LoggingConfig`, `TelemetryConfig`, `GitCredentialsConfig` use `*bool` to distinguish "not set" from `false`. Always nil-check before dereferencing.
+- **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
+- **`ReadFromString` is env-isolated** — it parses YAML + defaults only and does not apply `CLAWKER_*` environment overrides.
+- **`*bool` pointers** — schema structs (`Project()` and YAML-unmarshal paths) preserve nullable `*bool` semantics and may require nil checks. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) already materialize these to concrete true/false via non-nil pointers.
 - **`Project.Project` field** — has `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). This is intentional so viper's ErrorUnused doesn't reject the `project:` key.
 - **Transitive build failures** — Until all consumers are migrated, `go build ./...` and `go test ./...` will fail. Test individual migrated packages directly.
 - **`Config` is an interface** — consumers receive `Config`, not `*configImpl`. The private struct wraps `*viper.Viper`.

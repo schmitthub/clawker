@@ -1,7 +1,6 @@
 // Package config provides types for interacting with clawker configuration files.
 // It loads clawker.yaml (project) and settings.yaml (user) into one merged
 // in-memory Config backed by viper, with key-path traversal via Get/Set/Keys/Remove.
-// Most of this code is based on [github.com/cli/cli/blob/trunk/pkg/config/config.go](github.com/cli/cli/blob/trunk/pkg/config/config.go).
 package config
 
 import (
@@ -41,13 +40,13 @@ type Config interface {
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
-	MonitorSubdir() string
-	BuildSubdir() string
-	DockerfilesSubdir() string
+	MonitorSubdir() (string, error)
+	BuildSubdir() (string, error)
+	DockerfilesSubdir() (string, error)
 	ClawkerNetwork() string
-	LogsSubdir() string
-	BridgesSubdir() string
-	ShareSubdir() string
+	LogsSubdir() (string, error)
+	BridgesSubdir() (string, error)
+	ShareSubdir() (string, error)
 	LabelPrefix() string
 	LabelManaged() string
 	LabelMonitoringStack() string
@@ -140,12 +139,98 @@ type WriteOptions struct {
 }
 
 func newViperConfig() *viper.Viper {
+	return newViperConfigWithEnv(true)
+}
+
+func newViperConfigWithEnv(enableAutomaticEnv bool) *viper.Viper {
 	v := viper.New()
 	v.SetEnvPrefix("CLAWKER")
-	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	if enableAutomaticEnv {
+		bindSupportedEnvKeys(v)
+	}
 	setDefaults(v)
 	return v
+}
+
+func bindSupportedEnvKeys(v *viper.Viper) {
+	for _, key := range supportedEnvKeys {
+		_ = v.BindEnv(key)
+	}
+}
+
+var supportedEnvKeys = []string{
+	"default_image",
+	"build.image",
+	"build.dockerfile",
+	"build.packages",
+	"build.context",
+	"build.build_args",
+	"agent.includes",
+	"agent.env_file",
+	"agent.from_env",
+	"agent.env",
+	"agent.memory",
+	"agent.editor",
+	"agent.visual",
+	"agent.shell",
+	"agent.claude_code.config.strategy",
+	"agent.claude_code.use_host_auth",
+	"agent.enable_shared_dir",
+	"agent.post_init",
+	"workspace.remote_path",
+	"workspace.default_mode",
+	"security.firewall.enable",
+	"security.firewall.add_domains",
+	"security.firewall.ip_range_sources",
+	"security.docker_socket",
+	"security.cap_add",
+	"security.enable_host_proxy",
+	"security.git_credentials.forward_https",
+	"security.git_credentials.forward_ssh",
+	"security.git_credentials.forward_gpg",
+	"security.git_credentials.copy_git_config",
+	"loop.max_loops",
+	"loop.stagnation_threshold",
+	"loop.timeout_minutes",
+	"loop.calls_per_hour",
+	"loop.completion_threshold",
+	"loop.session_expiration_hours",
+	"loop.same_error_threshold",
+	"loop.output_decline_threshold",
+	"loop.max_consecutive_test_loops",
+	"loop.loop_delay_seconds",
+	"loop.safety_completion_threshold",
+	"loop.skip_permissions",
+	"loop.hooks_file",
+	"loop.append_system_prompt",
+	"logging.file_enabled",
+	"logging.max_size_mb",
+	"logging.max_age_days",
+	"logging.max_backups",
+	"logging.compress",
+	"logging.otel.enabled",
+	"logging.otel.timeout_seconds",
+	"logging.otel.max_queue_size",
+	"logging.otel.export_interval_seconds",
+	"monitoring.otel_collector_endpoint",
+	"monitoring.otel_collector_port",
+	"monitoring.otel_collector_host",
+	"monitoring.otel_collector_internal",
+	"monitoring.otel_grpc_port",
+	"monitoring.loki_port",
+	"monitoring.prometheus_port",
+	"monitoring.jaeger_port",
+	"monitoring.grafana_port",
+	"monitoring.prometheus_metrics_port",
+	"monitoring.telemetry.metrics_path",
+	"monitoring.telemetry.logs_path",
+	"monitoring.telemetry.metric_export_interval_ms",
+	"monitoring.telemetry.logs_export_interval_ms",
+	"monitoring.telemetry.log_tool_details",
+	"monitoring.telemetry.log_user_prompts",
+	"monitoring.telemetry.include_account_uuid",
+	"monitoring.telemetry.include_session_id",
 }
 
 func newConfig(v *viper.Viper) *configImpl {
@@ -327,7 +412,7 @@ func ReadFromString(str string) (Config, error) {
 		return nil, err
 	}
 
-	v := newViperConfig()
+	v := newViperConfigWithEnv(false)
 	v.SetConfigType("yaml")
 	if str != "" {
 		err := v.ReadConfig(strings.NewReader(str))

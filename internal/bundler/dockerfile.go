@@ -90,15 +90,14 @@ func EmbeddedScripts() []string {
 const (
 	DefaultClaudeCodeVersion = "latest"
 	DefaultUsername          = "claude"
-	DefaultUID               = config.ContainerUID
-	DefaultGID               = config.ContainerGID
 	DefaultShell             = "/bin/zsh"
 )
 
 // DockerfileManager generates and persists Dockerfiles for each version/variant combination.
 type DockerfileManager struct {
+	cfg             config.Config
 	outputDir       string
-	config          *VariantConfig
+	variantConfig   *VariantConfig
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
@@ -175,22 +174,29 @@ type RunInstruction struct {
 	Debian string
 }
 
+type DockerFileManagerOptions struct {
+	OutputDir string
+	VariantCfg       *VariantConfig
+}
+
 // NewDockerfileManager creates a new DockerfileManager.
-func NewDockerfileManager(outputDir string, cfg *VariantConfig) *DockerfileManager {
-	if cfg == nil {
-		cfg = DefaultVariantConfig()
+func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager {
+	if opts.VariantCfg == nil {
+		opts.VariantCfg = DefaultVariantConfig()
 	}
+
 	return &DockerfileManager{
-		outputDir: outputDir,
-		config:    cfg,
+		cfg:           cfg,
+		outputDir:     opts.OutputDir,
+		variantConfig: opts.VariantCfg,
 	}
 }
 
 // GenerateDockerfiles generates Dockerfiles for all version/variant combinations.
 func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error {
-	dockerfilesDir := filepath.Join(m.outputDir, "dockerfiles")
-	if err := config.EnsureDir(dockerfilesDir); err != nil {
-		return fmt.Errorf("failed to create dockerfiles directory: %w", err)
+	dockerfilesDir, err := m.cfg.DockerfilesSubdir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve dockerfiles directory: %w", err)
 	}
 
 	// Parse the template
@@ -252,21 +258,29 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	return nil
 }
 
+// otelBaseEndpoint returns the OTEL collector base URL.
+// Uses OtelCollectorEndpoint if set, otherwise constructs from internal host + port.
+func otelBaseEndpoint(mon config.MonitoringConfig) string {
+	if mon.OtelCollectorEndpoint != "" {
+		return mon.OtelCollectorEndpoint
+	}
+	return fmt.Sprintf("http://%s:%d", mon.OtelCollectorInternal, mon.OtelCollectorPort)
+}
+
 // createContext creates a DockerfileContext for a given version and variant.
 func (m *DockerfileManager) createContext(version, variant string) (*DockerfileContext, error) {
-	isAlpine := m.config.IsAlpine(variant)
+	isAlpine := m.variantConfig.IsAlpine(variant)
 	baseImage := m.variantToBaseImage(variant)
 
-	// OTEL telemetry from monitoring config defaults
-	defaults := config.DefaultSettings()
-	mon := &defaults.Monitoring
+	// OTEL telemetry from monitoring config
+	mon := m.cfg.MonitoringConfig()
 
 	return &DockerfileContext{
 		BaseImage:                baseImage,
 		Packages:                 []string{}, // Base packages are in template
 		Username:                 DefaultUsername,
-		UID:                      DefaultUID,
-		GID:                      DefaultGID,
+		UID:                      m.cfg.ContainerUID(),
+		GID:                      m.cfg.ContainerGID(),
 		Shell:                    "/bin/zsh",
 		WorkspacePath:            "/workspace",
 		ClaudeVersion:            version,
@@ -274,20 +288,20 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
 		Inject:                   nil,
-		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
-		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
-		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
-		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
-		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
-		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
-		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
-		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
+		OtelMetricsEndpoint:      otelBaseEndpoint(mon) + mon.Telemetry.MetricsPath,
+		OtelLogsEndpoint:         otelBaseEndpoint(mon) + mon.Telemetry.LogsPath,
+		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
+		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
+		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
+		OtelLogUserPrompts:       *mon.Telemetry.LogUserPrompts,
+		OtelIncludeAccountUUID:   *mon.Telemetry.IncludeAccountUUID,
+		OtelIncludeSessionID:     *mon.Telemetry.IncludeSessionID,
 	}, nil
 }
 
 // variantToBaseImage converts a variant name to a Docker base image.
 func (m *DockerfileManager) variantToBaseImage(variant string) string {
-	if m.config.IsAlpine(variant) {
+	if m.variantConfig.IsAlpine(variant) {
 		// Convert "alpine3.23" to "alpine:3.23"
 		alpineVersion := strings.TrimPrefix(variant, "alpine")
 		return fmt.Sprintf("alpine:%s", alpineVersion)
@@ -312,27 +326,19 @@ func (m *DockerfileManager) DockerfilesDir() string {
 
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
-	config          *config.Config // gateway — provides Project and Settings
+	cfg             config.Config
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
-func NewProjectGenerator(cfg *config.Config, workDir string) *ProjectGenerator {
+func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	return &ProjectGenerator{
-		config:  cfg,
+		cfg:     cfg,
 		workDir: workDir,
 	}
 }
 
-// effectiveSettings returns the loaded settings from the config gateway,
-// falling back to DefaultSettings() when no gateway is available (e.g. tests).
-func (g *ProjectGenerator) effectiveSettings() *config.Settings {
-	if g.config != nil && g.config.Settings != nil {
-		return g.config.Settings
-	}
-	return config.DefaultSettings()
-}
 
 // Generate creates a Dockerfile based on the project configuration.
 func (g *ProjectGenerator) Generate() ([]byte, error) {
@@ -416,7 +422,7 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	}
 
 	// Add any include files from agent config
-	for _, include := range g.config.Project.Agent.Includes {
+	for _, include := range g.cfg.Project().Agent.Includes {
 		includePath := include
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(g.workDir, includePath)
@@ -472,7 +478,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	}
 
 	// Write include files from agent config
-	for _, include := range g.config.Project.Agent.Includes {
+	for _, include := range g.cfg.Project().Agent.Includes {
 		includePath := include
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(g.workDir, includePath)
@@ -493,12 +499,12 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 
 // UseCustomDockerfile checks if a custom Dockerfile should be used.
 func (g *ProjectGenerator) UseCustomDockerfile() bool {
-	return g.config.Project.Build.Dockerfile != ""
+	return g.cfg.Project().Build.Dockerfile != ""
 }
 
 // GetCustomDockerfilePath returns the path to the custom Dockerfile.
 func (g *ProjectGenerator) GetCustomDockerfilePath() string {
-	path := g.config.Project.Build.Dockerfile
+	path := g.cfg.Project().Build.Dockerfile
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(g.workDir, path)
 	}
@@ -507,8 +513,8 @@ func (g *ProjectGenerator) GetCustomDockerfilePath() string {
 
 // GetBuildContext returns the build context path.
 func (g *ProjectGenerator) GetBuildContext() string {
-	if g.config.Project.Build.Context != "" {
-		path := g.config.Project.Build.Context
+	if g.cfg.Project().Build.Context != "" {
+		path := g.cfg.Project().Build.Context
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(g.workDir, path)
 		}
@@ -553,7 +559,7 @@ func filterBasePackages(packages []string, isAlpine bool) []string {
 
 // buildContext creates the template context from config.
 func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
-	p := g.config.Project
+	p := g.cfg.Project()
 	baseImage := p.Build.Image
 	if baseImage == "" {
 		baseImage = "buildpack-deps:bookworm-scm"
@@ -561,29 +567,28 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 
 	isAlpine := strings.Contains(strings.ToLower(baseImage), "alpine")
 
-	// OTEL telemetry from effective settings (user overrides respected)
-	settings := g.effectiveSettings()
-	mon := &settings.Monitoring
+	// OTEL telemetry from monitoring config
+	mon := g.cfg.MonitoringConfig()
 
 	ctx := &DockerfileContext{
 		BaseImage:                baseImage,
 		Packages:                 filterBasePackages(p.Build.Packages, isAlpine),
 		Username:                 DefaultUsername,
-		UID:                      DefaultUID,
-		GID:                      DefaultGID,
+		UID:                      g.cfg.ContainerUID(),
+		GID:                      g.cfg.ContainerGID(),
 		Shell:                    DefaultShell,
 		WorkspacePath:            p.Workspace.RemotePath,
 		ClaudeVersion:            DefaultClaudeCodeVersion,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
-		OtelMetricsEndpoint:      mon.GetMetricsEndpoint(),
-		OtelLogsEndpoint:         mon.GetLogsEndpoint(),
-		OtelLogsExportInterval:   mon.Telemetry.GetLogsExportIntervalMs(),
-		OtelMetricExportInterval: mon.Telemetry.GetMetricExportIntervalMs(),
-		OtelLogToolDetails:       mon.Telemetry.IsLogToolDetailsEnabled(),
-		OtelLogUserPrompts:       mon.Telemetry.IsLogUserPromptsEnabled(),
-		OtelIncludeAccountUUID:   mon.Telemetry.IsIncludeAccountUUIDEnabled(),
-		OtelIncludeSessionID:     mon.Telemetry.IsIncludeSessionIDEnabled(),
+		OtelMetricsEndpoint:      otelBaseEndpoint(mon) + mon.Telemetry.MetricsPath,
+		OtelLogsEndpoint:         otelBaseEndpoint(mon) + mon.Telemetry.LogsPath,
+		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
+		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
+		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
+		OtelLogUserPrompts:       *mon.Telemetry.LogUserPrompts,
+		OtelIncludeAccountUUID:   *mon.Telemetry.IncludeAccountUUID,
+		OtelIncludeSessionID:     *mon.Telemetry.IncludeSessionID,
 	}
 
 	// Populate Instructions if present (structural only — Copy, Args, RUN)

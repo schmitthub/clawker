@@ -40,7 +40,7 @@ Before any caller migration, add missing symbols to `internal/config/`:
 
 Order matters — downstream deps first:
 
-1. [ ] `internal/bundler` — define ContainerUID/GID constants, remove old config deps (`EnsureDir`, `DefaultSettings`, `*config.Config` struct → interface)
+1. [x] `internal/bundler` — DONE. `cfg config.Config` interface, `otelBaseEndpoint()` helper, `testConfig(t,yaml)` test double, 31 tests pass.
 2. [ ] `internal/docker` — labels.go self-defined, `client.go` change `*config.Config` to `config.Config` interface, `volume.go` import bundler UID/GID, `defaults.go` use `ConfigDir()` + literal
 3. [ ] `internal/containerfs` — import bundler UID/GID (6 sites)
 4. [ ] `internal/workspace` — `ConfigDir()` + literal paths, Config param for EnsureShareDir, fix private `clawkerHomeEnv` in tests
@@ -114,6 +114,13 @@ Commands with additional old-API usage beyond Provider:
 - Pattern 9 in config/CLAUDE.md shows registry writes via Set+Write (no Registry abstraction)
 - `~/.local/clawker` is dead — `ConfigDir()` owns the resolution chain
 - `ResolveAgentEnv` → `container/shared/` (domain logic, not config)
+
+### Bundler migration gotchas (apply to all callers)
+- **Schema structs are data-only** — `MonitoringConfig`, `TelemetryConfig`, `Project` etc. have no methods. Add helpers in the consumer package, not on the schema types.
+- **`*bool` fields are always populated** — `MonitoringConfig()` uses `boolPtr()` for all `*bool` TelemetryConfig fields. Safe to dereference with `*` directly, no nil guard needed.
+- **Use `config.ReadFromString(yaml)` for tests** — not `NewFakeConfig` or `NewMockConfig`. Wrap in a `testConfig(t, yaml)` helper per test file.
+- **`cfg` as field name** avoids collision with `config` package import name.
+- **`Project()` is a method call, not a field** — global replace `x.config.Project.` → `x.cfg.Project().` when migrating.
 
 ## IMPERATIVE
 
