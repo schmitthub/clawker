@@ -48,6 +48,26 @@ type Config interface {
 	LogsSubdir() string
 	BridgesSubdir() string
 	ShareSubdir() string
+	LabelPrefix() string
+	LabelManaged() string
+	LabelMonitoringStack() string
+	LabelProject() string
+	LabelAgent() string
+	LabelVersion() string
+	LabelImage() string
+	LabelCreated() string
+	LabelWorkdir() string
+	LabelPurpose() string
+	LabelTestName() string
+	LabelBaseImage() string
+	LabelFlavor() string
+	LabelTest() string
+	LabelE2ETest() string
+	ManagedLabelValue() string
+	EngineLabelPrefix() string
+	EngineManagedLabel() string
+	ContainerUID() int
+	ContainerGID() int
 	RequiredFirewallDomains() []string
 	GetProjectRoot() (string, error)
 }

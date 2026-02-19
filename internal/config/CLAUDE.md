@@ -71,6 +71,26 @@ All constants are **private** — callers access them exclusively through `Confi
 | `logsSubdir` | `LogsSubdir()` | `"logs"` |
 | `bridgesSubdir` | `BridgesSubdir()` | `"bridges"` |
 | `shareSubdir` | `ShareSubdir()` | `".clawker-share"` |
+| `labelPrefix` | `LabelPrefix()` | `"dev.clawker."` |
+| `labelManaged` | `LabelManaged()` | `"dev.clawker.managed"` |
+| `labelMonitoringStack` | `LabelMonitoringStack()` | `"dev.clawker.monitoring"` |
+| `labelProject` | `LabelProject()` | `"dev.clawker.project"` |
+| `labelAgent` | `LabelAgent()` | `"dev.clawker.agent"` |
+| `labelVersion` | `LabelVersion()` | `"dev.clawker.version"` |
+| `labelImage` | `LabelImage()` | `"dev.clawker.image"` |
+| `labelCreated` | `LabelCreated()` | `"dev.clawker.created"` |
+| `labelWorkdir` | `LabelWorkdir()` | `"dev.clawker.workdir"` |
+| `labelPurpose` | `LabelPurpose()` | `"dev.clawker.purpose"` |
+| `labelTestName` | `LabelTestName()` | `"dev.clawker.test.name"` |
+| `labelBaseImage` | `LabelBaseImage()` | `"dev.clawker.base-image"` |
+| `labelFlavor` | `LabelFlavor()` | `"dev.clawker.flavor"` |
+| `labelTest` | `LabelTest()` | `"dev.clawker.test"` |
+| `labelE2ETest` | `LabelE2ETest()` | `"dev.clawker.e2e-test"` |
+| `managedLabelValue` | `ManagedLabelValue()` | `"true"` |
+| `engineLabelPrefix` | `EngineLabelPrefix()` | `"dev.clawker"` |
+| `engineManagedLabel` | `EngineManagedLabel()` | `"managed"` |
+| `containerUID` | `ContainerUID()` | `1001` |
+| `containerGID` | `ContainerGID()` | `1001` |
 
 The only exported symbols in `consts.go` are the `Mode` type and its values:
 
@@ -110,6 +130,26 @@ type Config interface {
     LogsSubdir() string               // "logs"
     BridgesSubdir() string            // "bridges"
     ShareSubdir() string              // ".clawker-share"
+    LabelPrefix() string              // "dev.clawker."
+    LabelManaged() string             // "dev.clawker.managed"
+    LabelMonitoringStack() string     // "dev.clawker.monitoring"
+    LabelProject() string             // "dev.clawker.project"
+    LabelAgent() string               // "dev.clawker.agent"
+    LabelVersion() string             // "dev.clawker.version"
+    LabelImage() string               // "dev.clawker.image"
+    LabelCreated() string             // "dev.clawker.created"
+    LabelWorkdir() string             // "dev.clawker.workdir"
+    LabelPurpose() string             // "dev.clawker.purpose"
+    LabelTestName() string            // "dev.clawker.test.name"
+    LabelBaseImage() string           // "dev.clawker.base-image"
+    LabelFlavor() string              // "dev.clawker.flavor"
+    LabelTest() string                // "dev.clawker.test"
+    LabelE2ETest() string             // "dev.clawker.e2e-test"
+    ManagedLabelValue() string        // "true"
+    EngineLabelPrefix() string        // "dev.clawker"
+    EngineManagedLabel() string       // "managed"
+    ContainerUID() int                // 1001
+    ContainerGID() int                // 1001
 }
 ```
 
@@ -475,12 +515,12 @@ All subdir constants are private — access them through `Config` methods (`Logs
 ### Pattern 6: Label/PID constants → Config interface methods
 
 **Old**: `config.LabelManaged`, `config.ManagedLabelValue`, `config.BridgePIDFile`, etc.
-**New**: `LabelDomain()` and `Domain()` are available via the `Config` interface. Package-specific constants like PID file names belong in their own packages (`hostproxy`, `socketbridge`), not in `config`.
+**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). Package-specific constants like PID file names belong in their own packages (`hostproxy`, `socketbridge`), not in `config`.
 
-### Pattern 7: ContainerUID/GID / DefaultSettings → (not yet rebuilt)
+### Pattern 7: ContainerUID/GID / DefaultSettings
 
 **Old**: `config.ContainerUID`, `config.ContainerGID`, `config.DefaultSettings()`
-**New**: Not yet rebuilt. Bundler migration will need these — either re-add as constants/functions or move to `bundler` package if they're bundler-specific.
+**New**: `ContainerUID()` and `ContainerGID()` are available via `Config` interface methods. `DefaultSettings()` remains not rebuilt.
 
 ### Pattern 8: Testing — old configtest/ → stubs.go
 
