@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/docker/cli/cli/compose/loader"
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -188,19 +189,8 @@ func printImageNotFoundNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorSc
 
 // persistDefaultImageSetting saves the default image tag in user settings.
 // Returns a warning message if the setting could not be saved, empty string on success.
-func persistDefaultImageSetting(settingsLoaderFn func() config.SettingsLoader) string {
-	if settingsLoaderFn == nil {
-		return ""
-	}
-	loader := settingsLoaderFn()
-	if loader == nil {
-		return ""
-	}
-	currentSettings, loadErr := loader.Load()
-	if loadErr != nil {
-		logger.Warn().Err(loadErr).Msg("failed to load existing settings; skipping settings update")
-		return fmt.Sprintf("Could not save default image setting: %v", loadErr)
-	}
+func persistDefaultImageSetting() string {
+
 	currentSettings.DefaultImage = docker.DefaultImageTag
 	if saveErr := loader.Save(currentSettings); saveErr != nil {
 		logger.Warn().Err(saveErr).Msg("failed to update settings with default image")

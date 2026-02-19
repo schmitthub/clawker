@@ -214,7 +214,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
-| `config.Config` | Single interface all callers receive. File names, directory paths, and constants are private — callers use `Config` methods or propose new ones. `NewConfig()` (production), `ReadFromString()` (testing/validation). Validates via `UnmarshalExact` (unknown keys rejected). **Refactoring in progress** — see `internal/config/CLAUDE.md` for migration guide |
+| `config.Config` | Single interface all callers receive. File names, directory paths, and constants are private — callers use `Config` methods or propose new ones. `NewConfig()` (production), `ReadFromString()` (testing/validation). Validates via `UnmarshalExact` (unknown keys rejected). Low-level mutation: `Set(key, value)` + dirty tracking, `Write(WriteOptions)` with ownership-aware routing (`ScopeSettings`/`ScopeProject`/`ScopeRegistry` → correct file), `Watch(onChange)` for file changes. Thread-safe via `sync.RWMutex`. **Consumer migration in progress** — see `internal/config/CLAUDE.md` for migration guide |
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |

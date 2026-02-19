@@ -89,7 +89,7 @@ Removes stale worktree entries from the project registry.
 ```go
 type PruneOptions struct {
     IOStreams *iostreams.IOStreams
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     DryRun    bool
 }
 ```

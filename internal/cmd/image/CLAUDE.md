@@ -34,7 +34,7 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages.
 type BuildOptions struct {
     IOStreams *iostreams.IOStreams
     TUI       *tui.TUI
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     Client    func(context.Context) (*docker.Client, error)
 
     File      string   // -f, --file

@@ -16,7 +16,7 @@ import (
 
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {

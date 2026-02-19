@@ -2,6 +2,11 @@
 
 > High-level architecture overview. Use Serena for detailed method/type exploration.
 
+## Related Docs
+
+- `.claude/docs/DESIGN.md` — behavior and product-level rationale.
+- `internal/config/CLAUDE.md` — config package API, write semantics, and testing details.
+
 ## System Layers
 
 ```
@@ -104,9 +109,15 @@ Single `Config` interface that all callers receive. The package is a closed box 
 - `ConfigDir() string` — config directory path (respects `CLAWKER_CONFIG`, `XDG_CONFIG_HOME`)
 - All constants are private (`domain`, `labelDomain`, subdirs) — exposed only through `Config` interface methods
 
+**Write model (current):**
+- `Set(key, value)` updates in-memory state and marks dirty nodes only.
+- `Write(opts)` persists dirty keys/roots selectively based on ownership (`settings`, `registry`, `project`).
+- Dirty markers clear only for successful writes, supporting retry after partial failures.
+- Project-scope write target resolution: local project `clawker.yaml` when cwd resolves to a registered project; fallback to user-level config-dir `clawker.yaml` otherwise.
+
 **Validation**: `viper.UnmarshalExact` catches unknown/misspelled keys with user-friendly dot-path error messages. Both `ReadFromString` and `NewConfig` validate automatically.
 
-**Testing**: `NewMockConfig()`, `NewFakeConfig(opts)`, `NewConfigFromString(yaml)` — all in `stubs.go`, no separate `configtest/` subpackage.
+**Testing**: `NewMockConfig()`, `NewFakeConfig(opts)`, `NewConfigFromString(yaml)` — all in `stubs.go`, no separate `configtest/` subpackage. Prefer package-local runs (`go test ./internal/config -v`) during ongoing refactor migration.
 
 See `internal/config/CLAUDE.md` for full package reference and migration guide.
 

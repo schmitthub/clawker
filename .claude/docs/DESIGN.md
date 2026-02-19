@@ -2,6 +2,11 @@
 
 Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
 
+## Related Docs
+
+- `.claude/docs/ARCHITECTURE.md` — package layering and dependency boundaries.
+- `internal/config/CLAUDE.md` — config package contracts, persistence model, and test helpers.
+
 ## 1. Philosophy: "The Padded Cell"
 
 ### Core Principle
@@ -43,6 +48,8 @@ Higher precedence wins silently (no warnings on override).
 | `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
 
 **Project Resolution**: `config.NewConfig()` loads all config files and resolves the current project from the registry via `GetProjectRoot()`. The `Config` interface exposes `Project()`, `Settings()`, and typed accessors — all file paths and constants are private to the package. The `Project` schema struct's `Project` field is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
+
+**Config persistence model**: `Set(key, value)` updates only in-memory config and marks dirty nodes. Persistence is explicit through `Write(WriteOptions)`, which writes only dirty owned sections (`settings`, `registry`, `project`) by default. For project-owned keys, writes target local `./clawker.yaml` when the current directory resolves to a registered project, and fall back to user-level config-dir `clawker.yaml` when outside project context.
 
 ### 2.2 Agent
 
@@ -656,6 +663,16 @@ func TestNewCmdStop(t *testing.T) {
     }
 }
 ```
+
+### 11.3 Config Package Testing
+
+Use test doubles in `internal/config/stubs.go` for package-local testing:
+
+- `NewMockConfig()` for default in-memory config behavior.
+- `NewFakeConfig(FakeConfigOptions{Viper: v})` for deterministic pre-seeded state.
+- `ReadFromString(...)` / `NewConfigFromString(...)` for YAML validation and fixture-style scenarios.
+
+During config refactor migration, prefer focused package runs (`go test ./internal/config -v`) before broader suites.
 
 ## 12. Dependencies
 

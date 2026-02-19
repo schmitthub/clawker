@@ -15,7 +15,7 @@ import (
 
 type InitOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Force bool
 }

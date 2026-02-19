@@ -22,7 +22,7 @@ type StatsOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent      bool // if set to true, treat arguments as agent name
 	NoStream   bool

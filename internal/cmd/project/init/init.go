@@ -20,7 +20,7 @@ import (
 type ProjectInitOptions struct {
 	IOStreams *iostreams.IOStreams
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Name  string // Positional arg: project name
 	Force bool

@@ -8,6 +8,11 @@
 > ManagedLabelValue, LabelMonitoringStack) has been removed. Many consumers still reference these
 > removed symbols and will fail to compile until migrated. See "Migration Status" below.
 
+## Related Docs
+
+- `.claude/docs/ARCHITECTURE.md` — system package boundaries and config's place in the DAG.
+- `.claude/docs/DESIGN.md` — behavior-level rationale for config precedence and project resolution.
+
 ## Architecture
 
 Viper-backed configuration with merged multi-file loading. One `Config` interface, one private `configImpl` struct wrapping `*viper.Viper`.
@@ -15,17 +20,18 @@ Viper-backed configuration with merged multi-file loading. One `Config` interfac
 **Precedence** (highest → lowest): env vars (`CLAWKER_*`) > project `clawker.yaml` > project registry > user config > settings > defaults
 
 **Files loaded by `NewConfig()`**:
+
 1. `~/.config/clawker/settings.yaml` — user settings (logging, monitoring, default image)
 2. `~/.config/clawker/clawker.yaml` — user-level project config overrides
 3. `~/.config/clawker/projects.yaml` — project registry (slug → root path)
 4. `<project-root>/clawker.yaml` — project config (auto-discovered via registry + cwd)
 
-Config dir resolution: `$CLAWKER_CONFIG` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
+Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
 
 ## Files
 
 | File | Purpose |
-|------|---------|
+| --- | --- |
 | `config.go` | `Config` interface, `configImpl` struct, `NewConfig()`, `ReadFromString()`, `ConfigDir()`, file loading/merging |
 | `consts.go` | Private constants (`domain`, `labelDomain`, subdir names, network name) exposed only via `Config` interface methods. `Mode` type (`ModeBind`/`ModeSnapshot`) remains exported |
 | `schema.go` | All schema structs (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, etc.), `Registry` interface |
@@ -54,7 +60,7 @@ func ConfigDir() string
 All constants are **private** — callers access them exclusively through `Config` interface methods:
 
 | Private constant | Config method | Value |
-|-----------------|---------------|-------|
+| --- | --- | --- |
 | `domain` | `Domain()` | `"clawker.dev"` |
 | `labelDomain` | `LabelDomain()` | `"dev.clawker"` |
 | `clawkerConfigDirEnv` | `ConfigDirEnvVar()` | `"CLAWKER_CONFIG_DIR"` |
@@ -86,6 +92,10 @@ type Config interface {
     Settings() Settings               // typed user settings (logging, monitoring, default_image)
     LoggingConfig() LoggingConfig     // typed logging config with bool pointers
     MonitoringConfig() MonitoringConfig // typed monitoring config
+    Get(key string) (any, error)      // low-level dotted key read (returns KeyNotFoundError if not set)
+    Set(key string, value any) error  // low-level dotted key write + in-memory dirty tracking
+    Write(opts WriteOptions) error    // scoped/key/global selective persistence of dirty sections (thread-safe)
+    Watch(onChange func(fsnotify.Event)) error // file watch registration on active config file
     RequiredFirewallDomains() []string // immutable copy of required domains
     GetProjectRoot() (string, error)  // finds project root via registry + cwd (ErrNotInProject if none)
 
@@ -103,42 +113,104 @@ type Config interface {
 }
 ```
 
+### Low-level Mutation API (config.go)
+
+This package now supports a low-level, ownership-aware mutation layer in addition to typed getters.
+
+#### Ownership map (root key → file scope)
+
+| Root key | Scope | File target (default) |
+| --- | --- | --- |
+| `logging`, `monitoring`, `default_image` | `settings` | `settings.yaml` |
+| `projects` | `registry` | `projects.yaml` |
+| `version`, `project`, `build`, `agent`, `workspace`, `security`, `loop` | `project` | `<resolved-project-root>/clawker.yaml` (fallback user `clawker.yaml` when not in project) |
+
+#### `Set(key, value)` behavior
+
+- Resolves ownership from the key root.
+- Updates in-memory merged Viper state.
+- Marks the key path as structurally dirty (node-based tracking through the path).
+- Returns an error for unmapped keys.
+
+#### `Write(opts WriteOptions)` behavior
+
+`WriteOptions` fields:
+
+- `Path`: explicit output file (optional override)
+- `Safe`: no-overwrite mode (create-only)
+- `Scope`: `settings` / `project` / `registry` (optional)
+- `Key`: single dotted key persistence (optional)
+
+Dispatch order:
+
+1. `Key` set → persist that key only when its path/subtree is dirty (scope inferred from ownership map unless `Scope` provided)
+2. `Scope` set (without `Key`) → persist only dirty owned roots for that scope
+3. Neither `Key` nor `Scope` set:
+   - `Path` empty → persist dirty roots to their owning files by scope (`settings`, `registry`, `project`)
+   - `Path` set → legacy explicit single-file write (`WriteConfigAs` / `SafeWriteConfigAs`)
+
+Additional rules:
+
+- `Key` + `Scope` mismatch is rejected (ownership scope must match the key's mapped scope).
+- Dirty state is cleared only for successfully persisted entries.
+- No-op writes (no dirty content selected) return `nil`.
+
+#### `Watch(onChange)` behavior
+
+- Registers `OnConfigChange` callback when provided.
+- Starts Viper watch on the active config file.
+- Returns error when no active config file exists.
+
+#### In-memory implications (important)
+
+- `Set`: updates in-memory state and marks dirty; does **not** persist to disk.
+- `Write`: persists only selected dirty content, then clears dirty state for successful writes. It does **not** re-load/merge from disk as a separate step.
+- `Watch`: enables ongoing file-change watching; Viper handles refresh events for the watched file.
+
 ### Schema Types (schema.go)
 
 Top-level:
+
 - `Project` — root config struct, holds all sections plus runtime context (`projectEntry`, `registry`, `worktreeMu`)
 - `Settings` — user-level settings (`LoggingConfig`, `MonitoringConfig`, `DefaultImage`)
 
 Build:
+
 - `BuildConfig` — image, dockerfile, packages, context, build_args, instructions, inject
 - `DockerInstructions` — copy, env, labels, expose, args, volumes, workdir, healthcheck, shell, user_run, root_run
 - `CopyInstruction`, `ExposePort`, `ArgDefinition`, `HealthcheckConfig`, `RunInstruction`
 - `InjectConfig` — Dockerfile injection points (after_from, after_packages, after_user_setup, etc.)
 
 Agent:
+
 - `AgentConfig` — includes, env_file, from_env, env, memory, claude_code, post_init, etc.
 - `ClaudeCodeConfig` / `ClaudeCodeConfigOptions` — config strategy ("copy"/"fresh"), use_host_auth
 
 Workspace:
+
 - `WorkspaceConfig` — remote_path, default_mode
 - `ParseMode(s string) (Mode, error)` — converts string to `Mode` (type/consts in `consts.go`)
 
 Security:
+
 - `SecurityConfig` — firewall, docker_socket, cap_add, enable_host_proxy, git_credentials
 - `FirewallConfig` — enable, add_domains, ip_range_sources
 - `IPRangeSource` — name, url, jq_filter, required
 - `GitCredentialsConfig` — forward_https, forward_ssh, forward_gpg, copy_git_config
 
 Loop:
+
 - `LoopConfig` — max_loops, stagnation_threshold, timeout_minutes, and many circuit breaker params
 
 Registry:
+
 - `Registry` interface — `Projects()`, `Project(key)`, `AddProject()`, `RemoveProject()`, `Save()`
 - `ProjectEntry` — name, root, worktrees
 - `WorktreeEntry` — path, branch
 - `ProjectRegistry` — on-disk structure wrapping `map[string]ProjectEntry`
 
 Other:
+
 - `LoggingConfig` / `OtelConfig` — logging settings with `*bool` pointers for distinguishing unset from false
 - `MonitoringConfig` / `TelemetryConfig` — OTEL ports, paths, intervals
 - `KeyNotFoundError` — error type for missing keys
@@ -179,6 +251,33 @@ func NewFakeConfig(opts FakeConfigOptions) Config
 func NewConfigFromString(str string) (Config, error)
 ```
 
+### Testing Guide
+
+Use the lightest helper that fits the test intent:
+
+- `NewMockConfig()` — best for command/integration tests that only need a valid config object; no file loading, defaults enabled, safe in-memory behavior.
+- `NewFakeConfig(FakeConfigOptions{Viper: v})` — best for unit tests that need precise control over pre-seeded values; inject a custom `*viper.Viper` to set exact state before assertions.
+- `ReadFromString(...)` / `NewConfigFromString(...)` — best for YAML fixture-style tests and schema validation behavior; useful to verify unknown-key rejection and default merging semantics.
+
+Common patterns:
+
+- Test typed getters and defaults with `NewMockConfig()`.
+- Test key lookup/set/write behavior with `NewFakeConfig(...)` plus explicit `v.Set(...)`.
+- Test parsing/validation edge cases with `ReadFromString(...)` and inline YAML fixtures.
+
+Recommended package-local commands:
+
+```bash
+go test ./internal/config -v
+go test ./internal/config -run TestWrite -v
+go test ./internal/config -run TestReadFromString -v
+```
+
+Notes:
+
+- Keep tests package-local while the wider refactor is in progress.
+- Clear `CLAWKER_*` env vars in tests that assert defaults or file values.
+
 ### Default YAML Templates (defaults.go)
 
 ```go
@@ -191,6 +290,7 @@ const DefaultIgnoreFile    // .clawkerignore template
 ## Usage Patterns
 
 ### Command layer — validate a config string
+
 ```go
 data, err := os.ReadFile(path)
 cfg, err := config.ReadFromString(string(data))
@@ -198,6 +298,7 @@ cfg, err := config.ReadFromString(string(data))
 ```
 
 ### Command layer — full production config
+
 ```go
 cfg, err := config.NewConfig()
 project := cfg.Project()
@@ -205,7 +306,36 @@ settings := cfg.Settings()
 root, err := cfg.GetProjectRoot()
 ```
 
+### Command layer — low-level owned key update
+
+```go
+cfg, err := config.NewConfig()
+
+// Updates memory and marks the key path dirty.
+err = cfg.Set("logging.max_size_mb", 100)
+
+// Persist dirty changes for this key.
+err = cfg.Write(config.WriteOptions{Key: "logging.max_size_mb"})
+```
+
+### Command layer — scoped/key writes
+
+```go
+cfg, err := config.NewConfig()
+
+// Persist one dirty key to its owning file.
+err = cfg.Write(config.WriteOptions{Key: "build.image"})
+
+// Persist all settings-owned roots to an explicit file path.
+err = cfg.Write(config.WriteOptions{
+    Scope: config.ScopeSettings,
+    Path:  "/tmp/settings.yaml",
+    Safe:  false,
+})
+```
+
 ### Testing — mock config
+
 ```go
 cfg := config.NewMockConfig()
 // or with specific YAML:
@@ -213,6 +343,7 @@ cfg, err := config.ReadFromString(`build: { image: "alpine:3.20" }`)
 ```
 
 ### Testing — custom viper
+
 ```go
 v := viper.New()
 v.Set("build.image", "custom:latest")
@@ -224,7 +355,7 @@ cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: v})
 The following consumers still reference **removed** old-API symbols and need migration:
 
 | Package | Removed Symbols Referenced |
-|---------|--------------------------|
+| --- | --- |
 | `internal/bundler` | `ContainerUID`, `ContainerGID`, `EnsureDir`, `DefaultSettings` |
 | `internal/hostproxy` | `HostProxyPIDFile`, `HostProxyLogFile`, `LogsDir`, `EnsureDir`, `LabelManaged`, `ManagedLabelValue`, `LabelMonitoringStack` |
 | `internal/socketbridge` | `BridgePIDFile`, `BridgesDir`, `LogsDir`, `EnsureDir` |
@@ -244,10 +375,12 @@ The following consumers still reference **removed** old-API symbols and need mig
 | `test/harness` | `NewProjectLoader` |
 
 ### Already Migrated
+
 - `internal/cmd/config/check` — uses `ReadFromString()` only
 - `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
 
 ### Not Yet Built (configtest/)
+
 The old `configtest/` subpackage (`InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader`) has not been rebuilt. When needed, use `NewMockConfig()`, `NewFakeConfig()`, or `ReadFromString()` from `stubs.go`.
 
 ## Migration Guide
@@ -257,6 +390,7 @@ This section documents how to migrate consumers from the old config API to the n
 ### Pattern 1: ProjectLoader → ReadFromString
 
 **Old pattern** — directory-based loading with ProjectLoader:
+
 ```go
 loader := config.NewProjectLoader(dir, config.WithUserDefaults(""))
 if !loader.Exists() { /* not found */ }
@@ -264,6 +398,7 @@ project, err := loader.Load()
 ```
 
 **New pattern** — read file content and parse:
+
 ```go
 data, err := os.ReadFile(filepath.Join(dir, "clawker.yaml"))
 if errors.Is(err, os.ErrNotExist) { /* not found */ }
@@ -272,6 +407,7 @@ project := cfg.Project()
 ```
 
 Key differences:
+
 - No `Exists()` check — use `os.ReadFile` + `os.ErrNotExist` instead
 - No `WithUserDefaults` option — `ReadFromString` always applies viper defaults
 - Returns `Config` interface, call `.Project()` to get `*Project`
@@ -279,6 +415,7 @@ Key differences:
 ### Pattern 2: Validator → UnmarshalExact validation
 
 **Old pattern**:
+
 ```go
 validator := config.NewValidator(dir)
 valErr := validator.Validate(project)
@@ -294,9 +431,10 @@ errors.As(valErr, &multi)
 **Old**: `config.ConfigFileName` (constant `"clawker.yaml"`)
 **New**: Use literal `"clawker.yaml"` directly, or reference `DefaultConfigYAML` for scaffolding.
 
-### Pattern 4: SettingsLoader → Config.Settings()
+### Pattern 4: SettingsLoader → Set() + Write()
 
 **Old pattern**:
+
 ```go
 sl := cfgGateway.SettingsLoader()
 settings, _ := sl.Load()
@@ -304,19 +442,28 @@ sl.SetDefault("key", "value")
 sl.Save()
 ```
 
-**New pattern**: `SettingsLoader` is not yet rebuilt. For read-only access:
+**New pattern** — read via typed accessor, write via Set+Write:
+
 ```go
 cfg, _ := config.NewConfig()
+
+// Read
 settings := cfg.Settings()
-// settings.DefaultImage, settings.Logging, settings.Monitoring
+currentImage := settings.DefaultImage
+
+// Write — Set updates in-memory + marks dirty, Write persists to owning file
+_ = cfg.Set("default_image", "node:20-slim")
+_ = cfg.Write(config.WriteOptions{Key: "default_image"})
+// → routes to settings.yaml automatically (default_image is ScopeSettings)
 ```
 
-Write operations (save settings) need a new implementation.
+The ownership-aware file mapper routes writes to the correct underlying file. Callers never reference specific file paths — `Set` validates the key against `keyOwnership`, and `Write` resolves the target file from the key's scope.
 
 ### Pattern 5: DataDir / LogDir / EnsureDir → ConfigDir() + Config interface methods
 
 **Old**: `config.DataDir()`, `config.LogDir()`, `config.EnsureDir(path)`
 **New**: Use `config.ConfigDir()` as the base and subdir names from `Config` interface methods:
+
 ```go
 cfg, _ := config.NewConfig()
 logsDir := filepath.Join(config.ConfigDir(), cfg.LogsSubdir())
@@ -339,6 +486,7 @@ All subdir constants are private — access them through `Config` methods (`Logs
 
 **Old**: `configtest.InMemoryRegistryBuilder`, `configtest.InMemoryProjectBuilder`, `configtest.InMemorySettingsLoader`
 **New**: Use stubs from `stubs.go`:
+
 ```go
 // Default mock config (in-memory, no files)
 cfg := config.NewMockConfig()

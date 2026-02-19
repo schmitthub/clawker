@@ -23,7 +23,7 @@ func NewCmdProject(f *cmdutil.Factory) *cobra.Command
 type ProjectInitOptions struct {
     IOStreams *iostreams.IOStreams
     Prompter  func() *prompter.Prompter
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     Name      string // positional arg
     Force     bool
     Yes       bool
@@ -33,7 +33,7 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 type RegisterOptions struct {
     IOStreams *iostreams.IOStreams
     Prompter  func() *prompter.Prompter
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     Name      string // positional arg
     Yes       bool
 }

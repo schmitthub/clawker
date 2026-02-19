@@ -16,7 +16,7 @@ import (
 type RenameOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent     bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
 	container string

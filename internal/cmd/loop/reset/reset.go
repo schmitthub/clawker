@@ -14,7 +14,7 @@ import (
 // ResetOptions holds options for the loop reset command.
 type ResetOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent    string
 	ClearAll bool

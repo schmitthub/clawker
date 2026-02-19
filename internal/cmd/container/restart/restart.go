@@ -16,7 +16,7 @@ import (
 type RestartOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent      bool // treat arguments as agents names
 	Timeout    int

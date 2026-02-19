@@ -15,7 +15,7 @@ import (
 type KillOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent  bool
 	Signal string

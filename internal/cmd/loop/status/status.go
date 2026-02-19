@@ -14,7 +14,7 @@ import (
 // StatusOptions holds options for the loop status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 
 	Agent string
 	JSON  bool

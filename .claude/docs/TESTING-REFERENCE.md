@@ -118,6 +118,37 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 
 ---
 
+## Config Package Testing Guide (`internal/config`)
+
+The config package intentionally exposes lightweight test doubles in `internal/config/stubs.go`.
+
+### Which helper to use
+
+- `config.NewMockConfig()` — use for broad tests that just need a valid in-memory config with defaults; ideal for command tests that do not care about exact file-loading behavior.
+- `config.NewFakeConfig(config.FakeConfigOptions{Viper: v})` — use when you need exact control of backing state; seed specific keys with a custom `*viper.Viper` and assert behavior deterministically.
+- `config.ReadFromString(...)` / `config.NewConfigFromString(...)` — use for YAML fixture tests and schema validation assertions; best for unknown-key validation, merge expectations, and scenario readability.
+
+### Typical test mapping
+
+- Defaults and typed getters → `NewMockConfig()`
+- Key mutation / selective persistence logic → `NewFakeConfig(...)` or `mustConfigFromFile` style helpers in package tests
+- YAML parsing and validation errors → `ReadFromString(...)`
+
+### Focused commands
+
+```bash
+go test ./internal/config -v
+go test ./internal/config -run TestWrite -v
+go test ./internal/config -run TestReadFromString -v
+```
+
+### Practical notes
+
+- Keep config refactor validation package-local while transitive callers are still being migrated.
+- For tests asserting defaults/file values, clear `CLAWKER_*` environment overrides first.
+
+---
+
 ## Command Test Tiers
 
 Command testing breaks into three tiers, each with distinct purpose and setup cost:

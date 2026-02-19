@@ -27,7 +27,7 @@ Parent command only (no RunE). Aggregates subcommands from dedicated packages.
 ```go
 type InitOptions struct {
     IOStreams *iostreams.IOStreams
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     Force     bool
 }
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
@@ -41,7 +41,7 @@ Scaffolds monitoring stack config files in `~/.clawker/monitor/`. Flags: `--forc
 type UpOptions struct {
     IOStreams *iostreams.IOStreams
     Client    func(context.Context) (*docker.Client, error)
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
     Detach    bool
 }
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
@@ -66,7 +66,7 @@ Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named v
 ```go
 type StatusOptions struct {
     IOStreams *iostreams.IOStreams
-    Config    func() config.Provider
+    Config    func() (config.Config, error)
 }
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command
 ```

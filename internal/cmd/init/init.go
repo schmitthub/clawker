@@ -19,7 +19,7 @@ type InitOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() config.Provider
+	Config    func() (config.Config, error)
 	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode

@@ -33,6 +33,30 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
+## Config Package Test Double How-To
+
+Use the lightest config test helper that fits the assertion:
+
+- `config.NewMockConfig()` — default in-memory config for broad tests that only need a valid `config.Config`.
+- `config.NewFakeConfig(config.FakeConfigOptions{Viper: v})` — inject a pre-seeded `*viper.Viper` for precise state control.
+- `config.ReadFromString(...)` / `config.NewConfigFromString(...)` — YAML fixture-driven tests for parsing and validation behavior.
+
+Typical mapping:
+
+- Defaults and typed getter behavior → `NewMockConfig()`
+- Deterministic key/value setup before assertions → `NewFakeConfig(...)`
+- Unknown-key validation and YAML scenarios → `ReadFromString(...)`
+
+When working specifically on `internal/config`, keep validation package-local while migration is in progress:
+
+```bash
+go test ./internal/config -v
+go test ./internal/config -run TestWrite -v
+go test ./internal/config -run TestReadFromString -v
+```
+
+For tests asserting defaults or file values, clear `CLAWKER_*` environment overrides first.
+
 ## Test Categories
 
 | Category | Directory | Docker | Purpose |

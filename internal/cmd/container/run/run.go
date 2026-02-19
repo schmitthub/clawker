@@ -169,13 +169,12 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			}
 			if !exists {
 				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
-					ImageRef:       resolvedImage.Reference,
-					IOStreams:      ios,
-					TUI:            opts.TUI,
-					Prompter:       opts.Prompter,
-					SettingsLoader: func() config.SettingsLoader { return cfgGateway.SettingsLoader() },
-					BuildImage:     client.BuildDefaultImage,
-					CommandVerb:    "run",
+					ImageRef:    resolvedImage.Reference,
+					IOStreams:   ios,
+					TUI:         opts.TUI,
+					Prompter:    opts.Prompter,
+					BuildImage:  client.BuildDefaultImage,
+					CommandVerb: "run",
 				}); err != nil {
 					return err
 				}
