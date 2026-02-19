@@ -16,9 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// DefaultPort is the default port for the host proxy server.
-const DefaultPort = 18374
-
 // maxRequestBodySize limits request body size to prevent DoS via memory exhaustion.
 const maxRequestBodySize = 1 << 20 // 1MB
 

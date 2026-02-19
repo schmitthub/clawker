@@ -6,9 +6,18 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestManager creates a Manager with a mock config pointing at the given temp dir.
+func newTestManager(t *testing.T, dir string) *Manager {
+	t.Helper()
+	cfg := config.NewMockConfig()
+	t.Setenv(cfg.ConfigDirEnvVar(), dir)
+	return NewManager(cfg)
+}
 
 func TestReadPIDFile(t *testing.T) {
 	t.Run("valid PID file", func(t *testing.T) {
@@ -81,7 +90,8 @@ func TestWaitForPIDFile(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
-	m := NewManager()
+	cfg := config.NewMockConfig()
+	m := NewManager(cfg)
 	assert.NotNil(t, m)
 	assert.NotNil(t, m.bridges)
 	assert.Empty(t, m.bridges)
@@ -89,19 +99,14 @@ func TestNewManager(t *testing.T) {
 
 func TestManagerIsRunning(t *testing.T) {
 	t.Run("returns false for unknown container", func(t *testing.T) {
-		// Set CLAWKER_HOME to temp dir to isolate PID file checks
 		dir := t.TempDir()
-		t.Setenv("CLAWKER_HOME", dir)
-
-		m := NewManager()
+		m := newTestManager(t, dir)
 		assert.False(t, m.IsRunning("abc123def456"))
 	})
 
 	t.Run("returns true for tracked live process", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("CLAWKER_HOME", dir)
-
-		m := NewManager()
+		m := newTestManager(t, dir)
 		m.bridges["test-container"] = &bridgeProcess{
 			pid:     os.Getpid(), // Current process is alive
 			pidFile: filepath.Join(dir, "test-container.pid"),
@@ -112,9 +117,7 @@ func TestManagerIsRunning(t *testing.T) {
 
 	t.Run("returns false for tracked dead process", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("CLAWKER_HOME", dir)
-
-		m := NewManager()
+		m := newTestManager(t, dir)
 		m.bridges["test-container"] = &bridgeProcess{
 			pid:     999999999, // Very unlikely to exist
 			pidFile: filepath.Join(dir, "test-container.pid"),
@@ -127,17 +130,16 @@ func TestManagerIsRunning(t *testing.T) {
 func TestManagerStopBridge(t *testing.T) {
 	t.Run("removes PID file and tracking", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("CLAWKER_HOME", dir)
+		m := newTestManager(t, dir)
 
-		// Create bridges dir and PID file
-		bridgesDir := filepath.Join(dir, "bridges")
-		require.NoError(t, os.MkdirAll(bridgesDir, 0755))
+		// Create pids dir and PID file
+		pidsDir := filepath.Join(dir, "pids")
+		require.NoError(t, os.MkdirAll(pidsDir, 0755))
 
 		containerID := "abc123def456789"
-		pidFile := filepath.Join(bridgesDir, containerID+".pid")
+		pidFile := filepath.Join(pidsDir, containerID+".pid")
 		require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644))
 
-		m := NewManager()
 		m.bridges[containerID] = &bridgeProcess{
 			pid:     999999999, // Dead process — won't actually kill anything
 			pidFile: pidFile,
@@ -159,23 +161,22 @@ func TestManagerStopBridge(t *testing.T) {
 func TestManagerStopAll(t *testing.T) {
 	t.Run("cleans up all PID files", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("CLAWKER_HOME", dir)
+		m := newTestManager(t, dir)
 
-		bridgesDir := filepath.Join(dir, "bridges")
-		require.NoError(t, os.MkdirAll(bridgesDir, 0755))
+		pidsDir := filepath.Join(dir, "pids")
+		require.NoError(t, os.MkdirAll(pidsDir, 0755))
 
 		// Create some PID files with dead PIDs
 		for _, id := range []string{"container-a", "container-b"} {
-			pidFile := filepath.Join(bridgesDir, id+".pid")
+			pidFile := filepath.Join(pidsDir, id+".pid")
 			require.NoError(t, os.WriteFile(pidFile, []byte("999999999"), 0644))
 		}
 
-		m := NewManager()
 		err := m.StopAll()
 		assert.NoError(t, err)
 
 		// All PID files should be removed
-		entries, err := os.ReadDir(bridgesDir)
+		entries, err := os.ReadDir(pidsDir)
 		require.NoError(t, err)
 		assert.Empty(t, entries)
 	})
@@ -200,12 +201,11 @@ func TestShortID(t *testing.T) {
 
 func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAWKER_HOME", dir)
+	m := newTestManager(t, dir)
 
-	m := NewManager()
 	// Pre-track a bridge with a short container ID and the current PID
 	shortContainerID := "short"
-	pidFile := filepath.Join(dir, "bridges", shortContainerID+".pid")
+	pidFile := filepath.Join(dir, "pids", shortContainerID+".pid")
 	m.bridges[shortContainerID] = &bridgeProcess{
 		pid:     os.Getpid(),
 		pidFile: pidFile,
@@ -220,11 +220,10 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 
 func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAWKER_HOME", dir)
+	m := newTestManager(t, dir)
 
-	m := NewManager()
 	containerID := "test-container-12345"
-	pidFile := filepath.Join(dir, "bridges", containerID+".pid")
+	pidFile := filepath.Join(dir, "pids", containerID+".pid")
 
 	// Pre-track a bridge with current PID (alive)
 	m.bridges[containerID] = &bridgeProcess{

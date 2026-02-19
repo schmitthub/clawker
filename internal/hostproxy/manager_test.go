@@ -8,7 +8,19 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
+
+// newMockConfigWithPort creates a mock config with a custom manager port.
+func newMockConfigWithPort(t *testing.T, port int) config.Config {
+	t.Helper()
+	cfg := config.NewMockConfig()
+	if err := cfg.Set("host_proxy.manager.port", port); err != nil {
+		t.Fatalf("failed to set port: %v", err)
+	}
+	return cfg
+}
 
 // getFreeMgrPort returns an available TCP port for manager tests.
 func getFreeMgrPort(t *testing.T) int {
@@ -23,7 +35,11 @@ func getFreeMgrPort(t *testing.T) int {
 }
 
 func TestManagerProxyURL(t *testing.T) {
-	m := NewManagerWithPort(12345)
+	cfg := newMockConfigWithPort(t, 12345)
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 	expected := "http://host.docker.internal:12345"
 	if m.ProxyURL() != expected {
 		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
@@ -31,47 +47,61 @@ func TestManagerProxyURL(t *testing.T) {
 }
 
 func TestManagerPort(t *testing.T) {
-	m := NewManagerWithPort(12345)
+	cfg := newMockConfigWithPort(t, 12345)
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 	if m.Port() != 12345 {
 		t.Errorf("expected port %d, got %d", 12345, m.Port())
 	}
 }
 
 func TestManagerIsRunningInitially(t *testing.T) {
-	m := NewManagerWithPort(getFreeMgrPort(t))
+	cfg := newMockConfigWithPort(t, getFreeMgrPort(t))
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 	if m.IsRunning() {
 		t.Error("expected manager to not be running initially")
 	}
 }
 
 func TestManagerDefaultPort(t *testing.T) {
-	m := NewManager()
-	if m.Port() != DefaultPort {
-		t.Errorf("expected default port %d, got %d", DefaultPort, m.Port())
+	cfg := config.NewMockConfig()
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
 	}
-	expected := fmt.Sprintf("http://host.docker.internal:%d", DefaultPort)
+	if m.Port() != 18374 {
+		t.Errorf("expected default port 18374, got %d", m.Port())
+	}
+	expected := "http://host.docker.internal:18374"
 	if m.ProxyURL() != expected {
 		t.Errorf("expected %q, got %q", expected, m.ProxyURL())
 	}
 }
 
-func TestManagerStopIsNoOp(t *testing.T) {
-	m := NewManagerWithPort(getFreeMgrPort(t))
-	// Stop should not panic when called on a non-running manager
-	m.Stop()
+func TestManagerInvalidPort(t *testing.T) {
+	cfg := config.NewMockConfig()
+	if err := cfg.Set("host_proxy.manager.port", 0); err != nil {
+		t.Fatalf("Set failed: %v", err)
+	}
+	_, err := NewManager(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid port 0")
+	}
 }
 
-func TestManagerWithOptions(t *testing.T) {
-	port := 12345
-	pidFile := "/tmp/test-hostproxy.pid"
-	m := NewManagerWithOptions(port, pidFile)
-
-	if m.Port() != port {
-		t.Errorf("expected port %d, got %d", port, m.Port())
+func TestManagerStopIsNoOp(t *testing.T) {
+	cfg := newMockConfigWithPort(t, getFreeMgrPort(t))
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
 	}
-	if m.pidFile != pidFile {
-		t.Errorf("expected pidFile %q, got %q", pidFile, m.pidFile)
-	}
+	// Stop should not panic when called on a non-running manager
+	m.Stop()
 }
 
 // TestIsDaemonRunningWithStalePIDFile tests that stale PID files are handled correctly.
@@ -187,7 +217,11 @@ func TestIsProcessAlive(t *testing.T) {
 // TestManagerHealthCheck tests the health check functionality.
 func TestManagerHealthCheck(t *testing.T) {
 	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
+	cfg := newMockConfigWithPort(t, port)
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 
 	// Health check should fail when nothing is running
 	if err := m.healthCheck(); err == nil {
@@ -218,7 +252,11 @@ func TestManagerHealthCheck(t *testing.T) {
 // TestManagerIsPortInUse tests port detection.
 func TestManagerIsPortInUse(t *testing.T) {
 	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
+	cfg := newMockConfigWithPort(t, port)
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 
 	// Port should not be in use initially
 	if m.isPortInUse() {
@@ -249,7 +287,11 @@ func TestManagerIsPortInUse(t *testing.T) {
 // TestManagerIsPortInUseWithWrongService tests that we detect non-clawker services.
 func TestManagerIsPortInUseWithWrongService(t *testing.T) {
 	port := getFreeMgrPort(t)
-	m := NewManagerWithPort(port)
+	cfg := newMockConfigWithPort(t, port)
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
 
 	// Start a server that returns a different service identifier
 	server := &http.Server{
@@ -269,5 +311,25 @@ func TestManagerIsPortInUseWithWrongService(t *testing.T) {
 	// Port should NOT be considered in use by clawker
 	if m.isPortInUse() {
 		t.Error("expected isPortInUse to return false for non-clawker service")
+	}
+}
+
+func TestValidatePort(t *testing.T) {
+	tests := []struct {
+		port    int
+		wantErr bool
+	}{
+		{0, true},
+		{-1, true},
+		{65536, true},
+		{1, false},
+		{18374, false},
+		{65535, false},
+	}
+	for _, tt := range tests {
+		err := validatePort(tt.port, "test")
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validatePort(%d): got err=%v, wantErr=%v", tt.port, err, tt.wantErr)
+		}
 	}
 }

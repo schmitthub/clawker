@@ -38,6 +38,7 @@ type SocketBridgeManager interface {
 //
 // Manager implements SocketBridgeManager.
 type Manager struct {
+	cfg     config.Config
 	mu      sync.Mutex
 	bridges map[string]*bridgeProcess // containerID -> running bridge
 }
@@ -61,8 +62,9 @@ func shortID(id string) string {
 }
 
 // NewManager creates a new socket bridge Manager.
-func NewManager() *Manager {
+func NewManager(cfg config.Config) *Manager {
 	return &Manager{
+		cfg:     cfg,
 		bridges: make(map[string]*bridgeProcess),
 	}
 }
@@ -84,7 +86,7 @@ func (m *Manager) EnsureBridge(containerID string, gpgEnabled bool) error {
 	}
 
 	// Check PID file from a previous CLI invocation
-	pidFile, err := config.BridgePIDFile(containerID)
+	pidFile, err := m.cfg.BridgePIDFilePath(containerID)
 	if err != nil {
 		return fmt.Errorf("failed to get bridge PID file path: %w", err)
 	}
@@ -104,7 +106,7 @@ func (m *Manager) StopBridge(containerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	pidFile, err := config.BridgePIDFile(containerID)
+	pidFile, err := m.cfg.BridgePIDFilePath(containerID)
 	if err != nil {
 		return fmt.Errorf("failed to get bridge PID file path: %w", err)
 	}
@@ -134,7 +136,7 @@ func (m *Manager) StopAll() error {
 	}
 
 	// Scan bridges directory for PID files from other CLI invocations
-	bridgesDir, err := config.BridgesDir()
+	bridgesDir, err := m.cfg.BridgesSubdir()
 	if err != nil {
 		return nil // Non-fatal: can't find directory
 	}
@@ -168,7 +170,7 @@ func (m *Manager) IsRunning(containerID string) bool {
 	}
 
 	// Check PID file
-	pidFile, err := config.BridgePIDFile(containerID)
+	pidFile, err := m.cfg.BridgePIDFilePath(containerID)
 	if err != nil {
 		return false
 	}
@@ -183,13 +185,9 @@ func (m *Manager) startBridge(containerID string, gpgEnabled bool, pidFile strin
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Ensure bridges directory exists
-	bridgesDir, err := config.BridgesDir()
-	if err != nil {
+	// BridgesSubdir() ensures the directory exists via MkdirAll.
+	if _, err := m.cfg.BridgesSubdir(); err != nil {
 		return fmt.Errorf("failed to get bridges directory: %w", err)
-	}
-	if err := config.EnsureDir(bridgesDir); err != nil {
-		return fmt.Errorf("failed to create bridges directory: %w", err)
 	}
 
 	args := []string{
@@ -260,12 +258,10 @@ func (m *Manager) cleanupBridgeLocked(containerID string, bp *bridgeProcess) {
 }
 
 // openBridgeLogFile opens a log file for bridge daemon output.
+// LogsSubdir() ensures the directory exists via MkdirAll.
 func (m *Manager) openBridgeLogFile(containerID string) (*os.File, error) {
-	logsDir, err := config.LogsDir()
+	logsDir, err := m.cfg.LogsSubdir()
 	if err != nil {
-		return nil, err
-	}
-	if err := config.EnsureDir(logsDir); err != nil {
 		return nil, err
 	}
 	return os.OpenFile(

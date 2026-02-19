@@ -24,16 +24,16 @@ import (
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
-		Version:      version,
-		Config:       configFunc(),
-		HostProxy:    hostProxyFunc(),
-		SocketBridge: socketBridgeFunc(),
+		Version: version,
+		Config:  configFunc(),
 	}
 
-	f.IOStreams = ioStreams(f)       // needs f.Config() for logger settings
-	f.TUI = tuiFunc(f)               // needs IOStreams
-	f.Client = clientFunc(f)         // depends on Config
-	f.GitManager = gitManagerFunc(f) // depends on Config
+	f.HostProxy = hostProxyFunc(f)       // depends on Config
+	f.SocketBridge = socketBridgeFunc(f)  // depends on Config
+	f.IOStreams = ioStreams(f)             // needs f.Config() for logger settings
+	f.TUI = tuiFunc(f)                    // needs IOStreams
+	f.Client = clientFunc(f)              // depends on Config
+	f.GitManager = gitManagerFunc(f)      // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
@@ -115,28 +115,43 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 }
 
 // hostProxyFunc returns a lazy closure that creates a host proxy manager once.
-func hostProxyFunc() func() hostproxy.HostProxyService {
+func hostProxyFunc(f *cmdutil.Factory) func() hostproxy.HostProxyService {
 	var (
 		once    sync.Once
 		manager hostproxy.HostProxyService
 	)
 	return func() hostproxy.HostProxyService {
 		once.Do(func() {
-			manager = hostproxy.NewManager()
+			cfg, err := f.Config()
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to get config for host proxy manager, using defaults")
+				cfg = nil
+			}
+			m, mErr := hostproxy.NewManager(cfg)
+			if mErr != nil {
+				logger.Error().Err(mErr).Msg("failed to create host proxy manager")
+				return
+			}
+			manager = m
 		})
 		return manager
 	}
 }
 
 // socketBridgeFunc returns a lazy closure that creates a socket bridge manager once.
-func socketBridgeFunc() func() socketbridge.SocketBridgeManager {
+func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManager {
 	var (
 		once    sync.Once
 		manager socketbridge.SocketBridgeManager
 	)
 	return func() socketbridge.SocketBridgeManager {
 		once.Do(func() {
-			manager = socketbridge.NewManager()
+			cfg, err := f.Config()
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to get config for socket bridge manager, using defaults")
+				cfg = nil
+			}
+			manager = socketbridge.NewManager(cfg)
 		})
 		return manager
 	}
