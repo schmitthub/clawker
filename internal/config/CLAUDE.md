@@ -64,6 +64,7 @@ All constants are **private** — callers access them exclusively through `Confi
 | `domain` | `Domain()` | `"clawker.dev"` |
 | `labelDomain` | `LabelDomain()` | `"dev.clawker"` |
 | `clawkerConfigDirEnv` | `ConfigDirEnvVar()` | `"CLAWKER_CONFIG_DIR"` |
+| `clawkerConfigFileName` | *(internal use)* | `"clawker.yaml"` |
 | `clawkerIgnoreFileName` | `ClawkerIgnoreName()` | `".clawkerignore"` |
 | `monitorSubdir` | `MonitorSubdir()` | `"<ConfigDir()>/monitor"` |
 | `buildSubdir` | `BuildSubdir()` | `"<ConfigDir()>/build"` |
@@ -125,6 +126,7 @@ type Config interface {
     Watch(onChange func(fsnotify.Event)) error // file watch registration on active config file
     RequiredFirewallDomains() []string // immutable copy of required domains
     GetProjectRoot() (string, error)  // finds project root via registry + cwd (ErrNotInProject if none)
+    GetProjectIgnoreFile() (string, error) // returns "<project-root>/clawkerIgnoreFileName" if in project, error otherwise
 
     // Private constants — only accessible through these methods
     Domain() string                   // "clawker.dev"
@@ -484,10 +486,10 @@ errors.As(valErr, &multi)
 
 **New pattern**: Validation is now built into the loading pipeline via `viper.UnmarshalExact`. Unknown keys are caught automatically — `ReadFromString` and `NewConfig` both reject misspelled or unrecognized fields with clear dot-path error messages (e.g. `unknown keys: build.imag`). No separate `Validator` type is needed.
 
-### Pattern 3: ConfigFileName → hardcoded string
+### Pattern 3: ConfigFileName → private constant
 
-**Old**: `config.ConfigFileName` (constant `"clawker.yaml"`)
-**New**: Use literal `"clawker.yaml"` directly, or reference `DefaultConfigYAML` for scaffolding.
+**Old**: `config.ConfigFileName` (exported constant `"clawker.yaml"`)
+**New**: The private constant `clawkerConfigFileName` is used internally within the `config` package. External consumers should reference `DefaultConfigYAML` for scaffolding or use `Config` interface methods for path resolution.
 
 ### Pattern 4: SettingsLoader → Set() + Write()
 

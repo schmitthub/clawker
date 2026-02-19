@@ -35,7 +35,7 @@ func mustReadFromStringImpl(t *testing.T, str string) *configImpl {
 func mustConfigFromFile(t *testing.T, content string) (Config, string) {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "clawker.yaml")
+	path := filepath.Join(t.TempDir(), clawkerConfigFileName)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	v := newViperConfig()
@@ -61,9 +61,9 @@ func mustOwnedConfig(t *testing.T) (*configImpl, map[ConfigScope]string) {
 	projectRoot = resolvedProjectRoot
 
 	settingsPath := filepath.Join(root, "settings.yaml")
-	userProjectPath := filepath.Join(root, "clawker.yaml")
+	userProjectPath := filepath.Join(root, clawkerConfigFileName)
 	registryPath := filepath.Join(root, "projects.yaml")
-	projectPath := filepath.Join(projectRoot, "clawker.yaml")
+	projectPath := filepath.Join(projectRoot, clawkerConfigFileName)
 
 	require.NoError(t, os.WriteFile(settingsPath, []byte("logging:\n  max_size_mb: 50\n"), 0o644))
 	require.NoError(t, os.WriteFile(userProjectPath, []byte("build:\n  image: user:latest\n"), 0o644))
@@ -114,9 +114,9 @@ func newConfigFromTestdata(t *testing.T) Config {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), settingsBytes, 0o644))
 
-	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", "clawker.yaml"))
+	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", clawkerConfigFileName))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), userProjectBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), userProjectBytes, 0o644))
 
 	projectsYAML := fmt.Sprintf(`projects:
   clawker-tests:
@@ -772,7 +772,7 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
 	registryYAML := "projects: {}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
 
@@ -798,7 +798,7 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
 	registryYAML := "projects: {}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
 
@@ -1056,13 +1056,38 @@ projects:
 	assert.Equal(t, filepath.Clean(projectRoot), filepath.Clean(root))
 }
 
+func TestGetProjectIgnoreFile_CwdWithinProjectRoot(t *testing.T) {
+	projectRoot := t.TempDir()
+	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
+	require.NoError(t, err)
+	projectRoot = resolvedProjectRoot
+
+	nestedDir := filepath.Join(projectRoot, "a", "b")
+	require.NoError(t, os.MkdirAll(nestedDir, 0o755))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(nestedDir))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	c := mustReadFromStringImpl(t, fmt.Sprintf(`
+projects:
+  myproject:
+    name: myproject
+    root: %q
+`, projectRoot))
+	ignoreFile, err := c.GetProjectIgnoreFile()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(projectRoot, ".clawkerignore"), ignoreFile)
+}
+
 func TestMergeProjectConfig_MissingProjectConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(dir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "clawker.yaml"), []byte("build: ["), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, clawkerConfigFileName), []byte("build: ["), 0o644))
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 

@@ -78,6 +78,7 @@ type Config interface {
 	ContainerGID() int
 	RequiredFirewallDomains() []string
 	GetProjectRoot() (string, error)
+	GetProjectIgnoreFile() (string, error)
 }
 
 var ErrNotInProject = errors.New("current directory is not within a configured project root")
@@ -815,7 +816,7 @@ func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (
 
 		root, err := c.projectRootFromCurrentDir()
 		if err == nil {
-			return filepath.Join(root, "clawker.yaml"), nil
+			return filepath.Join(root, clawkerConfigFileName), nil
 		}
 		if errors.Is(err, ErrNotInProject) {
 			if c.userProjectConfigFile == "" {
@@ -906,6 +907,16 @@ func (c *configImpl) GetProjectRoot() (string, error) {
 	return c.projectRootFromCurrentDir()
 }
 
+func (c *configImpl) GetProjectIgnoreFile() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	root, err := c.projectRootFromCurrentDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, clawkerIgnoreFileName), nil
+}
+
 func (c *configImpl) projectRootFromCurrentDir() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -990,7 +1001,7 @@ func (c *configImpl) mergeProjectConfigUnsafe() error {
 		return err
 	}
 
-	projectFile := filepath.Join(root, "clawker.yaml")
+	projectFile := filepath.Join(root, clawkerConfigFileName)
 	c.v.SetConfigFile(projectFile)
 	if err := validateConfigFileExact(projectFile, &Project{}); err != nil {
 		return err
@@ -1025,7 +1036,7 @@ func settingsConfigFile() string {
 }
 
 func userProjectConfigFile() string {
-	return filepath.Join(ConfigDir(), "clawker.yaml")
+	return filepath.Join(ConfigDir(), clawkerConfigFileName)
 }
 
 func projectRegistryPath() string {

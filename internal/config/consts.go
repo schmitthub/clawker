@@ -15,6 +15,8 @@ const labelDomain = "dev.clawker"
 const (
 	// clawkerConfigDirEnv is the environment variable for overriding the config directory location.
 	clawkerConfigDirEnv = "CLAWKER_CONFIG_DIR"
+	// clawkerConfigFileName is the filename for project configuration.
+	clawkerConfigFileName = "clawker.yaml"
 	// clawkerIgnoreFileName is the filename for the ignore list that specify paths to exclude from processing.
 	clawkerIgnoreFileName = ".clawkerignore"
 	// monitorSubdir is the subdirectory for monitoring stack configuration
