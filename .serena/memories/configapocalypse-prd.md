@@ -55,12 +55,14 @@ ManagedLabelValue, LabelMonitoringStack
 **Summary table:** See `internal/config/CLAUDE.md` → "Migration Status".
 
 Critical path (blocks `go build ./...`):
-1. `internal/bundler` — ContainerUID, ContainerGID, EnsureDir, DefaultSettings
+1. ~~`internal/bundler`~~ — DONE (config.Config interface for UID/GID/labels)
 2. `internal/hostproxy` — PID files, log files, labels, EnsureDir
 3. `internal/socketbridge` — PID files, dirs, EnsureDir
-4. `internal/docker` — labels, DataDir
+4. ~~`internal/docker`~~ — DONE (labels→Client methods, volume→cfg.ContainerUID/GID, all tests pass)
 5. `internal/workspace` — DataDir, ConfigFileName
 6. `internal/containerfs` — DataDir, ConfigFileName, EnsureDir
+
+**Docker external cascade (post-migration):** `dockertest.NewFakeClient` signature changed to `(cfg, opts...)`. ~150+ callers need `config.NewMockConfig()` as first arg. Key locations: `cmd/fawker/factory.go`, `internal/cmd/container/*/` (~80), `internal/cmd/loop/shared/` (~15), `internal/cmd/image/build/`, `internal/cmd/init/`. `WithConfig` option deleted. Find all with: `grep -rn 'dockertest.NewFakeClient(' --include='*.go'`. Also: `docker.ContainerLabels(`, `docker.VolumeLabels(` etc. are now Client methods — external callers in `internal/cmd/` and `internal/workspace/` need migration. `docker.LabelManaged` etc. constants deleted — use `cfg.Label*()` methods.
 
 Command layer (blocks individual commands):
 7. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
