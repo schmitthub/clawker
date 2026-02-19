@@ -1,6 +1,6 @@
 # Config Foundation Migration: hostproxy + socketbridge → cfg config.Config
 
-> **Status:** In Progress — hostproxy DONE, socketbridge tests partially done
+> **Status:** COMPLETE — hostproxy and socketbridge both fully migrated
 > **Branch:** `refactor/configapocalypse`
 > **Parent memory:** `config-migration-foundation-packages` (has full TODO list for all packages)
 > **Last updated:** 2026-02-19
@@ -71,39 +71,16 @@ Migrate `internal/hostproxy` and `internal/socketbridge` from old removed `confi
 - `config.EnsureDir(dir)` — removed (subdir methods ensure dirs)
 - Builds: `go build ./internal/socketbridge/` ✅
 
-### 8. 🔧 socketbridge/manager_test.go — PARTIALLY DONE
+### 8. ✅ socketbridge/manager_test.go — DONE
 - Added `config` import
 - Created `newTestManager(t, dir) *Manager` helper using `cfg.ConfigDirEnvVar()`
 - `TestNewManager` updated
 - `TestManagerIsRunning` — **3 subtests updated** to use `newTestManager`
-- **REMAINING**: 4 more test functions still call `NewManager()` without args:
-  - `TestManagerStopBridge` (line ~143)
-  - `TestManagerStopAll` (line ~176)
-  - `TestManagerEnsureBridge_ShortContainerID` (line ~208)
-  - `TestManagerEnsureBridge_IdempotentWhenTracked` (line ~228)
-- These need `newTestManager(t, dir)` + fix `bridges/` → `pids/` in file paths
+- All test functions updated to use `newTestManager(t, dir)` with config-backed paths
 
 ## Remaining TODO Sequence
 
-### 9. [ ] Finish socketbridge/manager_test.go
-- Update 4 remaining test functions to use `newTestManager(t, dir)`
-- Fix subdir references: `filepath.Join(dir, "bridges")` → `filepath.Join(dir, "pids")` (BridgesSubdir returns pids dir)
-- Verify: `go test -c -o /dev/null ./internal/socketbridge/` then `go test ./internal/socketbridge/ -v`
-
-### 10. [ ] Update factory socketBridgeFunc
-- `socketBridgeFunc(f *cmdutil.Factory)` — get cfg from `f.Config()` inside lazy closure
-- Update `New()` to pass `f` to `socketBridgeFunc(f)` (move after Factory creation like hostProxyFunc)
-
-### 11. [ ] Verify full build for these packages
-- `go build ./internal/hostproxy/... ./internal/cmd/hostproxy/... ./internal/socketbridge/... ./internal/cmd/factory/...`
-- `go test ./internal/hostproxy/ ./internal/socketbridge/ -v -timeout 30s`
-
-### 12. [ ] Update documentation
-- Update `internal/hostproxy/CLAUDE.md` — new constructor signatures, cfg pattern
-- Update `internal/socketbridge/CLAUDE.md` — new constructor signatures, cfg pattern
-- Update `internal/cmd/hostproxy/CLAUDE.md` — note config loading in RunE
-- Update `internal/cmd/factory/CLAUDE.md` — hostProxyFunc/socketBridgeFunc take f
-- Update `config-migration-foundation-packages` memory — mark hostproxy+socketbridge done
+All items 9-12 COMPLETE. Committed and pushed in refactor/configapocalypse branch.
 
 ### 13. [ ] (Future) Remaining foundation packages from parent memory
 - `internal/workspace` — `EnsureShareDir(cfg)`, `cli.VolumeLabels()`, tests
@@ -121,7 +98,7 @@ Migrate `internal/hostproxy` and `internal/socketbridge` from old removed `confi
 | `internal/cmd/hostproxy/serve.go` | Modified |
 | `internal/cmd/factory/default.go` | Modified |
 | `internal/socketbridge/manager.go` | Modified |
-| `internal/socketbridge/manager_test.go` | Modified (partially — 4 tests still broken) |
+| `internal/socketbridge/manager_test.go` | Modified |
 
 ## Key Config Interface Methods Used
 

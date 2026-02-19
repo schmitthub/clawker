@@ -57,7 +57,7 @@ ManagedLabelValue, LabelMonitoringStack
 Critical path (blocks `go build ./...`):
 1. ~~`internal/bundler`~~ — DONE (config.Config interface for UID/GID/labels)
 2. ~~`internal/hostproxy`~~ — DONE (Manager/Daemon read from cfg.HostProxyConfig(); DaemonOptions/DefaultDaemonOptions/DefaultPort/NewManagerWithPort removed; functional options for CLI flag overrides; validation at construction)
-3. `internal/socketbridge` — PID files, dirs, EnsureDir
+3. ~~`internal/socketbridge`~~ — DONE (Manager reads from cfg.SocketBridgeConfig(); PID file from cfg.SocketBridgePIDFilePath(); migrated in same commit as hostproxy)
 4. ~~`internal/docker`~~ — DONE (labels→Client methods, volume→cfg.ContainerUID/GID, all tests pass)
 5. `internal/workspace` — DataDir, ConfigFileName
 6. `internal/containerfs` — DataDir, ConfigFileName, EnsureDir
