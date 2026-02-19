@@ -7,6 +7,15 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 )
 
+// newTestMonitorConfig creates a Manager with a mock config pointing at the given temp dir.
+func newTestMonitorConfig(t *testing.T, dir string) config.MonitoringConfig {
+	t.Helper()
+	cfg := config.NewMockConfig()
+	t.Setenv(cfg.ConfigDirEnvVar(), dir)
+
+	return cfg.MonitoringConfig()
+}
+
 func TestNewMonitorTemplateData(t *testing.T) {
 	cfg := &config.MonitoringConfig{
 		OtelCollectorPort:     4318,
