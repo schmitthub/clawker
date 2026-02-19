@@ -2,110 +2,32 @@
 
 > **Status:** In Progress
 > **Branch:** `refactor/configapocalypse`
-> **Last updated:** 2026-02-19
 
-## What Was Done
+## Completed
 
-### Foundation (commits on branch)
-- Schema-backed structs added to Config interface with underlying viper primitives
-- Test harness scaffolded with testdata fixtures
-- Go mod updates
+- **Config package rebuilt** — `Config` interface, `configImpl` wrapping viper, `Set`/`Write`/`Watch` mutation API, dirty tracking, ownership-aware file routing, thread-safe via `sync.RWMutex`
+- **Test stubs** — `NewMockConfig()`, `NewFakeConfig()`, `ReadFromString()` in stubs.go
+- **Docs updated** — `internal/config/CLAUDE.md`, `ARCHITECTURE.md`, `DESIGN.md`, `TESTING-REFERENCE.md`, root `CLAUDE.md`, `code-style.md`
 
-### Config Package Rebuilt (internal/config/)
-- `consts.go` — Package-wide constants: `Domain`, `LabelDomain`, subdir names, network name, `Mode` type (`ModeBind`/`ModeSnapshot`)
-- `config.go` — `Config` interface, `configImpl` wrapping `*viper.Viper`, `NewConfig()`, `ReadFromString()`, `ConfigDir()`
-- `schema.go` — All schema types (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, `LoopConfig`, etc.)
-- `defaults.go` — `setDefaults(v)`, `requiredFirewallDomains`, YAML template constants
-- `stubs.go` — Test helpers: `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()`
-- `config_test.go` — Full unit test coverage
-- `testdata/` — Test fixtures for multi-file loading
+### Consumers Migrated
 
-### Low-level Mutation API (config.go)
-- `Set(key, value) error` — validates key ownership via `keyOwnership` map, updates viper in-memory, marks dirty node tree
-- `Write(WriteOptions) error` — ownership-aware scoped persistence: Key → single key, Scope → dirty roots for scope, neither → all scopes to owning files
-- `Watch(onChange)` — file watching via viper's `OnConfigChange` + `WatchConfig`
-- `ConfigScope` type (`ScopeSettings`, `ScopeProject`, `ScopeRegistry`) routes writes to correct files
-- `WriteOptions` struct: `Path`, `Safe`, `Scope`, `Key` fields
-- `sync.RWMutex` on `configImpl` for thread-safe concurrent access
-- `dirtyNode` tree for structural path tracking (marks only changed subtrees)
-- Settings write-back gap (old SettingsLoader) is now CLOSED by Set+Write
+1. ~~`internal/bundler`~~ — config.Config interface for UID/GID/labels
+2. ~~`internal/hostproxy`~~ — Manager/Daemon read from `cfg.HostProxyConfig()`; removed DaemonOptions/DefaultDaemonOptions/DefaultPort/NewManagerWithPort; functional options for CLI overrides; validation at construction
+3. ~~`internal/socketbridge`~~ — Manager reads from `cfg.SocketBridgeConfig()`; PID file from `cfg.SocketBridgePIDFilePath()`
+4. ~~`internal/docker`~~ — labels→Client methods, volume→`cfg.ContainerUID/GID`, 131 `NewFakeClient()` callers migrated
 
-### First Consumer Migrated
-- `internal/cmd/config/check/` — Rewritten to use `ReadFromString()` only. Old ProjectLoader/Validator pattern removed. Tests updated.
+## Remaining Migration
 
-### Documentation (all updated)
-- `internal/config/CLAUDE.md` — Full package reference with migration guide, mutation API docs
-- `.claude/docs/ARCHITECTURE.md` — Config write model, validation, testing sections
-- `.claude/docs/DESIGN.md` — Config persistence model paragraph
-- `CLAUDE.md` (root) — Key Concepts table updated with Set/Write/Watch and ownership routing
-- `.claude/docs/TESTING-REFERENCE.md` — Config testing guide with all three stubs
-- `.claude/rules/code-style.md` — Config Package How-To with Set/Write patterns
-
-## Old API (Removed)
-
-ProjectLoader, Validator, MultiValidationError, ConfigFileName, SettingsLoader,
-FileSettingsLoader, InMemorySettingsLoader, InMemoryRegistryBuilder, InMemoryProjectBuilder,
-WithUserDefaults, DataDir, LogDir, EnsureDir, ContainerUID, ContainerGID, DefaultSettings,
-BridgePIDFile, BridgesDir, LogsDir, HostProxyPIDFile, HostProxyLogFile, LabelManaged,
-ManagedLabelValue, LabelMonitoringStack
-
-## Consumers Still Needing Migration
-
-**Full inventory:** See `configapocalypse-migration-inventory` memory for the COMPREHENSIVE per-file inventory with gap analysis and migration proposals.
-**Summary table:** See `internal/config/CLAUDE.md` → "Migration Status".
-
-Critical path (blocks `go build ./...`):
-1. ~~`internal/bundler`~~ — DONE (config.Config interface for UID/GID/labels)
-2. ~~`internal/hostproxy`~~ — DONE (Manager/Daemon read from cfg.HostProxyConfig(); DaemonOptions/DefaultDaemonOptions/DefaultPort/NewManagerWithPort removed; functional options for CLI flag overrides; validation at construction)
-3. ~~`internal/socketbridge`~~ — DONE (Manager reads from cfg.SocketBridgeConfig(); PID file from cfg.SocketBridgePIDFilePath(); migrated in same commit as hostproxy)
-4. ~~`internal/docker`~~ — DONE (labels→Client methods, volume→cfg.ContainerUID/GID, all tests pass)
-5. `internal/workspace` — DataDir, ConfigFileName
+### Critical path (blocks `go build ./...`):
+5. `internal/workspace` — DataDir, ConfigFileName, `docker.VolumeLabels`→`cli.VolumeLabels()`
 6. `internal/containerfs` — DataDir, ConfigFileName, EnsureDir
 
-**Docker external cascade (post-migration — PARTIALLY DONE):** DONE — 131 no-arg `dockertest.NewFakeClient()` → `dockertest.NewFakeClient(config.NewMockConfig())` across 26 files (sed + goimports). REMAINING — 8 `WithConfig` calls entangled with `config.Provider` → `config.Config` migration (will fix per-package). REMAINING — label constant external callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`, `workspace/strategy.go`. REMAINING — ~114 `config.Provider` references across Options structs and test callbacks. See below for per-package patterns.
+### Docker cascade (partially done):
+- 8 `WithConfig` calls entangled with `config.Provider`→`config.Config`
+- Label constant callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`, `workspace/strategy.go`
+- ~114 `config.Provider` references across Options structs and test callbacks
 
-### Per-Package Migration Patterns (docker cascade + config.Provider)
-
-**NewFakeClient WithConfig pattern** (8 remaining sites):
-```go
-// OLD: dockertest.NewFakeClient(dockertest.WithConfig(cfg))
-// NEW: dockertest.NewFakeClient(cfg)  // cfg must be config.Config interface
-```
-
-**config.NewConfigForTest replacement** (used in WithConfig sites + many others):
-```go
-// OLD: testCfg := config.NewConfigForTest(projectStruct, config.DefaultSettings())
-// NEW (simple): testCfg := config.NewMockConfig()
-// NEW (with values): testCfg, _ := config.ReadFromString(`project: "test"\nbuild:\n  image: "node:20-slim"`)
-```
-
-**config.Provider → config.Config in Options structs**:
-```go
-// OLD: Config func() config.Provider
-// NEW: Config func() (config.Config, error)
-```
-
-**config.Provider → config.Config in test Factory callbacks**:
-```go
-// OLD: Config: func() config.Provider { return cfg },
-// NEW: Config: func() (config.Config, error) { return cfg, nil },
-```
-
-**Label constants → config.Config methods** (in production code that has a cfg):
-```go
-// OLD: docker.LabelManaged, docker.ManagedLabelValue, docker.LabelProject, etc.
-// NEW: cfg.LabelManaged(), cfg.ManagedLabelValue(), cfg.LabelProject(), etc.
-```
-
-**Label functions → Client methods** (in code that has a *docker.Client):
-```go
-// OLD: docker.ImageLabels(project, version)
-// NEW: client.ImageLabels(project, version)
-// OLD: docker.VolumeLabels(project, agent, purpose)
-// NEW: client.VolumeLabels(project, agent, purpose)
-```
-
-Command layer (blocks individual commands):
+### Command layer (blocks individual commands):
 7. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
 8. `internal/cmd/project/register` — ProjectLoader, ConfigFileName
 9. `internal/cmd/image/build` — Validator
@@ -114,14 +36,54 @@ Command layer (blocks individual commands):
 12. `internal/cmd/container/run` — SettingsLoader
 13. Various other cmd packages — ConfigFileName, DataDir
 
+## Migration Patterns
+
+```go
+// Config on struct (standard pattern for all packages)
+cfg config.Config  // stored on struct, passed via constructor
+
+// Test stubs
+config.NewMockConfig()                    // default in-memory
+config.ReadFromString(`yaml content`)     // specific values
+
+// NewFakeClient
+dockertest.NewFakeClient(cfg)             // was: NewFakeClient(WithConfig(cfg))
+
+// config.Provider → config.Config
+Config func() (config.Config, error)      // was: func() config.Provider
+
+// Labels: production code with cfg
+cfg.LabelManaged()                        // was: docker.LabelManaged
+
+// Labels: code with *docker.Client
+client.ImageLabels(project, version)      // was: docker.ImageLabels(...)
+client.VolumeLabels(project, agent, purpose)
+```
+
+## Gotchas & Lessons Learned
+
+- **EnsureDir removed** — `*Subdir()` methods (`BridgesSubdir`, `LogsSubdir`, `PidsSubdir`, `ShareSubdir`) already `os.MkdirAll` internally via `subdirPath()`
+- **BridgesSubdir() is legacy alias** — returns the `pids` subdir, not `bridges`. Test fixtures use `pids/`
+- **Test env var via cfg** — Use `cfg.ConfigDirEnvVar()` (returns `"CLAWKER_CONFIG_DIR"`), never hardcode env var names
+- **copylocks warnings are false positives** — `config.Config` is an interface; `configImpl` is always `*configImpl` (pointer receiver). Linter traces through to the mutex. Safe to ignore
+- **Functional options for CLI overrides** — CLI flags override config via `With*()` options, never by mutating config. Pattern: `NewDaemon(cfg, WithDaemonPort(port))`
+- **Validation returns errors** — constructors validate and return errors, never silently default
+- **Shared validation helpers** — e.g. `validatePort()` used by both Manager and Daemon
+- **docker.VolumeLabels** is now a `*docker.Client` method, not a free function
+
+## Old API (Removed)
+
+ProjectLoader, Validator, MultiValidationError, ConfigFileName, SettingsLoader,
+FileSettingsLoader, InMemorySettingsLoader, InMemoryRegistryBuilder, InMemoryProjectBuilder,
+WithUserDefaults, DataDir, LogDir, EnsureDir, ContainerUID, ContainerGID, DefaultSettings,
+BridgePIDFile, BridgesDir, LogsDir, HostProxyPIDFile, HostProxyLogFile, LabelManaged,
+ManagedLabelValue, LabelMonitoringStack, DefaultPort, DaemonOptions, DefaultDaemonOptions,
+NewManagerWithPort
+
 ## Key Design Decisions
 
-- Config is an interface (`Config`), impl is private (`configImpl` wrapping `*viper.Viper`)
-- Viper does all merging: settings → user config → registry → project config → env vars
-- Validation via `viper.UnmarshalExact` — unknown fields rejected with dot-path error messages (`formatDecodeError`)
-- Test stubs in same package (stubs.go), not in separate configtest/ subpackage
-- `ReadFromString()` for isolated parsing, `NewConfig()` for full production loading
-- Write model: `Set` + dirty tracking → `Write` with ownership-aware file routing (no caller awareness of file layout)
-- `keyOwnership` map is the single source of truth for key→scope→file routing
-- `ConfigDirEnvVar()` on interface — tests access env var name without reaching into package internals
-- Thread-safe: all read/write methods protected by `sync.RWMutex`
+- Config is interface, impl is private `configImpl` wrapping `*viper.Viper`
+- Viper merges: settings → user config → registry → project config → env vars
+- Validation via `UnmarshalExact` — unknown fields rejected
+- `keyOwnership` map routes writes to correct files
+- Thread-safe via `sync.RWMutex`
