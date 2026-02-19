@@ -28,7 +28,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader` |
+| `internal/config` | `stubs.go` | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |

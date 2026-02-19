@@ -91,6 +91,25 @@ Thin layer configuring whail with clawker's conventions.
 - Names: `clawker.project.agent` (containers), `clawker.project.agent-purpose` (volumes)
 - Client embeds `whail.Engine`, adding clawker-specific operations
 
+### internal/config - Configuration
+
+Single `Config` interface that all callers receive. The package is a closed box — config file names, directory locations, file paths, and constants are all private to the package. Callers never construct paths or reference config internals directly.
+
+**Design principle**: If a caller needs information from the config package, it must use an existing `Config` method or propose a new one on the interface. No reaching into package internals.
+
+**Key API:**
+- `NewConfig() (Config, error)` — full production loading (settings → user config → registry → project config → env vars)
+- `ReadFromString(str string) (Config, error)` — parse a single YAML string (testing, `config check`)
+- `Config` interface — schema accessors (`Project()`, `Settings()`, etc.) plus private constant accessors (`Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.)
+- `ConfigDir() string` — config directory path (respects `CLAWKER_CONFIG`, `XDG_CONFIG_HOME`)
+- All constants are private (`domain`, `labelDomain`, subdirs) — exposed only through `Config` interface methods
+
+**Validation**: `viper.UnmarshalExact` catches unknown/misspelled keys with user-friendly dot-path error messages. Both `ReadFromString` and `NewConfig` validate automatically.
+
+**Testing**: `NewMockConfig()`, `NewFakeConfig(opts)`, `NewConfigFromString(yaml)` — all in `stubs.go`, no separate `configtest/` subpackage.
+
+See `internal/config/CLAUDE.md` for full package reference and migration guide.
+
 ### internal/cmd/* - CLI Commands
 
 Two parallel command interfaces:
@@ -128,7 +147,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 - `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. IOStreams (eager) → 2. TUI (eager, wraps IOStreams) → 3. Config gateway (lazy, internal sync.Once) → 4. HostProxy (lazy) → 5. SocketBridge (lazy) → 6. Client (lazy, reads Config) → 7. GitManager (lazy, reads Config) → 8. Prompter (lazy)
+1. IOStreams (eager) → 2. TUI (eager, wraps IOStreams) → 3. Config (lazy, `config.NewConfig()` via sync.Once) → 4. HostProxy (lazy) → 5. SocketBridge (lazy) → 6. Client (lazy, reads Config) → 7. GitManager (lazy, reads Config) → 8. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -172,7 +191,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/config` | Config gateway (`Provider` interface, `Config` concrete), project registry, settings loader, schema (`Project`). `SettingsLoader` interface with `FileSettingsLoader` (filesystem) and `configtest.InMemorySettingsLoader` (testing) |
+| `internal/config` | Single `Config` interface wrapping `*viper.Viper`. Multi-file loading, schema types, validation via `UnmarshalExact`, constants. All file paths and directory locations are private — callers use `Config` methods or propose new ones. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
@@ -261,7 +280,7 @@ func NewCmdStop(f *cmdutil.Factory, runF func(context.Context, *StopOptions) err
 type StopOptions struct {
     IOStreams     *iostreams.IOStreams
     Client       func(context.Context) (*docker.Client, error)
-    Config       func() config.Provider
+    Config       func() (config.Config, error)
     SocketBridge func() socketbridge.SocketBridgeManager
     // command-specific fields...
 }
@@ -288,7 +307,7 @@ type StopOptions struct {
     // From Factory (assigned in constructor)
     IOStreams     *iostreams.IOStreams
     Client       func(context.Context) (*docker.Client, error)
-    Config       func() config.Provider
+    Config       func() (config.Config, error)
     SocketBridge func() socketbridge.SocketBridgeManager
 
     // From flags (bound by Cobra)
@@ -444,7 +463,7 @@ Test doubles follow a `<package>/<package>test/` naming convention. Each provide
 
 | Subpackage | Provides |
 |------------|----------|
-| `config/configtest/` | `InMemoryRegistry`, `InMemorySettingsLoader`, `ProjectBuilder` |
+| `config/` (stubs.go) | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `docker/dockertest/` | `FakeClient`, test helpers |
 | `git/gittest/` | `InMemoryGitManager` |
 | `hostproxy/hostproxytest/` | `MockManager` (implements `HostProxyService`) |

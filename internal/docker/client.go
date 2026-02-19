@@ -54,7 +54,7 @@ func WithLabels(labels whail.LabelConfig) ClientOption {
 	}
 }
 
-func NewClient(ctx context.Context, cfg *config.Config, opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, cfg config.Config, opts ...ClientOption) (*Client, error) {
 	var o clientOptions
 	for _, opt := range opts {
 		opt(&o)

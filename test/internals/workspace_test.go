@@ -225,7 +225,7 @@ func TestSharedDir_MountedWhenEnabled(t *testing.T) {
 
 	// Use a temp dir for clawker home so EnsureShareDir creates the host directory there
 	clawkerHome := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, clawkerHome)
+	t.Setenv(config.clawkerHomeEnv, clawkerHome)
 
 	cfg := &config.Project{
 		Project: "test-project",

@@ -65,7 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # BUILD ME FOLLOWING THE MANTRA AND PROMPT INSTRUCTIONS 
+│   ├── config/                # Viper-backed config: schema types, multi-file loading, constants (REFACTORING — see internal/config/CLAUDE.md)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── dockertest/        # FakeClient, test helpers
@@ -214,8 +214,8 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
 | `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
+| `config.Config` | Single interface all callers receive. File names, directory paths, and constants are private — callers use `Config` methods or propose new ones. `NewConfig()` (production), `ReadFromString()` (testing/validation). Validates via `UnmarshalExact` (unknown keys rejected). **Refactoring in progress** — see `internal/config/CLAUDE.md` for migration guide |
 | `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
-| `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
 | `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
 | `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |

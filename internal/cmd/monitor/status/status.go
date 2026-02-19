@@ -47,6 +47,7 @@ Displays running/stopped state and service URLs when the stack is running.`,
 func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
+	networkName := config.NewMockConfig().ClawkerNetwork()
 
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
@@ -104,11 +105,11 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 
 	// Check network status
 	fmt.Fprintln(ios.ErrOut)
-	networkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork, "--format", "{{.Name}}")
+	networkCmd := exec.Command("docker", "network", "inspect", networkName, "--format", "{{.Name}}")
 	if networkOutput, err := networkCmd.Output(); err == nil {
 		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", strings.TrimSpace(string(networkOutput)), cs.Green("(active)"))
 	} else {
-		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", config.ClawkerNetwork, cs.Red("(not found)"))
+		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", networkName, cs.Red("(not found)"))
 	}
 
 	return nil

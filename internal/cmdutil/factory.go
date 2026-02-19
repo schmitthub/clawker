@@ -30,7 +30,7 @@ type Factory struct {
 
 	// Lazy nouns
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() config.Provider
+	Config       func() (config.Config, error)
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager

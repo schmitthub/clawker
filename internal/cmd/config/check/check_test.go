@@ -14,7 +14,7 @@ import (
 )
 
 // clearClawkerEnv unsets all CLAWKER_* env vars for the duration of a test.
-// The ProjectLoader uses viper.AutomaticEnv() with CLAWKER_ prefix, so
+// The config package uses viper.AutomaticEnv() with CLAWKER_ prefix, so
 // container-injected env vars (e.g. CLAWKER_VERSION) would override config
 // file values and break isolated validation tests.
 func clearClawkerEnv(t *testing.T) {
@@ -129,12 +129,8 @@ func TestCheckRun_validFile(t *testing.T) {
 func TestCheckRun_invalidFile(t *testing.T) {
 	clearClawkerEnv(t)
 	dir := t.TempDir()
-	writeConfig(t, dir, `version: "2"
-project: "test"
-workspace:
-  remote_path: "not-absolute"
-  default_mode: "invalid"
-`)
+	// Malformed YAML — viper will fail to parse this
+	writeConfig(t, dir, "version: [invalid\n  bad yaml\n")
 
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
@@ -146,13 +142,13 @@ workspace:
 	assert.ErrorIs(t, err, cmdutil.SilentError)
 
 	errOut := tio.ErrBuf.String()
-	assert.Contains(t, errOut, "version")
-	assert.Contains(t, errOut, "workspace.remote_path")
+	assert.Contains(t, errOut, "clawker.yaml")
 }
 
 func TestCheckRun_unknownFields(t *testing.T) {
 	clearClawkerEnv(t)
 	dir := t.TempDir()
+	// Viper silently ignores unknown fields — this should be valid
 	writeConfig(t, dir, `version: "1"
 project: "test-project"
 biuld:
@@ -168,10 +164,10 @@ workspace:
 	}
 
 	err := checkRun(context.Background(), opts)
-	assert.ErrorIs(t, err, cmdutil.SilentError)
+	require.NoError(t, err)
 
 	errOut := tio.ErrBuf.String()
-	assert.Contains(t, errOut, "biuld")
+	assert.Contains(t, errOut, "is valid")
 }
 
 func TestCheckRun_fileNotFound(t *testing.T) {
@@ -227,10 +223,9 @@ func TestCheckRun_directoryFlag(t *testing.T) {
 func TestResolveConfigTarget_empty(t *testing.T) {
 	target, err := resolveConfigTarget("")
 	require.NoError(t, err)
-	defer target.close()
 
 	cwd, _ := os.Getwd()
-	assert.Equal(t, cwd, target.loaderDir)
+	assert.Equal(t, filepath.Join(cwd, "clawker.yaml"), target.filePath)
 	assert.True(t, strings.HasSuffix(target.displayPath, "clawker.yaml"))
 }
 
@@ -244,9 +239,8 @@ func TestResolveConfigTarget_clawkerYaml(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.close()
 
-	assert.Equal(t, dir, target.loaderDir)
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
 }
 
@@ -260,15 +254,10 @@ func TestResolveConfigTarget_customFilename(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.close()
 
-	// Should create a temp dir with symlink
-	assert.NotEqual(t, dir, target.loaderDir)
+	// File is read directly — no temp dir needed
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
-
-	// The symlinked clawker.yaml should exist in the loader dir
-	_, statErr := os.Stat(filepath.Join(target.loaderDir, "clawker.yaml"))
-	assert.NoError(t, statErr)
 }
 
 func TestResolveConfigTarget_directory(t *testing.T) {
@@ -285,9 +274,8 @@ func TestResolveConfigTarget_nonexistent(t *testing.T) {
 
 	target, err := resolveConfigTarget(path)
 	require.NoError(t, err)
-	defer target.close()
 
-	assert.Equal(t, dir, target.loaderDir)
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
 }
 

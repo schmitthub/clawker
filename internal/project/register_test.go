@@ -11,7 +11,7 @@ import (
 
 func TestRegisterProject_HappyPath(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	tios := iostreamstest.New()
 
@@ -36,7 +36,7 @@ func TestRegisterProject_HappyPath(t *testing.T) {
 
 func TestRegisterProject_NilRegistryLoader(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	tios := iostreamstest.New()
 
@@ -56,7 +56,7 @@ func TestRegisterProject_RegisterError(t *testing.T) {
 	if err := os.MkdirAll(unwritableDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
-	t.Setenv(config.ClawkerHomeEnv, unwritableDir)
+	t.Setenv(config.clawkerHomeEnv, unwritableDir)
 
 	tios := iostreamstest.New()
 

@@ -64,6 +64,7 @@ Claude Code containers to send telemetry automatically.`,
 func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
+	networkName := config.NewMockConfig().ClawkerNetwork()
 
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()
@@ -91,11 +92,11 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 
 	if _, err := client.EnsureNetwork(ctx, docker.EnsureNetworkOptions{
-		Name: config.ClawkerNetwork,
+		Name: networkName,
 	}); err != nil {
-		return fmt.Errorf("failed to ensure Docker network '%s': %w", config.ClawkerNetwork, err)
+		return fmt.Errorf("failed to ensure Docker network '%s': %w", networkName, err)
 	}
-	ios.Logger.Debug().Str("network", config.ClawkerNetwork).Msg("network ready")
+	ios.Logger.Debug().Str("network", networkName).Msg("network ready")
 
 	// Build docker compose command
 	composeArgs := []string{"compose", "-f", composePath, "up"}

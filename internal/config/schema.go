@@ -245,8 +245,6 @@ func (s *SecurityConfig) FirewallEnabled() bool {
 	return s.Firewall.FirewallEnabled()
 }
 
-// Mode represents the workspace mode
-
 // GitCredentialsConfig defines git credential forwarding settings
 type GitCredentialsConfig struct {
 	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" mapstructure:"forward_https"`     // Enable HTTPS credential forwarding (default: follows host_proxy)
@@ -348,15 +346,6 @@ func (r *LoopConfig) GetTimeoutMinutes() int {
 	}
 	return r.TimeoutMinutes
 }
-
-type Mode string
-
-const (
-	// ModeBind represents direct host mount (live sync)
-	ModeBind Mode = "bind"
-	// ModeSnapshot represents ephemeral volume copy (isolated)
-	ModeSnapshot Mode = "snapshot"
-)
 
 // ParseMode converts a string to a Mode, returning an error if invalid
 func ParseMode(s string) (Mode, error) {

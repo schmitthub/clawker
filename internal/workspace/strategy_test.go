@@ -42,7 +42,7 @@ func TestShareConstants(t *testing.T) {
 
 func TestEnsureShareDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	sharePath, err := EnsureShareDir()
 	if err != nil {
@@ -65,7 +65,7 @@ func TestEnsureShareDir(t *testing.T) {
 
 func TestEnsureShareDir_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	// Create once
 	path1, err := EnsureShareDir()

@@ -36,7 +36,7 @@ func TestFactory_Config_Gateway(t *testing.T) {
 func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Point CLAWKER_HOME to an empty dir (no registry file)
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	f := New("1.0.0")
 
@@ -50,7 +50,7 @@ func TestFactory_Config_Resolution_NoRegistry(t *testing.T) {
 
 func TestFactory_Config_Resolution_WithProject(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, tmpDir)
+	t.Setenv(config.clawkerHomeEnv, tmpDir)
 
 	// Get the current working directory to use as project root
 	cwd, err := os.Getwd()

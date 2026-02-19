@@ -24,7 +24,7 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions,
 	t.Helper()
 
 	// Use temp dir for clawker home so performSetup can create share dir
-	t.Setenv(config.ClawkerHomeEnv, t.TempDir())
+	t.Setenv(config.clawkerHomeEnv, t.TempDir())
 
 	sl := configtest.NewInMemorySettingsLoader()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())

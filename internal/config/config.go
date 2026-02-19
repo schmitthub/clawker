@@ -9,15 +9,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/spf13/viper"
 )
 
+var invalidKeysRe = regexp.MustCompile(`'([^']+)' has invalid keys: (.+)$`)
+
 const (
 	appData          = "AppData"
-	clawkerConfigDir = "CLAWKER_CONFIG"
 	xdgConfigHome    = "XDG_CONFIG_HOME"
 )
 
@@ -29,6 +31,16 @@ type Config interface {
 	Settings() Settings
 	LoggingConfig() LoggingConfig
 	MonitoringConfig() MonitoringConfig
+	Domain() string
+	LabelDomain() string
+	ConfigDirEnvVar() string
+	MonitorSubdir() string
+	BuildSubdir() string
+	DockerfilesSubdir() string
+	ClawkerNetwork() string
+	LogsSubdir() string
+	BridgesSubdir() string
+	ShareSubdir() string
 	RequiredFirewallDomains() []string
 	GetProjectRoot() (string, error)
 }
@@ -71,6 +83,10 @@ func NewConfig() (Config, error) {
 // ReadFromString takes a YAML string and returns a Config.
 // Useful for testing or constructing configs programmatically.
 func ReadFromString(str string) (Config, error) {
+	if err := validateProjectYAMLString(str); err != nil {
+		return nil, err
+	}
+
 	v := newViperConfig()
 	v.SetConfigType("yaml")
 	if str != "" {
@@ -181,14 +197,21 @@ type loadOptions struct {
 }
 
 func (c *configImpl) load(opts loadOptions) error {
-	files := []string{
-		opts.settingsFile,
-		opts.userProjectConfigFile,
-		opts.projectRegistryPath,
+	files := []struct {
+		path   string
+		schema any
+	}{
+		{path: opts.settingsFile, schema: &Settings{}},
+		{path: opts.userProjectConfigFile, schema: &Project{}},
+		{path: opts.projectRegistryPath, schema: &projectRegistryValidation{}},
 	}
 
 	for i, f := range files {
-		c.v.SetConfigFile(f)
+		if err := validateConfigFileExact(f.path, f.schema); err != nil {
+			return err
+		}
+
+		c.v.SetConfigFile(f.path)
 		var err error
 		if i == 0 {
 			err = c.v.ReadInConfig()
@@ -196,7 +219,7 @@ func (c *configImpl) load(opts loadOptions) error {
 			err = c.v.MergeInConfig()
 		}
 		if err != nil {
-			return fmt.Errorf("loading config %s: %w", f, err)
+			return fmt.Errorf("loading config %s: %w", f.path, err)
 		}
 	}
 
@@ -213,6 +236,9 @@ func (c *configImpl) mergeProjectConfig() error {
 	}
 
 	c.v.SetConfigFile(filepath.Join(root, "clawker.yaml"))
+	if err := validateConfigFileExact(filepath.Join(root, "clawker.yaml"), &Project{}); err != nil {
+		return err
+	}
 	if err := c.v.MergeInConfig(); err != nil {
 		return fmt.Errorf("loading project config for root %s: %w", root, err)
 	}
@@ -222,7 +248,7 @@ func (c *configImpl) mergeProjectConfig() error {
 
 // ConfigDir returns the clawker config directory.
 func ConfigDir() string {
-	if a := os.Getenv(clawkerConfigDir); a != "" {
+	if a := os.Getenv(clawkerConfigDirEnv); a != "" {
 		return a
 	}
 	if b := os.Getenv(xdgConfigHome); b != "" {
@@ -252,4 +278,87 @@ func projectRegistryPath() string {
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
+}
+
+func validateProjectYAMLString(str string) error {
+	if str == "" {
+		return nil
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	if err := v.ReadConfig(strings.NewReader(str)); err != nil {
+		return fmt.Errorf("parsing config from string: %w", err)
+	}
+
+	if err := v.UnmarshalExact(&readFromStringValidation{}); err != nil {
+		return fmt.Errorf("invalid project config: %s", formatDecodeError(err))
+	}
+
+	return nil
+}
+
+func validateConfigFileExact(path string, schema any) error {
+	v := viper.New()
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
+		return fmt.Errorf("loading config %s: %w", path, err)
+	}
+
+	if err := v.UnmarshalExact(schema); err != nil {
+		return fmt.Errorf("invalid config %s: %s", path, formatDecodeError(err))
+	}
+
+	return nil
+}
+
+func formatDecodeError(err error) string {
+	msg := err.Error()
+	match := invalidKeysRe.FindStringSubmatch(msg)
+	if len(match) != 3 {
+		return msg
+	}
+
+	parent := strings.TrimSpace(match[1])
+	keys := strings.Split(match[2], ",")
+	paths := make([]string, 0, len(keys))
+	for _, key := range keys {
+		k := strings.TrimSpace(key)
+		if parent == "" || parent == "<root>" {
+			paths = append(paths, k)
+			continue
+		}
+		paths = append(paths, parent+"."+k)
+	}
+
+	return "unknown keys: " + strings.Join(paths, ", ")
+}
+
+// readFromStringValidation is a permissive root schema for ReadFromString.
+// It validates unknown keys for known config roots while allowing ad-hoc
+// projects maps used in tests.
+type readFromStringValidation struct {
+	Version      string           `mapstructure:"version"`
+	Project      string           `mapstructure:"project"`
+	DefaultImage string           `mapstructure:"default_image"`
+	Build        BuildConfig      `mapstructure:"build"`
+	Agent        AgentConfig      `mapstructure:"agent"`
+	Workspace    WorkspaceConfig  `mapstructure:"workspace"`
+	Security     SecurityConfig   `mapstructure:"security"`
+	Loop         *LoopConfig      `mapstructure:"loop"`
+	Logging      LoggingConfig    `mapstructure:"logging"`
+	Monitoring   MonitoringConfig `mapstructure:"monitoring"`
+	Projects     map[string]any   `mapstructure:"projects"`
+}
+
+// projectRegistryValidation allows legacy worktree values while still
+// rejecting unknown keys on registry/project entries.
+type projectRegistryValidation struct {
+	Projects map[string]projectEntryValidation `mapstructure:"projects"`
+}
+
+type projectEntryValidation struct {
+	Name      string         `mapstructure:"name"`
+	Root      string         `mapstructure:"root"`
+	Worktrees map[string]any `mapstructure:"worktrees"`
 }

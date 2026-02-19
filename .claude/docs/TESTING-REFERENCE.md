@@ -41,8 +41,8 @@ f := &cmdutil.Factory{
     Client: func(ctx context.Context) (*docker.Client, error) {
         return fake.Client, nil  // Fake from dockertest
     },
-    Config: func() (*config.Config, error) {
-        return testConfig(), nil
+    Config: func() (config.Config, error) {
+        return config.NewMockConfig(), nil
     },
     // ... other fields
 }
@@ -71,7 +71,7 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/config` | `stubs.go` | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
@@ -169,8 +169,8 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     tio := iostreamstest.New()
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
-        Config: func() config.Provider {
-            return config.NewConfigForTest(nil, nil)
+        Config: func() (config.Config, error) {
+            return config.NewMockConfig(), nil
         },
     }
 
@@ -192,7 +192,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
 
 **What this tests**: flag registration, defaults, enum validation, mutual exclusion, required args, positional arg mapping.
 **What this does NOT test**: Docker calls, output formatting, error handling in the run function.
-**Factory needs**: minimal — often just `IOStreams`. Add `Config` if the command uses `--agent` flag (it calls `opts.Config().ProjectKey()` in RunE).
+**Factory needs**: minimal — often just `IOStreams`. Add `Config` if the command uses `--agent` flag or accesses project config in RunE.
 
 ### Hybrid Injection Test
 
@@ -225,8 +225,8 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
         Client: func(_ context.Context) (*docker.Client, error) {
             return mockClient, nil
         },
-        Config: func() config.Provider {
-            return config.NewConfigForTest(testConfig(), nil)
+        Config: func() (config.Config, error) {
+            return config.NewMockConfig(), nil
         },
     }
 
@@ -280,8 +280,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgete
         Client: func(_ context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
-        Config: func() config.Provider {
-            return config.NewConfigForTest(nil, nil)
+        Config: func() (config.Config, error) {
+            return config.NewMockConfig(), nil
         },
     }
 
@@ -356,9 +356,9 @@ FakeCli would only add: (1) command routing tests (cobra's responsibility) and (
 
 ### Key Points
 
-- **`testFactory` and `testConfig` are per-package** — each command package creates its own suited to its dependencies
+- **`testFactory` is per-package** — each command package creates its own suited to its dependencies
 - **Reference implementation**: `internal/cmd/container/run/run_test.go` (`TestRunRun`)
-- Factory fields must include all closures the command's run function calls (Config, Client, Settings, etc.)
+- Factory fields must include all closures the command's run function calls (Config, Client, etc.)
 - Use `t.TempDir()` for `WorkDir` to avoid `os.Getwd()` issues in tests
 
 ---
@@ -804,50 +804,34 @@ fake.Reset()                                  // Clear call log
 
 The codebase provides in-memory implementations for testing without filesystem I/O.
 
-### configtest.InMemoryRegistryBuilder
+### config Test Stubs (stubs.go)
 
-Creates an in-memory registry for testing worktree and project commands. Use instead of file-based fakes when you need:
-- Controllable worktree status (healthy, stale, mixed)
-- No filesystem side effects
-- Fast parallel tests
+Config test helpers live in the `config` package itself (not a separate `configtest/` subpackage):
 
 ```go
-registry := configtest.NewInMemoryRegistryBuilder().
-    WithProject("myproject", "/path/to/project").  // Returns InMemoryProjectBuilder
-    WithHealthyWorktree("feature-branch", "/path/to/worktree").
-    WithStaleWorktree("stale-branch", "/missing/path").
-    WithPartialWorktree("partial-branch", "/partial/path").
-    WithErrorWorktree("error-branch", "/error/path", errors.New("delete failed")).
-    Registry().  // Back to InMemoryRegistryBuilder
-    Build()
+// Default mock — in-memory config with defaults + env support, no file I/O
+cfg := config.NewMockConfig()
 
-// Use the handle pattern
-proj := registry.Project("myproject")
-wt := proj.Worktree("feature-branch")
-status := wt.Status()
+// Config from YAML string — validates and parses
+cfg, err := config.ReadFromString(`build: { image: "alpine:3.20" }`)
+
+// Alias for ReadFromString
+cfg, err := config.NewConfigFromString(`project: myapp`)
+
+// Custom viper injection — for fine-grained control
+v := viper.New()
+v.Set("build.image", "custom:latest")
+cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: v})
 ```
 
-**InMemoryProjectBuilder methods:**
-
-| Method | Purpose |
-|--------|---------|
-| `WithWorktree(name, path string, state WorktreeState)` | Add worktree with explicit state |
-| `WithHealthyWorktree(name, path string)` | Add healthy worktree (dir+git exist) |
-| `WithStaleWorktree(name, path string)` | Add stale worktree (dir doesn't exist) |
-| `WithPartialWorktree(name, path string)` | Add partial worktree (dir exists, no .git) |
-| `WithErrorWorktree(name, path string, err error)` | Add worktree that errors on delete |
-| `Registry()` | Return to parent InMemoryRegistryBuilder |
-
-**InMemoryRegistry methods for state control:**
-
+**Factory wiring in tests:**
 ```go
-// Control filesystem-like state after build
-registry.SetWorktreeState("myproject", "feature-branch", configtest.WorktreeState{
-    DirExists: true,
-    GitExists: false,
-})
-registry.SetWorktreeDeleteError("myproject", "feature-branch", errors.New("permission denied"))
-registry.SetWorktreePathError("myproject", "feature-branch", errors.New("invalid path"))
+f := &cmdutil.Factory{
+    IOStreams: tio.IOStreams,
+    Config: func() (config.Config, error) {
+        return config.NewMockConfig(), nil
+    },
+}
 ```
 
 ### gittest.NewInMemoryGitManager
@@ -863,9 +847,10 @@ gitMgr := gittest.NewInMemoryGitManager()
 
 | Need | Use |
 |------|-----|
-| Test worktree list/prune commands | `InMemoryRegistryBuilder` |
-| Test worktree add/remove commands | `InMemoryGitManager` + `InMemoryRegistryBuilder` |
-| Test registry persistence | `configtest.FakeRegistryBuilder` (file-based) |
+| Default config for command tests | `config.NewMockConfig()` |
+| Config with specific YAML values | `config.ReadFromString(yaml)` |
+| Config with custom viper overrides | `config.NewFakeConfig(opts)` |
+| Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 | Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 
 ---

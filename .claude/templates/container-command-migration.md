@@ -128,8 +128,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
         Client: func(ctx context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
-        Config: func() *config.Config {
-            return config.NewConfigForTest(nil, nil)
+        Config: func() (config.Config, error) {
+            return config.NewMockConfig(), nil
         },
     }, tio
 }
@@ -309,7 +309,7 @@ These 3 commands already have Tier 2 tests. Migration is HandleError replacement
            Client: func(_ context.Context) (*docker.Client, error) {
                return nil, fmt.Errorf("cannot connect to Docker daemon")
            },
-           Config: func() *config.Config { return config.NewConfigForTest(nil, nil) },
+           Config: func() (config.Config, error) { return config.NewMockConfig(), nil },
        }
        cmd := NewCmdStop(f, nil)
        cmd.SetArgs([]string{"mycontainer"})
@@ -371,7 +371,7 @@ These 4 commands have Tier 1 tests (flag parsing) but NO Tier 2 tests. Each need
        return &cmdutil.Factory{
            IOStreams: tio.IOStreams,
            Client: func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
-           Config: func() *config.Config { return config.NewConfigForTest(nil, nil) },
+           Config: func() (config.Config, error) { return config.NewMockConfig(), nil },
        }, tio
    }
    ```

@@ -61,7 +61,7 @@ func newConfigFromTestdata(t *testing.T) Config {
 `, cwd)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(projectsYAML), 0o644))
 
-	t.Setenv("CLAWKER_CONFIG", configDir)
+	t.Setenv(clawkerConfigDirEnv, configDir)
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 	c, ok := cfg.(*configImpl)
@@ -83,12 +83,50 @@ func TestReadFromString_InvalidYAML(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestReadFromString_UnknownKey(t *testing.T) {
+	_, err := ReadFromString(`
+build:
+  image: ubuntu:22.04
+  imag: typo-value
+`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build.imag")
+}
+
+func TestReadFromString_UnknownRootKey(t *testing.T) {
+	_, err := ReadFromString(`
+versoin: "1"
+build:
+  image: ubuntu:22.04
+`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "versoin")
+}
+
 func TestReadFromString_ParsesValues(t *testing.T) {
 	c := mustReadFromString(t, `
 build:
   image: ubuntu:22.04
 `)
 	assert.Equal(t, "ubuntu:22.04", c.Project().Build.Image)
+}
+
+func TestModeConstants(t *testing.T) {
+	assert.Equal(t, Mode("bind"), ModeBind)
+	assert.Equal(t, Mode("snapshot"), ModeSnapshot)
+}
+
+func TestParseMode(t *testing.T) {
+	mode, err := ParseMode("bind")
+	require.NoError(t, err)
+	assert.Equal(t, ModeBind, mode)
+
+	mode, err = ParseMode("snapshot")
+	require.NoError(t, err)
+	assert.Equal(t, ModeSnapshot, mode)
+
+	_, err = ParseMode("invalid")
+	require.Error(t, err)
 }
 
 // defaults
@@ -305,27 +343,42 @@ func TestRequiredFirewallDomains_Immutable(t *testing.T) {
 	assert.NotEqual(t, "evil.com", c.RequiredFirewallDomains()[0], "RequiredFirewallDomains returned mutable reference")
 }
 
+func TestConstantAccessors(t *testing.T) {
+	c := mustReadFromString(t, "")
+
+	assert.Equal(t, "clawker.dev", c.Domain())
+	assert.Equal(t, "dev.clawker", c.LabelDomain())
+	assert.Equal(t, "CLAWKER_CONFIG_DIR", c.ConfigDirEnvVar())
+	assert.Equal(t, "monitor", c.MonitorSubdir())
+	assert.Equal(t, "build", c.BuildSubdir())
+	assert.Equal(t, "dockerfiles", c.DockerfilesSubdir())
+	assert.Equal(t, "clawker-net", c.ClawkerNetwork())
+	assert.Equal(t, "logs", c.LogsSubdir())
+	assert.Equal(t, "bridges", c.BridgesSubdir())
+	assert.Equal(t, ".clawker-share", c.ShareSubdir())
+}
+
 // ConfigDir
 
 func TestConfigDir_ClawkerConfigDir(t *testing.T) {
-	t.Setenv(clawkerConfigDir, "/custom/config")
+	t.Setenv(clawkerConfigDirEnv, "/custom/config")
 	assert.Equal(t, "/custom/config", ConfigDir())
 }
 
 func TestConfigDir_XDGConfigHome(t *testing.T) {
-	t.Setenv(clawkerConfigDir, "")
+	t.Setenv(clawkerConfigDirEnv, "")
 	t.Setenv(xdgConfigHome, "/xdg/config")
 	assert.Equal(t, filepath.Join("/xdg/config", "clawker"), ConfigDir())
 }
 
 func TestConfigDir_ClawkerTakesPrecedenceOverXDG(t *testing.T) {
-	t.Setenv(clawkerConfigDir, "/custom/config")
+	t.Setenv(clawkerConfigDirEnv, "/custom/config")
 	t.Setenv(xdgConfigHome, "/xdg/config")
 	assert.Equal(t, "/custom/config", ConfigDir())
 }
 
 func TestConfigDir_Default(t *testing.T) {
-	t.Setenv(clawkerConfigDir, "")
+	t.Setenv(clawkerConfigDirEnv, "")
 	t.Setenv(xdgConfigHome, "")
 	if runtime.GOOS == "windows" {
 		t.Setenv(appData, "")
