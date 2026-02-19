@@ -18,23 +18,24 @@
 
 ## Remaining Migration
 
-### Critical path (blocks `go build ./...`):
-5. `internal/workspace` — DataDir, ConfigFileName, `docker.VolumeLabels`→`cli.VolumeLabels()`
-6. `internal/containerfs` — DataDir, ConfigFileName, EnsureDir
+### Critical path — DONE:
+5. ~~`internal/workspace`~~ — `SetupMountsConfig.Config` → `Cfg config.Config`; deleted `EnsureShareDir` (use `cfg.ShareSubdir()`), deleted `resolveIgnoreFile` (use `cfg.GetProjectIgnoreFile()`); `docker.VolumeLabels` → `cli.VolumeLabels()`
+6. ~~`internal/containerfs`~~ — `PrepareOnboardingTar`/`PreparePostInitTar` now take `cfg config.Config` first param; replaced 6 `config.ContainerUID`/`config.ContainerGID` constants with `cfg.ContainerUID()`/`cfg.ContainerGID()` methods
+7. ~~`internal/monitor`~~ — migrated by user, tests passing
 
 ### Docker cascade (partially done):
 - 8 `WithConfig` calls entangled with `config.Provider`→`config.Config`
-- Label constant callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`, `workspace/strategy.go`
+- Label constant callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`
 - ~114 `config.Provider` references across Options structs and test callbacks
 
 ### Command layer (blocks individual commands):
-7. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
-8. `internal/cmd/project/register` — ProjectLoader, ConfigFileName
-9. `internal/cmd/image/build` — Validator
-10. `internal/cmd/container/shared` — SettingsLoader, ConfigFileName
-11. `internal/cmd/container/create` — SettingsLoader
-12. `internal/cmd/container/run` — SettingsLoader
-13. Various other cmd packages — ConfigFileName, DataDir
+8. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
+9. `internal/cmd/project/register` — ProjectLoader, ConfigFileName
+10. `internal/cmd/image/build` — Validator
+11. `internal/cmd/container/shared` — SettingsLoader, ConfigFileName
+12. `internal/cmd/container/create` — SettingsLoader
+13. `internal/cmd/container/run` — SettingsLoader
+14. Various other cmd packages — ConfigFileName, DataDir
 
 ## Migration Patterns
 
@@ -70,6 +71,10 @@ client.VolumeLabels(project, agent, purpose)
 - **Validation returns errors** — constructors validate and return errors, never silently default
 - **Shared validation helpers** — e.g. `validatePort()` used by both Manager and Daemon
 - **docker.VolumeLabels** is now a `*docker.Client` method, not a free function
+- **`*Subdir()` methods replace `EnsureDir` wrappers** — `ShareSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()` all do `os.MkdirAll` internally via `subdirPath()`. No need for separate ensure functions
+- **`GetProjectIgnoreFile()` replaces `resolveIgnoreFile`** — Config method resolves `.clawkerignore` from `projectConfigFile` directory. Errors on fake configs without `projectConfigFile` (only set by `NewConfig()` during file loading) — test that behavior in config package, not callers
+- **Tar functions take `cfg config.Config` first param** — `PrepareOnboardingTar(cfg, homeDir)` and `PreparePostInitTar(cfg, script)` read `cfg.ContainerUID()`/`cfg.ContainerGID()` instead of constants
+- **`SetupMountsConfig.Cfg` replaces `.Config`** — field type changed from `*config.Project` (schema pointer) to `config.Config` (interface). Access project schema via `cfg.Cfg.Project()`
 
 ## Old API (Removed)
 

@@ -1,6 +1,6 @@
 # ContainerFS Package
 
-Prepares host Claude Code configuration for container injection. Imports `internal/config` for `ContainerUID`/`ContainerGID`.
+Prepares host Claude Code configuration for container injection. Receives `config.Config` interface for `ContainerUID()`/`ContainerGID()` methods.
 
 ## Key Functions
 
@@ -9,8 +9,8 @@ Prepares host Claude Code configuration for container injection. Imports `intern
 | `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default) |
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
-| `PrepareOnboardingTar(containerHomeDir string) (io.Reader, error)` | Create tar with ~/.claude.json onboarding marker |
-| `PreparePostInitTar(script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
+| `PrepareOnboardingTar(cfg config.Config, containerHomeDir string) (io.Reader, error)` | Create tar with ~/.claude.json onboarding marker |
+| `PreparePostInitTar(cfg config.Config, script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
 
 ## Dependencies
 
@@ -75,4 +75,4 @@ Returns an `io.Reader` containing a tar archive with:
 go test ./internal/containerfs/... -v
 ```
 
-All tests use `t.TempDir()` for isolation and `keyring.MockInit()` for keyring tests.
+All tests use `t.TempDir()` for isolation, `keyring.MockInit()` for keyring tests, and `config.NewMockConfig()` for Config interface stubs.

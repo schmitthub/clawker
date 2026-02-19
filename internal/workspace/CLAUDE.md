@@ -46,11 +46,11 @@ func NewSnapshotStrategy(cfg Config) (*SnapshotStrategy, error)
 
 ```go
 type SetupMountsConfig struct {
-    ModeOverride   string          // CLI flag value (empty = use config default)
-    Config         *config.Project
+    ModeOverride   string        // CLI flag value (empty = use config default)
+    Cfg            config.Config // Config interface (provides project schema, ignore file, share dir)
     AgentName      string
-    WorkDir        string          // Host working directory (empty = os.Getwd() fallback)
-    ProjectRootDir string          // Main repo root for worktree .git mounting (empty for non-worktree)
+    WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
+    ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
 }
 
 type SetupMountsResult struct {
@@ -62,11 +62,10 @@ type SetupMountsResult struct {
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
-func EnsureShareDir() (string, error)
-func GetShareVolumeMount(hostPath string) mount.Mount
+func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
-`SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `resolveIgnoreFile` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved from `ProjectRootDir` first, falling back to `WorkDir`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- loads `.clawkerignore` patterns (via `cfg.Cfg.GetProjectIgnoreFile()` + `docker.LoadIgnorePatterns`), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The ignore file is resolved by the Config interface from the project config directory. Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
 `ConfigVolumeResult` tracks which config volumes were newly created vs pre-existing (`ConfigCreated`, `HistoryCreated` bool fields). Returned by `EnsureConfigVolumes` for use by container init orchestration. When `ConfigCreated` is true, callers should run `opts.InitContainerConfig` to populate the volume.
 
@@ -107,13 +106,12 @@ Only available when `security.docker_socket: true`.
 ```go
 const SharePurpose = "share"
 const ShareStagingPath = "/home/claude/.clawker-share"
-func EnsureShareDir() (string, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
 Shared directory provides a read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `ShareStagingPath`. Only mounted when `agent.enable_shared_dir: true` in config (`AgentConfig.SharedDirEnabled()`).
 
-`EnsureShareDir` resolves the host path via `config.ShareDir()` and creates it with `config.EnsureDir()` if missing. Returns the host path for `GetShareVolumeMount`. No Docker client needed — purely filesystem.
+Host path is resolved by `cfg.ShareSubdir()` (which already does `os.MkdirAll` internally). No separate `EnsureShareDir` needed — callers pass the host path directly to `GetShareVolumeMount`.
 
 **Host path**: `$CLAWKER_HOME/.clawker-share` (created during `clawker init`, re-created if missing during mount setup).
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/keyring"
 )
 
@@ -493,7 +494,8 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPrepareOnboardingTar(t *testing.T) {
-	reader, err := PrepareOnboardingTar("/home/claude")
+	cfg := config.NewMockConfig()
+	reader, err := PrepareOnboardingTar(cfg, "/home/claude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -540,7 +542,8 @@ func TestPrepareOnboardingTar(t *testing.T) {
 }
 
 func TestPreparePostInitTar_EmptyScript(t *testing.T) {
-	_, err := PreparePostInitTar("")
+	cfg := config.NewMockConfig()
+	_, err := PreparePostInitTar(cfg, "")
 	if err == nil {
 		t.Fatal("expected error for empty script")
 	}
@@ -549,16 +552,17 @@ func TestPreparePostInitTar_EmptyScript(t *testing.T) {
 	}
 
 	// Whitespace-only should also fail
-	_, err = PreparePostInitTar("   \n\t  ")
+	_, err = PreparePostInitTar(cfg, "   \n\t  ")
 	if err == nil {
 		t.Fatal("expected error for whitespace-only script")
 	}
 }
 
 func TestPreparePostInitTar(t *testing.T) {
+	cfg := config.NewMockConfig()
 	script := "claude mcp add -- npx -y @anthropic-ai/claude-code-mcp\nnpm install -g typescript\n"
 
-	reader, err := PreparePostInitTar(script)
+	reader, err := PreparePostInitTar(cfg, script)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
