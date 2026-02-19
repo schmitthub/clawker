@@ -500,6 +500,35 @@ cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: myViper})
 
 For registry testing, `Registry` interface exists in `schema.go` but no in-memory implementation is provided yet. Build one when needed.
 
+### Pattern 9: Registry + worktree creation → Set() + Write()
+
+**Old pattern** (conceptual): callers used `configtest` builders / loader-specific helpers to construct registry entries and worktrees.
+
+**New pattern**: write registry entries directly through owned key paths under `projects.*`, then persist with `Write`.
+
+```go
+cfg, _ := config.NewConfig()
+
+// Add project entry
+_ = cfg.Set("projects.my-app.name", "my-app")
+_ = cfg.Set("projects.my-app.root", "/abs/path/to/my-app")
+
+// Register worktree entry
+_ = cfg.Set("projects.my-app.worktrees.feature.path", "/abs/path/to/my-app/.worktrees/feature")
+_ = cfg.Set("projects.my-app.worktrees.feature.branch", "feature")
+
+// Persist dirty changes (auto-routes to projects.yaml by key ownership)
+_ = cfg.Write(config.WriteOptions{})
+```
+
+Notes:
+
+- You do not need to pass `Scope` for normal callers; registry routing is inferred from the `projects` root key.
+- `Write(config.WriteOptions{Scope: config.ScopeRegistry})` is optional for explicitly targeted flushes.
+- There is no typed `AddProject()` method on `config.Config` yet; use low-level key-path writes for now.
+
+See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_PersistsToRegistry`.
+
 ### Migration Checklist (per consumer)
 
 1. Identify which old symbols the consumer uses (see Migration Status table)
@@ -507,9 +536,10 @@ For registry testing, `Registry` interface exists in `schema.go` but no in-memor
 3. Replace `ConfigFileName` with literal `"clawker.yaml"`
 4. Replace `DataDir`/`LogDir`/`EnsureDir` with `ConfigDir()` + manual path construction
 5. If the consumer needs a constant/helper that doesn't exist yet, add it to `config` (or to the consumer's own package if it's package-specific)
-6. Update tests to use `NewMockConfig()` / `ReadFromString()` / `NewFakeConfig()`
-7. Verify: `go build ./internal/<package>/...` and `go test ./internal/<package>/...`
-8. Update the consumer's `CLAUDE.md` to reflect the new API usage
+6. For registry/worktree writes, use `Set("projects....")` + `Write(...)` instead of legacy builders/loaders
+7. Update tests to use `NewMockConfig()` / `ReadFromString()` / `NewFakeConfig()`
+8. Verify: `go build ./internal/<package>/...` and `go test ./internal/<package>/...`
+9. Update the consumer's `CLAUDE.md` to reflect the new API usage
 
 ## Gotchas
 

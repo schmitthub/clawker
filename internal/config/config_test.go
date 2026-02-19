@@ -344,6 +344,29 @@ func TestWrite_Key_ClearsDirtyForKey(t *testing.T) {
 	assert.Equal(t, string(before), string(after))
 }
 
+func TestWrite_AddProjectAndWorktree_PersistsToRegistry(t *testing.T) {
+	c, paths := mustOwnedConfig(t)
+
+	newProjectRoot := filepath.Join(t.TempDir(), "new-project")
+	require.NoError(t, os.MkdirAll(newProjectRoot, 0o755))
+
+	require.NoError(t, c.Set("projects.newproj.name", "newproj"))
+	require.NoError(t, c.Set("projects.newproj.root", newProjectRoot))
+	require.NoError(t, c.Set("projects.newproj.worktrees.feature.path", filepath.Join(newProjectRoot, "feature")))
+	require.NoError(t, c.Set("projects.newproj.worktrees.feature.branch", "feature"))
+
+	require.NoError(t, c.Write(WriteOptions{}))
+
+	registry := viper.New()
+	registry.SetConfigFile(paths[ScopeRegistry])
+	require.NoError(t, registry.ReadInConfig())
+
+	assert.Equal(t, "newproj", registry.GetString("projects.newproj.name"))
+	assert.Equal(t, newProjectRoot, registry.GetString("projects.newproj.root"))
+	assert.Equal(t, filepath.Join(newProjectRoot, "feature"), registry.GetString("projects.newproj.worktrees.feature.path"))
+	assert.Equal(t, "feature", registry.GetString("projects.newproj.worktrees.feature.branch"))
+}
+
 func TestWrite_Default_PartialFailure_ClearsOnlySuccessfulDirtyEntries(t *testing.T) {
 	c, paths := mustOwnedConfig(t)
 	require.NoError(t, c.Set("projects.app.name", "renamed-app"))
