@@ -4,44 +4,62 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
+// testClient returns a *Client with only cfg set (no engine).
+// Sufficient for label/filter methods that only read c.cfg.
+func testClient(t *testing.T) (*Client, config.Config) {
+	t.Helper()
+	cfg := testConfig(t, `
+version: "1"
+project: "testproject"
+`)
+	return &Client{cfg: cfg}, cfg
+}
+
 func TestLabelConstants(t *testing.T) {
-	// Verify label prefix consistency
+	_, cfg := testClient(t)
+
+	// Verify all label methods return strings prefixed with LabelPrefix
 	tests := []struct {
 		name  string
 		label string
 	}{
-		{"LabelManaged", LabelManaged},
-		{"LabelProject", LabelProject},
-		{"LabelAgent", LabelAgent},
-		{"LabelVersion", LabelVersion},
-		{"LabelImage", LabelImage},
-		{"LabelCreated", LabelCreated},
-		{"LabelWorkdir", LabelWorkdir},
-		{"LabelPurpose", LabelPurpose},
+		{"LabelManaged", cfg.LabelManaged()},
+		{"LabelProject", cfg.LabelProject()},
+		{"LabelAgent", cfg.LabelAgent()},
+		{"LabelVersion", cfg.LabelVersion()},
+		{"LabelImage", cfg.LabelImage()},
+		{"LabelCreated", cfg.LabelCreated()},
+		{"LabelWorkdir", cfg.LabelWorkdir()},
+		{"LabelPurpose", cfg.LabelPurpose()},
 	}
 
+	prefix := cfg.LabelPrefix()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if !strings.HasPrefix(tt.label, LabelPrefix) {
-				t.Errorf("%s = %q, expected prefix %q", tt.name, tt.label, LabelPrefix)
+			if !strings.HasPrefix(tt.label, prefix) {
+				t.Errorf("%s = %q, expected prefix %q", tt.name, tt.label, prefix)
 			}
 		})
 	}
 }
 
 func TestContainerLabels(t *testing.T) {
+	c, cfg := testClient(t)
+
 	t.Run("with project", func(t *testing.T) {
-		labels := ContainerLabels("myproject", "myagent", "1.0.0", "myimage:latest", "/workspace")
+		labels := c.ContainerLabels("myproject", "myagent", "1.0.0", "myimage:latest", "/workspace")
 
 		expected := map[string]string{
-			LabelManaged: ManagedLabelValue,
-			LabelProject: "myproject",
-			LabelAgent:   "myagent",
-			LabelVersion: "1.0.0",
-			LabelImage:   "myimage:latest",
-			LabelWorkdir: "/workspace",
+			cfg.LabelManaged(): cfg.ManagedLabelValue(),
+			cfg.LabelProject(): "myproject",
+			cfg.LabelAgent():   "myagent",
+			cfg.LabelVersion(): "1.0.0",
+			cfg.LabelImage():   "myimage:latest",
+			cfg.LabelWorkdir(): "/workspace",
 		}
 
 		for key, want := range expected {
@@ -51,7 +69,7 @@ func TestContainerLabels(t *testing.T) {
 		}
 
 		// Verify created timestamp is present and valid
-		created := labels[LabelCreated]
+		created := labels[cfg.LabelCreated()]
 		if created == "" {
 			t.Error("LabelCreated should not be empty")
 		}
@@ -61,29 +79,31 @@ func TestContainerLabels(t *testing.T) {
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := ContainerLabels("", "dev", "1.0.0", "myimage:latest", "/workspace")
+		labels := c.ContainerLabels("", "dev", "1.0.0", "myimage:latest", "/workspace")
 
-		if _, ok := labels[LabelProject]; ok {
+		if _, ok := labels[cfg.LabelProject()]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
 		}
-		if got := labels[LabelAgent]; got != "dev" {
+		if got := labels[cfg.LabelAgent()]; got != "dev" {
 			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
-		if got := labels[LabelManaged]; got != ManagedLabelValue {
-			t.Errorf("labels[LabelManaged] = %q, want %q", got, ManagedLabelValue)
+		if got := labels[cfg.LabelManaged()]; got != cfg.ManagedLabelValue() {
+			t.Errorf("labels[LabelManaged] = %q, want %q", got, cfg.ManagedLabelValue())
 		}
 	})
 }
 
 func TestVolumeLabels(t *testing.T) {
+	c, cfg := testClient(t)
+
 	t.Run("with project", func(t *testing.T) {
-		labels := VolumeLabels("myproject", "myagent", "workspace")
+		labels := c.VolumeLabels("myproject", "myagent", "workspace")
 
 		expected := map[string]string{
-			LabelManaged: ManagedLabelValue,
-			LabelProject: "myproject",
-			LabelAgent:   "myagent",
-			LabelPurpose: "workspace",
+			cfg.LabelManaged(): cfg.ManagedLabelValue(),
+			cfg.LabelProject(): "myproject",
+			cfg.LabelAgent():   "myagent",
+			cfg.LabelPurpose(): "workspace",
 		}
 
 		for key, want := range expected {
@@ -93,29 +113,31 @@ func TestVolumeLabels(t *testing.T) {
 		}
 
 		// VolumeLabels should NOT include created timestamp
-		if _, ok := labels[LabelCreated]; ok {
+		if _, ok := labels[cfg.LabelCreated()]; ok {
 			t.Error("VolumeLabels should not include LabelCreated")
 		}
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := VolumeLabels("", "dev", "workspace")
+		labels := c.VolumeLabels("", "dev", "workspace")
 
-		if _, ok := labels[LabelProject]; ok {
+		if _, ok := labels[cfg.LabelProject()]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
 		}
-		if got := labels[LabelAgent]; got != "dev" {
+		if got := labels[cfg.LabelAgent()]; got != "dev" {
 			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
 	})
 }
 
 func TestGlobalVolumeLabels(t *testing.T) {
-	labels := GlobalVolumeLabels("globals")
+	c, cfg := testClient(t)
+
+	labels := c.GlobalVolumeLabels("globals")
 
 	expected := map[string]string{
-		LabelManaged: ManagedLabelValue,
-		LabelPurpose: "globals",
+		cfg.LabelManaged(): cfg.ManagedLabelValue(),
+		cfg.LabelPurpose(): "globals",
 	}
 
 	for key, want := range expected {
@@ -125,10 +147,10 @@ func TestGlobalVolumeLabels(t *testing.T) {
 	}
 
 	// Should NOT include project or agent labels
-	if _, ok := labels[LabelProject]; ok {
+	if _, ok := labels[cfg.LabelProject()]; ok {
 		t.Error("GlobalVolumeLabels should not include LabelProject")
 	}
-	if _, ok := labels[LabelAgent]; ok {
+	if _, ok := labels[cfg.LabelAgent()]; ok {
 		t.Error("GlobalVolumeLabels should not include LabelAgent")
 	}
 
@@ -139,13 +161,15 @@ func TestGlobalVolumeLabels(t *testing.T) {
 }
 
 func TestImageLabels(t *testing.T) {
+	c, cfg := testClient(t)
+
 	t.Run("with project", func(t *testing.T) {
-		labels := ImageLabels("myproject", "1.0.0")
+		labels := c.ImageLabels("myproject", "1.0.0")
 
 		expected := map[string]string{
-			LabelManaged: ManagedLabelValue,
-			LabelProject: "myproject",
-			LabelVersion: "1.0.0",
+			cfg.LabelManaged(): cfg.ManagedLabelValue(),
+			cfg.LabelProject(): "myproject",
+			cfg.LabelVersion(): "1.0.0",
 		}
 
 		for key, want := range expected {
@@ -155,29 +179,31 @@ func TestImageLabels(t *testing.T) {
 		}
 
 		// Verify created timestamp
-		created := labels[LabelCreated]
+		created := labels[cfg.LabelCreated()]
 		if created == "" {
 			t.Error("LabelCreated should not be empty")
 		}
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := ImageLabels("", "1.0.0")
+		labels := c.ImageLabels("", "1.0.0")
 
-		if _, ok := labels[LabelProject]; ok {
+		if _, ok := labels[cfg.LabelProject()]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
 		}
-		if got := labels[LabelVersion]; got != "1.0.0" {
+		if got := labels[cfg.LabelVersion()]; got != "1.0.0" {
 			t.Errorf("labels[LabelVersion] = %q, want %q", got, "1.0.0")
 		}
 	})
 }
 
 func TestNetworkLabels(t *testing.T) {
-	labels := NetworkLabels()
+	c, cfg := testClient(t)
 
-	if got := labels[LabelManaged]; got != ManagedLabelValue {
-		t.Errorf("labels[LabelManaged] = %q, want %q", got, ManagedLabelValue)
+	labels := c.NetworkLabels()
+
+	if got := labels[cfg.LabelManaged()]; got != cfg.ManagedLabelValue() {
+		t.Errorf("labels[LabelManaged] = %q, want %q", got, cfg.ManagedLabelValue())
 	}
 
 	// NetworkLabels should only have managed label
@@ -187,7 +213,9 @@ func TestNetworkLabels(t *testing.T) {
 }
 
 func TestClawkerFilter(t *testing.T) {
-	f := ClawkerFilter()
+	c, cfg := testClient(t)
+
+	f := c.ClawkerFilter()
 
 	// Should contain the managed label filter
 	labelFilters := f["label"]
@@ -195,14 +223,16 @@ func TestClawkerFilter(t *testing.T) {
 		t.Errorf("expected 1 label filter, got %d", len(labelFilters))
 	}
 
-	expected := LabelManaged + "=" + ManagedLabelValue
+	expected := cfg.LabelManaged() + "=" + cfg.ManagedLabelValue()
 	if _, ok := labelFilters[expected]; !ok {
 		t.Errorf("filter missing expected label %q", expected)
 	}
 }
 
 func TestProjectFilter(t *testing.T) {
-	f := ProjectFilter("myproject")
+	c, cfg := testClient(t)
+
+	f := c.ProjectFilter("myproject")
 
 	labelFilters := f["label"]
 	if len(labelFilters) != 2 {
@@ -210,8 +240,8 @@ func TestProjectFilter(t *testing.T) {
 	}
 
 	// Check for both filters
-	_, hasManaged := labelFilters[LabelManaged+"="+ManagedLabelValue]
-	_, hasProject := labelFilters[LabelProject+"=myproject"]
+	_, hasManaged := labelFilters[cfg.LabelManaged()+"="+cfg.ManagedLabelValue()]
+	_, hasProject := labelFilters[cfg.LabelProject()+"=myproject"]
 
 	if !hasManaged {
 		t.Error("ProjectFilter should include managed label")
@@ -222,7 +252,9 @@ func TestProjectFilter(t *testing.T) {
 }
 
 func TestAgentFilter(t *testing.T) {
-	f := AgentFilter("myproject", "myagent")
+	c, cfg := testClient(t)
+
+	f := c.AgentFilter("myproject", "myagent")
 
 	labelFilters := f["label"]
 	if len(labelFilters) != 3 {
@@ -230,9 +262,9 @@ func TestAgentFilter(t *testing.T) {
 	}
 
 	// Check for all three filters
-	_, hasManaged := labelFilters[LabelManaged+"="+ManagedLabelValue]
-	_, hasProject := labelFilters[LabelProject+"=myproject"]
-	_, hasAgent := labelFilters[LabelAgent+"=myagent"]
+	_, hasManaged := labelFilters[cfg.LabelManaged()+"="+cfg.ManagedLabelValue()]
+	_, hasProject := labelFilters[cfg.LabelProject()+"=myproject"]
+	_, hasAgent := labelFilters[cfg.LabelAgent()+"=myagent"]
 
 	if !hasManaged {
 		t.Error("AgentFilter should include managed label")

@@ -10,11 +10,19 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseContainers(t *testing.T) {
+	cfg := testConfig(t, `
+version: "1"
+project: "testproject"
+`)
+	c := &Client{cfg: cfg}
+
 	tests := []struct {
 		name string
 		in   []container.Summary
@@ -32,10 +40,10 @@ func TestParseContainers(t *testing.T) {
 					ID:    "abc123",
 					Names: []string{"/clawker.myapp.dev"},
 					Labels: map[string]string{
-						LabelProject: "myapp",
-						LabelAgent:   "dev",
-						LabelImage:   "node:20",
-						LabelWorkdir: "/workspace",
+						cfg.LabelProject(): "myapp",
+						cfg.LabelAgent():   "dev",
+						cfg.LabelImage():   "node:20",
+						cfg.LabelWorkdir(): "/workspace",
 					},
 					State:   "running",
 					Created: 1700000000,
@@ -61,8 +69,8 @@ func TestParseContainers(t *testing.T) {
 					ID:    "aaa",
 					Names: []string{"/clawker.proj.agent1"},
 					Labels: map[string]string{
-						LabelProject: "proj",
-						LabelAgent:   "agent1",
+						cfg.LabelProject(): "proj",
+						cfg.LabelAgent():   "agent1",
 					},
 					State:   "running",
 					Created: 100,
@@ -71,8 +79,8 @@ func TestParseContainers(t *testing.T) {
 					ID:    "bbb",
 					Names: []string{"/clawker.proj.agent2"},
 					Labels: map[string]string{
-						LabelProject: "proj",
-						LabelAgent:   "agent2",
+						cfg.LabelProject(): "proj",
+						cfg.LabelAgent():   "agent2",
 					},
 					State:   "exited",
 					Created: 200,
@@ -130,9 +138,9 @@ func TestParseContainers(t *testing.T) {
 					Names: []string{"/clawker.test.agent"},
 					Image: "sha256:abc123def456",
 					Labels: map[string]string{
-						LabelProject: "test",
-						LabelAgent:   "agent",
-						LabelImage:   "clawker-test:latest",
+						cfg.LabelProject(): "test",
+						cfg.LabelAgent():   "agent",
+						cfg.LabelImage():   "clawker-test:latest",
 					},
 					State:   "running",
 					Created: 400,
@@ -190,7 +198,7 @@ func TestParseContainers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseContainers(tt.in)
+			got := c.parseContainers(tt.in)
 			if len(got) != len(tt.want) {
 				t.Fatalf("parseContainers() returned %d containers, want %d", len(got), len(tt.want))
 			}
@@ -263,17 +271,18 @@ func TestIsNotFoundError(t *testing.T) {
 
 // clawkerEngine returns a whail.Engine with clawker's production label config
 // backed by the given FakeAPIClient.
-func clawkerEngine(fake *whailtest.FakeAPIClient) *whail.Engine {
+func clawkerEngine(cfg config.Config, fake *whailtest.FakeAPIClient) *whail.Engine {
 	return whail.NewFromExisting(fake, whail.EngineOptions{
-		LabelPrefix:  EngineLabelPrefix,
-		ManagedLabel: EngineManagedLabel,
+		LabelPrefix:  cfg.EngineLabelPrefix(),
+		ManagedLabel: cfg.EngineManagedLabel(),
 	})
 }
 
 func TestBuildImage_RoutesToBuildKit(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
-	engine := clawkerEngine(fake)
-	client := &Client{Engine: engine}
+	engine := clawkerEngine(cfg, fake)
+	client := &Client{Engine: engine, cfg: cfg}
 
 	capture := &whailtest.BuildKitCapture{}
 	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
@@ -286,9 +295,7 @@ func TestBuildImage_RoutesToBuildKit(t *testing.T) {
 		SuppressOutput:  true,
 		Labels:          map[string]string{"app": "myapp"},
 	})
-	if err != nil {
-		t.Fatalf("BuildImage() error: %v", err)
-	}
+	require.NoError(t, err)
 
 	if capture.CallCount != 1 {
 		t.Fatalf("expected BuildKit builder to be called once, got %d", capture.CallCount)
@@ -301,7 +308,7 @@ func TestBuildImage_RoutesToBuildKit(t *testing.T) {
 	}
 
 	// Verify managed label was injected by whail
-	managedKey := EngineLabelPrefix + "." + EngineManagedLabel
+	managedKey := cfg.EngineLabelPrefix() + "." + cfg.EngineManagedLabel()
 	if capture.Opts.Labels[managedKey] != "true" {
 		t.Errorf("expected managed label %q=true, got %q", managedKey, capture.Opts.Labels[managedKey])
 	}
@@ -311,9 +318,10 @@ func TestBuildImage_RoutesToBuildKit(t *testing.T) {
 }
 
 func TestBuildImage_RoutesToLegacy(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
-	engine := clawkerEngine(fake)
-	client := &Client{Engine: engine}
+	engine := clawkerEngine(cfg, fake)
+	client := &Client{Engine: engine, cfg: cfg}
 
 	// Wire BuildKit to verify it's NOT called
 	capture := &whailtest.BuildKitCapture{}
@@ -332,9 +340,7 @@ func TestBuildImage_RoutesToLegacy(t *testing.T) {
 		BuildKitEnabled: false, // legacy path
 		SuppressOutput:  true,
 	})
-	if err != nil {
-		t.Fatalf("BuildImage() error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// BuildKit should NOT have been called
 	if capture.CallCount != 0 {
@@ -346,9 +352,10 @@ func TestBuildImage_RoutesToLegacy(t *testing.T) {
 }
 
 func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
+	cfg := testConfig(t, `version: "1"`)
 	fake := whailtest.NewFakeAPIClient()
-	engine := clawkerEngine(fake)
-	client := &Client{Engine: engine}
+	engine := clawkerEngine(cfg, fake)
+	client := &Client{Engine: engine, cfg: cfg}
 
 	capture := &whailtest.BuildKitCapture{}
 	engine.BuildKitImageBuilder = whailtest.FakeBuildKitBuilder(capture)
@@ -366,9 +373,7 @@ func TestBuildImage_BuildKitWithoutContextDir_FallsToLegacy(t *testing.T) {
 		ContextDir:      "", // empty — should fall to legacy
 		SuppressOutput:  true,
 	})
-	if err != nil {
-		t.Fatalf("BuildImage() error: %v", err)
-	}
+	require.NoError(t, err)
 
 	if capture.CallCount != 0 {
 		t.Errorf("expected BuildKit builder to NOT be called when ContextDir is empty, got %d calls", capture.CallCount)

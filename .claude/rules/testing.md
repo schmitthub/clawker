@@ -99,7 +99,7 @@ Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
 Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
-fake := dockertest.NewFakeClient()
+fake := dockertest.NewFakeClient(config.NewMockConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
 tio := iostreamstest.New()

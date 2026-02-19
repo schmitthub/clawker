@@ -207,7 +207,7 @@ func (b *Builder) mergeImageLabels(existing map[string]string) map[string]string
 	}
 
 	// Add clawker internal labels last — these cannot be overridden
-	for k, v := range ImageLabels(b.config.Project, b.config.Version) {
+	for k, v := range b.client.ImageLabels(b.config.Project, b.config.Version) {
 		merged[k] = v
 	}
 

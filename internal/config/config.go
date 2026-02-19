@@ -16,9 +16,12 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 var invalidKeysRe = regexp.MustCompile(`'([^']+)' has invalid keys: (.+)$`)
+
+const dottedLabelKeySentinel = "__clawker_dot__"
 
 const (
 	appData       = "AppData"
@@ -408,6 +411,13 @@ func NewConfig() (Config, error) {
 // ReadFromString takes a YAML string and returns a Config.
 // Useful for testing or constructing configs programmatically.
 func ReadFromString(str string) (Config, error) {
+	rewritten, err := rewriteDottedLabelKeysForViper(str)
+	if err != nil {
+		return nil, err
+	}
+
+	str = rewritten
+
 	if err := validateProjectYAMLString(str); err != nil {
 		return nil, err
 	}
@@ -421,6 +431,64 @@ func ReadFromString(str string) (Config, error) {
 		}
 	}
 	return newConfig(v), nil
+}
+
+func rewriteDottedLabelKeysForViper(str string) (string, error) {
+	if str == "" {
+		return str, nil
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(str), &root); err != nil {
+		return "", fmt.Errorf("parsing config from string: %w", err)
+	}
+
+	rewriteDottedLabelKeysInNode(&root)
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return "", fmt.Errorf("encoding rewritten config: %w", err)
+	}
+
+	return string(out), nil
+}
+
+func rewriteDottedLabelKeysInNode(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valueNode := node.Content[i+1]
+
+			if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "labels" && valueNode.Kind == yaml.MappingNode {
+				rewriteLabelMapKeys(valueNode)
+			}
+
+			rewriteDottedLabelKeysInNode(valueNode)
+		}
+		return
+	}
+
+	for _, child := range node.Content {
+		rewriteDottedLabelKeysInNode(child)
+	}
+}
+
+func rewriteLabelMapKeys(labelsNode *yaml.Node) {
+	for i := 0; i+1 < len(labelsNode.Content); i += 2 {
+		labelKey := labelsNode.Content[i]
+		if labelKey.Kind != yaml.ScalarNode {
+			continue
+		}
+		if !strings.Contains(labelKey.Value, ".") {
+			continue
+		}
+
+		labelKey.Value = strings.ReplaceAll(labelKey.Value, ".", dottedLabelKeySentinel)
+	}
 }
 
 func (c *configImpl) RequiredFirewallDomains() []string {
@@ -438,7 +506,26 @@ func (c *configImpl) Project() *Project {
 	defer c.mu.RUnlock()
 	p := &Project{}
 	_ = c.v.Unmarshal(p)
+	restoreDottedLabelKeys(p)
 	return p
+}
+
+func restoreDottedLabelKeys(project *Project) {
+	if project == nil || project.Build.Instructions == nil {
+		return
+	}
+
+	labels := project.Build.Instructions.Labels
+	if len(labels) == 0 {
+		return
+	}
+
+	restored := make(map[string]string, len(labels))
+	for key, value := range labels {
+		restored[strings.ReplaceAll(key, dottedLabelKeySentinel, ".")] = value
+	}
+
+	project.Build.Instructions.Labels = restored
 }
 
 func (c *configImpl) Settings() Settings {

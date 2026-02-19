@@ -17,10 +17,15 @@ import (
 	"github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 )
+
+// defaultCfg provides label values for standalone fixture functions.
+// Uses mock config so callers don't need to pass config explicitly.
+var defaultCfg = config.NewMockConfig()
 
 // ContainerFixture builds a container.Summary with proper clawker labels.
 // The container is in "exited" state by default.
@@ -30,12 +35,12 @@ func ContainerFixture(project, agent, image string) container.Summary {
 		panic(fmt.Sprintf("ContainerFixture: invalid inputs (project=%q, agent=%q): %v", project, agent, err))
 	}
 	labels := map[string]string{
-		docker.LabelManaged: docker.ManagedLabelValue,
-		docker.LabelAgent:   agent,
-		docker.LabelImage:   image,
+		defaultCfg.LabelManaged(): defaultCfg.ManagedLabelValue(),
+		defaultCfg.LabelAgent():   agent,
+		defaultCfg.LabelImage():   image,
 	}
 	if project != "" {
-		labels[docker.LabelProject] = project
+		labels[defaultCfg.LabelProject()] = project
 	}
 
 	return container.Summary{
@@ -114,7 +119,7 @@ func (f *FakeClient) SetupImageExists(ref string, exists bool) {
 			return client.ImageInspectResult{}, notFoundError(image)
 		}
 		if exists {
-			return managedImageInspect(ref), nil
+			return managedImageInspect(f.Cfg, ref), nil
 		}
 		return client.ImageInspectResult{}, notFoundError(image)
 	}
@@ -129,7 +134,7 @@ func (f *FakeClient) SetupImageTag() {
 	// ImageTag goes through whail's managed check which calls ImageInspect.
 	// Restore the default managed ImageInspect so the check passes.
 	f.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
-		return managedImageInspect(ref), nil
+		return managedImageInspect(f.Cfg, ref), nil
 	}
 }
 
@@ -171,7 +176,7 @@ func (f *FakeClient) SetupVolumeExists(name string, exists bool) {
 				Volume: volume.Volume{
 					Name: volumeID,
 					Labels: map[string]string{
-						docker.LabelManaged: docker.ManagedLabelValue,
+						f.Cfg.LabelManaged(): f.Cfg.ManagedLabelValue(),
 					},
 				},
 			}, nil
@@ -196,7 +201,7 @@ func (f *FakeClient) SetupNetworkExists(name string, exists bool) {
 						Name: networkName,
 						ID:   "net-" + networkName,
 						Labels: map[string]string{
-							docker.LabelManaged: docker.ManagedLabelValue,
+							f.Cfg.LabelManaged(): f.Cfg.ManagedLabelValue(),
 						},
 					},
 				},
@@ -588,14 +593,14 @@ func (f *FakeClient) SetupLegacyBuildError(err error) {
 }
 
 // managedImageInspect returns an ImageInspectResult with clawker managed labels.
-func managedImageInspect(ref string) client.ImageInspectResult {
+func managedImageInspect(cfg config.Config, ref string) client.ImageInspectResult {
 	return client.ImageInspectResult{
 		InspectResponse: dockerimage.InspectResponse{
 			ID: "sha256:fake-image-id-" + ref,
 			Config: &dockerspec.DockerOCIImageConfig{
 				ImageConfig: ocispec.ImageConfig{
 					Labels: map[string]string{
-						docker.LabelManaged: docker.ManagedLabelValue,
+						cfg.LabelManaged(): cfg.ManagedLabelValue(),
 					},
 				},
 			},

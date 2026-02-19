@@ -191,6 +191,19 @@ agent:
 	assert.Equal(t, []any{"~/.claude/agents"}, v)
 }
 
+func TestReadFromString_PreservesDottedLabelKeys(t *testing.T) {
+	c := mustReadFromString(t, `
+build:
+  instructions:
+    labels:
+      dev.clawker.project: attacker-project
+`)
+
+	p := c.Project()
+	require.NotNil(t, p.Build.Instructions)
+	assert.Equal(t, "attacker-project", p.Build.Instructions.Labels["dev.clawker.project"])
+}
+
 func TestGet_ReturnsValue(t *testing.T) {
 	c := mustReadFromString(t, `
 build:

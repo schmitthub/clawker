@@ -399,7 +399,7 @@ The following consumers still reference **removed** old-API symbols and need mig
 | `internal/bundler` | `ContainerUID`, `ContainerGID`, `EnsureDir`, `DefaultSettings` |
 | `internal/hostproxy` | `HostProxyPIDFile`, `HostProxyLogFile`, `LogsDir`, `EnsureDir`, `LabelManaged`, `ManagedLabelValue`, `LabelMonitoringStack` |
 | `internal/socketbridge` | `BridgePIDFile`, `BridgesDir`, `LogsDir`, `EnsureDir` |
-| `internal/docker` | `LabelManaged`, `ManagedLabelValue` (labels.go), `DataDir` (volume.go) |
+| ~~`internal/docker`~~ | ~~Migrated~~ — labels are Client methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. External callers of `dockertest.NewFakeClient` still need update |
 | `internal/workspace` | `DataDir`, `ConfigFileName` |
 | `internal/containerfs` | `DataDir`, `ConfigFileName`, `EnsureDir` |
 | `internal/cmd/project/init` | `NewProjectLoader`, `ConfigFileName` |
@@ -418,6 +418,8 @@ The following consumers still reference **removed** old-API symbols and need mig
 
 - `internal/cmd/config/check` — uses `ReadFromString()` only
 - `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
+- `internal/bundler` — uses `config.Config` interface for UID/GID/labels
+- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. External `dockertest.NewFakeClient` callers (~150+) still need `cfg` first arg.
 
 ### Not Yet Built (configtest/)
 
@@ -589,6 +591,7 @@ See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_
 - **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact` to catch unknown/misspelled keys (e.g. `biuld:` → `unknown keys: biuld`). Validation structs (`readFromStringValidation`, `projectRegistryValidation`) mirror the schema with `mapstructure` tags. Error messages are reformatted by `formatDecodeError` into user-friendly dot-path notation.
 - **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
 - **`ReadFromString` is env-isolated** — it parses YAML + defaults only and does not apply `CLAWKER_*` environment overrides.
+- **Dotted label keys in string fixtures are supported** — `ReadFromString`/`NewConfigFromString` preserve dotted keys under `build.instructions.labels` (for example `dev.clawker.project`) instead of expanding them into nested maps.
 - **`*bool` pointers** — schema structs (`Project()` and YAML-unmarshal paths) preserve nullable `*bool` semantics and may require nil checks. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) already materialize these to concrete true/false via non-nil pointers.
 - **`Project.Project` field** — has `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). This is intentional so viper's ErrorUnused doesn't reject the `project:` key.
 - **Transitive build failures** — Until all consumers are migrated, `go build ./...` and `go test ./...` will fail. Test individual migrated packages directly.

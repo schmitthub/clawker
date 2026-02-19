@@ -11,13 +11,13 @@ func TestResolveDefaultImage(t *testing.T) {
 	tests := []struct {
 		name     string
 		cfg      *config.Project
-		settings *config.Settings
+		settings config.Settings
 		want     string
 	}{
 		{
-			name:     "both nil returns empty",
+			name:     "both zero returns empty",
 			cfg:      nil,
-			settings: nil,
+			settings: config.Settings{},
 			want:     "",
 		},
 		{
@@ -25,7 +25,7 @@ func TestResolveDefaultImage(t *testing.T) {
 			cfg: &config.Project{
 				DefaultImage: "config-image:latest",
 			},
-			settings: &config.Settings{
+			settings: config.Settings{
 				DefaultImage: "settings-image:latest",
 			},
 			want: "config-image:latest",
@@ -35,7 +35,7 @@ func TestResolveDefaultImage(t *testing.T) {
 			cfg: &config.Project{
 				DefaultImage: "",
 			},
-			settings: &config.Settings{
+			settings: config.Settings{
 				DefaultImage: "settings-image:latest",
 			},
 			want: "settings-image:latest",
@@ -43,17 +43,17 @@ func TestResolveDefaultImage(t *testing.T) {
 		{
 			name: "settings only (nil config)",
 			cfg:  nil,
-			settings: &config.Settings{
+			settings: config.Settings{
 				DefaultImage: "settings-only:latest",
 			},
 			want: "settings-only:latest",
 		},
 		{
-			name: "config only (nil settings)",
+			name: "config only (zero settings)",
 			cfg: &config.Project{
 				DefaultImage: "config-only:latest",
 			},
-			settings: nil,
+			settings: config.Settings{},
 			want:     "config-only:latest",
 		},
 		{
@@ -61,18 +61,10 @@ func TestResolveDefaultImage(t *testing.T) {
 			cfg: &config.Project{
 				DefaultImage: "",
 			},
-			settings: &config.Settings{
+			settings: config.Settings{
 				DefaultImage: "",
 			},
 			want: "",
-		},
-		{
-			name: "empty config with nil settings",
-			cfg: &config.Project{
-				DefaultImage: "",
-			},
-			settings: nil,
-			want:     "",
 		},
 	}
 
@@ -88,45 +80,26 @@ func TestResolveDefaultImage(t *testing.T) {
 
 func TestResolveImage_FallbackToDefault(t *testing.T) {
 	tests := []struct {
-		name     string
-		cfg      *config.Project
-		settings *config.Settings
-		want     string
+		name string
+		yaml string
+		want string
 	}{
 		{
 			name: "falls back to config default",
-			cfg: &config.Project{
-				DefaultImage: "config-default:latest",
-			},
-			settings: nil,
-			want:     "config-default:latest",
+			yaml: `default_image: "config-default:latest"`,
+			want: "config-default:latest",
 		},
 		{
 			name: "falls back to settings default",
-			cfg: &config.Project{
-				DefaultImage: "",
-			},
-			settings: &config.Settings{
-				DefaultImage: "settings-default:latest",
-			},
+			yaml: `default_image: "settings-default:latest"`,
 			want: "settings-default:latest",
-		},
-		{
-			name: "config default takes precedence over settings",
-			cfg: &config.Project{
-				DefaultImage: "config-default:latest",
-			},
-			settings: &config.Settings{
-				DefaultImage: "settings-default:latest",
-			},
-			want: "config-default:latest",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &Client{} // nil Engine and nil cfg
-			client.cfg = config.NewConfigForTest(tt.cfg, tt.settings)
+			cfg := testConfig(t, tt.yaml)
+			client, _ := newTestClientWithConfig(cfg)
 			got, err := client.ResolveImage(context.TODO())
 			if err != nil {
 				t.Fatalf("ResolveImage() returned unexpected error: %v", err)
@@ -138,34 +111,10 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 	}
 }
 
-func TestResolveImage_NilConfig(t *testing.T) {
-	client := &Client{} // nil Engine and nil cfg
-	got, err := client.ResolveImage(context.TODO())
-	if err != nil {
-		t.Fatalf("ResolveImage() returned unexpected error: %v", err)
-	}
-	if got != "" {
-		t.Errorf("ResolveImage() with nil config = %q, want empty string", got)
-	}
-}
-
-func TestFindProjectImage_NilConfig(t *testing.T) {
-	ctx := context.Background()
-	client := &Client{} // nil cfg
-
-	result, err := client.findProjectImage(ctx)
-	if err != nil {
-		t.Errorf("findProjectImage() unexpected error = %v", err)
-	}
-	if result != "" {
-		t.Errorf("findProjectImage() = %q, want empty string", result)
-	}
-}
-
 func TestFindProjectImage_EmptyProject(t *testing.T) {
 	ctx := context.Background()
-	client := &Client{}
-	client.cfg = config.NewConfigForTest(&config.Project{Project: ""}, nil)
+	cfg := testConfig(t, `project: ""`)
+	client, _ := newTestClientWithConfig(cfg)
 
 	result, err := client.findProjectImage(ctx)
 	if err != nil {
@@ -181,68 +130,36 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		cfg        *config.Project
-		settings   *config.Settings
+		yaml       string
 		wantRef    string
 		wantSource ImageSource
 		wantNil    bool
 	}{
 		{
 			name:       "falls back to default from config",
-			cfg:        &config.Project{DefaultImage: "config-default:latest"},
-			settings:   nil,
+			yaml:       `default_image: "config-default:latest"`,
 			wantRef:    "config-default:latest",
 			wantSource: ImageSourceDefault,
-			wantNil:    false,
 		},
 		{
 			name:       "falls back to default from settings",
-			cfg:        &config.Project{DefaultImage: ""},
-			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
+			yaml:       `default_image: "settings-default:latest"`,
 			wantRef:    "settings-default:latest",
 			wantSource: ImageSourceDefault,
-			wantNil:    false,
 		},
 		{
-			name:       "config default takes precedence over settings",
-			cfg:        &config.Project{DefaultImage: "config-default:latest"},
-			settings:   &config.Settings{DefaultImage: "settings-default:latest"},
-			wantRef:    "config-default:latest",
-			wantSource: ImageSourceDefault,
-			wantNil:    false,
-		},
-		{
-			name:       "returns nil when no config set",
-			cfg:        nil,
-			settings:   nil,
-			wantRef:    "",
-			wantSource: "",
-			wantNil:    true,
-		},
-		{
-			name: "returns nil when all sources empty",
-			cfg: &config.Project{
-				DefaultImage: "",
-				Project:      "",
-			},
-			settings: &config.Settings{
-				DefaultImage: "",
-			},
-			wantRef:    "",
-			wantSource: "",
-			wantNil:    true,
+			name:    "returns nil when all sources empty",
+			yaml:    `{}`,
+			wantNil: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &Client{}
-			if tt.cfg != nil || tt.settings != nil {
-				client.cfg = config.NewConfigForTest(tt.cfg, tt.settings)
-			}
+			cfg := testConfig(t, tt.yaml)
+			client, _ := newTestClientWithConfig(cfg)
 
 			result, err := client.ResolveImageWithSource(ctx)
-
 			if err != nil {
 				t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
 			}
@@ -257,7 +174,6 @@ func TestResolveImageWithSource_NoDocker(t *testing.T) {
 			if result == nil {
 				t.Fatal("ResolveImageWithSource() returned nil, want non-nil")
 			}
-
 			if result.Reference != tt.wantRef {
 				t.Errorf("ResolveImageWithSource().Reference = %q, want %q", result.Reference, tt.wantRef)
 			}

@@ -165,7 +165,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 |-------------|---------|
 | `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
-| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
+| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming. `cfg config.Config` (interface) provides all label keys. `NewClient(ctx, cfg, opts...)` (production), `NewClientFromEngine(engine, cfg)` (tests) |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
