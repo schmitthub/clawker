@@ -554,6 +554,11 @@ func TestDefaults_Settings(t *testing.T) {
 	assert.True(t, *s.Monitoring.Telemetry.LogUserPrompts)
 	assert.True(t, *s.Monitoring.Telemetry.IncludeAccountUUID)
 	assert.True(t, *s.Monitoring.Telemetry.IncludeSessionID)
+	assert.Equal(t, 18374, s.HostProxy.Manager.Port)
+	assert.Equal(t, 8080, s.HostProxy.Daemon.Port)
+	assert.Equal(t, 30, int(s.HostProxy.Daemon.PollInterval.Seconds()))
+	assert.Equal(t, 60, int(s.HostProxy.Daemon.GracePeriod.Seconds()))
+	assert.Equal(t, 10, s.HostProxy.Daemon.MaxConsecutiveErrs)
 }
 
 func TestSettingsTypedGetter_Defaults(t *testing.T) {
@@ -595,6 +600,12 @@ func TestSettingsTypedGetter_Defaults(t *testing.T) {
 	assert.True(t, *settings.Monitoring.Telemetry.LogUserPrompts)
 	assert.True(t, *settings.Monitoring.Telemetry.IncludeAccountUUID)
 	assert.True(t, *settings.Monitoring.Telemetry.IncludeSessionID)
+
+	assert.Equal(t, 18374, settings.HostProxy.Manager.Port)
+	assert.Equal(t, 8080, settings.HostProxy.Daemon.Port)
+	assert.Equal(t, 30, int(settings.HostProxy.Daemon.PollInterval.Seconds()))
+	assert.Equal(t, 60, int(settings.HostProxy.Daemon.GracePeriod.Seconds()))
+	assert.Equal(t, 10, settings.HostProxy.Daemon.MaxConsecutiveErrs)
 }
 
 func TestSettingsTypedGetter_RespectsOverrides(t *testing.T) {
@@ -622,6 +633,14 @@ monitoring:
     log_user_prompts: false
     include_account_uuid: false
     include_session_id: false
+host_proxy:
+  manager:
+    port: 19444
+  daemon:
+    port: 18080
+    poll_interval: 45s
+    grace_period: 90s
+    max_consecutive_errs: 7
 default_image: alpine:3.20
 `)
 
@@ -650,7 +669,38 @@ default_image: alpine:3.20
 	assert.False(t, *settings.Monitoring.Telemetry.LogUserPrompts)
 	assert.False(t, *settings.Monitoring.Telemetry.IncludeAccountUUID)
 	assert.False(t, *settings.Monitoring.Telemetry.IncludeSessionID)
+	assert.Equal(t, 19444, settings.HostProxy.Manager.Port)
+	assert.Equal(t, 18080, settings.HostProxy.Daemon.Port)
+	assert.Equal(t, 45, int(settings.HostProxy.Daemon.PollInterval.Seconds()))
+	assert.Equal(t, 90, int(settings.HostProxy.Daemon.GracePeriod.Seconds()))
+	assert.Equal(t, 7, settings.HostProxy.Daemon.MaxConsecutiveErrs)
 	assert.Equal(t, "alpine:3.20", settings.DefaultImage)
+}
+
+func TestWrite_Key_HostProxyPersistsToSettings(t *testing.T) {
+	c, paths := mustOwnedConfig(t)
+	require.NoError(t, c.Set("host_proxy.daemon.port", 18081))
+
+	require.NoError(t, c.Write(WriteOptions{Key: "host_proxy.daemon.port"}))
+
+	v := viper.New()
+	v.SetConfigFile(paths[ScopeSettings])
+	require.NoError(t, v.ReadInConfig())
+	assert.Equal(t, 18081, v.GetInt("host_proxy.daemon.port"))
+}
+
+func TestWrite_ScopeSettings_WritesHostProxyRoots(t *testing.T) {
+	c, _ := mustOwnedConfig(t)
+	require.NoError(t, c.Set("host_proxy.manager.port", 19999))
+
+	outputPath := filepath.Join(t.TempDir(), "settings-host-proxy.yaml")
+	require.NoError(t, c.Write(WriteOptions{Scope: ScopeSettings, Path: outputPath}))
+
+	v := viper.New()
+	v.SetConfigFile(outputPath)
+	require.NoError(t, v.ReadInConfig())
+	assert.Equal(t, 19999, v.GetInt("host_proxy.manager.port"))
+	assert.Empty(t, v.GetString("build.image"))
 }
 
 // config overrides defaults
@@ -690,6 +740,30 @@ func TestNewMockConfig_AppliesEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
 	c := NewMockConfig()
 	assert.Equal(t, "alpine:3.19", c.Project().Build.Image)
+}
+
+func TestNewMockConfig_AppliesHostProxyEnvOverride(t *testing.T) {
+	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_PORT", "18090")
+	c := NewMockConfig()
+	assert.Equal(t, 18090, c.Settings().HostProxy.Daemon.Port)
+}
+
+func TestReadFromString_DoesNotApplyHostProxyEnvOverride(t *testing.T) {
+	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_PORT", "18090")
+	c := mustReadFromString(t, "")
+	assert.Equal(t, 8080, c.Settings().HostProxy.Daemon.Port)
+}
+
+func TestNewMockConfig_AppliesHostProxyDurationEnvOverride(t *testing.T) {
+	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL", "45s")
+	c := NewMockConfig()
+	assert.Equal(t, 45, int(c.Settings().HostProxy.Daemon.PollInterval.Seconds()))
+}
+
+func TestReadFromString_DoesNotApplyHostProxyDurationEnvOverride(t *testing.T) {
+	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL", "45s")
+	c := mustReadFromString(t, "")
+	assert.Equal(t, 30, int(c.Settings().HostProxy.Daemon.PollInterval.Seconds()))
 }
 
 func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
@@ -845,6 +919,33 @@ func TestBridgePIDFilePath_UsesContainerID(t *testing.T) {
 			assert.Equal(t, filepath.Join(configDir, "pids", tt.containerID+".pid"), path)
 		})
 	}
+}
+
+func TestPathHelpers_CreateDirectoriesIfMissing(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
+	c := mustReadFromString(t, "")
+
+	logsPath, err := c.HostProxyLogFilePath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "logs", "hostproxy.log"), logsPath)
+
+	pidPath, err := c.HostProxyPIDFilePath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "pids", "hostproxy.pid"), pidPath)
+
+	bridgePath, err := c.BridgePIDFilePath("container-123")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "pids", "container-123.pid"), bridgePath)
+
+	logsInfo, err := os.Stat(filepath.Join(configDir, "logs"))
+	require.NoError(t, err)
+	assert.True(t, logsInfo.IsDir())
+
+	pidsInfo, err := os.Stat(filepath.Join(configDir, "pids"))
+	require.NoError(t, err)
+	assert.True(t, pidsInfo.IsDir())
 }
 
 // ConfigDir

@@ -21,7 +21,7 @@ Viper-backed configuration with merged multi-file loading. One `Config` interfac
 
 **Files loaded by `NewConfig()`**:
 
-1. `~/.config/clawker/settings.yaml` — user settings (logging, monitoring, default image)
+1. `~/.config/clawker/settings.yaml` — user settings (logging, monitoring, host_proxy, default image)
 2. `~/.config/clawker/clawker.yaml` — user-level project config overrides
 3. `~/.config/clawker/projects.yaml` — project registry (slug → root path)
 4. `<project-root>/clawker.yaml` — project config (auto-discovered via registry + cwd)
@@ -113,9 +113,10 @@ type Config interface {
     // Schema accessors
     Logging() map[string]any          // raw logging config map
     Project() *Project                // full project schema (unmarshalled from viper)
-    Settings() Settings               // typed user settings (logging, monitoring, default_image); bool fields are materialized to concrete true/false via non-nil pointers
+    Settings() Settings               // typed user settings (logging, monitoring, host_proxy, default_image); bool fields are materialized to concrete true/false via non-nil pointers
     LoggingConfig() LoggingConfig     // typed logging config; bool pointer fields are materialized (non-nil)
     MonitoringConfig() MonitoringConfig // typed monitoring config; bool pointer fields are materialized (non-nil)
+    HostProxyConfig() HostProxyConfig // typed host proxy config (manager + daemon)
     Get(key string) (any, error)      // low-level dotted key read (returns KeyNotFoundError if not set)
     Set(key string, value any) error  // low-level dotted key write + in-memory dirty tracking
     Write(opts WriteOptions) error    // scoped/key/global selective persistence of dirty sections (thread-safe)
@@ -169,7 +170,7 @@ This package now supports a low-level, ownership-aware mutation layer in additio
 
 | Root key | Scope | File target (default) |
 | --- | --- | --- |
-| `logging`, `monitoring`, `default_image` | `settings` | `settings.yaml` |
+| `logging`, `monitoring`, `host_proxy`, `default_image` | `settings` | `settings.yaml` |
 | `projects` | `registry` | `projects.yaml` |
 | `version`, `project`, `build`, `agent`, `workspace`, `security`, `loop` | `project` | `<resolved-project-root>/clawker.yaml` (fallback user `clawker.yaml` when not in project) |
 
@@ -220,7 +221,7 @@ Additional rules:
 Top-level:
 
 - `Project` — root config struct, holds all sections plus runtime context (`projectEntry`, `registry`, `worktreeMu`)
-- `Settings` — user-level settings (`LoggingConfig`, `MonitoringConfig`, `DefaultImage`)
+- `Settings` — user-level settings (`LoggingConfig`, `MonitoringConfig`, `HostProxyConfig`, `DefaultImage`)
 
 Build:
 
@@ -463,7 +464,7 @@ Key differences:
 - `ReadFromString` does not apply `CLAWKER_*` environment overrides (it parses YAML + defaults only)
 - Returns `Config` interface, call `.Project()` to get `*Project`
 
-For `NewConfig()`, environment overrides are key-level for supported leaf keys (for example `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace entire nested objects.
+For `NewConfig()`, environment overrides are key-level for supported leaf keys (for example `CLAWKER_BUILD_IMAGE`, `CLAWKER_HOST_PROXY_DAEMON_PORT`, `CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace entire nested objects.
 
 ### Pattern 2: Validator → UnmarshalExact validation
 
@@ -597,7 +598,7 @@ See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_
 ## Gotchas
 
 - **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact` to catch unknown/misspelled keys (e.g. `biuld:` → `unknown keys: biuld`). Validation structs (`readFromStringValidation`, `projectRegistryValidation`) mirror the schema with `mapstructure` tags. Error messages are reformatted by `formatDecodeError` into user-friendly dot-path notation.
-- **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
+- **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`, `CLAWKER_HOST_PROXY_DAEMON_PORT`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
 - **`ReadFromString` is env-isolated** — it parses YAML + defaults only and does not apply `CLAWKER_*` environment overrides.
 - **Dotted label keys in string fixtures are supported** — `ReadFromString`/`NewConfigFromString` preserve dotted keys under `build.instructions.labels` (for example `dev.clawker.project`) instead of expanding them into nested maps.
 - **`*bool` pointers** — schema structs (`Project()` and YAML-unmarshal paths) preserve nullable `*bool` semantics and may require nil checks. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) already materialize these to concrete true/false via non-nil pointers.

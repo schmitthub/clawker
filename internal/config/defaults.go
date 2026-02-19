@@ -1,6 +1,10 @@
 package config
 
-import "github.com/spf13/viper"
+import (
+	"time"
+
+	"github.com/spf13/viper"
+)
 
 // requiredFirewallDomains is the default list of domains allowed through the firewall.
 // These are essential for Claude Code and common development tools.
@@ -45,6 +49,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.otel.timeout_seconds", 5)
 	v.SetDefault("logging.otel.max_queue_size", 2048)
 	v.SetDefault("logging.otel.export_interval_seconds", 5)
+
+	// Host Proxy
+	v.SetDefault("host_proxy.manager.port", 18374)
+	v.SetDefault("host_proxy.daemon.port", 18374)
+	v.SetDefault("host_proxy.daemon.poll_interval", 30*time.Second)
+	v.SetDefault("host_proxy.daemon.grace_period", 60*time.Second)
+	v.SetDefault("host_proxy.daemon.max_consecutive_errs", 10)
 
 	// Monitoring
 	v.SetDefault("monitoring.otel_collector_port", 4318)
@@ -176,6 +187,16 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #     timeout_seconds: 5
 #     max_queue_size: 2048
 #     export_interval_seconds: 5
+
+# Host Proxy configuration
+# host_proxy:
+#   manager:
+#     port: 18374
+#   daemon:
+#     port: 8080
+#     poll_interval: 30s
+#     grace_period: 60s
+#     max_consecutive_errs: 10
 
 # Monitoring stack ports (override if defaults conflict)
 # monitoring:

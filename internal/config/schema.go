@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Project represents the root configuration structure for clawker.yaml.
@@ -371,6 +372,26 @@ type Settings struct {
 	Logging      LoggingConfig    `yaml:"logging,omitempty" mapstructure:"logging"`
 	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty" mapstructure:"monitoring"`
 	DefaultImage string           `yaml:"default_image,omitempty" mapstructure:"default_image"`
+	HostProxy    HostProxyConfig  `yaml:"host_proxy,omitempty" mapstructure:"host_proxy"`
+}
+
+// HostProxyConfig configures the host proxy.
+type HostProxyConfig struct {
+	Manager HostProxyManagerConfig `yaml:"manager,omitempty" mapstructure:"manager"`
+	Daemon  HostProxyDaemonConfig  `yaml:"daemon,omitempty" mapstructure:"daemon"`
+}
+
+// HostProxyManagerConfig configures the host proxy manager.
+type HostProxyManagerConfig struct {
+	Port int `yaml:"port" mapstructure:"port"`
+}
+
+// HostProxyDaemonConfig defines configuration for the host proxy daemon.
+type HostProxyDaemonConfig struct {
+	Port               int           `yaml:"port" mapstructure:"port"`
+	PollInterval       time.Duration `yaml:"poll_interval,omitempty" mapstructure:"poll_interval"`
+	GracePeriod        time.Duration `yaml:"grace_period,omitempty" mapstructure:"grace_period"`
+	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" mapstructure:"max_consecutive_errs"`
 }
 
 // LoggingConfig configures file-based logging.

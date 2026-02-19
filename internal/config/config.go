@@ -51,6 +51,7 @@ type Config interface {
 	BridgesSubdir() (string, error)
 	PidsSubdir() (string, error)
 	BridgePIDFilePath(containerID string) (string, error)
+	HostProxyConfig() HostProxyConfig
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
 	ShareSubdir() (string, error)
@@ -108,6 +109,7 @@ const (
 var keyOwnership = map[string]ConfigScope{
 	"logging":       ScopeSettings,
 	"monitoring":    ScopeSettings,
+	"host_proxy":    ScopeSettings,
 	"default_image": ScopeSettings,
 
 	"projects": ScopeRegistry,
@@ -220,6 +222,11 @@ var supportedEnvKeys = []string{
 	"logging.otel.timeout_seconds",
 	"logging.otel.max_queue_size",
 	"logging.otel.export_interval_seconds",
+	"host_proxy.manager.port",
+	"host_proxy.daemon.port",
+	"host_proxy.daemon.poll_interval",
+	"host_proxy.daemon.grace_period",
+	"host_proxy.daemon.max_consecutive_errs",
 	"monitoring.otel_collector_endpoint",
 	"monitoring.otel_collector_port",
 	"monitoring.otel_collector_host",
@@ -571,6 +578,17 @@ func (c *configImpl) Settings() Settings {
 				IncludeSessionID:       boolPtr(c.v.GetBool("monitoring.telemetry.include_session_id")),
 			},
 		},
+		HostProxy: HostProxyConfig{
+			Manager: HostProxyManagerConfig{
+				Port: c.v.GetInt("host_proxy.manager.port"),
+			},
+			Daemon: HostProxyDaemonConfig{
+				Port:               c.v.GetInt("host_proxy.daemon.port"),
+				PollInterval:       c.v.GetDuration("host_proxy.daemon.poll_interval"),
+				GracePeriod:        c.v.GetDuration("host_proxy.daemon.grace_period"),
+				MaxConsecutiveErrs: c.v.GetInt("host_proxy.daemon.max_consecutive_errs"),
+			},
+		},
 		DefaultImage: c.v.GetString("default_image"),
 	}
 }
@@ -589,6 +607,22 @@ func (c *configImpl) LoggingConfig() LoggingConfig {
 			TimeoutSeconds:        c.v.GetInt("logging.otel.timeout_seconds"),
 			MaxQueueSize:          c.v.GetInt("logging.otel.max_queue_size"),
 			ExportIntervalSeconds: c.v.GetInt("logging.otel.export_interval_seconds"),
+		},
+	}
+}
+
+func (c *configImpl) HostProxyConfig() HostProxyConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return HostProxyConfig{
+		Manager: HostProxyManagerConfig{
+			Port: c.v.GetInt("host_proxy.manager.port"),
+		},
+		Daemon: HostProxyDaemonConfig{
+			Port:               c.v.GetInt("host_proxy.daemon.port"),
+			PollInterval:       c.v.GetDuration("host_proxy.daemon.poll_interval"),
+			GracePeriod:        c.v.GetDuration("host_proxy.daemon.grace_period"),
+			MaxConsecutiveErrs: c.v.GetInt("host_proxy.daemon.max_consecutive_errs"),
 		},
 	}
 }
@@ -1069,6 +1103,7 @@ type readFromStringValidation struct {
 	Security     SecurityConfig   `mapstructure:"security"`
 	Loop         *LoopConfig      `mapstructure:"loop"`
 	Logging      LoggingConfig    `mapstructure:"logging"`
+	HostProxy    HostProxyConfig  `mapstructure:"host_proxy"`
 	Monitoring   MonitoringConfig `mapstructure:"monitoring"`
 	Projects     map[string]any   `mapstructure:"projects"`
 }
