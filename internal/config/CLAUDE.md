@@ -419,7 +419,7 @@ The following consumers still reference **removed** old-API symbols and need mig
 - `internal/cmd/config/check` — uses `ReadFromString()` only
 - `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
 - `internal/bundler` — uses `config.Config` interface for UID/GID/labels
-- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. External `dockertest.NewFakeClient` callers (~150+) still need `cfg` first arg.
+- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. **131/139 external `dockertest.NewFakeClient` callers migrated** (no-arg → `config.NewMockConfig()` first arg). 8 remaining `WithConfig` callers are entangled with `config.Provider` → `config.Config` migration (will fix per-package).
 
 ### Not Yet Built (configtest/)
 

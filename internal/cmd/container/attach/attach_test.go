@@ -193,7 +193,7 @@ func TestAttachRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestAttachRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, tio := testFactory(t, fake)
 
@@ -213,7 +213,7 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	f, tio := testFactory(t, fake)
@@ -232,7 +232,7 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 func TestAttachRun_NonTTYHappyPath(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	fake.SetupContainerAttach()

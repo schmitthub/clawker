@@ -62,7 +62,48 @@ Critical path (blocks `go build ./...`):
 5. `internal/workspace` — DataDir, ConfigFileName
 6. `internal/containerfs` — DataDir, ConfigFileName, EnsureDir
 
-**Docker external cascade (post-migration):** `dockertest.NewFakeClient` signature changed to `(cfg, opts...)`. ~150+ callers need `config.NewMockConfig()` as first arg. Key locations: `cmd/fawker/factory.go`, `internal/cmd/container/*/` (~80), `internal/cmd/loop/shared/` (~15), `internal/cmd/image/build/`, `internal/cmd/init/`. `WithConfig` option deleted. Find all with: `grep -rn 'dockertest.NewFakeClient(' --include='*.go'`. Also: `docker.ContainerLabels(`, `docker.VolumeLabels(` etc. are now Client methods — external callers in `internal/cmd/` and `internal/workspace/` need migration. `docker.LabelManaged` etc. constants deleted — use `cfg.Label*()` methods.
+**Docker external cascade (post-migration — PARTIALLY DONE):** DONE — 131 no-arg `dockertest.NewFakeClient()` → `dockertest.NewFakeClient(config.NewMockConfig())` across 26 files (sed + goimports). REMAINING — 8 `WithConfig` calls entangled with `config.Provider` → `config.Config` migration (will fix per-package). REMAINING — label constant external callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`, `workspace/strategy.go`. REMAINING — ~114 `config.Provider` references across Options structs and test callbacks. See below for per-package patterns.
+
+### Per-Package Migration Patterns (docker cascade + config.Provider)
+
+**NewFakeClient WithConfig pattern** (8 remaining sites):
+```go
+// OLD: dockertest.NewFakeClient(dockertest.WithConfig(cfg))
+// NEW: dockertest.NewFakeClient(cfg)  // cfg must be config.Config interface
+```
+
+**config.NewConfigForTest replacement** (used in WithConfig sites + many others):
+```go
+// OLD: testCfg := config.NewConfigForTest(projectStruct, config.DefaultSettings())
+// NEW (simple): testCfg := config.NewMockConfig()
+// NEW (with values): testCfg, _ := config.ReadFromString(`project: "test"\nbuild:\n  image: "node:20-slim"`)
+```
+
+**config.Provider → config.Config in Options structs**:
+```go
+// OLD: Config func() config.Provider
+// NEW: Config func() (config.Config, error)
+```
+
+**config.Provider → config.Config in test Factory callbacks**:
+```go
+// OLD: Config: func() config.Provider { return cfg },
+// NEW: Config: func() (config.Config, error) { return cfg, nil },
+```
+
+**Label constants → config.Config methods** (in production code that has a cfg):
+```go
+// OLD: docker.LabelManaged, docker.ManagedLabelValue, docker.LabelProject, etc.
+// NEW: cfg.LabelManaged(), cfg.ManagedLabelValue(), cfg.LabelProject(), etc.
+```
+
+**Label functions → Client methods** (in code that has a *docker.Client):
+```go
+// OLD: docker.ImageLabels(project, version)
+// NEW: client.ImageLabels(project, version)
+// OLD: docker.VolumeLabels(project, agent, purpose)
+// NEW: client.VolumeLabels(project, agent, purpose)
+```
 
 Command layer (blocks individual commands):
 7. `internal/cmd/project/init` — ProjectLoader, ConfigFileName

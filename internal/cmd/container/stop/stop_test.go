@@ -146,7 +146,7 @@ func TestCmdStop_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestStopRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -179,7 +179,7 @@ func TestStopRun_StopsBridge(t *testing.T) {
 }
 
 func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -208,7 +208,7 @@ func TestStopRun_BridgeErrorDoesNotFailStop(t *testing.T) {
 }
 
 func TestStopRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -232,7 +232,7 @@ func TestStopRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestStopRun_StopsBridgeWithSignal(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 

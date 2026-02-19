@@ -301,7 +301,7 @@ func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 }
 
 func TestUpdateRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()
@@ -345,7 +345,7 @@ func TestUpdateRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestUpdateRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testUpdateFactory(t, fake)
@@ -362,7 +362,7 @@ func TestUpdateRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestUpdateRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()

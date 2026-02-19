@@ -286,7 +286,7 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestExecRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, tio := testFactory(t, fake)
 
@@ -306,7 +306,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	f, tio := testFactory(t, fake)
 
@@ -324,7 +324,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 func TestExecRun_DetachMode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-abc123")
 	fake.SetupExecStart()
@@ -346,7 +346,7 @@ func TestExecRun_DetachMode(t *testing.T) {
 func TestExecRun_NonTTYHappyPath(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-xyz789")
 	fake.SetupExecAttach()
@@ -369,7 +369,7 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 func TestExecRun_NonZeroExitCode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-fail")
 	fake.SetupExecAttach()

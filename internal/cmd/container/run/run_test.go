@@ -658,7 +658,7 @@ func TestImageArg(t *testing.T) {
 				ctx := context.Background()
 
 				// Create fake Docker client
-				fake := dockertest.NewFakeClient()
+				fake := dockertest.NewFakeClient(config.NewMockConfig())
 
 				// Build image summaries and configure fake
 				var summaries []whail.ImageSummary
@@ -839,7 +839,7 @@ func testConfig() *config.Project {
 
 func TestRunRun(t *testing.T) {
 	t.Run("detached mode prints container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(config.NewMockConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.SetupContainerStart()
@@ -865,7 +865,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container create failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(config.NewMockConfig())
 		fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 			return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
 		}
@@ -885,7 +885,7 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("container start failure returns error", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(config.NewMockConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {

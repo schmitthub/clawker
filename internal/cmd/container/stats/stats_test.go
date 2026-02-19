@@ -333,7 +333,7 @@ const statsJSON = `{
 }`
 
 func TestStatsRun_NoStream_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerStats(statsJSON)
@@ -385,7 +385,7 @@ func TestStatsRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStatsRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)
@@ -402,7 +402,7 @@ func TestStatsRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestStatsRun_NoRunningContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList() // empty list — no running containers
 
 	f, tio := testFactory(t, fake)

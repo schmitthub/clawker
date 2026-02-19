@@ -192,7 +192,7 @@ func TestCmdList_Properties(t *testing.T) {
 // --- Tier 2: Integration tests ---
 
 func TestListRun_DefaultTable(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -216,7 +216,7 @@ func TestListRun_DefaultTable(t *testing.T) {
 }
 
 func TestListRun_JSONOutput(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -239,7 +239,7 @@ func TestListRun_JSONOutput(t *testing.T) {
 }
 
 func TestListRun_QuietMode(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.RunningContainerFixture("myapp", "worker"),
@@ -264,7 +264,7 @@ func TestListRun_QuietMode(t *testing.T) {
 }
 
 func TestListRun_TemplateOutput(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -284,7 +284,7 @@ func TestListRun_TemplateOutput(t *testing.T) {
 }
 
 func TestListRun_FilterByStatus(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
@@ -306,7 +306,7 @@ func TestListRun_FilterByStatus(t *testing.T) {
 }
 
 func TestListRun_FilterByAgent(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.RunningContainerFixture("myapp", "worker"),
@@ -328,7 +328,7 @@ func TestListRun_FilterByAgent(t *testing.T) {
 }
 
 func TestListRun_FilterInvalidKey(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -344,7 +344,7 @@ func TestListRun_FilterInvalidKey(t *testing.T) {
 }
 
 func TestListRun_EmptyResults(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -362,7 +362,7 @@ func TestListRun_EmptyResults(t *testing.T) {
 }
 
 func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -403,7 +403,7 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestListRun_ProjectFilter(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(config.NewMockConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
