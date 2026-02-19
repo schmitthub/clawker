@@ -50,6 +50,7 @@ type Config interface {
 	LogsSubdir() (string, error)
 	BridgesSubdir() (string, error)
 	PidsSubdir() (string, error)
+	BridgePIDFilePath(containerID string) (string, error)
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
 	ShareSubdir() (string, error)

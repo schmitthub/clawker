@@ -70,6 +70,7 @@ All constants are **private** — callers access them exclusively through `Confi
 | `clawkerNetwork` | `ClawkerNetwork()` | `"clawker-net"` |
 | `logsSubdir` | `LogsSubdir()` | `"<ConfigDir()>/logs"` |
 | `pidsSubdir` | `PidsSubdir()` | `"<ConfigDir()>/pids"` |
+| `pidsSubdir` + runtime container ID | `BridgePIDFilePath(containerID)` | `"<ConfigDir()>/pids/<containerID>.pid"` |
 | `hostProxyPIDFileName` | `HostProxyPIDFilePath()` | `"<ConfigDir()>/pids/hostproxy.pid"` |
 | `hostProxyLogFileName` | `HostProxyLogFilePath()` | `"<ConfigDir()>/logs/hostproxy.log"` |
 | `pidsSubdir` (legacy alias) | `BridgesSubdir()` | `"<ConfigDir()>/pids"` |
@@ -133,6 +134,7 @@ type Config interface {
     LogsSubdir() (string, error)      // ensures + returns "<ConfigDir()>/logs"
     BridgesSubdir() (string, error)   // legacy alias; ensures + returns "<ConfigDir()>/pids"
     PidsSubdir() (string, error)      // ensures + returns "<ConfigDir()>/pids"
+    BridgePIDFilePath(containerID string) (string, error) // ensures pids dir + returns "<ConfigDir()>/pids/<containerID>.pid"
     HostProxyLogFilePath() (string, error) // ensures logs dir + returns "<ConfigDir()>/logs/hostproxy.log"
     HostProxyPIDFilePath() (string, error) // ensures pids dir + returns "<ConfigDir()>/pids/hostproxy.pid"
     ShareSubdir() (string, error)     // ensures + returns "<ConfigDir()>/.clawker-share"
@@ -526,7 +528,7 @@ All subdir constants are private — access them through `Config` methods (`Logs
 ### Pattern 6: Label/PID constants → Config interface methods
 
 **Old**: `config.LabelManaged`, `config.ManagedLabelValue`, `config.BridgePIDFile`, `config.HostProxyPIDFile`, `config.HostProxyLogFile`, etc.
-**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). Host proxy path helpers are also exposed on `Config` (`HostProxyPIDFilePath()`, `HostProxyLogFilePath()`).
+**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). PID/log path helpers are also exposed on `Config` (`BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`).
 
 ### Pattern 7: ContainerUID/GID / DefaultSettings
 

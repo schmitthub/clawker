@@ -785,7 +785,19 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, filepath.Join(configDir, "logs"), logsSubdirPath)
 	bridgesSubdirPath, err := c.BridgesSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "bridges"), bridgesSubdirPath)
+	assert.Equal(t, filepath.Join(configDir, "pids"), bridgesSubdirPath)
+	pidsSubdirPath, err := c.PidsSubdir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "pids"), pidsSubdirPath)
+	bridgePIDPath, err := c.BridgePIDFilePath("abc123")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "pids", "abc123.pid"), bridgePIDPath)
+	hostProxyLogPath, err := c.HostProxyLogFilePath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "logs", "hostproxy.log"), hostProxyLogPath)
+	hostProxyPIDPath, err := c.HostProxyPIDFilePath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(configDir, "pids", "hostproxy.pid"), hostProxyPIDPath)
 	shareSubdirPath, err := c.ShareSubdir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(configDir, ".clawker-share"), shareSubdirPath)
@@ -809,6 +821,30 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, "managed", c.EngineManagedLabel())
 	assert.Equal(t, 1001, c.ContainerUID())
 	assert.Equal(t, 1001, c.ContainerGID())
+}
+
+func TestBridgePIDFilePath_UsesContainerID(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
+	c := mustReadFromString(t, "")
+
+	tests := []struct {
+		name        string
+		containerID string
+	}{
+		{name: "alphanumeric", containerID: "abc123"},
+		{name: "contains-hyphen", containerID: "clawker-my-agent"},
+		{name: "contains-dot", containerID: "clawker.my.agent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, err := c.BridgePIDFilePath(tt.containerID)
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Join(configDir, "pids", tt.containerID+".pid"), path)
+		})
+	}
 }
 
 // ConfigDir

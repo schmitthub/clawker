@@ -131,6 +131,13 @@ func (c *configImpl) LogsSubdir() (string, error)        { return subdirPath(log
 func (c *configImpl) BridgesSubdir() (string, error)     { return subdirPath(pidsSubdir) } // TODO refactor callers to use to PidsSubdir
 
 func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(pidsSubdir) }
+func (c *configImpl) BridgePIDFilePath(containerID string) (string, error) {
+	pidsDir, err := c.PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pidsDir, containerID+".pid"), nil
+}
 func (c *configImpl) HostProxyLogFilePath() (string, error) {
 	logsDir, err := c.LogsSubdir()
 	if err != nil {
