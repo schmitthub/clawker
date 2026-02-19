@@ -14,19 +14,24 @@ const labelDomain = "dev.clawker"
 
 const (
 	clawkerConfigDirEnv = "CLAWKER_CONFIG_DIR"
-	// MonitorSubdir is the subdirectory for monitoring stack configuration
+	// monitorSubdir is the subdirectory for monitoring stack configuration
 	monitorSubdir = "monitor"
-	// BuildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
+	// buildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
 	buildSubdir = "build"
-	// DockerfilesSubdir is the subdirectory for generated Dockerfiles
+	// dockerfilesSubdir is the subdirectory for generated Dockerfiles
 	dockerfilesSubdir = "dockerfiles"
-	// ClawkerNetwork is the name of the shared Docker network
+	// clawkerNetwork is the name of the shared Docker network
 	clawkerNetwork = "clawker-net"
-	// LogsSubdir is the subdirectory for log files
+	// logsSubdir is the subdirectory for log files
 	logsSubdir = "logs"
-	// BridgesSubdir is the subdirectory for socket bridge PID files
-	bridgesSubdir = "bridges"
-	shareSubdir   = ".clawker-share"
+	// pidsSubdir is the subdirectory for PID files
+	pidsSubdir = "pids"
+	// hostProxyPIDFileName is the filename for the host proxy PID file
+	hostProxyPIDFileName = "hostproxy.pid"
+	// hostProxyLogFileName is the filename for the host proxy log file
+	hostProxyLogFileName = "hostproxy.log"
+	// shareSubdir is the subdirectory for the shared directory (mounted read-only into containers)
+	shareSubdir = ".clawker-share"
 )
 
 type Mode string
@@ -123,10 +128,26 @@ func (c *configImpl) BuildSubdir() (string, error)       { return subdirPath(bui
 func (c *configImpl) DockerfilesSubdir() (string, error) { return subdirPath(dockerfilesSubdir) }
 func (c *configImpl) ClawkerNetwork() string             { return clawkerNetwork }
 func (c *configImpl) LogsSubdir() (string, error)        { return subdirPath(logsSubdir) }
-func (c *configImpl) BridgesSubdir() (string, error)     { return subdirPath(bridgesSubdir) }
-func (c *configImpl) ShareSubdir() (string, error)       { return subdirPath(shareSubdir) }
-func (c *configImpl) LabelPrefix() string                { return labelPrefix }
-func (c *configImpl) LabelManaged() string               { return labelManaged }
+func (c *configImpl) BridgesSubdir() (string, error)     { return subdirPath(pidsSubdir) } // TODO refactor callers to use to PidsSubdir
+
+func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(pidsSubdir) }
+func (c *configImpl) HostProxyLogFilePath() (string, error) {
+	logsDir, err := c.LogsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(logsDir, hostProxyLogFileName), nil
+}
+func (c *configImpl) HostProxyPIDFilePath() (string, error) {
+	pidsDir, err := c.PidsSubdir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pidsDir, hostProxyPIDFileName), nil
+}
+func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(shareSubdir) }
+func (c *configImpl) LabelPrefix() string          { return labelPrefix }
+func (c *configImpl) LabelManaged() string         { return labelManaged }
 func (c *configImpl) LabelMonitoringStack() string {
 	return labelMonitoringStack
 }

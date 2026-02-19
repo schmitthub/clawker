@@ -69,7 +69,10 @@ All constants are **private** — callers access them exclusively through `Confi
 | `dockerfilesSubdir` | `DockerfilesSubdir()` | `"<ConfigDir()>/dockerfiles"` |
 | `clawkerNetwork` | `ClawkerNetwork()` | `"clawker-net"` |
 | `logsSubdir` | `LogsSubdir()` | `"<ConfigDir()>/logs"` |
-| `bridgesSubdir` | `BridgesSubdir()` | `"<ConfigDir()>/bridges"` |
+| `pidsSubdir` | `PidsSubdir()` | `"<ConfigDir()>/pids"` |
+| `hostProxyPIDFileName` | `HostProxyPIDFilePath()` | `"<ConfigDir()>/pids/hostproxy.pid"` |
+| `hostProxyLogFileName` | `HostProxyLogFilePath()` | `"<ConfigDir()>/logs/hostproxy.log"` |
+| `pidsSubdir` (legacy alias) | `BridgesSubdir()` | `"<ConfigDir()>/pids"` |
 | `shareSubdir` | `ShareSubdir()` | `"<ConfigDir()>/.clawker-share"` |
 | `labelPrefix` | `LabelPrefix()` | `"dev.clawker."` |
 | `labelManaged` | `LabelManaged()` | `"dev.clawker.managed"` |
@@ -128,7 +131,10 @@ type Config interface {
     DockerfilesSubdir() (string, error) // ensures + returns "<ConfigDir()>/dockerfiles"
     ClawkerNetwork() string           // "clawker-net"
     LogsSubdir() (string, error)      // ensures + returns "<ConfigDir()>/logs"
-    BridgesSubdir() (string, error)   // ensures + returns "<ConfigDir()>/bridges"
+    BridgesSubdir() (string, error)   // legacy alias; ensures + returns "<ConfigDir()>/pids"
+    PidsSubdir() (string, error)      // ensures + returns "<ConfigDir()>/pids"
+    HostProxyLogFilePath() (string, error) // ensures logs dir + returns "<ConfigDir()>/logs/hostproxy.log"
+    HostProxyPIDFilePath() (string, error) // ensures pids dir + returns "<ConfigDir()>/pids/hostproxy.pid"
     ShareSubdir() (string, error)     // ensures + returns "<ConfigDir()>/.clawker-share"
     LabelPrefix() string              // "dev.clawker."
     LabelManaged() string             // "dev.clawker.managed"
@@ -515,12 +521,12 @@ logsDir, _ := cfg.LogsSubdir()
 os.MkdirAll(logsDir, 0o755)
 ```
 
-All subdir constants are private — access them through `Config` methods (`LogsSubdir()`, `BridgesSubdir()`, `MonitorSubdir()`, etc.), which ensure the directory exists and return `(string, error)`.
+All subdir constants are private — access them through `Config` methods (`LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()` legacy alias, `MonitorSubdir()`, etc.), which ensure the directory exists and return `(string, error)`.
 
 ### Pattern 6: Label/PID constants → Config interface methods
 
-**Old**: `config.LabelManaged`, `config.ManagedLabelValue`, `config.BridgePIDFile`, etc.
-**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). Package-specific constants like PID file names belong in their own packages (`hostproxy`, `socketbridge`), not in `config`.
+**Old**: `config.LabelManaged`, `config.ManagedLabelValue`, `config.BridgePIDFile`, `config.HostProxyPIDFile`, `config.HostProxyLogFile`, etc.
+**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). Host proxy path helpers are also exposed on `Config` (`HostProxyPIDFilePath()`, `HostProxyLogFilePath()`).
 
 ### Pattern 7: ContainerUID/GID / DefaultSettings
 
