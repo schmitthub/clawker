@@ -64,6 +64,7 @@ All constants are **private** — callers access them exclusively through `Confi
 | `domain` | `Domain()` | `"clawker.dev"` |
 | `labelDomain` | `LabelDomain()` | `"dev.clawker"` |
 | `clawkerConfigDirEnv` | `ConfigDirEnvVar()` | `"CLAWKER_CONFIG_DIR"` |
+| `clawkerIgnoreFileName` | `ClawkerIgnoreName()` | `".clawkerignore"` |
 | `monitorSubdir` | `MonitorSubdir()` | `"<ConfigDir()>/monitor"` |
 | `buildSubdir` | `BuildSubdir()` | `"<ConfigDir()>/build"` |
 | `dockerfilesSubdir` | `DockerfilesSubdir()` | `"<ConfigDir()>/dockerfiles"` |
@@ -111,6 +112,7 @@ const ModeSnapshot Mode = "snapshot" // Ephemeral volume copy (isolated)
 ```go
 type Config interface {
     // Schema accessors
+    ClawkerIgnoreName() string       // ".clawkerignore"
     Logging() map[string]any          // raw logging config map
     Project() *Project                // full project schema (unmarshalled from viper)
     Settings() Settings               // typed user settings (logging, monitoring, host_proxy, default_image); bool fields are materialized to concrete true/false via non-nil pointers
@@ -161,6 +163,8 @@ type Config interface {
     ContainerGID() int                // 1001
 }
 ```
+
+Default host proxy values: `host_proxy.manager.port=18374`, `host_proxy.daemon.port=18374`, `host_proxy.daemon.poll_interval=30s`, `host_proxy.daemon.grace_period=60s`, `host_proxy.daemon.max_consecutive_errs=10`.
 
 ### Low-level Mutation API (config.go)
 

@@ -555,7 +555,7 @@ func TestDefaults_Settings(t *testing.T) {
 	assert.True(t, *s.Monitoring.Telemetry.IncludeAccountUUID)
 	assert.True(t, *s.Monitoring.Telemetry.IncludeSessionID)
 	assert.Equal(t, 18374, s.HostProxy.Manager.Port)
-	assert.Equal(t, 8080, s.HostProxy.Daemon.Port)
+	assert.Equal(t, 18374, s.HostProxy.Daemon.Port)
 	assert.Equal(t, 30, int(s.HostProxy.Daemon.PollInterval.Seconds()))
 	assert.Equal(t, 60, int(s.HostProxy.Daemon.GracePeriod.Seconds()))
 	assert.Equal(t, 10, s.HostProxy.Daemon.MaxConsecutiveErrs)
@@ -602,7 +602,7 @@ func TestSettingsTypedGetter_Defaults(t *testing.T) {
 	assert.True(t, *settings.Monitoring.Telemetry.IncludeSessionID)
 
 	assert.Equal(t, 18374, settings.HostProxy.Manager.Port)
-	assert.Equal(t, 8080, settings.HostProxy.Daemon.Port)
+	assert.Equal(t, 18374, settings.HostProxy.Daemon.Port)
 	assert.Equal(t, 30, int(settings.HostProxy.Daemon.PollInterval.Seconds()))
 	assert.Equal(t, 60, int(settings.HostProxy.Daemon.GracePeriod.Seconds()))
 	assert.Equal(t, 10, settings.HostProxy.Daemon.MaxConsecutiveErrs)
@@ -751,7 +751,7 @@ func TestNewMockConfig_AppliesHostProxyEnvOverride(t *testing.T) {
 func TestReadFromString_DoesNotApplyHostProxyEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_PORT", "18090")
 	c := mustReadFromString(t, "")
-	assert.Equal(t, 8080, c.Settings().HostProxy.Daemon.Port)
+	assert.Equal(t, 18374, c.Settings().HostProxy.Daemon.Port)
 }
 
 func TestNewMockConfig_AppliesHostProxyDurationEnvOverride(t *testing.T) {

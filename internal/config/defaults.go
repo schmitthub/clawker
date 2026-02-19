@@ -193,7 +193,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #   manager:
 #     port: 18374
 #   daemon:
-#     port: 8080
+#     port: 18374
 #     poll_interval: 30s
 #     grace_period: 60s
 #     max_consecutive_errs: 10

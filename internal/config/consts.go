@@ -13,7 +13,10 @@ const domain = "clawker.dev"
 const labelDomain = "dev.clawker"
 
 const (
+	// clawkerConfigDirEnv is the environment variable for overriding the config directory location.
 	clawkerConfigDirEnv = "CLAWKER_CONFIG_DIR"
+	// clawkerIgnoreFileName is the filename for the ignore list that specify paths to exclude from processing.
+	clawkerIgnoreFileName = ".clawkerignore"
 	// monitorSubdir is the subdirectory for monitoring stack configuration
 	monitorSubdir = "monitor"
 	// buildSubdir is the subdirectory for build artifacts (versions.json, dockerfiles)
@@ -120,17 +123,40 @@ func subdirPath(subdir string) (string, error) {
 	return fullPath, nil
 }
 
-func (c *configImpl) Domain() string                     { return domain }
-func (c *configImpl) LabelDomain() string                { return labelDomain }
-func (c *configImpl) ConfigDirEnvVar() string            { return clawkerConfigDirEnv }
-func (c *configImpl) MonitorSubdir() (string, error)     { return subdirPath(monitorSubdir) }
-func (c *configImpl) BuildSubdir() (string, error)       { return subdirPath(buildSubdir) }
-func (c *configImpl) DockerfilesSubdir() (string, error) { return subdirPath(dockerfilesSubdir) }
-func (c *configImpl) ClawkerNetwork() string             { return clawkerNetwork }
-func (c *configImpl) LogsSubdir() (string, error)        { return subdirPath(logsSubdir) }
-func (c *configImpl) BridgesSubdir() (string, error)     { return subdirPath(pidsSubdir) } // TODO refactor callers to use to PidsSubdir
+// ClawkerIgnoreName returns the canonical ignore filename used by snapshot/bind workflows.
+func (c *configImpl) ClawkerIgnoreName() string { return clawkerIgnoreFileName }
 
+// Domain returns the public clawker domain.
+func (c *configImpl) Domain() string { return domain }
+
+// LabelDomain returns the base OCI/Docker label namespace.
+func (c *configImpl) LabelDomain() string { return labelDomain }
+
+// ConfigDirEnvVar returns the environment variable name that overrides config directory resolution.
+func (c *configImpl) ConfigDirEnvVar() string { return clawkerConfigDirEnv }
+
+// MonitorSubdir ensures and returns the monitor subdirectory path under ConfigDir.
+func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir) }
+
+// BuildSubdir ensures and returns the build subdirectory path under ConfigDir.
+func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir) }
+
+// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under ConfigDir.
+func (c *configImpl) DockerfilesSubdir() (string, error) { return subdirPath(dockerfilesSubdir) }
+
+// ClawkerNetwork returns the shared Docker network name used by clawker resources.
+func (c *configImpl) ClawkerNetwork() string { return clawkerNetwork }
+
+// LogsSubdir ensures and returns the logs subdirectory path under ConfigDir.
+func (c *configImpl) LogsSubdir() (string, error) { return subdirPath(logsSubdir) }
+
+// BridgesSubdir ensures and returns the legacy bridge PID subdirectory path under ConfigDir.
+func (c *configImpl) BridgesSubdir() (string, error) { return subdirPath(pidsSubdir) } // TODO refactor callers to use to PidsSubdir
+
+// PidsSubdir ensures and returns the PID subdirectory path under ConfigDir.
 func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(pidsSubdir) }
+
+// BridgePIDFilePath ensures the PID subdirectory and returns the per-container bridge PID file path.
 func (c *configImpl) BridgePIDFilePath(containerID string) (string, error) {
 	pidsDir, err := c.PidsSubdir()
 	if err != nil {
@@ -138,6 +164,8 @@ func (c *configImpl) BridgePIDFilePath(containerID string) (string, error) {
 	}
 	return filepath.Join(pidsDir, containerID+".pid"), nil
 }
+
+// HostProxyLogFilePath ensures the logs subdirectory and returns the host proxy log file path.
 func (c *configImpl) HostProxyLogFilePath() (string, error) {
 	logsDir, err := c.LogsSubdir()
 	if err != nil {
@@ -145,6 +173,8 @@ func (c *configImpl) HostProxyLogFilePath() (string, error) {
 	}
 	return filepath.Join(logsDir, hostProxyLogFileName), nil
 }
+
+// HostProxyPIDFilePath ensures the PID subdirectory and returns the host proxy PID file path.
 func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 	pidsDir, err := c.PidsSubdir()
 	if err != nil {
@@ -152,30 +182,72 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 	}
 	return filepath.Join(pidsDir, hostProxyPIDFileName), nil
 }
+
+// ShareSubdir ensures and returns the shared directory path under ConfigDir.
 func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(shareSubdir) }
-func (c *configImpl) LabelPrefix() string          { return labelPrefix }
-func (c *configImpl) LabelManaged() string         { return labelManaged }
+
+// LabelPrefix returns the full label key prefix (with trailing dot).
+func (c *configImpl) LabelPrefix() string { return labelPrefix }
+
+// LabelManaged returns the managed-resource label key.
+func (c *configImpl) LabelManaged() string { return labelManaged }
+
+// LabelMonitoringStack returns the monitoring-stack label key.
 func (c *configImpl) LabelMonitoringStack() string {
 	return labelMonitoringStack
 }
-func (c *configImpl) LabelProject() string   { return labelProject }
-func (c *configImpl) LabelAgent() string     { return labelAgent }
-func (c *configImpl) LabelVersion() string   { return labelVersion }
-func (c *configImpl) LabelImage() string     { return labelImage }
-func (c *configImpl) LabelCreated() string   { return labelCreated }
-func (c *configImpl) LabelWorkdir() string   { return labelWorkdir }
-func (c *configImpl) LabelPurpose() string   { return labelPurpose }
-func (c *configImpl) LabelTestName() string  { return labelTestName }
+
+// LabelProject returns the project label key.
+func (c *configImpl) LabelProject() string { return labelProject }
+
+// LabelAgent returns the agent label key.
+func (c *configImpl) LabelAgent() string { return labelAgent }
+
+// LabelVersion returns the clawker version label key.
+func (c *configImpl) LabelVersion() string { return labelVersion }
+
+// LabelImage returns the source image label key.
+func (c *configImpl) LabelImage() string { return labelImage }
+
+// LabelCreated returns the creation timestamp label key.
+func (c *configImpl) LabelCreated() string { return labelCreated }
+
+// LabelWorkdir returns the host workdir label key.
+func (c *configImpl) LabelWorkdir() string { return labelWorkdir }
+
+// LabelPurpose returns the volume purpose label key.
+func (c *configImpl) LabelPurpose() string { return labelPurpose }
+
+// LabelTestName returns the test-name label key.
+func (c *configImpl) LabelTestName() string { return labelTestName }
+
+// LabelBaseImage returns the base-image label key.
 func (c *configImpl) LabelBaseImage() string { return labelBaseImage }
-func (c *configImpl) LabelFlavor() string    { return labelFlavor }
-func (c *configImpl) LabelTest() string      { return labelTest }
-func (c *configImpl) LabelE2ETest() string   { return labelE2ETest }
+
+// LabelFlavor returns the Linux flavor label key.
+func (c *configImpl) LabelFlavor() string { return labelFlavor }
+
+// LabelTest returns the test marker label key.
+func (c *configImpl) LabelTest() string { return labelTest }
+
+// LabelE2ETest returns the E2E-test marker label key.
+func (c *configImpl) LabelE2ETest() string { return labelE2ETest }
+
+// ManagedLabelValue returns the canonical value used for managed labels.
 func (c *configImpl) ManagedLabelValue() string {
 	return managedLabelValue
 }
+
+// EngineLabelPrefix returns the whail engine label prefix (without trailing dot).
 func (c *configImpl) EngineLabelPrefix() string { return engineLabelPrefix }
+
+// EngineManagedLabel returns the managed label key used by whail engine options.
 func (c *configImpl) EngineManagedLabel() string {
 	return engineManagedLabel
 }
+
+// ContainerUID returns the default non-root container user UID.
 func (c *configImpl) ContainerUID() int { return containerUID }
+
+// ContainerGID returns the default non-root container user GID.
 func (c *configImpl) ContainerGID() int { return containerGID }

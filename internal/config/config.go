@@ -31,6 +31,7 @@ const (
 // Config is the public configuration contract.
 // Add methods here as the config contract grows.
 type Config interface {
+	ClawkerIgnoreName() string
 	Logging() map[string]any
 	Project() *Project
 	Settings() Settings
