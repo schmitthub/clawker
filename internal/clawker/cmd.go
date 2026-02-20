@@ -118,13 +118,13 @@ func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResul
 }
 
 // updateStatePath returns the path to the update state cache file.
-// Returns empty string if the clawker home directory cannot be determined.
+// Returns empty string if the clawker state directory cannot be determined.
 func updateStatePath() string {
-	home, err := config.ClawkerHome()
-	if err != nil {
+	stateDir := config.StateDir()
+	if stateDir == "" {
 		return ""
 	}
-	return filepath.Join(home, "update-state.yaml")
+	return filepath.Join(stateDir, "update-state.yaml")
 }
 
 // userFormattedError is a duck-typed interface for errors that provide
