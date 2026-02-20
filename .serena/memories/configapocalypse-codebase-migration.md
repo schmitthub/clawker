@@ -49,14 +49,19 @@ Order matters — downstream deps first:
 
 **Validation gate**: `go build ./internal/bundler/... ./internal/docker/... ./internal/containerfs/... ./internal/workspace/... ./internal/hostproxy/... ./internal/socketbridge/...`
 
-### Phase 2: Mechanical command layer (~25 simple files, not started)
+### Phase 2: Mechanical command layer (~25 simple files, ~60% done)
 
 All commands that only need `config.Provider` → `func() (config.Config, error)` change:
 
-- [ ] All container/* subcommands: attach, cp, exec, inspect, kill, list, logs, pause, remove, rename, restart, start, stats, stop, top, unpause, update, wait
+- [x] container/kill — done (first command migrated, established pattern)
+- [x] container/pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait — done (bulk sweep, Group A)
+- [x] container/stop, remove, top — done (bulk sweep, Group B: also needed field type change)
+- [ ] container/exec — uses ProjectCfg(), more complex
+- [ ] container/list — test files still reference config.Provider
+- [ ] container/start — still `func() config.Provider` field type
 - [ ] All worktree/* subcommands: add, list, prune, remove
 - [ ] loop/reset, loop/status
-- [ ] monitor/status
+- [ ] monitor/status, monitor/up, monitor/down
 
 Each file: change Options struct `Config func() config.Provider` → `Config func() (config.Config, error)`, update run function to handle error return, update tests to use new stubs.
 
@@ -114,6 +119,14 @@ Commands with additional old-API usage beyond Provider:
 - Pattern 9 in config/CLAUDE.md shows registry writes via Set+Write (no Registry abstraction)
 - `~/.local/clawker` is dead — `ConfigDir()` owns the resolution chain
 - `ResolveAgentEnv` → `container/shared/` (domain logic, not config)
+
+### Bulk sweep gotchas (from 14-command migration)
+- **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split into `cfg, err := opts.Config()` then call methods on `cfg`.
+- **Nil-safe project access required** — `NewBlankConfig()` returns nil `Project()`. Always use `if p := cfg.Project(); p != nil { project = p.Project }`.
+- **Error variable shadowing** — For `docker.ContainerName(project, name)` calls, use `nameErr` to avoid shadowing the `err` from config.
+- **cp has TWO call sites** — Extract cfg once at top of `if opts.Agent {}` block, reuse for both src and dst resolution.
+- **Group A vs Group B** — 11 commands already had `func() (config.Config, error)` field type (only run function needed fixing). 3 commands (stop, remove, top) still had `func() config.Provider` and needed both field type change AND run function fix.
+- **Test replacement is mechanical** — `func() config.Provider {` → `func() (config.Config, error) {` and `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil` — can batch via sed for efficiency.
 
 ### Bundler migration gotchas (apply to all callers)
 - **Schema structs are data-only** — `MonitoringConfig`, `TelemetryConfig`, `Project` etc. have no methods. Add helpers in the consumer package, not on the schema types.

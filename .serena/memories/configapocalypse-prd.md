@@ -15,6 +15,7 @@
 2. ~~`internal/hostproxy`~~ — Manager/Daemon read from `cfg.HostProxyConfig()`; removed DaemonOptions/DefaultDaemonOptions/DefaultPort/NewManagerWithPort; functional options for CLI overrides; validation at construction
 3. ~~`internal/socketbridge`~~ — Manager reads from `cfg.SocketBridgeConfig()`; PID file from `cfg.SocketBridgePIDFilePath()`
 4. ~~`internal/docker`~~ — labels→Client methods, volume→`cfg.ContainerUID/GID`, 131 `NewFakeClient()` callers migrated
+4b. ~~Container commands bulk sweep (15 commands)~~ — factory, init, kill + 14-command sweep (pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait, stop, remove, top). All use `cfg, err := opts.Config()` + nil-safe `cfg.Project().Project` pattern.
 
 ## Remaining Migration
 
@@ -26,7 +27,7 @@
 ### Docker cascade (partially done):
 - 8 `WithConfig` calls entangled with `config.Provider`→`config.Config`
 - Label constant callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`
-- ~114 `config.Provider` references across Options structs and test callbacks
+- ~114 `config.Provider` references across Options structs and test callbacks (reduced by ~50 from 14-command bulk sweep)
 
 ### Command layer (blocks individual commands):
 8. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
@@ -75,6 +76,9 @@ client.VolumeLabels(project, agent, purpose)
 - **`GetProjectIgnoreFile()` replaces `resolveIgnoreFile`** — Config method resolves `.clawkerignore` from `projectConfigFile` directory. Errors on fake configs without `projectConfigFile` (only set by `NewConfig()` during file loading) — test that behavior in config package, not callers
 - **Tar functions take `cfg config.Config` first param** — `PrepareOnboardingTar(cfg, homeDir)` and `PreparePostInitTar(cfg, script)` read `cfg.ContainerUID()`/`cfg.ContainerGID()` instead of constants
 - **`SetupMountsConfig.Cfg` replaces `.Config`** — field type changed from `*config.Project` (schema pointer) to `config.Config` (interface). Access project schema via `cfg.Cfg.Project()`
+- **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split into `cfg, err := opts.Config()`.
+- **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Always guard: `if p := cfg.Project(); p != nil { project = p.Project }`
+- **cp has TWO ProjectKey sites** — extract cfg once at top of agent block, reuse for both src and dst
 
 ## Old API (Removed)
 

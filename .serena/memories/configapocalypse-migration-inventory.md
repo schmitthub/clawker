@@ -581,12 +581,17 @@ Order matters — downstream deps first:
 5. `internal/hostproxy` — local path helpers, label imports
 6. `internal/socketbridge` — local path helpers
 
-### Phase 2: Low-touch command packages (mechanical Provider → Config)
-All simple commands that only use `config.Provider` + `config.NewConfigForTest`:
-- All container/* subcommands (attach, cp, exec, inspect, kill, list, logs, pause, remove, rename, restart, start, stats, stop, top, unpause, update, wait)
+### Phase 2: Low-touch command packages (mechanical Provider → Config) — ~60% DONE
+Simple commands that only use `config.Provider` + `config.NewConfigForTest`:
+- ~~container/kill~~ ✅
+- ~~container/pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait~~ ✅ (Group A bulk sweep)
+- ~~container/stop, remove, top~~ ✅ (Group B bulk sweep — also needed field type change)
+- container/exec — uses ProjectCfg(), more complex
+- container/list — test files still reference config.Provider
+- container/start — still `func() config.Provider`
 - All worktree/* subcommands
 - loop/reset, loop/status
-- monitor/status (only needs Provider change + MonitorDir)
+- monitor/status, monitor/up, monitor/down
 
 ### Phase 3: Complex command packages
 Commands with additional old-API usage beyond Provider:

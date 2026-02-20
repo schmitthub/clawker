@@ -1,13 +1,14 @@
 # Config Migration: Command Layer & Project Manager Integration
 
-> **Status:** Planning complete, awaiting user's `project.Manager` interface
+> **Status:** Phase 1 bulk sweep ~60% complete (15/25 commands done)
 > **Branch:** `refactor/configapocalypse`
 > **Parent memories:** `configapocalypse-prd`, `configapocalypse-migration-inventory`
-> **Last updated:** 2026-02-19
+> **Tracker:** `configapocalypse-command-migration-tracker` (canonical state)
+> **Last updated:** 2026-02-20
 
 ## Context
 
-Items #1-7 of the configapocalypse migration are complete (bundler, hostproxy, socketbridge, docker, workspace, containerfs, monitor). The remaining work is the command-layer migration (~40 production files, ~120 test files) and test infrastructure.
+Items #1-7 of the configapocalypse migration are complete (bundler, hostproxy, socketbridge, docker, workspace, containerfs, monitor). The command-layer migration is underway. **15 of ~25 Phase 1 commands are done** (factory, init, kill, and the 14-command bulk sweep). See `configapocalypse-command-migration-tracker` for canonical per-command status.
 
 ## Architecture Decisions (Confirmed with User)
 
@@ -21,13 +22,13 @@ Items #1-7 of the configapocalypse migration are complete (bundler, hostproxy, s
 - `config.NewFromString(yaml)` — specific values expressed as YAML string
 - **Do NOT use `NewFakeConfig` with seeded viper** — user will not approve this; viper is an implementation detail
 
-### Old API Replacements
+### Old API Replacements (VERIFIED)
 | Old Pattern | New Pattern |
 |---|---|
 | `config.Provider` on Options structs | `config.Config` via `func() (config.Config, error)` (Factory already has this) |
-| `opts.Config().ProjectKey()` | `project.Manager` method (TBD — resolves cwd → registry slug) |
-| `opts.Config().ProjectFound()` | `project.Manager.Get()` returning `ErrNotInProject` sentinel |
-| `opts.Config().ProjectRegistry()` | `project.Manager.Registry()` (exists on current Service) |
+| `opts.Config().ProjectKey()` | `cfg, err := opts.Config()` + nil-safe `cfg.Project().Project` (NO project.Manager needed) |
+| `opts.Config().ProjectFound()` | `cfg.Project() != nil` |
+| `opts.Config().ProjectRegistry()` | `cfg.Set("projects.*", ...)` + `cfg.Write()` (no Registry abstraction) |
 | `opts.Config().ProjectCfg()` | `cfg.Project()` on `config.Config` interface |
 | `opts.Config().UserSettings()` | `cfg.Settings()` on `config.Config` interface |
 | `cfgGateway.SettingsLoader()` | `cfg.Set(key, val)` + `cfg.Write(WriteOptions{Key: key})` |
@@ -39,66 +40,19 @@ Items #1-7 of the configapocalypse migration are complete (bundler, hostproxy, s
 | `(*config.Config)` type assertion | Use `cfg.Project()` and `cfg.Settings()` interface methods directly |
 | `config.ResolveAgentEnv()` | Relocate to `container/shared/` (domain logic, not config) |
 
-### Factory Changes Needed
-- New `Project` noun on Factory returning `project.Manager` (follows existing noun pattern: `f.Client`, `f.GitManager`, `f.HostProxy`)
-- ~20 container commands need `project.Manager` for `ProjectKey()` resolution
-- Worktree commands need `project.Manager` for worktree operations + project identity
+### Factory Changes — RESOLVED
+- Factory `Config` field already returns `func() (config.Config, error)` — no further changes needed
+- Container commands resolve project identity via nil-safe `cfg.Project().Project` — no project.Manager dependency needed for these
+- Worktree commands may still need project.Manager for worktree lifecycle orchestration (TBD)
 
 ## Migration Phases
 
-### Phase 0: User completing `project.Manager` interface ⏳ IN PROGRESS (user is doing this)
-- `internal/project/service.go` — Service factory (`Registry()`, `Worktrees()`)
-- `internal/project/worktree_service.go` — Worktree lifecycle
-- `internal/project/registry.go` — Registry facade (already built)
-- Manager interface with project identity (ProjectKey/Get), registry, worktree orchestration
-- Integrates `config.Config` + `git.GitManager` + `text.Slugify`
+### Phase 0: Config package + project.Manager ✅ DONE
+- Config interface built, test stubs built, file mapper built
+- project.Manager exists as `project.NewProjectManager(cfg)` (wired in factory)
 
-### Phase 1: Simple Mechanical Sweep (~25 commands, ~80 test files) ⬜ TODO
-Commands that only need Provider→Config signature change + test stub swap + ProjectKey via Manager:
-- All `container/*` (attach, cp, exec, inspect, kill, list, logs, pause, remove, rename, restart, stats, stop, top, unpause, update, wait)
-- All `worktree/*` (add, list, prune, remove)
-- `loop/reset`, `loop/status`
-- `monitor/status`, `monitor/up`, `monitor/down`
+### Phase 1: Simple Mechanical Sweep (~25 commands, ~80 test files) 🔄 ~60% DONE
+**Done (15 commands):** factory, init, kill, pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait, stop, remove, top
 
-Each command needs:
-1. Options struct: `Config func() config.Provider` → `Config func() (config.Config, error)`
-2. Add `project.Manager` dependency to Options (for commands using ProjectKey)
-3. Run function: add `cfg, err := opts.Config()` error handling
-4. Replace `cfg.ProjectCfg()` → `cfg.Project()`
-5. Replace `cfg.UserSettings()` → `cfg.Settings()`
-6. Replace `opts.Config().ProjectKey()` → manager method
-7. Tests: swap `config.NewConfigForTest(...)` → `config.NewBlankConfig()` or `config.NewFromString(...)`
+**Remaining (~10 commands - see tracker memory for canonical list)**
 
-### Phase 2: Complex Commands (~10 commands) ⬜ TODO
-- **`container/shared`** — relocate `ResolveAgentEnv`, replace `SettingsLoader` with `Set()`+`Write()`
-- **`container/create`, `container/run`, `container/start`** — depend on shared
-- **`project/init`, `project/register`** — use `project.Manager`/`project.Registry`
-- **`init`** (clawker init) — SettingsLoader→Set/Write
-- **`image/build`** — remove old Validator
-- **`loop/iterate`, `loop/tasks`** — remove type assertion, use `cfg.Project()` directly
-
-### Phase 3: Test Infra + Fawker ⬜ TODO
-- `test/harness/` — builders, Slugify, factory
-- `test/commands/`, `test/internals/`, `test/agents/`
-- `cmd/fawker/`
-- `internal/cmd/factory/default_test.go`
-
-### Phase 4: Cleanup ⬜ TODO
-- Update all `CLAUDE.md` files (package-level + root)
-- Update serena memories
-- Verify `go build ./...` and `make test` pass
-
-## Key Files (Current State)
-- `internal/config/config.go` — Config interface (already has all needed methods)
-- `internal/config/stubs.go` — `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()`
-- `internal/config/schema.go` — Schema types + `Registry` interface
-- `internal/project/registry.go` — Registry facade wrapping config.Config
-- `internal/project/service.go` — Service factory (new)
-- `internal/project/worktree_service.go` — Worktree lifecycle (new)
-- `internal/project/projecttest/registry.go` — MockRegistrar, RegistrarFunc
-- `internal/cmdutil/factory.go` — Factory struct (Config field already migrated)
-- `internal/cmd/factory/default.go` — Factory constructor (configFunc already returns new type)
-
-## IMPERATIVE
-
-**Always check with the user before proceeding with the next todo item.** The user is actively building the `project.Manager` interface — do not start command-layer migration until they confirm it's ready. If all work is done, ask the user if they want to delete this memory.

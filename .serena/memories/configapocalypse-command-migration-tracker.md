@@ -48,6 +48,12 @@
 14. **`progressStatus()` bridges whail→tui** — duplicated in `image/build` and `init`. Consider extracting.
 15. **`dockertest.NewFakeClient()` requires config arg** — use `config.NewBlankConfig()` or test's cfg.
 16. **`config.Provider` type is gone** — replaced by `config.Config` interface everywhere.
+17. **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split: `cfg, err := opts.Config()` then use `cfg`.
+18. **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Always guard: `if p := cfg.Project(); p != nil { project = p.Project }`.
+19. **Error variable shadowing** — For `docker.ContainerName(project, name)` in commands like rename/attach/cp, use `nameErr` to avoid shadowing the `err` from config resolution.
+20. **cp has TWO ProjectKey call sites** — Extract cfg once at top of `if opts.Agent {}` block, reuse for both src and dst container resolution.
+21. **Group A vs Group B** — Most commands already had the `func() (config.Config, error)` field type from earlier work. Only stop, remove, top still had `func() config.Provider` and needed the field type change too.
+22. **Batch sed for test files** — The test replacement is purely mechanical (`config.Provider` → `(config.Config, error)`, `NewConfigForTest(nil, nil)` → `NewBlankConfig(), nil`). Using sed with replace-all is fastest for large batches.
 
 ### Container Kill (`internal/cmd/container/kill/`)
 **Production changes:**
