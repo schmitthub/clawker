@@ -28,6 +28,8 @@ const dottedLabelKeySentinel = "__clawker_dot__"
 
 // Config is the public configuration contract.
 // Add methods here as the config contract grows.
+//
+//go:generate moq -rm -out config_mock.go . Config
 type Config interface {
 	ClawkerIgnoreName() string
 	Logging() map[string]any

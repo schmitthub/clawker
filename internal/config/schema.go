@@ -3,16 +3,12 @@ package config
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 )
 
 // Project represents the root configuration structure for clawker.yaml.
 //
-// In addition to YAML schema fields, it contains runtime context fields
-// (projectEntry, registry, worktreeMu) that are injected after loading via
-// setRuntimeContext(). These runtime fields enable worktree operations and
-// project identity lookup.
+// Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
 	Project      string          `yaml:"-" mapstructure:"project"` // mapstructure:"project" (not "-") so ErrorUnused won't reject "project:" key
@@ -22,11 +18,6 @@ type Project struct {
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
 	Loop         *LoopConfig     `yaml:"loop,omitempty" mapstructure:"loop"`
-
-	// Runtime context (not persisted, injected after loading)
-	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
-	registry     Registry      `yaml:"-" mapstructure:"-"` // for write operations
-	worktreeMu   sync.RWMutex  `yaml:"-" mapstructure:"-"` // protects projectEntry.Worktrees
 }
 
 // BuildConfig defines the container build configuration
@@ -452,16 +443,7 @@ type WorktreeEntry struct {
 	Branch string `yaml:"branch,omitempty" mapstructure:"branch"`
 }
 
-// Registry provides access to project registry operations.
-type Registry interface {
-	Projects() map[string]ProjectEntry
-	Project(key string) (ProjectEntry, bool)
-	AddProject(key string, entry ProjectEntry) error
-	RemoveProject(key string) error
-	Save() error
-}
-
 // ProjectRegistry is the on-disk structure for projects.yaml.
 type ProjectRegistry struct {
-	Projects map[string]ProjectEntry `yaml:"projects" mapstructure:"projects"`
+	Projects []ProjectEntry `yaml:"projects" mapstructure:"projects"`
 }

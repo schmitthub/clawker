@@ -837,8 +837,13 @@ func TestRequiredFirewallDomains_Immutable(t *testing.T) {
 }
 
 func TestConstantAccessors(t *testing.T) {
-	configDir := t.TempDir()
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	dataDir := filepath.Join(base, "data")
+	stateDir := filepath.Join(base, "state")
 	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(clawkerDataDirEnv, dataDir)
+	t.Setenv(clawkerStateDirEnv, stateDir)
 
 	c := mustReadFromString(t, "")
 
@@ -847,35 +852,35 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, "CLAWKER_CONFIG_DIR", c.ConfigDirEnvVar())
 	monitorSubdirPath, err := c.MonitorSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "monitor"), monitorSubdirPath)
+	assert.Equal(t, filepath.Join(dataDir, "monitor"), monitorSubdirPath)
 	buildSubdirPath, err := c.BuildSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "build"), buildSubdirPath)
+	assert.Equal(t, filepath.Join(dataDir, "build"), buildSubdirPath)
 	dockerfilesSubdirPath, err := c.DockerfilesSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "dockerfiles"), dockerfilesSubdirPath)
+	assert.Equal(t, filepath.Join(dataDir, "dockerfiles"), dockerfilesSubdirPath)
 	assert.Equal(t, "clawker-net", c.ClawkerNetwork())
 	logsSubdirPath, err := c.LogsSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "logs"), logsSubdirPath)
+	assert.Equal(t, filepath.Join(stateDir, "logs"), logsSubdirPath)
 	bridgesSubdirPath, err := c.BridgesSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids"), bridgesSubdirPath)
+	assert.Equal(t, filepath.Join(stateDir, "pids"), bridgesSubdirPath)
 	pidsSubdirPath, err := c.PidsSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids"), pidsSubdirPath)
+	assert.Equal(t, filepath.Join(stateDir, "pids"), pidsSubdirPath)
 	bridgePIDPath, err := c.BridgePIDFilePath("abc123")
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids", "abc123.pid"), bridgePIDPath)
+	assert.Equal(t, filepath.Join(stateDir, "pids", "abc123.pid"), bridgePIDPath)
 	hostProxyLogPath, err := c.HostProxyLogFilePath()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "logs", "hostproxy.log"), hostProxyLogPath)
+	assert.Equal(t, filepath.Join(stateDir, "logs", "hostproxy.log"), hostProxyLogPath)
 	hostProxyPIDPath, err := c.HostProxyPIDFilePath()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids", "hostproxy.pid"), hostProxyPIDPath)
+	assert.Equal(t, filepath.Join(stateDir, "pids", "hostproxy.pid"), hostProxyPIDPath)
 	shareSubdirPath, err := c.ShareSubdir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, ".clawker-share"), shareSubdirPath)
+	assert.Equal(t, filepath.Join(dataDir, ".clawker-share"), shareSubdirPath)
 	assert.Equal(t, "dev.clawker.", c.LabelPrefix())
 	assert.Equal(t, "dev.clawker.managed", c.LabelManaged())
 	assert.Equal(t, "dev.clawker.monitoring", c.LabelMonitoringStack())
@@ -899,8 +904,8 @@ func TestConstantAccessors(t *testing.T) {
 }
 
 func TestBridgePIDFilePath_UsesContainerID(t *testing.T) {
-	configDir := t.TempDir()
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	stateDir := t.TempDir()
+	t.Setenv(clawkerStateDirEnv, stateDir)
 
 	c := mustReadFromString(t, "")
 
@@ -917,34 +922,39 @@ func TestBridgePIDFilePath_UsesContainerID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path, err := c.BridgePIDFilePath(tt.containerID)
 			require.NoError(t, err)
-			assert.Equal(t, filepath.Join(configDir, "pids", tt.containerID+".pid"), path)
+			assert.Equal(t, filepath.Join(stateDir, "pids", tt.containerID+".pid"), path)
 		})
 	}
 }
 
 func TestPathHelpers_CreateDirectoriesIfMissing(t *testing.T) {
-	configDir := t.TempDir()
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	dataDir := filepath.Join(base, "data")
+	stateDir := filepath.Join(base, "state")
 	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(clawkerDataDirEnv, dataDir)
+	t.Setenv(clawkerStateDirEnv, stateDir)
 
 	c := mustReadFromString(t, "")
 
 	logsPath, err := c.HostProxyLogFilePath()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "logs", "hostproxy.log"), logsPath)
+	assert.Equal(t, filepath.Join(stateDir, "logs", "hostproxy.log"), logsPath)
 
 	pidPath, err := c.HostProxyPIDFilePath()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids", "hostproxy.pid"), pidPath)
+	assert.Equal(t, filepath.Join(stateDir, "pids", "hostproxy.pid"), pidPath)
 
 	bridgePath, err := c.BridgePIDFilePath("container-123")
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(configDir, "pids", "container-123.pid"), bridgePath)
+	assert.Equal(t, filepath.Join(stateDir, "pids", "container-123.pid"), bridgePath)
 
-	logsInfo, err := os.Stat(filepath.Join(configDir, "logs"))
+	logsInfo, err := os.Stat(filepath.Join(stateDir, "logs"))
 	require.NoError(t, err)
 	assert.True(t, logsInfo.IsDir())
 
-	pidsInfo, err := os.Stat(filepath.Join(configDir, "pids"))
+	pidsInfo, err := os.Stat(filepath.Join(stateDir, "pids"))
 	require.NoError(t, err)
 	assert.True(t, pidsInfo.IsDir())
 }

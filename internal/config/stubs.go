@@ -120,7 +120,10 @@ func NewIsolatedTestConfig(t *testing.T) (Config, func(io.Writer, io.Writer, io.
 // a reader callback for settings, user project config, and project registry content.
 func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer) {
 	t.Helper()
-	t.Setenv(clawkerConfigDirEnv, t.TempDir())
+	base := t.TempDir()
+	t.Setenv(clawkerConfigDirEnv, filepath.Join(base, "config"))
+	t.Setenv(clawkerDataDirEnv, filepath.Join(base, "data"))
+	t.Setenv(clawkerStateDirEnv, filepath.Join(base, "state"))
 
 	return func(settingsOut io.Writer, projectOut io.Writer, registryOut io.Writer) {
 		copyFileToWriter(settingsConfigFile(), settingsOut)

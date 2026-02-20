@@ -13,8 +13,20 @@ const domain = "clawker.dev"
 const labelDomain = "dev.clawker"
 
 const (
+	appData       = "AppData"
+	xdgConfigHome = "XDG_CONFIG_HOME"
+	xdgDataHome   = "XDG_DATA_HOME"
+	xdgStateHome  = "XDG_STATE_HOME"
+	localAppData  = "LOCALAPPDATA"
+)
+
+const (
 	// clawkerConfigDirEnv is the environment variable for overriding the config directory location.
 	clawkerConfigDirEnv = "CLAWKER_CONFIG_DIR"
+	// clawkerDataDirEnv is the environment variable for overriding the data directory location.
+	clawkerDataDirEnv = "CLAWKER_DATA_DIR"
+	// clawkerStateDirEnv is the environment variable for overriding the state directory location.
+	clawkerStateDirEnv = "CLAWKER_STATE_DIR"
 	// clawkerConfigFileName is the filename for project configuration.
 	clawkerConfigFileName = "clawker.yaml"
 	// clawkerIgnoreFileName is the filename for the ignore list that specify paths to exclude from processing.
@@ -25,6 +37,8 @@ const (
 	buildSubdir = "build"
 	// dockerfilesSubdir is the subdirectory for generated Dockerfiles
 	dockerfilesSubdir = "dockerfiles"
+	// worktreesSubdir is the subdirectory for git worktree metadata
+	worktreesSubdir = "worktrees"
 	// clawkerNetwork is the name of the shared Docker network
 	clawkerNetwork = "clawker-net"
 	// logsSubdir is the subdirectory for log files
@@ -116,8 +130,8 @@ const containerUID = 1001
 // containerGID is the default GID for the non-root user inside clawker containers.
 const containerGID = 1001
 
-func subdirPath(subdir string) (string, error) {
-	configDir := ConfigDir()
+func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
+	configDir := baseDirFunc()
 	fullPath := filepath.Join(configDir, subdir)
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
@@ -137,26 +151,28 @@ func (c *configImpl) LabelDomain() string { return labelDomain }
 // ConfigDirEnvVar returns the environment variable name that overrides config directory resolution.
 func (c *configImpl) ConfigDirEnvVar() string { return clawkerConfigDirEnv }
 
-// MonitorSubdir ensures and returns the monitor subdirectory path under ConfigDir.
-func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir) }
+// MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
+func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir, DataDir) }
 
-// BuildSubdir ensures and returns the build subdirectory path under ConfigDir.
-func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir) }
+// BuildSubdir ensures and returns the build subdirectory path under DataDir.
+func (c *configImpl) BuildSubdir() (string, error) { return subdirPath(buildSubdir, DataDir) }
 
-// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under ConfigDir.
-func (c *configImpl) DockerfilesSubdir() (string, error) { return subdirPath(dockerfilesSubdir) }
+// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under DataDir.
+func (c *configImpl) DockerfilesSubdir() (string, error) {
+	return subdirPath(dockerfilesSubdir, DataDir)
+}
 
 // ClawkerNetwork returns the shared Docker network name used by clawker resources.
 func (c *configImpl) ClawkerNetwork() string { return clawkerNetwork }
 
-// LogsSubdir ensures and returns the logs subdirectory path under ConfigDir.
-func (c *configImpl) LogsSubdir() (string, error) { return subdirPath(logsSubdir) }
+// LogsSubdir ensures and returns the logs subdirectory path under StateDir.
+func (c *configImpl) LogsSubdir() (string, error) { return subdirPath(logsSubdir, StateDir) }
 
-// BridgesSubdir ensures and returns the legacy bridge PID subdirectory path under ConfigDir.
-func (c *configImpl) BridgesSubdir() (string, error) { return subdirPath(pidsSubdir) } // TODO refactor callers to use to PidsSubdir
+// BridgesSubdir ensures and returns the legacy bridge PID subdirectory path under StateDir.
+func (c *configImpl) BridgesSubdir() (string, error) { return subdirPath(pidsSubdir, StateDir) } // TODO refactor callers to use to PidsSubdir
 
-// PidsSubdir ensures and returns the PID subdirectory path under ConfigDir.
-func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(pidsSubdir) }
+// PidsSubdir ensures and returns the PID subdirectory path under StateDir.
+func (c *configImpl) PidsSubdir() (string, error) { return subdirPath(pidsSubdir, StateDir) }
 
 // BridgePIDFilePath ensures the PID subdirectory and returns the per-container bridge PID file path.
 func (c *configImpl) BridgePIDFilePath(containerID string) (string, error) {
@@ -185,8 +201,11 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) {
 	return filepath.Join(pidsDir, hostProxyPIDFileName), nil
 }
 
-// ShareSubdir ensures and returns the shared directory path under ConfigDir.
-func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(shareSubdir) }
+// ShareSubdir ensures and returns the shared directory path under DataDir.
+func (c *configImpl) ShareSubdir() (string, error) { return subdirPath(shareSubdir, DataDir) }
+
+// WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
+func (c *configImpl) WorktreesSubdir() (string, error) { return subdirPath(worktreesSubdir, DataDir) }
 
 // LabelPrefix returns the full label key prefix (with trailing dot).
 func (c *configImpl) LabelPrefix() string { return labelPrefix }
