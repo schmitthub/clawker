@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +44,7 @@ func TestRemoveRun_GitManagerError(t *testing.T) {
 	opts := &RemoveOptions{
 		IOStreams: newTestIOStreams(),
 		ProjectManager: func() (project.ProjectManager, error) {
-			return project.NewService(nil, nil), nil
+			return projectmocks.NewProjectManagerMock(), nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, errors.New("git boom")

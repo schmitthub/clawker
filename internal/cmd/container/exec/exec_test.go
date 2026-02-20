@@ -101,8 +101,8 @@ func TestNewCmdExec(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() config.Provider {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -241,13 +241,21 @@ func TestCmdExec_ArgsParsing(t *testing.T) {
 
 // testConfig returns a config with host proxy disabled and no git credentials
 // to avoid nil pointer issues when HostProxy/SocketBridge functions aren't set.
-func testConfig() *config.Config {
-	hostProxyDisabled := false
-	project := config.DefaultProject()
-	project.Security.EnableHostProxy = &hostProxyDisabled
-	project.Security.GitCredentials = nil
-	return config.NewConfigForTest(project, nil)
+func testConfig() config.Config {
+	cfg := configmocks.NewFromString(`
+security:
+  enable_host_proxy: false
+`)
+	cfg.ProjectFunc = func() *config.Project {
+		p := &config.Project{}
+		p.Security.EnableHostProxy = ptrBool(false)
+		p.Security.GitCredentials = nil
+		return p
+	}
+	return cfg
 }
+
+func ptrBool(b bool) *bool { return &b }
 
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
@@ -257,8 +265,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return testConfig()
+		Config: func() (config.Config, error) {
+			return testConfig(), nil
 		},
 	}, tio
 }
@@ -270,8 +278,8 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() config.Provider {
-			return testConfig()
+		Config: func() (config.Config, error) {
+			return testConfig(), nil
 		},
 	}
 

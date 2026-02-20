@@ -88,14 +88,42 @@ stop, remove, top
 - `func() config.Provider {` → `func() (config.Config, error) {` (replace_all)
 - `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil` (replace_all)
 
+### container/exec (`internal/cmd/container/exec/`)
+**Production changes:**
+- Config field: `func() config.Provider` → `func() (config.Config, error)` (Group B)
+- `opts.Config().ProjectKey()` in RunE → split multi-return + nil-safe `cfg.Project().Project`
+- `opts.Config().ProjectCfg()` in execRun → `cfg, err := opts.Config()` + `p := cfg.Project()`
+- All `cfg.Security.*` → `p.Security.*` with nil guard on `p`
+- `shared.NeedsSocketBridge(cfg)` → `shared.NeedsSocketBridge(p)` (already takes `*config.Project`)
+
+**Test changes:**
+- `func() config.Provider {` → `func() (config.Config, error) {` (3 locations)
+- `testConfig()` rewritten: `configmocks.NewFromString()` + custom `ProjectFunc`
+- `config.DefaultProject()` + `config.NewConfigForTest()` → removed
+
+### worktree/add, prune, list, remove
+**Production changes (all 4):**
+- `projectManager.FromCWD(ctx)` → `projectManager.CurrentProject(ctx)`
+
+**Additional list changes:**
+- `proj.CurrentProject()` → `proj.Record()` + `proj.Name()`
+- `projectEntry.Worktrees` → `record.Worktrees`
+
+**Additional remove changes:**
+- `removeSingleWorktree` param: `*project.Project` → `project.Project` (interface)
+
+**Test changes:**
+- `remove_test.go`: `project.NewService(nil, nil)` → `projectmocks.NewProjectManagerMock()`
+
+### Lesson 27: ProjectManager.FromCWD() → CurrentProject()
+### Lesson 28: project.Project is now an interface, not *struct
+
 ## Next Steps
 
-Phase 1 simple mechanical sweep commands still TODO:
-- `container/exec` — also uses ProjectCfg(), more complex
-- All `worktree/*` (add, list, prune, remove)
+Phase 1 is COMPLETE. All simple mechanical migration commands done.
 
 Phase 2 complex commands still TODO (~10 commands):
-- `container/shared`, `container/create`, `container/run`, `container/start`
+- `container/shared`, `container/create`, `container/run` (start already done)
 - `project/init`, `project/register`
 - `image/build`
 - `loop/iterate`, `loop/tasks`

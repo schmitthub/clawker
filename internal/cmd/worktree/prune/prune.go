@@ -63,7 +63,7 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	proj, err := projectManager.FromCWD(ctx)
+	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
 		if errors.Is(err, project.ErrProjectNotFound) {
 			return fmt.Errorf("not in a registered project directory")

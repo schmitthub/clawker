@@ -85,7 +85,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("initializing git: %w", err)
 	}
 
-	proj, err := projectManager.FromCWD(ctx)
+	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
 		if errors.Is(err, project.ErrProjectNotFound) {
 			return fmt.Errorf("not in a registered project directory")
@@ -127,7 +127,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 }
 
 
-func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj *project.Project, gitMgr *git.GitManager, branch string) error {
+func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj project.Project, gitMgr *git.GitManager, branch string) error {
 	if err := proj.RemoveWorktree(ctx, branch); err != nil {
 		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
 			return fmt.Errorf("not in a registered project directory")

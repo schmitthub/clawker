@@ -71,7 +71,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	proj, err := projectManager.FromCWD(ctx)
+	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
 		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) || errors.Is(err, project.ErrProjectNotFound) {
 			return fmt.Errorf("not in a registered project directory")
@@ -79,12 +79,12 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return err
 	}
 
-	projectSlug, projectEntry, err := proj.CurrentProject()
+	record, err := proj.Record()
 	if err != nil {
 		return err
 	}
 
-	if len(projectEntry.Worktrees) == 0 {
+	if len(record.Worktrees) == 0 {
 		if !opts.Quiet {
 			fmt.Fprintln(opts.IOStreams.ErrOut, "No worktrees found for this project.")
 			fmt.Fprintln(opts.IOStreams.ErrOut, "Use 'clawker run --worktree <branch>' to create one.")
@@ -99,10 +99,10 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 	}
 
 	var entries []git.WorktreeDirEntry
-	for name, worktree := range projectEntry.Worktrees {
+	for name, worktree := range record.Worktrees {
 		path := worktree.Path
 		if path == "" {
-			path = filepath.Join(config.ConfigDir(), "projects", projectSlug, text.Slugify(name))
+			path = filepath.Join(config.ConfigDir(), "projects", text.Slugify(proj.Name()), text.Slugify(name))
 		}
 		entries = append(entries, git.WorktreeDirEntry{Name: name, Slug: text.Slugify(name), Path: path})
 	}

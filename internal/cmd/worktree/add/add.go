@@ -65,7 +65,7 @@ func addRun(_ context.Context, opts *AddOptions) error {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	proj, err := projectManager.FromCWD(context.Background())
+	proj, err := projectManager.CurrentProject(context.Background())
 	if err != nil {
 		if errors.Is(err, project.ErrProjectNotFound) {
 			return fmt.Errorf("not in a registered project directory")
