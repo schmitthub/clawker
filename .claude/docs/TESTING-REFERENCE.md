@@ -73,6 +73,7 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
 | `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
+| `internal/project` | `stubs.go` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
@@ -148,6 +149,63 @@ go test ./internal/config -run TestReadFromString -v
 
 - Keep config refactor validation package-local while transitive callers are still being migrated.
 - For tests asserting defaults/file values, clear `CLAWKER_*` environment overrides first.
+
+---
+
+## Project Package Test Doubles (`internal/project/stubs.go`)
+
+The project package exposes scenario-oriented doubles so dependents can choose the minimum coupling needed.
+
+### 1) Pure mock manager (no config/git reads or writes)
+
+Use `project.NewProjectManagerMock()` when you only need interface-level behavior in unit tests.
+
+```go
+mgr := project.NewProjectManagerMock()
+mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
+    return project.NewProjectMockFromRecord(project.ProjectRecord{
+        Name: "demo",
+        Root: root,
+    }), nil
+}
+```
+
+### 2) Read-only config + in-memory git
+
+Use `project.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
+
+- Config double source: `config.NewFromString(yaml)`
+- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
+- Mutation guard: `Register`, `Update`, and `Remove` return `project.ErrReadOnlyTestManager`
+
+```go
+h := project.NewReadOnlyTestManager(t, `
+projects:
+  - name: Demo
+    root: /tmp/demo
+`)
+projects, err := h.Manager.List(context.Background())
+require.NoError(t, err)
+require.Len(t, projects, 1)
+```
+
+### 3) Isolated writable config + in-memory git
+
+Use `project.NewIsolatedTestManager(t)` when tests must exercise config `Set`/`Write` behavior and assert persisted files.
+
+- Config double source: `config.NewIsolatedTestConfig(t)`
+- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
+- Registry/settings assertions: `h.ReadConfigFiles(...)`
+
+```go
+h := project.NewIsolatedTestManager(t)
+_, err := h.Manager.Register(context.Background(), "Demo", t.TempDir())
+require.NoError(t, err)
+
+var settingsBuf, projectBuf, registryBuf bytes.Buffer
+h.ReadConfigFiles(&settingsBuf, &projectBuf, &registryBuf)
+require.Contains(t, registryBuf.String(), "name: Demo")
+```
 
 ---
 

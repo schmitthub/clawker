@@ -18,7 +18,7 @@ projects:
     root: /tmp/alpha
 `)
 
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 	projects, err := mgr.List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, projects, 2)
@@ -27,7 +27,7 @@ projects:
 }
 
 func TestProjectManager_Get_ProjectNotFound(t *testing.T) {
-	mgr := NewProjectManager(config.NewBlankConfig(), nil)
+	mgr := NewProjectManager(config.NewBlankConfig())
 
 	project, err := mgr.Get(context.Background(), "/missing")
 	require.Error(t, err)
@@ -36,7 +36,7 @@ func TestProjectManager_Get_ProjectNotFound(t *testing.T) {
 }
 
 func TestProjectManager_Remove_ProjectNotFound(t *testing.T) {
-	mgr := NewProjectManager(config.NewBlankConfig(), nil)
+	mgr := NewProjectManager(config.NewBlankConfig())
 
 	err := mgr.Remove(context.Background(), "/missing")
 	require.Error(t, err)

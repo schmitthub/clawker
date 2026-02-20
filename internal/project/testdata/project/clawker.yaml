@@ -1,9 +1,0 @@
-version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
-workspace:
-  remote_path: "/workspace"
-  default_mode: "bind"
-security:
-  firewall:
-    enable: true

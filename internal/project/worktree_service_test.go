@@ -49,7 +49,7 @@ func chdirForTest(t *testing.T, dir string) {
 
 func TestWorktreeService_AddWorktree_RegistersWorktree(t *testing.T) {
 	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 	projectRoot, err := os.Getwd()
 	require.NoError(t, err)
 
@@ -84,7 +84,7 @@ func TestWorktreeService_AddWorktree_RegistersWorktree(t *testing.T) {
 
 func TestWorktreeService_RemoveWorktree_UnregistersWorktree(t *testing.T) {
 	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 	projectRoot, err := os.Getwd()
 	require.NoError(t, err)
 
@@ -136,7 +136,7 @@ func TestWorktreeService_CurrentProject_NotRegistered(t *testing.T) {
 
 func TestWorktreeService_AddWorktree_UsesInMemoryGitManager(t *testing.T) {
 	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 
 	projectRoot, err := os.Getwd()
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestWorktreeService_AddWorktree_UsesInMemoryGitManager(t *testing.T) {
 
 func TestWorktreeService_RemoveWorktree_UsesInMemoryGitManager(t *testing.T) {
 	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 
 	projectRoot, err := os.Getwd()
 	require.NoError(t, err)

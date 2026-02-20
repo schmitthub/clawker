@@ -26,7 +26,7 @@ func newFSConfigFromProjectTestdata(t *testing.T) (config.Config, string, string
 }
 
 func TestProjectManager_Register_UninitializedManager(t *testing.T) {
-	mgr := NewProjectManager(nil, nil)
+	mgr := NewProjectManager(nil)
 
 	p, err := mgr.Register(context.Background(), "My Project", "/tmp/myproject")
 	require.Error(t, err)
@@ -35,7 +35,7 @@ func TestProjectManager_Register_UninitializedManager(t *testing.T) {
 
 func TestProjectManager_Register_UsesRootIdentity(t *testing.T) {
 	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
-	mgr := NewProjectManager(cfg, nil)
+	mgr := NewProjectManager(cfg)
 
 	projectRoot := filepath.Join(t.TempDir(), "myproject")
 	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
