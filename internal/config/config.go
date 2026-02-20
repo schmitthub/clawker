@@ -171,7 +171,9 @@ func bindSupportedEnvKeys(v *viper.Viper) {
 	}
 }
 
-// TODO: what in the actual farts is this...
+// TODO: AI-slop allowlist for env-overridable config keys (BindEnv instead of AutomaticEnv).
+// Prevents accidental override of structural keys like "version"/"project", but manually
+// mirroring the schema is a maintenance burden. Replace with AutomaticEnv + a small denylist.
 var supportedEnvKeys = []string{
 	"default_image",
 	"build.image",
