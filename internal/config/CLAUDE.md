@@ -60,6 +60,11 @@ func ReadFromString(str string) (Config, error)
 
 // Config directory path (respects CLAWKER_CONFIG, XDG_CONFIG_HOME, etc.)
 func ConfigDir() string
+
+// Absolute paths for user-level config files under ConfigDir()
+func SettingsFilePath() (string, error)
+func UserProjectConfigFilePath() (string, error)
+func ProjectRegistryFilePath() (string, error)
 ```
 
 ### Constants (consts.go)
@@ -72,7 +77,10 @@ All constants are **private** — callers access them exclusively through `Confi
 | `labelDomain` | `LabelDomain()` | `"dev.clawker"` |
 | `clawkerConfigDirEnv` | `ConfigDirEnvVar()` | `"CLAWKER_CONFIG_DIR"` |
 | `clawkerConfigFileName` | *(internal use)* | `"clawker.yaml"` |
+| `clawkerConfigFileName` + `ConfigDir()` | `UserProjectConfigFilePath()` | absolute `"<ConfigDir()>/clawker.yaml"` |
 | `clawkerIgnoreFileName` | `ClawkerIgnoreName()` | `".clawkerignore"` |
+| `clawkerSettingsFileName` + `ConfigDir()` | `SettingsFilePath()` | absolute `"<ConfigDir()>/settings.yaml"` |
+| `clawkerProjectsFileName` + `ConfigDir()` | `ProjectRegistryFilePath()` | absolute `"<ConfigDir()>/projects.yaml"` |
 | `monitorSubdir` | `MonitorSubdir()` | `"<ConfigDir()>/monitor"` |
 | `buildSubdir` | `BuildSubdir()` | `"<ConfigDir()>/build"` |
 | `dockerfilesSubdir` | `DockerfilesSubdir()` | `"<ConfigDir()>/dockerfiles"` |

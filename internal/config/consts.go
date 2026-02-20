@@ -143,6 +143,24 @@ func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
 	return fullPath, nil
 }
 
+func absConfigFilePath(fileName string) (string, error) {
+	path := filepath.Join(ConfigDir(), fileName)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute config path for %s: %w", fileName, err)
+	}
+	return absPath, nil
+}
+
+// SettingsFilePath returns the absolute path to the global settings file.
+func SettingsFilePath() (string, error) { return absConfigFilePath(clawkerSettingsFileName) }
+
+// UserProjectConfigFilePath returns the absolute path to the user-level clawker.yaml file.
+func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(clawkerConfigFileName) }
+
+// ProjectRegistryFilePath returns the absolute path to the project registry file.
+func ProjectRegistryFilePath() (string, error) { return absConfigFilePath(clawkerProjectsFileName) }
+
 // ClawkerIgnoreName returns the canonical ignore filename used by snapshot/bind workflows.
 func (c *configImpl) ClawkerIgnoreName() string { return clawkerIgnoreFileName }
 

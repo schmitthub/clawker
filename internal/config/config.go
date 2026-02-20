@@ -1191,15 +1191,27 @@ func StateDir() string {
 }
 
 func settingsConfigFile() string {
-	return filepath.Join(ConfigDir(), clawkerSettingsFileName)
+	path, err := SettingsFilePath()
+	if err != nil {
+		return filepath.Join(ConfigDir(), clawkerSettingsFileName)
+	}
+	return path
 }
 
 func userProjectConfigFile() string {
-	return filepath.Join(ConfigDir(), clawkerConfigFileName)
+	path, err := UserProjectConfigFilePath()
+	if err != nil {
+		return filepath.Join(ConfigDir(), clawkerConfigFileName)
+	}
+	return path
 }
 
 func projectRegistryPath() string {
-	return filepath.Join(ConfigDir(), clawkerProjectsFileName)
+	path, err := ProjectRegistryFilePath()
+	if err != nil {
+		return filepath.Join(ConfigDir(), clawkerProjectsFileName)
+	}
+	return path
 }
 
 func boolPtr(v bool) *bool {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1101,6 +1102,33 @@ func TestConfigDir_Default(t *testing.T) {
 	}
 	home, _ := os.UserHomeDir()
 	assert.Equal(t, filepath.Join(home, ".config", "clawker"), ConfigDir())
+}
+
+func TestSettingsFilePath_ReturnsAbsolutePath(t *testing.T) {
+	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+
+	path, err := SettingsFilePath()
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(path))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerSettingsFileName)))
+}
+
+func TestUserProjectConfigFilePath_ReturnsAbsolutePath(t *testing.T) {
+	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+
+	path, err := UserProjectConfigFilePath()
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(path))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerConfigFileName)))
+}
+
+func TestProjectRegistryFilePath_ReturnsAbsolutePath(t *testing.T) {
+	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+
+	path, err := ProjectRegistryFilePath()
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(path))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerProjectsFileName)))
 }
 
 // testdata-based load tests
