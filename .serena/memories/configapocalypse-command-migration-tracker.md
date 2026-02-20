@@ -32,7 +32,7 @@
 
 ## Lessons Learned / Gotchas
 
-1. **All commits on this branch need `--no-verify`** — pre-commit hooks fail due to in-progress migration across packages.
+1. **All commits on this branch need `--no-verify`** — pre-commit hooks fail due to in-progress migration across packages. **Always update memories, tracker, and relevant CLAUDE.md docs _before_ committing** — the commit should capture the documentation alongside the code change, not after.
 2. **Factory tests should only test wiring, not behavior of wired dependencies.**
 3. **`NewConfig()` requires all three files to exist** (`settings.yaml`, `clawker.yaml`, `projects.yaml`). Use `&cmdutil.Factory{}` struct literals in tests, not `factory.New()`.
 4. **`hostproxy.NewManager(nil)` panics** — pre-existing bug surfaced by config now returning errors.
@@ -49,10 +49,18 @@
 15. **`dockertest.NewFakeClient()` requires config arg** — use `config.NewBlankConfig()` or test's cfg.
 16. **`config.Provider` type is gone** — replaced by `config.Config` interface everywhere.
 
+### Container Kill (`internal/cmd/container/kill/`)
+**Production changes:**
+- `opts.Config().ProjectKey()` → `cfg, err := opts.Config()` + `cfg.Project().Project` (nil-safe)
+
+**Test changes:**
+- `config.Provider` → `(config.Config, error)` in 3 locations (TestNewCmdKill factory, TestKillRun_DockerConnectionError factory, testKillFactory helper)
+- `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig()`
+
 ## Next Steps
 
 Phase 1 simple mechanical sweep commands still TODO (~25 commands):
-- All `container/*` (attach, cp, exec, inspect, kill, list, logs, pause, remove, rename, restart, stats, stop, top, unpause, update, wait)
+- All `container/*` (attach, cp, exec, inspect, list, logs, pause, remove, rename, restart, stats, stop, top, unpause, update, wait)
 - All `worktree/*` (add, list, prune, remove)
 - `loop/reset`, `loop/status`
 - `monitor/status`, `monitor/up`, `monitor/down`
