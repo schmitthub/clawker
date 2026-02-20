@@ -46,7 +46,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E
 
 ### Core
 
-`NewHarness(t, opts ...HarnessOption)` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`
+`NewHarness(t, opts ...HarnessOption)` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`. Uses `text.Slugify` for project name normalization, `CLAWKER_CONFIG_DIR` env var for isolation, direct YAML string for registry construction.
 
 Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/NetworkName`, `ConfigPath`, `WriteFile/ReadFile/FileExists`, `UpdateConfig`
 
@@ -100,7 +100,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 ### Factory Testing (factory.go)
 
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup.
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup. Uses `configFromProject()` to bridge `*config.Project` schema → `config.Config` interface via `configmocks.NewFromString`. Factory.Config closure returns `(config.Config, error)`.
 
 ### Content-Addressed Caching (hash.go)
 
@@ -124,4 +124,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/docker`, `pkg/whail`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/text`, `pkg/whail`
