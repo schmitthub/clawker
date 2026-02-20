@@ -19,6 +19,16 @@
 
 ## Remaining Migration
 
+### Fawker + Test Harness Builders — DONE:
+- ~~`test/harness/builders/config_builder.go`~~ — Removed `configtest` import, replaced `*configtest.ProjectBuilder` with direct `*config.Project` construction. Same `With*` API, `Build()` returns shallow copy.
+- ~~`test/harness/harness.go`~~ — `config.Slugify` → `text.Slugify`, `config.RegistryFileName` → literal `"projects.yaml"`, `CLAWKER_HOME` → `CLAWKER_CONFIG_DIR`, direct YAML string for registry construction.
+- ~~`test/harness/factory.go`~~ — `config.NewConfigForTest` → `configmocks.NewFromString`, `Config` closure → `func() (config.Config, error)`, `hostproxy.NewManager(cfg)` with error handling, `docker.TestLabelConfig(cfg, t.Name())`.
+- ~~`cmd/fawker/factory.go`~~ — Full rewrite: removed `configtest` import, `configmocks.NewFromString` for config construction, `Config` closure returns `(config.Config, error)`, `fawkerClient` takes `config.Config` interface, `NewFakeClient(cfg)` without options.
+
+### Still broken in test/harness (pre-existing, not blocking fawker/clawker builds):
+- `test/harness/docker.go` — references removed `docker.LabelTest`, `docker.ManagedLabelValue`, `docker.LabelManaged`, `docker.LabelTestName`, `config.ClawkerHome`, and `hostproxy.NewManager()` (old signature)
+- `test/harness/client.go` — references removed `config.ContainerUID`
+
 ### Critical path — DONE:
 5. ~~`internal/workspace`~~ — `SetupMountsConfig.Config` → `Cfg config.Config`; deleted `EnsureShareDir` (use `cfg.ShareSubdir()`), deleted `resolveIgnoreFile` (use `cfg.GetProjectIgnoreFile()`); `docker.VolumeLabels` → `cli.VolumeLabels()`
 6. ~~`internal/containerfs`~~ — `PrepareOnboardingTar`/`PreparePostInitTar` now take `cfg config.Config` first param; replaced 6 `config.ContainerUID`/`config.ContainerGID` constants with `cfg.ContainerUID()`/`cfg.ContainerGID()` methods
@@ -77,6 +87,8 @@ client.VolumeLabels(project, agent, purpose)
 - **Tar functions take `cfg config.Config` first param** — `PrepareOnboardingTar(cfg, homeDir)` and `PreparePostInitTar(cfg, script)` read `cfg.ContainerUID()`/`cfg.ContainerGID()` instead of constants
 - **`SetupMountsConfig.Cfg` replaces `.Config`** — field type changed from `*config.Project` (schema pointer) to `config.Config` (interface). Access project schema via `cfg.Cfg.Project()`
 - **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split into `cfg, err := opts.Config()`.
+- **configFromProject pattern** — To bridge `*config.Project` schema structs to `config.Config` interface in tests: marshal to YAML, prepend `project:` name (yaml:"-" field), use `configmocks.NewFromString(yaml)`. See `test/harness/factory.go:configFromProject()`.
+- **text.Slugify** — `config.Slugify` was moved to `text.Slugify` in `internal/text/text.go`. Import `internal/text` for slug generation.
 - **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Always guard: `if p := cfg.Project(); p != nil { project = p.Project }`
 - **cp has TWO ProjectKey sites** — extract cfg once at top of agent block, reuse for both src and dst
 

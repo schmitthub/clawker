@@ -1,11 +1,13 @@
 package harness
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/text"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"gopkg.in/yaml.v3"
 )
@@ -118,7 +120,7 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	// The registry stores projects by slug, and Resolution.ProjectKey returns the slug.
 	// Container/volume/network names use the slug, so the harness must too.
 	if h.Project != "" {
-		h.Project = config.Slugify(h.Project)
+		h.Project = text.Slugify(h.Project)
 		h.Config.Project = h.Project // keep config in sync with slugified name
 	}
 
@@ -127,26 +129,15 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	// Isolate CLAWKER_HOME so registry/settings load from temp dir
-	h.SetEnv("CLAWKER_HOME", h.ConfigDir)
+	// Isolate config dir so registry/settings load from temp dir
+	h.SetEnv("CLAWKER_CONFIG_DIR", h.ConfigDir)
 
 	// Register the project in a temp registry so resolution finds it
 	if h.Project != "" {
-		slug := config.Slugify(h.Project)
-		registry := config.ProjectRegistry{
-			Projects: map[string]config.ProjectEntry{
-				slug: {
-					Name: h.Project,
-					Root: h.ProjectDir,
-				},
-			},
-		}
-		regData, err := yaml.Marshal(registry)
-		if err != nil {
-			t.Fatalf("failed to marshal registry: %v", err)
-		}
-		regPath := filepath.Join(h.ConfigDir, config.RegistryFileName)
-		if err := os.WriteFile(regPath, regData, 0644); err != nil {
+		slug := text.Slugify(h.Project)
+		regYAML := fmt.Sprintf("projects:\n  %s:\n    name: %s\n    root: %s\n", slug, h.Project, h.ProjectDir)
+		regPath := filepath.Join(h.ConfigDir, "projects.yaml")
+		if err := os.WriteFile(regPath, []byte(regYAML), 0644); err != nil {
 			t.Fatalf("failed to write registry: %v", err)
 		}
 	}

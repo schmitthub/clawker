@@ -12,7 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/config/configtest"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -23,6 +23,7 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed scenarios
@@ -43,10 +44,9 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 		Config:    configFn,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			// Mirror real factory: inject config into client for image resolution.
-			cfgProvider := configFn()
-			cfg, ok := cfgProvider.(*config.Config)
-			if !ok {
-				return nil, fmt.Errorf("unexpected config provider type %T", cfgProvider)
+			cfg, err := configFn()
+			if err != nil {
+				return nil, fmt.Errorf("fawker config: %w", err)
 			}
 			return fawkerClient(scenario, cfg)
 		},
@@ -60,20 +60,22 @@ func fawkerFactory() (*cmdutil.Factory, *string) {
 }
 
 // fawkerConfigFunc returns a lazy Config constructor with sync.Once semantics.
-// Uses InMemorySettingsLoader to avoid temp directory creation and filesystem leaks.
-func fawkerConfigFunc() func() config.Provider {
+// Uses configmocks.NewFromString to avoid temp directory creation and filesystem leaks.
+func fawkerConfigFunc() func() (config.Config, error) {
 	var (
 		once sync.Once
-		cfg  *config.Config
+		cfg  config.Config
 	)
-	return func() config.Provider {
+	return func() (config.Config, error) {
 		once.Do(func() {
-			settings := config.DefaultSettings()
-			settings.DefaultImage = docker.DefaultImageTag // Triggers rebuild flow on "@"
-			cfg = config.NewConfigForTest(fawkerProject(), settings)
-			cfg.SetSettingsLoader(configtest.NewInMemorySettingsLoader())
+			project := fawkerProject()
+			yamlData, _ := yaml.Marshal(project)
+			// Project.Project has yaml:"-" so it's not marshaled — prepend it.
+			// Also prepend default_image so the config knows the default image tag.
+			cfgYAML := fmt.Sprintf("project: %s\ndefault_image: %s\n%s", project.Project, docker.DefaultImageTag, string(yamlData))
+			cfg = configmocks.NewFromString(cfgYAML)
 		})
-		return cfg
+		return cfg, nil
 	}
 }
 
@@ -101,8 +103,8 @@ func fawkerProject() *config.Project {
 
 // fawkerClient builds a fake Docker client wired with the selected scenario's
 // recorded events for build progress.
-func fawkerClient(scenarioName string, cfg *config.Config) (*docker.Client, error) {
-	fake := dockertest.NewFakeClient(dockertest.WithConfig(cfg))
+func fawkerClient(scenarioName string, cfg config.Config) (*docker.Client, error) {
+	fake := dockertest.NewFakeClient(cfg)
 
 	// Wire legacy image build as fallback for non-BuildKit paths.
 	fake.SetupLegacyBuild()
