@@ -47,7 +47,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 **Methods**: `Close()`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
 
-**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolveDefaultImage(cfg config.Config, settings config.Settings) string`.
+**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolvedImage` struct (Reference + Source). `ResolveDefaultImage(cfg config.Config, settings config.Settings) string`.
 
 ## Builder (`builder.go`)
 
@@ -71,9 +71,11 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
 
+`BindOverlayDirsFromPatterns(patterns) []string` — derives directory overlay targets from ignore patterns for bind mode. Only returns deterministic directory paths, skips file-glob patterns.
+
 ## Opts Types (`opts.go`)
 
-`MemBytes`, `MemSwapBytes`, `NanoCPUs` (pflag.Value). Container options: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`. `ParseCPUs(value) (int64, error)`.
+`MemBytes`, `MemSwapBytes`, `NanoCPUs` (pflag.Value). Container options: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`. Constructors: `NewUlimitOpt`, `NewWeightDeviceOpt`, `NewThrottleDeviceOpt`, `NewGpuOpts`, `NewMountOpt`, `NewDeviceOpt`. `ParseCPUs(value) (int64, error)`.
 
 ## Type Re-exports (`types.go`)
 

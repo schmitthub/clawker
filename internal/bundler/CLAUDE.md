@@ -1,6 +1,6 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`, `BuildDefaultImage`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 

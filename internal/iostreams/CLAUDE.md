@@ -190,7 +190,7 @@ Lipgloss-based pure functions for composing visual output:
 
 ## Text Utilities
 
-**Moved to `internal/text/`** — See `internal/text/CLAUDE.md`. Pure leaf package (stdlib only). Provides: `Truncate`, `TruncateMiddle`, `PadRight/Left/Center`, `WordWrap`, `WrapLines`, `CountVisibleWidth`, `StripANSI`, `Indent`, `JoinNonEmpty`, `Repeat`, `FirstLine`, `LineCount`.
+**Moved to `internal/text/`** — See `internal/text/CLAUDE.md` for the full API. Pure leaf package (stdlib only, no iostreams dependency).
 
 ## Import Boundary
 

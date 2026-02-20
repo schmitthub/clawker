@@ -261,7 +261,7 @@ build:
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
 agent: { includes: [], env_file: [], from_env: [], env: {}, post_init: "" }
-workspace: { remote_path: "/workspace", default_mode: "snapshot" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
@@ -315,7 +315,6 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 
 - `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
 - `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
-- `.claude/prds/` — Product requirement documents
 - `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
 - `.serena/memories/` — Active work-in-progress tracking
 
