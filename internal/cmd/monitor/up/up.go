@@ -64,10 +64,15 @@ Claude Code containers to send telemetry automatically.`,
 func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	networkName := config.NewBlankConfig().ClawkerNetwork()
+
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	networkName := cfg.ClawkerNetwork()
 
 	// Resolve monitor directory
-	monitorDir, err := config.MonitorDir()
+	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
@@ -119,15 +124,13 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 
 	if opts.Detach {
-		mon := &opts.Config().UserSettings().Monitoring
-
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Service URLs:")
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(mon.GrafanaURL()))
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(mon.JaegerURL()))
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(mon.PrometheusURL()))
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(cfg.GrafanaURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(cfg.JaegerURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -67,7 +68,7 @@ func TestNewCmdKill(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
-					return config.NewBlankConfig(), nil
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -151,7 +152,7 @@ func TestKillRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -167,7 +168,7 @@ func TestKillRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestKillRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerKill()
@@ -188,7 +189,7 @@ func TestKillRun_Success(t *testing.T) {
 }
 
 func TestKillRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testKillFactory(t, fake)
@@ -214,7 +215,7 @@ func testKillFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factor
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }

@@ -7,11 +7,11 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 )
 
-var cfg = config.NewBlankConfig()
+var cfg = configmocks.NewBlankConfig()
 
 func TestNewFakeClient(t *testing.T) {
 	t.Run("constructs without panic", func(t *testing.T) {

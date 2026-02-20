@@ -10,6 +10,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -240,7 +241,7 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStartRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -257,7 +258,7 @@ func TestStartRun_Success(t *testing.T) {
 }
 
 func TestStartRun_MultipleContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -277,7 +278,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 }
 
 func TestStartRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupNetworkExists(docker.NetworkName, true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
@@ -306,7 +307,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 }
 
 func TestStartRun_NilHostProxy(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	tio := iostreamstest.New()

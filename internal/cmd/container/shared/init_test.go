@@ -10,6 +10,7 @@ import (
 	moby "github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -71,7 +72,7 @@ func testCreateConfig(fake *dockertest.FakeClient, cfg *config.Project, containe
 }
 
 func TestCreateContainer_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -92,7 +93,7 @@ func TestCreateContainer_HappyPath(t *testing.T) {
 }
 
 func TestCreateContainer_ContainerCreateError(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
 		return moby.ContainerCreateResult{}, fmt.Errorf("disk full")
 	}
@@ -112,7 +113,7 @@ func TestCreateContainer_ContainerCreateError(t *testing.T) {
 
 func TestCreateContainer_ConfigCached(t *testing.T) {
 	// Default fake: volumes exist → ConfigCreated=false → config step is cached
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -130,7 +131,7 @@ func TestCreateContainer_ConfigCached(t *testing.T) {
 
 func TestCreateContainer_ConfigFresh(t *testing.T) {
 	// Volumes don't exist → EnsureVolume creates → ConfigCreated=true → init runs
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupVolumeExists("", false)
 	fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
 		return moby.VolumeCreateResult{}, nil
@@ -155,7 +156,7 @@ func TestCreateContainer_ConfigFresh(t *testing.T) {
 
 func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	// Host proxy enabled in config, but proxy manager fails — non-fatal, continues with warning
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -210,7 +211,7 @@ func TestCreateContainer_OnboardingSkippedWhenDisabled(t *testing.T) {
 		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
 	}
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	// No CopyToContainer setup — if called, would panic
 
@@ -229,7 +230,7 @@ func TestCreateContainer_OnboardingSkippedWhenDisabled(t *testing.T) {
 
 func TestCreateContainer_PostInit(t *testing.T) {
 	// PostInit configured → CopyToContainer called for post-init script injection
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -262,7 +263,7 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 		Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
 	}
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	// No CopyToContainer setup — if called, would fail
 
@@ -282,7 +283,7 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 	// PostInit configured but CopyToContainer fails on the second call (post-init injection).
 	// First call (onboarding) succeeds, second call (post-init) fails.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
@@ -314,7 +315,7 @@ func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 
 func TestCreateContainer_EmptyProject(t *testing.T) {
 	// Empty project → 2-segment container name (clawker.agent)
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -336,7 +337,7 @@ func TestCreateContainer_EmptyProject(t *testing.T) {
 }
 
 func TestCreateContainer_EnvFileError(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -357,7 +358,7 @@ func TestCreateContainer_EnvFileError(t *testing.T) {
 }
 
 func TestCreateContainer_FromEnvWarnings(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -402,7 +403,7 @@ func TestCreateContainer_FromEnvWarnings(t *testing.T) {
 
 func TestCreateContainer_RandomAgentName(t *testing.T) {
 	// No agent specified → random name generated
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -422,7 +423,7 @@ func TestCreateContainer_RandomAgentName(t *testing.T) {
 func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	// When volumes are freshly created and a subsequent init step fails,
 	// deferred cleanup removes newly-created volumes.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 
 	// Track which volumes have been "created" — allows VolumeInspect to return
 	// "not found" initially (so EnsureVolume creates) then "managed" (so VolumeRemove works).
@@ -472,7 +473,7 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 
 func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 	// When volumes already exist (ConfigCreated=false), no cleanup on failure.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	// Default: VolumeExists returns true → no volumes created
 
 	// ContainerCreate fails
@@ -497,7 +498,7 @@ func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 
 func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 	// When volume cleanup fails, the original error is still returned.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 
 	// Volumes freshly created — track state so IsVolumeManaged works during cleanup
 	createdVols := map[string]bool{}
@@ -540,7 +541,7 @@ func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 
 func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	// Invalid agent name is rejected before any volumes are created.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -562,7 +563,7 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 func TestCreateContainer_DisableFirewall(t *testing.T) {
 	// When DisableFirewall=true, firewall env vars should NOT be set
 	// even when the config has firewall enabled.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -597,7 +598,7 @@ func TestCreateContainer_DisableFirewall(t *testing.T) {
 func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 	// When DisableFirewall=false (default), firewall env vars should be set
 	// when the config has firewall enabled.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
@@ -636,7 +637,7 @@ func TestCreateContainer_DisableFirewallFalse(t *testing.T) {
 
 func TestCreateContainer_EventsSequence(t *testing.T) {
 	// Verify events are sent in expected order with expected steps.
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 

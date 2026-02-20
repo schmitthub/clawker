@@ -244,9 +244,11 @@ config.NewConfigForTest(project, settings) // returns config.Provider
 ```
 
 **Migration:** Replace with new test helpers from stubs.go. The new API needs a bridge:
-- `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil`
-- `config.NewConfigForTest(project, nil)` → `config.NewFakeConfig(FakeConfigOptions{Project: project}), nil`
-- `config.NewConfigForTest(project, settings)` → `config.NewFakeConfig(FakeConfigOptions{Project: project, Settings: settings}), nil`
+- `config.NewConfigForTest(nil, nil)` → `configmocks.NewBlankConfig(), nil`
+- `config.NewConfigForTest(project, nil)` → `configmocks.NewFakeConfig(FakeConfigOptions{Project: project}), nil`
+- `config.NewConfigForTest(project, settings)` → `configmocks.NewFakeConfig(FakeConfigOptions{Project: project, Settings: settings}), nil`
+
+**Import:** `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`
 
 **Gap:** `NewFakeConfig` currently takes `FakeConfigOptions{Viper: v}` — it needs `Project` and `Settings` fields to support the test pattern. OR a new `NewConfigForTest` must be added to stubs.go.
 
@@ -447,7 +449,7 @@ config.NewConfigForTest(project, settings) // returns config.Provider
 
 #### Gap 2: `config.NewConfigForTest` does not exist
 **Impact:** ~90 call sites
-**Proposal:** Add to `stubs.go`:
+**Proposal:** Add to `mocks/stubs.go`:
 ```go
 func NewConfigForTest(project *Project, settings *Settings) (Config, error) {
     v := viper.New()
@@ -460,7 +462,7 @@ This bridges the old test pattern to the new interface. `FakeConfigOptions` shou
 
 #### Gap 3: `config.DefaultSettings()` does not exist
 **Impact:** ~15 call sites (bundler, init, image/build tests, container tests, fawker)
-**Proposal:** Add to `stubs.go` or `defaults.go`:
+**Proposal:** Add to `mocks/stubs.go` or `defaults.go`:
 ```go
 func DefaultSettings() Settings {
     return NewMockConfig().Settings()
@@ -489,7 +491,7 @@ Option (A) is cleaner and matches the "Config is the single gateway" principle.
 #### Gap 6: `configtest/` subpackage does not exist
 **Impact:** 10 import sites across tests
 **Key types needed:** `ProjectBuilder` (fluent config builder), `NewInMemorySettingsLoader`, `NewInMemoryRegistryBuilder`
-**Proposal:** Rebuild needed types in `stubs.go` (same package, no separate subpackage):
+**Proposal:** Rebuild needed types in `mocks/stubs.go` (config mocks subpackage):
 - `ProjectBuilder` → Add to stubs.go or use `NewFakeConfig` with extended options
 - `InMemorySettingsLoader` → Only needed if SettingsLoader pattern is retained
 - `InMemoryRegistryBuilder` → Only needed if standalone registry pattern is retained

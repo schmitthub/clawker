@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +14,7 @@ import (
 // newTestManager creates a Manager with a mock config pointing at the given temp dir.
 func newTestManager(t *testing.T, dir string) *Manager {
 	t.Helper()
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	t.Setenv(cfg.ConfigDirEnvVar(), dir)
 	return NewManager(cfg)
 }
@@ -90,7 +90,7 @@ func TestWaitForPIDFile(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	m := NewManager(cfg)
 	assert.NotNil(t, m)
 	assert.NotNil(t, m.bridges)

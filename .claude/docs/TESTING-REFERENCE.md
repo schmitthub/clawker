@@ -22,7 +22,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
        │                                       │                   │
        ▼                                       ▼                   ▼
    gittest/                               dockertest/         Factory DI
-   config/stubs.go                        whailtest/          + runF seam
+   config/mocks/                          whailtest/          + runF seam
 ```
 
 **Each node in the DAG must provide test infrastructure for its dependents.**
@@ -42,7 +42,7 @@ f := &cmdutil.Factory{
         return fake.Client, nil  // Fake from dockertest
     },
     Config: func() (config.Config, error) {
-        return config.NewBlankConfig(), nil
+        return configmocks.NewBlankConfig(), nil
     },
     // ... other fields
 }
@@ -71,9 +71,9 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
-| `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
-| `internal/project` | `stubs.go` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
+| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
@@ -121,14 +121,19 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 
 ## Config Package Testing Guide (`internal/config`)
 
-The config package exposes lightweight test doubles in `internal/config/stubs.go`. `NewBlankConfig()` and `NewFromString()` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. This enables partial mocking and call assertions.
+The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString()` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. This enables partial mocking and call assertions.
+
+Import as:
+```go
+configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+```
 
 ### Which helper to use
 
-- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
-- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
-- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+- `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
 
 ### Typical test mapping
 
@@ -152,18 +157,20 @@ go test ./internal/config -run TestReadFromString -v
 
 ---
 
-## Project Package Test Doubles (`internal/project/stubs.go`)
+## Project Package Test Doubles (`internal/project/mocks/`)
 
 The project package exposes scenario-oriented doubles so dependents can choose the minimum coupling needed.
 
 ### 1) Pure mock manager (no config/git reads or writes)
 
-Use `project.NewProjectManagerMock()` when you only need interface-level behavior in unit tests.
+Use `projectmocks.NewProjectManagerMock()` when you only need interface-level behavior in unit tests.
 
 ```go
-mgr := project.NewProjectManagerMock()
+import projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+
+mgr := projectmocks.NewProjectManagerMock()
 mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
-    return project.NewProjectMockFromRecord(project.ProjectRecord{
+    return projectmocks.NewProjectMockFromRecord(project.ProjectRecord{
         Name: "demo",
         Root: root,
     }), nil
@@ -172,14 +179,14 @@ mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
 
 ### 2) Read-only config + in-memory git
 
-Use `project.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
+Use `projectmocks.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
 
-- Config double source: `config.NewFromString(yaml)`
+- Config double source: `configmocks.NewFromString(yaml)`
 - Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
 - Mutation guard: `Register`, `Update`, and `Remove` return `project.ErrReadOnlyTestManager`
 
 ```go
-h := project.NewReadOnlyTestManager(t, `
+h := projectmocks.NewReadOnlyTestManager(t, `
 projects:
   - name: Demo
     root: /tmp/demo
@@ -191,14 +198,14 @@ require.Len(t, projects, 1)
 
 ### 3) Isolated writable config + in-memory git
 
-Use `project.NewIsolatedTestManager(t)` when tests must exercise config `Set`/`Write` behavior and assert persisted files.
+Use `projectmocks.NewIsolatedTestManager(t)` when tests must exercise config `Set`/`Write` behavior and assert persisted files.
 
-- Config double source: `config.NewIsolatedTestConfig(t)`
+- Config double source: `configmocks.NewIsolatedTestConfig(t)`
 - Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
 - Registry/settings assertions: `h.ReadConfigFiles(...)`
 
 ```go
-h := project.NewIsolatedTestManager(t)
+h := projectmocks.NewIsolatedTestManager(t)
 _, err := h.Manager.Register(context.Background(), "Demo", t.TempDir())
 require.NoError(t, err)
 
@@ -261,7 +268,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         Config: func() (config.Config, error) {
-            return config.NewBlankConfig(), nil
+            return configmocks.NewBlankConfig(), nil
         },
     }
 
@@ -317,7 +324,7 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
             return mockClient, nil
         },
         Config: func() (config.Config, error) {
-            return config.NewBlankConfig(), nil
+            return configmocks.NewBlankConfig(), nil
         },
     }
 
@@ -372,7 +379,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgete
             return fake.Client, nil
         },
         Config: func() (config.Config, error) {
-            return config.NewBlankConfig(), nil
+            return configmocks.NewBlankConfig(), nil
         },
     }
 
@@ -895,19 +902,21 @@ fake.Reset()                                  // Clear call log
 
 The codebase provides in-memory implementations for testing without filesystem I/O.
 
-### config Test Stubs (stubs.go)
+### config Test Stubs (mocks/stubs.go)
 
-Config test helpers live in the `config` package itself (not a separate subpackage):
+Config test helpers live in `internal/config/mocks/`:
 
 ```go
+import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+
 // Default test double — in-memory *ConfigMock with defaults, Set/Write/Watch panic
-cfg := config.NewBlankConfig()
+cfg := configmocks.NewBlankConfig()
 
 // Test double from YAML — in-memory *ConfigMock, Set/Write/Watch panic
-cfg := config.NewFromString(`build: { image: "alpine:3.20" }`)
+cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`)
 
 // File-backed config for mutation tests
-cfg, read := config.NewIsolatedTestConfig(t)
+cfg, read := configmocks.NewIsolatedTestConfig(t)
 ```
 
 **Factory wiring in tests:**
@@ -915,7 +924,7 @@ cfg, read := config.NewIsolatedTestConfig(t)
 f := &cmdutil.Factory{
     IOStreams: tio.IOStreams,
     Config: func() (config.Config, error) {
-        return config.NewBlankConfig(), nil
+        return configmocks.NewBlankConfig(), nil
     },
 }
 ```
@@ -933,9 +942,9 @@ gitMgr := gittest.NewInMemoryGitManager()
 
 | Need | Use |
 |------|-----|
-| Default config for command tests | `config.NewBlankConfig()` |
-| Config with specific YAML values | `config.NewFromString(yaml)` |
-| Config needing Set/Write/Watch | `config.NewIsolatedTestConfig(t)` |
+| Default config for command tests | `configmocks.NewBlankConfig()` |
+| Config with specific YAML values | `configmocks.NewFromString(yaml)` |
+| Config needing Set/Write/Watch | `configmocks.NewIsolatedTestConfig(t)` |
 | Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 | Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 

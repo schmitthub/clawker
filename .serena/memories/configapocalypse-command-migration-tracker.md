@@ -40,13 +40,13 @@
 6. **`ProjectFound()` / `ProjectKey()` gone from Config** — project identity lives in `project.ProjectManager`.
 7. **`config.RegistryFileName` removed** — registry path is internal to config.
 8. **SettingsLoader pattern is dead** — `cfg.Set(key, val)` + `cfg.Write(WriteOptions{})`. No more `SettingsLoader()`, `SetSettingsLoader()`, `NewSettingsLoader()`, `settingsLoader.Save/Path()`.
-9. **`config.Config` is an interface** — can't construct struct literals. Use `NewBlankConfig()`, `NewFromString(yaml)`, or `NewIsolatedTestConfig(t)`.
-10. **`NewBlankConfig()` doesn't wire Set/Write** — panics on call. Use `NewIsolatedTestConfig(t)` for mutation tests.
+9. **`config.Config` is an interface** — can't construct struct literals. Use `configmocks.NewBlankConfig()`, `configmocks.NewFromString(yaml)`, or `configmocks.NewIsolatedTestConfig(t)` (from `internal/config/mocks/`).
+10. **`configmocks.NewBlankConfig()` doesn't wire Set/Write** — panics on call. Use `configmocks.NewIsolatedTestConfig(t)` for mutation tests. Use `configmocks.NewFromString(yaml)` when you need specific config values without mutation.
 11. **`config.ShareDir()` / `config.EnsureDir()` gone** — use `cfg.ShareSubdir()` (ensures+returns).
 12. **Label constants removed from `docker`** — use `cfg.LabelManaged()`, `cfg.LabelBaseImage()`, etc. from Config interface.
 13. **`client.BuildDefaultImage(ctx, flavor, onProgress)` replaces manual build** — handles everything internally. Override via `fake.Client.BuildDefaultImageFunc`.
 14. **`progressStatus()` bridges whail→tui** — duplicated in `image/build` and `init`. Consider extracting.
-15. **`dockertest.NewFakeClient()` requires config arg** — use `config.NewBlankConfig()` or test's cfg.
+15. **`dockertest.NewFakeClient()` requires config arg** — use `configmocks.NewBlankConfig()` or test's cfg (import `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).
 16. **`config.Provider` type is gone** — replaced by `config.Config` interface everywhere.
 17. **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split: `cfg, err := opts.Config()` then use `cfg`.
 18. **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Always guard: `if p := cfg.Project(); p != nil { project = p.Project }`.

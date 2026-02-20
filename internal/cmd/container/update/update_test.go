@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -131,7 +132,7 @@ func TestNewCmdUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
-					return config.NewBlankConfig(), nil
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -295,13 +296,13 @@ func testUpdateFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
 
 func TestUpdateRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()
@@ -329,7 +330,7 @@ func TestUpdateRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -345,7 +346,7 @@ func TestUpdateRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestUpdateRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testUpdateFactory(t, fake)
@@ -362,7 +363,7 @@ func TestUpdateRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestUpdateRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUpdate()

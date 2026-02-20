@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
 // mockContainerLister implements ContainerLister for testing.
@@ -38,7 +38,7 @@ func (m *mockContainerLister) Close() error {
 }
 
 func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	hpCfg := cfg.HostProxyConfig().Daemon
 
 	// Verify the config defaults match what we expect
@@ -57,10 +57,7 @@ func TestNewDaemon_ReadsConfigDefaults(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesPort(t *testing.T) {
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.daemon.port", 0); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	cfg := configmocks.NewFromString(`host_proxy: { daemon: { port: 0 } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for port 0")
@@ -68,10 +65,7 @@ func TestNewDaemon_ValidatesPort(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.daemon.poll_interval", time.Duration(0)); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	cfg := configmocks.NewFromString(`host_proxy: { daemon: { poll_interval: "0s" } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for zero poll interval")
@@ -79,10 +73,7 @@ func TestNewDaemon_ValidatesPollInterval(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.daemon.grace_period", time.Duration(-1)); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	cfg := configmocks.NewFromString(`host_proxy: { daemon: { grace_period: "-1s" } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for negative grace period")
@@ -90,10 +81,7 @@ func TestNewDaemon_ValidatesGracePeriod(t *testing.T) {
 }
 
 func TestNewDaemon_ValidatesMaxConsecutiveErrs(t *testing.T) {
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.daemon.max_consecutive_errs", 0); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	cfg := configmocks.NewFromString(`host_proxy: { daemon: { max_consecutive_errs: 0 } }`)
 	_, err := NewDaemon(cfg)
 	if err == nil {
 		t.Fatal("expected error for zero max consecutive errors")
@@ -104,7 +92,7 @@ func TestWatchContainers_ExitsOnZeroContainers(t *testing.T) {
 	mock := &mockContainerLister{containerCount: 0}
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        10 * time.Millisecond,
@@ -137,7 +125,7 @@ func TestWatchContainers_ExitsOnConsecutiveErrors(t *testing.T) {
 	}
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        10 * time.Millisecond,
@@ -169,7 +157,7 @@ func TestWatchContainers_RespectsContextCancellation(t *testing.T) {
 	mock := &mockContainerLister{containerCount: 5} // Containers running
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        10 * time.Millisecond,
@@ -201,7 +189,7 @@ func TestWatchContainers_GracePeriod(t *testing.T) {
 
 	gracePeriod := 100 * time.Millisecond
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        gracePeriod,
@@ -240,7 +228,7 @@ func TestWatchContainers_ResetsErrorCountOnSuccess(t *testing.T) {
 	mock.err = errors.New("temporary error")
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
 		gracePeriod:        10 * time.Millisecond,
@@ -273,7 +261,7 @@ func TestDaemon_ClosesDockerClient(t *testing.T) {
 	mock := &mockContainerLister{containerCount: 0}
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		server:             NewServer(0), // Use port 0 to get random available port
 		docker:             mock,
 		pollInterval:       10 * time.Millisecond,
@@ -302,7 +290,7 @@ func TestCountClawkerContainers_UsesCorrectFilter(t *testing.T) {
 	mock := &mockContainerLister{}
 
 	daemon := &Daemon{
-		cfg:                config.NewBlankConfig(),
+		cfg:                configmocks.NewBlankConfig(),
 		docker:             mock,
 		maxConsecutiveErrs: 10,
 	}

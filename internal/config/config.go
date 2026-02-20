@@ -77,6 +77,9 @@ type Config interface {
 	EngineManagedLabel() string
 	ContainerUID() int
 	ContainerGID() int
+	GrafanaURL(host string, https bool) string
+	JaegerURL(host string, https bool) string
+	PrometheusURL(host string, https bool) string
 	RequiredFirewallDomains() []string
 	GetProjectRoot() (string, error)
 	GetProjectIgnoreFile() (string, error)

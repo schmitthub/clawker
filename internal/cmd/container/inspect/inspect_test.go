@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -85,7 +86,7 @@ func TestNewCmdInspect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
-					return config.NewBlankConfig(), nil
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -154,13 +155,13 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
 
 func TestInspectRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
@@ -178,7 +179,7 @@ func TestInspectRun_HappyPath(t *testing.T) {
 }
 
 func TestInspectRun_FormatTemplate(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
@@ -203,7 +204,7 @@ func TestInspectRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -219,7 +220,7 @@ func TestInspectRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestInspectRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)
@@ -235,7 +236,7 @@ func TestInspectRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)

@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -164,7 +165,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
@@ -177,7 +178,7 @@ func TestAttachRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -193,7 +194,7 @@ func TestAttachRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestAttachRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, tio := testFactory(t, fake)
 
@@ -213,7 +214,7 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	f, tio := testFactory(t, fake)
@@ -232,7 +233,7 @@ func TestAttachRun_ContainerNotRunning(t *testing.T) {
 func TestAttachRun_NonTTYHappyPath(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupContainerInspect("clawker.myapp.dev", fixture)
 	fake.SetupContainerAttach()

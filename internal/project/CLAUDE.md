@@ -167,9 +167,13 @@ It supports dry-run and partial-failure reporting through `PruneStaleResult`.
 - In-memory git manager behavior for realistic worktree lifecycle tests.
 - Stale prune path and failure accounting via `PruneStaleResult`.
 
-## Test Doubles for Dependents (`stubs.go`)
+## Test Doubles for Dependents (`mocks/`)
 
-`internal/project/stubs.go` provides pre-wired doubles for downstream packages that depend on `ProjectManager`/`Project`.
+`internal/project/mocks/` provides pre-wired doubles for downstream packages that depend on `ProjectManager`/`Project`. Import as:
+
+```go
+projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+```
 
 ### Scenario Mapping
 
@@ -178,11 +182,11 @@ It supports dry-run and partial-failure reporting through `PruneStaleResult`.
     - Returns a panic-safe `*ProjectManagerMock` with overridable function fields.
 - **Read-only config + in-memory git**
     - Use `NewReadOnlyTestManager(t, yaml)`
-    - Config is `config.NewFromString(yaml)` (read-only semantics), git is `gittest.NewInMemoryGitManager`.
+    - Config is `configmocks.NewFromString(yaml)` (read-only semantics), git is `gittest.NewInMemoryGitManager`.
     - `Register` / `Update` / `Remove` return `ErrReadOnlyTestManager`.
 - **Isolated writable config + in-memory git**
     - Use `NewIsolatedTestManager(t)`
-    - Config is `config.NewIsolatedTestConfig(t)` (safe file read/write in temp dirs), git is `gittest.NewInMemoryGitManager`.
+    - Config is `configmocks.NewIsolatedTestConfig(t)` (safe file read/write in temp dirs), git is `gittest.NewInMemoryGitManager`.
     - Includes `ReadConfigFiles` callback for assertions over persisted settings/project/registry files.
 
 ### Minimal Usage

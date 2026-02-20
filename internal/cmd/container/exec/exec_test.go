@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -286,7 +287,7 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestExecRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, tio := testFactory(t, fake)
 
@@ -306,7 +307,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	f, tio := testFactory(t, fake)
 
@@ -324,7 +325,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 func TestExecRun_DetachMode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-abc123")
 	fake.SetupExecStart()
@@ -346,7 +347,7 @@ func TestExecRun_DetachMode(t *testing.T) {
 func TestExecRun_NonTTYHappyPath(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-xyz789")
 	fake.SetupExecAttach()
@@ -369,7 +370,7 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 func TestExecRun_NonZeroExitCode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-fail")
 	fake.SetupExecAttach()

@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
 // testMonitoringConfig parses a YAML string into a config.Config and returns
 // a pointer to its MonitoringConfig. Follows the bundler testConfig pattern.
 func testMonitoringConfig(t *testing.T, yaml string) *config.MonitoringConfig {
 	t.Helper()
-	cfg := config.NewFromString(yaml)
+	cfg := configmocks.NewFromString(yaml)
 	mon := cfg.MonitoringConfig()
 	return &mon
 }

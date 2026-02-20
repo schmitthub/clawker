@@ -62,12 +62,12 @@ func TestProject_NilHandleGuards(t *testing.T) {
 
 func TestProject_GetWorktree_FromRecord(t *testing.T) {
 	projectValue := project.NewProjectHandleForTest(project.ProjectRecord{
-			Name: "Demo",
-			Root: "/tmp/demo",
-			Worktrees: map[string]project.WorktreeRecord{
-				"feature/x": {Path: "/tmp/wt", Branch: "feature/x"},
-			},
-		})
+		Name: "Demo",
+		Root: "/tmp/demo",
+		Worktrees: map[string]project.WorktreeRecord{
+			"feature/x": {Path: "/tmp/wt", Branch: "feature/x"},
+		},
+	})
 
 	state, err := projectValue.GetWorktree(context.Background(), "feature/x")
 	require.NoError(t, err)

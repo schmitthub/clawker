@@ -51,6 +51,9 @@ func NewFromString(cfgStr string) *ConfigMock {
 	mock.EngineLabelPrefixFunc = cfg.EngineLabelPrefix
 	mock.EngineManagedLabelFunc = cfg.EngineManagedLabel
 	mock.ManagedLabelValueFunc = cfg.ManagedLabelValue
+	mock.GrafanaURLFunc = cfg.GrafanaURL
+	mock.JaegerURLFunc = cfg.JaegerURL
+	mock.PrometheusURLFunc = cfg.PrometheusURL
 
 	// Labels
 	mock.LabelPrefixFunc = cfg.LabelPrefix

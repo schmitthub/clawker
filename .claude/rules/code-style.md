@@ -96,4 +96,4 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
   - `Write(WriteOptions{Scope: ...})` for owned dirty roots in a scope
   - `Write(WriteOptions{Path: ...})` for explicit full-config writes
 - Project-scope writes resolve to local project `clawker.yaml` when in a registered project; otherwise they fall back to user-level config-dir `clawker.yaml`.
-- In tests, prefer `NewBlankConfig()`, `NewFromString(yaml)`, and `NewIsolatedTestConfig(t)` from `internal/config/stubs.go`.
+- In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(yaml)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

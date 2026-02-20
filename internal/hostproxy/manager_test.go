@@ -10,16 +10,13 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
 // newMockConfigWithPort creates a mock config with a custom manager port.
 func newMockConfigWithPort(t *testing.T, port int) config.Config {
 	t.Helper()
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.manager.port", port); err != nil {
-		t.Fatalf("failed to set port: %v", err)
-	}
-	return cfg
+	return configmocks.NewFromString(fmt.Sprintf(`host_proxy: { manager: { port: %d }, daemon: { port: %d } }`, port, port))
 }
 
 // getFreeMgrPort returns an available TCP port for manager tests.
@@ -69,7 +66,7 @@ func TestManagerIsRunningInitially(t *testing.T) {
 }
 
 func TestManagerDefaultPort(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
@@ -84,10 +81,7 @@ func TestManagerDefaultPort(t *testing.T) {
 }
 
 func TestManagerInvalidPort(t *testing.T) {
-	cfg := config.NewBlankConfig()
-	if err := cfg.Set("host_proxy.manager.port", 0); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	cfg := configmocks.NewFromString(`host_proxy: { manager: { port: 0 } }`)
 	_, err := NewManager(cfg)
 	if err == nil {
 		t.Fatal("expected error for invalid port 0")

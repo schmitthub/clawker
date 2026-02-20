@@ -11,6 +11,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -86,7 +87,7 @@ func TestNewCmdRemove(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
 				Config: func() (config.Config, error) {
-					return config.NewBlankConfig(), nil
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -149,7 +150,7 @@ func TestCmdRemove_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestRemoveRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -182,7 +183,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 }
 
 func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -211,7 +212,7 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 }
 
 func TestRemoveRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -235,7 +236,7 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestRemoveRun_WithVolumes(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewBlankConfig())
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -286,7 +287,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -313,7 +314,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgete
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return config.NewBlankConfig(), nil
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 

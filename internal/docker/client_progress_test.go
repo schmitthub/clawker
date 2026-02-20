@@ -7,14 +7,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-var progressCfg = config.NewBlankConfig()
+var progressCfg = configmocks.NewBlankConfig()
 
 // eventCollector collects BuildProgressEvents in a thread-safe manner.
 type eventCollector struct {

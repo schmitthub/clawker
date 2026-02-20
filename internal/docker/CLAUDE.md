@@ -83,7 +83,7 @@ Re-exports ~37 Docker types from whail. Key groups: container/exec options, imag
 
 `NewFakeClient(cfg config.Config, opts ...FakeClientOption)` — function-field fake backed by `whailtest.FakeAPIClient`. Config is required as first param (used for label keys and engine options). `FakeClient.Cfg` field stores the config for test assertions.
 
-Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use a package-level `defaultCfg = config.NewBlankConfig()` to avoid cascading cfg params to every caller.
+Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use a package-level `defaultCfg = configmocks.NewBlankConfig()` to avoid cascading cfg params to every caller.
 
 **Fixtures**: `ContainerFixture()`, `RunningContainerFixture()`, `ImageSummaryFixture()`, `MinimalCreateOpts()`, `MinimalStartOpts()`, `BuildKitBuildOpts()`
 
@@ -104,4 +104,4 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 - **No label constants exported** — all label keys come from `config.Config` methods. External packages that need label keys must hold a `config.Config` reference.
 - **`parseContainers` is a Client method** — it needs `c.cfg` for label keys when parsing container summaries.
 - **LSP false positives** — gopls reports false "no field or method" errors on `config.Config` interface and false "copylocks" warnings. These are stale LSP cache issues — the real compiler (`go build`) is authoritative.
-- **External caller cascade** — `NewFakeClient` signature changed from `NewFakeClient(opts...)` to `NewFakeClient(cfg, opts...)`. All ~150+ external callers need `config.NewBlankConfig()` as first arg. `WithConfig` option was deleted.
+- **External caller cascade** — `NewFakeClient` signature changed from `NewFakeClient(opts...)` to `NewFakeClient(cfg, opts...)`. All ~150+ external callers need `configmocks.NewBlankConfig()` as first arg (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`). `WithConfig` option was deleted.

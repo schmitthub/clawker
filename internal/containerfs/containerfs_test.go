@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/keyring"
 )
 
@@ -494,7 +494,7 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPrepareOnboardingTar(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	reader, err := PrepareOnboardingTar(cfg, "/home/claude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -542,7 +542,7 @@ func TestPrepareOnboardingTar(t *testing.T) {
 }
 
 func TestPreparePostInitTar_EmptyScript(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	_, err := PreparePostInitTar(cfg, "")
 	if err == nil {
 		t.Fatal("expected error for empty script")
@@ -559,7 +559,7 @@ func TestPreparePostInitTar_EmptyScript(t *testing.T) {
 }
 
 func TestPreparePostInitTar(t *testing.T) {
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	script := "claude mcp add -- npx -y @anthropic-ai/claude-code-mcp\nnpm install -g typescript\n"
 
 	reader, err := PreparePostInitTar(cfg, script)

@@ -18,6 +18,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -25,7 +26,7 @@ import (
 
 // defaultCfg provides label values for standalone fixture functions.
 // Uses mock config so callers don't need to pass config explicitly.
-var defaultCfg = config.NewBlankConfig()
+var defaultCfg = configmocks.NewBlankConfig()
 
 // ContainerFixture builds a container.Summary with proper clawker labels.
 // The container is in "exited" state by default.

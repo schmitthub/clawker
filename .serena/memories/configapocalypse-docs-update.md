@@ -25,7 +25,7 @@ Update all documentation across the repo to reflect the current state of the con
 ### 2. `.claude/docs/ARCHITECTURE.md` — UPDATED [DONE]
 - Added new `internal/config` section describing design principle (single interface, private internals, propose new methods)
 - `config.Provider` → `config.Config` (all occurrences)
-- `configtest/` → `stubs.go` in test subpackages table
+- `configtest/` → `mocks/` in test subpackages table
 - Factory signature updated to `func() (config.Config, error)`
 - Config wiring order updated from "Config gateway" to "Config (lazy, config.NewConfig() via sync.Once)"
 - Constants described as private, exposed through interface
@@ -38,14 +38,14 @@ Update all documentation across the repo to reflect the current state of the con
 
 ### 4. `.claude/docs/TESTING-REFERENCE.md` — UPDATED [DONE]
 - All `config.Provider` → `config.Config`
-- All `config.NewConfigForTest` → `config.NewBlankConfig()`
+- All `config.NewConfigForTest` → `configmocks.NewBlankConfig()` (import `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`)
 - All `configtest.*` references removed
 - Config test section rewritten with `stubs.go` examples
 - Factory wiring examples corrected to `func() (config.Config, error)`
 - "When to Use Which" table rewritten for new test helpers
 
 ### 5. `.claude/rules/testing.md` — UPDATED [DONE]
-- Config row in DAG test infrastructure table: `configtest/` → `stubs.go`
+- Config row in DAG test infrastructure table: `configtest/` → `mocks/`
 
 ### 6. `CLAUDE.md` (root) — UPDATED [DONE]
 - `config.Config` key concept rewritten: single interface, private internals, UnmarshalExact validation

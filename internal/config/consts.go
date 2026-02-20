@@ -294,3 +294,26 @@ func (c *configImpl) ContainerUID() int { return containerUID }
 
 // ContainerGID returns the default non-root container user GID.
 func (c *configImpl) ContainerGID() int { return containerGID }
+
+// GrafanaURL returns the Grafana dashboard URL for the given host.
+func (c *configImpl) GrafanaURL(host string, https bool) string {
+	return serviceURL(host, c.MonitoringConfig().GrafanaPort, https)
+}
+
+// JaegerURL returns the Jaeger UI URL for the given host.
+func (c *configImpl) JaegerURL(host string, https bool) string {
+	return serviceURL(host, c.MonitoringConfig().JaegerPort, https)
+}
+
+// PrometheusURL returns the Prometheus UI URL for the given host.
+func (c *configImpl) PrometheusURL(host string, https bool) string {
+	return serviceURL(host, c.MonitoringConfig().PrometheusPort, https)
+}
+
+func serviceURL(host string, port int, https bool) string {
+	scheme := "http"
+	if https {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}

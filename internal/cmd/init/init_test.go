@@ -8,6 +8,7 @@ import (
 	intbuild "github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -22,7 +23,7 @@ import (
 func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 	t.Helper()
 
-	cfg, _ := config.NewIsolatedTestConfig(t)
+	cfg, _ := configmocks.NewIsolatedTestConfig(t)
 
 	fake := dockertest.NewFakeClient(cfg)
 	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
@@ -31,10 +32,10 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 
 	return &InitOptions{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() (config.Config, error) { return cfg, nil },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() (config.Config, error) { return cfg, nil },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 }
 
@@ -42,14 +43,14 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) *InitOptions {
 
 func TestNewCmdInit(t *testing.T) {
 	tio := iostreamstest.New()
-	cfg := config.NewBlankConfig()
+	cfg := configmocks.NewBlankConfig()
 	fake := dockertest.NewFakeClient(cfg)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() (config.Config, error) { return cfg, nil },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() (config.Config, error) { return cfg, nil },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
 	var gotOpts *InitOptions
@@ -157,7 +158,7 @@ func TestPerformSetup_BuildSuccess(t *testing.T) {
 
 func TestPerformSetup_BuildFailure(t *testing.T) {
 	tio := iostreamstest.New()
-	cfg, _ := config.NewIsolatedTestConfig(t)
+	cfg, _ := configmocks.NewIsolatedTestConfig(t)
 
 	fake := dockertest.NewFakeClient(cfg)
 	fake.Client.BuildDefaultImageFunc = func(_ context.Context, _ string, _ whail.BuildProgressFunc) error {
@@ -166,10 +167,10 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 
 	opts := &InitOptions{
 		IOStreams: tio.IOStreams,
-		TUI:      tui.NewTUI(tio.IOStreams),
-		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		Config:   func() (config.Config, error) { return cfg, nil },
-		Client:   func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
+		TUI:       tui.NewTUI(tio.IOStreams),
+		Prompter:  func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Config:    func() (config.Config, error) { return cfg, nil },
+		Client:    func(_ context.Context) (*docker.Client, error) { return fake.Client, nil },
 	}
 
 	err := performSetup(context.Background(), opts, true, "bookworm")

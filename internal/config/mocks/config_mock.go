@@ -64,6 +64,9 @@ var _ config.Config = &ConfigMock{}
 //			GetProjectRootFunc: func() (string, error) {
 //				panic("mock out the GetProjectRoot method")
 //			},
+//			GrafanaURLFunc: func(host string, https bool) string {
+//				panic("mock out the GrafanaURL method")
+//			},
 //			HostProxyConfigFunc: func() config.HostProxyConfig {
 //				panic("mock out the HostProxyConfig method")
 //			},
@@ -72,6 +75,9 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			HostProxyPIDFilePathFunc: func() (string, error) {
 //				panic("mock out the HostProxyPIDFilePath method")
+//			},
+//			JaegerURLFunc: func(host string, https bool) string {
+//				panic("mock out the JaegerURL method")
 //			},
 //			LabelAgentFunc: func() string {
 //				panic("mock out the LabelAgent method")
@@ -144,6 +150,9 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			ProjectFunc: func() *config.Project {
 //				panic("mock out the Project method")
+//			},
+//			PrometheusURLFunc: func(host string, https bool) string {
+//				panic("mock out the PrometheusURL method")
 //			},
 //			RequiredFirewallDomainsFunc: func() []string {
 //				panic("mock out the RequiredFirewallDomains method")
@@ -218,6 +227,9 @@ type ConfigMock struct {
 	// GetProjectRootFunc mocks the GetProjectRoot method.
 	GetProjectRootFunc func() (string, error)
 
+	// GrafanaURLFunc mocks the GrafanaURL method.
+	GrafanaURLFunc func(host string, https bool) string
+
 	// HostProxyConfigFunc mocks the HostProxyConfig method.
 	HostProxyConfigFunc func() config.HostProxyConfig
 
@@ -226,6 +238,9 @@ type ConfigMock struct {
 
 	// HostProxyPIDFilePathFunc mocks the HostProxyPIDFilePath method.
 	HostProxyPIDFilePathFunc func() (string, error)
+
+	// JaegerURLFunc mocks the JaegerURL method.
+	JaegerURLFunc func(host string, https bool) string
 
 	// LabelAgentFunc mocks the LabelAgent method.
 	LabelAgentFunc func() string
@@ -299,6 +314,9 @@ type ConfigMock struct {
 	// ProjectFunc mocks the Project method.
 	ProjectFunc func() *config.Project
 
+	// PrometheusURLFunc mocks the PrometheusURL method.
+	PrometheusURLFunc func(host string, https bool) string
+
 	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
 	RequiredFirewallDomainsFunc func() []string
 
@@ -371,6 +389,13 @@ type ConfigMock struct {
 		// GetProjectRoot holds details about calls to the GetProjectRoot method.
 		GetProjectRoot []struct {
 		}
+		// GrafanaURL holds details about calls to the GrafanaURL method.
+		GrafanaURL []struct {
+			// Host is the host argument value.
+			Host string
+			// HTTPS is the https argument value.
+			HTTPS bool
+		}
 		// HostProxyConfig holds details about calls to the HostProxyConfig method.
 		HostProxyConfig []struct {
 		}
@@ -379,6 +404,13 @@ type ConfigMock struct {
 		}
 		// HostProxyPIDFilePath holds details about calls to the HostProxyPIDFilePath method.
 		HostProxyPIDFilePath []struct {
+		}
+		// JaegerURL holds details about calls to the JaegerURL method.
+		JaegerURL []struct {
+			// Host is the host argument value.
+			Host string
+			// HTTPS is the https argument value.
+			HTTPS bool
 		}
 		// LabelAgent holds details about calls to the LabelAgent method.
 		LabelAgent []struct {
@@ -452,6 +484,13 @@ type ConfigMock struct {
 		// Project holds details about calls to the Project method.
 		Project []struct {
 		}
+		// PrometheusURL holds details about calls to the PrometheusURL method.
+		PrometheusURL []struct {
+			// Host is the host argument value.
+			Host string
+			// HTTPS is the https argument value.
+			HTTPS bool
+		}
 		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
 		RequiredFirewallDomains []struct {
 		}
@@ -497,9 +536,11 @@ type ConfigMock struct {
 	lockGet                     sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
+	lockGrafanaURL              sync.RWMutex
 	lockHostProxyConfig         sync.RWMutex
 	lockHostProxyLogFilePath    sync.RWMutex
 	lockHostProxyPIDFilePath    sync.RWMutex
+	lockJaegerURL               sync.RWMutex
 	lockLabelAgent              sync.RWMutex
 	lockLabelBaseImage          sync.RWMutex
 	lockLabelCreated            sync.RWMutex
@@ -524,6 +565,7 @@ type ConfigMock struct {
 	lockMonitoringConfig        sync.RWMutex
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
+	lockPrometheusURL           sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
 	lockSet                     sync.RWMutex
 	lockSettings                sync.RWMutex
@@ -948,6 +990,42 @@ func (mock *ConfigMock) GetProjectRootCalls() []struct {
 	return calls
 }
 
+// GrafanaURL calls GrafanaURLFunc.
+func (mock *ConfigMock) GrafanaURL(host string, https bool) string {
+	if mock.GrafanaURLFunc == nil {
+		panic("ConfigMock.GrafanaURLFunc: method is nil but Config.GrafanaURL was just called")
+	}
+	callInfo := struct {
+		Host  string
+		HTTPS bool
+	}{
+		Host:  host,
+		HTTPS: https,
+	}
+	mock.lockGrafanaURL.Lock()
+	mock.calls.GrafanaURL = append(mock.calls.GrafanaURL, callInfo)
+	mock.lockGrafanaURL.Unlock()
+	return mock.GrafanaURLFunc(host, https)
+}
+
+// GrafanaURLCalls gets all the calls that were made to GrafanaURL.
+// Check the length with:
+//
+//	len(mockedConfig.GrafanaURLCalls())
+func (mock *ConfigMock) GrafanaURLCalls() []struct {
+	Host  string
+	HTTPS bool
+} {
+	var calls []struct {
+		Host  string
+		HTTPS bool
+	}
+	mock.lockGrafanaURL.RLock()
+	calls = mock.calls.GrafanaURL
+	mock.lockGrafanaURL.RUnlock()
+	return calls
+}
+
 // HostProxyConfig calls HostProxyConfigFunc.
 func (mock *ConfigMock) HostProxyConfig() config.HostProxyConfig {
 	if mock.HostProxyConfigFunc == nil {
@@ -1026,6 +1104,42 @@ func (mock *ConfigMock) HostProxyPIDFilePathCalls() []struct {
 	mock.lockHostProxyPIDFilePath.RLock()
 	calls = mock.calls.HostProxyPIDFilePath
 	mock.lockHostProxyPIDFilePath.RUnlock()
+	return calls
+}
+
+// JaegerURL calls JaegerURLFunc.
+func (mock *ConfigMock) JaegerURL(host string, https bool) string {
+	if mock.JaegerURLFunc == nil {
+		panic("ConfigMock.JaegerURLFunc: method is nil but Config.JaegerURL was just called")
+	}
+	callInfo := struct {
+		Host  string
+		HTTPS bool
+	}{
+		Host:  host,
+		HTTPS: https,
+	}
+	mock.lockJaegerURL.Lock()
+	mock.calls.JaegerURL = append(mock.calls.JaegerURL, callInfo)
+	mock.lockJaegerURL.Unlock()
+	return mock.JaegerURLFunc(host, https)
+}
+
+// JaegerURLCalls gets all the calls that were made to JaegerURL.
+// Check the length with:
+//
+//	len(mockedConfig.JaegerURLCalls())
+func (mock *ConfigMock) JaegerURLCalls() []struct {
+	Host  string
+	HTTPS bool
+} {
+	var calls []struct {
+		Host  string
+		HTTPS bool
+	}
+	mock.lockJaegerURL.RLock()
+	calls = mock.calls.JaegerURL
+	mock.lockJaegerURL.RUnlock()
 	return calls
 }
 
@@ -1674,6 +1788,42 @@ func (mock *ConfigMock) ProjectCalls() []struct {
 	mock.lockProject.RLock()
 	calls = mock.calls.Project
 	mock.lockProject.RUnlock()
+	return calls
+}
+
+// PrometheusURL calls PrometheusURLFunc.
+func (mock *ConfigMock) PrometheusURL(host string, https bool) string {
+	if mock.PrometheusURLFunc == nil {
+		panic("ConfigMock.PrometheusURLFunc: method is nil but Config.PrometheusURL was just called")
+	}
+	callInfo := struct {
+		Host  string
+		HTTPS bool
+	}{
+		Host:  host,
+		HTTPS: https,
+	}
+	mock.lockPrometheusURL.Lock()
+	mock.calls.PrometheusURL = append(mock.calls.PrometheusURL, callInfo)
+	mock.lockPrometheusURL.Unlock()
+	return mock.PrometheusURLFunc(host, https)
+}
+
+// PrometheusURLCalls gets all the calls that were made to PrometheusURL.
+// Check the length with:
+//
+//	len(mockedConfig.PrometheusURLCalls())
+func (mock *ConfigMock) PrometheusURLCalls() []struct {
+	Host  string
+	HTTPS bool
+} {
+	var calls []struct {
+		Host  string
+		HTTPS bool
+	}
+	mock.lockPrometheusURL.RLock()
+	calls = mock.calls.PrometheusURL
+	mock.lockPrometheusURL.RUnlock()
 	return calls
 }
 

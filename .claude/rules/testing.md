@@ -28,21 +28,34 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
+| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
 ## Config Package Test Double How-To
 
-Use the lightest config test helper that fits the assertion:
+Test doubles live in `internal/config/mocks/`. Import as:
 
-- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
-- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
-- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+```go
+configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+```
 
-`NewBlankConfig` and `NewFromString` return `*ConfigMock` (moq-generated) with every read Func field pre-wired. Set/Write/Watch are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+Use the lightest helper that fits the assertion:
+
+- `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+
+`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Set/Write/Watch are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+
+Project test doubles live in `internal/project/mocks/`. Import as:
+
+```go
+projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+```
 
 Typical mapping:
 
@@ -103,7 +116,7 @@ Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
 Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
-fake := dockertest.NewFakeClient(config.NewBlankConfig())
+fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
 tio := iostreamstest.New()

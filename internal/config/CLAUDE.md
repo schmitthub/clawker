@@ -43,7 +43,8 @@ Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$Ap
 | `consts.go` | Private constants (`domain`, `labelDomain`, subdir names, network name) exposed only via `Config` interface methods. `Mode` type (`ModeBind`/`ModeSnapshot`) remains exported |
 | `schema.go` | All persisted schema structs (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, etc.) |
 | `defaults.go` | `setDefaults(v)` — viper defaults, `requiredFirewallDomains`, YAML template constants |
-| `stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `StubWriteConfig()` |
+| `mocks/config_mock.go` | moq-generated `ConfigMock` (auto-generated, do not edit) |
+| `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `StubWriteConfig()` |
 | `config_test.go` | Unit tests for all of the above |
 | `testdata/` | Test fixtures: `config/` (settings, projects, user clawker.yaml), `project/` (project clawker.yaml) |
 
@@ -178,6 +179,11 @@ type Config interface {
     EngineManagedLabel() string       // "managed"
     ContainerUID() int                // 1001
     ContainerGID() int                // 1001
+
+    // Monitoring URL helpers
+    GrafanaURL(host string, https bool) string    // e.g. "http://localhost:3000"
+    JaegerURL(host string, https bool) string     // e.g. "http://localhost:16686"
+    PrometheusURL(host string, https bool) string // e.g. "http://localhost:9090"
 }
 ```
 
@@ -321,7 +327,13 @@ Other:
 (*LoopConfig).GetAppendSystemPrompt() string
 ```
 
-### Test Helpers (stubs.go)
+### Test Helpers (`mocks/stubs.go`)
+
+Test doubles live in `internal/config/mocks/`. Import as:
+
+```go
+configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+```
 
 ```go
 // In-memory *ConfigMock with defaults — all read Func fields wired, Set/Write/Watch panic
@@ -343,10 +355,10 @@ func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer)
 
 Use the lightest helper that fits the test intent:
 
-- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
-- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
-- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+- `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
 
 Typical mapping:
 
@@ -427,11 +439,13 @@ err = cfg.Write(config.WriteOptions{
 ### Testing — mock config
 
 ```go
+import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+
 // Default test double with defaults
-cfg := config.NewBlankConfig()
+cfg := configmocks.NewBlankConfig()
 
 // Test double with specific YAML values
-cfg := config.NewFromString(`build: { image: "alpine:3.20" }`)
+cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`)
 
 // Override a specific method on the mock
 cfg.ProjectFunc = func() *config.Project {
@@ -572,19 +586,21 @@ All subdir constants are private — access them through `Config` methods (`Logs
 **Old**: `config.ContainerUID`, `config.ContainerGID`, `config.DefaultSettings()`
 **New**: `ContainerUID()` and `ContainerGID()` are available via `Config` interface methods. `DefaultSettings()` remains not rebuilt.
 
-### Pattern 8: Testing — stubs.go
+### Pattern 8: Testing — mocks/stubs.go
 
-Use stubs from `stubs.go`:
+Use stubs from `internal/config/mocks/`:
 
 ```go
+import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+
 // Default test double (in-memory, no files)
-cfg := config.NewBlankConfig()
+cfg := configmocks.NewBlankConfig()
 
 // Test double with specific YAML values
-cfg := config.NewFromString(`build: { image: "alpine" }`)
+cfg := configmocks.NewFromString(`build: { image: "alpine" }`)
 
 // File-backed config for mutation tests
-cfg, read := config.NewIsolatedTestConfig(t)
+cfg, read := configmocks.NewIsolatedTestConfig(t)
 ```
 
 Registry mutation behavior should be tested through `internal/project` facades/services using real `config.Config` inputs or package-local test doubles there.

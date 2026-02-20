@@ -23,7 +23,7 @@ Migrate the entire codebase (~110-120 files) from the removed old config API to 
 
 ### Phase 0: Config package gap resolution (PREREQUISITE — not started)
 
-Before any caller migration, add missing symbols to `internal/config/`:
+Before any caller migration, add missing symbols to `internal/config/` and `internal/config/mocks/`:
 
 - [ ] **Gap 11**: Move `ContainerUID`/`ContainerGID` (value `1001`) to `internal/bundler/` as public constants. All other packages (docker/volume, containerfs, loop/shared, test/harness) will import from bundler.
 - [ ] **Gap 10**: Labels — `docker/labels.go` defines all label strings directly using `"dev.clawker."` prefix. No more importing from config. Check hostproxy for circular dep (if circular, define label strings locally in hostproxy).
@@ -34,7 +34,7 @@ Before any caller migration, add missing symbols to `internal/config/`:
 - [ ] **Gap 7**: Move `ResolveAgentEnv()` from config to `container/shared/` package.
 - [ ] **Gap 13**: Add `ProjectFound() bool` and `ProjectKey() string` convenience methods if still needed, or verify callers can use `GetProjectRoot()` + `Project()` instead.
 - [ ] **Gap 5 cleanup**: Remove vestigial `Registry` interface from `schema.go` if it's no longer used, or keep if schema types still reference it. Verify.
-- [ ] **Gap 6 cleanup**: Confirm no `configtest/` rebuild needed — all test patterns covered by `NewMockConfig()`, `NewFakeConfig()`, `ReadFromString()`, and the new `NewConfigForTest()` bridge.
+- [ ] **Gap 6 cleanup**: Confirm no `configtest/` rebuild needed — all test patterns covered by `configmocks.NewBlankConfig()`, `configmocks.NewFromString()`, `ReadFromString()`, and the new `NewConfigForTest()` bridge. Test doubles now live in `internal/config/mocks/`.
 
 ### Phase 1: Leaf/foundation infrastructure packages (not started)
 
@@ -126,7 +126,7 @@ Commands with additional old-API usage beyond Provider:
 - **Error variable shadowing** — For `docker.ContainerName(project, name)` calls, use `nameErr` to avoid shadowing the `err` from config.
 - **cp has TWO call sites** — Extract cfg once at top of `if opts.Agent {}` block, reuse for both src and dst resolution.
 - **Group A vs Group B** — 11 commands already had `func() (config.Config, error)` field type (only run function needed fixing). 3 commands (stop, remove, top) still had `func() config.Provider` and needed both field type change AND run function fix.
-- **Test replacement is mechanical** — `func() config.Provider {` → `func() (config.Config, error) {` and `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil` — can batch via sed for efficiency.
+- **Test replacement is mechanical** — `func() config.Provider {` → `func() (config.Config, error) {` and `config.NewConfigForTest(nil, nil)` → `configmocks.NewBlankConfig(), nil` — can batch via sed for efficiency. Test doubles now live in `internal/config/mocks/` (import as `configmocks`).
 
 ### Bundler migration gotchas (apply to all callers)
 - **Schema structs are data-only** — `MonitoringConfig`, `TelemetryConfig`, `Project` etc. have no methods. Add helpers in the consumer package, not on the schema types.
