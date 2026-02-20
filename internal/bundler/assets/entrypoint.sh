@@ -1,23 +1,90 @@
 #!/bin/bash
 set -e
 
+# --- FD redirection: suppress all subcommand noise ---
+# fd 3 = original stdout pipe (Docker stream type 1) — emit_ready writes here
+# fd 4 = original stderr pipe (Docker stream type 2) — emit_error/spinner write here
+exec 3>&1 4>&2
+exec 1>/dev/null 2>/dev/null
+
+# --- TTY + color detection on saved stderr ---
+_IS_TTY=false
+_CLR_CYAN="" _CLR_RESET="" _CLR_LINE=""
+if [ -t 4 ]; then
+    _IS_TTY=true
+    _CLR_CYAN=$'\033[36m'
+    _CLR_RESET=$'\033[0m'
+    _CLR_LINE=$'\033[2K'
+fi
+
+# --- Spinner machinery ---
+_SPINNER_PID=""
+_SPINNER_FRAMES="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+_start_spinner() {
+    local label="$1"
+    (
+        i=0
+        len=${#_SPINNER_FRAMES}
+        while true; do
+            # Extract single braille character (3 bytes in UTF-8)
+            frame="${_SPINNER_FRAMES:$i:1}"
+            printf '\r%s%s[clawker] %s %s%s' "$_CLR_LINE" "$_CLR_CYAN" "$frame" "$label" "$_CLR_RESET" >&4
+            sleep 0.1
+            i=$(( (i + 1) % len ))
+        done
+    ) &
+    _SPINNER_PID=$!
+}
+
+_stop_spinner() {
+    if [ -n "$_SPINNER_PID" ]; then
+        kill "$_SPINNER_PID" 2>/dev/null || true
+        wait "$_SPINNER_PID" 2>/dev/null || true
+        _SPINNER_PID=""
+        # Clear the spinner line
+        if [ "$_IS_TTY" = true ]; then
+            printf '\r%s' "$_CLR_LINE" >&4
+        fi
+    fi
+}
+
+trap _stop_spinner EXIT
+
+# --- Progress display ---
+emit_step() {
+    local name="$1"
+    if [ "$_IS_TTY" = true ]; then
+        _stop_spinner
+        _start_spinner "$name"
+    else
+        printf '[clawker] init %s\n' "$name" >&4
+    fi
+}
+
 # Emit ready signal - called before exec to indicate container is ready
+# Writes to fd 3 (original stdout pipe = Docker stream type 1)
 emit_ready() {
+    _stop_spinner
     mkdir -p /var/run/clawker
     echo "ts=$(date +%s) pid=$$" > /var/run/clawker/ready
-    echo "[clawker] ready ts=$(date +%s) agent=${CLAWKER_AGENT:-default}"
+    echo "[clawker] ready ts=$(date +%s) agent=${CLAWKER_AGENT:-default}" >&3
 }
 
 # Emit error signal and exit
+# Writes to fd 4 (original stderr pipe = Docker stream type 2)
 emit_error() {
+    _stop_spinner
     local component="$1"
     local msg="$2"
-    echo "[clawker] error component=$component msg=$msg" >&2
+    echo "[clawker] error component=$component msg=$msg" >&4
     exit 1
 }
 
 # Initialize firewall if enabled at runtime
 if [ "$CLAWKER_FIREWALL_ENABLED" = "true" ]; then
+    emit_step "firewall"
+
     # Fail fast if prerequisites are missing — silent degradation of a security control is dangerous
     if [ ! -x /usr/local/bin/init-firewall.sh ]; then
         emit_error "firewall" "init-firewall.sh not found or not executable"
@@ -40,6 +107,8 @@ INIT_DIR="$HOME/.claude-init"
 CONFIG_DIR="$HOME/.claude"
 
 if [ -d "$INIT_DIR" ]; then
+    emit_step "config"
+
     # Copy statusline.sh if missing
     [ ! -f "$CONFIG_DIR/statusline.sh" ] && cp "$INIT_DIR/statusline.sh" "$CONFIG_DIR/statusline.sh"
 
@@ -58,6 +127,8 @@ fi
 # Uses git config commands to selectively copy settings, avoiding credential.helper
 HOST_GITCONFIG="/tmp/host-gitconfig"
 if [ -f "$HOST_GITCONFIG" ]; then
+    emit_step "git"
+
     # Copy host gitconfig, filtering out the entire [credential] section
     # The awk script skips lines from [credential] until the next section header
     if ! awk '
@@ -65,7 +136,6 @@ if [ -f "$HOST_GITCONFIG" ]; then
         /^\[/ { in_cred=0 }
         !in_cred { print }
     ' "$HOST_GITCONFIG" > "$HOME/.gitconfig.tmp" 2>/dev/null; then
-        echo "Warning: Failed to filter host gitconfig" >&2
         cp "$HOST_GITCONFIG" "$HOME/.gitconfig" 2>/dev/null || true
     elif [ -s "$HOME/.gitconfig.tmp" ]; then
         mv "$HOME/.gitconfig.tmp" "$HOME/.gitconfig"
@@ -76,9 +146,9 @@ fi
 
 # Configure git credential helper if HTTPS forwarding is enabled
 if [ -n "$CLAWKER_HOST_PROXY" ] && [ "$CLAWKER_GIT_HTTPS" = "true" ]; then
-    if ! git config --global credential.helper clawker 2>&1; then
-        echo "Warning: Failed to configure git credential helper" >&2
-    fi
+    emit_step "git-credentials"
+
+    git config --global credential.helper clawker 2>&1 || true
 fi
 
 # Setup SSH known hosts for common git hosting services
@@ -101,6 +171,7 @@ KNOWN_HOSTS
 
 # Setup SSH known hosts unconditionally — socketbridge handles SSH/GPG agent forwarding
 # via docker exec, but known_hosts are still needed for SSH operations
+emit_step "ssh"
 ssh_setup_known_hosts
 
 # Run post-init script once if it exists and hasn't been run yet
@@ -109,7 +180,10 @@ ssh_setup_known_hosts
 POST_INIT="$HOME/.clawker/post-init.sh"
 POST_INIT_DONE="$HOME/.claude/post-initialized"
 if [ -x "$POST_INIT" ] && [ ! -f "$POST_INIT_DONE" ]; then
-    echo "[clawker] running post-init"
+    emit_step "post-init"
+    if [ "$_IS_TTY" != true ]; then
+        printf '[clawker] running post-init\n' >&4
+    fi
     if "$POST_INIT"; then
         touch "$POST_INIT_DONE"
     else
@@ -125,4 +199,6 @@ fi
 # Signal readiness before handing off to the main process
 emit_ready
 
+# Restore fds for exec'd process and close saved fds
+exec 1>&3 2>&4 3>&- 4>&-
 exec "$@"
