@@ -25,7 +25,7 @@ import (
 
 // defaultCfg provides label values for standalone fixture functions.
 // Uses mock config so callers don't need to pass config explicitly.
-var defaultCfg = config.NewMockConfig()
+var defaultCfg = config.NewBlankConfig()
 
 // ContainerFixture builds a container.Summary with proper clawker labels.
 // The container is in "exited" state by default.

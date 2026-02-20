@@ -75,4 +75,4 @@ Returns an `io.Reader` containing a tar archive with:
 go test ./internal/containerfs/... -v
 ```
 
-All tests use `t.TempDir()` for isolation, `keyring.MockInit()` for keyring tests, and `config.NewMockConfig()` for Config interface stubs.
+All tests use `t.TempDir()` for isolation, `keyring.MockInit()` for keyring tests, and `config.NewBlankConfig()` for Config interface stubs.

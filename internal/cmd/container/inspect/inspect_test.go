@@ -160,7 +160,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 }
 
 func TestInspectRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
@@ -178,7 +178,7 @@ func TestInspectRun_HappyPath(t *testing.T) {
 }
 
 func TestInspectRun_FormatTemplate(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)
@@ -219,7 +219,7 @@ func TestInspectRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestInspectRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)
@@ -235,7 +235,7 @@ func TestInspectRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestInspectRun_MultiContainerPartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupContainerList(c)
 	fake.SetupContainerInspect("clawker.myapp.dev", c)

@@ -281,7 +281,7 @@ func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory,
 }
 
 func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyFromContainer()
@@ -300,7 +300,7 @@ func TestCpRun_CopyFromContainer_Stdout(t *testing.T) {
 }
 
 func TestCpRun_CopyToContainer_Stdin(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupCopyToContainer()
@@ -342,7 +342,7 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testCpFactory(t, fake)
@@ -359,7 +359,7 @@ func TestCpRun_ContainerNotFound_CopyFrom(t *testing.T) {
 }
 
 func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testCpFactory(t, fake)
@@ -376,7 +376,7 @@ func TestCpRun_ContainerNotFound_CopyTo(t *testing.T) {
 }
 
 func TestCpRun_BothPathsContainer(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)
@@ -391,7 +391,7 @@ func TestCpRun_BothPathsContainer(t *testing.T) {
 }
 
 func TestCpRun_BothPathsHost(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	f, tio := testCpFactory(t, fake)
 
 	cmd := NewCmdCp(f, nil)

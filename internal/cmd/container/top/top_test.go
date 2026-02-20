@@ -204,7 +204,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 }
 
 func TestTopRun_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerTop(
@@ -258,7 +258,7 @@ func TestTopRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestTopRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)

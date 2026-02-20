@@ -458,7 +458,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestCreateRun(t *testing.T) {
 	t.Run("basic create prints container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient(config.NewMockConfig())
+		fake := dockertest.NewFakeClient(config.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -483,7 +483,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init runs when config volume freshly created", func(t *testing.T) {
 		// Make all volumes report as not existing → EnsureVolume creates them → ConfigCreated=true
-		fake := dockertest.NewFakeClient(config.NewMockConfig())
+		fake := dockertest.NewFakeClient(config.NewBlankConfig())
 		fake.SetupVolumeExists("", false)
 		fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
 			return moby.VolumeCreateResult{}, nil
@@ -516,7 +516,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init skipped when config volume exists", func(t *testing.T) {
 		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := dockertest.NewFakeClient(config.NewMockConfig())
+		fake := dockertest.NewFakeClient(config.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -540,7 +540,7 @@ func TestCreateRun(t *testing.T) {
 	t.Run("onboarding injected when use_host_auth enabled", func(t *testing.T) {
 		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
 		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := dockertest.NewFakeClient(config.NewMockConfig())
+		fake := dockertest.NewFakeClient(config.NewBlankConfig())
 		fake.SetupContainerCreate()
 
 		copyToContainerCalled := false
@@ -566,7 +566,7 @@ func TestCreateRun(t *testing.T) {
 	t.Run("onboarding failure returns error", func(t *testing.T) {
 		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
 		// CopyToContainer fails → onboarding error propagates
-		fake := dockertest.NewFakeClient(config.NewMockConfig())
+		fake := dockertest.NewFakeClient(config.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 

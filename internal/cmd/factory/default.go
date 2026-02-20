@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -32,11 +33,32 @@ func New(version string) *cmdutil.Factory {
 	f.SocketBridge = socketBridgeFunc(f)  // depends on Config
 	f.IOStreams = ioStreams(f)             // needs f.Config() for logger settings
 	f.TUI = tuiFunc(f)                    // needs IOStreams
+	f.ProjectManager = projectManagerFunc(f) // depends on Config + IOStreams
 	f.Client = clientFunc(f)              // depends on Config
 	f.GitManager = gitManagerFunc(f)      // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
+}
+
+func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {
+	var (
+		once sync.Once
+		svc  project.ProjectManager
+		err  error
+	)
+
+	return func() (project.ProjectManager, error) {
+		once.Do(func() {
+			cfg, cfgErr := f.Config()
+			if cfgErr != nil {
+				err = fmt.Errorf("failed to get config: %w", cfgErr)
+				return
+			}
+			svc = project.NewService(cfg, f.IOStreams.Logger)
+		})
+		return svc, err
+	}
 }
 
 func tuiFunc(f *cmdutil.Factory) *tui.TUI {

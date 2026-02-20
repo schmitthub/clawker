@@ -10,7 +10,7 @@ import (
 )
 
 func TestWireBuildKit(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	require.Nil(t, fake.Client.BuildKitImageBuilder)
 	docker.WireBuildKit(fake.Client)
 	require.NotNil(t, fake.Client.BuildKitImageBuilder)

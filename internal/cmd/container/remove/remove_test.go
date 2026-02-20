@@ -149,7 +149,7 @@ func TestCmdRemove_Properties(t *testing.T) {
 // --- Tier 2: Cobra+Factory integration tests ---
 
 func TestRemoveRun_StopsBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -182,7 +182,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 }
 
 func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -211,7 +211,7 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 }
 
 func TestRemoveRun_NilSocketBridge(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 
@@ -235,7 +235,7 @@ func TestRemoveRun_NilSocketBridge(t *testing.T) {
 }
 
 func TestRemoveRun_WithVolumes(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 

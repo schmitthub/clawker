@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ import (
 type RemoveOptions struct {
 	IOStreams  *iostreams.IOStreams
 	GitManager func() (*git.GitManager, error)
-	Config     func() config.Provider
+	ProjectManager func() (project.ProjectManager, error)
 	Prompter   func() *prompter.Prompter
 
 	Force        bool
@@ -31,7 +31,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 	opts := &RemoveOptions{
 		IOStreams:  f.IOStreams,
 		GitManager: f.GitManager,
-		Config:     f.Config,
+		ProjectManager: f.ProjectManager,
 		Prompter:   f.Prompter,
 	}
 
@@ -74,12 +74,9 @@ If the worktree has uncommitted changes, the command will fail unless
 }
 
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
-	cfg := opts.Config()
-	projectCfg := cfg.ProjectCfg()
-
-	// Check if we're in a registered project
-	if !cfg.ProjectFound() {
-		return fmt.Errorf("not in a registered project directory")
+	projectManager, err := opts.ProjectManager()
+	if err != nil {
+		return fmt.Errorf("loading project manager: %w", err)
 	}
 
 	// Get git manager
@@ -88,10 +85,18 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("initializing git: %w", err)
 	}
 
+	proj, err := projectManager.FromCWD(ctx)
+	if err != nil {
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
+	}
+
 	var removeErrors []error
 
 	for _, branch := range opts.Branches {
-		if err := removeSingleWorktree(ctx, opts, gitMgr, projectCfg, branch); err != nil {
+		if err := removeSingleWorktree(ctx, opts, proj, gitMgr, branch); err != nil {
 			removeErrors = append(removeErrors, fmt.Errorf("%s: %w", branch, err))
 		}
 	}
@@ -121,44 +126,12 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, gitMgr *git.GitManager, project *config.Project, branch string) error {
-	// Check if worktree has uncommitted changes (if not forcing)
-	if !opts.Force {
-		// Get worktree path to check for changes
-		wtPath, err := project.GetWorktreeDir(branch)
-		if err != nil {
-			return fmt.Errorf("looking up worktree: %w", err)
-		}
 
-		// Try to open the worktree to check for changes
-		wt, err := gitMgr.Worktrees()
-		if err != nil {
-			return fmt.Errorf("initializing worktree manager: %w", err)
+func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj *project.Project, gitMgr *git.GitManager, branch string) error {
+	if err := proj.RemoveWorktree(ctx, branch); err != nil {
+		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
+			return fmt.Errorf("not in a registered project directory")
 		}
-
-		wtRepo, err := wt.Open(wtPath)
-		if err != nil {
-			// Can't open worktree - require --force to proceed
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		worktree, err := wtRepo.Worktree()
-		if err != nil {
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		status, err := worktree.Status()
-		if err != nil {
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		if !status.IsClean() {
-			return fmt.Errorf("worktree has uncommitted changes (use --force to override)")
-		}
-	}
-
-	// Remove the worktree
-	if err := gitMgr.RemoveWorktree(project, branch); err != nil {
 		return err
 	}
 

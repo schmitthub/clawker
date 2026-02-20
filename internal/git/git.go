@@ -1,17 +1,16 @@
 // Package git provides Git repository operations, including worktree management.
 //
-// This is a Tier 1 (Leaf) package in the clawker architecture:
+// This is a Tier 1 (Leaf) package:
 //   - It imports ONLY stdlib and go-git packages
 //   - It does NOT import any internal packages
-//   - Configuration is passed as parameters, not via config package imports
+//   - Directory/layout concerns are provided by caller interfaces
 //
 // The package follows the Facade pattern with domain-specific sub-managers:
 //   - GitManager is the top-level facade owning the repository
 //   - WorktreeManager handles linked worktree operations
 //
-// Dependency Inversion: GitManager defines WorktreeDirProvider interface which
-// Config.ProjectCfg() implements. This allows high-level orchestration without
-// importing the config package.
+// Dependency Inversion: GitManager defines WorktreeDirProvider, implemented by
+// callers so this package stays independent of external config/layout concerns.
 package git
 
 import (
@@ -118,13 +117,13 @@ func (g *GitManager) Worktrees() (*WorktreeManager, error) {
 // It orchestrates: directory creation (via provider) + git worktree add.
 //
 // Parameters:
-//   - dirs: Provider for worktree directory management (typically Config.ProjectCfg())
+//   - dirs: Provider for worktree directory management
 //   - branch: Branch name to check out (created if doesn't exist)
 //   - base: Base ref to create branch from (empty string uses HEAD)
 //
 // Returns the worktree path ready for mounting.
 func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string) (string, error) {
-	// 1. Get or create worktree directory in CLAWKER_HOME
+	// 1. Get or create caller-managed worktree directory
 	wtPath, err := dirs.GetOrCreateWorktreeDir(branch)
 	if err != nil {
 		return "", fmt.Errorf("creating worktree directory: %w", err)
@@ -320,7 +319,7 @@ func (g *GitManager) ListWorktrees(entries []WorktreeDirEntry) ([]WorktreeInfo, 
 		if seenSlugs[entry.Slug] {
 			continue
 		}
-		// Orphaned directory - has config entry but no git metadata
+		// Orphaned directory - has caller entry but no git metadata
 		infos = append(infos, WorktreeInfo{
 			Name:  entry.Name,
 			Slug:  entry.Slug,

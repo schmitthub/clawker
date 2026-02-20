@@ -11,6 +11,9 @@ import (
 
 // ansiPattern matches ANSI escape sequences for stripping.
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+var slugPattern = regexp.MustCompile(`[^a-z0-9-]+`)
+var leadingTrailingHyphenPattern = regexp.MustCompile(`^-+|-+$`)
+var multiHyphenPattern = regexp.MustCompile(`-{2,}`)
 
 // Truncate shortens a string to width visible characters, adding "..." if truncated.
 // ANSI-aware: counts visible characters only. When truncation occurs, ANSI codes
@@ -217,4 +220,26 @@ func LineCount(s string) int {
 		return 0
 	}
 	return strings.Count(s, "\n") + 1
+}
+
+// Slugify normalizes input text into a lowercase dash-separated slug.
+// The result contains only [a-z0-9-], collapses repeated dashes,
+// trims leading/trailing dashes, and is capped at 64 chars.
+// Returns "project" when normalization produces an empty value.
+func Slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = slugPattern.ReplaceAllString(s, "-")
+	s = multiHyphenPattern.ReplaceAllString(s, "-")
+	s = leadingTrailingHyphenPattern.ReplaceAllString(s, "")
+
+	if s == "" {
+		return "project"
+	}
+
+	if len(s) > 64 {
+		s = s[:64]
+		s = leadingTrailingHyphenPattern.ReplaceAllString(s, "")
+	}
+
+	return s
 }

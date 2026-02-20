@@ -11,7 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 )
 
-var cfg = config.NewMockConfig()
+var cfg = config.NewBlankConfig()
 
 func TestNewFakeClient(t *testing.T) {
 	t.Run("constructs without panic", func(t *testing.T) {

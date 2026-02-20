@@ -123,7 +123,7 @@ func testRenameFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fact
 }
 
 func TestRenameRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRename()
@@ -167,7 +167,7 @@ func TestRenameRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestRenameRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testRenameFactory(t, fake)
@@ -184,7 +184,7 @@ func TestRenameRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestRenameRun_RenameAPIError(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	// Set up rename to fail

@@ -59,7 +59,7 @@ func TestImageList_Golden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := dockertest.NewFakeClient(config.NewMockConfig())
+			fake := dockertest.NewFakeClient(config.NewBlankConfig())
 			fake.SetupImageList(tt.images...)
 
 			tio := iostreamstest.New()

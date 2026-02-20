@@ -244,7 +244,7 @@ config.NewConfigForTest(project, settings) // returns config.Provider
 ```
 
 **Migration:** Replace with new test helpers from stubs.go. The new API needs a bridge:
-- `config.NewConfigForTest(nil, nil)` → `config.NewMockConfig(), nil`
+- `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil`
 - `config.NewConfigForTest(project, nil)` → `config.NewFakeConfig(FakeConfigOptions{Project: project}), nil`
 - `config.NewConfigForTest(project, settings)` → `config.NewFakeConfig(FakeConfigOptions{Project: project, Settings: settings}), nil`
 
@@ -343,7 +343,7 @@ config.NewConfigForTest(project, settings) // returns config.Provider
 | `config.MonitorDir()` | → `filepath.Join(config.ConfigDir(), cfg.MonitorSubdir())` | YES |
 | `opts.Config().UserSettings()` | → `cfg.Settings()` | NO |
 | `config.EnsureDir(dir)` | → `os.MkdirAll(dir, 0o755)` | NO |
-| `config.NewMockConfig().ClawkerNetwork()` | → Works with new API (just awkward) | NO |
+| `config.NewBlankConfig().ClawkerNetwork()` | → Works with new API (just awkward) | NO |
 
 #### `internal/cmd/worktree/*` (add, list, prune, remove)
 | Symbol | Migration | Gap? |
@@ -521,7 +521,7 @@ Option (A) is cleaner and matches the "Config is the single gateway" principle.
 #### Gap 12: Private `config.clawkerHomeEnv` accessed cross-package — **RESOLVED**
 **Impact:** 9 test files
 **Status:** ✅ RESOLVED — `ConfigDirEnvVar()` is now on the `Config` interface.
-**Solution:** Tests create a mock config and call `cfg.ConfigDirEnvVar()` to get the env var name (`"CLAWKER_CONFIG_DIR"`). Alternatively, tests that already have a Config instance from their Factory use that directly. For tests without a Config instance, `config.NewMockConfig().ConfigDirEnvVar()` works as a one-liner.
+**Solution:** Tests create a mock config and call `cfg.ConfigDirEnvVar()` to get the env var name (`"CLAWKER_CONFIG_DIR"`). Alternatively, tests that already have a Config instance from their Factory use that directly. For tests without a Config instance, `config.NewBlankConfig().ConfigDirEnvVar()` works as a one-liner.
 
 #### Gap 13: Old Provider methods need new equivalents
 | Old Method | New Equivalent | Status |

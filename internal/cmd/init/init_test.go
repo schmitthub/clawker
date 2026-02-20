@@ -30,7 +30,7 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions,
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
 	cfg.SetSettingsLoader(sl)
 
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupLegacyBuild()
 
 	return &InitOptions{
@@ -47,7 +47,7 @@ func testInitOpts(t *testing.T, tio *iostreamstest.TestIOStreams) (*InitOptions,
 func TestNewCmdInit(t *testing.T) {
 	tio := iostreamstest.New()
 	cfg := config.NewConfigForTest(nil, config.DefaultSettings())
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
@@ -176,7 +176,7 @@ func TestPerformSetup_BuildFailure(t *testing.T) {
 	cfg.SetSettingsLoader(sl)
 
 	// Set up fake client with a build error
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupLegacyBuildError(fmt.Errorf("insufficient disk space"))
 
 	opts := &InitOptions{

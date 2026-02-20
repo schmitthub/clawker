@@ -167,7 +167,7 @@ func TestKillRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestKillRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerKill()
@@ -188,7 +188,7 @@ func TestKillRun_Success(t *testing.T) {
 }
 
 func TestKillRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testKillFactory(t, fake)

@@ -1,0 +1,17 @@
+version: "1"
+build:
+  image: "someother:someother"
+agent:
+  claude_code:
+    use_host_auth: false
+    config:
+      strategy: "fresh"
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+security:
+  docker_socket: false
+  firewall:
+    enable: false
+loop:
+  max_loops: 50

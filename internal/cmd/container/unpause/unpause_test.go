@@ -111,7 +111,7 @@ func testUnpauseFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Fac
 }
 
 func TestUnpauseRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerUnpause()
@@ -155,7 +155,7 @@ func TestUnpauseRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestUnpauseRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testUnpauseFactory(t, fake)
@@ -172,7 +172,7 @@ func TestUnpauseRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestUnpauseRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture1 := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture1)
 	fake.SetupContainerUnpause()

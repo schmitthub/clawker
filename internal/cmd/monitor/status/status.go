@@ -47,7 +47,7 @@ Displays running/stopped state and service URLs when the stack is running.`,
 func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	networkName := config.NewMockConfig().ClawkerNetwork()
+	networkName := config.NewBlankConfig().ClawkerNetwork()
 
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()

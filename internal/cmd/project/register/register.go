@@ -70,7 +70,7 @@ machine, or already exists and you want to register it locally.`,
 	return cmd
 }
 
-func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
+func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
@@ -80,20 +80,21 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	cfgGateway := opts.Config()
-	registry, err := cfgGateway.ProjectRegistry()
+	cfgGateway, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("loading project registry: %w", err)
+		return fmt.Errorf("loading config: %w", err)
 	}
+	projectManager := project.NewService(cfgGateway, ios.Logger)
 
 	// Require an existing clawker.yaml
-	loader := config.NewProjectLoader(wd)
-	if !loader.Exists() {
-		cmdutil.PrintErrorf(ios, "No %s found in the current directory", config.ConfigFileName)
+	configFileName := "clawker.yaml"
+	configPath := filepath.Join(wd, configFileName)
+	if _, err := os.Stat(configPath); err != nil {
+		cmdutil.PrintErrorf(ios, "No %s found in the current directory", configFileName)
 		cmdutil.PrintNextSteps(ios,
 			"Run 'clawker project init' to create a new project configuration",
 		)
-		return fmt.Errorf("no %s found", config.ConfigFileName)
+		return fmt.Errorf("no %s found", configFileName)
 	}
 
 	// Determine project name
@@ -120,12 +121,13 @@ func projectRegisterRun(_ context.Context, opts *RegisterOptions) error {
 		}
 	}
 
-	slug, err := project.RegisterProject(ios, registry, wd, projectName)
+	registeredProject, err := projectManager.Register(ctx, projectName, wd)
 	if err != nil {
-		return err
+		cmdutil.PrintErrorf(ios, "Could not register project in registry: %v", err)
+		return fmt.Errorf("could not register project: %w", err)
 	}
 
-	if slug != "" {
+	if registeredProject != nil {
 		fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), projectName)
 	}
 

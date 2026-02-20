@@ -64,7 +64,7 @@ Claude Code containers to send telemetry automatically.`,
 func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
-	networkName := config.NewMockConfig().ClawkerNetwork()
+	networkName := config.NewBlankConfig().ClawkerNetwork()
 
 	// Resolve monitor directory
 	monitorDir, err := config.MonitorDir()

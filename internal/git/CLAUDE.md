@@ -7,12 +7,12 @@ Git repository operations including worktree management.
 **Tier 1 (Leaf) Package** — imports ONLY stdlib + go-git, NO internal packages.
 
 This package follows the Facade pattern:
+
 - `GitManager` is the top-level facade owning the repository
 - `WorktreeManager` handles linked worktree operations (low-level go-git primitives)
 
-**Dependency Inversion:** The `WorktreeDirProvider` interface is defined here, not in config.
-Config.Project() implements this interface, allowing GitManager to orchestrate worktree
-setup without importing the config package.
+**Dependency Inversion:** The `WorktreeDirProvider` interface is defined here and implemented by callers.
+This lets GitManager orchestrate worktree setup without importing caller-specific config packages.
 
 ## Key Types
 
@@ -49,7 +49,7 @@ path, err := mgr.SetupWorktree(provider, "feature-branch", "main")
 err := mgr.RemoveWorktree(provider, "feature-branch")
 
 // List all worktrees with info (takes entries from provider, not provider itself)
-// Caller converts config.WorktreeDirInfo to git.WorktreeDirEntry
+// Caller converts its own directory metadata to git.WorktreeDirEntry
 entries := []git.WorktreeDirEntry{{Name: "feature/foo", Slug: "feature-foo", Path: "/path"}}
 infos, err := mgr.ListWorktrees(entries)
 ```
@@ -99,7 +99,7 @@ branch "a-output-styling".
 
 ### WorktreeDirProvider Interface
 
-Implemented by Config.Project() to manage worktree directories:
+Implemented by callers to manage worktree directories:
 
 ```go
 type WorktreeDirProvider interface {
@@ -121,7 +121,7 @@ type WorktreeDirEntry struct {
 }
 ```
 
-Callers convert from `config.WorktreeDirInfo` to `git.WorktreeDirEntry` when calling `ListWorktrees`.
+Callers convert from their own directory metadata types to `git.WorktreeDirEntry` when calling `ListWorktrees`.
 
 ### WorktreeInfo
 
@@ -130,7 +130,7 @@ Information about a worktree:
 ```go
 type WorktreeInfo struct {
     Name       string        // worktree name
-    Slug       string        // registry slug (preserved from WorktreeDirEntry)
+    Slug       string        // caller-provided slug/identifier (preserved from WorktreeDirEntry)
     Path       string        // filesystem path
     Head       plumbing.Hash // current commit
     Branch     string        // branch name (empty if detached)

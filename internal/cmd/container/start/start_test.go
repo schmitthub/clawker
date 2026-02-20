@@ -240,7 +240,7 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStartRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -257,7 +257,7 @@ func TestStartRun_Success(t *testing.T) {
 }
 
 func TestStartRun_MultipleContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -277,7 +277,7 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 }
 
 func TestStartRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupNetworkExists(docker.NetworkName, true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
@@ -306,7 +306,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 }
 
 func TestStartRun_NilHostProxy(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	setupContainerStart(fake)
 
 	tio := iostreamstest.New()

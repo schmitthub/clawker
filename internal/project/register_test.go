@@ -1,85 +1,77 @@
 package project
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRegisterProject_HappyPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv(config.clawkerHomeEnv, tmpDir)
-
-	tios := iostreamstest.New()
-
-	projectDir := filepath.Join(tmpDir, "myproject")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatalf("failed to create project dir: %v", err)
-	}
-
-	registryLoader, err := config.NewRegistryLoader()
-	if err != nil {
-		t.Fatalf("NewRegistryLoader() error: %v", err)
-	}
-
-	slug, err := RegisterProject(tios.IOStreams, registryLoader, projectDir, "My Project")
-	if err != nil {
-		t.Fatalf("RegisterProject() error: %v", err)
-	}
-	if slug != "my-project" {
-		t.Errorf("RegisterProject() slug = %q, want %q", slug, "my-project")
-	}
+func mustConfig(t *testing.T, yaml string) config.Config {
+	t.Helper()
+	cfg := config.NewFromString(yaml)
+	return cfg
 }
 
-func TestRegisterProject_NilRegistryLoader(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv(config.clawkerHomeEnv, tmpDir)
-
-	tios := iostreamstest.New()
-
-	slug, err := RegisterProject(tios.IOStreams, nil, tmpDir, "test")
-	if err == nil {
-		t.Fatal("RegisterProject() expected error for nil loader, got nil")
-	}
-	if slug != "" {
-		t.Errorf("RegisterProject() slug = %q, want empty", slug)
-	}
+func newFSConfigFromProjectTestdata(t *testing.T) (config.Config, string, string) {
+	t.Helper()
+	cfg, _ := config.NewIsolatedTestConfig(t)
+	configDir := os.Getenv(cfg.ConfigDirEnvVar())
+	registryPath := filepath.Join(configDir, "projects.yaml")
+	return cfg, registryPath, ""
 }
 
-func TestRegisterProject_RegisterError(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Set CLAWKER_HOME to an unwritable directory to cause Register to fail
-	unwritableDir := filepath.Join(tmpDir, "unwritable")
-	if err := os.MkdirAll(unwritableDir, 0755); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
-	}
-	t.Setenv(config.clawkerHomeEnv, unwritableDir)
+func TestProjectManager_Register_UninitializedManager(t *testing.T) {
+	mgr := NewProjectManager(nil, nil)
 
-	tios := iostreamstest.New()
+	p, err := mgr.Register(context.Background(), "My Project", "/tmp/myproject")
+	require.Error(t, err)
+	assert.Nil(t, p)
+}
 
-	// Create a valid registry loader
-	registryLoader, err := config.NewRegistryLoader()
-	if err != nil {
-		t.Fatalf("NewRegistryLoader() error: %v", err)
-	}
+func TestProjectManager_Register_UsesRootIdentity(t *testing.T) {
+	cfg, registryPath, _ := newFSConfigFromProjectTestdata(t)
+	mgr := NewProjectManager(cfg, nil)
 
-	// Create the registry file, then make the directory read-only
-	reg := &config.ProjectRegistry{Projects: map[string]config.ProjectEntry{}}
-	if err := registryLoader.Save(reg); err != nil {
-		t.Fatalf("Save() error: %v", err)
-	}
-	os.Chmod(unwritableDir, 0444)
-	t.Cleanup(func() { os.Chmod(unwritableDir, 0755) })
+	projectRoot := filepath.Join(t.TempDir(), "myproject")
+	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
-	slug, err := RegisterProject(tios.IOStreams, registryLoader, tmpDir, "test")
-	if err == nil {
-		// On some systems (e.g., running as root), chmod may not prevent writes
-		t.Skip("could not make directory unwritable (possibly running as root)")
-	}
-	if slug != "" {
-		t.Errorf("RegisterProject() slug = %q, want empty", slug)
-	}
+	project, err := mgr.Register(context.Background(), "My Project", projectRoot)
+	require.NoError(t, err)
+	require.NotNil(t, project)
+
+	record, err := project.Record()
+	require.NoError(t, err)
+	assert.Equal(t, "My Project", record.Name)
+	assert.Equal(t, projectRoot, record.Root)
+
+	_, err = mgr.Register(context.Background(), "Renamed Project", projectRoot)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrProjectExists)
+
+	b, err := os.ReadFile(registryPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "- name: My Project")
+	assert.Contains(t, string(b), "root: "+projectRoot)
+	assert.NotContains(t, string(b), "my-project:")
+}
+
+func TestRegistry_RemoveByRoot(t *testing.T) {
+	cfg, _ := config.NewIsolatedTestConfig(t)
+	require.NoError(t, cfg.Set("projects", []any{
+		map[string]any{"name": "one", "root": "/tmp/one"},
+		map[string]any{"name": "two", "root": "/tmp/two"},
+	}))
+
+	registry := newRegistry(cfg)
+	require.NoError(t, registry.RemoveByRoot("/tmp/one"))
+
+	entries := registry.Projects()
+	require.Len(t, entries, 1)
+	assert.Equal(t, "two", entries[0].Name)
+	assert.Equal(t, "/tmp/two", entries[0].Root)
 }

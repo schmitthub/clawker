@@ -14,7 +14,7 @@ import (
 // newTestManager creates a Manager with a mock config pointing at the given temp dir.
 func newTestManager(t *testing.T, dir string) *Manager {
 	t.Helper()
-	cfg := config.NewMockConfig()
+	cfg := config.NewBlankConfig()
 	t.Setenv(cfg.ConfigDirEnvVar(), dir)
 	return NewManager(cfg)
 }
@@ -90,7 +90,7 @@ func TestWaitForPIDFile(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
-	cfg := config.NewMockConfig()
+	cfg := config.NewBlankConfig()
 	m := NewManager(cfg)
 	assert.NotNil(t, m)
 	assert.NotNil(t, m.bridges)

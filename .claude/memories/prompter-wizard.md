@@ -353,7 +353,7 @@ if result.Values["confirm"] != "yes" { return nil } // "yes"/"no" lowercase from
 performSetup(ctx, opts, true, "bookworm")
 
 // Test with mock config + dockertest.FakeClient
-cfg := config.NewMockConfig()
+cfg := config.NewBlankConfig()
 fake := dockertest.NewFakeClient()
 fake.SetupLegacyBuild()
 ```

@@ -1,0 +1,40 @@
+=== initial ===
+projects: {}
+
+=== after add project ===
+projects:
+    demo-project:
+        name: Demo Project
+        root: <PROJECT_ROOT>
+
+=== after add two worktrees ===
+projects:
+    demo-project:
+        name: Demo Project
+        root: <PROJECT_ROOT>
+        worktrees:
+            feature-auth:
+                branch: feature/auth
+                path: <PROJECT_ROOT>/worktrees/feature-auth
+            feature-billing:
+                branch: feature/billing
+                path: <PROJECT_ROOT>/worktrees/feature-billing
+
+=== after remove one worktree ===
+projects:
+    demo-project:
+        name: Demo Project
+        root: <PROJECT_ROOT>
+        worktrees:
+            feature-billing:
+                branch: feature/billing
+                path: <PROJECT_ROOT>/worktrees/feature-billing
+
+=== after remove last worktree ===
+projects:
+    demo-project:
+        name: Demo Project
+        root: <PROJECT_ROOT>
+
+=== after remove project ===
+projects: {}

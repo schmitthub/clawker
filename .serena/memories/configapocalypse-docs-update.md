@@ -38,7 +38,7 @@ Update all documentation across the repo to reflect the current state of the con
 
 ### 4. `.claude/docs/TESTING-REFERENCE.md` — UPDATED [DONE]
 - All `config.Provider` → `config.Config`
-- All `config.NewConfigForTest` → `config.NewMockConfig()`
+- All `config.NewConfigForTest` → `config.NewBlankConfig()`
 - All `configtest.*` references removed
 - Config test section rewritten with `stubs.go` examples
 - Factory wiring examples corrected to `func() (config.Config, error)`

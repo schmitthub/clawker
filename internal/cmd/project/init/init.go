@@ -78,7 +78,7 @@ Use --yes/-y to skip prompts and accept all defaults.`,
 	return cmd
 }
 
-func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
+func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 	prompter := opts.Prompter()
@@ -89,17 +89,20 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	cfgGateway := opts.Config()
-	registry, err := cfgGateway.ProjectRegistry()
+	cfgGateway, err := opts.Config()
 	if err != nil {
-		return fmt.Errorf("loading project registry: %w", err)
+		return fmt.Errorf("loading config: %w", err)
 	}
+	projectManager := project.NewService(cfgGateway, ios.Logger)
+	configFileName := "clawker.yaml"
+	configPath := filepath.Join(wd, configFileName)
+	ignoreFileName := cfgGateway.ClawkerIgnoreName()
+	ignorePath := filepath.Join(wd, ignoreFileName)
 
 	// Check if configuration already exists
-	loader := config.NewProjectLoader(wd)
-	if loader.Exists() && !opts.Force {
+	if _, err := os.Stat(configPath); err == nil && !opts.Force {
 		if opts.Yes || !ios.IsInteractive() {
-			cmdutil.PrintErrorf(ios, "%s already exists", config.ConfigFileName)
+			cmdutil.PrintErrorf(ios, "%s already exists", configFileName)
 			cmdutil.PrintNextSteps(ios,
 				"Use --force to overwrite the existing configuration",
 				"Or edit the existing clawker.yaml manually",
@@ -109,7 +112,7 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 		}
 		// Interactive: ask for confirmation
 		overwrite, err := prompter.Confirm(
-			fmt.Sprintf("%s already exists. Overwrite?", config.ConfigFileName),
+			fmt.Sprintf("%s already exists. Overwrite?", configFileName),
 			false,
 		)
 		if err != nil {
@@ -122,12 +125,11 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 				return fmt.Errorf("resolving project path: %w", absErr)
 			}
 			dirName := filepath.Base(absPath)
-			registryLoader := registry
-			slug, err := project.RegisterProject(ios, registryLoader, wd, dirName)
+			registeredProject, err := projectManager.Register(ctx, dirName, wd)
 			if err != nil {
 				ios.Logger.Debug().Err(err).Msg("failed to register project during init (non-overwrite path)")
 			}
-			if slug != "" {
+			if registeredProject != nil {
 				fmt.Fprintf(ios.ErrOut, "%s Registered project '%s'\n", cs.SuccessIcon(), dirName)
 			}
 			return nil
@@ -169,8 +171,8 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 
 	// Get default image from user settings if available (for fallback image, not build base)
 	userDefaultImage := ""
-	settings := cfgGateway.UserSettings()
-	if settings != nil && settings.DefaultImage != "" {
+	settings := cfgGateway.Settings()
+	if settings.DefaultImage != "" {
 		userDefaultImage = settings.DefaultImage
 	}
 
@@ -261,30 +263,28 @@ func projectInitRun(_ context.Context, opts *ProjectInitOptions) error {
 	configContent := generateConfigYAML(buildImage, defaultImage, workspaceMode)
 
 	// Create clawker.yaml
-	configPath := loader.ConfigPath()
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", config.ConfigFileName, err)
+		return fmt.Errorf("failed to write %s: %w", configFileName, err)
 	}
 	ios.Logger.Debug().Str("file", configPath).Msg("created configuration file")
 
 	// Create .clawkerignore
-	ignorePath := loader.IgnorePath()
 	if _, err := os.Stat(ignorePath); os.IsNotExist(err) || opts.Force {
 		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", config.IgnoreFileName, err)
+			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
 		ios.Logger.Debug().Str("file", ignorePath).Msg("created ignore file")
 	}
 
 	// Register project in user settings
-	if _, err := project.RegisterProject(ios, registry, wd, projectName); err != nil {
+	if _, err := projectManager.Register(ctx, projectName, wd); err != nil {
 		ios.Logger.Debug().Err(err).Msg("failed to register project during init")
 	}
 
 	// Success output
 	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.ConfigFileName)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), config.IgnoreFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), configFileName)
+	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), ignoreFileName)
 	fmt.Fprintf(ios.ErrOut, "%s ProjectCfg: %s\n", cs.InfoIcon(), projectName)
 	fmt.Fprintln(ios.ErrOut)
 	cmdutil.PrintNextSteps(ios,

@@ -3,18 +3,19 @@ package prune
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // PruneOptions contains the options for the prune command.
 type PruneOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 
 	DryRun bool
 }
@@ -23,7 +24,7 @@ type PruneOptions struct {
 func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) error) *cobra.Command {
 	opts := &PruneOptions{
 		IOStreams: f.IOStreams,
-		Config:    f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -57,82 +58,63 @@ Use 'clawker worktree list' to see which entries are stale before pruning.`,
 }
 
 func pruneRun(ctx context.Context, opts *PruneOptions) error {
-	cfg := opts.Config()
-	projectCfg := cfg.ProjectCfg()
-
-	// Check if we're in a registered project
-	if !cfg.ProjectFound() {
-		return fmt.Errorf("not in a registered project directory")
-	}
-
-	// Check if registry is available
-	registry, err := cfg.ProjectRegistry()
+	projectManager, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("loading project registry: %w", err)
-	}
-	if registry == nil {
-		return fmt.Errorf("registry not available")
+		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	// Get project handle
-	projectHandle := registry.Project(projectCfg.Key())
-
-	// Get worktree handles
-	handles, err := projectHandle.ListWorktrees()
+	proj, err := projectManager.FromCWD(ctx)
 	if err != nil {
-		return fmt.Errorf("listing worktrees: %w", err)
-	}
-
-	if len(handles) == 0 {
-		fmt.Fprintln(opts.IOStreams.Out, "No worktrees registered for this project.")
-		return nil
-	}
-
-	// Find prunable entries
-	var prunable []config.WorktreeHandle
-	for _, h := range handles {
-		status := h.Status()
-		if status.IsPrunable() {
-			prunable = append(prunable, h)
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return fmt.Errorf("not in a registered project directory")
 		}
+		return err
 	}
 
-	if len(prunable) == 0 {
+	result, err := proj.PruneStaleWorktrees(ctx, opts.DryRun)
+	if err != nil {
+		if errors.Is(err, project.ErrNotInProjectPath) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
+	}
+
+	if len(result.Prunable) == 0 {
 		fmt.Fprintln(opts.IOStreams.Out, "No stale entries to prune.")
 		return nil
 	}
 
 	// Process prunable entries
-	var failedCount int
-	for _, h := range prunable {
+	for _, name := range result.Prunable {
 		if opts.DryRun {
-			fmt.Fprintf(opts.IOStreams.Out, "Would remove: %s\n", h.Name())
+			fmt.Fprintf(opts.IOStreams.Out, "Would remove: %s\n", name)
 		} else {
-			if err := h.Delete(); err != nil {
-				fmt.Fprintf(opts.IOStreams.ErrOut, "Failed to remove %s: %v\n", h.Name(), err)
-				failedCount++
-				continue
+			if _, failed := result.Failed[name]; !failed {
+				fmt.Fprintf(opts.IOStreams.Out, "Removed: %s\n", name)
 			}
-			fmt.Fprintf(opts.IOStreams.Out, "Removed: %s\n", h.Name())
 		}
 	}
 
 	// Summary
 	if opts.DryRun {
-		if len(prunable) == 1 {
+		if len(result.Prunable) == 1 {
 			fmt.Fprintln(opts.IOStreams.Out, "\n1 stale entry would be removed.")
 		} else {
-			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries would be removed.\n", len(prunable))
+			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries would be removed.\n", len(result.Prunable))
 		}
 	} else {
-		successCount := len(prunable) - failedCount
+		successCount := len(result.Removed)
 		if successCount == 1 {
 			fmt.Fprintln(opts.IOStreams.Out, "\n1 stale entry removed.")
 		} else if successCount > 0 {
 			fmt.Fprintf(opts.IOStreams.Out, "\n%d stale entries removed.\n", successCount)
 		}
+		failedCount := len(result.Failed)
 		if failedCount > 0 {
-			return fmt.Errorf("%d of %d entries failed to prune", failedCount, len(prunable))
+			for name, failedErr := range result.Failed {
+				fmt.Fprintf(opts.IOStreams.ErrOut, "Failed to remove %s: %v\n", name, failedErr)
+			}
+			return fmt.Errorf("%d of %d entries failed to prune", failedCount, len(result.Prunable))
 		}
 	}
 

@@ -44,7 +44,7 @@
 cfg config.Config  // stored on struct, passed via constructor
 
 // Test stubs
-config.NewMockConfig()                    // default in-memory
+config.NewBlankConfig()                    // default in-memory
 config.ReadFromString(`yaml content`)     // specific values
 
 // NewFakeClient

@@ -163,7 +163,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
+| `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Project`, `Client`, `GitManager`, etc.); constructor in `internal/cmd/factory` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
 | `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming. `cfg config.Config` (interface) provides all label keys. `NewClient(ctx, cfg, opts...)` (production), `NewClientFromEngine(engine, cfg)` (tests) |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
@@ -213,10 +213,9 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
-| `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
-| `config.Config` | Single interface all callers receive. File names, directory paths, and constants are private — callers use `Config` methods or propose new ones. `NewConfig()` (production), `ReadFromString()` (testing/validation). Validates via `UnmarshalExact` (unknown keys rejected). Low-level mutation: `Set(key, value)` + dirty tracking, `Write(WriteOptions)` with ownership-aware routing (`ScopeSettings`/`ScopeProject`/`ScopeRegistry` → correct file), `Watch(onChange)` for file changes. Thread-safe via `sync.RWMutex`. **Consumer migration in progress** — see `internal/config/CLAUDE.md` for migration guide |
-| `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
-| `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
+| `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml`; CRUD/orchestration is owned by `internal/project` |
+| `project.Service` | Project-layer factory dependency built from `config.Config`; exposes `Registry()` and `Worktrees()` services for commands |
+| `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
 | `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
 
@@ -286,6 +285,7 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
 11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
 12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
+13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
 
 ## Important Gotchas
 

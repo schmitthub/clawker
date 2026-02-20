@@ -136,7 +136,7 @@ func testWaitFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factor
 }
 
 func TestWaitRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)
@@ -158,7 +158,7 @@ func TestWaitRun_Success(t *testing.T) {
 }
 
 func TestWaitRun_NonZeroExitCode(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(42)
@@ -202,7 +202,7 @@ func TestWaitRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestWaitRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list — container won't be found
 
 	f, tio := testWaitFactory(t, fake)
@@ -219,7 +219,7 @@ func TestWaitRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestWaitRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerWait(0)

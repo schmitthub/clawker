@@ -3,8 +3,10 @@ package list
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/text"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +23,7 @@ import (
 type ListOptions struct {
 	IOStreams  *iostreams.IOStreams
 	GitManager func() (*git.GitManager, error)
-	Config     func() config.Provider
+	ProjectManager func() (project.ProjectManager, error)
 
 	Quiet bool
 }
@@ -29,7 +33,7 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 	opts := &ListOptions{
 		IOStreams:  f.IOStreams,
 		GitManager: f.GitManager,
-		Config:     f.Config,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -62,30 +66,25 @@ for each worktree.`,
 }
 
 func listRun(ctx context.Context, opts *ListOptions) error {
-	cfg := opts.Config()
-	projectCfg := cfg.ProjectCfg()
-
-	// Check if we're in a registered project
-	if !cfg.ProjectFound() {
-		return fmt.Errorf("not in a registered project directory")
-	}
-
-	// Get worktree handles from registry
-	var worktreeHandles []config.WorktreeHandle
-	registry, err := cfg.ProjectRegistry()
+	projectManager, err := opts.ProjectManager()
 	if err != nil {
-		return fmt.Errorf("loading project registry: %w", err)
-	}
-	if registry != nil {
-		projectHandle := registry.Project(projectCfg.Key())
-		handles, err := projectHandle.ListWorktrees()
-		if err != nil {
-			return fmt.Errorf("listing worktrees from registry: %w", err)
-		}
-		worktreeHandles = handles
+		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	if len(worktreeHandles) == 0 {
+	proj, err := projectManager.FromCWD(ctx)
+	if err != nil {
+		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) || errors.Is(err, project.ErrProjectNotFound) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
+	}
+
+	projectSlug, projectEntry, err := proj.CurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if len(projectEntry.Worktrees) == 0 {
 		if !opts.Quiet {
 			fmt.Fprintln(opts.IOStreams.ErrOut, "No worktrees found for this project.")
 			fmt.Fprintln(opts.IOStreams.ErrOut, "Use 'clawker run --worktree <branch>' to create one.")
@@ -99,39 +98,19 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return fmt.Errorf("initializing git: %w", err)
 	}
 
-	// Separate entries with valid paths from those with path errors
-	var validEntries []git.WorktreeDirEntry
-	var errorWorktrees []git.WorktreeInfo
-
-	for _, handle := range worktreeHandles {
-		status := handle.Status()
-		if status.Error != nil {
-			// Path resolution failed - skip git lookup, record error for display
-			opts.IOStreams.Logger.Debug().Err(status.Error).Str("worktree", handle.Name()).Msg("failed to resolve worktree path")
-			errorWorktrees = append(errorWorktrees, git.WorktreeInfo{
-				Name:   handle.Name(),
-				Slug:   handle.Slug(),
-				Branch: handle.Name(), // Set Branch for display in table
-				Path:   "",            // No valid path
-				Error:  fmt.Errorf("path error: %w", status.Error),
-			})
-			continue
+	var entries []git.WorktreeDirEntry
+	for name, worktree := range projectEntry.Worktrees {
+		path := worktree.Path
+		if path == "" {
+			path = filepath.Join(config.ConfigDir(), "projects", projectSlug, text.Slugify(name))
 		}
-		validEntries = append(validEntries, git.WorktreeDirEntry{
-			Name: handle.Name(),
-			Slug: handle.Slug(),
-			Path: status.Path,
-		})
+		entries = append(entries, git.WorktreeDirEntry{Name: name, Slug: text.Slugify(name), Path: path})
 	}
 
-	// List worktrees with git metadata (only for entries with valid paths)
-	worktrees, err := gitMgr.ListWorktrees(validEntries)
+	worktrees, err := gitMgr.ListWorktrees(entries)
 	if err != nil {
 		return fmt.Errorf("listing worktrees: %w", err)
 	}
-
-	// Append error entries to the list
-	worktrees = append(worktrees, errorWorktrees...)
 
 	// Quiet mode - just branch names
 	if opts.Quiet {
@@ -139,12 +118,6 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 			fmt.Fprintln(opts.IOStreams.Out, wt.Name)
 		}
 		return nil
-	}
-
-	// Build a map of slug -> handle for status checks
-	handleBySlug := make(map[string]config.WorktreeHandle, len(worktreeHandles))
-	for _, h := range worktreeHandles {
-		handleBySlug[h.Slug()] = h
 	}
 
 	// Print table
@@ -181,25 +154,10 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 			}
 		}
 
-		// Determine status using handle-based health check
-		status := ""
-		if handle, ok := handleBySlug[wt.Slug]; ok {
-			wtStatus := handle.Status()
-			// Skip handle status for path errors - use wt.Error instead (has better context)
-			if wtStatus.Error == nil {
-				if wtStatus.IsHealthy() {
-					status = "healthy"
-				} else {
-					status = wtStatus.String()
-					if wtStatus.IsPrunable() {
-						staleCount++
-					}
-				}
-			}
-		}
-		// Fall back to error from wt.Error if we didn't get a handle status
-		if status == "" && wt.Error != nil {
+		status := "healthy"
+		if wt.Error != nil {
 			status = fmt.Sprintf("error: %v", wt.Error)
+			staleCount++
 		}
 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", branch, wt.Path, head, modified, status)

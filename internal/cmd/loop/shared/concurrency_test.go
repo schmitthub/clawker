@@ -15,7 +15,7 @@ import (
 )
 
 func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	tio := iostreamstest.New()
@@ -32,7 +32,7 @@ func TestCheckConcurrency_NoRunningContainers(t *testing.T) {
 func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[docker.LabelWorkdir] = "/other/dir"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio := iostreamstest.New()
@@ -49,7 +49,7 @@ func TestCheckConcurrency_DifferentWorkDir(t *testing.T) {
 func TestCheckConcurrency_SameWorkDir_NonInteractive(t *testing.T) {
 	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[docker.LabelWorkdir] = "/workspace"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio := iostreamstest.New()
@@ -81,7 +81,7 @@ func selectionInput(idx int) string {
 func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[docker.LabelWorkdir] = "/workspace"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio := iostreamstest.New()
@@ -99,7 +99,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Worktree(t *testing.T) {
 func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[docker.LabelWorkdir] = "/workspace"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio := iostreamstest.New()
@@ -117,7 +117,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Proceed(t *testing.T) {
 func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 	ctr := dockertest.RunningContainerFixture("myproj", "loop-agent")
 	ctr.Labels[docker.LabelWorkdir] = "/workspace"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr)
 
 	tio := iostreamstest.New()
@@ -133,7 +133,7 @@ func TestCheckConcurrency_SameWorkDir_Interactive_Abort(t *testing.T) {
 }
 
 func TestCheckConcurrency_DockerListError(t *testing.T) {
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerListError(fmt.Errorf("docker daemon unavailable"))
 
 	tio := iostreamstest.New()
@@ -153,7 +153,7 @@ func TestCheckConcurrency_MultipleRunning_WarnsAndProceeds(t *testing.T) {
 	ctr1.Labels[docker.LabelWorkdir] = "/workspace"
 	ctr2 := dockertest.RunningContainerFixture("myproj", "loop-agent2")
 	ctr2.Labels[docker.LabelWorkdir] = "/workspace"
-	fake := dockertest.NewFakeClient(config.NewMockConfig())
+	fake := dockertest.NewFakeClient(config.NewBlankConfig())
 	fake.SetupContainerList(ctr1, ctr2)
 
 	tio := iostreamstest.New()

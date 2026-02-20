@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var progressCfg = config.NewMockConfig()
+var progressCfg = config.NewBlankConfig()
 
 // eventCollector collects BuildProgressEvents in a thread-safe manner.
 type eventCollector struct {

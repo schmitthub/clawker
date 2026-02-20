@@ -48,7 +48,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Layer 1: WIRING (internal/cmd/factory/default.go)                      │
 │                                                                         │
-│  factory.New(version, commit) → *cmdutil.Factory                        │
+│  factory.New(version) → *cmdutil.Factory                                │
 │    • Creates IOStreams, wires sync.Once closures for all dependencies    │
 │    • Imports everything: config, docker, hostproxy, iostreams, prompts   │
 │    • Called ONCE at entry point (internal/clawker/cmd.go)                │
@@ -57,7 +57,7 @@ Clawker follows the GitHub CLI's three-layer Factory pattern for dependency inje
 │  Layer 2: CONTRACT (internal/cmdutil/factory.go)                        │
 │                                                                         │
 │  Factory struct — pure data with closure fields, no methods             │
-│    • Defines WHAT dependencies exist (Client, Config, GitManager, etc.) │
+│    • Defines WHAT dependencies exist (Client, Config, Project, GitManager, etc.) │
 │    • Importable by all cmd/* packages without cycles                    │
 │    • Also provides error handling, name resolution, project utilities   │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -121,6 +121,10 @@ Single `Config` interface that all callers receive. The package is a closed box 
 
 See `internal/config/CLAUDE.md` for full package reference and migration guide.
 
+**Boundary:**
+- Path resolution and config file I/O stay in `internal/config` (for example `GetProjectRoot`, `GetProjectIgnoreFile`, `Write`).
+- Project identity, CRUD, and worktree lifecycle orchestration belong to `internal/project`.
+
 ### internal/cmd/* - CLI Commands
 
 Two parallel command interfaces:
@@ -152,13 +156,13 @@ Shared toolkit importable by all command packages.
 
 ### internal/cmd/factory - Factory Wiring
 
-Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy dependencies (config, docker, hostproxy, iostreams, logger, prompts) and wires `sync.Once` closures.
+Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy dependencies (config, project, docker, hostproxy, iostreams, logger, prompts) and wires `sync.Once` closures.
 
 **Key function:**
-- `New(version, commit string) *cmdutil.Factory` — called exactly once at CLI entry point
+- `New(version string) *cmdutil.Factory` — called exactly once at CLI entry point
 
 **Dependency wiring order:**
-1. IOStreams (eager) → 2. TUI (eager, wraps IOStreams) → 3. Config (lazy, `config.NewConfig()` via sync.Once) → 4. HostProxy (lazy) → 5. SocketBridge (lazy) → 6. Client (lazy, reads Config) → 7. GitManager (lazy, reads Config) → 8. Prompter (lazy)
+1. Config (lazy, `config.NewConfig()` via `sync.Once`) → 2. HostProxy (lazy, reads Config) → 3. SocketBridge (lazy, reads Config) → 4. IOStreams (eager, logger initialized from Config) → 5. TUI (eager, wraps IOStreams) → 6. Project (lazy, built from Config + IOStreams logger) → 7. Client (lazy, reads Config) → 8. GitManager (lazy, reads Config) → 9. Prompter (lazy)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -213,7 +217,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
-| `internal/project` | Project registration in user registry (`RegisterProject` shared helper) |
+| `internal/project` | Project domain layer: registry CRUD, project identity resolution, and worktree orchestration services built on `config.Config` |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 
 **Note:** `hostproxy/internals/` is a structurally-leaf subpackage (stdlib + embed only) that provides container-side scripts and binaries. It is imported by `internal/bundler` for embedding into Docker images, but does NOT import `internal/hostproxy` or any other internal package.

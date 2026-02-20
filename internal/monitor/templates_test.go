@@ -5,15 +5,13 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/stretchr/testify/require"
 )
 
 // testMonitoringConfig parses a YAML string into a config.Config and returns
 // a pointer to its MonitoringConfig. Follows the bundler testConfig pattern.
 func testMonitoringConfig(t *testing.T, yaml string) *config.MonitoringConfig {
 	t.Helper()
-	cfg, err := config.NewConfigFromString(yaml)
-	require.NoError(t, err)
+	cfg := config.NewFromString(yaml)
 	mon := cfg.MonitoringConfig()
 	return &mon
 }
