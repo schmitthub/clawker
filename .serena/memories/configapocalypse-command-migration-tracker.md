@@ -63,6 +63,13 @@
 - `config.Provider` → `(config.Config, error)` in 3 locations (TestNewCmdKill factory, TestKillRun_DockerConnectionError factory, testKillFactory helper)
 - `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig()`
 
+### Container List (`internal/cmd/container/list/`)
+**Production changes:** None needed — `ListOptions` has no Config field.
+
+**Test changes:**
+- `testFactory`: `func() config.Provider { return config.NewConfigForTest(nil, nil) }` → `func() (config.Config, error) { return config.NewBlankConfig(), nil }`
+- `TestListRun_DockerConnectionError`: same inline factory fix
+
 ### Container Commands Bulk Migration (14 commands)
 **Commands migrated (identical pattern to kill):**
 pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait, stop, remove, top
@@ -85,7 +92,6 @@ stop, remove, top
 
 Phase 1 simple mechanical sweep commands still TODO (~11 commands):
 - `container/exec` — also uses ProjectCfg(), more complex
-- `container/list` — test files still reference config.Provider
 - All `worktree/*` (add, list, prune, remove)
 - `loop/reset`, `loop/status`
 - `monitor/status`, `monitor/up`, `monitor/down`
