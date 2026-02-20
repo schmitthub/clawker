@@ -173,6 +173,12 @@ func (c *configImpl) LabelDomain() string { return labelDomain }
 // ConfigDirEnvVar returns the environment variable name that overrides config directory resolution.
 func (c *configImpl) ConfigDirEnvVar() string { return clawkerConfigDirEnv }
 
+// StateDirEnvVar returns the environment variable name that overrides state directory resolution.
+func (c *configImpl) StateDirEnvVar() string { return clawkerStateDirEnv }
+
+// DataDirEnvVar returns the environment variable name that overrides data directory resolution.
+func (c *configImpl) DataDirEnvVar() string { return clawkerDataDirEnv }
+
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir, DataDir) }
 

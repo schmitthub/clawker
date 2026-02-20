@@ -369,7 +369,7 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
     t.Helper()
     tio := iostreamstest.New()
 

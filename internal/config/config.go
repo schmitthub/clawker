@@ -44,6 +44,8 @@ type Config interface {
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
+	StateDirEnvVar() string
+	DataDirEnvVar() string
 	MonitorSubdir() (string, error)
 	BuildSubdir() (string, error)
 	DockerfilesSubdir() (string, error)
@@ -1225,6 +1227,13 @@ func boolPtr(v bool) *bool {
 }
 
 func ensureDefaultConfigFiles(opts loadOptions) error {
+	// All config files share the same parent directory — ensure it exists
+	// before attempting file locks or writes.
+	dir := filepath.Dir(opts.settingsFile)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating config directory %s: %w", dir, err)
+	}
+
 	files := []struct {
 		path    string
 		content string

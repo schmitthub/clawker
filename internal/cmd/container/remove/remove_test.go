@@ -16,7 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/schmitthub/clawker/internal/socketbridge/socketbridgetest"
+	sockebridgemocks "github.com/schmitthub/clawker/internal/socketbridge/mocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -161,8 +161,8 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
-	mock := socketbridgetest.NewMockManager()
-	mock.StopBridgeFn = func(_ string) error {
+	mock := sockebridgemocks.NewMockManager()
+	mock.StopBridgeFunc = func(_ string) error {
 		require.False(t, dockerRemoveCalled, "bridge must stop before docker remove")
 		return nil
 	}
@@ -178,7 +178,7 @@ func TestRemoveRun_StopsBridge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both operations were called
-	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	require.True(t, sockebridgemocks.CalledWith(mock, "StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerRemove")
 }
 
@@ -191,8 +191,8 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
-	mock := socketbridgetest.NewMockManager()
-	mock.StopBridgeFn = func(_ string) error {
+	mock := sockebridgemocks.NewMockManager()
+	mock.StopBridgeFunc = func(_ string) error {
 		return fmt.Errorf("bridge not found")
 	}
 	f, tio := testFactory(t, fake, mock)
@@ -207,7 +207,7 @@ func TestRemoveRun_BridgeErrorDoesNotFailRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bridge error was best-effort — remove still succeeded
-	require.True(t, mock.CalledWith("StopBridge", fixture.ID))
+	require.True(t, sockebridgemocks.CalledWith(mock, "StopBridge", fixture.ID))
 	fake.AssertCalled(t, "ContainerRemove")
 }
 
@@ -304,7 +304,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgetest.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
 

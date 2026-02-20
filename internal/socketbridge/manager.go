@@ -19,7 +19,9 @@ import (
 
 // SocketBridgeManager is the interface for managing socket bridge daemons.
 // Commands interact with this interface (not the concrete Manager) to enable
-// test mocking via socketbridgetest.MockManager.
+// test mocking via sockebridgemocks.SocketBridgeManagerMock.
+//
+//go:generate moq -rm -pkg mocks -out mocks/manager_mock.go . SocketBridgeManager
 type SocketBridgeManager interface {
 	// EnsureBridge ensures a bridge daemon is running for the given container.
 	// It is idempotent — if a bridge is already running, it returns immediately.

@@ -51,7 +51,7 @@ type Factory struct {
 - `Config()` -- returns `config.Provider` gateway interface (which lazy-loads project, settings, registry via `sync.Once`)
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config.Project.RootDir()
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
-- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `socketbridgetest.MockManager`
+- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 
 **Config gateway pattern:** Commands use `f.Config().ProjectCfg()`, `f.Config().UserSettings()`, `f.Config().ProjectKey()`, `f.Config().WorkDir()`, `f.Config().ProjectRegistry()`, `f.Config().SettingsLoader()`, etc.

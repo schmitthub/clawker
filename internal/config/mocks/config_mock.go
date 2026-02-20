@@ -43,6 +43,9 @@ var _ config.Config = &ConfigMock{}
 //			ContainerUIDFunc: func() int {
 //				panic("mock out the ContainerUID method")
 //			},
+//			DataDirEnvVarFunc: func() string {
+//				panic("mock out the DataDirEnvVar method")
+//			},
 //			DockerfilesSubdirFunc: func() (string, error) {
 //				panic("mock out the DockerfilesSubdir method")
 //			},
@@ -166,6 +169,9 @@ var _ config.Config = &ConfigMock{}
 //			ShareSubdirFunc: func() (string, error) {
 //				panic("mock out the ShareSubdir method")
 //			},
+//			StateDirEnvVarFunc: func() string {
+//				panic("mock out the StateDirEnvVar method")
+//			},
 //			WatchFunc: func(onChange func(fsnotify.Event)) error {
 //				panic("mock out the Watch method")
 //			},
@@ -205,6 +211,9 @@ type ConfigMock struct {
 
 	// ContainerUIDFunc mocks the ContainerUID method.
 	ContainerUIDFunc func() int
+
+	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
+	DataDirEnvVarFunc func() string
 
 	// DockerfilesSubdirFunc mocks the DockerfilesSubdir method.
 	DockerfilesSubdirFunc func() (string, error)
@@ -329,6 +338,9 @@ type ConfigMock struct {
 	// ShareSubdirFunc mocks the ShareSubdir method.
 	ShareSubdirFunc func() (string, error)
 
+	// StateDirEnvVarFunc mocks the StateDirEnvVar method.
+	StateDirEnvVarFunc func() string
+
 	// WatchFunc mocks the Watch method.
 	WatchFunc func(onChange func(fsnotify.Event)) error
 
@@ -365,6 +377,9 @@ type ConfigMock struct {
 		}
 		// ContainerUID holds details about calls to the ContainerUID method.
 		ContainerUID []struct {
+		}
+		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
+		DataDirEnvVar []struct {
 		}
 		// DockerfilesSubdir holds details about calls to the DockerfilesSubdir method.
 		DockerfilesSubdir []struct {
@@ -507,6 +522,9 @@ type ConfigMock struct {
 		// ShareSubdir holds details about calls to the ShareSubdir method.
 		ShareSubdir []struct {
 		}
+		// StateDirEnvVar holds details about calls to the StateDirEnvVar method.
+		StateDirEnvVar []struct {
+		}
 		// Watch holds details about calls to the Watch method.
 		Watch []struct {
 			// OnChange is the onChange argument value.
@@ -529,6 +547,7 @@ type ConfigMock struct {
 	lockConfigDirEnvVar         sync.RWMutex
 	lockContainerGID            sync.RWMutex
 	lockContainerUID            sync.RWMutex
+	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
@@ -570,6 +589,7 @@ type ConfigMock struct {
 	lockSet                     sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockShareSubdir             sync.RWMutex
+	lockStateDirEnvVar          sync.RWMutex
 	lockWatch                   sync.RWMutex
 	lockWorktreesSubdir         sync.RWMutex
 	lockWrite                   sync.RWMutex
@@ -793,6 +813,33 @@ func (mock *ConfigMock) ContainerUIDCalls() []struct {
 	mock.lockContainerUID.RLock()
 	calls = mock.calls.ContainerUID
 	mock.lockContainerUID.RUnlock()
+	return calls
+}
+
+// DataDirEnvVar calls DataDirEnvVarFunc.
+func (mock *ConfigMock) DataDirEnvVar() string {
+	if mock.DataDirEnvVarFunc == nil {
+		panic("ConfigMock.DataDirEnvVarFunc: method is nil but Config.DataDirEnvVar was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockDataDirEnvVar.Lock()
+	mock.calls.DataDirEnvVar = append(mock.calls.DataDirEnvVar, callInfo)
+	mock.lockDataDirEnvVar.Unlock()
+	return mock.DataDirEnvVarFunc()
+}
+
+// DataDirEnvVarCalls gets all the calls that were made to DataDirEnvVar.
+// Check the length with:
+//
+//	len(mockedConfig.DataDirEnvVarCalls())
+func (mock *ConfigMock) DataDirEnvVarCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockDataDirEnvVar.RLock()
+	calls = mock.calls.DataDirEnvVar
+	mock.lockDataDirEnvVar.RUnlock()
 	return calls
 }
 
@@ -1941,6 +1988,33 @@ func (mock *ConfigMock) ShareSubdirCalls() []struct {
 	mock.lockShareSubdir.RLock()
 	calls = mock.calls.ShareSubdir
 	mock.lockShareSubdir.RUnlock()
+	return calls
+}
+
+// StateDirEnvVar calls StateDirEnvVarFunc.
+func (mock *ConfigMock) StateDirEnvVar() string {
+	if mock.StateDirEnvVarFunc == nil {
+		panic("ConfigMock.StateDirEnvVarFunc: method is nil but Config.StateDirEnvVar was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockStateDirEnvVar.Lock()
+	mock.calls.StateDirEnvVar = append(mock.calls.StateDirEnvVar, callInfo)
+	mock.lockStateDirEnvVar.Unlock()
+	return mock.StateDirEnvVarFunc()
+}
+
+// StateDirEnvVarCalls gets all the calls that were made to StateDirEnvVar.
+// Check the length with:
+//
+//	len(mockedConfig.StateDirEnvVarCalls())
+func (mock *ConfigMock) StateDirEnvVarCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockStateDirEnvVar.RLock()
+	calls = mock.calls.StateDirEnvVar
+	mock.lockStateDirEnvVar.RUnlock()
 	return calls
 }
 

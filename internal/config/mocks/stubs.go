@@ -45,6 +45,8 @@ func NewFromString(cfgStr string) *ConfigMock {
 	mock.DomainFunc = cfg.Domain
 	mock.LabelDomainFunc = cfg.LabelDomain
 	mock.ConfigDirEnvVarFunc = cfg.ConfigDirEnvVar
+	mock.StateDirEnvVarFunc = cfg.StateDirEnvVar
+	mock.DataDirEnvVarFunc = cfg.DataDirEnvVar
 	mock.ClawkerNetworkFunc = cfg.ClawkerNetwork
 	mock.ContainerUIDFunc = cfg.ContainerUID
 	mock.ContainerGIDFunc = cfg.ContainerGID
@@ -143,8 +145,8 @@ func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer) {
 		t.Fatalf("creating blank config for env setup: %v", err)
 	}
 	t.Setenv(blankCfg.ConfigDirEnvVar(), filepath.Join(base, "config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
+	t.Setenv(blankCfg.DataDirEnvVar(), filepath.Join(base, "data"))
+	t.Setenv(blankCfg.StateDirEnvVar(), filepath.Join(base, "state"))
 
 	return func(settingsOut io.Writer, projectOut io.Writer, registryOut io.Writer) {
 		t.Helper()

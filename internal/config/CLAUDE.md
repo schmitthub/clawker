@@ -72,7 +72,7 @@ Key ownership: `logging/monitoring/host_proxy/default_image` -> settings, `proje
 
 **Schema accessors**: `Project()`, `Settings()`, `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()`, `Logging()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
 
-**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`
+**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`
 
 **Mutation**: `Get(key)`, `Set(key, value)`, `Write(WriteOptions)`, `Watch(onChange)`
 - `Set` updates in-memory state + marks dirty; does not persist

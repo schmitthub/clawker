@@ -181,7 +181,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
 | `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
-| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
+| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout. `Logger` field for diagnostic file logging |
 | `iostreams.Logger` | Interface matching `*zerolog.Logger` — `Debug/Info/Warn/Error() *zerolog.Event`. Decouples commands from `internal/logger` |
