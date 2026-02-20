@@ -28,7 +28,7 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `stubs.go` | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
+| `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
@@ -37,15 +37,19 @@ Each package in the dependency DAG must provide test utilities so dependents can
 
 Use the lightest config test helper that fits the assertion:
 
-- `config.NewMockConfig()` — default in-memory config for broad tests that only need a valid `config.Config`.
-- `config.NewFakeConfig(config.FakeConfigOptions{Viper: v})` — inject a pre-seeded `*viper.Viper` for precise state control.
-- `config.ReadFromString(...)` / `config.NewConfigFromString(...)` — YAML fixture-driven tests for parsing and validation behavior.
+- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+
+`NewBlankConfig` and `NewFromString` return `*ConfigMock` (moq-generated) with every read Func field pre-wired. Set/Write/Watch are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
 
 Typical mapping:
 
-- Defaults and typed getter behavior → `NewMockConfig()`
-- Deterministic key/value setup before assertions → `NewFakeConfig(...)`
-- Unknown-key validation and YAML scenarios → `ReadFromString(...)`
+- Defaults and typed getter behavior → `NewBlankConfig()`
+- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
+- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML parsing and validation errors → `ReadFromString(...)` directly
 
 When working specifically on `internal/config`, keep validation package-local while migration is in progress:
 
@@ -99,7 +103,7 @@ Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
 Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
-fake := dockertest.NewFakeClient(config.NewMockConfig())
+fake := dockertest.NewFakeClient(config.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
 tio := iostreamstest.New()

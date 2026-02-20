@@ -41,7 +41,7 @@ Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$Ap
 | `consts.go` | Private constants (`domain`, `labelDomain`, subdir names, network name) exposed only via `Config` interface methods. `Mode` type (`ModeBind`/`ModeSnapshot`) remains exported |
 | `schema.go` | All persisted schema structs (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, etc.) |
 | `defaults.go` | `setDefaults(v)` — viper defaults, `requiredFirewallDomains`, YAML template constants |
-| `stubs.go` | Test helpers: `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
+| `stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `StubWriteConfig()` |
 | `config_test.go` | Unit tests for all of the above |
 | `testdata/` | Test fixtures: `config/` (settings, projects, user clawker.yaml), `project/` (project clawker.yaml) |
 
@@ -314,29 +314,36 @@ Other:
 ### Test Helpers (stubs.go)
 
 ```go
-// In-memory config with defaults + env support, no file I/O
-func NewMockConfig() Config
+// In-memory *ConfigMock with defaults — all read Func fields wired, Set/Write/Watch panic
+func NewBlankConfig() *ConfigMock
 
-// Config with injected viper (nil → defaults)
-func NewFakeConfig(opts FakeConfigOptions) Config
+// In-memory *ConfigMock from YAML — all read Func fields wired, Set/Write/Watch panic
+func NewFromString(cfgStr string) *ConfigMock
 
-// Alias for ReadFromString (convenience)
-func NewConfigFromString(str string) (Config, error)
+// File-backed config isolated to a temp config dir — supports Set/Write
+func NewIsolatedTestConfig(t *testing.T) (Config, func(io.Writer, io.Writer, io.Writer))
+
+// Isolates config-file writes to a temp dir — returns reader callback
+func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer)
 ```
+
+`NewBlankConfig` and `NewFromString` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl` backed by `ReadFromString`. This enables partial mocking (override any Func field) and call assertions (check `mock.ProjectCalls()`). Set, Write, and Watch are intentionally NOT wired — calling them panics via moq's nil-func guard, signaling that `NewIsolatedTestConfig` should be used for mutation tests.
 
 ### Testing Guide
 
 Use the lightest helper that fits the test intent:
 
-- `NewMockConfig()` — best for command/integration tests that only need a valid config object; no file loading, defaults enabled, safe in-memory behavior.
-- `NewFakeConfig(FakeConfigOptions{Viper: v})` — best for unit tests that need precise control over pre-seeded values; inject a custom `*viper.Viper` to set exact state before assertions.
-- `ReadFromString(...)` / `NewConfigFromString(...)` — best for YAML fixture-style tests and schema validation behavior; useful to verify unknown-key rejection and default merging semantics.
+- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
 
-Common patterns:
+Typical mapping:
 
-- Test typed getters and defaults with `NewMockConfig()`.
-- Test key lookup/set/write behavior with `NewFakeConfig(...)` plus explicit `v.Set(...)`.
-- Test parsing/validation edge cases with `ReadFromString(...)` and inline YAML fixtures.
+- Defaults and typed getter behavior → `NewBlankConfig()`
+- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
+- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML parsing and validation errors → `ReadFromString(...)` directly
 
 Recommended package-local commands:
 
@@ -410,17 +417,16 @@ err = cfg.Write(config.WriteOptions{
 ### Testing — mock config
 
 ```go
-cfg := config.NewMockConfig()
-// or with specific YAML:
-cfg, err := config.ReadFromString(`build: { image: "alpine:3.20" }`)
-```
+// Default test double with defaults
+cfg := config.NewBlankConfig()
 
-### Testing — custom viper
+// Test double with specific YAML values
+cfg := config.NewFromString(`build: { image: "alpine:3.20" }`)
 
-```go
-v := viper.New()
-v.Set("build.image", "custom:latest")
-cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: v})
+// Override a specific method on the mock
+cfg.ProjectFunc = func() *config.Project {
+    return &config.Project{Build: config.BuildConfig{Image: "custom:latest"}}
+}
 ```
 
 ## Migration Status
@@ -452,11 +458,7 @@ The following consumers still reference **removed** old-API symbols and need mig
 - `internal/cmd/config/check` — uses `ReadFromString()` only
 - `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
 - `internal/bundler` — uses `config.Config` interface for UID/GID/labels
-- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. **131/139 external `dockertest.NewFakeClient` callers migrated** (no-arg → `config.NewMockConfig()` first arg). 8 remaining `WithConfig` callers are entangled with `config.Provider` → `config.Config` migration (will fix per-package).
-
-### Not Yet Built (configtest/)
-
-The old `configtest/` subpackage (`InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader`) has not been rebuilt. When needed, use `NewMockConfig()`, `NewFakeConfig()`, or `ReadFromString()` from `stubs.go`.
+- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. **131/139 external `dockertest.NewFakeClient` callers migrated** (no-arg → `config.NewBlankConfig()` first arg). 8 remaining `WithConfig` callers are entangled with `config.Provider` → `config.Config` migration (will fix per-package).
 
 ## Migration Guide
 
@@ -560,20 +562,19 @@ All subdir constants are private — access them through `Config` methods (`Logs
 **Old**: `config.ContainerUID`, `config.ContainerGID`, `config.DefaultSettings()`
 **New**: `ContainerUID()` and `ContainerGID()` are available via `Config` interface methods. `DefaultSettings()` remains not rebuilt.
 
-### Pattern 8: Testing — old configtest/ → stubs.go
+### Pattern 8: Testing — stubs.go
 
-**Old**: `configtest.InMemoryRegistryBuilder`, `configtest.InMemoryProjectBuilder`, `configtest.InMemorySettingsLoader`
-**New**: Use stubs from `stubs.go`:
+Use stubs from `stubs.go`:
 
 ```go
-// Default mock config (in-memory, no files)
-cfg := config.NewMockConfig()
+// Default test double (in-memory, no files)
+cfg := config.NewBlankConfig()
 
-// Config from YAML string
-cfg, _ := config.ReadFromString(`build: { image: "alpine" }`)
+// Test double with specific YAML values
+cfg := config.NewFromString(`build: { image: "alpine" }`)
 
-// Custom viper injection
-cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: myViper})
+// File-backed config for mutation tests
+cfg, read := config.NewIsolatedTestConfig(t)
 ```
 
 Registry mutation behavior should be tested through `internal/project` facades/services using real `config.Config` inputs or package-local test doubles there.
@@ -615,7 +616,7 @@ See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_
 4. Replace `DataDir`/`LogDir`/`EnsureDir` with `ConfigDir()` + manual path construction
 5. If the consumer needs a constant/helper that doesn't exist yet, add it to `config` (or to the consumer's own package if it's package-specific)
 6. For registry/worktree writes, use `Set("projects....")` + `Write(...)` instead of legacy builders/loaders
-7. Update tests to use `NewMockConfig()` / `ReadFromString()` / `NewFakeConfig()`
+7. Update tests to use `NewBlankConfig()` / `NewFromString(yaml)` / `NewIsolatedTestConfig(t)`
 8. Verify: `go build ./internal/<package>/...` and `go test ./internal/<package>/...`
 9. Update the consumer's `CLAUDE.md` to reflect the new API usage
 
@@ -624,7 +625,7 @@ See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_
 - **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact` to catch unknown/misspelled keys (e.g. `biuld:` → `unknown keys: biuld`). Validation structs (`readFromStringValidation`, `projectRegistryValidation`) mirror the schema with `mapstructure` tags. Error messages are reformatted by `formatDecodeError` into user-friendly dot-path notation.
 - **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`, `CLAWKER_HOST_PROXY_DAEMON_PORT`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
 - **`ReadFromString` is env-isolated** — it parses YAML + defaults only and does not apply `CLAWKER_*` environment overrides.
-- **Dotted label keys in string fixtures are supported** — `ReadFromString`/`NewConfigFromString` preserve dotted keys under `build.instructions.labels` (for example `dev.clawker.project`) instead of expanding them into nested maps.
+- **Dotted label keys in string fixtures are supported** — `ReadFromString` preserves dotted keys under `build.instructions.labels` (for example `dev.clawker.project`) instead of expanding them into nested maps.
 - **`*bool` pointers** — schema structs (`Project()` and YAML-unmarshal paths) preserve nullable `*bool` semantics and may require nil checks. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) already materialize these to concrete true/false via non-nil pointers.
 - **`Project.Project` field** — has `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). This is intentional so viper's ErrorUnused doesn't reject the `project:` key.
 - **Transitive build failures** — Until all consumers are migrated, `go build ./...` and `go test ./...` will fail. Test individual migrated packages directly.

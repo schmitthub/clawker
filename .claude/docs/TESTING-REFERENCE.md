@@ -22,7 +22,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
        │                                       │                   │
        ▼                                       ▼                   ▼
    gittest/                               dockertest/         Factory DI
-   configtest/                            whailtest/          + runF seam
+   config/stubs.go                        whailtest/          + runF seam
 ```
 
 **Each node in the DAG must provide test infrastructure for its dependents.**
@@ -42,7 +42,7 @@ f := &cmdutil.Factory{
         return fake.Client, nil  // Fake from dockertest
     },
     Config: func() (config.Config, error) {
-        return config.NewMockConfig(), nil
+        return config.NewBlankConfig(), nil
     },
     // ... other fields
 }
@@ -71,7 +71,7 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
-| `internal/config` | `stubs.go` | `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
+| `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
@@ -120,19 +120,21 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 
 ## Config Package Testing Guide (`internal/config`)
 
-The config package intentionally exposes lightweight test doubles in `internal/config/stubs.go`.
+The config package exposes lightweight test doubles in `internal/config/stubs.go`. `NewBlankConfig()` and `NewFromString()` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. This enables partial mocking and call assertions.
 
 ### Which helper to use
 
-- `config.NewMockConfig()` — use for broad tests that just need a valid in-memory config with defaults; ideal for command tests that do not care about exact file-loading behavior.
-- `config.NewFakeConfig(config.FakeConfigOptions{Viper: v})` — use when you need exact control of backing state; seed specific keys with a custom `*viper.Viper` and assert behavior deterministically.
-- `config.ReadFromString(...)` / `config.NewConfigFromString(...)` — use for YAML fixture tests and schema validation assertions; best for unknown-key validation, merge expectations, and scenario readability.
+- `config.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `config.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `config.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `config.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
 
 ### Typical test mapping
 
-- Defaults and typed getters → `NewMockConfig()`
-- Key mutation / selective persistence logic → `NewFakeConfig(...)` or `mustConfigFromFile` style helpers in package tests
-- YAML parsing and validation errors → `ReadFromString(...)`
+- Defaults and typed getter behavior → `NewBlankConfig()`
+- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
+- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML parsing and validation errors → `ReadFromString(...)` directly
 
 ### Focused commands
 
@@ -201,7 +203,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
         Config: func() (config.Config, error) {
-            return config.NewMockConfig(), nil
+            return config.NewBlankConfig(), nil
         },
     }
 
@@ -257,7 +259,7 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
             return mockClient, nil
         },
         Config: func() (config.Config, error) {
-            return config.NewMockConfig(), nil
+            return config.NewBlankConfig(), nil
         },
     }
 
@@ -312,7 +314,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *socketbridgete
             return fake.Client, nil
         },
         Config: func() (config.Config, error) {
-            return config.NewMockConfig(), nil
+            return config.NewBlankConfig(), nil
         },
     }
 
@@ -837,22 +839,17 @@ The codebase provides in-memory implementations for testing without filesystem I
 
 ### config Test Stubs (stubs.go)
 
-Config test helpers live in the `config` package itself (not a separate `configtest/` subpackage):
+Config test helpers live in the `config` package itself (not a separate subpackage):
 
 ```go
-// Default mock — in-memory config with defaults + env support, no file I/O
-cfg := config.NewMockConfig()
+// Default test double — in-memory *ConfigMock with defaults, Set/Write/Watch panic
+cfg := config.NewBlankConfig()
 
-// Config from YAML string — validates and parses
-cfg, err := config.ReadFromString(`build: { image: "alpine:3.20" }`)
+// Test double from YAML — in-memory *ConfigMock, Set/Write/Watch panic
+cfg := config.NewFromString(`build: { image: "alpine:3.20" }`)
 
-// Alias for ReadFromString
-cfg, err := config.NewConfigFromString(`project: myapp`)
-
-// Custom viper injection — for fine-grained control
-v := viper.New()
-v.Set("build.image", "custom:latest")
-cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: v})
+// File-backed config for mutation tests
+cfg, read := config.NewIsolatedTestConfig(t)
 ```
 
 **Factory wiring in tests:**
@@ -860,7 +857,7 @@ cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: v})
 f := &cmdutil.Factory{
     IOStreams: tio.IOStreams,
     Config: func() (config.Config, error) {
-        return config.NewMockConfig(), nil
+        return config.NewBlankConfig(), nil
     },
 }
 ```
@@ -878,9 +875,9 @@ gitMgr := gittest.NewInMemoryGitManager()
 
 | Need | Use |
 |------|-----|
-| Default config for command tests | `config.NewMockConfig()` |
-| Config with specific YAML values | `config.ReadFromString(yaml)` |
-| Config with custom viper overrides | `config.NewFakeConfig(opts)` |
+| Default config for command tests | `config.NewBlankConfig()` |
+| Config with specific YAML values | `config.NewFromString(yaml)` |
+| Config needing Set/Write/Watch | `config.NewIsolatedTestConfig(t)` |
 | Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 | Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 

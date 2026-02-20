@@ -737,16 +737,16 @@ build:
 	assert.Equal(t, "ubuntu:22.04", c.Project().Build.Image)
 }
 
-func TestNewMockConfig_AppliesEnvOverride(t *testing.T) {
+func TestNewConfig_AppliesEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
-	c := NewMockConfig()
-	assert.Equal(t, "alpine:3.19", c.Project().Build.Image)
+	cfg, _ := NewIsolatedTestConfig(t)
+	assert.Equal(t, "alpine:3.19", cfg.Project().Build.Image)
 }
 
-func TestNewMockConfig_AppliesHostProxyEnvOverride(t *testing.T) {
+func TestNewConfig_AppliesHostProxyEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_PORT", "18090")
-	c := NewMockConfig()
-	assert.Equal(t, 18090, c.Settings().HostProxy.Daemon.Port)
+	cfg, _ := NewIsolatedTestConfig(t)
+	assert.Equal(t, 18090, cfg.Settings().HostProxy.Daemon.Port)
 }
 
 func TestReadFromString_DoesNotApplyHostProxyEnvOverride(t *testing.T) {
@@ -755,10 +755,10 @@ func TestReadFromString_DoesNotApplyHostProxyEnvOverride(t *testing.T) {
 	assert.Equal(t, 18374, c.Settings().HostProxy.Daemon.Port)
 }
 
-func TestNewMockConfig_AppliesHostProxyDurationEnvOverride(t *testing.T) {
+func TestNewConfig_AppliesHostProxyDurationEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL", "45s")
-	c := NewMockConfig()
-	assert.Equal(t, 45, int(c.Settings().HostProxy.Daemon.PollInterval.Seconds()))
+	cfg, _ := NewIsolatedTestConfig(t)
+	assert.Equal(t, 45, int(cfg.Settings().HostProxy.Daemon.PollInterval.Seconds()))
 }
 
 func TestReadFromString_DoesNotApplyHostProxyDurationEnvOverride(t *testing.T) {
