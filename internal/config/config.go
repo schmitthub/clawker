@@ -4,6 +4,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,8 +14,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/gofrs/flock"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
@@ -22,11 +25,6 @@ import (
 var invalidKeysRe = regexp.MustCompile(`'([^']+)' has invalid keys: (.+)$`)
 
 const dottedLabelKeySentinel = "__clawker_dot__"
-
-const (
-	appData       = "AppData"
-	xdgConfigHome = "XDG_CONFIG_HOME"
-)
 
 // Config is the public configuration contract.
 // Add methods here as the config contract grows.
@@ -56,6 +54,7 @@ type Config interface {
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
 	ShareSubdir() (string, error)
+	WorktreesSubdir() (string, error)
 	LabelPrefix() string
 	LabelManaged() string
 	LabelMonitoringStack() string
@@ -752,10 +751,20 @@ func (c *configImpl) Write(opts WriteOptions) error {
 		return nil
 	}
 
-	if opts.Safe {
-		return c.v.SafeWriteConfigAs(opts.Path)
-	}
-	return c.v.WriteConfigAs(opts.Path)
+	return withFileLock(opts.Path, func() error {
+		if opts.Safe {
+			if _, err := os.Stat(opts.Path); err == nil {
+				return fmt.Errorf("config file already exists: %s", opts.Path)
+			}
+		}
+
+		encoded, err := yaml.Marshal(c.v.AllSettings())
+		if err != nil {
+			return fmt.Errorf("encoding config %s: %w", opts.Path, err)
+		}
+
+		return atomicWriteFile(opts.Path, encoded, 0o644)
+	})
 }
 
 // Watch enables file watching for the currently loaded config file.
@@ -841,41 +850,131 @@ func ownedRoots(scope ConfigScope) []string {
 	return roots
 }
 
-func writeKeyToFile(path, key string, value any, safe bool) error {
-	v, exists, err := openConfigForWrite(path)
-	if err != nil {
-		return err
+// atomicWriteFile writes data to path using a temp-file + fsync + rename
+// strategy so that a crash mid-write never leaves the target truncated or
+// partial. The temp file is created in the target's parent directory to
+// guarantee same-filesystem rename semantics on POSIX.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating config directory for %s: %w", path, err)
 	}
 
-	v.Set(key, value)
-	if safe {
-		if exists {
+	tmp, err := os.CreateTemp(dir, ".clawker-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp file for %s: %w", path, err)
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing temp file for %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("syncing temp file for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp file for %s: %w", path, err)
+	}
+	if err := os.Chmod(tmp.Name(), perm); err != nil {
+		return fmt.Errorf("setting permissions on temp file for %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("renaming temp file to %s: %w", path, err)
+	}
+
+	success = true
+	return nil
+}
+
+// withFileLock acquires an advisory file lock on path+".lock" before running fn,
+// providing cross-process mutual exclusion for config file writes.
+func withFileLock(path string, fn func() error) error {
+	fl := flock.New(path + ".lock")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	locked, err := fl.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("acquiring file lock for %s: %w", path, err)
+	}
+	if !locked {
+		return fmt.Errorf("timed out acquiring file lock for %s", path)
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	return fn()
+}
+
+func writeKeyToFile(path, key string, value any, safe bool) error {
+	return withFileLock(path, func() error {
+		v, exists, err := openConfigForWrite(path)
+		if err != nil {
+			return err
+		}
+
+		if safe && exists {
 			return fmt.Errorf("config file already exists: %s", path)
 		}
-		return v.SafeWriteConfigAs(path)
-	}
-	return v.WriteConfigAs(path)
+
+		v.Set(key, value)
+
+		encoded, err := yaml.Marshal(v.AllSettings())
+		if err != nil {
+			return fmt.Errorf("encoding config %s: %w", path, err)
+		}
+
+		return atomicWriteFile(path, encoded, 0o644)
+	})
 }
 
 func writeRootsToFile(path string, roots []string, source *viper.Viper, safe bool) error {
-	v, exists, err := openConfigForWrite(path)
-	if err != nil {
-		return err
-	}
-
-	for _, root := range roots {
-		if source.IsSet(root) {
-			v.Set(root, source.Get(root))
+	return withFileLock(path, func() error {
+		_, exists, err := openConfigForWrite(path)
+		if err != nil {
+			return err
 		}
-	}
 
-	if safe {
-		if exists {
+		if safe && exists {
 			return fmt.Errorf("config file already exists: %s", path)
 		}
-		return v.SafeWriteConfigAs(path)
-	}
-	return v.WriteConfigAs(path)
+
+		content := map[string]any{}
+		if exists {
+			bytes, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("reading config %s: %w", path, err)
+			}
+			if len(bytes) > 0 {
+				if err := yaml.Unmarshal(bytes, &content); err != nil {
+					return fmt.Errorf("parsing config %s: %w", path, err)
+				}
+			}
+		}
+
+		for _, root := range roots {
+			if source.IsSet(root) {
+				content[root] = source.Get(root)
+				continue
+			}
+			delete(content, root)
+		}
+
+		encoded, err := yaml.Marshal(content)
+		if err != nil {
+			return fmt.Errorf("encoding config %s: %w", path, err)
+		}
+
+		return atomicWriteFile(path, encoded, 0o644)
+	})
 }
 
 func openConfigForWrite(path string) (*viper.Viper, bool, error) {
@@ -924,10 +1023,32 @@ func (c *configImpl) projectRootFromCurrentDir() (string, error) {
 	}
 	cwd = filepath.Clean(cwd)
 
-	projects := c.v.GetStringMap("projects")
+	projectsRaw := c.v.Get("projects")
+	projectRoots := make([]string, 0)
+	switch projects := projectsRaw.(type) {
+	case map[string]any:
+		for key := range projects {
+			root := filepath.Clean(c.v.GetString(fmt.Sprintf("projects.%s.root", key)))
+			if root != "" {
+				projectRoots = append(projectRoots, root)
+			}
+		}
+	case []any:
+		for _, rawEntry := range projects {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				continue
+			}
+			root, ok := entry["root"].(string)
+			if !ok || root == "" {
+				continue
+			}
+			projectRoots = append(projectRoots, filepath.Clean(root))
+		}
+	}
+
 	bestMatch := ""
-	for key := range projects {
-		root := filepath.Clean(c.v.GetString(fmt.Sprintf("projects.%s.root", key)))
+	for _, root := range projectRoots {
 		rel, relErr := filepath.Rel(root, cwd)
 		if relErr != nil {
 			continue
@@ -1031,6 +1152,38 @@ func ConfigDir() string {
 	return filepath.Join(d, ".config", "clawker")
 }
 
+func DataDir() string {
+	if a := os.Getenv(clawkerDataDirEnv); a != "" {
+		return a
+	}
+	if b := os.Getenv(xdgDataHome); b != "" {
+		return filepath.Join(b, "clawker")
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv(localAppData); c != "" {
+			return filepath.Join(c, "clawker")
+		}
+	}
+	d, _ := os.UserHomeDir()
+	return filepath.Join(d, ".local", "share", "clawker")
+}
+
+func StateDir() string {
+	if a := os.Getenv(clawkerStateDirEnv); a != "" {
+		return a
+	}
+	if b := os.Getenv(xdgStateHome); b != "" {
+		return filepath.Join(b, "clawker")
+	}
+	if runtime.GOOS == "windows" {
+		if c := os.Getenv(appData); c != "" {
+			return filepath.Join(c, "clawker", "state")
+		}
+	}
+	d, _ := os.UserHomeDir()
+	return filepath.Join(d, ".local", "state", "clawker")
+}
+
 func settingsConfigFile() string {
 	return filepath.Join(ConfigDir(), "settings.yaml")
 }
@@ -1104,7 +1257,7 @@ func formatDecodeError(err error) string {
 
 // readFromStringValidation is a permissive root schema for ReadFromString.
 // It validates unknown keys for known config roots while allowing ad-hoc
-// projects maps used in tests.
+// project registry shapes used in tests.
 type readFromStringValidation struct {
 	Version      string           `mapstructure:"version"`
 	Project      string           `mapstructure:"project"`
@@ -1117,13 +1270,12 @@ type readFromStringValidation struct {
 	Logging      LoggingConfig    `mapstructure:"logging"`
 	HostProxy    HostProxyConfig  `mapstructure:"host_proxy"`
 	Monitoring   MonitoringConfig `mapstructure:"monitoring"`
-	Projects     map[string]any   `mapstructure:"projects"`
+	Projects     any              `mapstructure:"projects"`
 }
 
-// projectRegistryValidation allows legacy worktree values while still
-// rejecting unknown keys on registry/project entries.
+// projectRegistryValidation accepts both legacy map and new list formats.
 type projectRegistryValidation struct {
-	Projects map[string]projectEntryValidation `mapstructure:"projects"`
+	Projects any `mapstructure:"projects"`
 }
 
 type projectEntryValidation struct {

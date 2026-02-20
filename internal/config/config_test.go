@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
@@ -1098,4 +1099,66 @@ projects:
     root: %s
 `, cwd))
 	require.Error(t, c.mergeProjectConfig())
+}
+
+// atomicWriteFile
+
+func TestAtomicWriteFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "file.yaml")
+
+	data := []byte("project: my-app\n")
+	require.NoError(t, atomicWriteFile(path, data, 0o644))
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(data), string(got))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+}
+
+func TestAtomicWriteFile_OverwritePreservesContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("old content\n"), 0o644))
+
+	newData := []byte("new content\n")
+	require.NoError(t, atomicWriteFile(path, newData, 0o644))
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "new content\n", string(got))
+}
+
+// withFileLock
+
+func TestWithFileLock_MutualExclusion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locktest.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
+
+	var mu sync.Mutex
+	var order []int
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	for i := 0; i < 2; i++ {
+		go func(id int) {
+			defer wg.Done()
+			err := withFileLock(path, func() error {
+				mu.Lock()
+				order = append(order, id)
+				mu.Unlock()
+				// Hold the lock briefly to ensure the other goroutine must wait.
+				time.Sleep(50 * time.Millisecond)
+				return nil
+			})
+			assert.NoError(t, err)
+		}(i)
+	}
+
+	wg.Wait()
+
+	assert.Len(t, order, 2, "both goroutines should have acquired the lock")
 }

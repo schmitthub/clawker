@@ -28,13 +28,18 @@ Viper-backed configuration with merged multi-file loading. One `Config` interfac
 
 Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
 
+## Boundary
+
+- `config` owns **path resolution primitives** and file-backed config I/O (for example: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`, `Write(WriteOptions)`).
+- `config` does **not** own project CRUD or project identity orchestration (slug/key resolution, registry lifecycle, worktree lifecycle); those belong in `internal/project`.
+
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `config.go` | `Config` interface, `configImpl` struct, `NewConfig()`, `ReadFromString()`, `ConfigDir()`, file loading/merging |
 | `consts.go` | Private constants (`domain`, `labelDomain`, subdir names, network name) exposed only via `Config` interface methods. `Mode` type (`ModeBind`/`ModeSnapshot`) remains exported |
-| `schema.go` | All schema structs (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, etc.), `Registry` interface |
+| `schema.go` | All persisted schema structs (`Project`, `BuildConfig`, `AgentConfig`, `SecurityConfig`, etc.) |
 | `defaults.go` | `setDefaults(v)` — viper defaults, `requiredFirewallDomains`, YAML template constants |
 | `stubs.go` | Test helpers: `NewMockConfig()`, `NewFakeConfig()`, `NewConfigFromString()` |
 | `config_test.go` | Unit tests for all of the above |
@@ -202,13 +207,26 @@ Dispatch order:
 2. `Scope` set (without `Key`) → persist only dirty owned roots for that scope
 3. Neither `Key` nor `Scope` set:
    - `Path` empty → persist dirty roots to their owning files by scope (`settings`, `registry`, `project`)
-   - `Path` set → legacy explicit single-file write (`WriteConfigAs` / `SafeWriteConfigAs`)
+   - `Path` set → legacy explicit single-file write (yaml.Marshal + atomicWriteFile)
 
 Additional rules:
 
 - `Key` + `Scope` mismatch is rejected (ownership scope must match the key's mapped scope).
 - Dirty state is cleared only for successfully persisted entries.
 - No-op writes (no dirty content selected) return `nil`.
+
+#### Write safety guarantees
+
+All `Write` paths provide two layers of protection:
+
+| Layer | Mechanism | Protects |
+|-------|-----------|----------|
+| Cross-process | `gofrs/flock` advisory lock (`path + ".lock"`) with 10s timeout, 100ms retry | Multiple clawker processes writing the same config file |
+| Data integrity | temp-file → fsync → rename (`atomicWriteFile`) | Crash during write doesn't corrupt the file |
+
+- The in-process `sync.RWMutex` (existing) protects goroutines within one process.
+- Lock files (`.lock` suffix) are left on disk after release — this is standard practice; removing them races with other waiters.
+- Temp files use `.clawker-*.tmp` naming in the target's parent directory for same-filesystem atomic rename.
 
 #### `Watch(onChange)` behavior
 
@@ -219,14 +237,14 @@ Additional rules:
 #### In-memory implications (important)
 
 - `Set`: updates in-memory state and marks dirty; does **not** persist to disk.
-- `Write`: persists only selected dirty content, then clears dirty state for successful writes. It does **not** re-load/merge from disk as a separate step.
+- `Write`: acquires a cross-process file lock, persists only selected dirty content via atomic temp-file + rename, then clears dirty state for successful writes. It does **not** re-load/merge from disk as a separate step.
 - `Watch`: enables ongoing file-change watching; Viper handles refresh events for the watched file.
 
 ### Schema Types (schema.go)
 
 Top-level:
 
-- `Project` — root config struct, holds all sections plus runtime context (`projectEntry`, `registry`, `worktreeMu`)
+- `Project` — root persisted config struct for `clawker.yaml`
 - `Settings` — user-level settings (`LoggingConfig`, `MonitoringConfig`, `HostProxyConfig`, `DefaultImage`)
 
 Build:
@@ -558,7 +576,7 @@ cfg, _ := config.ReadFromString(`build: { image: "alpine" }`)
 cfg := config.NewFakeConfig(config.FakeConfigOptions{Viper: myViper})
 ```
 
-For registry testing, `Registry` interface exists in `schema.go` but no in-memory implementation is provided yet. Build one when needed.
+Registry mutation behavior should be tested through `internal/project` facades/services using real `config.Config` inputs or package-local test doubles there.
 
 ### Pattern 9: Registry + worktree creation → Set() + Write()
 
