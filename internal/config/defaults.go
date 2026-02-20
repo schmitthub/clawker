@@ -142,13 +142,6 @@ security:
     # Add domains to the default allowed list
     # add_domains:
     #   - "api.openai.com"
-    # Remove domains from the default allowed list
-    # remove_domains:
-    #   - "registry.npmjs.org"
-    # Override the entire allowed list (ignores add/remove, skips GitHub IP fetching)
-    # override_domains:
-    #   - "api.anthropic.com"
-    #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
 
@@ -225,7 +218,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 // DefaultRegistryYAML returns the default registry template
 const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
-projects: {}
+projects: [{}]
 `
 
 // DefaultIgnoreFile returns the default .clawkerignore content

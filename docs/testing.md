@@ -86,9 +86,9 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `stubs.go` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
-| `internal/project` | `stubs.go` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
+| `internal/project` | `mocks/` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 

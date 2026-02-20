@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 clawker init
 ```
 
-This creates `~/.local/clawker/` with logs, settings, and project registry. It also prompts you to build a default fallback image.
+This creates the Clawker directory structure (`~/.config/clawker/` for settings, `~/.local/share/clawker/` for data, `~/.local/state/clawker/` for logs) and prompts you to build a default fallback image.
 
 ## Start a Project
 
@@ -39,11 +39,17 @@ clawker build           # Builds your project's Docker image
 
 ## Run Your First Agent
 
+An **agent** is a named container instance running Claude Code. The `--agent` flag gives it a name so you can manage multiple agents per project (e.g., `dev`, `review`, `refactor`).
+
 ```bash
 clawker run -it --agent dev @
 ```
 
-The `@` shortcut resolves to your project's image (`clawker-<project>:latest`). This creates and attaches to a new Claude Code agent running in an isolated container.
+<Tip>
+The `@` shortcut resolves to your project's built image (`clawker-<project>:latest`). It saves you from typing the full image name every time.
+</Tip>
+
+This creates and attaches to a new Claude Code agent running in an isolated container.
 
 <Steps>
   <Step title="Interact with Claude Code">
@@ -70,6 +76,12 @@ The `@` shortcut resolves to your project's image (`clawker-<project>:latest`). 
 <CardGroup cols={2}>
   <Card title="Configuration" icon="gear" href="/configuration">
     Customize your clawker.yaml for your project's needs
+  </Card>
+  <Card title="Security & Firewall" icon="shield" href="/security">
+    Understand the network firewall and security controls
+  </Card>
+  <Card title="Custom Images" icon="layer-group" href="/custom-images">
+    Build images with custom packages and Dockerfile instructions
   </Card>
   <Card title="CLI Reference" icon="terminal" href="/cli-reference/clawker">
     Explore the full command reference

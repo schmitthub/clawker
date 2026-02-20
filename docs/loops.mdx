@@ -1,0 +1,143 @@
+---
+title: "Loop Mode"
+description: "Run Claude Code in autonomous iterative loops with stagnation detection and circuit breakers"
+icon: "rotate"
+---
+
+Loop mode runs Claude Code repeatedly in a loop, creating a fresh container for each iteration while preserving workspace and config volumes across iterations. It's designed for tasks that benefit from multiple autonomous passes -- fixing test suites, implementing features, or working through a task backlog.
+
+## Commands
+
+### `clawker loop iterate`
+
+Run the same prompt repeatedly:
+
+```bash
+# Basic loop with a prompt
+clawker loop iterate --prompt "Fix all failing tests"
+
+# Read prompt from a file
+clawker loop iterate --prompt-file task.md
+
+# Stream all output in real time
+clawker loop iterate --prompt "Add tests" --verbose
+
+# Output final result as JSON
+clawker loop iterate --prompt "Fix tests" --json
+```
+
+### `clawker loop tasks`
+
+Run loops driven by a task file. The agent reads the task list, picks the next task, completes it, and marks it done:
+
+```bash
+# Task-driven loop
+clawker loop tasks --tasks todo.md
+
+# Custom task prompt template
+clawker loop tasks --tasks backlog.md --task-prompt-file instructions.md
+```
+
+The task file is plain text -- no rigid schema required. The agent reads it each iteration and manages task state. The default template wraps your tasks in a `<tasks>` block with instructions to pick the next open task and mark it done.
+
+### `clawker loop status`
+
+Check the status of the current loop session:
+
+```bash
+clawker loop status
+```
+
+### `clawker loop reset`
+
+Reset the circuit breaker and session state:
+
+```bash
+clawker loop reset
+```
+
+## Output Modes
+
+Loop mode automatically selects the best output mode:
+
+| Condition | Mode | Behavior |
+|-----------|------|----------|
+| TTY + no flags | TUI Dashboard | Real-time interactive display, press q/Esc to detach |
+| `--verbose` | Text Monitor | Stream all agent output to stderr |
+| `--quiet` | Silent | No progress, exit status only |
+| `--json` | JSON | Structured result to stdout |
+| Non-TTY | Text Monitor | Fallback for piped output |
+
+## Circuit Breakers
+
+Loop mode includes multiple circuit breakers to prevent runaway loops:
+
+| Breaker | Default | What It Detects |
+|---------|---------|-----------------|
+| `max_loops` | 50 | Hard iteration limit |
+| `stagnation_threshold` | 3 | Iterations without meaningful progress |
+| `timeout_minutes` | 15 | Per-iteration time limit |
+| `same_error_threshold` | 5 | Consecutive identical errors |
+| `output_decline_threshold` | 70 | Output size declining by this percentage |
+| `max_consecutive_test_loops` | 3 | Iterations that only run tests (no code changes) |
+| `safety_completion_threshold` | 5 | Completion indicators without exit signal |
+| `completion_threshold` | 2 | Indicators required for completion detection |
+| `session_expiration_hours` | 24 | Session TTL |
+
+Override defaults via CLI flags or `clawker.yaml`:
+
+```bash
+clawker loop iterate \
+  --prompt "Refactor codebase" \
+  --max-loops 200 \
+  --stagnation-threshold 10 \
+  --same-error-threshold 8
+```
+
+Or in config:
+
+```yaml
+loop:
+  max_loops: 100
+  stagnation_threshold: 5
+  timeout_minutes: 20
+  same_error_threshold: 10
+  output_decline_threshold: 50
+```
+
+## Worktree Integration
+
+Run loops in isolated Git worktrees for concurrent development:
+
+```bash
+# Auto-generate a worktree branch
+clawker loop iterate --prompt "Build auth" --worktree ""
+
+# Use a specific branch
+clawker loop iterate --prompt "Add cache" --worktree feature/cache
+
+# Create branch from a specific base
+clawker loop iterate --prompt "Fix bugs" --worktree hotfix/login:main
+```
+
+If a loop is already running in the project root and you start another, Clawker will prompt you to use a worktree for isolation. See the [Worktrees](/worktrees) guide for more.
+
+## Additional Flags
+
+| Flag | Description |
+|------|-------------|
+| `--loop-delay` | Seconds to wait between iterations (default: 3) |
+| `--calls-per-hour` | API rate limit (default: 100, 0 to disable) |
+| `--skip-permissions` | Allow all tools without prompting |
+| `--reset-circuit` | Reset circuit breaker before starting |
+| `--hooks-file` | Custom hook configuration file |
+| `--append-system-prompt` | Additional system prompt instructions |
+| `--image` | Override container image |
+
+## Tips
+
+- **Start small**: Use lower `max_loops` (10-20) while testing your prompt, then increase.
+- **Use `--verbose` for debugging**: See exactly what the agent is doing each iteration.
+- **Task files work best with clear structure**: Number your tasks, use checkboxes, or other markers the agent can update.
+- **Worktrees for parallel work**: Run multiple loops on different features simultaneously without branch conflicts.
+- **Reset when stuck**: If the circuit breaker tripped, use `clawker loop reset` before retrying with a refined prompt.

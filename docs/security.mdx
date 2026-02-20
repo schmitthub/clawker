@@ -1,0 +1,157 @@
+---
+title: "Security & Firewall"
+description: "How the network firewall works, domain allowlists, IP range sources, and container security controls"
+icon: "shield"
+---
+
+Clawker runs every agent in an isolated Docker container with a default-on network firewall. This guide explains how the security controls work and how to customize them.
+
+## Network Firewall
+
+The firewall is enabled by default and **blocks all outbound traffic** except to explicitly allowlisted domains and IP ranges. It uses `iptables` and `ipset` inside the container, configured during container initialization.
+
+### How It Works
+
+1. Container starts with `NET_ADMIN` and `NET_RAW` Linux capabilities
+2. The init script resolves allowlisted domains to IP addresses via DNS
+3. IP ranges from configured sources (GitHub, cloud providers) are fetched and added
+4. `iptables` rules are applied: allow listed IPs, reject everything else
+5. Foundational services (DNS, SSH, localhost, Docker bridge networks) are always allowed
+
+### Default Allowed Domains
+
+These domains are always allowed when the firewall is enabled:
+
+| Domain | Purpose |
+|--------|---------|
+| `api.anthropic.com` | Claude API |
+| `sentry.io` | Error tracking |
+| `statsig.anthropic.com` | Feature flags |
+| `statsig.com` | Feature flags |
+| `registry-1.docker.io` | Docker image registry |
+| `production.cloudflare.docker.com` | Docker CDN |
+| `docker.io` | Docker image resolution |
+
+### Adding Custom Domains
+
+Use `add_domains` to allowlist additional domains:
+
+```yaml
+security:
+  firewall:
+    enable: true
+    add_domains:
+      - "api.openai.com"
+      - "registry.npmjs.org"
+      - "pypi.org"
+```
+
+### IP Range Sources
+
+For cloud providers that use large IP ranges, Clawker can fetch and allowlist entire CIDR blocks. Built-in sources:
+
+| Source | What It Covers | Required by Default |
+|--------|---------------|:---:|
+| `github` | GitHub API, Git, Copilot, Actions, Packages, Pages | Yes |
+| `google-cloud` | Google Cloud Platform IPs | No |
+| `google` | All Google IPs (includes GCS, Firebase) | No |
+| `cloudflare` | Cloudflare edge network | No |
+| `aws` | All AWS IP ranges | No |
+
+Configure IP range sources in your `clawker.yaml`:
+
+```yaml
+security:
+  firewall:
+    ip_range_sources:
+      - name: github
+      - name: google-cloud
+```
+
+Custom IP range sources are also supported:
+
+```yaml
+security:
+  firewall:
+    ip_range_sources:
+      - name: github
+      - name: custom-internal
+        url: "https://internal.example.com/ip-ranges.json"
+        jq_filter: ".cidrs[]"
+        required: false
+```
+
+The `jq_filter` field extracts CIDR strings from the JSON response. The `required` field controls whether a fetch failure aborts container startup (default: `false`, except `github` which defaults to `true`).
+
+<Warning>
+The `google` IP range source allows traffic to **all** Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk -- an attacker could host malicious content on a public GCS bucket that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`). Use `google-cloud` for a more targeted allowlist.
+</Warning>
+
+### Disabling the Firewall
+
+```yaml
+security:
+  firewall:
+    enable: false
+```
+
+<Warning>
+Disabling the firewall removes all outbound network restrictions. The agent can reach any endpoint on the internet. Only do this in trusted environments.
+</Warning>
+
+## Docker Socket
+
+By default, the Docker socket is **not** mounted into containers:
+
+```yaml
+security:
+  docker_socket: false
+```
+
+Enabling `docker_socket: true` mounts `/var/run/docker.sock` read-write into the container. This gives the agent full control over your Docker daemon -- it can create, modify, and delete any container, image, or volume on your host. Only enable this if your workflow genuinely requires Docker-in-Docker.
+
+## Linux Capabilities
+
+The `cap_add` field adds Linux capabilities to the container. The defaults are required for the firewall:
+
+```yaml
+security:
+  cap_add:
+    - "NET_ADMIN"   # Required for iptables rules
+    - "NET_RAW"     # Required for raw socket operations
+```
+
+If you disable the firewall, you can remove these capabilities for a more locked-down container. If you need additional capabilities for your workflow, add them here.
+
+## Host Proxy
+
+The host proxy is a lightweight daemon that runs on your host machine and forwards credentials into containers. It's enabled by default:
+
+```yaml
+security:
+  enable_host_proxy: true
+```
+
+The host proxy is required for Git HTTPS credential forwarding. See the [Credential Forwarding](/credentials) guide for details.
+
+## Troubleshooting
+
+### Container startup fails with "iptables not available"
+
+The container needs `NET_ADMIN` and `NET_RAW` capabilities. Check that `security.cap_add` includes both, and that your Docker daemon supports adding capabilities.
+
+### GitHub IP range fetch fails
+
+The `github` IP range source is required by default. If the GitHub API is unreachable (e.g., behind a corporate proxy), container startup will fail. You can make it optional:
+
+```yaml
+security:
+  firewall:
+    ip_range_sources:
+      - name: github
+        required: false
+```
+
+### Agent can't reach a domain
+
+Add the domain to `add_domains` in your firewall config. Use `clawker exec --agent <name> -- dig <domain>` to verify DNS resolution from inside the container.

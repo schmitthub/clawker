@@ -21,6 +21,11 @@ build:
   image: "node:20-slim"
   # Optional: path to custom Dockerfile (relative to project root)
   # dockerfile: "./.devcontainer/Dockerfile"
+  # Optional: custom build context directory (relative to project root)
+  # context: "./docker"
+  # Build-time arguments (passed as --build-arg)
+  # build_args:
+  #   NODE_VERSION: "20"
   # System packages to install (apt-get on Debian, apk on Alpine)
   packages:
     - git
@@ -28,14 +33,40 @@ build:
     - ripgrep
   # Build-time instructions for image customization
   instructions:
+    # Environment variables baked into the image
     env: {}
+    # Labels added to the image
+    labels: {}
+    # COPY instructions with optional chown/chmod
     copy: []
+    # Ports to expose (protocol defaults to tcp)
+    expose: []
+    # Build arguments (ARG instruction)
+    args: []
+    # Additional volume mount points
+    volumes: []
+    # Override the working directory
+    # workdir: "/app"
+    # Healthcheck configuration
+    # healthcheck:
+    #   cmd: ["CMD", "curl", "-f", "http://localhost/health"]
+    #   interval: "30s"
+    #   timeout: "10s"
+    #   retries: 3
+    # Override the default shell
+    # shell: ["/bin/bash", "-c"]
+    # Commands to run as root (OS-aware: cmd, alpine, debian)
     root_run: []
+    # Commands to run as the container user (OS-aware: cmd, alpine, debian)
     user_run: []
   # Raw Dockerfile injection points
   inject:
     after_from: []
     after_packages: []
+    after_user_setup: []
+    after_user_switch: []
+    after_claude_install: []
+    before_entrypoint: []
 
 agent:
   # Files to make available to Claude (prompts, docs, memory)
@@ -46,12 +77,27 @@ agent:
   from_env: []
   # Environment variables to set
   env: {}
+  # Container memory limit (e.g., "4g", "2048m")
+  # memory: "4g"
+  # Override the default editor
+  # editor: "vim"
+  # Override the visual editor
+  # visual: "code"
+  # Override the default shell
+  # shell: "/bin/zsh"
+  # Claude Code configuration
+  # claude_code:
+  #   config:
+  #     # "copy" copies host ~/.claude/ config (default), "fresh" starts clean
+  #     strategy: "copy"
+  #   # Use host authentication tokens in container (default: true)
+  #   use_host_auth: true
+  # Enable read-only shared directory (~/.clawker-share in container)
+  # enable_shared_dir: false
   # Shell commands to run after container init, before Claude Code starts
   # post_init: |
   #   claude mcp add -- npx -y @anthropic-ai/claude-code-mcp
   #   npm install -g typescript
-  # Enable read-only shared directory (~/.clawker-share in container)
-  # enable_shared_dir: true
 
 workspace:
   # Container path where your code is mounted
@@ -75,21 +121,36 @@ security:
     #     jq_filter: ".cidrs[]"
   # Mount Docker socket (security risk if enabled)
   docker_socket: false
+  # Linux capabilities to add (default: NET_ADMIN, NET_RAW for firewall)
+  # cap_add:
+  #   - "NET_ADMIN"
+  #   - "NET_RAW"
+  # Enable host proxy for HTTPS credential forwarding (default: true)
+  # enable_host_proxy: true
   git_credentials:
-    forward_https: true
+    # Enable HTTPS credential forwarding (default: follows enable_host_proxy)
+    # forward_https: true
     forward_ssh: true
     forward_gpg: true
     copy_git_config: true
 
 # Autonomous loop settings
-loop:
-  max_loops: 50
-  stagnation_threshold: 3
-  timeout_minutes: 15
-  # loop_delay_seconds: 3
-  skip_permissions: false
-  # hooks_file: ""
-  # append_system_prompt: ""
+# loop:
+#   max_loops: 50
+#   stagnation_threshold: 3
+#   timeout_minutes: 15
+#   loop_delay_seconds: 3
+#   calls_per_hour: 100
+#   skip_permissions: false
+#   hooks_file: ""
+#   append_system_prompt: ""
+#   # Circuit breaker tuning
+#   same_error_threshold: 5
+#   output_decline_threshold: 70
+#   max_consecutive_test_loops: 3
+#   safety_completion_threshold: 5
+#   completion_threshold: 2
+#   session_expiration_hours: 24
 ```
 
 ## Key Sections
@@ -98,24 +159,70 @@ loop:
 
 Controls how the Docker image is built. The `image` field sets the base image. Use `packages` for system-level dependencies, and `instructions` for more complex customization.
 
-The `inject` field provides raw Dockerfile injection points for advanced use cases like adding custom APT repositories or multi-stage build layers.
+The `context` field sets a custom build context directory, and `build_args` passes build-time arguments.
+
+#### instructions
+
+The `instructions` block maps to Dockerfile directives:
+
+| Field | Dockerfile | Description |
+|-------|-----------|-------------|
+| `copy` | `COPY` | Copy files with optional `chown`/`chmod` |
+| `env` | `ENV` | Environment variables baked into the image |
+| `labels` | `LABEL` | Image metadata labels |
+| `expose` | `EXPOSE` | Ports to document (with protocol) |
+| `args` | `ARG` | Build-time arguments with optional defaults |
+| `volumes` | `VOLUME` | Mount point declarations |
+| `workdir` | `WORKDIR` | Override working directory |
+| `healthcheck` | `HEALTHCHECK` | Container health check configuration |
+| `shell` | `SHELL` | Override the default shell |
+| `root_run` | `RUN` (as root) | Commands run as root before user switch |
+| `user_run` | `RUN` (as user) | Commands run as the container user |
+
+The `root_run` and `user_run` fields support OS-aware commands. Each entry can specify `cmd` (generic), `alpine`, or `debian` variants:
+
+```yaml
+root_run:
+  - cmd: "echo 'runs on both'"
+  - alpine: "apk add --no-cache jq"
+    debian: "apt-get install -y jq"
+```
+
+#### inject
+
+The `inject` field provides raw Dockerfile injection points for advanced use cases. Each field accepts an array of raw Dockerfile lines inserted at the corresponding point in the generated Dockerfile:
+
+| Point | When | Use case |
+|-------|------|----------|
+| `after_from` | After `FROM` | Custom APT repos, base image tweaks |
+| `after_packages` | After package install | Post-install configuration |
+| `after_user_setup` | After user creation | User-level system config |
+| `after_user_switch` | After `USER` switch | User dotfiles, shell config |
+| `after_claude_install` | After Claude Code install | Claude extensions, MCP tools |
+| `before_entrypoint` | Before `ENTRYPOINT` | Final setup, cleanup |
 
 ### agent
 
-Configures the Claude Code agent inside the container. Use `post_init` to run shell commands after the container starts but before Claude Code launches — useful for installing MCP servers, language tools, or other setup.
+Configures the Claude Code agent inside the container. Use `post_init` to run shell commands after the container starts but before Claude Code launches -- useful for installing MCP servers, language tools, or other setup.
 
 The `includes` field makes host files available inside the container for Claude to reference.
+
+The `claude_code` block controls how Claude Code is configured inside the container:
+- `config.strategy` -- `"copy"` (default) copies your host `~/.claude/` settings into the container; `"fresh"` starts with a clean configuration
+- `use_host_auth` -- when `true` (default), your host authentication tokens are forwarded so Claude Code inside the container is pre-authenticated
+
+Additional container environment settings: `memory` sets a container memory limit, `editor`/`visual` override the editor, and `shell` overrides the default shell.
 
 ### workspace
 
 Controls how your source code gets into the container:
 
-- **bind** — Live mount of your project directory. Changes sync both ways.
-- **snapshot** — One-time copy at container creation. The container gets its own isolated copy.
+- **bind** -- Live mount of your project directory. Changes sync both ways.
+- **snapshot** -- One-time copy at container creation. The container gets its own isolated copy.
 
 ### security
 
-The firewall is enabled by default and blocks all outbound traffic except allowlisted domains. The default allowlist includes GitHub and common package registries.
+The firewall is enabled by default and blocks all outbound traffic except allowlisted domains. The default allowlist includes Anthropic APIs and Docker registries.
 
 Built-in IP range sources: `github`, `google-cloud`, `google`, `cloudflare`, `aws`.
 
@@ -123,27 +230,98 @@ Built-in IP range sources: `github`, `google-cloud`, `google`, `cloudflare`, `aw
 The `google` IP range source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. Only add it if your project requires it (e.g., Go modules via `proxy.golang.org`).
 </Warning>
 
+The `cap_add` field adds Linux capabilities to the container. The defaults (`NET_ADMIN`, `NET_RAW`) are required for the firewall's iptables rules. Only modify this if you know what you're doing.
+
+The `enable_host_proxy` field controls whether the host proxy daemon runs. The host proxy enables HTTPS credential forwarding from your host into the container. It's enabled by default.
+
+<Note>
+The `forward_https` setting defaults to follow `enable_host_proxy`. If the host proxy is disabled, HTTPS credential forwarding is also disabled regardless of the `forward_https` value.
+</Note>
+
 ### loop
 
 Settings for autonomous loop mode (`clawker loop iterate`). The circuit breaker trips after `stagnation_threshold` iterations without progress.
 
+Advanced circuit breaker fields for fine-tuning loop behavior:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_loops` | 50 | Maximum iterations per session |
+| `stagnation_threshold` | 3 | Iterations without progress before circuit trips |
+| `timeout_minutes` | 15 | Per-iteration timeout |
+| `loop_delay_seconds` | 3 | Delay between iterations |
+| `calls_per_hour` | 100 | API rate limit (0 to disable) |
+| `same_error_threshold` | 5 | Consecutive identical errors before trip |
+| `output_decline_threshold` | 70 | Output shrink percentage before trip |
+| `max_consecutive_test_loops` | 3 | Test-only iterations before trip |
+| `safety_completion_threshold` | 5 | Completion indicators without exit signal before trip |
+| `completion_threshold` | 2 | Indicators required for strict completion |
+| `session_expiration_hours` | 24 | Session TTL |
+
 ## User Settings
 
-Global settings live at `~/.local/clawker/settings.yaml`:
+Global settings live at `~/.config/clawker/settings.yaml`:
 
 ```yaml
+# Default image when no project config exists
 default_image: "node:20-slim"
+
+# Logging configuration
+# logging:
+#   file_enabled: true
+#   max_size_mb: 50
+#   max_age_days: 7
+#   max_backups: 3
+#   compress: true
+#   otel:
+#     enabled: true
+#     timeout_seconds: 5
+#     max_queue_size: 2048
+#     export_interval_seconds: 5
+
+# Host proxy configuration
+# host_proxy:
+#   manager:
+#     port: 18374
+#   daemon:
+#     port: 18374
+#     poll_interval: 30s
+#     grace_period: 60s
+#     max_consecutive_errs: 10
+
+# Monitoring stack ports (override if defaults conflict)
+# monitoring:
+#   grafana_port: 3000
+#   jaeger_port: 16686
+#   prometheus_port: 9090
+#   loki_port: 3100
+#   otel_collector_port: 4318
 ```
 
 ## Project Registry
 
-The project registry at `~/.local/clawker/projects.yaml` maps project slugs to filesystem paths:
+The project registry at `~/.config/clawker/projects.yaml` maps project slugs to filesystem paths:
 
 ```yaml
 projects:
-  my-app:
-    name: "my-app"
+  - name: "my-app"
     root: "/Users/dev/my-app"
+    worktrees:
+      feature-auth:
+        path: "/Users/dev/my-app-auth"
+        branch: "feature/auth"
 ```
 
 Managed by `clawker project init` and `clawker project register`.
+
+## Directory Structure
+
+Clawker follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). Files are organized across three directories:
+
+| Directory | Default Path | Contents |
+|-----------|-------------|----------|
+| Config | `~/.config/clawker/` | `settings.yaml`, `projects.yaml`, `clawker.yaml` (user overrides) |
+| Data | `~/.local/share/clawker/` | Build cache, monitor config, worktree metadata, `.clawker-share` |
+| State | `~/.local/state/clawker/` | Log files, PID files |
+
+Override with environment variables: `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`.
