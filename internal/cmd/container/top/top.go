@@ -16,11 +16,10 @@ import (
 type TopOptions struct {
 	TUI    *tui.TUI
 	Client func(context.Context) (*docker.Client, error)
-	Config func() config.Provider
+	Config func() (config.Config, error)
 
 	Agent bool
-
-	Args []string
+	Args  []string
 }
 
 // NewCmdTop creates a new top command.
@@ -76,8 +75,16 @@ func topRun(ctx context.Context, opts *TopOptions) error {
 	psArgs := opts.Args[1:]
 
 	if opts.Agent {
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Project
+		}
 		// Resolve agent name to full container name
-		containers, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), []string{containerName})
+		containers, err := docker.ContainerNamesFromAgents(project, []string{containerName})
 		if err != nil {
 			return err
 		}

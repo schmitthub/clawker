@@ -87,10 +87,18 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 
 	container := opts.container
 	if opts.Agent {
-		var err error
-		container, err = docker.ContainerName(opts.Config().ProjectKey(), container)
+		cfg, err := opts.Config()
 		if err != nil {
 			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Project
+		}
+		var nameErr error
+		container, nameErr = docker.ContainerName(project, container)
+		if nameErr != nil {
+			return nameErr
 		}
 	}
 	// Connect to Docker

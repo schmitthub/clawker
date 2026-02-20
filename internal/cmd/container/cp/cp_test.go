@@ -274,8 +274,8 @@ func testCpFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return config.NewBlankConfig(), nil
 		},
 	}, tio
 }
@@ -325,8 +325,8 @@ func TestCpRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return config.NewBlankConfig(), nil
 		},
 	}
 

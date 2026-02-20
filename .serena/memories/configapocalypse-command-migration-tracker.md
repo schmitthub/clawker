@@ -57,10 +57,29 @@
 - `config.Provider` → `(config.Config, error)` in 3 locations (TestNewCmdKill factory, TestKillRun_DockerConnectionError factory, testKillFactory helper)
 - `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig()`
 
+### Container Commands Bulk Migration (14 commands)
+**Commands migrated (identical pattern to kill):**
+pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait, stop, remove, top
+
+**Group A — Config field already `func() (config.Config, error)`, only run function fixed (11 commands):**
+pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait
+
+**Group B — Config field changed from `func() config.Provider` to `func() (config.Config, error)` + run function fixed (3 commands):**
+stop, remove, top
+
+**Production changes (all 14):**
+- `opts.Config().ProjectKey()` → `cfg, err := opts.Config()` + nil-safe `cfg.Project().Project`
+- cp had TWO `ProjectKey()` call sites (src and dst container) — both fixed with single cfg extraction
+
+**Test changes (all 14):**
+- `func() config.Provider {` → `func() (config.Config, error) {` (replace_all)
+- `config.NewConfigForTest(nil, nil)` → `config.NewBlankConfig(), nil` (replace_all)
+
 ## Next Steps
 
-Phase 1 simple mechanical sweep commands still TODO (~25 commands):
-- All `container/*` (attach, cp, exec, inspect, list, logs, pause, remove, rename, restart, stats, stop, top, unpause, update, wait)
+Phase 1 simple mechanical sweep commands still TODO (~11 commands):
+- `container/exec` — also uses ProjectCfg(), more complex
+- `container/list` — test files still reference config.Provider
 - All `worktree/*` (add, list, prune, remove)
 - `loop/reset`, `loop/status`
 - `monitor/status`, `monitor/up`, `monitor/down`

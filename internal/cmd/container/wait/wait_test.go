@@ -45,8 +45,8 @@ func TestNewCmdWait(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() config.Provider {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return config.NewBlankConfig(), nil
 				},
 			}
 
@@ -84,8 +84,8 @@ func TestNewCmdWait(t *testing.T) {
 
 func TestNewCmdWait_AgentFlag(t *testing.T) {
 	f := &cmdutil.Factory{
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return config.NewBlankConfig(), nil
 		},
 	}
 
@@ -129,8 +129,8 @@ func testWaitFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factor
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return config.NewBlankConfig(), nil
 		},
 	}, tio
 }
@@ -185,8 +185,8 @@ func TestWaitRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return config.NewBlankConfig(), nil
 		},
 	}
 

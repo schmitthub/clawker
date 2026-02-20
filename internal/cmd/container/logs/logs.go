@@ -92,7 +92,15 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 	// Resolve container name
 	containerName := opts.Containers[0]
 	if opts.Agent {
-		containers, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), opts.Containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Project
+		}
+		containers, err := docker.ContainerNamesFromAgents(project, opts.Containers)
 		if err != nil {
 			return err
 		}
