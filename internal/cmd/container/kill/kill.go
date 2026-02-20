@@ -80,7 +80,15 @@ func killRun(ctx context.Context, opts *KillOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().ProjectKey(), containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Project
+		}
+		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {
 			return err
 		}
