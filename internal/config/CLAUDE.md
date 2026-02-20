@@ -475,14 +475,13 @@ The following consumers still reference **removed** old-API symbols and need mig
 | `internal/cmd/generate` | `ConfigFileName` |
 | `internal/cmd/loop/shared` | `DataDir` |
 | `internal/cmd/monitor/init` | `DataDir` |
-| `test/harness` | `NewProjectLoader` |
-
 ### Already Migrated
 
 - `internal/cmd/config/check` — uses `ReadFromString()` only
 - `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
 - `internal/bundler` — uses `config.Config` interface for UID/GID/labels
 - `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. **131/139 external `dockertest.NewFakeClient` callers migrated** (no-arg → `config.NewBlankConfig()` first arg). 8 remaining `WithConfig` callers are entangled with `config.Provider` → `config.Config` migration (will fix per-package).
+- `test/harness` — package-level `_blankCfg = configmocks.NewBlankConfig()` provides label constants and `ContainerUID()`; exported `const` block → `var` block; `config.ClawkerHome()` → `config.ConfigDir()`; `hostproxy.NewManager(_blankCfg)`; `docker.TestLabelConfig(_blankCfg, t.Name())`; `config.NewProjectLoader` → `os.ReadFile` + `ReadFromString` in tests
 
 ## Migration Guide
 

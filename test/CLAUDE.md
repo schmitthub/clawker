@@ -73,7 +73,9 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 **Image options**: `BuildTestImageOptions`, `BuildSimpleTestImageOptions` — config structs for image build helpers.
 
-**Constants**: `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName`, `TestChownImage`
+**Package-level vars**: `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName` — initialized from `_blankCfg` (a `configmocks.NewBlankConfig()` instance). `TestChownImage` remains a `const`.
+
+**Internal**: `_blankCfg` — package-level blank config providing label constants and `ContainerUID()` for Dockerfile generation. Shared across `docker.go` and `client.go`.
 
 ### Readiness (ready.go)
 
@@ -124,4 +126,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/text`, `pkg/whail`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/hostproxy`, `internal/socketbridge`, `internal/text`, `pkg/whail`

@@ -247,10 +247,11 @@ func TestHarness_UpdateConfig(t *testing.T) {
 	assert.Equal(t, "new:image", h.Config.Build.Image)
 
 	// Verify file was rewritten - reload and check
-	loader := config.NewProjectLoader(h.ProjectDir)
-	reloaded, err := loader.Load()
+	data, err := os.ReadFile(h.ConfigPath())
 	require.NoError(t, err)
-	assert.Equal(t, "new:image", reloaded.Build.Image)
+	reloaded, err := config.ReadFromString(string(data))
+	require.NoError(t, err)
+	assert.Equal(t, "new:image", reloaded.Project().Build.Image)
 }
 
 func TestHarness_ConfigPath(t *testing.T) {

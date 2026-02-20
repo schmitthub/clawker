@@ -25,9 +25,11 @@
 - ~~`test/harness/factory.go`~~ — `config.NewConfigForTest` → `configmocks.NewFromString`, `Config` closure → `func() (config.Config, error)`, `hostproxy.NewManager(cfg)` with error handling, `docker.TestLabelConfig(cfg, t.Name())`.
 - ~~`cmd/fawker/factory.go`~~ — Full rewrite: removed `configtest` import, `configmocks.NewFromString` for config construction, `Config` closure returns `(config.Config, error)`, `fawkerClient` takes `config.Config` interface, `NewFakeClient(cfg)` without options.
 
-### Still broken in test/harness (pre-existing, not blocking fawker/clawker builds):
-- `test/harness/docker.go` — references removed `docker.LabelTest`, `docker.ManagedLabelValue`, `docker.LabelManaged`, `docker.LabelTestName`, `config.ClawkerHome`, and `hostproxy.NewManager()` (old signature)
-- `test/harness/client.go` — references removed `config.ContainerUID`
+### Test harness fully migrated:
+- ~~`test/harness/docker.go`~~ — package-level `_blankCfg = configmocks.NewBlankConfig()` provides label constants; exported `const` block → `var` block initialized from blank config; `config.ClawkerHome()` → `config.ConfigDir()`; `hostproxy.NewManager()` → `hostproxy.NewManager(_blankCfg)`; `docker.TestLabelConfig(t.Name())` → `docker.TestLabelConfig(_blankCfg, t.Name())`; all `docker.Label*` constants → `_blankCfg.Label*()` methods
+- ~~`test/harness/client.go`~~ — `config.ContainerUID` → `_blankCfg.ContainerUID()`; removed `config` import
+- ~~`test/harness/docker_test.go`~~ — `docker.LabelProject/LabelAgent` → `_blankCfg.LabelProject()/LabelAgent()`; removed `docker` import
+- ~~`test/harness/harness_test.go`~~ — `config.NewProjectLoader` → `os.ReadFile` + `config.ReadFromString`
 
 ### Critical path — DONE:
 5. ~~`internal/workspace`~~ — `SetupMountsConfig.Config` → `Cfg config.Config`; deleted `EnsureShareDir` (use `cfg.ShareSubdir()`), deleted `resolveIgnoreFile` (use `cfg.GetProjectIgnoreFile()`); `docker.VolumeLabels` → `cli.VolumeLabels()`
