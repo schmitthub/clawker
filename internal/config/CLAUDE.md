@@ -26,6 +26,8 @@ Viper-backed configuration with merged multi-file loading. One `Config` interfac
 3. `~/.config/clawker/projects.yaml` — project registry (slug → root path)
 4. `<project-root>/clawker.yaml` — project config (auto-discovered via registry + cwd)
 
+`NewConfig()` lazily creates missing config-dir files (items 1-3) before validation/merge using template defaults from `defaults.go` (`DefaultSettingsYAML`, `DefaultConfigYAML`, `DefaultRegistryYAML`). Existing files are never overwritten.
+
 Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
 
 ## Boundary

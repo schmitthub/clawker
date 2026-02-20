@@ -29,6 +29,10 @@ const (
 	clawkerStateDirEnv = "CLAWKER_STATE_DIR"
 	// clawkerConfigFileName is the filename for project configuration.
 	clawkerConfigFileName = "clawker.yaml"
+	// clawkerSettingsFileName is the filename for global clawker settings.
+	clawkerSettingsFileName = "settings.yaml"
+	// clawkerProjectsFileName is the filename for the projects registry.
+	clawkerProjectsFileName = "projects.yaml"
 	// clawkerIgnoreFileName is the filename for the ignore list that specify paths to exclude from processing.
 	clawkerIgnoreFileName = ".clawkerignore"
 	// monitorSubdir is the subdirectory for monitoring stack configuration

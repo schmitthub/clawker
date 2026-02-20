@@ -414,6 +414,9 @@ func NewConfig() (Config, error) {
 		userProjectConfigFile: userProjectConfigFile(),
 		projectRegistryPath:   projectRegistryPath(),
 	}
+	if err := ensureDefaultConfigFiles(opts); err != nil {
+		return nil, err
+	}
 	c.settingsFile = opts.settingsFile
 	c.userProjectConfigFile = opts.userProjectConfigFile
 	c.projectRegistryPath = opts.projectRegistryPath
@@ -1188,7 +1191,7 @@ func StateDir() string {
 }
 
 func settingsConfigFile() string {
-	return filepath.Join(ConfigDir(), "settings.yaml")
+	return filepath.Join(ConfigDir(), clawkerSettingsFileName)
 }
 
 func userProjectConfigFile() string {
@@ -1196,12 +1199,43 @@ func userProjectConfigFile() string {
 }
 
 func projectRegistryPath() string {
-	return filepath.Join(ConfigDir(), "projects.yaml")
+	return filepath.Join(ConfigDir(), clawkerProjectsFileName)
 }
 
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
+}
+
+func ensureDefaultConfigFiles(opts loadOptions) error {
+	files := []struct {
+		path    string
+		content string
+	}{
+		{path: opts.settingsFile, content: DefaultSettingsYAML},
+		{path: opts.userProjectConfigFile, content: DefaultConfigYAML},
+		{path: opts.projectRegistryPath, content: DefaultRegistryYAML},
+	}
+
+	for _, file := range files {
+		if err := writeIfMissingLocked(file.path, []byte(file.content)); err != nil {
+			return fmt.Errorf("ensuring default config file %s: %w", file.path, err)
+		}
+	}
+
+	return nil
+}
+
+func writeIfMissingLocked(path string, content []byte) error {
+	return withFileLock(path, func() error {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to stat config %s: %w", path, err)
+		}
+
+		return atomicWriteFile(path, content, 0o644)
+	})
 }
 
 func validateProjectYAMLString(str string) error {

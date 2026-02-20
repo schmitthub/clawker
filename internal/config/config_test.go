@@ -817,6 +817,121 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 	assert.Equal(t, "alpine:3.19", cfg.Project().Build.Image)
 }
 
+func TestNewConfig_CreatesMissingConfigFilesWithDefaults(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
+	_, err = NewConfig()
+	require.NoError(t, err)
+
+	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
+	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
+	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+
+	settingsBytes, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(settingsBytes), "# Clawker User Settings")
+
+	projectBytes, err := os.ReadFile(userProjectPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(projectBytes), "# Clawker Configuration")
+	assert.Contains(t, string(projectBytes), "version: \"1\"")
+
+	registryBytes, err := os.ReadFile(registryPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(registryBytes), "projects: {}")
+}
+
+func TestNewConfig_DoesNotOverwriteExistingConfigFiles(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
+	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
+	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+
+	settingsContent := "default_image: custom-settings-image\n"
+	projectContent := "build:\n  image: custom-project-image\n"
+	registryContent := "projects: {}\n"
+
+	require.NoError(t, os.WriteFile(settingsPath, []byte(settingsContent), 0o644))
+	require.NoError(t, os.WriteFile(userProjectPath, []byte(projectContent), 0o644))
+	require.NoError(t, os.WriteFile(registryPath, []byte(registryContent), 0o644))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "custom-project-image", cfg.Project().Build.Image)
+	assert.Equal(t, "custom-settings-image", cfg.Settings().DefaultImage)
+
+	settingsAfter, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.Equal(t, settingsContent, string(settingsAfter))
+
+	projectAfter, err := os.ReadFile(userProjectPath)
+	require.NoError(t, err)
+	assert.Equal(t, projectContent, string(projectAfter))
+
+	registryAfter, err := os.ReadFile(registryPath)
+	require.NoError(t, err)
+	assert.Equal(t, registryContent, string(registryAfter))
+}
+
+func TestNewConfig_CreatesOnlyMissingConfigFiles(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+
+	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
+	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
+	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+
+	settingsContent := "default_image: existing-settings-image\n"
+	projectContent := "build:\n  image: existing-project-image\n"
+
+	require.NoError(t, os.WriteFile(settingsPath, []byte(settingsContent), 0o644))
+	require.NoError(t, os.WriteFile(userProjectPath, []byte(projectContent), 0o644))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	t.Setenv(clawkerConfigDirEnv, configDir)
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "existing-project-image", cfg.Project().Build.Image)
+	assert.Equal(t, "existing-settings-image", cfg.Settings().DefaultImage)
+
+	settingsAfter, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	assert.Equal(t, settingsContent, string(settingsAfter))
+
+	projectAfter, err := os.ReadFile(userProjectPath)
+	require.NoError(t, err)
+	assert.Equal(t, projectContent, string(projectAfter))
+
+	registryAfter, err := os.ReadFile(registryPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(registryAfter), "projects: {}")
+}
+
 // RequiredFirewallDomains
 
 func TestRequiredFirewallDomains_NotEmpty(t *testing.T) {
