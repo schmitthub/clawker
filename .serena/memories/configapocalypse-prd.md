@@ -1,112 +1,156 @@
 # Config Package Refactor (configapocalypse)
 
-> **Status:** In Progress
+> **Status:** In Progress — command test files + integration test files remain
 > **Branch:** `refactor/configapocalypse`
+> **Last updated:** 2026-02-20
 
-## Completed
+## What's Done
 
-- **Config package rebuilt** — `Config` interface, `configImpl` wrapping viper, `Set`/`Write`/`Watch` mutation API, dirty tracking, ownership-aware file routing, thread-safe via `sync.RWMutex`
-- **Test stubs** — `NewMockConfig()`, `NewFakeConfig()`, `ReadFromString()` in stubs.go
-- **Docs updated** — `internal/config/CLAUDE.md`, `ARCHITECTURE.md`, `DESIGN.md`, `TESTING-REFERENCE.md`, root `CLAUDE.md`, `code-style.md`
+The `Config` interface is built and working. All production code compiles (`go build ./...` passes). The following packages are fully migrated (production + tests):
 
-### Consumers Migrated
+- `internal/config` — rebuilt: interface, `configImpl`, mocks/stubs, Set/Write/Watch, dirty tracking
+- `internal/bundler` — `config.Config` interface for UID/GID/labels
+- `internal/hostproxy` — `cfg.HostProxyConfig()`, functional options for CLI overrides
+- `internal/socketbridge` — `cfg.SocketBridgeConfig()`, `cfg.BridgePIDFilePath()`
+- `internal/docker` — labels → Client methods, volume → `cfg.ContainerUID/GID`. 131+ `NewFakeClient` callers migrated
+- `internal/workspace` — `SetupMountsConfig.Cfg config.Config`, deleted `EnsureDir`/`resolveIgnoreFile`
+- `internal/containerfs` — `PrepareOnboardingTar(cfg, ...)`, `PreparePostInitTar(cfg, ...)`
+- `internal/monitor` — migrated
+- `internal/cmd/config/check` — `ReadFromString()` only
+- `internal/cmd/factory` — `NewConfig()` (Factory.Config closure)
+- `internal/cmd/container/*` (15 commands, production code) — bulk sweep done. `cfg, err := opts.Config()` + nil-safe pattern
+- `test/harness` — `_blankCfg = configmocks.NewBlankConfig()` for labels/constants
+- `cmd/fawker` — `configmocks.NewFromString` for config, `NewFakeClient(cfg)` without options
 
-1. ~~`internal/bundler`~~ — config.Config interface for UID/GID/labels
-2. ~~`internal/hostproxy`~~ — Manager/Daemon read from `cfg.HostProxyConfig()`; removed DaemonOptions/DefaultDaemonOptions/DefaultPort/NewManagerWithPort; functional options for CLI overrides; validation at construction
-3. ~~`internal/socketbridge`~~ — Manager reads from `cfg.SocketBridgeConfig()`; PID file from `cfg.SocketBridgePIDFilePath()`
-4. ~~`internal/docker`~~ — labels→Client methods, volume→`cfg.ContainerUID/GID`, 131 `NewFakeClient()` callers migrated
-4b. ~~Container commands bulk sweep (15 commands)~~ — factory, init, kill + 14-command sweep (pause, unpause, restart, rename, attach, cp, inspect, logs, stats, update, wait, stop, remove, top). All use `cfg, err := opts.Config()` + nil-safe `cfg.Project().Project` pattern.
+## What Remains — 9 Failing Test Files
 
-## Remaining Migration
+`go build ./...` passes. Only test files fail (`go test ./...`).
 
-### Fawker + Test Harness Builders — DONE:
-- ~~`test/harness/builders/config_builder.go`~~ — Removed `configtest` import, replaced `*configtest.ProjectBuilder` with direct `*config.Project` construction. Same `With*` API, `Build()` returns shallow copy.
-- ~~`test/harness/harness.go`~~ — `config.Slugify` → `text.Slugify`, `config.RegistryFileName` → literal `"projects.yaml"`, `CLAWKER_HOME` → `CLAWKER_CONFIG_DIR`, direct YAML string for registry construction.
-- ~~`test/harness/factory.go`~~ — `config.NewConfigForTest` → `configmocks.NewFromString`, `Config` closure → `func() (config.Config, error)`, `hostproxy.NewManager(cfg)` with error handling, `docker.TestLabelConfig(cfg, t.Name())`.
-- ~~`cmd/fawker/factory.go`~~ — Full rewrite: removed `configtest` import, `configmocks.NewFromString` for config construction, `Config` closure returns `(config.Config, error)`, `fawkerClient` takes `config.Config` interface, `NewFakeClient(cfg)` without options.
+### Group A: Command Test Files (7 files, 5 symbols)
 
-### Test harness fully migrated:
-- ~~`test/harness/docker.go`~~ — package-level `_blankCfg = configmocks.NewBlankConfig()` provides label constants; exported `const` block → `var` block initialized from blank config; `config.ClawkerHome()` → `config.ConfigDir()`; `hostproxy.NewManager()` → `hostproxy.NewManager(_blankCfg)`; `docker.TestLabelConfig(t.Name())` → `docker.TestLabelConfig(_blankCfg, t.Name())`; all `docker.Label*` constants → `_blankCfg.Label*()` methods
-- ~~`test/harness/client.go`~~ — `config.ContainerUID` → `_blankCfg.ContainerUID()`; removed `config` import
-- ~~`test/harness/docker_test.go`~~ — `docker.LabelProject/LabelAgent` → `_blankCfg.LabelProject()/LabelAgent()`; removed `docker` import
-- ~~`test/harness/harness_test.go`~~ — `config.NewProjectLoader` → `os.ReadFile` + `config.ReadFromString`
+| File | Undefined Symbols |
+|------|-------------------|
+| `internal/cmd/container/create/create_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `config.DefaultProject`, `dockertest.WithConfig` |
+| `internal/cmd/container/run/run_test.go` | same |
+| `internal/cmd/container/start/start_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
+| `internal/cmd/image/build/build_progress_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `dockertest.WithConfig` |
+| `internal/cmd/image/build/build_progress_golden_test.go` | same |
+| `internal/cmd/loop/iterate/iterate_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
+| `internal/cmd/loop/tasks/tasks_test.go` | same |
 
-### Critical path — DONE:
-5. ~~`internal/workspace`~~ — `SetupMountsConfig.Config` → `Cfg config.Config`; deleted `EnsureShareDir` (use `cfg.ShareSubdir()`), deleted `resolveIgnoreFile` (use `cfg.GetProjectIgnoreFile()`); `docker.VolumeLabels` → `cli.VolumeLabels()`
-6. ~~`internal/containerfs`~~ — `PrepareOnboardingTar`/`PreparePostInitTar` now take `cfg config.Config` first param; replaced 6 `config.ContainerUID`/`config.ContainerGID` constants with `cfg.ContainerUID()`/`cfg.ContainerGID()` methods
-7. ~~`internal/monitor`~~ — migrated by user, tests passing
+### Group B: Integration Test Files (2 files, 3 symbols)
 
-### Docker cascade (partially done):
-- 8 `WithConfig` calls entangled with `config.Provider`→`config.Config`
-- Label constant callers in `test/harness/docker.go`, `init.go`, `build.go`, `container/shared/container.go`
-- ~114 `config.Provider` references across Options structs and test callbacks (reduced by ~50 from 14-command bulk sweep)
+| File | Undefined Symbols |
+|------|-------------------|
+| `test/commands/container_create_test.go` | `docker.LabelManaged`, `docker.LabelProject`, `docker.LabelAgent` |
+| `test/commands/container_exec_test.go` | `docker.LabelProject`, `docker.LabelAgent` |
 
-### Command layer (blocks individual commands):
-8. `internal/cmd/project/init` — ProjectLoader, ConfigFileName
-9. `internal/cmd/project/register` — ProjectLoader, ConfigFileName
-10. `internal/cmd/image/build` — Validator
-11. `internal/cmd/container/shared` — SettingsLoader, ConfigFileName
-12. `internal/cmd/container/create` — SettingsLoader
-13. `internal/cmd/container/run` — SettingsLoader
-14. Various other cmd packages — ConfigFileName, DataDir
+## Migration Patterns (Old → New)
 
-## Migration Patterns
+### 1. `config.Provider` → `config.Config`
 
 ```go
-// Config on struct (standard pattern for all packages)
-cfg config.Config  // stored on struct, passed via constructor
+// OLD (on Options struct)
+Config func() config.Provider
 
-// Test stubs
-config.NewBlankConfig()                    // default in-memory
-config.ReadFromString(`yaml content`)     // specific values
-
-// NewFakeClient
-dockertest.NewFakeClient(cfg)             // was: NewFakeClient(WithConfig(cfg))
-
-// config.Provider → config.Config
-Config func() (config.Config, error)      // was: func() config.Provider
-
-// Labels: production code with cfg
-cfg.LabelManaged()                        // was: docker.LabelManaged
-
-// Labels: code with *docker.Client
-client.ImageLabels(project, version)      // was: docker.ImageLabels(...)
-client.VolumeLabels(project, agent, purpose)
+// NEW
+Config func() (config.Config, error)
 ```
 
-## Gotchas & Lessons Learned
+Go can't chain on multi-return: `opts.Config().Something()` → must split:
+```go
+cfg, err := opts.Config()
+require.NoError(t, err)
+```
 
-- **EnsureDir removed** — `*Subdir()` methods (`BridgesSubdir`, `LogsSubdir`, `PidsSubdir`, `ShareSubdir`) already `os.MkdirAll` internally via `subdirPath()`
-- **BridgesSubdir() is legacy alias** — returns the `pids` subdir, not `bridges`. Test fixtures use `pids/`
-- **Test env var via cfg** — Use `cfg.ConfigDirEnvVar()` (returns `"CLAWKER_CONFIG_DIR"`), never hardcode env var names
-- **copylocks warnings are false positives** — `config.Config` is an interface; `configImpl` is always `*configImpl` (pointer receiver). Linter traces through to the mutex. Safe to ignore
-- **Functional options for CLI overrides** — CLI flags override config via `With*()` options, never by mutating config. Pattern: `NewDaemon(cfg, WithDaemonPort(port))`
-- **Validation returns errors** — constructors validate and return errors, never silently default
-- **Shared validation helpers** — e.g. `validatePort()` used by both Manager and Daemon
-- **docker.VolumeLabels** is now a `*docker.Client` method, not a free function
-- **`*Subdir()` methods replace `EnsureDir` wrappers** — `ShareSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()` all do `os.MkdirAll` internally via `subdirPath()`. No need for separate ensure functions
-- **`GetProjectIgnoreFile()` replaces `resolveIgnoreFile`** — Config method resolves `.clawkerignore` from `projectConfigFile` directory. Errors on fake configs without `projectConfigFile` (only set by `NewConfig()` during file loading) — test that behavior in config package, not callers
-- **Tar functions take `cfg config.Config` first param** — `PrepareOnboardingTar(cfg, homeDir)` and `PreparePostInitTar(cfg, script)` read `cfg.ContainerUID()`/`cfg.ContainerGID()` instead of constants
-- **`SetupMountsConfig.Cfg` replaces `.Config`** — field type changed from `*config.Project` (schema pointer) to `config.Config` (interface). Access project schema via `cfg.Cfg.Project()`
-- **Go can't chain on multi-return** — `opts.Config().ProjectKey()` on `func() (config.Config, error)` is a compile error. Must split into `cfg, err := opts.Config()`.
-- **configFromProject pattern** — To bridge `*config.Project` schema structs to `config.Config` interface in tests: marshal to YAML, prepend `project:` name (yaml:"-" field), use `configmocks.NewFromString(yaml)`. See `test/harness/factory.go:configFromProject()`.
-- **text.Slugify** — `config.Slugify` was moved to `text.Slugify` in `internal/text/text.go`. Import `internal/text` for slug generation.
-- **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Always guard: `if p := cfg.Project(); p != nil { project = p.Project }`
-- **cp has TWO ProjectKey sites** — extract cfg once at top of agent block, reuse for both src and dst
+### 2. `config.NewConfigForTest(nil, nil)` → `configmocks.NewBlankConfig()`
 
-## Old API (Removed)
+```go
+// OLD
+cfg := config.NewConfigForTest(config.DefaultProject(), config.DefaultSettings())
 
-ProjectLoader, Validator, MultiValidationError, ConfigFileName, SettingsLoader,
-FileSettingsLoader, InMemorySettingsLoader, InMemoryRegistryBuilder, InMemoryProjectBuilder,
-WithUserDefaults, DataDir, LogDir, EnsureDir, ContainerUID, ContainerGID, DefaultSettings,
-BridgePIDFile, BridgesDir, LogsDir, HostProxyPIDFile, HostProxyLogFile, LabelManaged,
-ManagedLabelValue, LabelMonitoringStack, DefaultPort, DaemonOptions, DefaultDaemonOptions,
-NewManagerWithPort
+// NEW
+cfg := configmocks.NewBlankConfig()
+```
 
-## Key Design Decisions
+If specific values needed:
+```go
+cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`)
+```
 
-- Config is interface, impl is private `configImpl` wrapping `*viper.Viper`
-- Viper merges: settings → user config → registry → project config → env vars
-- Validation via `UnmarshalExact` — unknown fields rejected
-- `keyOwnership` map routes writes to correct files
-- Thread-safe via `sync.RWMutex`
+### 3. `config.DefaultProject` / `config.DefaultSettings` → removed
+
+These were convenience constructors for old `*config.Config` structs. Replace:
+- `config.DefaultProject()` → `configmocks.NewBlankConfig().Project()` or just `configmocks.NewBlankConfig()` if feeding into a constructor
+- `config.DefaultSettings()` → `configmocks.NewBlankConfig().Settings()` or just don't pass at all
+
+### 4. `dockertest.WithConfig(cfg)` → removed
+
+```go
+// OLD
+fake := dockertest.NewFakeClient(dockertest.WithConfig(config.NewConfigForTest(nil, nil)))
+
+// NEW
+fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+```
+
+`NewFakeClient` now takes `cfg config.Config` as first param, no options.
+
+### 5. `docker.LabelManaged` / `docker.LabelProject` / `docker.LabelAgent` → config methods
+
+```go
+// OLD (package-level constants)
+docker.LabelManaged
+docker.LabelProject
+
+// NEW (config interface methods)
+cfg.LabelManaged()
+cfg.LabelProject()
+```
+
+In test files without a config, use a blank config:
+```go
+cfg := configmocks.NewBlankConfig()
+cfg.LabelProject()  // "dev.clawker.project"
+```
+
+Or for `test/commands/` which imports `test/harness`, use the harness vars:
+```go
+harness.TestLabel         // = _blankCfg.LabelTest()
+harness.ClawkerManagedLabel  // = _blankCfg.LabelManaged()
+```
+
+### 6. `config.ConfigFileName` → literal `"clawker.yaml"`
+
+### 7. Factory Config closure pattern
+
+```go
+// OLD
+f.Config = func() config.Provider { return cfg }
+
+// NEW
+f.Config = func() (config.Config, error) { return cfg, nil }
+```
+
+## Key Gotchas
+
+- **Go can't chain multi-return** — `opts.Config().Method()` is a compile error. Must split into `cfg, err := opts.Config()`
+- **Nil-safe project access** — `NewBlankConfig()` returns nil `Project()`. Guard: `if p := cfg.Project(); p != nil { ... }`
+- **`_blankCfg` pattern** — for test packages needing label constants without threading config everywhere, use a package-level `var _blankCfg = configmocks.NewBlankConfig()`
+- **`configFromProject` bridge** — to go from `*config.Project` schema → `config.Config` interface: marshal to YAML, prepend `project:` name (yaml:"-" field), use `configmocks.NewFromString(yaml)`. See `test/harness/factory.go`
+- **copylocks false positives** — `config.Config` is an interface; linter traces through to mutex. Safe to ignore
+- **8 `dockertest.WithConfig` callers remain** — all in failing test files above. Same migration: `NewFakeClient(cfg)` with no options
+- **`test/commands/` uses `docker.Label*` directly** — these need either `configmocks.NewBlankConfig().Label*()` or harness vars
+- **Transitive build failures** — `go build ./...` now passes but `go test ./...` fails on the 9 files above
+
+## Reference
+
+- **Config interface**: `internal/config/config.go` — full `Config` interface definition
+- **Config constants table**: `internal/config/CLAUDE.md` — maps private constants to interface methods
+- **Test doubles**: `internal/config/mocks/stubs.go` — `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`
+- **Harness label vars**: `test/harness/docker.go` — `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName`
+- **Migration patterns**: `internal/config/CLAUDE.md` — Migration Guide section
+
+## IMPORTANT
+
+Always check with the user before proceeding with the next migration step. If all work is done, ask the user if they want to delete this memory.

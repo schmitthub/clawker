@@ -1,12 +1,8 @@
 # Config Package
 
-> **REFACTOR IN PROGRESS** — This package is in the middle of a major overhaul (`refactor/configapocalypse` branch).
-> The old API surface (ProjectLoader, Validator, MultiValidationError, ConfigFileName, SettingsLoader,
-> FileSettingsLoader, InMemorySettingsLoader, InMemoryRegistryBuilder, InMemoryProjectBuilder,
-> WithUserDefaults, DataDir, LogDir, EnsureDir, ContainerUID, ContainerGID, DefaultSettings,
-> BridgePIDFile, BridgesDir, LogsDir, HostProxyPIDFile, HostProxyLogFile, LabelManaged,
-> ManagedLabelValue, LabelMonitoringStack) has been removed. Many consumers still reference these
-> removed symbols and will fail to compile until migrated. See "Migration Status" below.
+> **REFACTOR IN PROGRESS** — `refactor/configapocalypse` branch. All production code compiles (`go build ./...`).
+> 9 test files still reference removed symbols (`config.Provider`, `config.NewConfigForTest`, `dockertest.WithConfig`, etc.).
+> See "Migration Status" below for the exact files and patterns.
 
 ## Related Docs
 
@@ -455,203 +451,83 @@ cfg.ProjectFunc = func() *config.Project {
 
 ## Migration Status
 
-The following consumers still reference **removed** old-API symbols and need migration:
+All production code compiles (`go build ./...` passes). Only **test files** still reference removed symbols.
 
-| Package | Removed Symbols Referenced |
+### Remaining — 9 Test Files
+
+| File | Symbols |
 | --- | --- |
-| `internal/bundler` | `ContainerUID`, `ContainerGID`, `EnsureDir`, `DefaultSettings` |
-| `internal/hostproxy` | `HostProxyPIDFile`, `HostProxyLogFile`, `LogsDir`, `EnsureDir`, `LabelManaged`, `ManagedLabelValue`, `LabelMonitoringStack` |
-| `internal/socketbridge` | `BridgePIDFile`, `BridgesDir`, `LogsDir`, `EnsureDir` |
-| ~~`internal/docker`~~ | ~~Migrated~~ — labels are Client methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. External callers of `dockertest.NewFakeClient` still need update |
-| `internal/workspace` | `DataDir`, `ConfigFileName` |
-| `internal/containerfs` | `DataDir`, `ConfigFileName`, `EnsureDir` |
-| `internal/cmd/project/init` | `NewProjectLoader`, `ConfigFileName` |
-| `internal/cmd/project/register` | `NewProjectLoader`, `ConfigFileName` |
-| `internal/cmd/image/build` | `NewValidator` |
-| `internal/cmd/container/shared` | `SettingsLoader`, `ConfigFileName` |
-| `internal/cmd/container/create` | `SettingsLoader` |
-| `internal/cmd/container/run` | `SettingsLoader` |
-| `internal/cmd/init` | `ConfigFileName`, `DataDir` |
-| `internal/cmd/generate` | `ConfigFileName` |
-| `internal/cmd/loop/shared` | `DataDir` |
-| `internal/cmd/monitor/init` | `DataDir` |
+| `internal/cmd/container/create/create_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `config.DefaultProject`, `dockertest.WithConfig` |
+| `internal/cmd/container/run/run_test.go` | same |
+| `internal/cmd/container/start/start_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
+| `internal/cmd/image/build/build_progress_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `dockertest.WithConfig` |
+| `internal/cmd/image/build/build_progress_golden_test.go` | same |
+| `internal/cmd/loop/iterate/iterate_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
+| `internal/cmd/loop/tasks/tasks_test.go` | same |
+| `test/commands/container_create_test.go` | `docker.LabelManaged`, `docker.LabelProject`, `docker.LabelAgent` |
+| `test/commands/container_exec_test.go` | `docker.LabelProject`, `docker.LabelAgent` |
+
 ### Already Migrated
 
-- `internal/cmd/config/check` — uses `ReadFromString()` only
-- `internal/cmd/factory` — uses `NewConfig()` (Factory.Config closure)
-- `internal/bundler` — uses `config.Config` interface for UID/GID/labels
-- `internal/docker` — labels are `(*Client)` methods via `c.cfg`, volume uses `c.cfg.ContainerUID()/ContainerGID()`. All internal tests pass. **131/139 external `dockertest.NewFakeClient` callers migrated** (no-arg → `config.NewBlankConfig()` first arg). 8 remaining `WithConfig` callers are entangled with `config.Provider` → `config.Config` migration (will fix per-package).
-- `test/harness` — package-level `_blankCfg = configmocks.NewBlankConfig()` provides label constants and `ContainerUID()`; exported `const` block → `var` block; `config.ClawkerHome()` → `config.ConfigDir()`; `hostproxy.NewManager(_blankCfg)`; `docker.TestLabelConfig(_blankCfg, t.Name())`; `config.NewProjectLoader` → `os.ReadFile` + `ReadFromString` in tests
+`internal/config`, `internal/bundler`, `internal/hostproxy`, `internal/socketbridge`, `internal/docker` (+ dockertest), `internal/workspace`, `internal/containerfs`, `internal/monitor`, `internal/cmd/config/check`, `internal/cmd/factory`, `internal/cmd/container/*` (15 commands, production code), `internal/cmd/project/*`, `internal/cmd/init`, `internal/cmd/generate`, `internal/cmd/loop/shared`, `internal/cmd/monitor/init`, `test/harness`, `cmd/fawker`
 
-## Migration Guide
+## Migration Quick Reference
 
-This section documents how to migrate consumers from the old config API to the new one.
-
-### Pattern 1: ProjectLoader → ReadFromString
-
-**Old pattern** — directory-based loading with ProjectLoader:
+### Test file patterns (covers all remaining symbols)
 
 ```go
-loader := config.NewProjectLoader(dir, config.WithUserDefaults(""))
-if !loader.Exists() { /* not found */ }
-project, err := loader.Load()
+// config.Provider → config.Config
+// OLD: Config func() config.Provider
+// NEW: Config func() (config.Config, error)
+
+// config.NewConfigForTest(project, settings) → configmocks.NewBlankConfig()
+// OLD: cfg := config.NewConfigForTest(config.DefaultProject(), config.DefaultSettings())
+// NEW: cfg := configmocks.NewBlankConfig()
+// With values: cfg := configmocks.NewFromString(`build: { image: "alpine" }`)
+
+// config.DefaultProject() / config.DefaultSettings() → removed (use NewBlankConfig)
+
+// dockertest.WithConfig(cfg) → removed (first arg)
+// OLD: fake := dockertest.NewFakeClient(dockertest.WithConfig(cfg))
+// NEW: fake := dockertest.NewFakeClient(cfg)
+
+// docker.LabelManaged / docker.LabelProject / docker.LabelAgent → config methods
+// NEW: cfg.LabelManaged(), cfg.LabelProject(), cfg.LabelAgent()
+// In test/commands/: use harness.ClawkerManagedLabel, or configmocks.NewBlankConfig().LabelProject()
+
+// Factory Config closure
+// OLD: f.Config = func() config.Provider { return cfg }
+// NEW: f.Config = func() (config.Config, error) { return cfg, nil }
 ```
 
-**New pattern** — read file content and parse:
+### Production code patterns (all done, kept for reference)
 
-```go
-data, err := os.ReadFile(filepath.Join(dir, "clawker.yaml"))
-if errors.Is(err, os.ErrNotExist) { /* not found */ }
-cfg, err := config.ReadFromString(string(data))
-project := cfg.Project()
-```
+- `config.ConfigFileName` → literal `"clawker.yaml"`
+- `config.DataDir()` / `config.LogDir()` / `config.EnsureDir()` → `cfg.LogsSubdir()`, `cfg.PidsSubdir()`, etc.
+- `config.LabelManaged` → `cfg.LabelManaged()` (all labels are Config interface methods)
+- `config.ContainerUID` → `cfg.ContainerUID()`
+- `config.NewProjectLoader(dir)` → `os.ReadFile` + `config.ReadFromString`
+- `config.NewValidator(dir)` → removed (validation built into `ReadFromString`/`NewConfig`)
+- `SettingsLoader` → `cfg.Settings()` read, `cfg.Set()` + `cfg.Write()` for mutations
+- `config.BridgePIDFile` → `cfg.BridgePIDFilePath(containerID)`
 
-Key differences:
+### Migration checklist (per test file)
 
-- No `Exists()` check — use `os.ReadFile` + `os.ErrNotExist` instead
-- No `WithUserDefaults` option — `ReadFromString` always applies viper defaults
-- `ReadFromString` does not apply `CLAWKER_*` environment overrides (it parses YAML + defaults only)
-- Returns `Config` interface, call `.Project()` to get `*Project`
-
-For `NewConfig()`, environment overrides are key-level for supported leaf keys (for example `CLAWKER_BUILD_IMAGE`, `CLAWKER_HOST_PROXY_DAEMON_PORT`, `CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace entire nested objects.
-
-### Pattern 2: Validator → UnmarshalExact validation
-
-**Old pattern**:
-
-```go
-validator := config.NewValidator(dir)
-valErr := validator.Validate(project)
-warnings := validator.Warnings()
-var multi *config.MultiValidationError
-errors.As(valErr, &multi)
-```
-
-**New pattern**: Validation is now built into the loading pipeline via `viper.UnmarshalExact`. Unknown keys are caught automatically — `ReadFromString` and `NewConfig` both reject misspelled or unrecognized fields with clear dot-path error messages (e.g. `unknown keys: build.imag`). No separate `Validator` type is needed.
-
-### Pattern 3: ConfigFileName → private constant
-
-**Old**: `config.ConfigFileName` (exported constant `"clawker.yaml"`)
-**New**: The private constant `clawkerConfigFileName` is used internally within the `config` package. External consumers should reference `DefaultConfigYAML` for scaffolding or use `Config` interface methods for path resolution.
-
-### Pattern 4: SettingsLoader → Set() + Write()
-
-**Old pattern**:
-
-```go
-sl := cfgGateway.SettingsLoader()
-settings, _ := sl.Load()
-sl.SetDefault("key", "value")
-sl.Save()
-```
-
-**New pattern** — read via typed accessor, write via Set+Write:
-
-```go
-cfg, _ := config.NewConfig()
-
-// Read
-settings := cfg.Settings()
-currentImage := settings.DefaultImage
-
-// Write — Set updates in-memory + marks dirty, Write persists to owning file
-_ = cfg.Set("default_image", "node:20-slim")
-_ = cfg.Write(config.WriteOptions{Key: "default_image"})
-// → routes to settings.yaml automatically (default_image is ScopeSettings)
-```
-
-The ownership-aware file mapper routes writes to the correct underlying file. Callers never reference specific file paths — `Set` validates the key against `keyOwnership`, and `Write` resolves the target file from the key's scope.
-
-### Pattern 5: DataDir / LogDir / EnsureDir → ConfigDir() + Config interface methods
-
-**Old**: `config.DataDir()`, `config.LogDir()`, `config.EnsureDir(path)`
-**New**: Use `config.ConfigDir()` as the base and subdir names from `Config` interface methods:
-
-```go
-cfg, _ := config.NewConfig()
-logsDir, _ := cfg.LogsSubdir()
-os.MkdirAll(logsDir, 0o755)
-```
-
-All subdir constants are private — access them through `Config` methods (`LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()` legacy alias, `MonitorSubdir()`, etc.), which ensure the directory exists and return `(string, error)`.
-
-### Pattern 6: Label/PID constants → Config interface methods
-
-**Old**: `config.LabelManaged`, `config.ManagedLabelValue`, `config.BridgePIDFile`, `config.HostProxyPIDFile`, `config.HostProxyLogFile`, etc.
-**New**: label and engine constants are exposed through the `Config` interface (`LabelManaged()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`, etc.). PID/log path helpers are also exposed on `Config` (`BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`).
-
-### Pattern 7: ContainerUID/GID / DefaultSettings
-
-**Old**: `config.ContainerUID`, `config.ContainerGID`, `config.DefaultSettings()`
-**New**: `ContainerUID()` and `ContainerGID()` are available via `Config` interface methods. `DefaultSettings()` remains not rebuilt.
-
-### Pattern 8: Testing — mocks/stubs.go
-
-Use stubs from `internal/config/mocks/`:
-
-```go
-import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-
-// Default test double (in-memory, no files)
-cfg := configmocks.NewBlankConfig()
-
-// Test double with specific YAML values
-cfg := configmocks.NewFromString(`build: { image: "alpine" }`)
-
-// File-backed config for mutation tests
-cfg, read := configmocks.NewIsolatedTestConfig(t)
-```
-
-Registry mutation behavior should be tested through `internal/project` facades/services using real `config.Config` inputs or package-local test doubles there.
-
-### Pattern 9: Registry + worktree creation → Set() + Write()
-
-**Old pattern** (conceptual): callers used `configtest` builders / loader-specific helpers to construct registry entries and worktrees.
-
-**New pattern**: write registry entries directly through owned key paths under `projects.*`, then persist with `Write`.
-
-```go
-cfg, _ := config.NewConfig()
-
-// Add project entry
-_ = cfg.Set("projects.my-app.name", "my-app")
-_ = cfg.Set("projects.my-app.root", "/abs/path/to/my-app")
-
-// Register worktree entry
-_ = cfg.Set("projects.my-app.worktrees.feature.path", "/abs/path/to/my-app/.worktrees/feature")
-_ = cfg.Set("projects.my-app.worktrees.feature.branch", "feature")
-
-// Persist dirty changes (auto-routes to projects.yaml by key ownership)
-_ = cfg.Write(config.WriteOptions{})
-```
-
-Notes:
-
-- You do not need to pass `Scope` for normal callers; registry routing is inferred from the `projects` root key.
-- `Write(config.WriteOptions{Scope: config.ScopeRegistry})` is optional for explicitly targeted flushes.
-- There is no typed `AddProject()` method on `config.Config` yet; use low-level key-path writes for now.
-
-See also: `internal/config/config_test.go` — `TestWrite_AddProjectAndWorktree_PersistsToRegistry`.
-
-### Migration Checklist (per consumer)
-
-1. Identify which old symbols the consumer uses (see Migration Status table)
-2. Replace ProjectLoader usage with `os.ReadFile` + `ReadFromString` or `NewConfig`
-3. Replace `ConfigFileName` with literal `"clawker.yaml"`
-4. Replace `DataDir`/`LogDir`/`EnsureDir` with `ConfigDir()` + manual path construction
-5. If the consumer needs a constant/helper that doesn't exist yet, add it to `config` (or to the consumer's own package if it's package-specific)
-6. For registry/worktree writes, use `Set("projects....")` + `Write(...)` instead of legacy builders/loaders
-7. Update tests to use `NewBlankConfig()` / `NewFromString(yaml)` / `NewIsolatedTestConfig(t)`
-8. Verify: `go build ./internal/<package>/...` and `go test ./internal/<package>/...`
-9. Update the consumer's `CLAUDE.md` to reflect the new API usage
+1. Replace `config.Provider` → `config.Config` in type signatures
+2. Replace `config.NewConfigForTest(...)` → `configmocks.NewBlankConfig()` or `configmocks.NewFromString(yaml)`
+3. Replace `dockertest.WithConfig(cfg)` → pass `cfg` as first arg to `NewFakeClient`
+4. Replace `docker.Label*` → `cfg.Label*()` or harness vars
+5. Update Factory Config closure: `func() config.Provider` → `func() (config.Config, error)`
+6. Verify: `go test ./internal/cmd/<package>/... -v`
 
 ## Gotchas
 
-- **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact` to catch unknown/misspelled keys (e.g. `biuld:` → `unknown keys: biuld`). Validation structs (`readFromStringValidation`, `projectRegistryValidation`) mirror the schema with `mapstructure` tags. Error messages are reformatted by `formatDecodeError` into user-friendly dot-path notation.
-- **Env overrides are key-level only** — only explicitly bound leaf keys are overridden (for example `CLAWKER_BUILD_IMAGE`, `CLAWKER_HOST_PROXY_DAEMON_PORT`). Parent object vars like `CLAWKER_AGENT` are ignored and do not replace nested config objects/lists.
-- **`ReadFromString` is env-isolated** — it parses YAML + defaults only and does not apply `CLAWKER_*` environment overrides.
-- **Dotted label keys in string fixtures are supported** — `ReadFromString` preserves dotted keys under `build.instructions.labels` (for example `dev.clawker.project`) instead of expanding them into nested maps.
-- **`*bool` pointers** — schema structs (`Project()` and YAML-unmarshal paths) preserve nullable `*bool` semantics and may require nil checks. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) already materialize these to concrete true/false via non-nil pointers.
-- **`Project.Project` field** — has `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). This is intentional so viper's ErrorUnused doesn't reject the `project:` key.
-- **Transitive build failures** — Until all consumers are migrated, `go build ./...` and `go test ./...` will fail. Test individual migrated packages directly.
+- **Unknown fields are rejected** — `ReadFromString` and `NewConfig` use `viper.UnmarshalExact`. Misspelled keys produce clear dot-path error messages.
+- **Env overrides are key-level only** — only explicitly bound leaf keys (e.g. `CLAWKER_BUILD_IMAGE`). Parent object vars like `CLAWKER_AGENT` are ignored.
+- **`ReadFromString` is env-isolated** — parses YAML + defaults only, no `CLAWKER_*` environment overrides.
+- **`*bool` pointers** — schema structs preserve nullable `*bool`. Typed accessors (`Settings()`, `LoggingConfig()`) materialize to concrete true/false.
+- **`Project.Project` field** — has `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper).
+- **Go can't chain multi-return** — `opts.Config().Method()` won't compile. Split: `cfg, err := opts.Config()`.
+- **Nil-safe project access** — `NewBlankConfig().Project()` returns nil. Guard: `if p := cfg.Project(); p != nil { ... }`.
 - **`Config` is an interface** — consumers receive `Config`, not `*configImpl`. The private struct wraps `*viper.Viper`.
+- **copylocks false positives** — `config.Config` is an interface; linter traces to mutex. Safe to ignore.
