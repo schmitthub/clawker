@@ -1,16 +1,17 @@
-package project
+package project_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProjectManager_List_SortedByRoot(t *testing.T) {
-	cfg := config.NewFromString(`
+	cfg := configmocks.NewFromString(`
 projects:
   - name: Zeta
     root: /tmp/zeta
@@ -18,7 +19,7 @@ projects:
     root: /tmp/alpha
 `)
 
-	mgr := NewProjectManager(cfg)
+	mgr := project.NewProjectManager(cfg)
 	projects, err := mgr.List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, projects, 2)
@@ -27,53 +28,51 @@ projects:
 }
 
 func TestProjectManager_Get_ProjectNotFound(t *testing.T) {
-	mgr := NewProjectManager(config.NewBlankConfig())
+	mgr := project.NewProjectManager(configmocks.NewBlankConfig())
 
-	project, err := mgr.Get(context.Background(), "/missing")
+	projectValue, err := mgr.Get(context.Background(), "/missing")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectNotFound)
-	assert.Nil(t, project)
+	assert.ErrorIs(t, err, project.ErrProjectNotFound)
+	assert.Nil(t, projectValue)
 }
 
 func TestProjectManager_Remove_ProjectNotFound(t *testing.T) {
-	mgr := NewProjectManager(config.NewBlankConfig())
+	mgr := project.NewProjectManager(configmocks.NewBlankConfig())
 
 	err := mgr.Remove(context.Background(), "/missing")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectNotFound)
+	assert.ErrorIs(t, err, project.ErrProjectNotFound)
 }
 
 func TestProject_NilHandleGuards(t *testing.T) {
-	var project *projectHandle
+	var projectValue *project.ProjectHandleForTest
 
-	_, err := project.Record()
+	_, err := projectValue.Record()
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectHandleNotInitialized)
+	assert.ErrorIs(t, err, project.ErrProjectHandleNotInitialized)
 
-	_, err = project.ListWorktrees(context.Background())
+	_, err = projectValue.ListWorktrees(context.Background())
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectHandleNotInitialized)
+	assert.ErrorIs(t, err, project.ErrProjectHandleNotInitialized)
 
-	_, err = project.GetWorktree(context.Background(), "feature/x")
+	_, err = projectValue.GetWorktree(context.Background(), "feature/x")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectHandleNotInitialized)
+	assert.ErrorIs(t, err, project.ErrProjectHandleNotInitialized)
 }
 
 func TestProject_GetWorktree_FromRecord(t *testing.T) {
-	project := &projectHandle{
-		record: ProjectRecord{
+	projectValue := project.NewProjectHandleForTest(project.ProjectRecord{
 			Name: "Demo",
 			Root: "/tmp/demo",
-			Worktrees: map[string]WorktreeRecord{
+			Worktrees: map[string]project.WorktreeRecord{
 				"feature/x": {Path: "/tmp/wt", Branch: "feature/x"},
 			},
-		},
-	}
+		})
 
-	state, err := project.GetWorktree(context.Background(), "feature/x")
+	state, err := projectValue.GetWorktree(context.Background(), "feature/x")
 	require.NoError(t, err)
 	assert.Equal(t, "feature/x", state.Branch)
 	assert.Equal(t, "/tmp/wt", state.Path)
-	assert.Equal(t, WorktreeHealthy, state.Status)
+	assert.Equal(t, project.WorktreeHealthy, state.Status)
 	assert.True(t, state.ExistsInRegistry)
 }

@@ -1,9 +1,10 @@
-package config
+package mocks
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +36,7 @@ func TestNewFromString_MutationPanics(t *testing.T) {
 		_ = cfg.Set("build.image", "nope")
 	})
 	assert.Panics(t, func() {
-		_ = cfg.Write(WriteOptions{})
+		_ = cfg.Write(config.WriteOptions{})
 	})
 }
 
@@ -47,7 +48,7 @@ func TestNewIsolatedTestConfig_WritesAreIsolated(t *testing.T) {
 	require.NoError(t, cfg.Set("projects", []any{
 		map[string]any{"name": "demo", "root": "/tmp/demo"},
 	}))
-	require.NoError(t, cfg.Write(WriteOptions{Scope: ScopeRegistry}))
+	require.NoError(t, cfg.Write(config.WriteOptions{Scope: config.ScopeRegistry}))
 
 	var settingsBuf, projectBuf, registryBuf bytes.Buffer
 	read(&settingsBuf, &projectBuf, &registryBuf)

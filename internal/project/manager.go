@@ -20,7 +20,7 @@ var ErrProjectHandleNotInitialized = errors.New("project handle not initialized"
 // ProjectManager provides the only external project-domain API:
 // registration/list/get/remove and path-based project resolution.
 
-//go:generate moq -rm -out manager_mock.go . ProjectManager
+//go:generate moq -rm -pkg mocks -out mocks/manager_mock.go . ProjectManager
 type ProjectManager interface {
 	Register(ctx context.Context, name string, repoPath string) (Project, error)
 	Update(ctx context.Context, entry config.ProjectEntry) (Project, error)
@@ -69,7 +69,7 @@ type WorktreeState struct {
 // Project is the runtime behavior contract for a single registered project.
 // The concrete implementation is package-private.
 //
-//go:generate moq -rm -out project_mock.go . Project
+//go:generate moq -rm -pkg mocks -out mocks/project_mock.go . Project
 type Project interface {
 	Name() string
 	RepoPath() string

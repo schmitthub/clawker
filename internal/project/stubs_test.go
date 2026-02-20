@@ -1,17 +1,31 @@
-package project
+package project_test
 
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/project"
+	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func chdirForTestProjectExternal(t *testing.T, dir string) {
+	t.Helper()
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWd)
+	})
+}
+
 func TestNewProjectManagerMock_DefaultsArePanicSafe(t *testing.T) {
-	mgr := NewProjectManagerMock()
+	mgr := projectmocks.NewProjectManagerMock()
 	require.NotNil(t, mgr)
 
 	ctx := context.Background()
@@ -28,26 +42,26 @@ func TestNewProjectManagerMock_DefaultsArePanicSafe(t *testing.T) {
 
 	require.NoError(t, mgr.Remove(ctx, "/tmp/demo"))
 
-	project, err := mgr.Get(ctx, "/tmp/demo")
+	projectValue, err := mgr.Get(ctx, "/tmp/demo")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectNotFound)
-	assert.Nil(t, project)
+	assert.ErrorIs(t, err, project.ErrProjectNotFound)
+	assert.Nil(t, projectValue)
 
-	project, err = mgr.ResolvePath(ctx, "/tmp/demo")
+	projectValue, err = mgr.ResolvePath(ctx, "/tmp/demo")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectNotFound)
-	assert.Nil(t, project)
+	assert.ErrorIs(t, err, project.ErrProjectNotFound)
+	assert.Nil(t, projectValue)
 
-	project, err = mgr.CurrentProject(ctx)
+	projectValue, err = mgr.CurrentProject(ctx)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProjectNotFound)
-	assert.Nil(t, project)
+	assert.ErrorIs(t, err, project.ErrProjectNotFound)
+	assert.Nil(t, projectValue)
 }
 
 func TestNewProjectManagerMock_AllowsOverrides(t *testing.T) {
-	mgr := NewProjectManagerMock()
-	mgr.GetFunc = func(_ context.Context, root string) (Project, error) {
-		return NewProjectMockFromRecord(ProjectRecord{Name: "override", Root: root}), nil
+	mgr := projectmocks.NewProjectManagerMock()
+	mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
+		return projectmocks.NewProjectMockFromRecord(project.ProjectRecord{Name: "override", Root: root}), nil
 	}
 
 	project, err := mgr.Get(context.Background(), "/tmp/override")
@@ -58,69 +72,69 @@ func TestNewProjectManagerMock_AllowsOverrides(t *testing.T) {
 }
 
 func TestNewProjectMock_DefaultsArePanicSafe(t *testing.T) {
-	project := NewProjectMock()
-	require.NotNil(t, project)
+	projectValue := projectmocks.NewProjectMock()
+	require.NotNil(t, projectValue)
 
-	assert.Equal(t, "test-project", project.Name())
-	assert.Equal(t, testRepoRoot, project.RepoPath())
+	assert.Equal(t, "test-project", projectValue.Name())
+	assert.Equal(t, filepath.Join(os.TempDir(), "clawker-test-repo"), projectValue.RepoPath())
 
-	record, err := project.Record()
+	record, err := projectValue.Record()
 	require.NoError(t, err)
 	assert.Equal(t, "test-project", record.Name)
-	assert.Equal(t, testRepoRoot, record.Root)
+	assert.Equal(t, filepath.Join(os.TempDir(), "clawker-test-repo"), record.Root)
 	assert.Empty(t, record.Worktrees)
 
-	worktrees, err := project.ListWorktrees(context.Background())
+	worktrees, err := projectValue.ListWorktrees(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, worktrees)
 
-	_, err = project.GetWorktree(context.Background(), "missing")
+	_, err = projectValue.GetWorktree(context.Background(), "missing")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+	assert.ErrorIs(t, err, project.ErrWorktreeNotFound)
 
-	_, err = project.CreateWorktree(context.Background(), "missing", "main")
+	_, err = projectValue.CreateWorktree(context.Background(), "missing", "main")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+	assert.ErrorIs(t, err, project.ErrWorktreeNotFound)
 
-	_, err = project.AddWorktree(context.Background(), "missing", "main")
+	_, err = projectValue.AddWorktree(context.Background(), "missing", "main")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+	assert.ErrorIs(t, err, project.ErrWorktreeNotFound)
 
-	err = project.RemoveWorktree(context.Background(), "missing")
+	err = projectValue.RemoveWorktree(context.Background(), "missing")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrWorktreeNotFound)
+	assert.ErrorIs(t, err, project.ErrWorktreeNotFound)
 
-	result, err := project.PruneStaleWorktrees(context.Background(), true)
+	result, err := projectValue.PruneStaleWorktrees(context.Background(), true)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Failed)
 }
 
 func TestNewProjectMockFromRecord_SeedsWorktreeState(t *testing.T) {
-	project := NewProjectMockFromRecord(ProjectRecord{
+	projectValue := projectmocks.NewProjectMockFromRecord(project.ProjectRecord{
 		Name: "demo",
 		Root: "/tmp/demo",
-		Worktrees: map[string]WorktreeRecord{
+		Worktrees: map[string]project.WorktreeRecord{
 			"feature/x": {Path: "/tmp/wt-x", Branch: "feature/x"},
 		},
 	})
 
-	state, err := project.GetWorktree(context.Background(), "feature/x")
+	state, err := projectValue.GetWorktree(context.Background(), "feature/x")
 	require.NoError(t, err)
 	assert.Equal(t, "feature/x", state.Branch)
 	assert.Equal(t, "/tmp/wt-x", state.Path)
-	assert.Equal(t, WorktreeHealthy, state.Status)
+	assert.Equal(t, project.WorktreeHealthy, state.Status)
 
-	path, err := project.CreateWorktree(context.Background(), "feature/x", "main")
+	path, err := projectValue.CreateWorktree(context.Background(), "feature/x", "main")
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/wt-x", path)
 
-	err = project.RemoveWorktree(context.Background(), "feature/x")
+	err = projectValue.RemoveWorktree(context.Background(), "feature/x")
 	require.NoError(t, err)
 }
 
 func TestNewReadOnlyTestManager_CouplesConfigAndGit(t *testing.T) {
-	harness := NewReadOnlyTestManager(t, `
+	harness := projectmocks.NewReadOnlyTestManager(t, `
 projects:
   - name: Demo
     root: /tmp/demo
@@ -144,14 +158,14 @@ projects:
 
 	_, err = harness.Manager.Register(ctx, "another", "/tmp/another")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrReadOnlyTestManager)
+	assert.ErrorIs(t, err, projectmocks.ErrReadOnlyTestManager)
 
 	_, err = harness.Git.BranchExists("main")
 	require.NoError(t, err)
 }
 
 func TestNewIsolatedTestManager_ConfigWritesAreIsolated(t *testing.T) {
-	harness := NewIsolatedTestManager(t)
+	harness := projectmocks.NewIsolatedTestManager(t)
 
 	require.NotNil(t, harness)
 	require.NotNil(t, harness.Manager)
@@ -160,7 +174,7 @@ func TestNewIsolatedTestManager_ConfigWritesAreIsolated(t *testing.T) {
 	require.NotNil(t, harness.ReadConfigFiles)
 
 	projectRoot := t.TempDir()
-	chdirForTest(t, projectRoot)
+	chdirForTestProjectExternal(t, projectRoot)
 
 	_, err := harness.Manager.Register(context.Background(), "Demo", projectRoot)
 	require.NoError(t, err)

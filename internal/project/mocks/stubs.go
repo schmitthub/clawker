@@ -1,4 +1,4 @@
-package project
+package mocks
 
 import (
 	"context"
@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/git/gittest"
+	"github.com/schmitthub/clawker/internal/project"
 )
 
 var ErrReadOnlyTestManager = errors.New("test manager is read-only")
@@ -24,14 +26,14 @@ type TestManagerHarness struct {
 // NewProjectManagerMock returns a panic-safe mock manager with default behavior.
 func NewProjectManagerMock() *ProjectManagerMock {
 	return &ProjectManagerMock{
-		RegisterFunc: func(_ context.Context, name string, repoPath string) (Project, error) {
-			return NewProjectMockFromRecord(ProjectRecord{
+		RegisterFunc: func(_ context.Context, name string, repoPath string) (project.Project, error) {
+			return NewProjectMockFromRecord(project.ProjectRecord{
 				Name:      name,
 				Root:      repoPath,
-				Worktrees: map[string]WorktreeRecord{},
+				Worktrees: map[string]project.WorktreeRecord{},
 			}), nil
 		},
-		UpdateFunc: func(_ context.Context, entry config.ProjectEntry) (Project, error) {
+		UpdateFunc: func(_ context.Context, entry config.ProjectEntry) (project.Project, error) {
 			return NewProjectMockFromRecord(projectRecordFromEntry(entry)), nil
 		},
 		ListFunc: func(_ context.Context) ([]config.ProjectEntry, error) {
@@ -40,14 +42,14 @@ func NewProjectManagerMock() *ProjectManagerMock {
 		RemoveFunc: func(_ context.Context, _ string) error {
 			return nil
 		},
-		GetFunc: func(_ context.Context, _ string) (Project, error) {
-			return nil, ErrProjectNotFound
+		GetFunc: func(_ context.Context, _ string) (project.Project, error) {
+			return nil, project.ErrProjectNotFound
 		},
-		ResolvePathFunc: func(_ context.Context, _ string) (Project, error) {
-			return nil, ErrProjectNotFound
+		ResolvePathFunc: func(_ context.Context, _ string) (project.Project, error) {
+			return nil, project.ErrProjectNotFound
 		},
-		CurrentProjectFunc: func(_ context.Context) (Project, error) {
-			return nil, ErrProjectNotFound
+		CurrentProjectFunc: func(_ context.Context) (project.Project, error) {
+			return nil, project.ErrProjectNotFound
 		},
 	}
 }
@@ -58,14 +60,14 @@ func NewProjectManagerMock() *ProjectManagerMock {
 func NewReadOnlyTestManager(t *testing.T, cfgYAML string) *TestManagerHarness {
 	t.Helper()
 
-	cfg := config.NewFromString(cfgYAML)
-	realManager := NewProjectManager(cfg)
+	cfg := configmocks.NewFromString(cfgYAML)
+	realManager := project.NewProjectManager(cfg)
 
 	mgr := NewProjectManagerMock()
-	mgr.RegisterFunc = func(_ context.Context, _ string, _ string) (Project, error) {
+	mgr.RegisterFunc = func(_ context.Context, _ string, _ string) (project.Project, error) {
 		return nil, ErrReadOnlyTestManager
 	}
-	mgr.UpdateFunc = func(_ context.Context, _ config.ProjectEntry) (Project, error) {
+	mgr.UpdateFunc = func(_ context.Context, _ config.ProjectEntry) (project.Project, error) {
 		return nil, ErrReadOnlyTestManager
 	}
 	mgr.RemoveFunc = func(_ context.Context, _ string) error {
@@ -91,8 +93,8 @@ func NewReadOnlyTestManager(t *testing.T, cfgYAML string) *TestManagerHarness {
 func NewIsolatedTestManager(t *testing.T) *TestManagerHarness {
 	t.Helper()
 
-	cfg, read := config.NewIsolatedTestConfig(t)
-	realManager := NewProjectManager(cfg)
+	cfg, read := configmocks.NewIsolatedTestConfig(t)
+	realManager := project.NewProjectManager(cfg)
 
 	gitManager := gittest.NewInMemoryGitManager(t, testRepoRootFromConfig(cfg))
 
@@ -106,17 +108,17 @@ func NewIsolatedTestManager(t *testing.T) *TestManagerHarness {
 
 // NewProjectMock returns a panic-safe project mock with default behavior.
 func NewProjectMock() *ProjectMock {
-	return NewProjectMockFromRecord(ProjectRecord{
+	return NewProjectMockFromRecord(project.ProjectRecord{
 		Name:      "test-project",
 		Root:      testRepoRoot,
-		Worktrees: map[string]WorktreeRecord{},
+		Worktrees: map[string]project.WorktreeRecord{},
 	})
 }
 
 // NewProjectMockFromRecord returns a project mock seeded from the provided record.
-func NewProjectMockFromRecord(record ProjectRecord) *ProjectMock {
+func NewProjectMockFromRecord(record project.ProjectRecord) *ProjectMock {
 	if record.Worktrees == nil {
-		record.Worktrees = map[string]WorktreeRecord{}
+		record.Worktrees = map[string]project.WorktreeRecord{}
 	}
 
 	return &ProjectMock{
@@ -126,11 +128,11 @@ func NewProjectMockFromRecord(record ProjectRecord) *ProjectMock {
 		RepoPathFunc: func() string {
 			return record.Root
 		},
-		RecordFunc: func() (ProjectRecord, error) {
-			copied := ProjectRecord{
+		RecordFunc: func() (project.ProjectRecord, error) {
+			copied := project.ProjectRecord{
 				Name:      record.Name,
 				Root:      record.Root,
-				Worktrees: make(map[string]WorktreeRecord, len(record.Worktrees)),
+				Worktrees: make(map[string]project.WorktreeRecord, len(record.Worktrees)),
 			}
 			for branch, wt := range record.Worktrees {
 				copied.Worktrees[branch] = wt
@@ -140,56 +142,56 @@ func NewProjectMockFromRecord(record ProjectRecord) *ProjectMock {
 		CreateWorktreeFunc: func(_ context.Context, branch, _ string) (string, error) {
 			wt, ok := record.Worktrees[branch]
 			if !ok {
-				return "", ErrWorktreeNotFound
+				return "", project.ErrWorktreeNotFound
 			}
 			return wt.Path, nil
 		},
-		AddWorktreeFunc: func(_ context.Context, branch, _ string) (WorktreeState, error) {
+		AddWorktreeFunc: func(_ context.Context, branch, _ string) (project.WorktreeState, error) {
 			wt, ok := record.Worktrees[branch]
 			if !ok {
-				return WorktreeState{}, ErrWorktreeNotFound
+				return project.WorktreeState{}, project.ErrWorktreeNotFound
 			}
-			return WorktreeState{
+			return project.WorktreeState{
 				Branch:           branch,
 				Path:             wt.Path,
 				ExistsInRegistry: true,
 				ExistsInGit:      true,
-				Status:           WorktreeHealthy,
+				Status:           project.WorktreeHealthy,
 			}, nil
 		},
 		RemoveWorktreeFunc: func(_ context.Context, branch string) error {
 			if _, ok := record.Worktrees[branch]; !ok {
-				return ErrWorktreeNotFound
+				return project.ErrWorktreeNotFound
 			}
 			return nil
 		},
-		PruneStaleWorktreesFunc: func(_ context.Context, _ bool) (*PruneStaleResult, error) {
-			return &PruneStaleResult{Failed: map[string]error{}}, nil
+		PruneStaleWorktreesFunc: func(_ context.Context, _ bool) (*project.PruneStaleResult, error) {
+			return &project.PruneStaleResult{Failed: map[string]error{}}, nil
 		},
-		ListWorktreesFunc: func(_ context.Context) ([]WorktreeState, error) {
-			states := make([]WorktreeState, 0, len(record.Worktrees))
+		ListWorktreesFunc: func(_ context.Context) ([]project.WorktreeState, error) {
+			states := make([]project.WorktreeState, 0, len(record.Worktrees))
 			for branch, wt := range record.Worktrees {
-				states = append(states, WorktreeState{
+				states = append(states, project.WorktreeState{
 					Branch:           branch,
 					Path:             wt.Path,
 					ExistsInRegistry: true,
 					ExistsInGit:      true,
-					Status:           WorktreeHealthy,
+					Status:           project.WorktreeHealthy,
 				})
 			}
 			return states, nil
 		},
-		GetWorktreeFunc: func(_ context.Context, branch string) (WorktreeState, error) {
+		GetWorktreeFunc: func(_ context.Context, branch string) (project.WorktreeState, error) {
 			wt, ok := record.Worktrees[branch]
 			if !ok {
-				return WorktreeState{}, ErrWorktreeNotFound
+				return project.WorktreeState{}, project.ErrWorktreeNotFound
 			}
-			return WorktreeState{
+			return project.WorktreeState{
 				Branch:           branch,
 				Path:             wt.Path,
 				ExistsInRegistry: true,
 				ExistsInGit:      true,
-				Status:           WorktreeHealthy,
+				Status:           project.WorktreeHealthy,
 			}, nil
 		},
 	}
@@ -208,7 +210,7 @@ func testRepoRootFromConfig(cfg config.Config) string {
 	return projectRoot
 }
 
-func delegatingProjectManagerMock(manager ProjectManager) *ProjectManagerMock {
+func delegatingProjectManagerMock(manager project.ProjectManager) *ProjectManagerMock {
 	if manager == nil {
 		return NewProjectManagerMock()
 	}
@@ -224,3 +226,19 @@ func delegatingProjectManagerMock(manager ProjectManager) *ProjectManagerMock {
 	}
 }
 
+func projectRecordFromEntry(entry config.ProjectEntry) project.ProjectRecord {
+	record := project.ProjectRecord{
+		Name:      entry.Name,
+		Root:      entry.Root,
+		Worktrees: map[string]project.WorktreeRecord{},
+	}
+
+	for branch, wt := range entry.Worktrees {
+		record.Worktrees[branch] = project.WorktreeRecord{
+			Path:   wt.Path,
+			Branch: wt.Branch,
+		}
+	}
+
+	return record
+}

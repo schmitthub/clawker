@@ -1,4 +1,4 @@
-package config
+package config_test
 
 import (
 	"errors"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	. "github.com/schmitthub/clawker/internal/config"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,10 +27,10 @@ func mustReadFromString(t *testing.T, str string) Config {
 	return c
 }
 
-func mustReadFromStringImpl(t *testing.T, str string) *configImpl {
+func mustReadFromStringImpl(t *testing.T, str string) *ConfigImplForTest {
 	t.Helper()
 	c := mustReadFromString(t, str)
-	impl, ok := c.(*configImpl)
+	impl, ok := c.(*ConfigImplForTest)
 	require.True(t, ok)
 	return impl
 }
@@ -37,22 +38,20 @@ func mustReadFromStringImpl(t *testing.T, str string) *configImpl {
 func mustConfigFromFile(t *testing.T, content string) (Config, string) {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), clawkerConfigFileName)
+	path := filepath.Join(t.TempDir(), ClawkerConfigFileNameForTest)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	v := newViperConfig()
+	v := NewViperConfigForTest()
 	v.SetConfigFile(path)
 	require.NoError(t, v.ReadInConfig())
 
-	c := newConfig(v)
-	c.userProjectConfigFile = path
-	c.settingsFile = path
-	c.projectRegistryPath = path
+	c := NewConfigWithViperForTest(v)
+	c.SetFilePathsForTest(path, path, path)
 
 	return c, path
 }
 
-func mustOwnedConfig(t *testing.T) (*configImpl, map[ConfigScope]string) {
+func mustOwnedConfig(t *testing.T) (*ConfigImplForTest, map[ConfigScope]string) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -63,9 +62,9 @@ func mustOwnedConfig(t *testing.T) (*configImpl, map[ConfigScope]string) {
 	projectRoot = resolvedProjectRoot
 
 	settingsPath := filepath.Join(root, "settings.yaml")
-	userProjectPath := filepath.Join(root, clawkerConfigFileName)
+	userProjectPath := filepath.Join(root, ClawkerConfigFileNameForTest)
 	registryPath := filepath.Join(root, "projects.yaml")
-	projectPath := filepath.Join(projectRoot, clawkerConfigFileName)
+	projectPath := filepath.Join(projectRoot, ClawkerConfigFileNameForTest)
 
 	require.NoError(t, os.WriteFile(settingsPath, []byte("logging:\n  max_size_mb: 50\n"), 0o644))
 	require.NoError(t, os.WriteFile(userProjectPath, []byte("build:\n  image: user:latest\n"), 0o644))
@@ -78,15 +77,9 @@ func mustOwnedConfig(t *testing.T) (*configImpl, map[ConfigScope]string) {
 	require.NoError(t, os.Chdir(projectRoot))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	c := newConfig(newViperConfig())
-	c.settingsFile = settingsPath
-	c.userProjectConfigFile = userProjectPath
-	c.projectRegistryPath = registryPath
-	require.NoError(t, c.load(loadOptions{
-		settingsFile:          settingsPath,
-		userProjectConfigFile: userProjectPath,
-		projectRegistryPath:   registryPath,
-	}))
+	c := NewConfigWithViperForTest(NewViperConfigForTest())
+	c.SetFilePathsForTest(settingsPath, userProjectPath, registryPath)
+	require.NoError(t, c.LoadForTest(NewLoadOptionsForTest(settingsPath, userProjectPath, registryPath)))
 
 	paths := map[ConfigScope]string{
 		ScopeSettings: settingsPath,
@@ -95,6 +88,19 @@ func mustOwnedConfig(t *testing.T) (*configImpl, map[ConfigScope]string) {
 	}
 
 	return c, paths
+}
+
+func mustNewIsolatedConfig(t *testing.T) Config {
+	t.Helper()
+
+	base := t.TempDir()
+	t.Setenv(ClawkerConfigDirEnvForTest, filepath.Join(base, "config"))
+	t.Setenv(ClawkerDataDirEnvForTest, filepath.Join(base, "data"))
+	t.Setenv(ClawkerStateDirEnvForTest, filepath.Join(base, "state"))
+
+	cfg, err := NewConfig()
+	require.NoError(t, err)
+	return cfg
 }
 
 func newConfigFromTestdata(t *testing.T) Config {
@@ -116,9 +122,9 @@ func newConfigFromTestdata(t *testing.T) Config {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), settingsBytes, 0o644))
 
-	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", clawkerConfigFileName))
+	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", ClawkerConfigFileNameForTest))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), userProjectBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), userProjectBytes, 0o644))
 
 	projectsYAML := fmt.Sprintf(`projects:
   clawker-tests:
@@ -129,10 +135,10 @@ func newConfigFromTestdata(t *testing.T) Config {
 `, cwd)
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(projectsYAML), 0o644))
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 	cfg, err := NewConfig()
 	require.NoError(t, err)
-	c, ok := cfg.(*configImpl)
+	c, ok := cfg.(*ConfigImplForTest)
 	require.True(t, ok)
 
 	return c
@@ -402,7 +408,7 @@ func TestWrite_Default_PartialFailure_ClearsOnlySuccessfulDirtyEntries(t *testin
 	require.NoError(t, c.Set("build.image", "go:1.23"))
 
 	registryOut := filepath.Join(t.TempDir(), "registry-out.yaml")
-	c.projectRegistryPath = registryOut
+	c.SetProjectRegistryPathForTest(registryOut)
 
 	err := c.Write(WriteOptions{Safe: true})
 	require.Error(t, err)
@@ -740,13 +746,13 @@ build:
 
 func TestNewConfig_AppliesEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
-	cfg, _ := NewIsolatedTestConfig(t)
+	cfg := mustNewIsolatedConfig(t)
 	assert.Equal(t, "alpine:3.19", cfg.Project().Build.Image)
 }
 
 func TestNewConfig_AppliesHostProxyEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_PORT", "18090")
-	cfg, _ := NewIsolatedTestConfig(t)
+	cfg := mustNewIsolatedConfig(t)
 	assert.Equal(t, 18090, cfg.Settings().HostProxy.Daemon.Port)
 }
 
@@ -758,7 +764,7 @@ func TestReadFromString_DoesNotApplyHostProxyEnvOverride(t *testing.T) {
 
 func TestNewConfig_AppliesHostProxyDurationEnvOverride(t *testing.T) {
 	t.Setenv("CLAWKER_HOST_PROXY_DAEMON_POLL_INTERVAL", "45s")
-	cfg, _ := NewIsolatedTestConfig(t)
+	cfg := mustNewIsolatedConfig(t)
 	assert.Equal(t, 45, int(cfg.Settings().HostProxy.Daemon.PollInterval.Seconds()))
 }
 
@@ -774,7 +780,7 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
 	registryYAML := "projects: {}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
 
@@ -783,7 +789,7 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 	require.NoError(t, os.Chdir(root))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 	t.Setenv("CLAWKER_AGENT", "from-env")
 
 	cfg, err := NewConfig()
@@ -800,7 +806,7 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, clawkerConfigFileName), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
 	registryYAML := "projects: {}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
 
@@ -809,7 +815,7 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 	require.NoError(t, os.Chdir(root))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 	t.Setenv("CLAWKER_BUILD_IMAGE", "alpine:3.19")
 
 	cfg, err := NewConfig()
@@ -828,14 +834,14 @@ func TestNewConfig_CreatesMissingConfigFilesWithDefaults(t *testing.T) {
 	require.NoError(t, os.Chdir(root))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 
 	_, err = NewConfig()
 	require.NoError(t, err)
 
-	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
-	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
-	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+	settingsPath := filepath.Join(configDir, ClawkerSettingsFileNameForTest)
+	userProjectPath := filepath.Join(configDir, ClawkerConfigFileNameForTest)
+	registryPath := filepath.Join(configDir, ClawkerProjectsFileNameForTest)
 
 	settingsBytes, err := os.ReadFile(settingsPath)
 	require.NoError(t, err)
@@ -856,9 +862,9 @@ func TestNewConfig_DoesNotOverwriteExistingConfigFiles(t *testing.T) {
 	configDir := filepath.Join(root, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
-	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
-	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
-	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+	settingsPath := filepath.Join(configDir, ClawkerSettingsFileNameForTest)
+	userProjectPath := filepath.Join(configDir, ClawkerConfigFileNameForTest)
+	registryPath := filepath.Join(configDir, ClawkerProjectsFileNameForTest)
 
 	settingsContent := "default_image: custom-settings-image\n"
 	projectContent := "build:\n  image: custom-project-image\n"
@@ -873,7 +879,7 @@ func TestNewConfig_DoesNotOverwriteExistingConfigFiles(t *testing.T) {
 	require.NoError(t, os.Chdir(root))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 
 	cfg, err := NewConfig()
 	require.NoError(t, err)
@@ -898,9 +904,9 @@ func TestNewConfig_CreatesOnlyMissingConfigFiles(t *testing.T) {
 	configDir := filepath.Join(root, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
-	settingsPath := filepath.Join(configDir, clawkerSettingsFileName)
-	userProjectPath := filepath.Join(configDir, clawkerConfigFileName)
-	registryPath := filepath.Join(configDir, clawkerProjectsFileName)
+	settingsPath := filepath.Join(configDir, ClawkerSettingsFileNameForTest)
+	userProjectPath := filepath.Join(configDir, ClawkerConfigFileNameForTest)
+	registryPath := filepath.Join(configDir, ClawkerProjectsFileNameForTest)
 
 	settingsContent := "default_image: existing-settings-image\n"
 	projectContent := "build:\n  image: existing-project-image\n"
@@ -913,7 +919,7 @@ func TestNewConfig_CreatesOnlyMissingConfigFiles(t *testing.T) {
 	require.NoError(t, os.Chdir(root))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	t.Setenv(clawkerConfigDirEnv, configDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 
 	cfg, err := NewConfig()
 	require.NoError(t, err)
@@ -957,9 +963,9 @@ func TestConstantAccessors(t *testing.T) {
 	configDir := filepath.Join(base, "config")
 	dataDir := filepath.Join(base, "data")
 	stateDir := filepath.Join(base, "state")
-	t.Setenv(clawkerConfigDirEnv, configDir)
-	t.Setenv(clawkerDataDirEnv, dataDir)
-	t.Setenv(clawkerStateDirEnv, stateDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
+	t.Setenv(ClawkerDataDirEnvForTest, dataDir)
+	t.Setenv(ClawkerStateDirEnvForTest, stateDir)
 
 	c := mustReadFromString(t, "")
 
@@ -1021,7 +1027,7 @@ func TestConstantAccessors(t *testing.T) {
 
 func TestBridgePIDFilePath_UsesContainerID(t *testing.T) {
 	stateDir := t.TempDir()
-	t.Setenv(clawkerStateDirEnv, stateDir)
+	t.Setenv(ClawkerStateDirEnvForTest, stateDir)
 
 	c := mustReadFromString(t, "")
 
@@ -1048,9 +1054,9 @@ func TestPathHelpers_CreateDirectoriesIfMissing(t *testing.T) {
 	configDir := filepath.Join(base, "config")
 	dataDir := filepath.Join(base, "data")
 	stateDir := filepath.Join(base, "state")
-	t.Setenv(clawkerConfigDirEnv, configDir)
-	t.Setenv(clawkerDataDirEnv, dataDir)
-	t.Setenv(clawkerStateDirEnv, stateDir)
+	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
+	t.Setenv(ClawkerDataDirEnvForTest, dataDir)
+	t.Setenv(ClawkerStateDirEnvForTest, stateDir)
 
 	c := mustReadFromString(t, "")
 
@@ -1078,57 +1084,57 @@ func TestPathHelpers_CreateDirectoriesIfMissing(t *testing.T) {
 // ConfigDir
 
 func TestConfigDir_ClawkerConfigDir(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "/custom/config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "/custom/config")
 	assert.Equal(t, "/custom/config", ConfigDir())
 }
 
 func TestConfigDir_XDGConfigHome(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "")
-	t.Setenv(xdgConfigHome, "/xdg/config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "")
+	t.Setenv(XDGConfigHomeForTest, "/xdg/config")
 	assert.Equal(t, filepath.Join("/xdg/config", "clawker"), ConfigDir())
 }
 
 func TestConfigDir_ClawkerTakesPrecedenceOverXDG(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "/custom/config")
-	t.Setenv(xdgConfigHome, "/xdg/config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "/custom/config")
+	t.Setenv(XDGConfigHomeForTest, "/xdg/config")
 	assert.Equal(t, "/custom/config", ConfigDir())
 }
 
 func TestConfigDir_Default(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "")
-	t.Setenv(xdgConfigHome, "")
+	t.Setenv(ClawkerConfigDirEnvForTest, "")
+	t.Setenv(XDGConfigHomeForTest, "")
 	if runtime.GOOS == "windows" {
-		t.Setenv(appData, "")
+		t.Setenv(AppDataForTest, "")
 	}
 	home, _ := os.UserHomeDir()
 	assert.Equal(t, filepath.Join(home, ".config", "clawker"), ConfigDir())
 }
 
 func TestSettingsFilePath_ReturnsAbsolutePath(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "./relative-config")
 
 	path, err := SettingsFilePath()
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(path))
-	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerSettingsFileName)))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", ClawkerSettingsFileNameForTest)))
 }
 
 func TestUserProjectConfigFilePath_ReturnsAbsolutePath(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "./relative-config")
 
 	path, err := UserProjectConfigFilePath()
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(path))
-	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerConfigFileName)))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", ClawkerConfigFileNameForTest)))
 }
 
 func TestProjectRegistryFilePath_ReturnsAbsolutePath(t *testing.T) {
-	t.Setenv(clawkerConfigDirEnv, "./relative-config")
+	t.Setenv(ClawkerConfigDirEnvForTest, "./relative-config")
 
 	path, err := ProjectRegistryFilePath()
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(path))
-	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", clawkerProjectsFileName)))
+	assert.True(t, strings.HasSuffix(path, filepath.Join("relative-config", ClawkerProjectsFileNameForTest)))
 }
 
 // testdata-based load tests
@@ -1181,7 +1187,7 @@ projects:
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNotInProject))
 	assert.Equal(t, "", root)
-	require.NoError(t, c.mergeProjectConfig())
+	require.NoError(t, c.MergeProjectConfigForTest())
 }
 
 func TestGetProjectRoot_CwdWithinProjectRoot(t *testing.T) {
@@ -1241,7 +1247,7 @@ func TestMergeProjectConfig_MissingProjectConfigFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(dir))
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
-	require.NoError(t, os.WriteFile(filepath.Join(dir, clawkerConfigFileName), []byte("build: ["), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ClawkerConfigFileNameForTest), []byte("build: ["), 0o644))
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 
@@ -1251,7 +1257,7 @@ projects:
     name: myproject
     root: %s
 `, cwd))
-	require.Error(t, c.mergeProjectConfig())
+	require.Error(t, c.MergeProjectConfigForTest())
 }
 
 // atomicWriteFile
@@ -1261,7 +1267,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	path := filepath.Join(dir, "sub", "file.yaml")
 
 	data := []byte("project: my-app\n")
-	require.NoError(t, atomicWriteFile(path, data, 0o644))
+	require.NoError(t, ExportAtomicWriteFile(path, data, 0o644))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1277,7 +1283,7 @@ func TestAtomicWriteFile_OverwritePreservesContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("old content\n"), 0o644))
 
 	newData := []byte("new content\n")
-	require.NoError(t, atomicWriteFile(path, newData, 0o644))
+	require.NoError(t, ExportAtomicWriteFile(path, newData, 0o644))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -1299,7 +1305,7 @@ func TestWithFileLock_MutualExclusion(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func(id int) {
 			defer wg.Done()
-			err := withFileLock(path, func() error {
+			err := ExportWithFileLock(path, func() error {
 				mu.Lock()
 				order = append(order, id)
 				mu.Unlock()

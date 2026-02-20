@@ -1,10 +1,12 @@
-package config
+package mocks
 
 import (
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/config"
 )
 
 // NewBlankConfig returns an in-memory *ConfigMock seeded with defaults.
@@ -19,7 +21,7 @@ func NewBlankConfig() *ConfigMock {
 // Use NewIsolatedTestConfig for tests that need mutation or file-backed config.
 // Panics on invalid YAML to match test-stub ergonomics.
 func NewFromString(cfgStr string) *ConfigMock {
-	cfg, err := ReadFromString(cfgStr)
+	cfg, err := config.ReadFromString(cfgStr)
 	if err != nil {
 		panic(err)
 	}
@@ -89,26 +91,38 @@ func NewFromString(cfgStr string) *ConfigMock {
 
 // NewIsolatedTestConfig creates a blank file-backed config isolated to a temp config dir,
 // and returns a reader callback for persisted settings/project/registry files.
-func NewIsolatedTestConfig(t *testing.T) (Config, func(io.Writer, io.Writer, io.Writer)) {
+func NewIsolatedTestConfig(t *testing.T) (config.Config, func(io.Writer, io.Writer, io.Writer)) {
 	t.Helper()
 	read := StubWriteConfig(t)
 
-	cfgDir := ConfigDir()
+	cfgDir := config.ConfigDir()
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("creating isolated config dir %q: %v", cfgDir, err)
 	}
 
-	if err := writeIfMissing(settingsConfigFile(), []byte("{}\n")); err != nil {
+	path, err := config.SettingsFilePath()
+	if err != nil {
+		t.Fatalf("resolving isolated settings file path: %v", err)
+	}
+	if err := writeIfMissing(path, []byte("{}\n")); err != nil {
 		t.Fatalf("creating isolated settings file: %v", err)
 	}
-	if err := writeIfMissing(userProjectConfigFile(), []byte("{}\n")); err != nil {
+	userProjectPath, err := config.UserProjectConfigFilePath()
+	if err != nil {
+		t.Fatalf("resolving isolated user project file path: %v", err)
+	}
+	if err := writeIfMissing(userProjectPath, []byte("{}\n")); err != nil {
 		t.Fatalf("creating isolated user project file: %v", err)
 	}
-	if err := writeIfMissing(projectRegistryPath(), []byte("projects: []\n")); err != nil {
+	registryPath, err := config.ProjectRegistryFilePath()
+	if err != nil {
+		t.Fatalf("resolving isolated project registry file path: %v", err)
+	}
+	if err := writeIfMissing(registryPath, []byte("projects: []\n")); err != nil {
 		t.Fatalf("creating isolated project registry file: %v", err)
 	}
 
-	cfg, err := NewConfig()
+	cfg, err := config.NewConfig()
 	if err != nil {
 		t.Fatalf("creating isolated test config: %v", err)
 	}
@@ -121,14 +135,33 @@ func NewIsolatedTestConfig(t *testing.T) (Config, func(io.Writer, io.Writer, io.
 func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer) {
 	t.Helper()
 	base := t.TempDir()
-	t.Setenv(clawkerConfigDirEnv, filepath.Join(base, "config"))
-	t.Setenv(clawkerDataDirEnv, filepath.Join(base, "data"))
-	t.Setenv(clawkerStateDirEnv, filepath.Join(base, "state"))
+	blankCfg, err := config.ReadFromString("")
+	if err != nil {
+		t.Fatalf("creating blank config for env setup: %v", err)
+	}
+	t.Setenv(blankCfg.ConfigDirEnvVar(), filepath.Join(base, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(base, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
 
 	return func(settingsOut io.Writer, projectOut io.Writer, registryOut io.Writer) {
-		copyFileToWriter(settingsConfigFile(), settingsOut)
-		copyFileToWriter(userProjectConfigFile(), projectOut)
-		copyFileToWriter(projectRegistryPath(), registryOut)
+		t.Helper()
+
+		settingsPath, err := config.SettingsFilePath()
+		if err != nil {
+			t.Fatalf("resolving settings file path: %v", err)
+		}
+		projectPath, err := config.UserProjectConfigFilePath()
+		if err != nil {
+			t.Fatalf("resolving user project file path: %v", err)
+		}
+		registryPath, err := config.ProjectRegistryFilePath()
+		if err != nil {
+			t.Fatalf("resolving project registry file path: %v", err)
+		}
+
+		copyFileToWriter(settingsPath, settingsOut)
+		copyFileToWriter(projectPath, projectOut)
+		copyFileToWriter(registryPath, registryOut)
 	}
 }
 
