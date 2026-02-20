@@ -1,6 +1,6 @@
 # Config Package Refactor (configapocalypse)
 
-> **Status:** In Progress — command test files + integration test files remain
+> **Status:** COMPLETE — all test files migrated, all packages compile
 > **Branch:** `refactor/configapocalypse`
 > **Last updated:** 2026-02-20
 
@@ -22,28 +22,45 @@ The `Config` interface is built and working. All production code compiles (`go b
 - `test/harness` — `_blankCfg = configmocks.NewBlankConfig()` for labels/constants
 - `cmd/fawker` — `configmocks.NewFromString` for config, `NewFakeClient(cfg)` without options
 
-## What Remains — 9 Failing Test Files
+## What Was Completed (Test File Migration)
 
-`go build ./...` passes. Only test files fail (`go test ./...`).
+All 9 originally-failing test files + 8 additional files discovered during migration have been fixed:
 
-### Group A: Command Test Files (7 files, 5 symbols)
+### Group A: Command Test Files (7 files) — DONE
+- `internal/cmd/container/create/create_test.go`
+- `internal/cmd/container/run/run_test.go`
+- `internal/cmd/container/start/start_test.go`
+- `internal/cmd/container/shared/image_test.go`
+- `internal/cmd/container/shared/init_test.go`
+- `internal/cmd/image/build/build_test.go`
+- `internal/cmd/image/build/build_progress_test.go`
+- `internal/cmd/image/build/build_progress_golden_test.go`
+- `internal/cmd/loop/iterate/iterate_test.go`
+- `internal/cmd/loop/tasks/tasks_test.go`
+- `internal/cmd/loop/shared/concurrency_test.go`
+- `internal/cmd/loop/shared/dashboard_test.go`
+- `internal/cmd/loop/shared/lifecycle_test.go`
+- `internal/cmd/loop/shared/runner_test.go`
 
-| File | Undefined Symbols |
-|------|-------------------|
-| `internal/cmd/container/create/create_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `config.DefaultProject`, `dockertest.WithConfig` |
-| `internal/cmd/container/run/run_test.go` | same |
-| `internal/cmd/container/start/start_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
-| `internal/cmd/image/build/build_progress_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultSettings`, `dockertest.WithConfig` |
-| `internal/cmd/image/build/build_progress_golden_test.go` | same |
-| `internal/cmd/loop/iterate/iterate_test.go` | `config.Provider`, `config.NewConfigForTest`, `config.DefaultProject` |
-| `internal/cmd/loop/tasks/tasks_test.go` | same |
+### Group B: Integration Test Files — DONE
+- `test/commands/container_create_test.go`
+- `test/commands/container_exec_test.go`
+- `test/commands/container_run_test.go`
+- `test/commands/container_start_test.go`
+- `test/commands/loop_test.go`
+- `test/commands/worktree_test.go`
+- `test/agents/loop_test.go`
+- `test/internals/docker_client_test.go`
+- `test/internals/image_resolver_test.go`
+- `test/internals/workspace_test.go`
+- `test/internals/containerfs_test.go`
+- `test/internals/constants_test.go` (new — shared `_testCfg` for internals package)
 
-### Group B: Integration Test Files (2 files, 3 symbols)
-
-| File | Undefined Symbols |
-|------|-------------------|
-| `test/commands/container_create_test.go` | `docker.LabelManaged`, `docker.LabelProject`, `docker.LabelAgent` |
-| `test/commands/container_exec_test.go` | `docker.LabelProject`, `docker.LabelAgent` |
+### Pre-existing Failures (NOT from migration)
+- `internal/config` — 3 lock file tests (file lock race in temp dirs)
+- `internal/socketbridge` — PID file cleanup timing
+- `internal/cmd/container/create,run,start,shared` — "resolve ignore file" (pre-existing on clean branch too)
+- `internal/cmd/config/check` — unknown fields (pre-existing)
 
 ## Migration Patterns (Old → New)
 
@@ -139,9 +156,9 @@ f.Config = func() (config.Config, error) { return cfg, nil }
 - **`_blankCfg` pattern** — for test packages needing label constants without threading config everywhere, use a package-level `var _blankCfg = configmocks.NewBlankConfig()`
 - **`configFromProject` bridge** — to go from `*config.Project` schema → `config.Config` interface: marshal to YAML, prepend `project:` name (yaml:"-" field), use `configmocks.NewFromString(yaml)`. See `test/harness/factory.go`
 - **copylocks false positives** — `config.Config` is an interface; linter traces through to mutex. Safe to ignore
-- **8 `dockertest.WithConfig` callers remain** — all in failing test files above. Same migration: `NewFakeClient(cfg)` with no options
-- **`test/commands/` uses `docker.Label*` directly** — these need either `configmocks.NewBlankConfig().Label*()` or harness vars
-- **Transitive build failures** — `go build ./...` now passes but `go test ./...` fails on the 9 files above
+- **All `dockertest.WithConfig` callers migrated** — `NewFakeClient(cfg)` with config as first param
+- **All `docker.Label*` references migrated** — use `_testCfg.LabelProject()` etc. via package-level blank config
+- **All test files compile** — `go test -count=0 ./...` passes with zero build failures
 
 ## Reference
 

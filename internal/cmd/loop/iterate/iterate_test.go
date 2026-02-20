@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -28,13 +29,11 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) 
 func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	project := config.DefaultProject()
-	project.Project = "testproject"
-	cfg := config.NewConfigForTest(project, nil)
+	cfg := configmocks.NewFromString(`project: testproject`)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
-		Config:    func() config.Provider { return cfg },
+		Config:    func() (config.Config, error) { return cfg, nil },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("docker not available in tests")
 		},

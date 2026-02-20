@@ -192,9 +192,6 @@ func TestCmdStart_Properties(t *testing.T) {
 func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	disableHP := false
-	project := config.DefaultProject()
-	project.Security.EnableHostProxy = &disableHP
 
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
@@ -224,8 +221,8 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -317,8 +314,8 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 		HostProxy: func() hostproxy.HostProxyService { return nil },
 	}

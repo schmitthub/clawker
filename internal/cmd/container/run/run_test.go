@@ -509,7 +509,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultProject())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -658,8 +658,15 @@ func TestImageArg(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := context.Background()
 
-				// Create fake Docker client
-				fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+				// Build config mock with project + optional default image
+				cfgYAML := fmt.Sprintf("project: %s", tt.projectName)
+				if tt.defaultImage != "" {
+					cfgYAML += fmt.Sprintf("\ndefault_image: %s", tt.defaultImage)
+				}
+				testCfg := configmocks.NewFromString(cfgYAML)
+
+				// Create fake Docker client with the config
+				fake := dockertest.NewFakeClient(testCfg)
 
 				// Build image summaries and configure fake
 				var summaries []whail.ImageSummary
@@ -669,19 +676,6 @@ func TestImageArg(t *testing.T) {
 					})
 				}
 				fake.SetupImageList(summaries...)
-
-				// Build config and settings, inject into fake client
-				cfg := &config.Project{
-					Project: tt.projectName,
-				}
-				var settings *config.Settings
-				if tt.defaultImage != "" {
-					settings = &config.Settings{
-						DefaultImage: tt.defaultImage,
-					}
-				}
-				testCfg := config.NewConfigForTest(cfg, settings)
-				fake.Client.SetConfig(testCfg)
 
 				// Call the resolution method on the client
 				result, err := fake.Client.ResolveImageWithSource(ctx)
@@ -805,8 +799,12 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		Config: func() (config.Config, error) {
+			return configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`), nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -816,26 +814,6 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		},
 		Prompter: func() *prompter.Prompter { return nil },
 	}, tio
-}
-
-// testConfig returns a minimal *config.Project for test use.
-// Host proxy disabled, bind mode, empty project, firewall disabled.
-func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Version: "1",
-		Project: "",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
-	}
 }
 
 func TestRunRun(t *testing.T) {
@@ -907,12 +885,13 @@ func TestRunRun(t *testing.T) {
 	})
 
 	t.Run("non-interactive missing default image returns error", func(t *testing.T) {
-		cfgProject := testConfig()
-		cfgProject.DefaultImage = "node:20-slim"
-
-		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(cfgProject, config.DefaultSettings())),
-		)
+		testCfg := configmocks.NewFromString(`
+version: "1"
+default_image: "node:20-slim"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`)
+		fake := dockertest.NewFakeClient(testCfg)
 		fake.SetupImageList()                        // empty — no project image found
 		fake.SetupImageExists("node:20-slim", false) // default image missing
 		fake.SetupContainerCreate()
@@ -926,8 +905,8 @@ func TestRunRun(t *testing.T) {
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
-			Config: func() config.Provider {
-				return config.NewConfigForTest(cfgProject, config.DefaultSettings())
+			Config: func() (config.Config, error) {
+				return testCfg, nil
 			},
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")

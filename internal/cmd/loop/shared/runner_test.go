@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/cmd/loop/shared"
-	"github.com/schmitthub/clawker/internal/config/configtest"
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/logger/loggertest"
@@ -125,7 +125,7 @@ func TestRunnerRun_SingleLoopCompletion(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), shared.Options{
 		CreateContainer: makeCreateContainer("container-123"),
-		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:      &config.Project{Project: "testproj"},
 		Agent:           "testagent",
 		Prompt:          "implement the feature",
 		MaxLoops:        10,
@@ -158,7 +158,7 @@ func TestRunnerRun_MaxLoopsReached(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), shared.Options{
 		CreateContainer:     makeCreateContainer("container-123"),
-		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:          &config.Project{Project: "testproj"},
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            2,
@@ -186,7 +186,7 @@ func TestRunnerRun_CircuitBreakerTrips(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), shared.Options{
 		CreateContainer:     makeCreateContainer("container-123"),
-		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:          &config.Project{Project: "testproj"},
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            10,
@@ -217,7 +217,7 @@ func TestRunnerRun_ContextCancellation(t *testing.T) {
 	var loopsRan int
 	result, err := runner.Run(ctx, shared.Options{
 		CreateContainer:     makeCreateContainer("container-123"),
-		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:          &config.Project{Project: "testproj"},
 		Agent:               "testagent",
 		Prompt:              "do some work",
 		MaxLoops:            100,
@@ -252,7 +252,7 @@ func TestRunnerRun_CallbacksFired(t *testing.T) {
 
 	result, err := runner.Run(context.Background(), shared.Options{
 		CreateContainer: makeCreateContainer("container-123"),
-		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:      &config.Project{Project: "testproj"},
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,
@@ -287,7 +287,7 @@ func TestRunnerRun_PreCancelledContext(t *testing.T) {
 
 	result, err := runner.Run(ctx, shared.Options{
 		CreateContainer: makeCreateContainer("container-123"),
-		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:      &config.Project{Project: "testproj"},
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,
@@ -313,7 +313,7 @@ func TestRunnerRun_RepeatedErrorHistoryEntry(t *testing.T) {
 	// Same-error threshold is 5 by default so the circuit won't trip yet.
 	result, err := runner.Run(context.Background(), shared.Options{
 		CreateContainer:     makeCreateContainer("container-123"),
-		ProjectCfg:          configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:          &config.Project{Project: "testproj"},
 		Agent:               "testagent",
 		Prompt:              "do work",
 		MaxLoops:            4,
@@ -358,7 +358,7 @@ func TestRunnerRun_CircuitAlreadyTripped(t *testing.T) {
 
 	result, runErr := runner.Run(context.Background(), shared.Options{
 		CreateContainer: makeCreateContainer("container-123"),
-		ProjectCfg:      configtest.NewProjectBuilder().WithProject("testproj").Build(),
+		ProjectCfg:      &config.Project{Project: "testproj"},
 		Agent:           "testagent",
 		Prompt:          "do it",
 		MaxLoops:        5,

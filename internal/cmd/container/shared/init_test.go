@@ -11,7 +11,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -423,7 +422,8 @@ func TestCreateContainer_RandomAgentName(t *testing.T) {
 func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	// When volumes are freshly created and a subsequent init step fails,
 	// deferred cleanup removes newly-created volumes.
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	cfg := configmocks.NewBlankConfig()
+	fake := dockertest.NewFakeClient(cfg)
 
 	// Track which volumes have been "created" — allows VolumeInspect to return
 	// "not found" initially (so EnsureVolume creates) then "managed" (so VolumeRemove works).
@@ -433,7 +433,7 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 			return moby.VolumeInspectResult{
 				Volume: volume.Volume{
 					Name:   id,
-					Labels: map[string]string{docker.LabelManaged: docker.ManagedLabelValue},
+					Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
 				},
 			}, nil
 		}
@@ -498,7 +498,8 @@ func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 
 func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 	// When volume cleanup fails, the original error is still returned.
-	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	cfg := configmocks.NewBlankConfig()
+	fake := dockertest.NewFakeClient(cfg)
 
 	// Volumes freshly created — track state so IsVolumeManaged works during cleanup
 	createdVols := map[string]bool{}
@@ -507,7 +508,7 @@ func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 			return moby.VolumeInspectResult{
 				Volume: volume.Volume{
 					Name:   id,
-					Labels: map[string]string{docker.LabelManaged: docker.ManagedLabelValue},
+					Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
 				},
 			}, nil
 		}

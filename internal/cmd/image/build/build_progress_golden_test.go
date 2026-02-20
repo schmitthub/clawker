@@ -8,6 +8,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -32,8 +33,14 @@ func TestBuildProgress_Golden(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
-			testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-			fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+			testCfg := configmocks.NewFromString(`
+version: "1"
+project: test-project
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`)
+			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
 			tio := iostreamstest.New()
@@ -43,8 +50,8 @@ func TestBuildProgress_Golden(t *testing.T) {
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
-				Config: func() config.Provider {
-					return testCfg
+				Config: func() (config.Config, error) {
+					return testCfg, nil
 				},
 			}
 

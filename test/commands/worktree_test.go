@@ -14,7 +14,9 @@ import (
 	gitpkg "github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/text"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
@@ -230,93 +232,103 @@ func initGitRepo(t *testing.T, dir string) {
 	require.NoError(t, err, "git commit failed: %s", output)
 }
 
-// registerWorktreeInRegistry adds a worktree entry to the project registry.
+// registerWorktreeInRegistry adds a worktree entry to the project registry file.
+// The harness writes the registry in map format (slug → entry). This function
+// reads the raw YAML, adds the worktree, and writes it back in a format that
+// both viper (map) and the project registry decoder can consume.
 func registerWorktreeInRegistry(t *testing.T, h *harness.Harness, branch, slug string) {
 	t.Helper()
 
-	// Read existing registry
-	regPath := filepath.Join(h.ConfigDir, config.RegistryFileName)
+	// Read existing registry as raw YAML map (harness writes map format)
+	regPath := filepath.Join(h.ConfigDir, "projects.yaml")
 	data, err := os.ReadFile(regPath)
 	require.NoError(t, err, "failed to read registry")
 
-	var registry config.ProjectRegistry
-	require.NoError(t, yaml.Unmarshal(data, &registry))
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
 
-	// Add worktree entry
-	if registry.Projects == nil {
-		registry.Projects = make(map[string]config.ProjectEntry)
+	// Navigate to projects map
+	projectsRaw, ok := raw["projects"]
+	if !ok || projectsRaw == nil {
+		projectsRaw = map[string]any{}
+		raw["projects"] = projectsRaw
 	}
-	projectSlug := config.Slugify(h.Project)
-	entry := registry.Projects[projectSlug]
-	if entry.Worktrees == nil {
-		entry.Worktrees = make(map[string]string)
+	projects, ok := projectsRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected projects to be a map, got %T", projectsRaw)
 	}
-	entry.Worktrees[branch] = slug
-	registry.Projects[projectSlug] = entry
+
+	// Find the project entry by slug
+	projectSlug := text.Slugify(h.Project)
+	entryRaw, ok := projects[projectSlug]
+	if !ok {
+		t.Fatalf("project %q not found in registry", projectSlug)
+	}
+	entry, ok := entryRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected project entry to be a map, got %T", entryRaw)
+	}
+
+	// Get or create worktrees map
+	worktreesRaw, ok := entry["worktrees"]
+	var worktrees map[string]any
+	if ok && worktreesRaw != nil {
+		worktrees, ok = worktreesRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected worktrees to be a map, got %T", worktreesRaw)
+		}
+	} else {
+		worktrees = map[string]any{}
+	}
+
+	// Add the worktree entry with the new WorktreeEntry struct format (path + branch)
+	worktreeDir := filepath.Join(h.ConfigDir, "projects", h.Project, "worktrees", slug)
+	worktrees[branch] = map[string]any{
+		"path":   worktreeDir,
+		"branch": branch,
+	}
+	entry["worktrees"] = worktrees
 
 	// Write back
-	data, err = yaml.Marshal(registry)
+	data, err = yaml.Marshal(raw)
 	require.NoError(t, err, "failed to marshal registry")
 	require.NoError(t, os.WriteFile(regPath, data, 0644))
 }
 
-// newWorktreeTestFactory creates a factory with GitManager for worktree tests.
+// newWorktreeTestFactory creates a factory with GitManager and ProjectManager for worktree tests.
+// It uses config.NewConfig() to get a real file-backed config (since the harness has set
+// CLAWKER_CONFIG_DIR and written both clawker.yaml and projects.yaml), and wires up a
+// real ProjectManager for project/worktree resolution.
 func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 
 	tio := iostreamstest.New()
 
-	// Create a project config with the harness project name
-	project := &config.Project{
-		Version: "1",
-		Project: h.Project,
-		Build: config.BuildConfig{
-			Image: "alpine:latest",
-		},
-	}
+	// Use real config loading — the harness has set CLAWKER_CONFIG_DIR and written
+	// both clawker.yaml (in ProjectDir) and projects.yaml (in ConfigDir).
+	// Chdir() was called, so NewConfig() will find the project via cwd + registry.
+	cfg, err := config.NewConfig()
+	require.NoError(t, err, "failed to load config")
 
-	// Read the registry to get the project entry with worktrees
-	regPath := filepath.Join(h.ConfigDir, config.RegistryFileName)
-	var entry *config.ProjectEntry
-	data, err := os.ReadFile(regPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			t.Fatalf("unexpected error reading registry %s: %v", regPath, err)
-		}
-		// File doesn't exist - this is fine, use default entry below
-	} else {
-		var registry config.ProjectRegistry
-		if err := yaml.Unmarshal(data, &registry); err != nil {
-			t.Fatalf("failed to parse registry %s: %v", regPath, err)
-		}
-		// Use slugified key for lookup (matches how projects are registered)
-		key := config.Slugify(h.Project)
-		if e, ok := registry.Projects[key]; ok {
-			entry = &e
-		}
-	}
-
-	// If no entry found, create one pointing to harness project dir
-	if entry == nil {
-		entry = &config.ProjectEntry{
-			Name: h.Project,
-			Root: h.ProjectDir,
-		}
-	}
-
-	// Create config with proper test setup using exported function
-	cfg := config.NewConfigForTestWithEntry(project, nil, entry, h.ConfigDir)
+	// Build a real ProjectManager so CurrentProject/Record work against the registry
+	pm := project.NewProjectManager(cfg)
 
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
-		Config: func() config.Provider {
-			return cfg
+		Config: func() (config.Config, error) {
+			return cfg, nil
+		},
+		ProjectManager: func() (project.ProjectManager, error) {
+			return pm, nil
 		},
 		GitManager: func() (*gitpkg.GitManager, error) {
 			return gitpkg.NewGitManager(h.ProjectDir)
 		},
 		HostProxy: func() hostproxy.HostProxyService {
-			mgr := hostproxy.NewManager()
+			mgr, err := hostproxy.NewManager(cfg)
+			if err != nil {
+				t.Fatalf("failed to create host proxy manager: %v", err)
+			}
 			t.Cleanup(func() {
 				_ = mgr.StopDaemon()
 			})

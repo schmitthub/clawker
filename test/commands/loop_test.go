@@ -415,9 +415,8 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	}()
 
 	f, tio := harness.NewTestFactory(t, h)
-	cfgProvider := f.Config()
-	cfg, ok := cfgProvider.(*config.Config)
-	require.True(t, ok, "expected *config.Config provider, got %T", cfgProvider)
+	cfg, err := f.Config()
+	require.NoError(t, err, "failed to get config")
 
 	dockerClient, err := f.Client(ctx)
 	require.NoError(t, err)

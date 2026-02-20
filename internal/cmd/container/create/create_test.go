@@ -368,7 +368,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultProject())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -415,25 +415,6 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // Tier 2 — Cobra+Factory integration tests
 // ---------------------------------------------------------------------------
 
-// testConfig returns a minimal *config.Project for Tier 2 tests.
-func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Version: "1",
-		Project: "",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
-	}
-}
-
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
@@ -444,8 +425,12 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		Config: func() (config.Config, error) {
+			return configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`), nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -590,16 +575,13 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("onboarding skipped when use_host_auth disabled", func(t *testing.T) {
 		// Explicitly disable use_host_auth → no onboarding injection
-		cfg := testConfig()
-		useHostAuth := false
-		cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
-			UseHostAuth: &useHostAuth,
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
-		}
-
-		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(cfg, config.DefaultSettings())),
-		)
+		useHostAuthCfg := configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
+`)
+		fake := dockertest.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 
@@ -610,8 +592,8 @@ func TestCreateRun(t *testing.T) {
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
-			Config: func() config.Provider {
-				return config.NewConfigForTest(cfg, config.DefaultSettings())
+			Config: func() (config.Config, error) {
+				return useHostAuthCfg, nil
 			},
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")

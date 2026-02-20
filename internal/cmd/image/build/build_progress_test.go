@@ -7,6 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -26,8 +27,14 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
-			testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-			fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+			testCfg := configmocks.NewFromString(`
+version: "1"
+project: test-project
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`)
+			fake := dockertest.NewFakeClient(testCfg)
 			fake.SetupBuildKitWithProgress(scenario.Events)
 
 			tio := iostreamstest.New()
@@ -37,8 +44,8 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 				Client: func(_ context.Context) (*docker.Client, error) {
 					return fake.Client, nil
 				},
-				Config: func() config.Provider {
-					return testCfg
+				Config: func() (config.Config, error) {
+					return testCfg, nil
 				},
 			}
 
@@ -76,8 +83,14 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 func TestBuildProgress_SimplePipeline(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+	testCfg := configmocks.NewFromString(`
+version: "1"
+project: test-project
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`)
+	fake := dockertest.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio := iostreamstest.New()
@@ -87,8 +100,8 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return testCfg
+		Config: func() (config.Config, error) {
+			return testCfg, nil
 		},
 	}
 
@@ -116,8 +129,14 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 func TestBuildProgress_Suppressed(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+	testCfg := configmocks.NewFromString(`
+version: "1"
+project: test-project
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`)
+	fake := dockertest.NewFakeClient(testCfg)
 	fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio := iostreamstest.New()
@@ -127,8 +146,8 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return testCfg
+		Config: func() (config.Config, error) {
+			return testCfg, nil
 		},
 	}
 
@@ -151,8 +170,14 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 func TestBuildProgress_CaptureCallCount(t *testing.T) {
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
-	testCfg := config.NewConfigForTest(testBuildConfig(t), config.DefaultSettings())
-	fake := dockertest.NewFakeClient(dockertest.WithConfig(testCfg))
+	testCfg := configmocks.NewFromString(`
+version: "1"
+project: test-project
+build: { image: "node:20-slim" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { firewall: { enable: false } }
+`)
+	fake := dockertest.NewFakeClient(testCfg)
 	capture := fake.SetupBuildKitWithProgress(whailtest.SimpleBuildEvents())
 
 	tio := iostreamstest.New()
@@ -162,8 +187,8 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return testCfg
+		Config: func() (config.Config, error) {
+			return testCfg, nil
 		},
 	}
 
@@ -179,26 +204,4 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 	assert.Equal(t, 1, capture.CallCount, "BuildKit builder should be called exactly once")
 	assert.NotEmpty(t, capture.Opts.Tags, "build should pass tags")
 	assert.NotEmpty(t, capture.Opts.ContextDir, "build should pass context dir")
-}
-
-// testBuildConfig returns a minimal config.Project suitable for the build pipeline test.
-// Uses Build.Image so the bundler can generate a Dockerfile without external dependencies.
-func testBuildConfig(t *testing.T) *config.Project {
-	t.Helper()
-	return &config.Project{
-		Version: "1",
-		Project: "test-project",
-		Build: config.BuildConfig{
-			Image: "node:20-slim",
-		},
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
-	}
 }
