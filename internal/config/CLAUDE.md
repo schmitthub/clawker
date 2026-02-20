@@ -72,6 +72,8 @@ Key ownership: `logging/monitoring/host_proxy/default_image` -> settings, `proje
 
 **Schema accessors**: `Project()`, `Settings()`, `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()`, `Logging()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`
 
+**Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
+
 **Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`
 
 **Mutation**: `Get(key)`, `Set(key, value)`, `Write(WriteOptions)`, `Watch(onChange)`

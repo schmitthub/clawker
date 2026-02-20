@@ -27,8 +27,8 @@ const (
 	clawkerDataDirEnv = "CLAWKER_DATA_DIR"
 	// clawkerStateDirEnv is the environment variable for overriding the state directory location.
 	clawkerStateDirEnv = "CLAWKER_STATE_DIR"
-	// clawkerConfigFileName is the filename for project configuration.
-	clawkerConfigFileName = "clawker.yaml"
+	// clawkerProjectConfigFileName is the filename for project configuration.
+	clawkerProjectConfigFileName = "clawker.yaml"
 	// clawkerSettingsFileName is the filename for global clawker settings.
 	clawkerSettingsFileName = "settings.yaml"
 	// clawkerProjectsFileName is the filename for the projects registry.
@@ -156,13 +156,24 @@ func absConfigFilePath(fileName string) (string, error) {
 func SettingsFilePath() (string, error) { return absConfigFilePath(clawkerSettingsFileName) }
 
 // UserProjectConfigFilePath returns the absolute path to the user-level clawker.yaml file.
-func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(clawkerConfigFileName) }
+func UserProjectConfigFilePath() (string, error) {
+	return absConfigFilePath(clawkerProjectConfigFileName)
+}
 
 // ProjectRegistryFilePath returns the absolute path to the project registry file.
 func ProjectRegistryFilePath() (string, error) { return absConfigFilePath(clawkerProjectsFileName) }
 
 // ClawkerIgnoreName returns the canonical ignore filename used by snapshot/bind workflows.
 func (c *configImpl) ClawkerIgnoreName() string { return clawkerIgnoreFileName }
+
+// ProjectConfigFileName returns the canonical project config filename.
+func (c *configImpl) ProjectConfigFileName() string { return clawkerProjectConfigFileName }
+
+// SettingsFileName returns the canonical settings filename.
+func (c *configImpl) SettingsFileName() string { return clawkerSettingsFileName }
+
+// ProjectRegistryFileName returns the canonical project registry filename.
+func (c *configImpl) ProjectRegistryFileName() string { return clawkerProjectsFileName }
 
 // Domain returns the public clawker domain.
 func (c *configImpl) Domain() string { return domain }

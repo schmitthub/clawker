@@ -10,7 +10,7 @@ type ConfigImplForTest = configImpl
 type LoadOptionsForTest = loadOptions
 
 const (
-	ClawkerConfigFileNameForTest   = clawkerConfigFileName
+	ClawkerConfigFileNameForTest   = clawkerProjectConfigFileName
 	ClawkerSettingsFileNameForTest = clawkerSettingsFileName
 	ClawkerProjectsFileNameForTest = clawkerProjectsFileName
 	ClawkerConfigDirEnvForTest     = clawkerConfigDirEnv

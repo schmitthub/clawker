@@ -61,9 +61,9 @@ func mustOwnedConfig(t *testing.T) (*ConfigImplForTest, map[ConfigScope]string) 
 	require.NoError(t, err)
 	projectRoot = resolvedProjectRoot
 
-	settingsPath := filepath.Join(root, "settings.yaml")
+	settingsPath := filepath.Join(root, ClawkerSettingsFileNameForTest)
 	userProjectPath := filepath.Join(root, ClawkerConfigFileNameForTest)
-	registryPath := filepath.Join(root, "projects.yaml")
+	registryPath := filepath.Join(root, ClawkerProjectsFileNameForTest)
 	projectPath := filepath.Join(projectRoot, ClawkerConfigFileNameForTest)
 
 	require.NoError(t, os.WriteFile(settingsPath, []byte("logging:\n  max_size_mb: 50\n"), 0o644))
@@ -120,7 +120,7 @@ func newConfigFromTestdata(t *testing.T) Config {
 	configDir := t.TempDir()
 	settingsBytes, err := os.ReadFile(filepath.Join(td, "config", "settings.yaml"))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), settingsBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), settingsBytes, 0o644))
 
 	userProjectBytes, err := os.ReadFile(filepath.Join(td, "config", ClawkerConfigFileNameForTest))
 	require.NoError(t, err)
@@ -133,7 +133,7 @@ func newConfigFromTestdata(t *testing.T) Config {
     worktrees:
       fix/test: fix-test
 `, cwd)
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(projectsYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(projectsYAML), 0o644))
 
 	t.Setenv(ClawkerConfigDirEnvForTest, configDir)
 	cfg, err := NewConfig()
@@ -779,10 +779,10 @@ func TestNewConfig_ParentEnvVarDoesNotShadowNestedYAMLList(t *testing.T) {
 	configDir := filepath.Join(root, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), []byte(""), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("agent:\n  includes:\n    - ~/.claude/agents\n"), 0o644))
 	registryYAML := "projects: {}\n"
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(registryYAML), 0o644))
 
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)
@@ -805,10 +805,10 @@ func TestNewConfig_LeafEnvVarOverridesConfigValue(t *testing.T) {
 	configDir := filepath.Join(root, "config")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "settings.yaml"), []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerSettingsFileNameForTest), []byte(""), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerConfigFileNameForTest), []byte("build:\n  image: ubuntu:22.04\n"), 0o644))
 	registryYAML := "projects: {}\n"
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "projects.yaml"), []byte(registryYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ClawkerProjectsFileNameForTest), []byte(registryYAML), 0o644))
 
 	oldWd, err := os.Getwd()
 	require.NoError(t, err)

@@ -87,7 +87,7 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	projectManager := project.NewProjectManager(cfgGateway)
 
 	// Require an existing clawker.yaml
-	configFileName := "clawker.yaml"
+	configFileName := cfgGateway.ProjectConfigFileName()
 	configPath := filepath.Join(wd, configFileName)
 	if _, err := os.Stat(configPath); err != nil {
 		cmdutil.PrintErrorf(ios, "No %s found in the current directory", configFileName)

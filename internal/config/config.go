@@ -83,6 +83,9 @@ type Config interface {
 	JaegerURL(host string, https bool) string
 	PrometheusURL(host string, https bool) string
 	RequiredFirewallDomains() []string
+	ProjectConfigFileName() string
+	SettingsFileName() string
+	ProjectRegistryFileName() string
 	GetProjectRoot() (string, error)
 	GetProjectIgnoreFile() (string, error)
 }
@@ -838,7 +841,7 @@ func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (
 
 		root, err := c.projectRootFromCurrentDir()
 		if err == nil {
-			return filepath.Join(root, clawkerConfigFileName), nil
+			return filepath.Join(root, clawkerProjectConfigFileName), nil
 		}
 		if errors.Is(err, ErrNotInProject) {
 			if c.userProjectConfigFile == "" {
@@ -1135,7 +1138,7 @@ func (c *configImpl) mergeProjectConfigUnsafe() error {
 		return err
 	}
 
-	projectFile := filepath.Join(root, clawkerConfigFileName)
+	projectFile := filepath.Join(root, clawkerProjectConfigFileName)
 	c.v.SetConfigFile(projectFile)
 	if err := validateConfigFileExact(projectFile, &Project{}); err != nil {
 		return err
@@ -1208,7 +1211,7 @@ func settingsConfigFile() string {
 func userProjectConfigFile() string {
 	path, err := UserProjectConfigFilePath()
 	if err != nil {
-		return filepath.Join(ConfigDir(), clawkerConfigFileName)
+		return filepath.Join(ConfigDir(), clawkerProjectConfigFileName)
 	}
 	return path
 }

@@ -17,12 +17,14 @@ import (
 type CheckOptions struct {
 	IOStreams *iostreams.IOStreams
 	File      string
+	Config    func() (config.Config, error)
 }
 
 // NewCmdCheck creates the config check command.
 func NewCmdCheck(f *cmdutil.Factory, runF func(context.Context, *CheckOptions) error) *cobra.Command {
 	opts := &CheckOptions{
 		IOStreams: f.IOStreams,
+		Config:   f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -58,13 +60,13 @@ type configTarget struct {
 }
 
 // resolveConfigTarget resolves the --file flag into a configTarget.
-func resolveConfigTarget(filePath string) (*configTarget, error) {
+func resolveConfigTarget(clawkerConfigFileName, filePath string) (*configTarget, error) {
 	if filePath == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("failed to determine working directory: %w", err)
 		}
-		absPath := filepath.Join(cwd, "clawker.yaml")
+		absPath := filepath.Join(cwd, clawkerConfigFileName)
 		return &configTarget{
 			filePath:    absPath,
 			displayPath: absPath,
@@ -113,8 +115,12 @@ func resolveConfigTarget(filePath string) (*configTarget, error) {
 func checkRun(_ context.Context, opts *CheckOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
 
-	target, err := resolveConfigTarget(opts.File)
+	target, err := resolveConfigTarget(cfg.ProjectConfigFileName(), opts.File)
 	if err != nil {
 		return err
 	}

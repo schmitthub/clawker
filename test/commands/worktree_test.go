@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/worktree/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	gitpkg "github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -240,7 +241,7 @@ func registerWorktreeInRegistry(t *testing.T, h *harness.Harness, branch, slug s
 	t.Helper()
 
 	// Read existing registry as raw YAML map (harness writes map format)
-	regPath := filepath.Join(h.ConfigDir, "projects.yaml")
+	regPath := filepath.Join(h.ConfigDir, configmocks.NewBlankConfig().ProjectRegistryFileName())
 	data, err := os.ReadFile(regPath)
 	require.NoError(t, err, "failed to read registry")
 

@@ -102,7 +102,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	for _, ctr := range result.Items {
 		if ctr.NetworkSettings != nil {
 			for netName := range ctr.NetworkSettings.Networks {
-				if netName == "clawker-net" {
+				if netName == c.cfg.ClawkerNetwork() {
 					logger.Debug().Msg("monitoring stack detected as active")
 					return true
 				}

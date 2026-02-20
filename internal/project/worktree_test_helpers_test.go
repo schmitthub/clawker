@@ -13,6 +13,6 @@ func newFSConfigFromProjectTestdata(t *testing.T) (config.Config, string, string
 	t.Helper()
 	cfg, _ := configmocks.NewIsolatedTestConfig(t)
 	configDir := os.Getenv(cfg.ConfigDirEnvVar())
-	registryPath := filepath.Join(configDir, "projects.yaml")
+	registryPath := filepath.Join(configDir, cfg.ProjectRegistryFileName())
 	return cfg, registryPath, ""
 }

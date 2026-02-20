@@ -42,6 +42,9 @@ func NewFromString(cfgStr string) *ConfigMock {
 
 	// Constants
 	mock.ClawkerIgnoreNameFunc = cfg.ClawkerIgnoreName
+	mock.ProjectConfigFileNameFunc = cfg.ProjectConfigFileName
+	mock.SettingsFileNameFunc = cfg.SettingsFileName
+	mock.ProjectRegistryFileNameFunc = cfg.ProjectRegistryFileName
 	mock.DomainFunc = cfg.Domain
 	mock.LabelDomainFunc = cfg.LabelDomain
 	mock.ConfigDirEnvVarFunc = cfg.ConfigDirEnvVar

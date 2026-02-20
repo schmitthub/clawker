@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/text"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"gopkg.in/yaml.v3"
@@ -130,13 +131,14 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	}
 
 	// Isolate config dir so registry/settings load from temp dir
-	h.SetEnv("CLAWKER_CONFIG_DIR", h.ConfigDir)
+	cfgConsts := configmocks.NewBlankConfig()
+	h.SetEnv(cfgConsts.ConfigDirEnvVar(), h.ConfigDir)
 
 	// Register the project in a temp registry so resolution finds it
 	if h.Project != "" {
 		slug := text.Slugify(h.Project)
 		regYAML := fmt.Sprintf("projects:\n  %s:\n    name: %s\n    root: %s\n", slug, h.Project, h.ProjectDir)
-		regPath := filepath.Join(h.ConfigDir, "projects.yaml")
+		regPath := filepath.Join(h.ConfigDir, cfgConsts.ProjectRegistryFileName())
 		if err := os.WriteFile(regPath, []byte(regYAML), 0644); err != nil {
 			t.Fatalf("failed to write registry: %v", err)
 		}
@@ -155,7 +157,8 @@ func (h *Harness) writeConfig() error {
 		return err
 	}
 
-	configPath := filepath.Join(h.ProjectDir, "clawker.yaml")
+	cfgConsts := configmocks.NewBlankConfig()
+	configPath := filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
 	return os.WriteFile(configPath, data, 0644)
 }
 
@@ -260,7 +263,8 @@ func (h *Harness) NetworkName() string {
 
 // ConfigPath returns the path to the clawker.yaml file.
 func (h *Harness) ConfigPath() string {
-	return filepath.Join(h.ProjectDir, "clawker.yaml")
+	cfgConsts := configmocks.NewBlankConfig()
+	return filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
 }
 
 // WriteFile writes a file to the project directory.

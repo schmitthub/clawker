@@ -154,6 +154,12 @@ var _ config.Config = &ConfigMock{}
 //			ProjectFunc: func() *config.Project {
 //				panic("mock out the Project method")
 //			},
+//			ProjectConfigFileNameFunc: func() string {
+//				panic("mock out the ProjectConfigFileName method")
+//			},
+//			ProjectRegistryFileNameFunc: func() string {
+//				panic("mock out the ProjectRegistryFileName method")
+//			},
 //			PrometheusURLFunc: func(host string, https bool) string {
 //				panic("mock out the PrometheusURL method")
 //			},
@@ -165,6 +171,9 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			SettingsFunc: func() config.Settings {
 //				panic("mock out the Settings method")
+//			},
+//			SettingsFileNameFunc: func() string {
+//				panic("mock out the SettingsFileName method")
 //			},
 //			ShareSubdirFunc: func() (string, error) {
 //				panic("mock out the ShareSubdir method")
@@ -323,6 +332,12 @@ type ConfigMock struct {
 	// ProjectFunc mocks the Project method.
 	ProjectFunc func() *config.Project
 
+	// ProjectConfigFileNameFunc mocks the ProjectConfigFileName method.
+	ProjectConfigFileNameFunc func() string
+
+	// ProjectRegistryFileNameFunc mocks the ProjectRegistryFileName method.
+	ProjectRegistryFileNameFunc func() string
+
 	// PrometheusURLFunc mocks the PrometheusURL method.
 	PrometheusURLFunc func(host string, https bool) string
 
@@ -334,6 +349,9 @@ type ConfigMock struct {
 
 	// SettingsFunc mocks the Settings method.
 	SettingsFunc func() config.Settings
+
+	// SettingsFileNameFunc mocks the SettingsFileName method.
+	SettingsFileNameFunc func() string
 
 	// ShareSubdirFunc mocks the ShareSubdir method.
 	ShareSubdirFunc func() (string, error)
@@ -499,6 +517,12 @@ type ConfigMock struct {
 		// Project holds details about calls to the Project method.
 		Project []struct {
 		}
+		// ProjectConfigFileName holds details about calls to the ProjectConfigFileName method.
+		ProjectConfigFileName []struct {
+		}
+		// ProjectRegistryFileName holds details about calls to the ProjectRegistryFileName method.
+		ProjectRegistryFileName []struct {
+		}
 		// PrometheusURL holds details about calls to the PrometheusURL method.
 		PrometheusURL []struct {
 			// Host is the host argument value.
@@ -518,6 +542,9 @@ type ConfigMock struct {
 		}
 		// Settings holds details about calls to the Settings method.
 		Settings []struct {
+		}
+		// SettingsFileName holds details about calls to the SettingsFileName method.
+		SettingsFileName []struct {
 		}
 		// ShareSubdir holds details about calls to the ShareSubdir method.
 		ShareSubdir []struct {
@@ -584,10 +611,13 @@ type ConfigMock struct {
 	lockMonitoringConfig        sync.RWMutex
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
+	lockProjectConfigFileName   sync.RWMutex
+	lockProjectRegistryFileName sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockRequiredFirewallDomains sync.RWMutex
 	lockSet                     sync.RWMutex
 	lockSettings                sync.RWMutex
+	lockSettingsFileName        sync.RWMutex
 	lockShareSubdir             sync.RWMutex
 	lockStateDirEnvVar          sync.RWMutex
 	lockWatch                   sync.RWMutex
@@ -1838,6 +1868,60 @@ func (mock *ConfigMock) ProjectCalls() []struct {
 	return calls
 }
 
+// ProjectConfigFileName calls ProjectConfigFileNameFunc.
+func (mock *ConfigMock) ProjectConfigFileName() string {
+	if mock.ProjectConfigFileNameFunc == nil {
+		panic("ConfigMock.ProjectConfigFileNameFunc: method is nil but Config.ProjectConfigFileName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectConfigFileName.Lock()
+	mock.calls.ProjectConfigFileName = append(mock.calls.ProjectConfigFileName, callInfo)
+	mock.lockProjectConfigFileName.Unlock()
+	return mock.ProjectConfigFileNameFunc()
+}
+
+// ProjectConfigFileNameCalls gets all the calls that were made to ProjectConfigFileName.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectConfigFileNameCalls())
+func (mock *ConfigMock) ProjectConfigFileNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectConfigFileName.RLock()
+	calls = mock.calls.ProjectConfigFileName
+	mock.lockProjectConfigFileName.RUnlock()
+	return calls
+}
+
+// ProjectRegistryFileName calls ProjectRegistryFileNameFunc.
+func (mock *ConfigMock) ProjectRegistryFileName() string {
+	if mock.ProjectRegistryFileNameFunc == nil {
+		panic("ConfigMock.ProjectRegistryFileNameFunc: method is nil but Config.ProjectRegistryFileName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectRegistryFileName.Lock()
+	mock.calls.ProjectRegistryFileName = append(mock.calls.ProjectRegistryFileName, callInfo)
+	mock.lockProjectRegistryFileName.Unlock()
+	return mock.ProjectRegistryFileNameFunc()
+}
+
+// ProjectRegistryFileNameCalls gets all the calls that were made to ProjectRegistryFileName.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectRegistryFileNameCalls())
+func (mock *ConfigMock) ProjectRegistryFileNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectRegistryFileName.RLock()
+	calls = mock.calls.ProjectRegistryFileName
+	mock.lockProjectRegistryFileName.RUnlock()
+	return calls
+}
+
 // PrometheusURL calls PrometheusURLFunc.
 func (mock *ConfigMock) PrometheusURL(host string, https bool) string {
 	if mock.PrometheusURLFunc == nil {
@@ -1961,6 +2045,33 @@ func (mock *ConfigMock) SettingsCalls() []struct {
 	mock.lockSettings.RLock()
 	calls = mock.calls.Settings
 	mock.lockSettings.RUnlock()
+	return calls
+}
+
+// SettingsFileName calls SettingsFileNameFunc.
+func (mock *ConfigMock) SettingsFileName() string {
+	if mock.SettingsFileNameFunc == nil {
+		panic("ConfigMock.SettingsFileNameFunc: method is nil but Config.SettingsFileName was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockSettingsFileName.Lock()
+	mock.calls.SettingsFileName = append(mock.calls.SettingsFileName, callInfo)
+	mock.lockSettingsFileName.Unlock()
+	return mock.SettingsFileNameFunc()
+}
+
+// SettingsFileNameCalls gets all the calls that were made to SettingsFileName.
+// Check the length with:
+//
+//	len(mockedConfig.SettingsFileNameCalls())
+func (mock *ConfigMock) SettingsFileNameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockSettingsFileName.RLock()
+	calls = mock.calls.SettingsFileName
+	mock.lockSettingsFileName.RUnlock()
 	return calls
 }
 

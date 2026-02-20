@@ -194,7 +194,7 @@ func (r *projectRegistry) Save() error {
 		return nil
 	}
 	if strings.Contains(err.Error(), "project registry path is not configured") {
-		registryPath := filepath.Join(config.ConfigDir(), "projects.yaml")
+		registryPath := filepath.Join(config.ConfigDir(), r.cfg.ProjectRegistryFileName())
 		return r.cfg.Write(config.WriteOptions{Scope: config.ScopeRegistry, Path: registryPath})
 	}
 	return err
