@@ -90,12 +90,9 @@ stop, remove, top
 
 ## Next Steps
 
-Phase 1 simple mechanical sweep commands still TODO (~10 commands):
+Phase 1 simple mechanical sweep commands still TODO:
 - `container/exec` — also uses ProjectCfg(), more complex
-- `container/list` — test-only fix (prod has no Config field). Fix `testFactory` (line 30-31) and `TestListRun_DockerConnectionError` (line 389-390): `func() config.Provider { return config.NewConfigForTest(nil, nil) }` → `func() (config.Config, error) { return config.NewBlankConfig(), nil }`
 - All `worktree/*` (add, list, prune, remove)
-- `loop/reset`, `loop/status` — see detailed notes below
-- `monitor/status`, `monitor/up`, `monitor/down` — see detailed notes below
 
 Phase 2 complex commands still TODO (~10 commands):
 - `container/shared`, `container/create`, `container/run`, `container/start`
@@ -106,120 +103,50 @@ Phase 2 complex commands still TODO (~10 commands):
 Phase 3: test infra + fawker
 Phase 4: cleanup + docs
 
-### Detailed Notes: loop/reset + loop/status
+### loop/reset (`internal/cmd/loop/reset/`)
+**Production changes:**
+- `cfg := opts.Config().ProjectCfg()` → split multi-return + nil-safe `cfg.Project()` extraction
+- All `cfg.Project` references replaced with `project` local variable
+- No test changes needed (tests use `runF` interception)
 
-**Both commands**: Config field is already `func() (config.Config, error)`. Only the run function needs fixing.
+### loop/status (`internal/cmd/loop/status/`)
+**Production changes:**
+- Same pattern as loop/reset — split multi-return + nil-safe project extraction
+- `cfg.Project` in LoadSession, LoadCircuitState, and output header replaced with `project`
+- No test changes needed
 
-**Pattern**: `cfg := opts.Config().ProjectCfg()` → split multi-return + nil-safe Project():
-```go
-cfg, err := opts.Config()
-if err != nil {
-    return fmt.Errorf("loading config: %w", err)
-}
-var project string
-if p := cfg.Project(); p != nil {
-    project = p.Project
-}
-```
-Then replace `cfg.Project` with `project` everywhere in the function.
+### monitor/down (`internal/cmd/monitor/down/`)
+**Production changes:**
+- Added `Config func() (config.Config, error)` field to `DownOptions`
+- Wired `Config: f.Config` in `NewCmdDown`
+- `config.MonitorDir()` → `cfg.MonitorSubdir()` via new config resolution
+- Replaced deprecated `cmdutil.PrintErrorf`/`PrintNextSteps` with `fmt.Fprintf` + `cs.FailureIcon()`
+- Updated `internal/cmd/monitor/CLAUDE.md` DownOptions docs + Config Access Pattern section
+- No test changes needed (tests use `runF` interception)
 
-**loop/reset** (`resetRun`): One `ProjectCfg()` call at line ~68. Uses `cfg.Project` in DeleteCircuitState and success message.
+### monitor/status, monitor/up, monitor/init
+Already fixed in user's prior unstaged changes:
+- `config.MonitorDir()` → `cfg.MonitorSubdir()`
+- `config.NewBlankConfig().ClawkerNetwork()` → `cfg.ClawkerNetwork()`
+- `opts.Config().UserSettings().Monitoring` → split multi-return + `cfg.MonitoringConfig()`
+- URL methods: `cfg.GrafanaURL("localhost", false)`, `cfg.JaegerURL("localhost", false)`, `cfg.PrometheusURL("localhost", false)`
 
-**loop/status** (`statusRun`): One `ProjectCfg()` call at line ~65. Uses `cfg.Project` in LoadSession, LoadCircuitState, and output header.
+### RESOLVED: URL helper methods
+User added to Config interface + configImpl in consts.go with `(host string, https bool)` signature.
+DRY helper: `serviceURL(host string, port int, https bool) string`. No OtelCollectorURL method added.
 
-**No test changes needed** for loop/reset or loop/status.
-
-### Detailed Notes: monitor/status + monitor/up + monitor/down
-
-**All 3 commands** have TWO issues each:
-1. `config.MonitorDir()` is gone → replace with `cfg.MonitorSubdir()` (returns `(string, error)`, ensures dir exists)
-2. `config.NewBlankConfig().ClawkerNetwork()` → use `cfg.ClawkerNetwork()` from the resolved config
-
-**monitor/status** (`statusRun`):
-- Config field already `func() (config.Config, error)` — just split multi-return
-- Line ~50: `config.NewBlankConfig().ClawkerNetwork()` → `cfg.ClawkerNetwork()`
-- Line ~53: `config.MonitorDir()` → `cfg.MonitorSubdir()`
-- Line ~92: `opts.Config().UserSettings().Monitoring` → `cfg.Settings().Monitoring` (Note: `UserSettings()` is gone, replaced by `Settings()`)
-- `mon.GrafanaURL()`, `mon.JaegerURL()`, `mon.PrometheusURL()` methods DON'T EXIST on `MonitoringConfig`. They were on the old deleted type. Need to add URL helper methods first — see BLOCKER below.
-
-**monitor/up** (`upRun`):
-- Same pattern as status. Lines ~67, ~70, ~122.
-
-**monitor/down** (`downRun`):
-- **Has NO Config field** — needs `Config func() (config.Config, error)` added to `DownOptions`, wired in `NewCmdDown` as `Config: f.Config`
-- Line ~57: `config.MonitorDir()` → `cfg.MonitorSubdir()`
-- No URL methods needed (down doesn't print URLs)
-- Update monitor/CLAUDE.md DownOptions docs
-
-**monitor/init** (`initRun`) — ALSO broken with same patterns:
-- Line ~68: `config.MonitorDir()` → `cfg.MonitorSubdir()`
-- Line ~76: `opts.Config().UserSettings()` → split multi-return + `cfg.Settings()`
-- Line ~81: `config.EnsureDir()` is gone — `MonitorSubdir()` already ensures the dir
-- Line ~132: uses `settings.Monitoring.GrafanaURL()` — same missing URL method
-
-### BLOCKER: URL helper methods needed before monitor commands
-
-`GrafanaURL()`, `JaegerURL()`, `PrometheusURL()` don't exist on `MonitoringConfig`. User wants them added to the `Config` interface + `configImpl` in consts.go with:
-- `https bool` parameter
-- A DRY `localURL(port int, https bool) string` private helper
-- Also add `OtelCollectorURL(https bool)` method
-- Ports from defaults: Grafana=3000, Jaeger=16686, Prometheus=9090, OtelCollector (from monitoring config)
-
-Implementation in consts.go:
-```go
-func localURL(port int, https bool) string {
-    scheme := "http"
-    if https { scheme = "https" }
-    return fmt.Sprintf("%s://localhost:%d", scheme, port)
-}
-func (c *configImpl) GrafanaURL(https bool) string { return localURL(c.Settings().Monitoring.GrafanaPort, https) }
-func (c *configImpl) JaegerURL(https bool) string { return localURL(c.Settings().Monitoring.JaegerPort, https) }
-func (c *configImpl) PrometheusURL(https bool) string { return localURL(c.Settings().Monitoring.PrometheusPort, https) }
-func (c *configImpl) OtelCollectorURL(https bool) string { return localURL(c.Settings().Monitoring.OtelCollectorPort, https) }
-```
-
-Then add to Config interface + regenerate ConfigMock + wire in stubs.go.
-
-### BLOCKER: go:generate moq for ConfigMock
-
-Adding methods to `Config` interface requires regenerating `config_mock.go`. The directive:
-```
-//go:generate moq -rm -out config_mock.go . Config
-```
-The `-rm` flag deletes the mock first, but `stubs.go` references `ConfigMock`, causing chicken-and-egg compile failure. **Fix**: temporarily rename `stubs.go` → `stubs.go.bak`, run `go generate`, rename back. Or remove `-rm` from directive temporarily.
-
-After regenerating, wire new methods in `stubs.go` `NewFromString()` (add `mock.GrafanaURLFunc = ...` etc.).
-
-### BLOCKER: go mod tidy broken by deleted configtest package
-
-`go mod tidy` fails because these files import the deleted `internal/config/configtest`:
-- `cmd/fawker/factory.go`
-- `test/harness/builders/config_builder.go`
-- `internal/cmd/container/shared/image_test.go`
-- `internal/cmd/loop/shared/runner_test.go`
-- `internal/cmd/loop/shared/dashboard_test.go`
-- `test/agents/loop_test.go`
-- `test/internals/containerfs_test.go`
-
-Does NOT block targeted `go build` or `go test` on individual packages. Only blocks `go mod tidy`.
-
-### Fawker factory rewrite needed (Phase 3)
-
-Key changes for `cmd/fawker/factory.go`:
-- `fawkerConfigFunc` return type: `func() config.Provider` → `func() (config.Config, error)`
-- Replace `config.NewConfigForTest(project, settings)` + `configtest.NewInMemorySettingsLoader()` with `config.NewFromString(yaml)` with inline project YAML
-- `fawkerClient` param: `*config.Config` (concrete) → `config.Config` (interface)
-- `dockertest.NewFakeClient(dockertest.WithConfig(cfg))` → `dockertest.NewFakeClient(cfg)` (WithConfig doesn't exist)
-- Remove `fawkerProject()` helper, `configtest` import, `config.DefaultSettings`/`config.Provider` refs
+### RESOLVED: ConfigMock infrastructure
+User moved mocks to `internal/config/mocks/` subpackage. Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
+ConfigMock regenerated with URL method stubs. Stubs.go in mocks/ wires all read Func fields.
 
 ### Lesson 23: go:generate moq -rm chicken-and-egg
-The `-rm` flag on the moq generate directive deletes config_mock.go before regenerating. If any other file in the package references `ConfigMock` (like stubs.go), the package won't compile and moq fails. Workaround: temporarily rename stubs.go before running go generate.
+The `-rm` flag on the moq generate directive deletes config_mock.go before regenerating. If any other file in the package references `ConfigMock` (like stubs.go), the package won't compile and moq fails. RESOLVED: mocks moved to separate subpackage.
 
 ### Lesson 24: Monitor URL methods were on old deleted type
-`GrafanaURL()`, `JaegerURL()`, `PrometheusURL()` existed on the old `UserSettings.Monitoring` type but were deleted with the old API. They need to be re-added to the new Config interface before monitor commands can be migrated.
+`GrafanaURL()`, `JaegerURL()`, `PrometheusURL()` existed on the old `UserSettings.Monitoring` type but were deleted with the old API. RESOLVED: re-added to Config interface with `(host string, https bool)` signature.
 
 ### Lesson 25: monitor/down has no Config field
-Unlike the other monitor subcommands, `DownOptions` has no `Config` field. It needs one added and wired via `f.Config` in `NewCmdDown`.
+Unlike the other monitor subcommands, `DownOptions` had no `Config` field. RESOLVED: added and wired.
 
-### Lesson 26: monitor/init is also broken
-`monitor/init` has the same `config.MonitorDir()`, `opts.Config().UserSettings()`, `config.EnsureDir()`, and URL method issues as the other monitor commands. Fix it at the same time.
+### Lesson 26: monitor/init was also broken
+`monitor/init` had the same `config.MonitorDir()`, `opts.Config().UserSettings()`, `config.EnsureDir()`, and URL method issues. RESOLVED in user's prior unstaged changes.

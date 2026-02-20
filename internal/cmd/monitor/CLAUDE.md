@@ -54,6 +54,7 @@ Starts monitoring stack via Docker Compose. Ensures `clawker-net` network exists
 ```go
 type DownOptions struct {
     IOStreams *iostreams.IOStreams
+    Config    func() (config.Config, error)
     Volumes   bool
 }
 func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command
@@ -75,4 +76,4 @@ Shows monitoring stack status (running/stopped), container details, and service 
 
 ## Config Access Pattern
 
-Subcommands use `config.Provider` gateway: `opts.Config().UserSettings().Monitoring` for URLs/ports.
+Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, service URLs via `cfg.GrafanaURL(host, https)` / `cfg.JaegerURL(host, https)` / `cfg.PrometheusURL(host, https)`.

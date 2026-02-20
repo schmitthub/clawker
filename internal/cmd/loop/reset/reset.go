@@ -66,7 +66,15 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	cs := ios.ColorScheme()
 
 	// Get config
-	cfg := opts.Config().ProjectCfg()
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var project string
+	if p := cfg.Project(); p != nil {
+		project = p.Project
+	}
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()
@@ -75,18 +83,18 @@ func resetRun(_ context.Context, opts *ResetOptions) error {
 	}
 
 	// Reset circuit breaker
-	if err := store.DeleteCircuitState(cfg.Project, opts.Agent); err != nil {
+	if err := store.DeleteCircuitState(project, opts.Agent); err != nil {
 		return fmt.Errorf("resetting circuit breaker: %w", err)
 	}
 
 	if !opts.Quiet {
 		fmt.Fprintf(ios.ErrOut, "%s Circuit breaker reset for %s.%s\n",
-			cs.SuccessIcon(), cfg.Project, opts.Agent)
+			cs.SuccessIcon(), project, opts.Agent)
 	}
 
 	// Optionally clear session
 	if opts.ClearAll {
-		if err := store.DeleteSession(cfg.Project, opts.Agent); err != nil {
+		if err := store.DeleteSession(project, opts.Agent); err != nil {
 			return fmt.Errorf("clearing session: %w", err)
 		}
 		if !opts.Quiet {

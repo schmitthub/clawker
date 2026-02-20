@@ -127,8 +127,8 @@ func TestNewCmdStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() config.Provider {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -201,8 +201,8 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() config.Provider {
-			return config.NewConfigForTest(project, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
