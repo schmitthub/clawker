@@ -31,7 +31,7 @@ type RunOptions struct {
 	IOStreams    *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() config.Provider
+	Config       func() (config.Config, error)
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -135,8 +135,11 @@ If IMAGE is "@", clawker will use (in order of precedence):
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
-	cfgGateway := opts.Config()
-	cfg := cfgGateway.ProjectCfg()
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cfg := cfgGateway.Project()
 
 	// --- Phase A: Pre-progress (synchronous) ---
 	// Config + Docker connect + image resolution — may trigger interactive prompts.
@@ -173,6 +176,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 					IOStreams:   ios,
 					TUI:         opts.TUI,
 					Prompter:    opts.Prompter,
+					Cfg:         cfgGateway,
 					BuildImage:  client.BuildDefaultImage,
 					CommandVerb: "run",
 				}); err != nil {
@@ -197,6 +201,7 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
 			Client:      client,
+			Cfg:         cfgGateway,
 			Config:      cfg,
 			Options:     containerOpts,
 			Flags:       opts.flags,
@@ -334,13 +339,15 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	ios.Logger.Debug().Msg("container started successfully")
 
 	// Start socket bridge for GPG/SSH forwarding
-	cfg := opts.Config().ProjectCfg()
-	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-		gpgEnabled := cfg.Security.GitCredentials != nil && cfg.Security.GitCredentials.GPGEnabled()
-		if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
-			ios.Logger.Warn().Err(err).Msg("failed to start socket bridge")
-		} else {
-			defer opts.SocketBridge().StopBridge(containerID)
+	if sbCfg, sbErr := opts.Config(); sbErr == nil {
+		sbProject := sbCfg.Project()
+		if shared.NeedsSocketBridge(sbProject) && opts.SocketBridge != nil {
+			gpgEnabled := sbProject.Security.GitCredentials != nil && sbProject.Security.GitCredentials.GPGEnabled()
+			if err := opts.SocketBridge().EnsureBridge(containerID, gpgEnabled); err != nil {
+				ios.Logger.Warn().Err(err).Msg("failed to start socket bridge")
+			} else {
+				defer opts.SocketBridge().StopBridge(containerID)
+			}
 		}
 	}
 

@@ -115,6 +115,8 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 type InjectOnboardingOpts struct {
 	// ContainerID is the Docker container ID to inject the file into.
 	ContainerID string
+	// Cfg provides config constants (e.g. domain, label prefix) for containerfs.
+	Cfg config.Config
 	// CopyToContainer copies a tar archive to the container at the given destination path.
 	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
 	CopyToContainer CopyToContainerFn
@@ -128,7 +130,7 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 		return fmt.Errorf("InjectOnboardingFile: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PrepareOnboardingTar(containerHomeDir)
+	tar, err := containerfs.PrepareOnboardingTar(opts.Cfg, containerHomeDir)
 	if err != nil {
 		return fmt.Errorf("failed to prepare onboarding file: %w", err)
 	}
@@ -147,6 +149,8 @@ type InjectPostInitOpts struct {
 	ContainerID string
 	// Script is the user's post_init content from clawker.yaml.
 	Script string
+	// Cfg provides config constants for containerfs.
+	Cfg config.Config
 	// CopyToContainer copies a tar archive to the container at the given destination path.
 	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
 	CopyToContainer CopyToContainerFn
@@ -161,7 +165,7 @@ func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 		return fmt.Errorf("InjectPostInitScript: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PreparePostInitTar(opts.Script)
+	tar, err := containerfs.PreparePostInitTar(opts.Cfg, opts.Script)
 	if err != nil {
 		return fmt.Errorf("failed to prepare post-init script: %w", err)
 	}

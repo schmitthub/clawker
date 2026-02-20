@@ -93,7 +93,7 @@ func projectInitRun(ctx context.Context, opts *ProjectInitOptions) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	projectManager := project.NewService(cfgGateway, ios.Logger)
+	projectManager := project.NewProjectManager(cfgGateway)
 	configFileName := "clawker.yaml"
 	configPath := filepath.Join(wd, configFileName)
 	ignoreFileName := cfgGateway.ClawkerIgnoreName()

@@ -38,8 +38,8 @@ type LoopContainerConfig struct {
 
 	Command []string
 
-	// Config is the gateway config providing ProjectCfg(), Settings(), etc.
-	Config *config.Config
+	// Config is the config.Config interface providing Project(), Settings(), etc.
+	Config config.Config
 
 	// LoopOpts holds the shared loop flags (agent, image, worktree, etc.).
 	LoopOpts *LoopOptions
@@ -142,7 +142,8 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 			defer close(events)
 			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
 				Client:      cfg.Client,
-				Config:      cfg.Config.Project,
+				Cfg:         cfg.Config,
+				Config:      cfg.Config.Project(),
 				Options:     containerOpts,
 				Flags:       cfg.Flags,
 				Version:     cfg.Version,
@@ -167,7 +168,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 		containerID := o.result.ContainerID
 
 		// Inject hooks into the container
-		if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
+		if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true)
@@ -200,7 +201,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 // The cleanup function uses context.Background() so it runs even after cancellation.
 func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopContainerResult, func(), error) {
 	ios := cfg.IOStreams
-	projectCfg := cfg.Config.Project
+	projectCfg := cfg.Config.Project()
 
 	// --- Phase A: Image resolution ---
 	image := cfg.LoopOpts.Image
@@ -308,7 +309,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	// --- Phase C: Inject hooks ---
 	ios.StartSpinner("Injecting loop hooks")
-	if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), ios.Logger); err != nil {
+	if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), ios.Logger); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("injecting hooks: %w", err)
@@ -339,7 +340,7 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 //
 // Hooks are merged into the existing settings.json to preserve any pre-existing
 // configuration (MCP servers, skills, extensions) set up by containerfs or post-init.
-func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, readFn containershared.CopyFromContainerFn, log iostreams.Logger) error {
+func InjectLoopHooks(ctx context.Context, cfgGateway config.Config, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, readFn containershared.CopyFromContainerFn, log iostreams.Logger) error {
 	hooks, hookFiles, err := ResolveHooks(hooksFile)
 	if err != nil {
 		return err
@@ -358,7 +359,7 @@ func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, 
 		return fmt.Errorf("marshaling merged settings: %w", err)
 	}
 
-	settingsTar, err := buildSettingsTar(settingsJSON)
+	settingsTar, err := buildSettingsTar(cfgGateway, settingsJSON)
 	if err != nil {
 		return fmt.Errorf("building settings tar: %w", err)
 	}
@@ -430,7 +431,7 @@ func readExistingSettings(ctx context.Context, containerID string, readFn contai
 
 // buildSettingsTar creates a tar archive containing settings.json with the given content.
 // The file is owned by the container user (UID/GID 1001).
-func buildSettingsTar(content []byte) (io.Reader, error) {
+func buildSettingsTar(cfg config.Config, content []byte) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
@@ -438,8 +439,8 @@ func buildSettingsTar(content []byte) (io.Reader, error) {
 		Name:    "settings.json",
 		Mode:    0o644,
 		Size:    int64(len(content)),
-		Uid:     config.ContainerUID,
-		Gid:     config.ContainerGID,
+		Uid:     cfg.ContainerUID(),
+		Gid:     cfg.ContainerGID(),
 		ModTime: time.Now(),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {

@@ -289,6 +289,16 @@ func projectWorktreeBaseDir(cfg config.Config, projectRoot string) string {
 	return filepath.Join(worktreesRoot, fmt.Sprintf("%x", sum[:6]))
 }
 
+// NewWorktreeDirProvider creates a WorktreeDirProvider rooted at the
+// standard worktree namespace for the given project root.
+// This is the exported constructor for external callers (e.g. container/shared)
+// that need a WorktreeDirProvider without going through the full project service.
+func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeDirProvider {
+	return &configDirWorktreeProvider{
+		baseDir: projectWorktreeBaseDir(cfg, projectRoot),
+	}
+}
+
 func (s *worktreeService) logError(err error, msg string) {
 	if s == nil || s.logger == nil {
 		return
