@@ -55,7 +55,7 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get config: %w", cfgErr)
 				return
 			}
-			svc = project.NewService(cfg, f.IOStreams.Logger)
+			svc = project.NewProjectManager(cfg)
 		})
 		return svc, err
 	}
