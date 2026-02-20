@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -193,7 +195,7 @@ func NewProjectMockFromRecord(record ProjectRecord) *ProjectMock {
 	}
 }
 
-const testRepoRoot = "/tmp/clawker-test-repo"
+var testRepoRoot = filepath.Join(os.TempDir(), "clawker-test-repo")
 
 func testRepoRootFromConfig(cfg config.Config) string {
 	if cfg == nil {

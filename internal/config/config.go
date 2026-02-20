@@ -171,6 +171,7 @@ func bindSupportedEnvKeys(v *viper.Viper) {
 	}
 }
 
+// TODO: what in the actual farts is this...
 var supportedEnvKeys = []string{
 	"default_image",
 	"build.image",

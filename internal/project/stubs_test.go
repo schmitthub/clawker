@@ -62,12 +62,12 @@ func TestNewProjectMock_DefaultsArePanicSafe(t *testing.T) {
 	require.NotNil(t, project)
 
 	assert.Equal(t, "test-project", project.Name())
-	assert.Equal(t, "/tmp/test-project", project.RepoPath())
+	assert.Equal(t, testRepoRoot, project.RepoPath())
 
 	record, err := project.Record()
 	require.NoError(t, err)
 	assert.Equal(t, "test-project", record.Name)
-	assert.Equal(t, "/tmp/test-project", record.Root)
+	assert.Equal(t, testRepoRoot, record.Root)
 	assert.Empty(t, record.Worktrees)
 
 	worktrees, err := project.ListWorktrees(context.Background())
