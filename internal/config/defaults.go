@@ -18,9 +18,9 @@ var requiredFirewallDomains = []string{
 	"docker.io",
 }
 
-// setDefaults registers all default values under namespaced keys.
+// SetDefaults registers all default values under namespaced keys.
 // Project-scope keys are prefixed with "project.", settings-scope with "settings.".
-func setDefaults(v *viper.Viper) {
+func SetDefaults(v *viper.Viper) {
 	// Project scope
 	v.SetDefault("project.version", "1")
 

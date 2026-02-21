@@ -136,9 +136,8 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 | Helper | Returns | Use case |
 | --- | --- | --- |
 | `NewBlankConfig()` | `*ConfigMock` | Default test double; Set/Write/Watch panic |
-| `NewFromString(yaml)` | `*ConfigMock` | Specific YAML values over defaults; Set/Write/Watch panic |
-| `NewIsolatedTestConfig(t)` | `Config` + reader callback | File-backed; supports Set/Write/env overrides |
-| `StubWriteConfig(t)` | reader callback | Isolates writes to temp dir |
+| `NewFromString(yaml)` | `*ConfigMock` | Empty config unless specific YAML values; Set/Write/Watch panic |
+| `NewIsolatedTestConfig(t)` | `Config` + reader callback | File-backed; supports Set/Write/env overrides
 
 `NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions.
 

@@ -27,7 +27,7 @@ func newViperConfigWithEnv(enableAutomaticEnv bool) *viper.Viper {
 	if enableAutomaticEnv {
 		bindEnvKeysFromSchema(v)
 	}
-	setDefaults(v)
+	SetDefaults(v)
 	return v
 }
 
@@ -133,6 +133,11 @@ func NewConfig() (Config, error) {
 	return c, nil
 }
 
+func NewBlankConfig() (Config, error) {
+	c := newConfig(newViperConfigWithEnv(false))
+	return c, nil
+}
+
 // ReadFromString takes a YAML string and returns a Config.
 // Useful for testing or constructing configs programmatically.
 // Top-level keys are grouped by scope via keyOwnership and merged under their
@@ -143,7 +148,7 @@ func ReadFromString(str string) (Config, error) {
 		return nil, err
 	}
 
-	v := newViperConfigWithEnv(false)
+	v := viper.New()
 
 	if rewritten != "" {
 		if err := checkDuplicateTopLevelKeys(rewritten); err != nil {

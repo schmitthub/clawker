@@ -12,20 +12,30 @@ import (
 // NewBlankConfig returns an in-memory *ConfigMock seeded with defaults.
 // It is the default test double for consumers that don't care about specific config values.
 func NewBlankConfig() *ConfigMock {
-	return NewFromString("")
+	cfg, err := config.NewBlankConfig()
+	if err != nil {
+		panic(err)
+	}
+	return newMockFrom(cfg)
 }
 
 // NewFromString creates an in-memory *ConfigMock from YAML.
 // All read methods delegate to a real config backed by defaults + the provided YAML.
-// Set, Write, and Watch are not wired — calling them panics, signaling the wrong test double.
-// Use NewIsolatedTestConfig for tests that need mutation or file-backed config.
 // Panics on invalid YAML to match test-stub ergonomics.
+// Set, Write, and Watch are NOT wired — calling them panics via moq's nil-func guard,
+// signaling that NewIsolatedTestConfig should be used for mutation tests.
 func NewFromString(cfgStr string) *ConfigMock {
 	cfg, err := config.ReadFromString(cfgStr)
 	if err != nil {
 		panic(err)
 	}
+	return newMockFrom(cfg)
+}
 
+// newMockFrom wires all read-only Func fields on a ConfigMock to delegate to cfg.
+// Set, Write, Watch, and path helpers are intentionally NOT wired — calling them
+// panics via moq's nil-func guard, signaling that NewIsolatedTestConfig should be used.
+func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
 	// Schema accessors
@@ -77,123 +87,55 @@ func NewFromString(cfgStr string) *ConfigMock {
 	mock.LabelTestFunc = cfg.LabelTest
 	mock.LabelE2ETestFunc = cfg.LabelE2ETest
 
-	// Path helpers
-	mock.MonitorSubdirFunc = cfg.MonitorSubdir
-	mock.BuildSubdirFunc = cfg.BuildSubdir
-	mock.DockerfilesSubdirFunc = cfg.DockerfilesSubdir
-	mock.LogsSubdirFunc = cfg.LogsSubdir
-	mock.BridgesSubdirFunc = cfg.BridgesSubdir
-	mock.PidsSubdirFunc = cfg.PidsSubdir
-	mock.BridgePIDFilePathFunc = cfg.BridgePIDFilePath
-	mock.HostProxyLogFilePathFunc = cfg.HostProxyLogFilePath
-	mock.HostProxyPIDFilePathFunc = cfg.HostProxyPIDFilePath
-	mock.ShareSubdirFunc = cfg.ShareSubdir
-	mock.WorktreesSubdirFunc = cfg.WorktreesSubdir
-
-	// Set, Write, Watch are intentionally NOT wired.
-	// Calling them panics via moq's nil-func guard, signaling
-	// that NewIsolatedTestConfig should be used for mutation tests.
-
 	return mock
 }
 
-// NewIsolatedTestConfig creates a blank file-backed config isolated to a temp config dir,
-// and returns a reader callback for persisted settings/project/registry files.
-func NewIsolatedTestConfig(t *testing.T) (config.Config, func(io.Writer, io.Writer, io.Writer)) {
+// NewIsolatedTestConfig creates a file-backed config isolated to a temp directory.
+// It returns a real Config (backed by configImpl with defaults) that supports Set/Write,
+// and a reader callback that reads any data written to disk during the test.
+// Use this for tests that need mutation, persistence, or env var overrides.
+func NewIsolatedTestConfig(t *testing.T) (config.Config, func(io.Writer, io.Writer, io.Writer, io.Writer)) {
 	t.Helper()
-	read := StubWriteConfig(t)
 
-	cfgDir := config.ConfigDir()
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		t.Fatalf("creating isolated config dir %q: %v", cfgDir, err)
-	}
-
-	path, err := config.SettingsFilePath()
+	cfg, err := config.NewBlankConfig()
 	if err != nil {
-		t.Fatalf("resolving isolated settings file path: %v", err)
-	}
-	if err := writeIfMissing(path, []byte("{}\n")); err != nil {
-		t.Fatalf("creating isolated settings file: %v", err)
-	}
-	userProjectPath, err := config.UserProjectConfigFilePath()
-	if err != nil {
-		t.Fatalf("resolving isolated user project file path: %v", err)
-	}
-	if err := writeIfMissing(userProjectPath, []byte("{}\n")); err != nil {
-		t.Fatalf("creating isolated user project file: %v", err)
-	}
-	registryPath, err := config.ProjectRegistryFilePath()
-	if err != nil {
-		t.Fatalf("resolving isolated project registry file path: %v", err)
-	}
-	if err := writeIfMissing(registryPath, []byte("projects: []\n")); err != nil {
-		t.Fatalf("creating isolated project registry file: %v", err)
+		t.Fatalf("creating blank config for isolated test: %v", err)
 	}
 
-	cfg, err := config.NewConfig()
-	if err != nil {
-		t.Fatalf("creating isolated test config: %v", err)
+	base := t.TempDir()
+	configDir := filepath.Join(base, "config")
+	dataDir := filepath.Join(base, "data")
+	stateDir := filepath.Join(base, "state")
+
+	for _, dir := range []string{configDir, dataDir, stateDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("creating isolated test dir %s: %v", dir, err)
+		}
+	}
+
+	t.Setenv(cfg.ConfigDirEnvVar(), configDir)
+	t.Setenv(cfg.DataDirEnvVar(), dataDir)
+	t.Setenv(cfg.StateDirEnvVar(), stateDir)
+
+	settingsFileName := cfg.SettingsFileName()
+	userProjectFileName := cfg.ProjectConfigFileName()
+	repoProjectFileName := cfg.ProjectConfigFileName()
+	projectRegistryFileName := cfg.ProjectRegistryFileName()
+
+	read := func(settingsOut, userProjectOut, repoProjectOut, registryOut io.Writer) {
+		if data, err := os.ReadFile(filepath.Join(base, settingsFileName)); err == nil {
+			_, _ = settingsOut.Write(data)
+		}
+		if data, err := os.ReadFile(filepath.Join(base, userProjectFileName)); err == nil {
+			_, _ = userProjectOut.Write(data)
+		}
+		if data, err := os.ReadFile(filepath.Join(base, repoProjectFileName)); err == nil {
+			_, _ = repoProjectOut.Write(data)
+		}
+		if data, err := os.ReadFile(filepath.Join(base, projectRegistryFileName)); err == nil {
+			_, _ = registryOut.Write(data)
+		}
 	}
 
 	return cfg, read
-}
-
-// StubWriteConfig isolates config-file writes to a temp config directory and returns
-// a reader callback for settings, user project config, and project registry content.
-func StubWriteConfig(t *testing.T) func(io.Writer, io.Writer, io.Writer) {
-	t.Helper()
-	base := t.TempDir()
-	blankCfg, err := config.ReadFromString("")
-	if err != nil {
-		t.Fatalf("creating blank config for env setup: %v", err)
-	}
-	t.Setenv(blankCfg.ConfigDirEnvVar(), filepath.Join(base, "config"))
-	t.Setenv(blankCfg.DataDirEnvVar(), filepath.Join(base, "data"))
-	t.Setenv(blankCfg.StateDirEnvVar(), filepath.Join(base, "state"))
-
-	return func(settingsOut io.Writer, projectOut io.Writer, registryOut io.Writer) {
-		t.Helper()
-
-		settingsPath, err := config.SettingsFilePath()
-		if err != nil {
-			t.Fatalf("resolving settings file path: %v", err)
-		}
-		projectPath, err := config.UserProjectConfigFilePath()
-		if err != nil {
-			t.Fatalf("resolving user project file path: %v", err)
-		}
-		registryPath, err := config.ProjectRegistryFilePath()
-		if err != nil {
-			t.Fatalf("resolving project registry file path: %v", err)
-		}
-
-		copyFileToWriter(settingsPath, settingsOut)
-		copyFileToWriter(projectPath, projectOut)
-		copyFileToWriter(registryPath, registryOut)
-	}
-}
-
-func writeIfMissing(path string, content []byte) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, content, 0o644)
-}
-
-func copyFileToWriter(path string, out io.Writer) {
-	if out == nil {
-		return
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	_, _ = io.Copy(out, file)
 }
