@@ -298,15 +298,23 @@ func registerWorktreeInRegistry(t *testing.T, h *harness.Harness, branch, slug s
 
 // newWorktreeTestFactory creates a factory with GitManager and ProjectManager for worktree tests.
 // It uses config.NewConfig() to get a real file-backed config (since the harness has set
-// CLAWKER_CONFIG_DIR and written both clawker.yaml and projects.yaml), and wires up a
+// CLAWKER_CONFIG_DIR and written both config and registry files), and wires up a
 // real ProjectManager for project/worktree resolution.
 func newWorktreeTestFactory(t *testing.T, h *harness.Harness) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 
 	tio := iostreamstest.New()
 
+	// Isolate state/data dirs so subdir helpers (PidsSubdir, LogsSubdir, etc.)
+	// don't accidentally create directories under real ~/.local/{state,share}/clawker.
+	// The harness already isolates CLAWKER_CONFIG_DIR; we complete the trifecta here.
+	tmpRoot := t.TempDir()
+	envConsts := configmocks.NewBlankConfig()
+	t.Setenv(envConsts.StateDirEnvVar(), filepath.Join(tmpRoot, "state"))
+	t.Setenv(envConsts.DataDirEnvVar(), filepath.Join(tmpRoot, "data"))
+
 	// Use real config loading — the harness has set CLAWKER_CONFIG_DIR and written
-	// both clawker.yaml (in ProjectDir) and projects.yaml (in ConfigDir).
+	// both config and registry files in ConfigDir/ProjectDir.
 	// Chdir() was called, so NewConfig() will find the project via cwd + registry.
 	cfg, err := config.NewConfig()
 	require.NoError(t, err, "failed to load config")

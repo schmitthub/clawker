@@ -113,7 +113,7 @@ Single `Config` interface that all callers receive. The package is a closed box 
 - `Set(key, value)` updates in-memory state and marks dirty nodes only.
 - `Write(opts)` persists dirty keys/roots selectively based on ownership (`settings`, `registry`, `project`).
 - Dirty markers clear only for successful writes, supporting retry after partial failures.
-- Project-scope write target resolution: local project `clawker.yaml` when cwd resolves to a registered project; fallback to user-level config-dir `clawker.yaml` otherwise.
+- Project-scope write target resolution: local project `cfg.ProjectConfigFileName()` when cwd resolves to a registered project; fallback to user-level config-dir config file otherwise.
 
 **Validation**: `viper.UnmarshalExact` catches unknown/misspelled keys with user-friendly dot-path error messages. Both `ReadFromString` and `NewConfig` validate automatically.
 

@@ -129,7 +129,7 @@ Core responsibilities:
   - legacy map-shaped registry (`map[string]any`)
 - Stage updates with `cfg.Set("projects", raw)`.
 - Persist with `cfg.Write(WriteOptions{Scope: ScopeRegistry})`.
-- Fallback persistence path when registry path is unconfigured: `ConfigDir()/projects.yaml`.
+- Fallback persistence path when registry path is unconfigured: `ConfigDir()/cfg.ProjectRegistryFileName()`.
 
 Internal ops:
 

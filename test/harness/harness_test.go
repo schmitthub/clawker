@@ -257,7 +257,7 @@ func TestHarness_UpdateConfig(t *testing.T) {
 func TestHarness_ConfigPath(t *testing.T) {
 	h := NewHarness(t)
 
-	expected := filepath.Join(h.ProjectDir, "clawker.yaml")
+	expected := filepath.Join(h.ProjectDir, _blankCfg.ProjectConfigFileName())
 	assert.Equal(t, expected, h.ConfigPath())
 }
 

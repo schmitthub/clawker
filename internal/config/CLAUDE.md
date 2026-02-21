@@ -11,13 +11,15 @@ Viper-backed configuration with merged multi-file loading. One `Config` interfac
 
 **Precedence** (highest to lowest): env vars (`CLAWKER_*` leaf keys only) > project `clawker.yaml` > project registry > user config > settings > defaults
 
-**Files loaded by `NewConfig()`**:
-1. `~/.config/clawker/settings.yaml` — user settings
-2. `~/.config/clawker/clawker.yaml` — user-level project config overrides
-3. `~/.config/clawker/projects.yaml` — project registry (slug to root path)
-4. `<project-root>/clawker.yaml` — project config (auto-discovered via registry + cwd)
+**Files loaded by `NewConfig()`** (use accessors — never hardcode these names):
+1. `cfg.SettingsFileName()` — user settings
+2. `cfg.ProjectConfigFileName()` — user-level project config overrides
+3. `cfg.ProjectRegistryFileName()` — project registry (slug to root path)
+4. `<project-root>/cfg.ProjectConfigFileName()` — project config (auto-discovered via registry + cwd)
 
-Config dir resolution: `$CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
+Config dir resolution: `cfg.ConfigDirEnvVar()` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
+Data dir: `cfg.DataDirEnvVar()` > `$XDG_DATA_HOME/clawker` > `~/.local/share/clawker`
+State dir: `cfg.StateDirEnvVar()` > `$XDG_STATE_HOME/clawker` > `~/.local/state/clawker`
 
 ## Boundary
 

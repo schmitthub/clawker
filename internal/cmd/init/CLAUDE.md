@@ -1,6 +1,6 @@
 # Init Command Package
 
-Initialize user-level clawker settings (`~/.local/clawker/settings.yaml`).
+Initialize user-level clawker settings (`cfg.SettingsFileName()` in `config.ConfigDir()`).
 
 ## Files
 

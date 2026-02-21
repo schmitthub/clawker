@@ -34,22 +34,25 @@ A clawker project is defined by configuration files. Every clawker command requi
 
 1. CLI flags
 2. Environment variables
-3. Project config (`./clawker.yaml`)
+3. Project config (`cfg.ProjectConfigFileName()`)
 4. User defaults (from settings)
 
 Higher precedence wins silently (no warnings on override).
 
-**Configuration Files**:
+**Configuration Files** (use `Config` interface accessors — never hardcode filenames or env vars):
 
-| Location | Purpose |
-|----------|---------|
-| `./clawker.yaml` | Project-specific config (schema: `Config`) |
-| `~/.local/clawker/settings.yaml` | User settings (`Settings`: default_image, logging) |
-| `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
+| Accessor | Default Value | Purpose |
+|----------|---------------|---------|
+| `cfg.ProjectConfigFileName()` | `clawker.yaml` | Project-specific config (schema: `Config`) |
+| `cfg.SettingsFileName()` | `settings.yaml` | User settings (`Settings`: default_image, logging) |
+| `cfg.ProjectRegistryFileName()` | `projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
+| `cfg.ConfigDirEnvVar()` | `CLAWKER_CONFIG_DIR` | Config directory override env var |
+| `cfg.DataDirEnvVar()` | `CLAWKER_DATA_DIR` | Data directory override env var |
+| `cfg.StateDirEnvVar()` | `CLAWKER_STATE_DIR` | State directory override env var |
 
 **Project Resolution**: `config.NewConfig()` loads all config files and resolves the current project from the registry via `GetProjectRoot()`. The `Config` interface exposes `Project()`, `Settings()`, and typed accessors — all file paths and constants are private to the package. The `Project` schema struct's `Project` field is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
 
-**Config persistence model**: `Set(key, value)` updates only in-memory config and marks dirty nodes. Persistence is explicit through `Write(WriteOptions)`, which writes only dirty owned sections (`settings`, `registry`, `project`) by default. For project-owned keys, writes target local `./clawker.yaml` when the current directory resolves to a registered project, and fall back to user-level config-dir `clawker.yaml` when outside project context.
+**Config persistence model**: `Set(key, value)` updates only in-memory config and marks dirty nodes. Persistence is explicit through `Write(WriteOptions)`, which writes only dirty owned sections (`settings`, `registry`, `project`) by default. For project-owned keys, writes target local project `cfg.ProjectConfigFileName()` when the current directory resolves to a registered project, and fall back to user-level config-dir config file when outside project context.
 
 ### 2.2 Agent
 
@@ -92,7 +95,7 @@ dev.clawker.agent=<agent-name>
 
 ### Project Registry Lifecycle
 
-1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `projects.yaml`
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `cfg.ProjectRegistryFileName()`
 2. **Lookup**: `Factory.Config()` returns a `config.Config` — the single interface all callers receive. Project resolution uses registry + `os.Getwd()` internally
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 
@@ -566,7 +569,7 @@ New containers require one-time initialization to inherit the host user's Claude
 configuration (settings, plugins, credentials). This avoids manual re-authentication
 and plugin installation on every container creation.
 
-**Config schema** (`config.ClaudeCodeConfig` in `clawker.yaml`):
+**Config schema** (`config.ClaudeCodeConfig` in `cfg.ProjectConfigFileName()`):
 - `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
 - `use_host_auth`: Forward host credentials to container. Default: `true`
 

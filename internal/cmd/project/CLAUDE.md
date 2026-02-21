@@ -12,8 +12,8 @@ Project lifecycle management (initialization and registration).
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory (creates `clawker.yaml` and `.clawkerignore`)
-- `project register` — register existing project in user's registry (`~/.local/clawker/projects.yaml`)
+- `project init` — initialize new project in current directory (creates `cfg.ProjectConfigFileName()` and `cfg.ClawkerIgnoreName()`)
+- `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 
 ## Key Symbols
 
