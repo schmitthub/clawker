@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,7 +56,7 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get config: %w", cfgErr)
 				return
 			}
-			svc = project.NewProjectManager(cfg)
+			svc = project.NewProjectManager(cfg, nil)
 		})
 		return svc, err
 	}
@@ -83,14 +84,14 @@ func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 	var otelCfg *logger.OtelLogConfig
 	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
 		otelCfg = &logger.OtelLogConfig{
-			Endpoint:       monitoringCfg.OtelCollectorEndpoint,
+			Endpoint:       strings.TrimPrefix(strings.TrimPrefix(monitoringCfg.OtelCollectorEndpoint, "https://"), "http://"),
 			Insecure:       true,
 			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
 			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
 			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
 		}
 		if otelCfg.Endpoint == "" && monitoringCfg.OtelCollectorHost != "" && monitoringCfg.OtelCollectorPort > 0 {
-			otelCfg.Endpoint = fmt.Sprintf("http://%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
+			otelCfg.Endpoint = fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
 		}
 	}
 

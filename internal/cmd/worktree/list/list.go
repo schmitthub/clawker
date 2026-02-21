@@ -6,33 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/text"
 	"github.com/spf13/cobra"
 )
 
 // ListOptions contains the options for the list command.
 type ListOptions struct {
-	IOStreams  *iostreams.IOStreams
-	GitManager func() (*git.GitManager, error)
+	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
 
+	All   bool
 	Quiet bool
 }
 
 // NewCmdList creates the worktree list command.
 func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) error) *cobra.Command {
 	opts := &ListOptions{
-		IOStreams:  f.IOStreams,
-		GitManager: f.GitManager,
+		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
 	}
 
@@ -40,15 +35,18 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List worktrees for the current project",
-		Long: `Lists all git worktrees registered for the current project.
+		Long: `Lists git worktrees registered for the current project.
 
 Shows the branch name, filesystem path, HEAD commit, and last modified time
-for each worktree.`,
-		Example: `  # List all worktrees
+for each worktree. Use --all to list worktrees across all registered projects.`,
+		Example: `  # List worktrees for the current project
   clawker worktree list
 
   # List worktrees (short form)
   clawker worktree ls
+
+  # List worktrees across all projects
+  clawker worktree ls -a
 
   # List only branch names
   clawker worktree ls -q`,
@@ -60,114 +58,103 @@ for each worktree.`,
 		},
 	}
 
+	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "List worktrees across all registered projects")
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Only display branch names")
 
 	return cmd
 }
 
 func listRun(ctx context.Context, opts *ListOptions) error {
-	projectManager, err := opts.ProjectManager()
+	mgr, err := opts.ProjectManager()
 	if err != nil {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	proj, err := projectManager.CurrentProject(ctx)
-	if err != nil {
-		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) || errors.Is(err, project.ErrProjectNotFound) {
-			return fmt.Errorf("not in a registered project directory")
+	var states []project.WorktreeState
+	if opts.All {
+		states, err = mgr.ListWorktrees(ctx)
+		if err != nil {
+			return err
 		}
-		return err
+	} else {
+		proj, projErr := mgr.CurrentProject(ctx)
+		if projErr != nil {
+			if errors.Is(projErr, project.ErrNotInProjectPath) || errors.Is(projErr, project.ErrProjectNotRegistered) || errors.Is(projErr, project.ErrProjectNotFound) {
+				return fmt.Errorf("not in a registered project directory")
+			}
+			return projErr
+		}
+		states, err = proj.ListWorktrees(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
-	record, err := proj.Record()
-	if err != nil {
-		return err
-	}
-
-	if len(record.Worktrees) == 0 {
+	if len(states) == 0 {
 		if !opts.Quiet {
-			fmt.Fprintln(opts.IOStreams.ErrOut, "No worktrees found for this project.")
-			fmt.Fprintln(opts.IOStreams.ErrOut, "Use 'clawker run --worktree <branch>' to create one.")
+			if opts.All {
+				fmt.Fprintln(opts.IOStreams.ErrOut, "No worktrees found across any registered projects.")
+			} else {
+				fmt.Fprintln(opts.IOStreams.ErrOut, "No worktrees found for this project.")
+				fmt.Fprintln(opts.IOStreams.ErrOut, "Use `clawker worktree add --help` or create one automatically with `clawker run --worktree <branch>`.")
+			}
 		}
 		return nil
 	}
 
-	// Get git manager for detailed worktree info (HEAD, branch, etc.)
-	gitMgr, err := opts.GitManager()
-	if err != nil {
-		return fmt.Errorf("initializing git: %w", err)
-	}
-
-	var entries []git.WorktreeDirEntry
-	for name, worktree := range record.Worktrees {
-		path := worktree.Path
-		if path == "" {
-			path = filepath.Join(config.ConfigDir(), "projects", text.Slugify(proj.Name()), text.Slugify(name))
-		}
-		entries = append(entries, git.WorktreeDirEntry{Name: name, Slug: text.Slugify(name), Path: path})
-	}
-
-	worktrees, err := gitMgr.ListWorktrees(entries)
-	if err != nil {
-		return fmt.Errorf("listing worktrees: %w", err)
-	}
-
-	// Quiet mode - just branch names
+	// Quiet mode
 	if opts.Quiet {
-		for _, wt := range worktrees {
-			fmt.Fprintln(opts.IOStreams.Out, wt.Name)
+		for _, wt := range states {
+			if opts.All {
+				fmt.Fprintf(opts.IOStreams.Out, "%s\t%s\n", wt.Project, wt.Branch)
+			} else {
+				fmt.Fprintln(opts.IOStreams.Out, wt.Branch)
+			}
 		}
 		return nil
 	}
 
-	// Print table
+	// Full table
 	w := tabwriter.NewWriter(opts.IOStreams.Out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "BRANCH\tPATH\tHEAD\tMODIFIED\tSTATUS")
+	if opts.All {
+		fmt.Fprintln(w, "PROJECT\tBRANCH\tPATH\tHEAD\tMODIFIED\tSTATUS")
+	} else {
+		fmt.Fprintln(w, "BRANCH\tPATH\tHEAD\tMODIFIED\tSTATUS")
+	}
 
 	staleCount := 0
-	for _, wt := range worktrees {
-		// Get branch display (or "(detached)" for detached HEAD)
+	for _, wt := range states {
 		branch := wt.Branch
 		if wt.IsDetached {
 			branch = "(detached)"
 		}
 
-		// Get HEAD short hash
-		head := ""
-		if !wt.Head.IsZero() {
-			head = wt.Head.String()[:7]
-		}
-
-		// Get last modified time from path
 		modified := ""
 		if wt.Path != "" {
 			if info, statErr := os.Stat(wt.Path); statErr == nil {
 				modified = formatTimeAgo(info.ModTime())
-			} else if !os.IsNotExist(statErr) {
-				// Surface non-existence errors (e.g., permission issues) to the user
-				// by aggregating them into the error field
-				if wt.Error != nil {
-					wt.Error = fmt.Errorf("%v; stat error: %w", wt.Error, statErr)
-				} else {
-					wt.Error = fmt.Errorf("stat error: %w", statErr)
-				}
 			}
 		}
 
-		status := "healthy"
-		if wt.Error != nil {
-			status = fmt.Sprintf("error: %v", wt.Error)
+		status := string(wt.Status)
+		if wt.InspectError != nil {
+			status = fmt.Sprintf("error: %v", wt.InspectError)
+			staleCount++
+		} else if wt.Status != project.WorktreeHealthy {
 			staleCount++
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", branch, wt.Path, head, modified, status)
+		if opts.All {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", wt.Project, branch, wt.Path, wt.Head, modified, status)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", branch, wt.Path, wt.Head, modified, status)
+		}
 	}
 
 	if err := w.Flush(); err != nil {
 		return err
 	}
 
-	// Show prune warning if there are stale entries
 	if staleCount > 0 {
 		fmt.Fprintln(opts.IOStreams.ErrOut)
 		if staleCount == 1 {

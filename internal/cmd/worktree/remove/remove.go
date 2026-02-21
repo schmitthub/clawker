@@ -10,16 +10,13 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/spf13/cobra"
 )
 
 // RemoveOptions contains the options for the remove command.
 type RemoveOptions struct {
-	IOStreams  *iostreams.IOStreams
-	GitManager func() (*git.GitManager, error)
+	IOStreams       *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
-	Prompter   func() *prompter.Prompter
 
 	Force        bool
 	DeleteBranch bool
@@ -30,9 +27,7 @@ type RemoveOptions struct {
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
 		IOStreams:  f.IOStreams,
-		GitManager: f.GitManager,
 		ProjectManager: f.ProjectManager,
-		Prompter:   f.Prompter,
 	}
 
 	cmd := &cobra.Command{
@@ -79,12 +74,6 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	// Get git manager
-	gitMgr, err := opts.GitManager()
-	if err != nil {
-		return fmt.Errorf("initializing git: %w", err)
-	}
-
 	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
 		if errors.Is(err, project.ErrProjectNotFound) {
@@ -96,7 +85,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	var removeErrors []error
 
 	for _, branch := range opts.Branches {
-		if err := removeSingleWorktree(ctx, opts, proj, gitMgr, branch); err != nil {
+		if err := removeSingleWorktree(ctx, opts, proj, branch); err != nil {
 			removeErrors = append(removeErrors, fmt.Errorf("%s: %w", branch, err))
 		}
 	}
@@ -126,42 +115,27 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-
-func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj project.Project, gitMgr *git.GitManager, branch string) error {
-	if err := proj.RemoveWorktree(ctx, branch); err != nil {
-		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
-			return fmt.Errorf("not in a registered project directory")
+func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj project.Project, branch string) error {
+	err := proj.RemoveWorktree(ctx, branch, opts.DeleteBranch)
+	if err == nil {
+		if opts.DeleteBranch {
+			fmt.Fprintf(opts.IOStreams.ErrOut, "Deleted branch %q\n", branch)
 		}
-		return err
+		return nil
 	}
 
-	// Optionally delete the branch
-	if opts.DeleteBranch {
-		if err := handleBranchDelete(opts.IOStreams, gitMgr, branch); err != nil {
-			return fmt.Errorf("worktree removed but %w", err)
-		}
+	if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
+		return fmt.Errorf("not in a registered project directory")
 	}
 
-	return nil
-}
-
-// handleBranchDelete handles branch deletion with user-friendly error reporting.
-// Returns nil if the branch was deleted, was already gone, or had unmerged commits (warning printed).
-func handleBranchDelete(ios *iostreams.IOStreams, gitMgr *git.GitManager, branch string) error {
-	if err := gitMgr.DeleteBranch(branch); err != nil {
-		if errors.Is(err, git.ErrBranchNotMerged) {
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s branch %q has unmerged commits\n",
-				cs.WarningIcon(), branch)
-			fmt.Fprintf(ios.ErrOut, "  To force delete: git branch -D %s\n", branch)
-			return nil
-		}
-		if errors.Is(err, git.ErrBranchNotFound) {
-			// Branch already deleted or never existed — not an error
-			return nil
-		}
-		return fmt.Errorf("failed to delete branch: %w", err)
+	// Branch deletion failures: worktree was removed, branch deletion had issues.
+	if errors.Is(err, git.ErrBranchNotMerged) {
+		cs := opts.IOStreams.ColorScheme()
+		fmt.Fprintf(opts.IOStreams.ErrOut, "%s branch %q has unmerged commits\n",
+			cs.WarningIcon(), branch)
+		fmt.Fprintf(opts.IOStreams.ErrOut, "  To force delete: git branch -D %s\n", branch)
+		return nil
 	}
-	fmt.Fprintf(ios.ErrOut, "Deleted branch %q\n", branch)
-	return nil
+
+	return err
 }

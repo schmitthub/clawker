@@ -8,22 +8,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
-	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/text"
 )
 
 var ErrNotInProjectPath = errors.New("not in a registered project path")
 var ErrProjectNotRegistered = errors.New("project root is not registered")
-
-type gitManager interface {
-	SetupWorktree(dirs git.WorktreeDirProvider, branch, base string) (string, error)
-	RemoveWorktree(dirs git.WorktreeDirProvider, branch string) error
-	Worktrees() (*git.WorktreeManager, error)
-}
-
-type gitManagerFactory func(projectRoot string) (gitManager, error)
+var ErrWorktreeExists = errors.New("worktree already exists for branch")
 
 type worktreeRegistry interface {
 	Projects() []config.ProjectEntry
@@ -40,18 +33,14 @@ type PruneStaleResult struct {
 
 type worktreeService struct {
 	cfg             config.Config
-	logger          iostreams.Logger
-	newManager      gitManagerFactory
+	newGitMgr       GitManagerFactory
 	registryFactory func() worktreeRegistry
 }
 
-func newWorktreeService(cfg config.Config, logger iostreams.Logger) *worktreeService {
+func newWorktreeService(cfg config.Config, gitFactory GitManagerFactory) *worktreeService {
 	return &worktreeService{
-		cfg:    cfg,
-		logger: logger,
-		newManager: func(projectRoot string) (gitManager, error) {
-			return git.NewGitManager(projectRoot)
-		},
+		cfg:       cfg,
+		newGitMgr: gitFactory,
 		registryFactory: func() worktreeRegistry {
 			return newRegistry(cfg)
 		},
@@ -65,44 +54,43 @@ func (s *worktreeService) CreateWorktree(ctx context.Context, branch, base strin
 func (s *worktreeService) AddWorktree(_ context.Context, branch, base string) (string, error) {
 	projectRoot, err := s.cfg.GetProjectRoot()
 	if err != nil {
-		s.logError(err, "project root resolution failed")
 		if errors.Is(err, config.ErrNotInProject) {
 			return "", ErrNotInProjectPath
 		}
 		return "", fmt.Errorf("resolving project root: %w", err)
 	}
 
-	_, err = s.findProjectByRoot(projectRoot)
+	entry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
-		s.logError(err, "project registry lookup failed")
 		return "", err
 	}
 
-	manager, err := s.newManager(projectRoot)
+	// Reject duplicate worktree
+	if _, exists := entry.Worktrees[branch]; exists {
+		return "", fmt.Errorf("branch %q: %w", branch, ErrWorktreeExists)
+	}
+
+	manager, err := s.newGitMgr(projectRoot)
 	if err != nil {
-		s.logError(err, "git manager initialization failed")
 		if errors.Is(err, git.ErrNotRepository) {
 			return "", fmt.Errorf("project root is not a git repository: %w", err)
 		}
 		return "", fmt.Errorf("initializing git manager: %w", err)
 	}
 
-	provider := &configDirWorktreeProvider{baseDir: projectWorktreeBaseDir(s.cfg, projectRoot)}
+	provider := newFlatWorktreeDirProvider(s.cfg, projectRoot, entry)
 	worktreePath, err := manager.SetupWorktree(provider, branch, base)
 	if err != nil {
-		s.logError(err, "git worktree setup failed")
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}
 
 	registry := s.registryFactory()
 	if err := registry.registerWorktree(projectRoot, branch, worktreePath); err != nil {
-		s.logError(err, "registry staging failed after worktree create")
 		_ = manager.RemoveWorktree(provider, branch)
 		return "", fmt.Errorf("updating project registry: %w", err)
 	}
 
 	if err := registry.Save(); err != nil {
-		s.logError(err, "registry save failed after worktree create")
 		_ = manager.RemoveWorktree(provider, branch)
 		return "", fmt.Errorf("saving project registry: %w", err)
 	}
@@ -110,45 +98,47 @@ func (s *worktreeService) AddWorktree(_ context.Context, branch, base string) (s
 	return worktreePath, nil
 }
 
-func (s *worktreeService) RemoveWorktree(_ context.Context, branch string) error {
+func (s *worktreeService) RemoveWorktree(_ context.Context, branch string, deleteBranch bool) error {
 	projectRoot, err := s.cfg.GetProjectRoot()
 	if err != nil {
-		s.logError(err, "project root resolution failed")
 		if errors.Is(err, config.ErrNotInProject) {
 			return ErrNotInProjectPath
 		}
 		return fmt.Errorf("resolving project root: %w", err)
 	}
 
-	_, err = s.findProjectByRoot(projectRoot)
+	entry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
-		s.logError(err, "project registry lookup failed")
 		return err
 	}
 
-	manager, err := s.newManager(projectRoot)
+	manager, err := s.newGitMgr(projectRoot)
 	if err != nil {
-		s.logError(err, "git manager initialization failed")
 		if errors.Is(err, git.ErrNotRepository) {
 			return fmt.Errorf("project root is not a git repository: %w", err)
 		}
 		return fmt.Errorf("initializing git manager: %w", err)
 	}
 
-	provider := &configDirWorktreeProvider{baseDir: projectWorktreeBaseDir(s.cfg, projectRoot)}
+	provider := newFlatWorktreeDirProvider(s.cfg, projectRoot, entry)
 	if err := manager.RemoveWorktree(provider, branch); err != nil {
-		s.logError(err, "git worktree remove failed")
 		return fmt.Errorf("removing worktree: %w", err)
 	}
 
 	registry := s.registryFactory()
 	if err := registry.unregisterWorktree(projectRoot, branch); err != nil {
-		s.logError(err, "registry update failed after worktree remove")
 		return fmt.Errorf("updating project registry: %w", err)
 	}
 	if err := registry.Save(); err != nil {
-		s.logError(err, "registry save failed after worktree remove")
 		return fmt.Errorf("saving project registry: %w", err)
+	}
+
+	if deleteBranch {
+		if err := manager.DeleteBranch(branch); err != nil {
+			if !errors.Is(err, git.ErrBranchNotFound) {
+				return fmt.Errorf("worktree removed but deleting branch: %w", err)
+			}
+		}
 	}
 
 	return nil
@@ -157,7 +147,6 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, branch string) error
 func (s *worktreeService) CurrentProject() (config.ProjectEntry, error) {
 	projectRoot, err := s.cfg.GetProjectRoot()
 	if err != nil {
-		s.logError(err, "project root resolution failed")
 		if errors.Is(err, config.ErrNotInProject) {
 			return config.ProjectEntry{}, ErrNotInProjectPath
 		}
@@ -166,7 +155,6 @@ func (s *worktreeService) CurrentProject() (config.ProjectEntry, error) {
 
 	projectEntry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
-		s.logError(err, "project registry lookup failed")
 		return config.ProjectEntry{}, err
 	}
 
@@ -186,16 +174,14 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*
 
 	projectRoot, err := s.cfg.GetProjectRoot()
 	if err != nil {
-		s.logError(err, "project root resolution failed")
 		if errors.Is(err, config.ErrNotInProject) {
 			return nil, ErrNotInProjectPath
 		}
 		return nil, fmt.Errorf("resolving project root: %w", err)
 	}
 
-	manager, err := s.newManager(projectRoot)
+	manager, err := s.newGitMgr(projectRoot)
 	if err != nil {
-		s.logError(err, "git manager initialization failed")
 		if errors.Is(err, git.ErrNotRepository) {
 			return nil, fmt.Errorf("project root is not a git repository: %w", err)
 		}
@@ -204,29 +190,38 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, dryRun bool) (*
 
 	wtMgr, err := manager.Worktrees()
 	if err != nil {
-		s.logError(err, "worktree manager initialization failed")
 		return nil, fmt.Errorf("initializing worktree manager: %w", err)
 	}
 
 	for name, wt := range projectEntry.Worktrees {
-		slug := text.Slugify(name)
 		path := wt.Path
 		if path == "" {
-			path = filepath.Join(projectWorktreeBaseDir(s.cfg, projectRoot), slug)
+			// Path must be set — skip entries with missing paths
+			result.Prunable = append(result.Prunable, name)
+			continue
 		}
 
 		_, statErr := os.Stat(path)
-		dirMissing := statErr != nil && os.IsNotExist(statErr)
+		dirExists := statErr == nil
 		if statErr != nil && !os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("checking worktree %s: %w", name, statErr)
 		}
 
-		gitExists, err := wtMgr.Exists(slug)
+		// Use directory basename for git worktree existence check — matches how
+		// SetupWorktree registers worktrees with git (by dir basename, not branch name).
+		wtName := filepath.Base(path)
+		gitWorktreeExists, err := wtMgr.Exists(wtName)
 		if err != nil {
 			return nil, fmt.Errorf("checking git worktree %s: %w", name, err)
 		}
 
-		if dirMissing && !gitExists {
+		branchExists, err := manager.BranchExists(name)
+		if err != nil {
+			return nil, fmt.Errorf("checking branch %s: %w", name, err)
+		}
+
+		// Prunable if any of: dir missing, git worktree metadata gone, or branch gone
+		if !dirExists || !gitWorktreeExists || !branchExists {
 			result.Prunable = append(result.Prunable, name)
 		}
 	}
@@ -272,54 +267,118 @@ func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectE
 	return config.ProjectEntry{}, ErrProjectNotRegistered
 }
 
-func projectWorktreeBaseDir(cfg config.Config, projectRoot string) string {
-	worktreesRoot, err := cfg.WorktreesSubdir()
-	if err != nil || worktreesRoot == "" {
-		worktreesRoot = filepath.Join(config.ConfigDir(), "worktrees")
+// worktreesRootDir returns the base directory where all worktree directories live.
+func worktreesRootDir(cfg config.Config) string {
+	root, err := cfg.WorktreesSubdir()
+	if err != nil || root == "" {
+		return filepath.Join(config.ConfigDir(), "worktrees")
 	}
-	absRoot, err := filepath.Abs(projectRoot)
-	if err != nil {
-		absRoot = projectRoot
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		resolvedRoot = filepath.Clean(absRoot)
-	}
-	sum := sha1.Sum([]byte(resolvedRoot))
-	return filepath.Join(worktreesRoot, fmt.Sprintf("%x", sum[:6]))
+	return root
 }
 
-// NewWorktreeDirProvider creates a WorktreeDirProvider rooted at the
-// standard worktree namespace for the given project root.
-// This is the exported constructor for external callers (e.g. container/shared)
-// that need a WorktreeDirProvider without going through the full project service.
+// generateWorktreeDirName produces a flat directory name for a worktree:
+// <repoName>-<projectName>-<sha1(uuid)[:12]>
+func generateWorktreeDirName(repoName, projectName string) string {
+	id := uuid.New()
+	sum := sha1.Sum(id[:])
+	return fmt.Sprintf("%s-%s-%x",
+		text.Slugify(repoName),
+		text.Slugify(projectName),
+		sum[:6],
+	)
+}
+
+// NewWorktreeDirProvider creates a WorktreeDirProvider for the given project.
+// It looks up the project in the registry to populate known worktree paths,
+// enabling path reuse for existing worktrees and UUID-based generation for new ones.
+// External callers (e.g. container/shared) use this instead of the full project service.
 func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeDirProvider {
-	return &configDirWorktreeProvider{
-		baseDir: projectWorktreeBaseDir(cfg, projectRoot),
+	registry := newRegistry(cfg)
+	projects := registry.Projects()
+
+	resolvedRoot, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		resolvedRoot = filepath.Clean(projectRoot)
+	}
+
+	var entry config.ProjectEntry
+	for _, p := range projects {
+		resolvedEntry, err := filepath.EvalSymlinks(p.Root)
+		if err != nil {
+			resolvedEntry = filepath.Clean(p.Root)
+		}
+		if resolvedEntry == resolvedRoot {
+			entry = p
+			break
+		}
+	}
+
+	return newFlatWorktreeDirProvider(cfg, projectRoot, entry)
+}
+
+// newFlatWorktreeDirProvider creates a flatWorktreeDirProvider from a project entry.
+func newFlatWorktreeDirProvider(cfg config.Config, projectRoot string, entry config.ProjectEntry) *flatWorktreeDirProvider {
+	knownPaths := make(map[string]string, len(entry.Worktrees))
+	for branch, wt := range entry.Worktrees {
+		if wt.Path != "" {
+			knownPaths[branch] = wt.Path
+		}
+	}
+
+	repoName := filepath.Base(projectRoot)
+	projectName := entry.Name
+	if projectName == "" {
+		projectName = repoName
+	}
+
+	return &flatWorktreeDirProvider{
+		worktreesRoot: worktreesRootDir(cfg),
+		repoName:      repoName,
+		projectName:   projectName,
+		knownPaths:    knownPaths,
 	}
 }
 
-func (s *worktreeService) logError(err error, msg string) {
-	if s == nil || s.logger == nil {
-		return
+// flatWorktreeDirProvider implements git.WorktreeDirProvider with flat UUID-based naming.
+// Worktree directories are placed directly under the worktrees root:
+//
+//	<WorktreesRoot>/<repoName>-<projectName>-<sha1(uuid)[:12]>
+//
+// Known paths from the registry are reused for existing worktrees.
+// New worktrees get a freshly generated UUID-based directory name.
+type flatWorktreeDirProvider struct {
+	worktreesRoot string
+	repoName      string
+	projectName   string
+	knownPaths    map[string]string // branch -> absolute path (from registry)
+}
+
+func (p *flatWorktreeDirProvider) GetOrCreateWorktreeDir(name string) (string, error) {
+	// Reuse known path for existing worktrees
+	if path, ok := p.knownPaths[name]; ok {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return "", fmt.Errorf("creating worktree directory: %w", err)
+		}
+		return path, nil
 	}
-	s.logger.Error().Err(err).Msg(msg)
-}
 
-type configDirWorktreeProvider struct {
-	baseDir string
-}
-
-func (p *configDirWorktreeProvider) GetOrCreateWorktreeDir(name string) (string, error) {
-	path := filepath.Join(p.baseDir, text.Slugify(name))
+	// Generate new UUID-based directory
+	dirName := generateWorktreeDirName(p.repoName, p.projectName)
+	path := filepath.Join(p.worktreesRoot, dirName)
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", fmt.Errorf("creating worktree directory: %w", err)
 	}
+
+	// Track the new path so RemoveWorktree can find it on cleanup
+	p.knownPaths[name] = path
 	return path, nil
 }
 
-func (p *configDirWorktreeProvider) GetWorktreeDir(name string) (string, error) {
-	path := filepath.Join(p.baseDir, text.Slugify(name))
+func (p *flatWorktreeDirProvider) GetWorktreeDir(name string) (string, error) {
+	path, ok := p.knownPaths[name]
+	if !ok {
+		return "", fmt.Errorf("worktree %q not found in registry", name)
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("worktree directory not found: %s", path)
@@ -329,8 +388,11 @@ func (p *configDirWorktreeProvider) GetWorktreeDir(name string) (string, error) 
 	return path, nil
 }
 
-func (p *configDirWorktreeProvider) DeleteWorktreeDir(name string) error {
-	path := filepath.Join(p.baseDir, text.Slugify(name))
+func (p *flatWorktreeDirProvider) DeleteWorktreeDir(name string) error {
+	path, ok := p.knownPaths[name]
+	if !ok {
+		return fmt.Errorf("worktree %q not found in registry", name)
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("worktree directory not found: %s", path)

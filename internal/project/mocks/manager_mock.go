@@ -29,6 +29,9 @@ var _ project.ProjectManager = &ProjectManagerMock{}
 //			ListFunc: func(ctx context.Context) ([]config.ProjectEntry, error) {
 //				panic("mock out the List method")
 //			},
+//			ListWorktreesFunc: func(ctx context.Context) ([]project.WorktreeState, error) {
+//				panic("mock out the ListWorktrees method")
+//			},
 //			RegisterFunc: func(ctx context.Context, name string, repoPath string) (project.Project, error) {
 //				panic("mock out the Register method")
 //			},
@@ -56,6 +59,9 @@ type ProjectManagerMock struct {
 
 	// ListFunc mocks the List method.
 	ListFunc func(ctx context.Context) ([]config.ProjectEntry, error)
+
+	// ListWorktreesFunc mocks the ListWorktrees method.
+	ListWorktreesFunc func(ctx context.Context) ([]project.WorktreeState, error)
 
 	// RegisterFunc mocks the Register method.
 	RegisterFunc func(ctx context.Context, name string, repoPath string) (project.Project, error)
@@ -85,6 +91,11 @@ type ProjectManagerMock struct {
 		}
 		// List holds details about calls to the List method.
 		List []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
+		// ListWorktrees holds details about calls to the ListWorktrees method.
+		ListWorktrees []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 		}
@@ -122,6 +133,7 @@ type ProjectManagerMock struct {
 	lockCurrentProject sync.RWMutex
 	lockGet            sync.RWMutex
 	lockList           sync.RWMutex
+	lockListWorktrees  sync.RWMutex
 	lockRegister       sync.RWMutex
 	lockRemove         sync.RWMutex
 	lockResolvePath    sync.RWMutex
@@ -225,6 +237,38 @@ func (mock *ProjectManagerMock) ListCalls() []struct {
 	mock.lockList.RLock()
 	calls = mock.calls.List
 	mock.lockList.RUnlock()
+	return calls
+}
+
+// ListWorktrees calls ListWorktreesFunc.
+func (mock *ProjectManagerMock) ListWorktrees(ctx context.Context) ([]project.WorktreeState, error) {
+	if mock.ListWorktreesFunc == nil {
+		panic("ProjectManagerMock.ListWorktreesFunc: method is nil but ProjectManager.ListWorktrees was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockListWorktrees.Lock()
+	mock.calls.ListWorktrees = append(mock.calls.ListWorktrees, callInfo)
+	mock.lockListWorktrees.Unlock()
+	return mock.ListWorktreesFunc(ctx)
+}
+
+// ListWorktreesCalls gets all the calls that were made to ListWorktrees.
+// Check the length with:
+//
+//	len(mockedProjectManager.ListWorktreesCalls())
+func (mock *ProjectManagerMock) ListWorktreesCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockListWorktrees.RLock()
+	calls = mock.calls.ListWorktrees
+	mock.lockListWorktrees.RUnlock()
 	return calls
 }
 

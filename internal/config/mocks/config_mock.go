@@ -181,6 +181,9 @@ var _ config.Config = &ConfigMock{}
 //			StateDirEnvVarFunc: func() string {
 //				panic("mock out the StateDirEnvVar method")
 //			},
+//			TestRepoDirEnvVarFunc: func() string {
+//				panic("mock out the TestRepoDirEnvVar method")
+//			},
 //			WatchFunc: func(onChange func(fsnotify.Event)) error {
 //				panic("mock out the Watch method")
 //			},
@@ -358,6 +361,9 @@ type ConfigMock struct {
 
 	// StateDirEnvVarFunc mocks the StateDirEnvVar method.
 	StateDirEnvVarFunc func() string
+
+	// TestRepoDirEnvVarFunc mocks the TestRepoDirEnvVar method.
+	TestRepoDirEnvVarFunc func() string
 
 	// WatchFunc mocks the Watch method.
 	WatchFunc func(onChange func(fsnotify.Event)) error
@@ -552,6 +558,9 @@ type ConfigMock struct {
 		// StateDirEnvVar holds details about calls to the StateDirEnvVar method.
 		StateDirEnvVar []struct {
 		}
+		// TestRepoDirEnvVar holds details about calls to the TestRepoDirEnvVar method.
+		TestRepoDirEnvVar []struct {
+		}
 		// Watch holds details about calls to the Watch method.
 		Watch []struct {
 			// OnChange is the onChange argument value.
@@ -620,6 +629,7 @@ type ConfigMock struct {
 	lockSettingsFileName        sync.RWMutex
 	lockShareSubdir             sync.RWMutex
 	lockStateDirEnvVar          sync.RWMutex
+	lockTestRepoDirEnvVar       sync.RWMutex
 	lockWatch                   sync.RWMutex
 	lockWorktreesSubdir         sync.RWMutex
 	lockWrite                   sync.RWMutex
@@ -2126,6 +2136,33 @@ func (mock *ConfigMock) StateDirEnvVarCalls() []struct {
 	mock.lockStateDirEnvVar.RLock()
 	calls = mock.calls.StateDirEnvVar
 	mock.lockStateDirEnvVar.RUnlock()
+	return calls
+}
+
+// TestRepoDirEnvVar calls TestRepoDirEnvVarFunc.
+func (mock *ConfigMock) TestRepoDirEnvVar() string {
+	if mock.TestRepoDirEnvVarFunc == nil {
+		panic("ConfigMock.TestRepoDirEnvVarFunc: method is nil but Config.TestRepoDirEnvVar was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockTestRepoDirEnvVar.Lock()
+	mock.calls.TestRepoDirEnvVar = append(mock.calls.TestRepoDirEnvVar, callInfo)
+	mock.lockTestRepoDirEnvVar.Unlock()
+	return mock.TestRepoDirEnvVarFunc()
+}
+
+// TestRepoDirEnvVarCalls gets all the calls that were made to TestRepoDirEnvVar.
+// Check the length with:
+//
+//	len(mockedConfig.TestRepoDirEnvVarCalls())
+func (mock *ConfigMock) TestRepoDirEnvVarCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockTestRepoDirEnvVar.RLock()
+	calls = mock.calls.TestRepoDirEnvVar
+	mock.lockTestRepoDirEnvVar.RUnlock()
 	return calls
 }
 

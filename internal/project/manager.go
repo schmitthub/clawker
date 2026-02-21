@@ -9,7 +9,7 @@ import (
 	"sort"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/git"
 )
 
 var ErrProjectNotFound = errors.New("project not found")
@@ -29,6 +29,7 @@ type ProjectManager interface {
 	Get(ctx context.Context, root string) (Project, error)
 	ResolvePath(ctx context.Context, cwd string) (Project, error)
 	CurrentProject(ctx context.Context) (Project, error)
+	ListWorktrees(ctx context.Context) ([]WorktreeState, error)
 }
 
 // ProjectRecord is the persisted model for a registered project.
@@ -56,6 +57,7 @@ const (
 
 // WorktreeState is a caller-facing merged worktree view.
 type WorktreeState struct {
+	Project          string
 	Branch           string
 	Path             string
 	Head             string
@@ -76,11 +78,16 @@ type Project interface {
 	Record() (ProjectRecord, error)
 	CreateWorktree(ctx context.Context, branch, base string) (string, error)
 	AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
-	RemoveWorktree(ctx context.Context, branch string) error
+	RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
 	PruneStaleWorktrees(ctx context.Context, dryRun bool) (*PruneStaleResult, error)
 	ListWorktrees(ctx context.Context) ([]WorktreeState, error)
 	GetWorktree(ctx context.Context, branch string) (WorktreeState, error)
 }
+
+// GitManagerFactory creates a git.GitManager for the given project root.
+// Production callers pass git.NewGitManager; tests pass a factory returning
+// gittest.InMemoryGitManager.GitManager.
+type GitManagerFactory func(projectRoot string) (*git.GitManager, error)
 
 type projectHandle struct {
 	manager *projectManager
@@ -88,12 +95,17 @@ type projectHandle struct {
 }
 
 type projectManager struct {
-	cfg    config.Config
-	logger iostreams.Logger
+	cfg        config.Config
+	newGitMgr  GitManagerFactory
 }
 
-func NewProjectManager(cfg config.Config) ProjectManager {
-	return &projectManager{cfg: cfg}
+func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) ProjectManager {
+	if gitFactory == nil {
+		gitFactory = func(root string) (*git.GitManager, error) {
+			return git.NewGitManager(root)
+		}
+	}
+	return &projectManager{cfg: cfg, newGitMgr: gitFactory}
 }
 
 // Register adds or updates a project registration and returns a project object.
@@ -204,6 +216,28 @@ func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
 	return s.ResolvePath(ctx, cwd)
 }
 
+// ListWorktrees returns worktree states across all registered projects.
+func (s *projectManager) ListWorktrees(ctx context.Context) ([]WorktreeState, error) {
+	entries, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []WorktreeState
+	for _, entry := range entries {
+		proj, err := s.Get(ctx, entry.Root)
+		if err != nil {
+			continue
+		}
+		states, err := proj.ListWorktrees(ctx)
+		if err != nil {
+			continue
+		}
+		all = append(all, states...)
+	}
+	return all, nil
+}
+
 // Name returns the project display name.
 func (p *projectHandle) Name() string {
 	return p.record.Name
@@ -248,6 +282,7 @@ func (p *projectHandle) AddWorktree(ctx context.Context, branch, base string) (W
 		return WorktreeState{}, err
 	}
 	return WorktreeState{
+		Project:          p.record.Name,
 		Branch:           branch,
 		Path:             worktreePath,
 		ExistsInRegistry: true,
@@ -256,16 +291,18 @@ func (p *projectHandle) AddWorktree(ctx context.Context, branch, base string) (W
 	}, nil
 }
 
-// RemoveWorktree removes a worktree by branch.
-func (p *projectHandle) RemoveWorktree(ctx context.Context, branch string) error {
+// RemoveWorktree removes a worktree by branch. If deleteBranch is true,
+// the branch ref is also deleted via GitManager.DeleteBranch (safe deletion:
+// refuses unmerged commits and current branch).
+// The worktree is always removed even if branch deletion fails.
+func (p *projectHandle) RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error {
 	if p == nil || p.manager == nil {
 		return ErrProjectHandleNotInitialized
 	}
-	if err := p.manager.worktrees().RemoveWorktree(ctx, branch); err != nil {
-		return err
-	}
+	err := p.manager.worktrees().RemoveWorktree(ctx, branch, deleteBranch)
+	// Worktree is gone regardless of branch deletion outcome — always update record.
 	delete(p.record.Worktrees, branch)
-	return nil
+	return err
 }
 
 // PruneStaleWorktrees removes stale worktree entries for this project.
@@ -285,7 +322,9 @@ func (p *projectHandle) PruneStaleWorktrees(ctx context.Context, dryRun bool) (*
 	return result, nil
 }
 
-// ListWorktrees returns merged worktree state views.
+// ListWorktrees returns merged worktree state views with actual health checks.
+// It uses the git layer to inspect each worktree for HEAD, branch, and detached
+// state, then combines that with registry and disk state to set Status.
 func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error) {
 	if p == nil {
 		return nil, ErrProjectHandleNotInitialized
@@ -294,15 +333,85 @@ func (p *projectHandle) ListWorktrees(_ context.Context) ([]WorktreeState, error
 		return []WorktreeState{}, nil
 	}
 
+	// Try to get git manager for detailed worktree inspection.
+	var gitMgr *git.GitManager
+	if p.manager != nil && p.manager.newGitMgr != nil {
+		mgr, err := p.manager.newGitMgr(p.record.Root)
+		if err == nil {
+			gitMgr = mgr
+		}
+	}
+
+	// Build git.WorktreeDirEntry slice from registry for the git layer
+	var entries []git.WorktreeDirEntry
+	for branch, wt := range p.record.Worktrees {
+		if wt.Path == "" {
+			continue
+		}
+		entries = append(entries, git.WorktreeDirEntry{
+			Name: branch,
+			Slug: filepath.Base(wt.Path),
+			Path: wt.Path,
+		})
+	}
+
+	// Get git-level info (HEAD, branch, detached state) for each worktree
+	gitInfoByBranch := make(map[string]git.WorktreeInfo)
+	if gitMgr != nil && len(entries) > 0 {
+		infos, err := gitMgr.ListWorktrees(entries)
+		if err == nil {
+			for _, info := range infos {
+				gitInfoByBranch[info.Name] = info
+			}
+		}
+	}
+
 	states := make([]WorktreeState, 0, len(p.record.Worktrees))
 	for branch, wt := range p.record.Worktrees {
 		state := WorktreeState{
+			Project:          p.record.Name,
 			Branch:           branch,
 			Path:             wt.Path,
 			ExistsInRegistry: true,
-			ExistsInGit:      true,
-			Status:           WorktreeHealthy,
 		}
+
+		// Check if directory exists on disk
+		_, statErr := os.Stat(wt.Path)
+		dirExists := statErr == nil
+
+		// Check if branch exists in git
+		branchExists := true // assume true if we can't check
+		if gitMgr != nil {
+			exists, err := gitMgr.BranchExists(branch)
+			if err == nil {
+				branchExists = exists
+			}
+		}
+
+		state.ExistsInGit = branchExists
+
+		// Merge git-level detail from ListWorktrees
+		if info, ok := gitInfoByBranch[branch]; ok {
+			if !info.Head.IsZero() {
+				state.Head = info.Head.String()[:7]
+			}
+			state.IsDetached = info.IsDetached
+			if info.Error != nil {
+				state.InspectError = info.Error
+			}
+		}
+
+		switch {
+		case dirExists && branchExists:
+			state.Status = WorktreeHealthy
+		case !dirExists && branchExists:
+			state.Status = WorktreeRegistryOnly
+		case dirExists && !branchExists:
+			state.Status = WorktreeBroken
+		default:
+			state.Status = WorktreeRegistryOnly
+		}
+
 		states = append(states, state)
 	}
 
@@ -331,7 +440,7 @@ func (s *projectManager) registry() *projectRegistry {
 }
 
 func (s *projectManager) worktrees() *worktreeService {
-	return newWorktreeService(s.cfg, s.logger)
+	return newWorktreeService(s.cfg, s.newGitMgr)
 }
 
 func (p *projectHandle) ensureProjectDir() error {

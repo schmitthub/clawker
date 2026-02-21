@@ -40,7 +40,7 @@ var _ project.Project = &ProjectMock{}
 //			RecordFunc: func() (project.ProjectRecord, error) {
 //				panic("mock out the Record method")
 //			},
-//			RemoveWorktreeFunc: func(ctx context.Context, branch string) error {
+//			RemoveWorktreeFunc: func(ctx context.Context, branch string, deleteBranch bool) error {
 //				panic("mock out the RemoveWorktree method")
 //			},
 //			RepoPathFunc: func() string {
@@ -75,7 +75,7 @@ type ProjectMock struct {
 	RecordFunc func() (project.ProjectRecord, error)
 
 	// RemoveWorktreeFunc mocks the RemoveWorktree method.
-	RemoveWorktreeFunc func(ctx context.Context, branch string) error
+	RemoveWorktreeFunc func(ctx context.Context, branch string, deleteBranch bool) error
 
 	// RepoPathFunc mocks the RepoPath method.
 	RepoPathFunc func() string
@@ -131,6 +131,8 @@ type ProjectMock struct {
 			Ctx context.Context
 			// Branch is the branch argument value.
 			Branch string
+			// DeleteBranch is the deleteBranch argument value.
+			DeleteBranch bool
 		}
 		// RepoPath holds details about calls to the RepoPath method.
 		RepoPath []struct {
@@ -386,21 +388,23 @@ func (mock *ProjectMock) RecordCalls() []struct {
 }
 
 // RemoveWorktree calls RemoveWorktreeFunc.
-func (mock *ProjectMock) RemoveWorktree(ctx context.Context, branch string) error {
+func (mock *ProjectMock) RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error {
 	if mock.RemoveWorktreeFunc == nil {
 		panic("ProjectMock.RemoveWorktreeFunc: method is nil but Project.RemoveWorktree was just called")
 	}
 	callInfo := struct {
-		Ctx    context.Context
-		Branch string
+		Ctx          context.Context
+		Branch       string
+		DeleteBranch bool
 	}{
-		Ctx:    ctx,
-		Branch: branch,
+		Ctx:          ctx,
+		Branch:       branch,
+		DeleteBranch: deleteBranch,
 	}
 	mock.lockRemoveWorktree.Lock()
 	mock.calls.RemoveWorktree = append(mock.calls.RemoveWorktree, callInfo)
 	mock.lockRemoveWorktree.Unlock()
-	return mock.RemoveWorktreeFunc(ctx, branch)
+	return mock.RemoveWorktreeFunc(ctx, branch, deleteBranch)
 }
 
 // RemoveWorktreeCalls gets all the calls that were made to RemoveWorktree.
@@ -408,12 +412,14 @@ func (mock *ProjectMock) RemoveWorktree(ctx context.Context, branch string) erro
 //
 //	len(mockedProject.RemoveWorktreeCalls())
 func (mock *ProjectMock) RemoveWorktreeCalls() []struct {
-	Ctx    context.Context
-	Branch string
+	Ctx          context.Context
+	Branch       string
+	DeleteBranch bool
 } {
 	var calls []struct {
-		Ctx    context.Context
-		Branch string
+		Ctx          context.Context
+		Branch       string
+		DeleteBranch bool
 	}
 	mock.lockRemoveWorktree.RLock()
 	calls = mock.calls.RemoveWorktree

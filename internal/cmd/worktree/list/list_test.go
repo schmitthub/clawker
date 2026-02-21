@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/stretchr/testify/assert"
@@ -27,9 +26,6 @@ func TestListRun_ProjectLoadError(t *testing.T) {
 		IOStreams: newTestIOStreams(),
 		ProjectManager: func() (project.ProjectManager, error) {
 			return nil, errors.New("boom")
-		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, nil
 		},
 	}
 

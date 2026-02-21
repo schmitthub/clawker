@@ -3,6 +3,8 @@ package shared
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,11 +55,29 @@ func testFlags() *cobra.Command {
 	return cmd
 }
 
+// testMockConfig returns a *configmocks.ConfigMock with GetProjectIgnoreFile and
+// GetProjectRoot stubbed to return safe temp paths (no registered project needed).
+// The cfg parameter ensures Project() returns a consistent project name for volume naming.
+func testMockConfig(project *config.Project) *configmocks.ConfigMock {
+	mock := configmocks.NewBlankConfig()
+	mock.GetProjectIgnoreFileFunc = func() (string, error) {
+		return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
+	}
+	mock.GetProjectRootFunc = func() (string, error) {
+		return os.TempDir(), nil
+	}
+	if project != nil {
+		mock.ProjectFunc = func() *config.Project { return project }
+	}
+	return mock
+}
+
 // testCreateConfig builds a CreateContainerConfig with test defaults.
-func testCreateConfig(fake *dockertest.FakeClient, cfg *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
+func testCreateConfig(fake *dockertest.FakeClient, project *config.Project, containerOpts *ContainerOptions, cmd *cobra.Command) *CreateContainerConfig {
 	return &CreateContainerConfig{
 		Client:  fake.Client,
-		Config:  cfg,
+		Cfg:     testMockConfig(project),
+		Config:  project,
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
 		Logger:  loggertest.NewNop(),
@@ -159,9 +179,9 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 	fake.SetupContainerCreate()
 	fake.SetupCopyToContainer()
 
-	cfg := testConfig()
+	projectCfg := testConfig()
 	hostProxyEnabled := true
-	cfg.Security.EnableHostProxy = &hostProxyEnabled
+	projectCfg.Security.EnableHostProxy = &hostProxyEnabled
 
 	cmd := testFlags()
 	containerOpts := NewContainerOptions()
@@ -169,7 +189,8 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 
 	ccfg := &CreateContainerConfig{
 		Client:  fake.Client,
-		Config:  cfg,
+		Cfg:     testMockConfig(projectCfg),
+		Config:  projectCfg,
 		Options: containerOpts,
 		Flags:   cmd.Flags(),
 		Logger:  loggertest.NewNop(),

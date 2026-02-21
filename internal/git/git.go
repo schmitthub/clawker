@@ -36,6 +36,9 @@ var (
 
 	// ErrIsCurrentBranch is returned when attempting to delete the currently checked-out branch.
 	ErrIsCurrentBranch = errors.New("cannot delete the currently checked out branch")
+
+	// ErrBranchAlreadyExists is returned when creating a branch that already exists.
+	ErrBranchAlreadyExists = errors.New("branch already exists")
 )
 
 // GitManager is the top-level facade for git operations.
@@ -354,6 +357,39 @@ func (g *GitManager) ResolveRef(ref string) (plumbing.Hash, error) {
 		return plumbing.ZeroHash, fmt.Errorf("resolving %q: %w", ref, err)
 	}
 	return *hash, nil
+}
+
+// CreateBranch creates a new branch pointing at the given base ref.
+// If base is empty, the branch is created from HEAD.
+// Returns ErrBranchAlreadyExists if the branch already exists.
+func (g *GitManager) CreateBranch(branch, base string) error {
+	exists, err := g.BranchExists(branch)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrBranchAlreadyExists
+	}
+
+	var hash plumbing.Hash
+	if base != "" {
+		hash, err = g.ResolveRef(base)
+		if err != nil {
+			return err
+		}
+	} else {
+		head, err := g.repo.Head()
+		if err != nil {
+			return fmt.Errorf("resolving HEAD: %w", err)
+		}
+		hash = head.Hash()
+	}
+
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), hash)
+	if err := g.repo.Storer.SetReference(ref); err != nil {
+		return fmt.Errorf("creating branch %q: %w", branch, err)
+	}
+	return nil
 }
 
 // BranchExists checks if a branch exists in the repository.

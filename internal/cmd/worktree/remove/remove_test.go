@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
@@ -29,9 +28,6 @@ func TestRemoveRun_ProjectLoadError(t *testing.T) {
 		ProjectManager: func() (project.ProjectManager, error) {
 			return nil, errors.New("boom")
 		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, nil
-		},
 		Branches: []string{"feature-1"},
 	}
 
@@ -40,21 +36,18 @@ func TestRemoveRun_ProjectLoadError(t *testing.T) {
 	assert.Contains(t, err.Error(), "loading project manager")
 }
 
-func TestRemoveRun_GitManagerError(t *testing.T) {
+func TestRemoveRun_CurrentProjectError(t *testing.T) {
 	opts := &RemoveOptions{
 		IOStreams: newTestIOStreams(),
 		ProjectManager: func() (project.ProjectManager, error) {
-			return projectmocks.NewProjectManagerMock(), nil
-		},
-		GitManager: func() (*git.GitManager, error) {
-			return nil, errors.New("git boom")
+			return projectmocks.NewMockProjectManager(), nil
 		},
 		Branches: []string{"feature-1"},
 	}
 
 	err := removeRun(context.Background(), opts)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "initializing git")
+	assert.Contains(t, err.Error(), "not in a registered project directory")
 }
 
 func TestNewCmdRemove_RunFReceivesArgsAndFlags(t *testing.T) {

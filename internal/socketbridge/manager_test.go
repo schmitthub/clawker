@@ -83,31 +83,27 @@ func TestWaitForPIDFile(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
-	dir := t.TempDir()
-	m := sockebridgemocks.NewTestManager(t, dir)
+	m, _ := sockebridgemocks.NewTestManager(t)
 	assert.NotNil(t, m)
 	assert.Equal(t, 0, m.BridgeCountForTest())
 }
 
 func TestManagerIsRunning(t *testing.T) {
 	t.Run("returns false for unknown container", func(t *testing.T) {
-		dir := t.TempDir()
-		m := sockebridgemocks.NewTestManager(t, dir)
+		m, _ := sockebridgemocks.NewTestManager(t)
 		assert.False(t, m.IsRunning("abc123def456"))
 	})
 
 	t.Run("returns true for tracked live process", func(t *testing.T) {
-		dir := t.TempDir()
-		m := sockebridgemocks.NewTestManager(t, dir)
-		m.SetBridgeForTest("test-container", os.Getpid(), filepath.Join(dir, "test-container.pid"))
+		m, pidsDir := sockebridgemocks.NewTestManager(t)
+		m.SetBridgeForTest("test-container", os.Getpid(), filepath.Join(pidsDir, "test-container.pid"))
 
 		assert.True(t, m.IsRunning("test-container"))
 	})
 
 	t.Run("returns false for tracked dead process", func(t *testing.T) {
-		dir := t.TempDir()
-		m := sockebridgemocks.NewTestManager(t, dir)
-		m.SetBridgeForTest("test-container", 999999999, filepath.Join(dir, "test-container.pid"))
+		m, pidsDir := sockebridgemocks.NewTestManager(t)
+		m.SetBridgeForTest("test-container", 999999999, filepath.Join(pidsDir, "test-container.pid"))
 
 		assert.False(t, m.IsRunning("test-container"))
 	})
@@ -115,12 +111,7 @@ func TestManagerIsRunning(t *testing.T) {
 
 func TestManagerStopBridge(t *testing.T) {
 	t.Run("removes PID file and tracking", func(t *testing.T) {
-		dir := t.TempDir()
-		m := sockebridgemocks.NewTestManager(t, dir)
-
-		// Create pids dir and PID file
-		pidsDir := filepath.Join(dir, "pids")
-		require.NoError(t, os.MkdirAll(pidsDir, 0755))
+		m, pidsDir := sockebridgemocks.NewTestManager(t)
 
 		containerID := "abc123def456789"
 		pidFile := filepath.Join(pidsDir, containerID+".pid")
@@ -142,11 +133,7 @@ func TestManagerStopBridge(t *testing.T) {
 
 func TestManagerStopAll(t *testing.T) {
 	t.Run("cleans up all PID files", func(t *testing.T) {
-		dir := t.TempDir()
-		m := sockebridgemocks.NewTestManager(t, dir)
-
-		pidsDir := filepath.Join(dir, "pids")
-		require.NoError(t, os.MkdirAll(pidsDir, 0755))
+		m, pidsDir := sockebridgemocks.NewTestManager(t)
 
 		// Create some PID files with dead PIDs
 		for _, id := range []string{"container-a", "container-b"} {
@@ -182,12 +169,11 @@ func TestShortID(t *testing.T) {
 }
 
 func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
-	dir := t.TempDir()
-	m := sockebridgemocks.NewTestManager(t, dir)
+	m, pidsDir := sockebridgemocks.NewTestManager(t)
 
 	// Pre-track a bridge with a short container ID and the current PID
 	shortContainerID := "short"
-	pidFile := filepath.Join(dir, "pids", shortContainerID+".pid")
+	pidFile := filepath.Join(pidsDir, shortContainerID+".pid")
 	m.SetBridgeForTest(shortContainerID, os.Getpid(), pidFile)
 
 	// This should NOT panic from containerID[:12] slicing
@@ -198,11 +184,10 @@ func TestManagerEnsureBridge_ShortContainerID(t *testing.T) {
 }
 
 func TestManagerEnsureBridge_IdempotentWhenTracked(t *testing.T) {
-	dir := t.TempDir()
-	m := sockebridgemocks.NewTestManager(t, dir)
+	m, pidsDir := sockebridgemocks.NewTestManager(t)
 
 	containerID := "test-container-12345"
-	pidFile := filepath.Join(dir, "pids", containerID+".pid")
+	pidFile := filepath.Join(pidsDir, containerID+".pid")
 
 	// Pre-track a bridge with current PID (alive)
 	m.SetBridgeForTest(containerID, os.Getpid(), pidFile)

@@ -14,7 +14,7 @@ import (
 
 // AddOptions contains the options for the add command.
 type AddOptions struct {
-	IOStreams *iostreams.IOStreams
+	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
 
 	Branch string
@@ -24,7 +24,7 @@ type AddOptions struct {
 // NewCmdAdd creates the worktree add command.
 func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error) *cobra.Command {
 	opts := &AddOptions{
-		IOStreams: f.IOStreams,
+		IOStreams:      f.IOStreams,
 		ProjectManager: f.ProjectManager,
 	}
 
@@ -33,7 +33,7 @@ func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error
 		Short: "Create a worktree for a branch",
 		Long: `Creates a git worktree for the specified branch.
 
-If the worktree already exists, the command succeeds (idempotent).
+If the worktree already exists, the command will fail.
 If the branch exists but isn't checked out elsewhere, it's checked out in the new worktree.
 If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
 		Example: `  # Create a worktree for a new branch

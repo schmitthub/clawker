@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -426,11 +428,18 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewFromString(`
+			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
-`), nil
+`)
+			mock.GetProjectIgnoreFileFunc = func() (string, error) {
+				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
+			}
+			mock.GetProjectRootFunc = func() (string, error) {
+				return os.TempDir(), nil
+			}
+			return mock, nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -581,6 +590,12 @@ workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
 agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
 `)
+		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
+			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
+		}
+		useHostAuthCfg.GetProjectRootFunc = func() (string, error) {
+			return os.TempDir(), nil
+		}
 		fake := dockertest.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic

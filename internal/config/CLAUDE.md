@@ -80,7 +80,7 @@ Key ownership: `logging/monitoring/host_proxy/default_image` -> settings, `proje
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
 
-**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`
+**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
 
 **Mutation**: `Get(key)`, `Set(key, value)`, `Write(WriteOptions)`, `Watch(onChange)`
 - `Set` updates in-memory state + marks dirty; does not persist

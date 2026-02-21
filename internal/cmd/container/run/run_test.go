@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -800,11 +802,18 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 			return fake.Client, nil
 		},
 		Config: func() (config.Config, error) {
-			return configmocks.NewFromString(`
+			mock := configmocks.NewFromString(`
 version: "1"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
-`), nil
+`)
+			mock.GetProjectIgnoreFileFunc = func() (string, error) {
+				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
+			}
+			mock.GetProjectRootFunc = func() (string, error) {
+				return os.TempDir(), nil
+			}
+			return mock, nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -891,6 +900,12 @@ default_image: "node:20-slim"
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { enable_host_proxy: false, firewall: { enable: false } }
 `)
+		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
+			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil
+		}
+		testCfg.GetProjectRootFunc = func() (string, error) {
+			return os.TempDir(), nil
+		}
 		fake := dockertest.NewFakeClient(testCfg)
 		fake.SetupImageList()                        // empty — no project image found
 		fake.SetupImageExists("node:20-slim", false) // default image missing
