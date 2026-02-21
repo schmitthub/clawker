@@ -301,7 +301,6 @@ loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permis
 - CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
 - Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
-- `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
 - Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
 - Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 
