@@ -4,25 +4,15 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/gofrs/flock"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
-
-const dottedLabelKeySentinel = "__clawker_dot__"
 
 // Config is the public configuration contract.
 // Add methods here as the config contract grows.
@@ -102,11 +92,6 @@ type configImpl struct {
 	mu sync.RWMutex
 }
 
-type dirtyNode struct {
-	direct   bool
-	children map[string]*dirtyNode
-}
-
 type ConfigScope string
 
 const (
@@ -124,7 +109,7 @@ var keyOwnership = map[string]ConfigScope{
 	"projects": ScopeRegistry,
 
 	"version":   ScopeProject,
-	"project":   ScopeProject,
+	"name":      ScopeProject,
 	"build":     ScopeProject,
 	"agent":     ScopeProject,
 	"workspace": ScopeProject,
@@ -132,137 +117,14 @@ var keyOwnership = map[string]ConfigScope{
 	"loop":      ScopeProject,
 }
 
-// WriteOptions controls how Write persists the current in-memory configuration.
-//
-// Path selects the target file:
-//   - Empty: write to the currently loaded/configured Viper target.
-//   - Non-empty: write to this explicit filesystem path.
-//
-// Safe controls overwrite behavior:
-//   - false: create or overwrite (truncate) the target file.
-//   - true: create only; return an error if the target already exists.
-//
-// Scope constrains persistence to a logical config file owner.
-//   - Empty: selective dirty-root persistence to owning files (or explicit Path write).
-//   - settings/project/registry: persist only dirty roots owned by that scope.
-//
-// Key optionally persists a single key.
-//   - Empty: scope/default behavior applies.
-//   - Non-empty: write only this key when dirty (scope inferred from ownership map when Scope is empty).
-type WriteOptions struct {
-	Path  string
-	Safe  bool
-	Scope ConfigScope
-	Key   string
-}
+// validScopes is the set of recognised namespace prefixes, derived from keyOwnership.
+var validScopes map[string]ConfigScope
 
-func newViperConfig() *viper.Viper {
-	return newViperConfigWithEnv(true)
-}
-
-func newViperConfigWithEnv(enableAutomaticEnv bool) *viper.Viper {
-	v := viper.New()
-	v.SetEnvPrefix("CLAWKER")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	if enableAutomaticEnv {
-		bindSupportedEnvKeys(v)
+func init() {
+	validScopes = make(map[string]ConfigScope)
+	for _, scope := range keyOwnership {
+		validScopes[string(scope)] = scope
 	}
-	setDefaults(v)
-	return v
-}
-
-func bindSupportedEnvKeys(v *viper.Viper) {
-	replacer := strings.NewReplacer(".", "_")
-	for _, flatKey := range supportedEnvKeys {
-		nsKey, err := namespacedKey(flatKey)
-		if err != nil {
-			continue // skip keys without ownership mapping
-		}
-		envVar := "CLAWKER_" + strings.ToUpper(replacer.Replace(flatKey))
-		_ = v.BindEnv(nsKey, envVar)
-	}
-}
-
-// TODO: AI-slop allowlist for env-overridable config keys (BindEnv instead of AutomaticEnv).
-// Prevents accidental override of structural keys like "version"/"project", but manually
-// mirroring the schema is a maintenance burden. Replace with AutomaticEnv + a small denylist.
-var supportedEnvKeys = []string{
-	"default_image",
-	"build.image",
-	"build.dockerfile",
-	"build.packages",
-	"build.context",
-	"build.build_args",
-	"agent.includes",
-	"agent.env_file",
-	"agent.from_env",
-	"agent.env",
-	"agent.memory",
-	"agent.editor",
-	"agent.visual",
-	"agent.shell",
-	"agent.claude_code.config.strategy",
-	"agent.claude_code.use_host_auth",
-	"agent.enable_shared_dir",
-	"agent.post_init",
-	"workspace.remote_path",
-	"workspace.default_mode",
-	"security.firewall.enable",
-	"security.firewall.add_domains",
-	"security.firewall.ip_range_sources",
-	"security.docker_socket",
-	"security.cap_add",
-	"security.enable_host_proxy",
-	"security.git_credentials.forward_https",
-	"security.git_credentials.forward_ssh",
-	"security.git_credentials.forward_gpg",
-	"security.git_credentials.copy_git_config",
-	"loop.max_loops",
-	"loop.stagnation_threshold",
-	"loop.timeout_minutes",
-	"loop.calls_per_hour",
-	"loop.completion_threshold",
-	"loop.session_expiration_hours",
-	"loop.same_error_threshold",
-	"loop.output_decline_threshold",
-	"loop.max_consecutive_test_loops",
-	"loop.loop_delay_seconds",
-	"loop.safety_completion_threshold",
-	"loop.skip_permissions",
-	"loop.hooks_file",
-	"loop.append_system_prompt",
-	"logging.file_enabled",
-	"logging.max_size_mb",
-	"logging.max_age_days",
-	"logging.max_backups",
-	"logging.compress",
-	"logging.otel.enabled",
-	"logging.otel.timeout_seconds",
-	"logging.otel.max_queue_size",
-	"logging.otel.export_interval_seconds",
-	"host_proxy.manager.port",
-	"host_proxy.daemon.port",
-	"host_proxy.daemon.poll_interval",
-	"host_proxy.daemon.grace_period",
-	"host_proxy.daemon.max_consecutive_errs",
-	"monitoring.otel_collector_endpoint",
-	"monitoring.otel_collector_port",
-	"monitoring.otel_collector_host",
-	"monitoring.otel_collector_internal",
-	"monitoring.otel_grpc_port",
-	"monitoring.loki_port",
-	"monitoring.prometheus_port",
-	"monitoring.jaeger_port",
-	"monitoring.grafana_port",
-	"monitoring.prometheus_metrics_port",
-	"monitoring.telemetry.metrics_path",
-	"monitoring.telemetry.logs_path",
-	"monitoring.telemetry.metric_export_interval_ms",
-	"monitoring.telemetry.logs_export_interval_ms",
-	"monitoring.telemetry.log_tool_details",
-	"monitoring.telemetry.log_user_prompts",
-	"monitoring.telemetry.include_account_uuid",
-	"monitoring.telemetry.include_session_id",
 }
 
 func newConfig(v *viper.Viper) *configImpl {
@@ -272,288 +134,7 @@ func newConfig(v *viper.Viper) *configImpl {
 	}
 }
 
-func newDirtyNode() *dirtyNode {
-	return &dirtyNode{}
-}
-
-func (n *dirtyNode) isDirty() bool {
-	if n == nil {
-		return false
-	}
-	if n.direct {
-		return true
-	}
-	for _, child := range n.children {
-		if child.isDirty() {
-			return true
-		}
-	}
-	return false
-}
-
-func (n *dirtyNode) ensureChild(key string) *dirtyNode {
-	if n.children == nil {
-		n.children = make(map[string]*dirtyNode)
-	}
-	child, ok := n.children[key]
-	if !ok {
-		child = newDirtyNode()
-		n.children[key] = child
-	}
-	return child
-}
-
-func splitKeyPath(key string) []string {
-	raw := strings.Split(key, ".")
-	parts := make([]string, 0, len(raw))
-	for _, part := range raw {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return parts
-}
-
-func (c *configImpl) markDirtyPath(key string) {
-	parts := splitKeyPath(key)
-	if len(parts) == 0 {
-		return
-	}
-
-	node := c.dirty
-	for i, part := range parts {
-		node = node.ensureChild(part)
-		if i == len(parts)-1 {
-			node.direct = true
-		}
-	}
-}
-
-func (c *configImpl) dirtyNodeForPath(parts []string) *dirtyNode {
-	node := c.dirty
-	for _, part := range parts {
-		if node == nil || node.children == nil {
-			return nil
-		}
-		next, ok := node.children[part]
-		if !ok {
-			return nil
-		}
-		node = next
-	}
-	return node
-}
-
-func (c *configImpl) isDirtyPath(key string) bool {
-	parts := splitKeyPath(key)
-	if len(parts) == 0 {
-		return false
-	}
-	node := c.dirtyNodeForPath(parts)
-	return node != nil && node.isDirty()
-}
-
-func clearPathRecursive(node *dirtyNode, parts []string) bool {
-	if node == nil {
-		return false
-	}
-
-	if len(parts) == 0 {
-		node.direct = false
-		node.children = nil
-		return node.isDirty()
-	}
-
-	next, ok := node.children[parts[0]]
-	if !ok {
-		return node.isDirty()
-	}
-
-	if !clearPathRecursive(next, parts[1:]) {
-		delete(node.children, parts[0])
-		if len(node.children) == 0 {
-			node.children = nil
-		}
-	}
-
-	return node.isDirty()
-}
-
-func (c *configImpl) clearDirtyPath(key string) {
-	parts := splitKeyPath(key)
-	if len(parts) == 0 {
-		return
-	}
-	_ = clearPathRecursive(c.dirty, parts)
-}
-
-// dirtyOwnedRoots returns the file-level root keys that are dirty under the
-// given scope. With namespaced dirty tracking, the scope is the top-level node
-// in the dirty tree and its children are the file-level roots.
-func (c *configImpl) dirtyOwnedRoots(scope ConfigScope) []string {
-	scopeNode := c.dirtyNodeForPath([]string{string(scope)})
-	if scopeNode == nil {
-		return nil
-	}
-	roots := make([]string, 0, len(scopeNode.children))
-	for root, node := range scopeNode.children {
-		if node.isDirty() {
-			roots = append(roots, root)
-		}
-	}
-	sort.Strings(roots)
-	return roots
-}
-
-func (c *configImpl) writeDirtyRootsForScope(scope ConfigScope, overridePath string, safe bool) error {
-	dirtyRoots := c.dirtyOwnedRoots(scope)
-	if len(dirtyRoots) == 0 {
-		return nil
-	}
-
-	targetPath, err := c.resolveTargetPath(scope, overridePath)
-	if err != nil {
-		return err
-	}
-
-	// writeRootsToFile reads namespaced keys from Viper but writes flat keys to file.
-	if err := writeRootsToFile(targetPath, dirtyRoots, scope, c.v, safe); err != nil {
-		return err
-	}
-
-	for _, root := range dirtyRoots {
-		// Clear dirty using the namespaced path: scope.root
-		c.clearDirtyPath(string(scope) + "." + root)
-	}
-	return nil
-}
-
-// NewConfig loads all clawker configuration files into a single Config.
-// Precedence (highest to lowest): project config > project registry > user config > settings
-func NewConfig() (Config, error) {
-	c := newConfig(newViperConfig())
-	opts := loadOptions{
-		settingsFile:          settingsConfigFile(),
-		userProjectConfigFile: userProjectConfigFile(),
-		projectRegistryPath:   projectRegistryPath(),
-	}
-	if err := ensureDefaultConfigFiles(opts); err != nil {
-		return nil, err
-	}
-	c.settingsFile = opts.settingsFile
-	c.userProjectConfigFile = opts.userProjectConfigFile
-	c.projectRegistryPath = opts.projectRegistryPath
-	if err := c.load(opts); err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-// ReadFromString takes a YAML string and returns a Config.
-// Useful for testing or constructing configs programmatically.
-// Top-level keys are grouped by scope via keyOwnership and merged under their
-// namespace prefix (project.*, settings.*, registry.*).
-func ReadFromString(str string) (Config, error) {
-	rewritten, err := rewriteDottedLabelKeysForViper(str)
-	if err != nil {
-		return nil, err
-	}
-
-	v := newViperConfigWithEnv(false)
-
-	if rewritten != "" {
-		flat := map[string]any{}
-		if err := yaml.Unmarshal([]byte(rewritten), &flat); err != nil {
-			return nil, fmt.Errorf("parsing config from string: %w", err)
-		}
-
-		// Group top-level keys by owning scope.
-		grouped := map[ConfigScope]map[string]any{}
-		for key, val := range flat {
-			scope, sErr := scopeForKey(key)
-			if sErr != nil {
-				return nil, fmt.Errorf("unknown config key %q: %w", key, sErr)
-			}
-			if grouped[scope] == nil {
-				grouped[scope] = map[string]any{}
-			}
-			grouped[scope][key] = val
-		}
-
-		for scope, m := range grouped {
-			scopeYAML, mErr := yaml.Marshal(m)
-			if mErr != nil {
-				return nil, fmt.Errorf("marshalling %s config for validation: %w", scope, mErr)
-			}
-			if err := validateYAMLStrict(string(scopeYAML), schemaForScope(scope)); err != nil {
-				return nil, fmt.Errorf("invalid %s config: %w", scope, err)
-			}
-			if err := v.MergeConfigMap(namespaceMap(m, scope)); err != nil {
-				return nil, fmt.Errorf("merging %s config from string: %w", scope, err)
-			}
-		}
-	}
-
-	return newConfig(v), nil
-}
-
-func rewriteDottedLabelKeysForViper(str string) (string, error) {
-	if str == "" {
-		return str, nil
-	}
-
-	var root yaml.Node
-	if err := yaml.Unmarshal([]byte(str), &root); err != nil {
-		return "", fmt.Errorf("parsing config from string: %w", err)
-	}
-
-	rewriteDottedLabelKeysInNode(&root)
-
-	out, err := yaml.Marshal(&root)
-	if err != nil {
-		return "", fmt.Errorf("encoding rewritten config: %w", err)
-	}
-
-	return string(out), nil
-}
-
-func rewriteDottedLabelKeysInNode(node *yaml.Node) {
-	if node == nil {
-		return
-	}
-
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-
-			if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "labels" && valueNode.Kind == yaml.MappingNode {
-				rewriteLabelMapKeys(valueNode)
-			}
-
-			rewriteDottedLabelKeysInNode(valueNode)
-		}
-		return
-	}
-
-	for _, child := range node.Content {
-		rewriteDottedLabelKeysInNode(child)
-	}
-}
-
-func rewriteLabelMapKeys(labelsNode *yaml.Node) {
-	for i := 0; i+1 < len(labelsNode.Content); i += 2 {
-		labelKey := labelsNode.Content[i]
-		if labelKey.Kind != yaml.ScalarNode {
-			continue
-		}
-		if !strings.Contains(labelKey.Value, ".") {
-			continue
-		}
-
-		labelKey.Value = strings.ReplaceAll(labelKey.Value, ".", dottedLabelKeySentinel)
-	}
-}
+// --- Schema accessors ---
 
 func (c *configImpl) RequiredFirewallDomains() []string {
 	return append([]string(nil), requiredFirewallDomains...)
@@ -580,11 +161,18 @@ func (c *configImpl) Project() *Project {
 	}
 	projectMap, ok := projectRaw.(map[string]any)
 	if !ok {
+		fmt.Fprintf(os.Stderr, "config: Project() expected map[string]any, got %T\n", projectRaw)
 		return p
 	}
 	sub := viper.New()
-	_ = sub.MergeConfigMap(projectMap)
-	_ = sub.Unmarshal(p)
+	if err := sub.MergeConfigMap(projectMap); err != nil {
+		fmt.Fprintf(os.Stderr, "config: Project() MergeConfigMap: %v\n", err)
+		return p
+	}
+	if err := sub.Unmarshal(p); err != nil {
+		fmt.Fprintf(os.Stderr, "config: Project() Unmarshal: %v\n", err)
+		return p
+	}
 	restoreDottedLabelKeys(p)
 	return p
 }
@@ -662,65 +250,18 @@ func (c *configImpl) Settings() Settings {
 }
 
 func (c *configImpl) LoggingConfig() LoggingConfig {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return LoggingConfig{
-		FileEnabled: boolPtr(c.v.GetBool("settings.logging.file_enabled")),
-		MaxSizeMB:   c.v.GetInt("settings.logging.max_size_mb"),
-		MaxAgeDays:  c.v.GetInt("settings.logging.max_age_days"),
-		MaxBackups:  c.v.GetInt("settings.logging.max_backups"),
-		Compress:    boolPtr(c.v.GetBool("settings.logging.compress")),
-		Otel: OtelConfig{
-			Enabled:               boolPtr(c.v.GetBool("settings.logging.otel.enabled")),
-			TimeoutSeconds:        c.v.GetInt("settings.logging.otel.timeout_seconds"),
-			MaxQueueSize:          c.v.GetInt("settings.logging.otel.max_queue_size"),
-			ExportIntervalSeconds: c.v.GetInt("settings.logging.otel.export_interval_seconds"),
-		},
-	}
+	return c.Settings().Logging
 }
 
 func (c *configImpl) HostProxyConfig() HostProxyConfig {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return HostProxyConfig{
-		Manager: HostProxyManagerConfig{
-			Port: c.v.GetInt("settings.host_proxy.manager.port"),
-		},
-		Daemon: HostProxyDaemonConfig{
-			Port:               c.v.GetInt("settings.host_proxy.daemon.port"),
-			PollInterval:       c.v.GetDuration("settings.host_proxy.daemon.poll_interval"),
-			GracePeriod:        c.v.GetDuration("settings.host_proxy.daemon.grace_period"),
-			MaxConsecutiveErrs: c.v.GetInt("settings.host_proxy.daemon.max_consecutive_errs"),
-		},
-	}
+	return c.Settings().HostProxy
 }
 
 func (c *configImpl) MonitoringConfig() MonitoringConfig {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return MonitoringConfig{
-		OtelCollectorEndpoint: c.v.GetString("settings.monitoring.otel_collector_endpoint"),
-		OtelCollectorPort:     c.v.GetInt("settings.monitoring.otel_collector_port"),
-		OtelCollectorHost:     c.v.GetString("settings.monitoring.otel_collector_host"),
-		OtelCollectorInternal: c.v.GetString("settings.monitoring.otel_collector_internal"),
-		OtelGRPCPort:          c.v.GetInt("settings.monitoring.otel_grpc_port"),
-		LokiPort:              c.v.GetInt("settings.monitoring.loki_port"),
-		PrometheusPort:        c.v.GetInt("settings.monitoring.prometheus_port"),
-		JaegerPort:            c.v.GetInt("settings.monitoring.jaeger_port"),
-		GrafanaPort:           c.v.GetInt("settings.monitoring.grafana_port"),
-		PrometheusMetricsPort: c.v.GetInt("settings.monitoring.prometheus_metrics_port"),
-		Telemetry: TelemetryConfig{
-			MetricsPath:            c.v.GetString("settings.monitoring.telemetry.metrics_path"),
-			LogsPath:               c.v.GetString("settings.monitoring.telemetry.logs_path"),
-			MetricExportIntervalMs: c.v.GetInt("settings.monitoring.telemetry.metric_export_interval_ms"),
-			LogsExportIntervalMs:   c.v.GetInt("settings.monitoring.telemetry.logs_export_interval_ms"),
-			LogToolDetails:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_tool_details")),
-			LogUserPrompts:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_user_prompts")),
-			IncludeAccountUUID:     boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_account_uuid")),
-			IncludeSessionID:       boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_session_id")),
-		},
-	}
+	return c.Settings().Monitoring
 }
+
+// --- Get / Set / Watch ---
 
 // Get returns the value for a namespaced config key (e.g. "project.build.image",
 // "settings.logging.file_enabled").
@@ -761,86 +302,6 @@ func (c *configImpl) Set(key string, value any) error {
 	return nil
 }
 
-// Write persists the current in-memory configuration using WriteOptions.
-//
-// Behavior summary:
-//   - Key set: persist only that dirty key (scope inferred/validated).
-//   - Scope set: persist only dirty owned roots in that scope.
-//   - Path empty: persist dirty roots to owning files across all scopes.
-//   - Path set (without Key/Scope): write full merged config to explicit path.
-//
-// Access is protected by an RWMutex for safe concurrent writes.
-func (c *configImpl) Write(opts WriteOptions) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if opts.Key != "" {
-		inferredScope, err := scopeFromNamespacedKey(opts.Key)
-		if err != nil {
-			return err
-		}
-
-		scope := inferredScope
-		if opts.Scope != "" {
-			if opts.Scope != inferredScope {
-				return fmt.Errorf("key %q belongs to %q scope, not %q", opts.Key, inferredScope, opts.Scope)
-			}
-			scope = opts.Scope
-		}
-
-		if !c.isDirtyPath(opts.Key) {
-			return nil
-		}
-
-		targetPath, err := c.resolveTargetPath(scope, opts.Path)
-		if err != nil {
-			return err
-		}
-
-		if !c.v.IsSet(opts.Key) {
-			return &KeyNotFoundError{Key: opts.Key}
-		}
-
-		// Strip scope prefix for file-relative key.
-		flatKey := stripScopePrefix(opts.Key)
-		value := c.v.Get(opts.Key)
-		if err := writeKeyToFile(targetPath, flatKey, value, opts.Safe); err != nil {
-			return err
-		}
-		c.clearDirtyPath(opts.Key)
-		return nil
-	}
-
-	if opts.Scope != "" {
-		return c.writeDirtyRootsForScope(opts.Scope, opts.Path, opts.Safe)
-	}
-
-	if opts.Path == "" {
-		scopes := []ConfigScope{ScopeSettings, ScopeRegistry, ScopeProject}
-		for _, scope := range scopes {
-			if err := c.writeDirtyRootsForScope(scope, "", opts.Safe); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	return withFileLock(opts.Path, func() error {
-		if opts.Safe {
-			if _, err := os.Stat(opts.Path); err == nil {
-				return fmt.Errorf("config file already exists: %s", opts.Path)
-			}
-		}
-
-		encoded, err := yaml.Marshal(c.v.AllSettings())
-		if err != nil {
-			return fmt.Errorf("encoding config %s: %w", opts.Path, err)
-		}
-
-		return atomicWriteFile(opts.Path, encoded, 0o644)
-	})
-}
-
 // Watch enables file watching for the currently loaded config file.
 //
 // If onChange is non-nil, it is registered with Viper's OnConfigChange hook.
@@ -862,6 +323,8 @@ func (c *configImpl) Watch(onChange func(fsnotify.Event)) error {
 	return nil
 }
 
+// --- Key / scope helpers ---
+
 func schemaForScope(scope ConfigScope) any {
 	switch scope {
 	case ScopeProject:
@@ -871,7 +334,7 @@ func schemaForScope(scope ConfigScope) any {
 	case ScopeRegistry:
 		return &ProjectRegistry{}
 	default:
-		return &map[string]any{}
+		panic(fmt.Sprintf("config: no schema for scope %q", scope))
 	}
 }
 
@@ -887,13 +350,6 @@ func scopeForKey(key string) (ConfigScope, error) {
 func keyRoot(key string) string {
 	parts := strings.SplitN(key, ".", 2)
 	return parts[0]
-}
-
-// validScopes is the set of recognised namespace prefixes.
-var validScopes = map[string]ConfigScope{
-	string(ScopeProject):  ScopeProject,
-	string(ScopeSettings): ScopeSettings,
-	string(ScopeRegistry): ScopeRegistry,
 }
 
 // namespacedKey converts a flat (file-relative) config key to its namespaced
@@ -929,23 +385,6 @@ func scopeFromNamespacedKey(key string) (ConfigScope, error) {
 	return scope, nil
 }
 
-// readFileToMap reads a YAML file into a flat map[string]any.
-// Returns an empty map for empty files.
-func readFileToMap(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
-	}
-	m := map[string]any{}
-	if len(data) == 0 {
-		return m, nil
-	}
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
-	}
-	return m, nil
-}
-
 // stripScopePrefix removes the first dotted segment from a namespaced key.
 // E.g. "project.build.image" → "build.image", "settings.logging" → "logging".
 func stripScopePrefix(key string) string {
@@ -956,481 +395,7 @@ func stripScopePrefix(key string) string {
 	return parts[1]
 }
 
-func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (string, error) {
-	if overridePath != "" {
-		return overridePath, nil
-	}
-
-	switch scope {
-	case ScopeSettings:
-		if c.settingsFile == "" {
-			return "", fmt.Errorf("settings file path is not configured")
-		}
-		return c.settingsFile, nil
-	case ScopeRegistry:
-		if c.projectRegistryPath == "" {
-			return "", fmt.Errorf("project registry path is not configured")
-		}
-		return c.projectRegistryPath, nil
-	case ScopeProject:
-		if c.projectConfigFile != "" {
-			return c.projectConfigFile, nil
-		}
-
-		root, err := c.projectRootFromCurrentDir()
-		if err == nil {
-			return filepath.Join(root, clawkerProjectConfigFileName), nil
-		}
-		if errors.Is(err, ErrNotInProject) {
-			if c.userProjectConfigFile == "" {
-				return "", fmt.Errorf("project config path is not configured")
-			}
-			return c.userProjectConfigFile, nil
-		}
-		return "", err
-	default:
-		return "", fmt.Errorf("invalid write scope: %s", scope)
-	}
-}
-
-func ownedRoots(scope ConfigScope) []string {
-	roots := make([]string, 0)
-	for root, owner := range keyOwnership {
-		if owner == scope {
-			roots = append(roots, root)
-		}
-	}
-	sort.Strings(roots)
-	return roots
-}
-
-// atomicWriteFile writes data to path using a temp-file + fsync + rename
-// strategy so that a crash mid-write never leaves the target truncated or
-// partial. The temp file is created in the target's parent directory to
-// guarantee same-filesystem rename semantics on POSIX.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating config directory for %s: %w", path, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".clawker-*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp file for %s: %w", path, err)
-	}
-
-	success := false
-	defer func() {
-		if !success {
-			_ = os.Remove(tmp.Name())
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("writing temp file for %s: %w", path, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("syncing temp file for %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp file for %s: %w", path, err)
-	}
-	if err := os.Chmod(tmp.Name(), perm); err != nil {
-		return fmt.Errorf("setting permissions on temp file for %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("renaming temp file to %s: %w", path, err)
-	}
-
-	success = true
-	return nil
-}
-
-// withFileLock acquires an advisory file lock on path+".lock" before running fn,
-// providing cross-process mutual exclusion for config file writes.
-func withFileLock(path string, fn func() error) error {
-	fl := flock.New(path + ".lock")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	locked, err := fl.TryLockContext(ctx, 100*time.Millisecond)
-	if err != nil {
-		return fmt.Errorf("acquiring file lock for %s: %w", path, err)
-	}
-	if !locked {
-		return fmt.Errorf("timed out acquiring file lock for %s", path)
-	}
-	defer func() { _ = fl.Unlock() }()
-
-	return fn()
-}
-
-func writeKeyToFile(path, key string, value any, safe bool) error {
-	return withFileLock(path, func() error {
-		v, exists, err := openConfigForWrite(path)
-		if err != nil {
-			return err
-		}
-
-		if safe && exists {
-			return fmt.Errorf("config file already exists: %s", path)
-		}
-
-		v.Set(key, value)
-
-		encoded, err := yaml.Marshal(v.AllSettings())
-		if err != nil {
-			return fmt.Errorf("encoding config %s: %w", path, err)
-		}
-
-		return atomicWriteFile(path, encoded, 0o644)
-	})
-}
-
-// writeRootsToFile persists dirty root keys to a config file.
-// roots are flat file-level keys (e.g. "build", "logging").
-// scope is used to read from the namespaced Viper store (e.g. "project.build").
-func writeRootsToFile(path string, roots []string, scope ConfigScope, source *viper.Viper, safe bool) error {
-	return withFileLock(path, func() error {
-		_, exists, err := openConfigForWrite(path)
-		if err != nil {
-			return err
-		}
-
-		if safe && exists {
-			return fmt.Errorf("config file already exists: %s", path)
-		}
-
-		content := map[string]any{}
-		if exists {
-			bytes, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("reading config %s: %w", path, err)
-			}
-			if len(bytes) > 0 {
-				if err := yaml.Unmarshal(bytes, &content); err != nil {
-					return fmt.Errorf("parsing config %s: %w", path, err)
-				}
-			}
-		}
-
-		scopePrefix := string(scope) + "."
-		for _, root := range roots {
-			nsKey := scopePrefix + root
-			if source.IsSet(nsKey) {
-				content[root] = source.Get(nsKey)
-				continue
-			}
-			delete(content, root)
-		}
-
-		encoded, err := yaml.Marshal(content)
-		if err != nil {
-			return fmt.Errorf("encoding config %s: %w", path, err)
-		}
-
-		return atomicWriteFile(path, encoded, 0o644)
-	})
-}
-
-func openConfigForWrite(path string) (*viper.Viper, bool, error) {
-	v := viper.New()
-	v.SetConfigType("yaml")
-	v.SetConfigFile(path)
-
-	exists := true
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			exists = false
-		} else {
-			return nil, false, fmt.Errorf("failed to stat config %s: %w", path, err)
-		}
-	}
-
-	if exists {
-		if err := v.ReadInConfig(); err != nil {
-			return nil, false, fmt.Errorf("loading config %s: %w", path, err)
-		}
-	}
-
-	return v, exists, nil
-}
-
-func (c *configImpl) GetProjectRoot() (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.projectRootFromCurrentDir()
-}
-
-func (c *configImpl) GetProjectIgnoreFile() (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	root, err := c.projectRootFromCurrentDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, clawkerIgnoreFileName), nil
-}
-
-func (c *configImpl) projectRootFromCurrentDir() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getting cwd: %w", err)
-	}
-	cwd = filepath.Clean(cwd)
-
-	projectsRaw := c.v.Get("registry.projects")
-	projectRoots := make([]string, 0)
-	switch projects := projectsRaw.(type) {
-	case map[string]any:
-		for key := range projects {
-			root := filepath.Clean(c.v.GetString(fmt.Sprintf("registry.projects.%s.root", key)))
-			if root != "" {
-				projectRoots = append(projectRoots, root)
-			}
-		}
-	case []any:
-		for _, rawEntry := range projects {
-			entry, ok := rawEntry.(map[string]any)
-			if !ok {
-				continue
-			}
-			root, ok := entry["root"].(string)
-			if !ok || root == "" {
-				continue
-			}
-			projectRoots = append(projectRoots, filepath.Clean(root))
-		}
-	}
-
-	bestMatch := ""
-	for _, root := range projectRoots {
-		rel, relErr := filepath.Rel(root, cwd)
-		if relErr != nil {
-			continue
-		}
-		if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-			if len(root) > len(bestMatch) {
-				bestMatch = root
-			}
-		}
-	}
-
-	if bestMatch == "" {
-		return "", fmt.Errorf("%w: %s", ErrNotInProject, cwd)
-	}
-
-	return bestMatch, nil
-}
-
-type loadOptions struct {
-	settingsFile          string
-	userProjectConfigFile string
-	projectRegistryPath   string
-}
-
-func (c *configImpl) load(opts loadOptions) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	files := []struct {
-		path   string
-		schema any
-		scope  ConfigScope
-	}{
-		{path: opts.settingsFile, schema: &Settings{}, scope: ScopeSettings},
-		{path: opts.userProjectConfigFile, schema: &Project{}, scope: ScopeProject},
-		{path: opts.projectRegistryPath, schema: &ProjectRegistry{}, scope: ScopeRegistry},
-	}
-
-	for _, f := range files {
-		if err := validateConfigFileExact(f.path, f.schema); err != nil {
-			return err
-		}
-
-		raw, err := readFileToMap(f.path)
-		if err != nil {
-			return fmt.Errorf("loading config %s: %w", f.path, err)
-		}
-
-		if err := c.v.MergeConfigMap(namespaceMap(raw, f.scope)); err != nil {
-			return fmt.Errorf("merging config %s: %w", f.path, err)
-		}
-	}
-
-	return c.mergeProjectConfigUnsafe()
-}
-
-func (c *configImpl) mergeProjectConfig() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.mergeProjectConfigUnsafe()
-}
-
-func (c *configImpl) mergeProjectConfigUnsafe() error {
-	root, err := c.projectRootFromCurrentDir()
-	if err != nil {
-		if errors.Is(err, ErrNotInProject) {
-			c.projectConfigFile = ""
-			return nil
-		}
-		return err
-	}
-
-	projectFile := filepath.Join(root, clawkerProjectConfigFileName)
-	if err := validateConfigFileExact(projectFile, &Project{}); err != nil {
-		return err
-	}
-	raw, err := readFileToMap(projectFile)
-	if err != nil {
-		return fmt.Errorf("loading project config for root %s: %w", root, err)
-	}
-	if err := c.v.MergeConfigMap(namespaceMap(raw, ScopeProject)); err != nil {
-		return fmt.Errorf("merging project config for root %s: %w", root, err)
-	}
-	c.projectConfigFile = projectFile
-
-	return nil
-}
-
-// ConfigDir returns the clawker config directory.
-func ConfigDir() string {
-	if a := os.Getenv(clawkerConfigDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgConfigHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(appData); c != "" {
-			return filepath.Join(c, "clawker")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".config", "clawker")
-}
-
-func DataDir() string {
-	if a := os.Getenv(clawkerDataDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgDataHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(localAppData); c != "" {
-			return filepath.Join(c, "clawker")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "share", "clawker")
-}
-
-func StateDir() string {
-	if a := os.Getenv(clawkerStateDirEnv); a != "" {
-		return a
-	}
-	if b := os.Getenv(xdgStateHome); b != "" {
-		return filepath.Join(b, "clawker")
-	}
-	if runtime.GOOS == "windows" {
-		if c := os.Getenv(appData); c != "" {
-			return filepath.Join(c, "clawker", "state")
-		}
-	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "state", "clawker")
-}
-
-func settingsConfigFile() string {
-	path, err := SettingsFilePath()
-	if err != nil {
-		return filepath.Join(ConfigDir(), clawkerSettingsFileName)
-	}
-	return path
-}
-
-func userProjectConfigFile() string {
-	path, err := UserProjectConfigFilePath()
-	if err != nil {
-		return filepath.Join(ConfigDir(), clawkerProjectConfigFileName)
-	}
-	return path
-}
-
-func projectRegistryPath() string {
-	path, err := ProjectRegistryFilePath()
-	if err != nil {
-		return filepath.Join(ConfigDir(), clawkerProjectsFileName)
-	}
-	return path
-}
-
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
-}
-
-func ensureDefaultConfigFiles(opts loadOptions) error {
-	// All config files share the same parent directory — ensure it exists
-	// before attempting file locks or writes.
-	dir := filepath.Dir(opts.settingsFile)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating config directory %s: %w", dir, err)
-	}
-
-	files := []struct {
-		path    string
-		content string
-	}{
-		{path: opts.settingsFile, content: DefaultSettingsYAML},
-		{path: opts.userProjectConfigFile, content: DefaultConfigYAML},
-		{path: opts.projectRegistryPath, content: DefaultRegistryYAML},
-	}
-
-	for _, file := range files {
-		if err := writeIfMissingLocked(file.path, []byte(file.content)); err != nil {
-			return fmt.Errorf("ensuring default config file %s: %w", file.path, err)
-		}
-	}
-
-	return nil
-}
-
-func writeIfMissingLocked(path string, content []byte) error {
-	return withFileLock(path, func() error {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("failed to stat config %s: %w", path, err)
-		}
-
-		return atomicWriteFile(path, content, 0o644)
-	})
-}
-
-// validateYAMLStrict validates YAML content against a Go struct schema using
-// yaml.v3 strict decoding. Catches type mismatches (map where list expected),
-// unknown fields, and structural violations — all derived from struct tags.
-func validateYAMLStrict(yamlContent string, schema any) error {
-	dec := yaml.NewDecoder(strings.NewReader(yamlContent))
-	dec.KnownFields(true)
-	if err := dec.Decode(schema); err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	return nil
-}
-
-func validateConfigFileExact(path string, schema any) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading config %s: %w", path, err)
-	}
-	if err := validateYAMLStrict(string(content), schema); err != nil {
-		return fmt.Errorf("invalid config %s: %w", path, err)
-	}
-	return nil
 }

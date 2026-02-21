@@ -30,7 +30,11 @@ State dir: `cfg.StateDirEnvVar()` > `$XDG_STATE_HOME/clawker` > `~/.local/state/
 
 | File | Purpose |
 | --- | --- |
-| `config.go` | `Config` interface, `configImpl`, constructors, file loading/merging, `Set`/`Write`/`Watch` |
+| `config.go` | `Config` interface, `configImpl` struct, `ConfigScope`/`keyOwnership`, schema accessors, `Get`/`Set`/`Watch`, key/scope helpers |
+| `dirty.go` | Dirty tree data structure (`dirtyNode`), mark/query/clear helpers, `dirtyOwnedRoots` |
+| `write.go` | `WriteOptions`, `Write()` dispatch, `resolveTargetPath`, atomic file I/O, file locks, `writeKeyToFile`/`writeRootsToFile` |
+| `load.go` | `NewConfig()`, `ReadFromString()`, viper init, YAML parsing/validation, dotted-label rewriting, `load`/`mergeProjectConfig`, `ensureDefaultConfigFiles` |
+| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, `projectRootFromCurrentDir` |
 | `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
 | `defaults.go` | `setDefaults(v)`, `requiredFirewallDomains`, YAML template constants |
@@ -141,10 +145,11 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 ## Gotchas
 
 - **Unknown fields are rejected** — `ReadFromString`/`NewConfig` use `viper.UnmarshalExact`; unknown keys cause errors.
-- **Env overrides are key-level only** — only bound leaf keys override (e.g. `CLAWKER_BUILD_IMAGE`). Parent vars like `CLAWKER_AGENT` are ignored.
+- **Env overrides are key-level only** — env bindings are derived automatically via schema struct reflection (`bindEnvKeysFromSchema`). Only leaf `mapstructure` tag paths with a root in `keyOwnership` get bound. Parent vars like `CLAWKER_AGENT` are ignored. No manual list to maintain.
 - **`ReadFromString` is env-isolated** — parses YAML + defaults only, no `CLAWKER_*` env overrides.
+- **Duplicate top-level YAML keys are rejected** — `ReadFromString` checks for duplicate top-level keys before parsing to prevent silent value shadowing.
 - **Dotted label keys in string fixtures are supported** — `ReadFromString` preserves dotted keys under `build.instructions.labels` (e.g. `dev.clawker.project`) instead of expanding into nested maps.
 - **`*bool` pointers** — schema structs preserve nullable `*bool` semantics. Typed accessors (`Settings()`, `LoggingConfig()`, `MonitoringConfig()`) materialize to concrete true/false.
-- **`Project().Name` field** — `yaml:"-"` (not persisted) but `mapstructure:"project"` (loaded from viper). Intentional for ErrorUnused compatibility.
+- **`Project().Name` field** — `yaml:"name,omitempty"` / `mapstructure:"name"`. The `name` key is in `keyOwnership` mapped to `ScopeProject`, making it overridable via `CLAWKER_NAME` env var.
 - **Transitive build failures** — Until all consumers are migrated, `go build ./...` may fail. Test individual packages directly.
 - **Cross-process safety** — `Write` uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.
