@@ -465,8 +465,8 @@ func FindIgnoredDirs(hostPath string, patterns []string) ([]string, error) {
 	// fail fast if any negation patterns are present (not yet supported)
 	for _, p := range patterns {
 		if strings.HasPrefix(strings.TrimSpace(p), "!") {
-			logger.Error().Str("pattern", p).Msg("negation patterns in .clawkerignore are not yet supported and will be ignored")
-			return nil, fmt.Errorf("negation patterns in .clawkerignore are not yet supported: %q", p)
+			logger.Error().Str("pattern", p).Msg("negation patterns in ignore file are not yet supported and will be ignored")
+			return nil, fmt.Errorf("negation patterns in ignore file are not yet supported: %q", p)
 		}
 	}
 

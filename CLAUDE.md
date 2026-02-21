@@ -173,7 +173,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
 | `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
 | `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
-| `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
+| `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
@@ -213,7 +213,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
-| `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml`; CRUD/orchestration is owned by `internal/project` |
+| `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
 | `project.Service` | Project-layer factory dependency built from `config.Config`; exposes `Registry()` and `Worktrees()` services for commands |
 | `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
@@ -233,13 +233,15 @@ Commands use positional arguments for resource names (e.g., `clawker container s
 
 ## Configuration
 
-### User Settings (~/.local/clawker/settings.yaml)
+> **For code**: Always use `Config` interface accessors (`cfg.ProjectConfigFileName()`, `cfg.SettingsFileName()`, `cfg.ProjectRegistryFileName()`, `cfg.ConfigDirEnvVar()`, `cfg.DataDirEnvVar()`, `cfg.StateDirEnvVar()`) — never hardcode filenames, paths, or env var names. See `internal/config/CLAUDE.md` for full accessor list.
+
+### User Settings (`cfg.SettingsFileName()` → settings.yaml)
 
 ```yaml
 default_image: "node:20-slim"
 ```
 
-### Project Registry (~/.local/clawker/projects.yaml)
+### Project Registry (`cfg.ProjectRegistryFileName()` → projects.yaml)
 
 ```yaml
 projects:
@@ -250,7 +252,7 @@ projects:
 
 Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
 
-### Project Config (clawker.yaml)
+### Project Config (`cfg.ProjectConfigFileName()` → clawker.yaml)
 
 ```yaml
 version: "1"

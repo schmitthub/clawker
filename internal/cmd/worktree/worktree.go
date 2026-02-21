@@ -22,7 +22,7 @@ without switching branches in your main repository. Each worktree is a
 separate checkout of the repository at a specific branch.
 
 Worktrees are created automatically when using 'clawker run --worktree <branch>'
-and stored in $CLAWKER_HOME/projects/<project>/worktrees/.`,
+and stored under the clawker data directory (default: ~/.local/share/clawker/worktrees/).`,
 		Example: `  # Create a worktree for a new branch
   clawker worktree add feat-42
 

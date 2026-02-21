@@ -4,7 +4,7 @@ Zerolog-based file-only logging with project context and optional OTEL bridge. Z
 
 ## Architecture
 
-**File-only by default**: All log output goes to `~/.local/clawker/logs/clawker.log` via lumberjack rotation with gzip compression. There is no console writer. Before `NewLogger` (or legacy `InitWithFile`) is called, the logger is a nop (all output discarded).
+**File-only by default**: All log output goes to `cfg.LogsSubdir()/clawker.log` via lumberjack rotation with gzip compression. There is no console writer. Before `NewLogger` (or legacy `InitWithFile`) is called, the logger is a nop (all output discarded).
 
 **Dual-destination**: When `OtelConfig` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via the `otelzerolog` bridge hook attached to the zerolog logger. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
 
@@ -188,7 +188,7 @@ assert.Contains(t, tl.Output(), "expected log message")
 - Zerolog is for **file logging only** — never for user-visible output
 - `logger.Debug()` for developer diagnostics; `logger.Info/Warn/Error()` for file-only structured logs
 - User-visible output uses `fmt.Fprintf` to IOStreams streams
-- Log path: `~/.local/clawker/logs/clawker.log`
+- Log path: `cfg.LogsSubdir()/clawker.log`
 - File rotation via lumberjack: 50MB size, 7 days age, 3 backups, gzip compression (defaults)
 - Prefer `NewLogger()` over `Init()`/`InitWithFile()` for new code
 - Prefer `Close()` over `CloseFileWriter()` for new code

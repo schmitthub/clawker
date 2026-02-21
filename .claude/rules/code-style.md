@@ -6,7 +6,7 @@ description: Code style guidelines for the clawker codebase
 
 ## Logging
 - `zerolog` is for **file logging only** — never for user-visible output
-- File logging to `~/.local/clawker/logs/clawker.log` with rotation (50MB, 7 days, 3 backups)
+- File logging to `cfg.LogsSubdir()/clawker.log` with rotation (50MB, 7 days, 3 backups)
 - User-visible output uses `fmt.Fprintf` to IOStreams (`ios.ErrOut` for status/warnings, `ios.Out` for data; see per-scenario rules in style guide)
 - `logger.Debug()` / `logger.Warn()` are fine for diagnostic file logs
 - Project/agent context: `logger.SetContext(project, agent)` adds structured fields

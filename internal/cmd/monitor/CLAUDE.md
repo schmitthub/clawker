@@ -33,7 +33,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
 ```
 
-Scaffolds monitoring stack config files in `~/.clawker/monitor/`. Flags: `--force/-f` (overwrite existing).
+Scaffolds monitoring stack config files in `cfg.MonitorSubdir()`. Flags: `--force/-f` (overwrite existing).
 
 ### monitor up
 

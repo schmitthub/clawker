@@ -69,7 +69,7 @@ Wired into `internal/clawker/cmd.go:Main()` following the gh CLI pattern:
 - `updateCancel()` called after `ExecuteC()` — aborts in-flight HTTP if still running
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 
-Cache file: `~/.local/clawker/update-state.yaml`
+Cache file: `config.StateDir()/update-state.yaml`
 
 ## Testing
 

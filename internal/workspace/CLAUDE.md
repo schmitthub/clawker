@@ -109,11 +109,11 @@ const ShareStagingPath = "/home/claude/.clawker-share"
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
-Shared directory provides a read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `ShareStagingPath`. Only mounted when `agent.enable_shared_dir: true` in config (`AgentConfig.SharedDirEnabled()`).
+Shared directory provides a read-only bind mount from `cfg.ShareSubdir()` into containers at `ShareStagingPath`. Only mounted when `agent.enable_shared_dir: true` in config (`AgentConfig.SharedDirEnabled()`).
 
 Host path is resolved by `cfg.ShareSubdir()` (which already does `os.MkdirAll` internally). No separate `EnsureShareDir` needed — callers pass the host path directly to `GetShareVolumeMount`.
 
-**Host path**: `$CLAWKER_HOME/.clawker-share` (created during `clawker init`, re-created if missing during mount setup).
+**Host path**: resolved via `cfg.ShareSubdir()` (created during `clawker init`, re-created if missing during mount setup).
 
 **Lifecycle**: Host directory is never deleted by clawker. Users manage contents directly on the host filesystem.
 
