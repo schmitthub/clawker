@@ -131,8 +131,8 @@ configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 ### Which helper to use
 
 - `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
-- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
-- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `configmocks.NewFromString(yaml)` — empty config test double with specific YAML values Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback. Test repository directory is also set up and can be accessed via `cfg.TestRepoDirEnvVar()`.
 - `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
 
 ### Typical test mapping

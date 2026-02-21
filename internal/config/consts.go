@@ -27,6 +27,8 @@ const (
 	clawkerDataDirEnv = "CLAWKER_DATA_DIR"
 	// clawkerStateDirEnv is the environment variable for overriding the state directory location.
 	clawkerStateDirEnv = "CLAWKER_STATE_DIR"
+	// clawkerTestRepoDirEnv is the environment variable for overriding the test repository directory location.
+	clawkerTestRepoDirEnv = "CLAWKER_TEST_REPO_DIR"
 	// clawkerProjectConfigFileName is the filename for project configuration.
 	clawkerProjectConfigFileName = "clawker.yaml"
 	// clawkerSettingsFileName is the filename for global clawker settings.
@@ -189,6 +191,9 @@ func (c *configImpl) StateDirEnvVar() string { return clawkerStateDirEnv }
 
 // DataDirEnvVar returns the environment variable name that overrides data directory resolution.
 func (c *configImpl) DataDirEnvVar() string { return clawkerDataDirEnv }
+
+// TestRepoDirEnvVar returns the environment variable name that overrides test repository directory resolution.
+func (c *configImpl) TestRepoDirEnvVar() string { return clawkerTestRepoDirEnv }
 
 // MonitorSubdir ensures and returns the monitor subdirectory path under DataDir.
 func (c *configImpl) MonitorSubdir() (string, error) { return subdirPath(monitorSubdir, DataDir) }

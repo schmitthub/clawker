@@ -103,39 +103,53 @@ func NewIsolatedTestConfig(t *testing.T) (config.Config, func(io.Writer, io.Writ
 	}
 
 	base := t.TempDir()
+
 	configDir := filepath.Join(base, "config")
 	dataDir := filepath.Join(base, "data")
+	testRepoDir := filepath.Join(base, "testrepo")
 	stateDir := filepath.Join(base, "state")
-
-	for _, dir := range []string{configDir, dataDir, stateDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("creating isolated test dir %s: %v", dir, err)
-		}
-	}
 
 	t.Setenv(cfg.ConfigDirEnvVar(), configDir)
 	t.Setenv(cfg.DataDirEnvVar(), dataDir)
 	t.Setenv(cfg.StateDirEnvVar(), stateDir)
+	t.Setenv(cfg.TestRepoDirEnvVar(), testRepoDir)
+
+	err = os.MkdirAll(configDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	err = os.MkdirAll(dataDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating data dir: %v", err)
+	}
+	err = os.MkdirAll(stateDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating state dir: %v", err)
+	}
+	err = os.MkdirAll(testRepoDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating testrepo dir: %v", err)
+	}
 
 	settingsFileName := cfg.SettingsFileName()
 	userProjectFileName := cfg.ProjectConfigFileName()
 	repoProjectFileName := cfg.ProjectConfigFileName()
 	projectRegistryFileName := cfg.ProjectRegistryFileName()
 
-	read := func(settingsOut, userProjectOut, repoProjectOut, registryOut io.Writer) {
-		if data, err := os.ReadFile(filepath.Join(base, settingsFileName)); err == nil {
-			_, _ = settingsOut.Write(data)
+	return cfg, func(settingsOut io.Writer, userProjectOut io.Writer, repoProjectOut io.Writer, registryOut io.Writer) {
+		copyFile := func(path string, out io.Writer) {
+			f, err := os.Open(path)
+			if err != nil {
+				return // file not written, skip silently
+			}
+			defer f.Close()
+			io.Copy(out, f)
 		}
-		if data, err := os.ReadFile(filepath.Join(base, userProjectFileName)); err == nil {
-			_, _ = userProjectOut.Write(data)
-		}
-		if data, err := os.ReadFile(filepath.Join(base, repoProjectFileName)); err == nil {
-			_, _ = repoProjectOut.Write(data)
-		}
-		if data, err := os.ReadFile(filepath.Join(base, projectRegistryFileName)); err == nil {
-			_, _ = registryOut.Write(data)
-		}
-	}
 
-	return cfg, read
+		copyFile(filepath.Join(configDir, settingsFileName), settingsOut)
+		copyFile(filepath.Join(configDir, userProjectFileName), userProjectOut)
+		copyFile(filepath.Join(testRepoDir, repoProjectFileName), repoProjectOut)
+		copyFile(filepath.Join(configDir, projectRegistryFileName), registryOut)
+
+	}
 }

@@ -123,9 +123,33 @@ func NewIsolatedTestConfig(t *testing.T) (*ConfigImplForTest, func(io.Writer, io
 func StubWriteConfig(t *testing.T, cfg *ConfigImplForTest) func(io.Writer, io.Writer, io.Writer, io.Writer) {
 	t.Helper()
 	base := t.TempDir()
-	t.Setenv(cfg.ConfigDirEnvVar(), filepath.Join(base, "config"))
-	t.Setenv(cfg.DataDirEnvVar(), filepath.Join(base, "data"))
-	t.Setenv(cfg.StateDirEnvVar(), filepath.Join(base, "state"))
+
+	configDir := filepath.Join(base, "config")
+	dataDir := filepath.Join(base, "data")
+	stateDir := filepath.Join(base, "state")
+	testRepoDir := filepath.Join(base, "testrepo")
+
+	t.Setenv(cfg.ConfigDirEnvVar(), configDir)
+	t.Setenv(cfg.DataDirEnvVar(), dataDir)
+	t.Setenv(cfg.StateDirEnvVar(), stateDir)
+	t.Setenv(cfg.TestRepoDirEnvVar(), testRepoDir)
+
+	err := os.MkdirAll(configDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	err = os.MkdirAll(dataDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating data dir: %v", err)
+	}
+	err = os.MkdirAll(stateDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating state dir: %v", err)
+	}
+	err = os.MkdirAll(testRepoDir, 0o755)
+	if err != nil {
+		t.Fatalf("creating testrepo dir: %v", err)
+	}
 
 	settingsFileName := cfg.SettingsFileName()
 	userProjectFileName := cfg.ProjectConfigFileName()
@@ -133,61 +157,19 @@ func StubWriteConfig(t *testing.T, cfg *ConfigImplForTest) func(io.Writer, io.Wr
 	projectRegistryFileName := cfg.ProjectRegistryFileName()
 
 	return func(settingsOut io.Writer, userProjectOut io.Writer, repoProjectOut io.Writer, registryOut io.Writer) {
-		settings, err := os.Open(filepath.Join(base, settingsFileName))
-		if err != nil {
-			return
-		}
-		defer settings.Close()
-		settingsData, err := io.ReadAll(settings)
-		if err != nil {
-			return
-		}
-		_, err = settingsOut.Write(settingsData)
-		if err != nil {
-			return
+		copyFile := func(path string, out io.Writer) {
+			f, err := os.Open(path)
+			if err != nil {
+				return // file not written, skip silently
+			}
+			defer f.Close()
+			io.Copy(out, f)
 		}
 
-		userProject, err := os.Open(filepath.Join(base, userProjectFileName))
-		if err != nil {
-			return
-		}
-		defer userProject.Close()
-		userProjectData, err := io.ReadAll(userProject)
-		if err != nil {
-			return
-		}
-		_, err = userProjectOut.Write(userProjectData)
-		if err != nil {
-			return
-		}
-
-		repoProject, err := os.Open(filepath.Join(base, repoProjectFileName))
-		if err != nil {
-			return
-		}
-		defer repoProject.Close()
-		repoProjectData, err := io.ReadAll(repoProject)
-		if err != nil {
-			return
-		}
-		_, err = repoProjectOut.Write(repoProjectData)
-		if err != nil {
-			return
-		}
-
-		registry, err := os.Open(filepath.Join(base, projectRegistryFileName))
-		if err != nil {
-			return
-		}
-		defer registry.Close()
-		registryData, err := io.ReadAll(registry)
-		if err != nil {
-			return
-		}
-		_, err = registryOut.Write(registryData)
-		if err != nil {
-			return
-		}
+		copyFile(filepath.Join(configDir, settingsFileName), settingsOut)
+		copyFile(filepath.Join(configDir, userProjectFileName), userProjectOut)
+		copyFile(filepath.Join(testRepoDir, repoProjectFileName), repoProjectOut)
+		copyFile(filepath.Join(configDir, projectRegistryFileName), registryOut)
 
 	}
 }

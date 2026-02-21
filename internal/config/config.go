@@ -34,6 +34,7 @@ type Config interface {
 	ConfigDirEnvVar() string
 	StateDirEnvVar() string
 	DataDirEnvVar() string
+	TestRepoDirEnvVar() string
 	MonitorSubdir() (string, error)
 	BuildSubdir() (string, error)
 	DockerfilesSubdir() (string, error)
