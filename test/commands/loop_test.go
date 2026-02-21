@@ -444,7 +444,7 @@ func TestLoopShared_SetupLoopContainer(t *testing.T) {
 	assert.NotEmpty(t, setup.ContainerID)
 	assert.NotEmpty(t, setup.ContainerName)
 	assert.Equal(t, agentName, setup.AgentName)
-	assert.Equal(t, project, setup.ProjectCfg.Project)
+	assert.Equal(t, project, setup.ProjectCfg.Name)
 
 	running := harness.ContainerIsRunning(ctx, client, setup.ContainerName)
 	assert.True(t, running, "container should be running after SetupLoopContainer")

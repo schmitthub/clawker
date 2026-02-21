@@ -58,7 +58,7 @@ func managedImageInspect(cfg config.Config, ref string) moby.ImageInspectResult 
 }
 
 const ensureImageTestYAML = `
-project: "testproj"
+name: "testproj"
 version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -121,7 +121,7 @@ func TestMergeTags(t *testing.T) {
 
 func TestMergeImageLabels_InternalLabelsOverrideUser(t *testing.T) {
 	cfg := testConfig(t, `
-project: "myproject"
+name: "myproject"
 version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -300,7 +300,7 @@ func TestEnsureImage_CustomDockerfileDelegatesToBuild(t *testing.T) {
 	require.NoError(t, os.WriteFile(customDockerfile, []byte("FROM alpine:latest\n"), 0644))
 
 	cfg := testConfig(t, `
-project: "testproj"
+name: "testproj"
 version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -335,7 +335,7 @@ workspace:
 
 func TestEnsureImage_ContentHashError(t *testing.T) {
 	cfg := testConfig(t, `
-project: "testproj"
+name: "testproj"
 version: "1.0.0"
 build:
   image: "buildpack-deps:bookworm-scm"

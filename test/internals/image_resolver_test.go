@@ -177,7 +177,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("image matches with :latest tag", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(fmt.Sprintf("project: %q", state.projectName))
+		testCfg := configmocks.NewFromString(fmt.Sprintf("name: %q", state.projectName))
 		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 		result, err := localClient.ResolveImageWithSource(ctx)
@@ -200,7 +200,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("no matching images for nonexistent project", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(`project: "nonexistent-project-xyz"`)
+		testCfg := configmocks.NewFromString(`name: "nonexistent-project-xyz"`)
 		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 		result, err := localClient.ResolveImageWithSource(ctx)
@@ -215,7 +215,7 @@ func TestFindProjectImage_Integration(t *testing.T) {
 	})
 
 	t.Run("finds correct project image among multiple", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(`project: "other-project"`)
+		testCfg := configmocks.NewFromString(`name: "other-project"`)
 		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 		result, err := localClient.ResolveImageWithSource(ctx)
@@ -237,7 +237,7 @@ func TestFindProjectImage_NoLatestTag(t *testing.T) {
 	state := setupImageResolverTests(t)
 	ctx := context.Background()
 
-	testCfg := configmocks.NewFromString(`project: "project-with-absolutely-no-images"`)
+	testCfg := configmocks.NewFromString(`name: "project-with-absolutely-no-images"`)
 	localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 	result, err := localClient.ResolveImageWithSource(ctx)
@@ -256,7 +256,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds project image with :latest tag", func(t *testing.T) {
-		testCfg := configmocks.NewFromString(fmt.Sprintf("project: %q\ndefault_image: %q", state.projectName, "fallback:latest"))
+		testCfg := configmocks.NewFromString(fmt.Sprintf("name: %q\ndefault_image: %q", state.projectName, "fallback:latest"))
 		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 		result, err := localClient.ResolveImageWithSource(ctx)
@@ -278,7 +278,7 @@ func TestResolveImageWithSource_ProjectImage(t *testing.T) {
 	})
 
 	t.Run("falls back to default when no project image", func(t *testing.T) {
-		testCfg := configmocks.NewFromString("project: \"nonexistent-project-xyz\"\ndefault_image: \"fallback:latest\"")
+		testCfg := configmocks.NewFromString("name: \"nonexistent-project-xyz\"\ndefault_image: \"fallback:latest\"")
 		localClient := docker.NewClientFromEngine(state.dockerClient.Engine, testCfg)
 
 		result, err := localClient.ResolveImageWithSource(ctx)

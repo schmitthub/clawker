@@ -64,7 +64,7 @@ func TestProjectManager_Register_UsesRootIdentity(t *testing.T) {
 
 func TestRegistry_RemoveByRoot(t *testing.T) {
 	cfg, _ := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.Set("projects", []any{
+	require.NoError(t, cfg.Set("registry.projects", []any{
 		map[string]any{"name": "one", "root": "/tmp/one"},
 		map[string]any{"name": "two", "root": "/tmp/two"},
 	}))

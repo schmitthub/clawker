@@ -70,9 +70,9 @@ func fawkerConfigFunc() func() (config.Config, error) {
 		once.Do(func() {
 			project := fawkerProject()
 			yamlData, _ := yaml.Marshal(project)
-			// Project().Name has yaml:"-" so it's not marshaled — prepend it.
-			// Also prepend default_image so the config knows the default image tag.
-			cfgYAML := fmt.Sprintf("project: %s\ndefault_image: %s\n%s", project.Name, docker.DefaultImageTag, string(yamlData))
+			// Name has yaml:"name,omitempty" so yaml.Marshal includes it.
+			// Prepend default_image which is unset in the struct (omitempty).
+			cfgYAML := fmt.Sprintf("default_image: %s\n%s", docker.DefaultImageTag, string(yamlData))
 			cfg = configmocks.NewFromString(cfgYAML)
 		})
 		return cfg, nil

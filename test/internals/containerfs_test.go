@@ -985,7 +985,7 @@ agent:
 	}
 
 	agent := harness.UniqueAgentName(t)
-	volumeName := createConfigVolume(t, ctx, client, cfg.Project, agent)
+	volumeName := createConfigVolume(t, ctx, client, cfg.Name, agent)
 
 	// Create container manually (not via RunContainer — we need to inject before start)
 	containerName := fmt.Sprintf("clawker-test-postinit-%s", agent)

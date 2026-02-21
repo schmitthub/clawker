@@ -167,7 +167,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 
 	if buildBaseImage {
 		// Clear default image when building (will be set after successful build)
-		if err := cfg.Set("default_image", ""); err != nil {
+		if err := cfg.Set("settings.default_image", ""); err != nil {
 			return fmt.Errorf("failed to clear default image: %w", err)
 		}
 	}
@@ -260,7 +260,7 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		}
 
 		// Update settings with the built image
-		if err := cfg.Set("default_image", docker.DefaultImageTag); err != nil {
+		if err := cfg.Set("settings.default_image", docker.DefaultImageTag); err != nil {
 			ios.Logger.Warn().Err(err).Msg("failed to update settings with default image")
 		}
 		if err := cfg.Write(config.WriteOptions{}); err != nil {

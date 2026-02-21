@@ -19,7 +19,7 @@ import (
 func TestParseContainers(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"
-project: "testproject"
+name: "testproject"
 `)
 	c := &Client{cfg: cfg}
 

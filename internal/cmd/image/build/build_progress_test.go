@@ -29,7 +29,7 @@ func TestBuildProgress_Pipeline(t *testing.T) {
 
 			testCfg := configmocks.NewFromString(`
 version: "1"
-project: test-project
+name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }
@@ -85,7 +85,7 @@ func TestBuildProgress_SimplePipeline(t *testing.T) {
 
 	testCfg := configmocks.NewFromString(`
 version: "1"
-project: test-project
+name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }
@@ -131,7 +131,7 @@ func TestBuildProgress_Suppressed(t *testing.T) {
 
 	testCfg := configmocks.NewFromString(`
 version: "1"
-project: test-project
+name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }
@@ -172,7 +172,7 @@ func TestBuildProgress_CaptureCallCount(t *testing.T) {
 
 	testCfg := configmocks.NewFromString(`
 version: "1"
-project: test-project
+name: test-project
 build: { image: "node:20-slim" }
 workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: false } }

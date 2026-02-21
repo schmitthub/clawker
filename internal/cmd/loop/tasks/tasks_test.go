@@ -31,7 +31,7 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) 
 func testFactoryWithConfig(t *testing.T) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	cfg := configmocks.NewFromString(`project: testproject`)
+	cfg := configmocks.NewFromString(`name: testproject`)
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),

@@ -14,7 +14,7 @@ func testClient(t *testing.T) (*Client, config.Config) {
 	t.Helper()
 	cfg := testConfig(t, `
 version: "1"
-project: "testproject"
+name: "testproject"
 `)
 	return &Client{cfg: cfg}, cfg
 }

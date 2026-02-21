@@ -106,7 +106,7 @@ func TestContentHash_PermissionError(t *testing.T) {
 func TestContentHash_MetadataStability(t *testing.T) {
 	baseYAML := `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -155,7 +155,7 @@ agent:
 	// Change firewall domains — hash should NOT change
 	cfg4 := testConfig(t, `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -178,7 +178,7 @@ security:
 	// Change labels — hash should NOT change
 	cfg5 := testConfig(t, `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -204,7 +204,7 @@ security:
 	// Change project name — hash should NOT change (labels are via API)
 	cfg6 := testConfig(t, `
 version: "1"
-project: "different-project"
+name: "different-project"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -225,7 +225,7 @@ security:
 	// Change packages — hash SHOULD change (structural)
 	cfg7 := testConfig(t, `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -248,7 +248,7 @@ security:
 func hashTestConfig(t *testing.T) string {
 	return `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
@@ -341,7 +341,7 @@ func TestContentHash_StableLegacy(t *testing.T) {
 func TestContentHash_BuildKitAlpineVsLegacy(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"
-project: "testproj"
+name: "testproj"
 build:
   image: "alpine:3.22"
 workspace:

@@ -25,7 +25,7 @@ func (r *projectRegistry) Projects() []config.ProjectEntry {
 		return []config.ProjectEntry{}
 	}
 
-	v, err := r.cfg.Get("projects")
+	v, err := r.cfg.Get("registry.projects")
 	if err != nil {
 		return []config.ProjectEntry{}
 	}
@@ -111,7 +111,7 @@ func (r *projectRegistry) setProjects(entries []config.ProjectEntry) error {
 		raw = append(raw, entryAny)
 	}
 
-	return r.cfg.Set("projects", raw)
+	return r.cfg.Set("registry.projects", raw)
 }
 
 func (r *projectRegistry) RemoveByRoot(root string) error {

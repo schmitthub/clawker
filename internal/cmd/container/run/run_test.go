@@ -659,7 +659,7 @@ func TestImageArg(t *testing.T) {
 				ctx := context.Background()
 
 				// Build config mock with project + optional default image
-				cfgYAML := fmt.Sprintf("project: %s", tt.projectName)
+				cfgYAML := fmt.Sprintf("name: %s", tt.projectName)
 				if tt.defaultImage != "" {
 					cfgYAML += fmt.Sprintf("\ndefault_image: %s", tt.defaultImage)
 				}

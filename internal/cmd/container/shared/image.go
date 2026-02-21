@@ -192,8 +192,8 @@ func persistDefaultImageSetting(cfg config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	cfg.Set("default_image", docker.DefaultImageTag)
-	if saveErr := cfg.Write(config.WriteOptions{Key: "default_image"}); saveErr != nil {
+	cfg.Set("settings.default_image", docker.DefaultImageTag)
+	if saveErr := cfg.Write(config.WriteOptions{Key: "settings.default_image"}); saveErr != nil {
 		logger.Warn().Err(saveErr).Msg("failed to update settings with default image")
 		return fmt.Sprintf("Could not save default image setting: %v", saveErr)
 	}

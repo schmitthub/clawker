@@ -113,7 +113,7 @@ func TestResolveImage_FallbackToDefault(t *testing.T) {
 
 func TestFindProjectImage_EmptyProject(t *testing.T) {
 	ctx := context.Background()
-	cfg := testConfig(t, `project: ""`)
+	cfg := testConfig(t, `name: ""`)
 	client, _ := newTestClientWithConfig(cfg)
 
 	result, err := client.findProjectImage(ctx)

@@ -81,7 +81,7 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	client := harness.NewTestClient(t)
 
 	mockCfg := configmocks.NewFromString(`
-project: "test-project"
+name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"
@@ -178,7 +178,7 @@ func TestWorktreeGitMounts_WithoutProjectRootDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	mockCfg := configmocks.NewFromString(`
-project: "test-project"
+name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"
@@ -225,7 +225,7 @@ func TestSharedDir_MountedWhenEnabled(t *testing.T) {
 	shareDir := filepath.Join(clawkerHome, "clawker-share")
 
 	mockCfg := configmocks.NewFromString(`
-project: "test-project"
+name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"
@@ -296,7 +296,7 @@ func TestSharedDir_NotMountedWhenDisabled(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	mockCfg := configmocks.NewFromString(`
-project: "test-project"
+name: "test-project"
 workspace:
   remote_path: "/workspace"
   default_mode: "bind"

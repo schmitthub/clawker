@@ -89,3 +89,9 @@ func NamespaceMapForTest(flat map[string]any, scope ConfigScope) map[string]any 
 func ScopeFromNamespacedKeyForTest(key string) (ConfigScope, error) {
 	return scopeFromNamespacedKey(key)
 }
+
+func ScopeForKeyForTest(key string) (ConfigScope, error) {
+	return scopeForKey(key)
+}
+
+var KeyOwnershipForTest = keyOwnership

@@ -95,7 +95,7 @@ func TestNewCmdCheck_metadata(t *testing.T) {
 }
 
 const validConfig = `version: "1"
-project: "test-project"
+name: "test-project"
 build:
   image: "node:20-slim"
 workspace:
@@ -167,7 +167,7 @@ func TestCheckRun_unknownFields_rejectsTypos(t *testing.T) {
 	// "biuld" is a typo for "build" — ReadFromString uses UnmarshalExact,
 	// which correctly rejects unknown top-level keys.
 	writeConfig(t, dir, `version: "1"
-project: "test-project"
+name: "test-project"
 biuld:
   image: "node:20-slim"
 workspace:
@@ -193,7 +193,7 @@ func TestCheckRun_unknownFields_rejectsExtraFields(t *testing.T) {
 	dir := t.TempDir()
 	// "extra_stuff" is not a valid config key — should be rejected.
 	writeConfig(t, dir, `version: "1"
-project: "test-project"
+name: "test-project"
 extra_stuff: true
 build:
   image: "node:20-slim"
