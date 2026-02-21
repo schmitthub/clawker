@@ -104,6 +104,9 @@ func (c *configImpl) Write(opts WriteOptions) error {
 	// Write(Path) without Key/Scope: export all settings to explicit path.
 	// Strip namespace prefixes so the output is a valid config file format,
 	// merging children from each scope into a flat map.
+	if err := os.MkdirAll(filepath.Dir(opts.Path), 0o755); err != nil {
+		return fmt.Errorf("creating directory for %s: %w", opts.Path, err)
+	}
 	return withFileLock(opts.Path, func() error {
 		if opts.Safe {
 			if _, err := os.Stat(opts.Path); err == nil {
@@ -165,15 +168,15 @@ func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (
 
 	switch scope {
 	case ScopeSettings:
-		if c.settingsFile == "" {
-			return "", fmt.Errorf("settings file path is not configured")
+		if c.settingsFile != "" {
+			return c.settingsFile, nil
 		}
-		return c.settingsFile, nil
+		return settingsConfigFile(), nil
 	case ScopeRegistry:
-		if c.projectRegistryPath == "" {
-			return "", fmt.Errorf("project registry path is not configured")
+		if c.projectRegistryPath != "" {
+			return c.projectRegistryPath, nil
 		}
-		return c.projectRegistryPath, nil
+		return projectRegistryPath(), nil
 	case ScopeProject:
 		if c.projectConfigFile != "" {
 			return c.projectConfigFile, nil
@@ -184,10 +187,10 @@ func (c *configImpl) resolveTargetPath(scope ConfigScope, overridePath string) (
 			return filepath.Join(root, clawkerProjectConfigFileName), nil
 		}
 		if errors.Is(err, ErrNotInProject) {
-			if c.userProjectConfigFile == "" {
-				return "", fmt.Errorf("project config path is not configured")
+			if c.userProjectConfigFile != "" {
+				return c.userProjectConfigFile, nil
 			}
-			return c.userProjectConfigFile, nil
+			return userProjectConfigFile(), nil
 		}
 		return "", err
 	default:
@@ -260,6 +263,9 @@ func withFileLock(path string, fn func() error) error {
 }
 
 func writeKeyToFile(path, key string, value any, safe bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating directory for %s: %w", path, err)
+	}
 	return withFileLock(path, func() error {
 		v, exists, err := openConfigForWrite(path)
 		if err != nil {
@@ -285,6 +291,9 @@ func writeKeyToFile(path, key string, value any, safe bool) error {
 // roots are flat file-level keys (e.g. "build", "logging").
 // scope is used to read from the namespaced Viper store (e.g. "project.build").
 func writeRootsToFile(path string, roots []string, scope ConfigScope, source *viper.Viper, safe bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating directory for %s: %w", path, err)
+	}
 	return withFileLock(path, func() error {
 		_, exists, err := openConfigForWrite(path)
 		if err != nil {

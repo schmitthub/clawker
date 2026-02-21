@@ -3,6 +3,7 @@ package config_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -701,6 +702,66 @@ func TestSafeWriteConfig_WithPredefinedPath_NoOverwrite(t *testing.T) {
 	c, _ := mustConfigFromFile(t, "build:\n  image: ubuntu:22.04\n")
 	err := c.Write(WriteOptions{Safe: true})
 	require.NoError(t, err)
+}
+
+func TestWrite_LazyCreatesSettingsFile(t *testing.T) {
+	c, readConfigs := NewIsolatedTestConfig(t)
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 999))
+
+	require.NoError(t, c.Write(WriteOptions{Scope: ScopeSettings}))
+
+	var buf strings.Builder
+	readConfigs(&buf, io.Discard, io.Discard, io.Discard)
+	assert.Contains(t, buf.String(), "999")
+}
+
+func TestWrite_LazyCreatesRegistryFile(t *testing.T) {
+	c, readConfigs := NewIsolatedTestConfig(t)
+	require.NoError(t, c.Set("registry.projects.myapp.name", "myapp"))
+	require.NoError(t, c.Set("registry.projects.myapp.root", "/tmp/myapp"))
+
+	require.NoError(t, c.Write(WriteOptions{Scope: ScopeRegistry}))
+
+	var buf strings.Builder
+	readConfigs(io.Discard, io.Discard, io.Discard, &buf)
+	assert.Contains(t, buf.String(), "myapp")
+}
+
+func TestWrite_LazyCreatesProjectFile(t *testing.T) {
+	c, readConfigs := NewIsolatedTestConfig(t)
+	require.NoError(t, c.Set("project.build.image", "alpine:edge"))
+
+	require.NoError(t, c.Write(WriteOptions{Scope: ScopeProject}))
+
+	var buf strings.Builder
+	readConfigs(io.Discard, &buf, io.Discard, io.Discard)
+	assert.Contains(t, buf.String(), "alpine:edge")
+}
+
+func TestWrite_LazyKey_CreatesFile(t *testing.T) {
+	c, readConfigs := NewIsolatedTestConfig(t)
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 777))
+
+	require.NoError(t, c.Write(WriteOptions{Key: "settings.logging.max_size_mb"}))
+
+	var buf strings.Builder
+	readConfigs(&buf, io.Discard, io.Discard, io.Discard)
+	assert.Contains(t, buf.String(), "777")
+}
+
+func TestWrite_LazyDefaultScope_CreatesAllFiles(t *testing.T) {
+	c, readConfigs := NewIsolatedTestConfig(t)
+	require.NoError(t, c.Set("settings.logging.max_size_mb", 111))
+	require.NoError(t, c.Set("registry.projects.app.name", "app"))
+	require.NoError(t, c.Set("project.build.image", "go:1.23"))
+
+	require.NoError(t, c.Write(WriteOptions{}))
+
+	var settingsBuf, userProjectBuf, registryBuf strings.Builder
+	readConfigs(&settingsBuf, &userProjectBuf, io.Discard, &registryBuf)
+	assert.Contains(t, settingsBuf.String(), "111")
+	assert.Contains(t, registryBuf.String(), "app")
+	assert.Contains(t, userProjectBuf.String(), "go:1.23")
 }
 
 func TestWatchConfig_WithoutPredefinedPath(t *testing.T) {
