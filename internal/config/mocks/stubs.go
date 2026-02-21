@@ -20,7 +20,7 @@ func NewBlankConfig() *ConfigMock {
 }
 
 // NewFromString creates an in-memory *ConfigMock from YAML.
-// All read methods delegate to a real config backed by defaults + the provided YAML.
+// All read methods delegate to an empty config with values from the provided YAML.
 // Panics on invalid YAML to match test-stub ergonomics.
 // Set, Write, and Watch are NOT wired — calling them panics via moq's nil-func guard,
 // signaling that NewIsolatedTestConfig should be used for mutation tests.
