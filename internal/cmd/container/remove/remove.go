@@ -16,7 +16,7 @@ import (
 type RemoveOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() (config.Config, error)
 	SocketBridge func() socketbridge.SocketBridgeManager
 
 	Agent   bool
@@ -88,7 +88,15 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	// Resolve container names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Name
+		}
+		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {
 			return err
 		}

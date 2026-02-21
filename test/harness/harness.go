@@ -1,11 +1,14 @@
 package harness
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/text"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"gopkg.in/yaml.v3"
 )
@@ -45,7 +48,7 @@ func WithConfig(cfg *config.Project) HarnessOption {
 	return func(h *Harness) {
 		h.Config = cfg
 		if cfg != nil {
-			h.Project = cfg.Project
+			h.Project = cfg.Name
 		}
 	}
 }
@@ -56,7 +59,7 @@ func WithConfigBuilder(cb *builders.ConfigBuilder) HarnessOption {
 		cfg := cb.Build()
 		h.Config = cfg
 		if cfg != nil {
-			h.Project = cfg.Project
+			h.Project = cfg.Name
 		}
 	}
 }
@@ -109,17 +112,17 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	// - If project was explicitly set via WithProject, update config
 	// - Otherwise, use project name from config
 	if h.Project != "" {
-		h.Config.Project = h.Project
+		h.Config.Name = h.Project
 	} else {
-		h.Project = h.Config.Project
+		h.Project = h.Config.Name
 	}
 
 	// Slugify the project name to match registry resolution behavior.
 	// The registry stores projects by slug, and Resolution.ProjectKey returns the slug.
 	// Container/volume/network names use the slug, so the harness must too.
 	if h.Project != "" {
-		h.Project = config.Slugify(h.Project)
-		h.Config.Project = h.Project // keep config in sync with slugified name
+		h.Project = text.Slugify(h.Project)
+		h.Config.Name = h.Project // keep config in sync with slugified name
 	}
 
 	// Write clawker.yaml to project directory
@@ -127,26 +130,16 @@ func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	// Isolate CLAWKER_HOME so registry/settings load from temp dir
-	h.SetEnv("CLAWKER_HOME", h.ConfigDir)
+	// Isolate config dir so registry/settings load from temp dir
+	cfgConsts := configmocks.NewBlankConfig()
+	h.SetEnv(cfgConsts.ConfigDirEnvVar(), h.ConfigDir)
 
 	// Register the project in a temp registry so resolution finds it
 	if h.Project != "" {
-		slug := config.Slugify(h.Project)
-		registry := config.ProjectRegistry{
-			Projects: map[string]config.ProjectEntry{
-				slug: {
-					Name: h.Project,
-					Root: h.ProjectDir,
-				},
-			},
-		}
-		regData, err := yaml.Marshal(registry)
-		if err != nil {
-			t.Fatalf("failed to marshal registry: %v", err)
-		}
-		regPath := filepath.Join(h.ConfigDir, config.RegistryFileName)
-		if err := os.WriteFile(regPath, regData, 0644); err != nil {
+		slug := text.Slugify(h.Project)
+		regYAML := fmt.Sprintf("projects:\n  %s:\n    name: %s\n    root: %s\n", slug, h.Project, h.ProjectDir)
+		regPath := filepath.Join(h.ConfigDir, cfgConsts.ProjectRegistryFileName())
+		if err := os.WriteFile(regPath, []byte(regYAML), 0644); err != nil {
 			t.Fatalf("failed to write registry: %v", err)
 		}
 	}
@@ -164,7 +157,8 @@ func (h *Harness) writeConfig() error {
 		return err
 	}
 
-	configPath := filepath.Join(h.ProjectDir, "clawker.yaml")
+	cfgConsts := configmocks.NewBlankConfig()
+	configPath := filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
 	return os.WriteFile(configPath, data, 0644)
 }
 
@@ -260,7 +254,7 @@ func (h *Harness) VolumeName(agent, purpose string) string {
 
 // NetworkName returns the clawker network name.
 func (h *Harness) NetworkName() string {
-	return NamePrefix + "-net"
+	return _blankCfg.ClawkerNetwork()
 }
 
 // ----------------------------------------------------------------
@@ -269,7 +263,8 @@ func (h *Harness) NetworkName() string {
 
 // ConfigPath returns the path to the clawker.yaml file.
 func (h *Harness) ConfigPath() string {
-	return filepath.Join(h.ProjectDir, "clawker.yaml")
+	cfgConsts := configmocks.NewBlankConfig()
+	return filepath.Join(h.ProjectDir, cfgConsts.ProjectConfigFileName())
 }
 
 // WriteFile writes a file to the project directory.

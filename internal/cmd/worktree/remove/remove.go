@@ -7,19 +7,16 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/prompter"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // RemoveOptions contains the options for the remove command.
 type RemoveOptions struct {
-	IOStreams  *iostreams.IOStreams
-	GitManager func() (*git.GitManager, error)
-	Config     func() *config.Config
-	Prompter   func() *prompter.Prompter
+	IOStreams       *iostreams.IOStreams
+	ProjectManager func() (project.ProjectManager, error)
 
 	Force        bool
 	DeleteBranch bool
@@ -30,9 +27,7 @@ type RemoveOptions struct {
 func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions) error) *cobra.Command {
 	opts := &RemoveOptions{
 		IOStreams:  f.IOStreams,
-		GitManager: f.GitManager,
-		Config:     f.Config,
-		Prompter:   f.Prompter,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -74,23 +69,23 @@ If the worktree has uncommitted changes, the command will fail unless
 }
 
 func removeRun(ctx context.Context, opts *RemoveOptions) error {
-	cfg := opts.Config()
-
-	// Check if we're in a registered project
-	if !cfg.Project.Found() {
-		return fmt.Errorf("not in a registered project directory")
+	projectManager, err := opts.ProjectManager()
+	if err != nil {
+		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	// Get git manager
-	gitMgr, err := opts.GitManager()
+	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
-		return fmt.Errorf("initializing git: %w", err)
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
 	}
 
 	var removeErrors []error
 
 	for _, branch := range opts.Branches {
-		if err := removeSingleWorktree(ctx, opts, gitMgr, cfg.Project, branch); err != nil {
+		if err := removeSingleWorktree(ctx, opts, proj, branch); err != nil {
 			removeErrors = append(removeErrors, fmt.Errorf("%s: %w", branch, err))
 		}
 	}
@@ -120,74 +115,27 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	return nil
 }
 
-func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, gitMgr *git.GitManager, project *config.Project, branch string) error {
-	// Check if worktree has uncommitted changes (if not forcing)
-	if !opts.Force {
-		// Get worktree path to check for changes
-		wtPath, err := project.GetWorktreeDir(branch)
-		if err != nil {
-			return fmt.Errorf("looking up worktree: %w", err)
+func removeSingleWorktree(ctx context.Context, opts *RemoveOptions, proj project.Project, branch string) error {
+	err := proj.RemoveWorktree(ctx, branch, opts.DeleteBranch)
+	if err == nil {
+		if opts.DeleteBranch {
+			fmt.Fprintf(opts.IOStreams.ErrOut, "Deleted branch %q\n", branch)
 		}
-
-		// Try to open the worktree to check for changes
-		wt, err := gitMgr.Worktrees()
-		if err != nil {
-			return fmt.Errorf("initializing worktree manager: %w", err)
-		}
-
-		wtRepo, err := wt.Open(wtPath)
-		if err != nil {
-			// Can't open worktree - require --force to proceed
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		worktree, err := wtRepo.Worktree()
-		if err != nil {
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		status, err := worktree.Status()
-		if err != nil {
-			return fmt.Errorf("cannot verify worktree status (use --force to remove anyway): %w", err)
-		}
-
-		if !status.IsClean() {
-			return fmt.Errorf("worktree has uncommitted changes (use --force to override)")
-		}
+		return nil
 	}
 
-	// Remove the worktree
-	if err := gitMgr.RemoveWorktree(project, branch); err != nil {
-		return err
+	if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
+		return fmt.Errorf("not in a registered project directory")
 	}
 
-	// Optionally delete the branch
-	if opts.DeleteBranch {
-		if err := handleBranchDelete(opts.IOStreams, gitMgr, branch); err != nil {
-			return fmt.Errorf("worktree removed but %w", err)
-		}
+	// Branch deletion failures: worktree was removed, branch deletion had issues.
+	if errors.Is(err, git.ErrBranchNotMerged) {
+		cs := opts.IOStreams.ColorScheme()
+		fmt.Fprintf(opts.IOStreams.ErrOut, "%s branch %q has unmerged commits\n",
+			cs.WarningIcon(), branch)
+		fmt.Fprintf(opts.IOStreams.ErrOut, "  To force delete: git branch -D %s\n", branch)
+		return nil
 	}
 
-	return nil
-}
-
-// handleBranchDelete handles branch deletion with user-friendly error reporting.
-// Returns nil if the branch was deleted, was already gone, or had unmerged commits (warning printed).
-func handleBranchDelete(ios *iostreams.IOStreams, gitMgr *git.GitManager, branch string) error {
-	if err := gitMgr.DeleteBranch(branch); err != nil {
-		if errors.Is(err, git.ErrBranchNotMerged) {
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s branch %q has unmerged commits\n",
-				cs.WarningIcon(), branch)
-			fmt.Fprintf(ios.ErrOut, "  To force delete: git branch -D %s\n", branch)
-			return nil
-		}
-		if errors.Is(err, git.ErrBranchNotFound) {
-			// Branch already deleted or never existed — not an error
-			return nil
-		}
-		return fmt.Errorf("failed to delete branch: %w", err)
-	}
-	fmt.Fprintf(ios.ErrOut, "Deleted branch %q\n", branch)
-	return nil
+	return err
 }

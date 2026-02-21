@@ -352,9 +352,8 @@ if result.Values["confirm"] != "yes" { return nil } // "yes"/"no" lowercase from
 // Test shared logic directly — no BubbleTea needed
 performSetup(ctx, opts, true, "bookworm")
 
-// Test with InMemorySettingsLoader + dockertest.FakeClient
-cfg := config.NewConfigForTest()
-cfg.SetSettingsLoader(configtest.NewInMemorySettingsLoader())
+// Test with mock config + dockertest.FakeClient
+cfg := config.NewBlankConfig()
 fake := dockertest.NewFakeClient()
 fake.SetupLegacyBuild()
 ```

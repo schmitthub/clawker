@@ -26,7 +26,7 @@ func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOpti
 
 - `--skip-fetch` — use cached versions.json
 - `--cleanup` (default: true) — remove stale files
-- `--output` / `-o` — custom output directory (default: `~/.clawker/build/`)
+- `--output` / `-o` — custom output directory (default: `cfg.BuildSubdir()`)
 
 ## Behavior
 

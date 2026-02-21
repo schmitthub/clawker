@@ -11,7 +11,7 @@ type WorktreeInfo struct {
 	// Name is the worktree name (typically the branch name).
 	Name string
 
-	// Slug is the registry slug for this worktree entry.
+	// Slug is the caller-provided identifier for this worktree entry.
 	// Preserved from WorktreeDirEntry to avoid re-computation.
 	Slug string
 
@@ -44,9 +44,9 @@ type WorktreeDirEntry struct {
 	Path string
 }
 
-// WorktreeDirProvider is implemented by Config.ProjectCfg() to manage
-// worktree directories in CLAWKER_HOME. Defined here for dependency inversion —
-// the git package does not import config.
+// WorktreeDirProvider manages worktree directories for callers.
+// Defined here for dependency inversion so the git package remains
+// unconcerned with caller configuration/layout details.
 type WorktreeDirProvider interface {
 	// GetOrCreateWorktreeDir returns the path to a worktree directory,
 	// creating it if it doesn't exist. The name is typically a branch name

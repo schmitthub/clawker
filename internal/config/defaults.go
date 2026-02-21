@@ -1,8 +1,14 @@
 package config
 
-// RequiredFirewallDomains is the default list of domains allowed through the firewall.
+import (
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+// requiredFirewallDomains is the default list of domains allowed through the firewall.
 // These are essential for Claude Code and common development tools.
-var RequiredFirewallDomains = []string{
+var requiredFirewallDomains = []string{
 	"api.anthropic.com",
 	"sentry.io",
 	"statsig.anthropic.com",
@@ -12,75 +18,60 @@ var RequiredFirewallDomains = []string{
 	"docker.io",
 }
 
-// DefaultProject returns a Project with sensible default values
-func DefaultProject() *Project {
-	return &Project{
-		Version: "1",
-		Build: BuildConfig{
-			Image:    "node:20-slim",
-			Packages: []string{"git", "curl", "ripgrep"},
-		},
-		Agent: AgentConfig{
-			Includes: []string{},
-			Env:      map[string]string{},
-		},
-		Workspace: WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: SecurityConfig{
-			Firewall: &FirewallConfig{
-				Enable: true, // Enabled by default for safety
-			},
-			DockerSocket: false, // Disabled by default, opt-in
-			CapAdd:       []string{"NET_ADMIN", "NET_RAW"},
-		},
-	}
-}
+// SetDefaults registers all default values under namespaced keys.
+// Project-scope keys are prefixed with "project.", settings-scope with "settings.".
+func SetDefaults(v *viper.Viper) {
+	// Project scope
+	v.SetDefault("project.version", "1")
 
-// DefaultSettings returns a Settings with sensible default values.
-// This is the single source of truth for all settings defaults.
-func DefaultSettings() *Settings {
-	return &Settings{
-		Logging: LoggingConfig{
-			FileEnabled: boolPtr(true),
-			MaxSizeMB:   50,
-			MaxAgeDays:  7,
-			MaxBackups:  3,
-			Compress:    boolPtr(true),
-			Otel: OtelConfig{
-				Enabled:               boolPtr(true),
-				TimeoutSeconds:        5,
-				MaxQueueSize:          2048,
-				ExportIntervalSeconds: 5,
-			},
-		},
-		Monitoring: MonitoringConfig{
-			OtelCollectorPort:     4318,
-			OtelCollectorHost:     "localhost",
-			OtelCollectorInternal: "otel-collector",
-			OtelGRPCPort:          4317,
-			LokiPort:              3100,
-			PrometheusPort:        9090,
-			JaegerPort:            16686,
-			GrafanaPort:           3000,
-			PrometheusMetricsPort: 8889,
-			Telemetry: TelemetryConfig{
-				MetricsPath:            "/v1/metrics",
-				LogsPath:               "/v1/logs",
-				MetricExportIntervalMs: 10000,
-				LogsExportIntervalMs:   5000,
-				LogToolDetails:         boolPtr(true),
-				LogUserPrompts:         boolPtr(true),
-				IncludeAccountUUID:     boolPtr(true),
-				IncludeSessionID:       boolPtr(true),
-			},
-		},
-	}
-}
+	v.SetDefault("project.build.image", "node:20-slim")
+	v.SetDefault("project.build.packages", []string{"git", "curl", "ripgrep"})
 
-// boolPtr returns a pointer to the given bool value.
-func boolPtr(b bool) *bool { return &b }
+	v.SetDefault("project.agent.includes", []string{})
+	v.SetDefault("project.agent.env", map[string]string{})
+
+	v.SetDefault("project.workspace.remote_path", "/workspace")
+	v.SetDefault("project.workspace.default_mode", "bind")
+
+	v.SetDefault("project.security.firewall.enable", true)
+	v.SetDefault("project.security.docker_socket", false)
+	v.SetDefault("project.security.cap_add", []string{"NET_ADMIN", "NET_RAW"})
+
+	// Settings scope
+	v.SetDefault("settings.logging.file_enabled", true)
+	v.SetDefault("settings.logging.max_size_mb", 50)
+	v.SetDefault("settings.logging.max_age_days", 7)
+	v.SetDefault("settings.logging.max_backups", 3)
+	v.SetDefault("settings.logging.compress", true)
+	v.SetDefault("settings.logging.otel.enabled", true)
+	v.SetDefault("settings.logging.otel.timeout_seconds", 5)
+	v.SetDefault("settings.logging.otel.max_queue_size", 2048)
+	v.SetDefault("settings.logging.otel.export_interval_seconds", 5)
+
+	v.SetDefault("settings.host_proxy.manager.port", 18374)
+	v.SetDefault("settings.host_proxy.daemon.port", 18374)
+	v.SetDefault("settings.host_proxy.daemon.poll_interval", 30*time.Second)
+	v.SetDefault("settings.host_proxy.daemon.grace_period", 60*time.Second)
+	v.SetDefault("settings.host_proxy.daemon.max_consecutive_errs", 10)
+
+	v.SetDefault("settings.monitoring.otel_collector_port", 4318)
+	v.SetDefault("settings.monitoring.otel_collector_host", "localhost")
+	v.SetDefault("settings.monitoring.otel_collector_internal", "otel-collector")
+	v.SetDefault("settings.monitoring.otel_grpc_port", 4317)
+	v.SetDefault("settings.monitoring.loki_port", 3100)
+	v.SetDefault("settings.monitoring.prometheus_port", 9090)
+	v.SetDefault("settings.monitoring.jaeger_port", 16686)
+	v.SetDefault("settings.monitoring.grafana_port", 3000)
+	v.SetDefault("settings.monitoring.prometheus_metrics_port", 8889)
+	v.SetDefault("settings.monitoring.telemetry.metrics_path", "/v1/metrics")
+	v.SetDefault("settings.monitoring.telemetry.logs_path", "/v1/logs")
+	v.SetDefault("settings.monitoring.telemetry.metric_export_interval_ms", 10000)
+	v.SetDefault("settings.monitoring.telemetry.logs_export_interval_ms", 5000)
+	v.SetDefault("settings.monitoring.telemetry.log_tool_details", true)
+	v.SetDefault("settings.monitoring.telemetry.log_user_prompts", true)
+	v.SetDefault("settings.monitoring.telemetry.include_account_uuid", true)
+	v.SetDefault("settings.monitoring.telemetry.include_session_id", true)
+}
 
 // TODO: making these dynamically generated while still maintaining commented
 // sections is tricky. For now, we use static strings with placeholders.
@@ -147,13 +138,6 @@ security:
     # Add domains to the default allowed list
     # add_domains:
     #   - "api.openai.com"
-    # Remove domains from the default allowed list
-    # remove_domains:
-    #   - "registry.npmjs.org"
-    # Override the entire allowed list (ignores add/remove, skips GitHub IP fetching)
-    # override_domains:
-    #   - "api.anthropic.com"
-    #   - "api.github.com"
   # Mount Docker socket for Docker-in-Docker (security risk if enabled)
   docker_socket: false
 
@@ -193,6 +177,16 @@ const DefaultSettingsYAML = `# Clawker User Settings
 #     max_queue_size: 2048
 #     export_interval_seconds: 5
 
+# Host Proxy configuration
+# host_proxy:
+#   manager:
+#     port: 18374
+#   daemon:
+#     port: 18374
+#     poll_interval: 30s
+#     grace_period: 60s
+#     max_consecutive_errs: 10
+
 # Monitoring stack ports (override if defaults conflict)
 # monitoring:
 #   otel_collector_port: 4318
@@ -220,7 +214,7 @@ const DefaultSettingsYAML = `# Clawker User Settings
 // DefaultRegistryYAML returns the default registry template
 const DefaultRegistryYAML = `# Clawker ProjectCfg Registry
 # Managed by 'clawker init' — do not edit manually
-projects: {}
+projects: []
 `
 
 // DefaultIgnoreFile returns the default .clawkerignore content

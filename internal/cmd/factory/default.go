@@ -3,7 +3,8 @@ package factory
 import (
 	"context"
 	"fmt"
-	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -24,60 +26,84 @@ import (
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
-		Version:      version,
-		Config:       configFunc(),
-		HostProxy:    hostProxyFunc(),
-		SocketBridge: socketBridgeFunc(),
+		Version: version,
+		Config:  configFunc(),
 	}
 
-	f.IOStreams = ioStreams(f)       // needs f.Config() for logger settings
-	f.TUI = tui.NewTUI(f.IOStreams)  // needs IOStreams
-	f.Client = clientFunc(f)         // depends on Config
-	f.GitManager = gitManagerFunc(f) // depends on Config
+	f.HostProxy = hostProxyFunc(f)       // depends on Config
+	f.SocketBridge = socketBridgeFunc(f)  // depends on Config
+	f.IOStreams = ioStreams(f)             // needs f.Config() for logger settings
+	f.TUI = tuiFunc(f)                    // needs IOStreams
+	f.ProjectManager = projectManagerFunc(f) // depends on Config + IOStreams
+	f.Client = clientFunc(f)              // depends on Config
+	f.GitManager = gitManagerFunc(f)      // depends on Config
 	f.Prompter = prompterFunc(f)
 
 	return f
+}
+
+func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, error) {
+	var (
+		once sync.Once
+		svc  project.ProjectManager
+		err  error
+	)
+
+	return func() (project.ProjectManager, error) {
+		once.Do(func() {
+			cfg, cfgErr := f.Config()
+			if cfgErr != nil {
+				err = fmt.Errorf("failed to get config: %w", cfgErr)
+				return
+			}
+			svc = project.NewProjectManager(cfg, nil)
+		})
+		return svc, err
+	}
+}
+
+func tuiFunc(f *cmdutil.Factory) *tui.TUI {
+	ios := f.IOStreams
+	return tui.NewTUI(ios)
 }
 
 // ioStreams creates an IOStreams with TTY/color/CI detection and initializes the logger.
 func ioStreams(f *cmdutil.Factory) *iostreams.IOStreams {
 	ios := iostreams.System()
 
-	// CLAWKER_SPINNER_DISABLED is clawker-specific config
-	if os.Getenv("CLAWKER_SPINNER_DISABLED") != "" {
-		ios.SetSpinnerDisabled(true)
-	}
-
-	// Initialize logger from settings — config gateway resolves ENV > config > defaults
-	settings := f.Config().Settings
-
-	logsDir, err := config.LogsDir()
+	cfg, err := f.Config()
 	if err != nil {
-		logger.Init()
-		ios.Logger = &logger.Log
 		return ios
 	}
 
+	settings := cfg.Settings()
+	loggingCfg := settings.Logging
+	monitoringCfg := settings.Monitoring
+
 	// Build OTEL config from settings if enabled
 	var otelCfg *logger.OtelLogConfig
-	if settings.Logging.Otel.IsEnabled() {
+	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
 		otelCfg = &logger.OtelLogConfig{
-			Endpoint:       settings.Monitoring.OtelCollectorEndpoint(),
+			Endpoint:       strings.TrimPrefix(strings.TrimPrefix(monitoringCfg.OtelCollectorEndpoint, "https://"), "http://"),
 			Insecure:       true,
-			Timeout:        time.Duration(settings.Logging.Otel.GetTimeoutSeconds()) * time.Second,
-			MaxQueueSize:   settings.Logging.Otel.GetMaxQueueSize(),
-			ExportInterval: time.Duration(settings.Logging.Otel.GetExportIntervalSeconds()) * time.Second,
+			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
+			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
+			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
+		}
+		if otelCfg.Endpoint == "" && monitoringCfg.OtelCollectorHost != "" && monitoringCfg.OtelCollectorPort > 0 {
+			otelCfg.Endpoint = fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
 		}
 	}
 
+	logsDir := filepath.Join(config.ConfigDir(), "logs")
 	if err := logger.NewLogger(&logger.Options{
 		LogsDir: logsDir,
 		FileConfig: &logger.LoggingConfig{
-			FileEnabled: settings.Logging.FileEnabled,
-			MaxSizeMB:   settings.Logging.MaxSizeMB,
-			MaxAgeDays:  settings.Logging.MaxAgeDays,
-			MaxBackups:  settings.Logging.MaxBackups,
-			Compress:    settings.Logging.Compress,
+			FileEnabled: loggingCfg.FileEnabled,
+			MaxSizeMB:   loggingCfg.MaxSizeMB,
+			MaxAgeDays:  loggingCfg.MaxAgeDays,
+			MaxBackups:  loggingCfg.MaxBackups,
+			Compress:    loggingCfg.Compress,
 		},
 		OtelConfig: otelCfg,
 	}); err != nil {
@@ -97,7 +123,12 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 	)
 	return func(ctx context.Context) (*docker.Client, error) {
 		once.Do(func() {
-			client, clientErr = docker.NewClient(ctx, f.Config())
+			cfg, err := f.Config()
+			if err != nil {
+				clientErr = fmt.Errorf("failed to get config: %w", err)
+				return
+			}
+			client, clientErr = docker.NewClient(ctx, cfg)
 			if clientErr == nil {
 				docker.WireBuildKit(client)
 			}
@@ -107,28 +138,43 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 }
 
 // hostProxyFunc returns a lazy closure that creates a host proxy manager once.
-func hostProxyFunc() func() hostproxy.HostProxyService {
+func hostProxyFunc(f *cmdutil.Factory) func() hostproxy.HostProxyService {
 	var (
 		once    sync.Once
 		manager hostproxy.HostProxyService
 	)
 	return func() hostproxy.HostProxyService {
 		once.Do(func() {
-			manager = hostproxy.NewManager()
+			cfg, err := f.Config()
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to get config for host proxy manager, using defaults")
+				cfg = nil
+			}
+			m, mErr := hostproxy.NewManager(cfg)
+			if mErr != nil {
+				logger.Error().Err(mErr).Msg("failed to create host proxy manager")
+				return
+			}
+			manager = m
 		})
 		return manager
 	}
 }
 
 // socketBridgeFunc returns a lazy closure that creates a socket bridge manager once.
-func socketBridgeFunc() func() socketbridge.SocketBridgeManager {
+func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManager {
 	var (
 		once    sync.Once
 		manager socketbridge.SocketBridgeManager
 	)
 	return func() socketbridge.SocketBridgeManager {
 		once.Do(func() {
-			manager = socketbridge.NewManager()
+			cfg, err := f.Config()
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to get config for socket bridge manager, using defaults")
+				cfg = nil
+			}
+			manager = socketbridge.NewManager(cfg)
 		})
 		return manager
 	}
@@ -136,16 +182,15 @@ func socketBridgeFunc() func() socketbridge.SocketBridgeManager {
 
 // configFunc returns a lazy closure that creates a Config gateway once.
 // Config uses os.Getwd internally for project resolution.
-func configFunc() func() *config.Config {
-	var (
-		once sync.Once
-		cfg  *config.Config
-	)
-	return func() *config.Config {
-		once.Do(func() {
-			cfg = config.NewConfig()
-		})
-		return cfg
+func configFunc() func() (config.Config, error) {
+	var cachedConfig config.Config
+	var configError error
+	return func() (config.Config, error) {
+		if cachedConfig != nil || configError != nil {
+			return cachedConfig, configError
+		}
+		cachedConfig, configError = config.NewConfig()
+		return cachedConfig, configError
 	}
 }
 
@@ -167,14 +212,14 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	)
 	return func() (*git.GitManager, error) {
 		once.Do(func() {
-			cfg := f.Config()
-			if cfg.Project == nil {
-				mgrErr = fmt.Errorf("no project configuration found; run 'clawker init' or ensure clawker.yaml exists")
+			cfg, err := f.Config()
+			if err != nil {
+				mgrErr = fmt.Errorf("failed to get config: %w", err)
 				return
 			}
-			projectRoot := cfg.Project.RootDir()
-			if projectRoot == "" {
-				mgrErr = fmt.Errorf("not in a registered project directory")
+			projectRoot, err := cfg.GetProjectRoot()
+			if err != nil {
+				mgrErr = fmt.Errorf("failed to get project root: %w", err)
 				return
 			}
 			mgr, mgrErr = git.NewGitManager(projectRoot)

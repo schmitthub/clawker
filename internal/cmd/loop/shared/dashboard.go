@@ -55,7 +55,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 
 		dashResult := RunLoopDashboard(ios, LoopDashboardConfig{
 			AgentName: cfg.Setup.AgentName,
-			Project:   cfg.Setup.ProjectCfg.Project,
+			Project:   cfg.Setup.ProjectCfg.Name,
 			MaxLoops:  runnerOpts.MaxLoops,
 		}, ch)
 		if dashResult.Err != nil {
@@ -96,7 +96,7 @@ func RunLoop(ctx context.Context, cfg RunLoopConfig) (*Result, error) {
 			runnerOpts.Monitor = monitor
 
 			fmt.Fprintf(ios.ErrOut, "%s Starting loop %s for %s.%s (%d max loops)\n",
-				cs.InfoIcon(), cfg.CommandName, cfg.Setup.ProjectCfg.Project, cfg.Setup.AgentName, runnerOpts.MaxLoops)
+				cs.InfoIcon(), cfg.CommandName, cfg.Setup.ProjectCfg.Name, cfg.Setup.AgentName, runnerOpts.MaxLoops)
 		}
 
 		if cfg.Verbose {
@@ -190,7 +190,7 @@ func WireLoopDashboard(opts *Options, ch chan<- LoopDashEvent, setup *LoopContai
 	ch <- LoopDashEvent{
 		Kind:          LoopDashEventStart,
 		AgentName:     setup.AgentName,
-		Project:       setup.ProjectCfg.Project,
+		Project:       setup.ProjectCfg.Name,
 		MaxIterations: maxLoops,
 	}
 

@@ -1,0 +1,278 @@
+---
+title: "Custom Images"
+description: "Building custom Docker images with packages, Dockerfile instructions, and injection points"
+icon: "layer-group"
+---
+
+Clawker builds Docker images from a parameterized Dockerfile template. You configure the image through `clawker.yaml` and Clawker generates an optimized Dockerfile with caching, security, and Claude Code pre-installed.
+
+## Base Image
+
+The `build.image` field sets the base image. Alpine and Debian bases are both supported:
+
+```yaml
+build:
+  image: "node:20-slim"        # Debian-based
+  # image: "node:20-alpine"    # Alpine-based
+```
+
+Clawker auto-detects the base OS and adjusts package management (`apt-get` vs `apk`) accordingly.
+
+## System Packages
+
+Install system packages with the `packages` field:
+
+```yaml
+build:
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - python3
+    - make
+    - gcc
+```
+
+## The `@` Shortcut
+
+When you build a project image with `clawker build`, the resulting image is tagged as `clawker-<project>:latest`. The `@` shortcut in commands resolves to this image:
+
+```bash
+clawker build              # Builds clawker-myapp:latest
+clawker run -it --agent dev @  # Resolves @ to clawker-myapp:latest
+```
+
+Images are content-addressed -- Clawker hashes the build configuration and only rebuilds when the config changes.
+
+## Build Instructions
+
+The `instructions` block provides type-safe Dockerfile directives. Each field maps to a Dockerfile instruction:
+
+### env
+
+Set environment variables baked into the image:
+
+```yaml
+build:
+  instructions:
+    env:
+      NODE_ENV: "development"
+      PYTHONPATH: "/workspace/lib"
+```
+
+### copy
+
+Copy files into the image with optional `chown`/`chmod`:
+
+```yaml
+build:
+  instructions:
+    copy:
+      - src: "./config/eslint.json"
+        dest: "/home/claude/.eslintrc.json"
+        chown: "claude:claude"
+      - src: "./scripts/setup.sh"
+        dest: "/usr/local/bin/setup.sh"
+        chmod: "755"
+```
+
+### labels
+
+Add metadata labels to the image:
+
+```yaml
+build:
+  instructions:
+    labels:
+      maintainer: "team@example.com"
+      version: "1.0"
+```
+
+### expose
+
+Document ports the container listens on:
+
+```yaml
+build:
+  instructions:
+    expose:
+      - port: 3000
+      - port: 8080
+        protocol: "tcp"
+      - port: 9090
+        protocol: "udp"
+```
+
+### args
+
+Define build-time arguments:
+
+```yaml
+build:
+  instructions:
+    args:
+      - name: "NODE_VERSION"
+        default: "20"
+      - name: "CUSTOM_FLAG"
+```
+
+### volumes
+
+Declare volume mount points:
+
+```yaml
+build:
+  instructions:
+    volumes:
+      - "/data"
+      - "/var/cache"
+```
+
+### workdir
+
+Override the working directory:
+
+```yaml
+build:
+  instructions:
+    workdir: "/app"
+```
+
+### healthcheck
+
+Configure a container health check:
+
+```yaml
+build:
+  instructions:
+    healthcheck:
+      cmd: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: "30s"
+      timeout: "10s"
+      start_period: "5s"
+      retries: 3
+```
+
+### shell
+
+Override the default shell:
+
+```yaml
+build:
+  instructions:
+    shell: ["/bin/bash", "-c"]
+```
+
+### root_run and user_run
+
+Run commands during the build. `root_run` executes as root (before the `USER` switch), `user_run` executes as the container user (after the switch).
+
+Both support OS-aware variants:
+
+```yaml
+build:
+  instructions:
+    root_run:
+      # Generic command (runs on both Alpine and Debian)
+      - cmd: "echo 'Setting up system'"
+      # OS-specific commands
+      - alpine: "apk add --no-cache sqlite-dev"
+        debian: "apt-get install -y libsqlite3-dev"
+    user_run:
+      - cmd: "pip install --user poetry"
+```
+
+If only `alpine` or `debian` is specified, the command is skipped on the other OS.
+
+## Injection Points
+
+For advanced use cases, the `inject` field provides raw Dockerfile injection points. Each field accepts an array of raw Dockerfile lines:
+
+```yaml
+build:
+  inject:
+    after_from:
+      - "ARG TARGETARCH"
+      - "RUN echo 'Custom base setup'"
+    after_packages:
+      - "RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+    after_user_setup:
+      - "RUN mkdir -p /home/claude/.config"
+    after_user_switch:
+      - "COPY --chown=claude:claude ./dotfiles/ /home/claude/"
+    after_claude_install:
+      - "RUN claude mcp add memory -- npx -y @anthropic-ai/claude-code-mcp"
+    before_entrypoint:
+      - "RUN echo 'Final cleanup'"
+```
+
+**Injection point order in the generated Dockerfile:**
+
+1. `FROM` base image
+2. `after_from` -- Base image tweaks, custom repos
+3. Package installation
+4. `after_packages` -- Post-install configuration
+5. User creation and setup
+6. `after_user_setup` -- User-level system config
+7. `USER` switch to non-root
+8. `after_user_switch` -- Dotfiles, shell config
+9. Claude Code installation
+10. `after_claude_install` -- Claude extensions, MCP tools
+11. `before_entrypoint` -- Final setup
+12. `ENTRYPOINT`
+
+## Custom Dockerfile
+
+For complete control, point to your own Dockerfile:
+
+```yaml
+build:
+  dockerfile: "./.devcontainer/Dockerfile"
+```
+
+When using a custom Dockerfile, the `image`, `packages`, `instructions`, and `inject` fields are ignored. The Dockerfile is built as-is.
+
+## Build Context and Build Args
+
+Set a custom build context directory and pass build-time arguments:
+
+```yaml
+build:
+  context: "./docker"
+  build_args:
+    NODE_VERSION: "20"
+    REGISTRY: "ghcr.io"
+```
+
+The `context` path is relative to the project root. Build args are passed as `--build-arg` to Docker.
+
+## Complete Example
+
+```yaml
+build:
+  image: "node:20-slim"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - python3
+  build_args:
+    NPM_TOKEN: ""
+  instructions:
+    env:
+      NODE_ENV: "development"
+    copy:
+      - src: ".npmrc"
+        dest: "/home/claude/.npmrc"
+        chown: "claude:claude"
+    root_run:
+      - alpine: "apk add --no-cache sqlite-dev"
+        debian: "apt-get install -y libsqlite3-dev"
+    user_run:
+      - cmd: "npm install -g typescript ts-node"
+    expose:
+      - port: 3000
+  inject:
+    after_claude_install:
+      - "RUN claude mcp add context7 -- npx -y @anthropic-ai/claude-code-mcp"
+```

@@ -8,13 +8,15 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // clearClawkerEnv unsets all CLAWKER_* env vars for the duration of a test.
-// The ProjectLoader uses viper.AutomaticEnv() with CLAWKER_ prefix, so
+// The config package uses viper.AutomaticEnv() with CLAWKER_ prefix, so
 // container-injected env vars (e.g. CLAWKER_VERSION) would override config
 // file values and break isolated validation tests.
 func clearClawkerEnv(t *testing.T) {
@@ -93,7 +95,7 @@ func TestNewCmdCheck_metadata(t *testing.T) {
 }
 
 const validConfig = `version: "1"
-project: "test-project"
+name: "test-project"
 build:
   image: "node:20-slim"
 workspace:
@@ -101,9 +103,21 @@ workspace:
   default_mode: "bind"
 `
 
+// projectConfigFileName returns the config filename from a blank config mock,
+// avoiding hardcoded "clawker.yaml" literals throughout tests.
+func projectConfigFileName() string {
+	return configmocks.NewBlankConfig().ProjectConfigFileName()
+}
+
+func blankConfigProvider() func() (config.Config, error) {
+	return func() (config.Config, error) {
+		return configmocks.NewBlankConfig(), nil
+	}
+}
+
 func writeConfig(t *testing.T, dir, content string) string {
 	t.Helper()
-	path := filepath.Join(dir, "clawker.yaml")
+	path := filepath.Join(dir, projectConfigFileName())
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	return path
 }
@@ -116,7 +130,8 @@ func TestCheckRun_validFile(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:      filepath.Join(dir, "clawker.yaml"),
+		Config:    blankConfigProvider(),
+		File:      filepath.Join(dir, projectConfigFileName()),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -129,32 +144,30 @@ func TestCheckRun_validFile(t *testing.T) {
 func TestCheckRun_invalidFile(t *testing.T) {
 	clearClawkerEnv(t)
 	dir := t.TempDir()
-	writeConfig(t, dir, `version: "2"
-project: "test"
-workspace:
-  remote_path: "not-absolute"
-  default_mode: "invalid"
-`)
+	// Malformed YAML — viper will fail to parse this
+	writeConfig(t, dir, "version: [invalid\n  bad yaml\n")
 
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:      filepath.Join(dir, "clawker.yaml"),
+		Config:    blankConfigProvider(),
+		File:      filepath.Join(dir, projectConfigFileName()),
 	}
 
 	err := checkRun(context.Background(), opts)
 	assert.ErrorIs(t, err, cmdutil.SilentError)
 
 	errOut := tio.ErrBuf.String()
-	assert.Contains(t, errOut, "version")
-	assert.Contains(t, errOut, "workspace.remote_path")
+	assert.Contains(t, errOut, projectConfigFileName())
 }
 
-func TestCheckRun_unknownFields(t *testing.T) {
+func TestCheckRun_unknownFields_rejectsTypos(t *testing.T) {
 	clearClawkerEnv(t)
 	dir := t.TempDir()
+	// "biuld" is a typo for "build" — ReadFromString uses UnmarshalExact,
+	// which correctly rejects unknown top-level keys.
 	writeConfig(t, dir, `version: "1"
-project: "test-project"
+name: "test-project"
 biuld:
   image: "node:20-slim"
 workspace:
@@ -164,7 +177,8 @@ workspace:
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:      filepath.Join(dir, "clawker.yaml"),
+		Config:    blankConfigProvider(),
+		File:      filepath.Join(dir, projectConfigFileName()),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -174,11 +188,37 @@ workspace:
 	assert.Contains(t, errOut, "biuld")
 }
 
+func TestCheckRun_unknownFields_rejectsExtraFields(t *testing.T) {
+	clearClawkerEnv(t)
+	dir := t.TempDir()
+	// "extra_stuff" is not a valid config key — should be rejected.
+	writeConfig(t, dir, `version: "1"
+name: "test-project"
+extra_stuff: true
+build:
+  image: "node:20-slim"
+`)
+
+	tio := iostreamstest.New()
+	opts := &CheckOptions{
+		IOStreams: tio.IOStreams,
+		Config:    blankConfigProvider(),
+		File:      filepath.Join(dir, projectConfigFileName()),
+	}
+
+	err := checkRun(context.Background(), opts)
+	assert.ErrorIs(t, err, cmdutil.SilentError)
+
+	errOut := tio.ErrBuf.String()
+	assert.Contains(t, errOut, "extra_stuff")
+}
+
 func TestCheckRun_fileNotFound(t *testing.T) {
 	clearClawkerEnv(t)
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
+		Config:    blankConfigProvider(),
 		File:      filepath.Join(t.TempDir(), "nonexistent.yaml"),
 	}
 
@@ -197,7 +237,8 @@ func TestCheckRun_fileFlag(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
-		File:      filepath.Join(dir, "clawker.yaml"),
+		Config:    blankConfigProvider(),
+		File:      filepath.Join(dir, projectConfigFileName()),
 	}
 
 	err := checkRun(context.Background(), opts)
@@ -212,7 +253,7 @@ func TestCheckRun_directoryFlag(t *testing.T) {
 	dir := t.TempDir()
 
 	tio := iostreamstest.New()
-	f := &cmdutil.Factory{IOStreams: tio.IOStreams}
+	f := &cmdutil.Factory{IOStreams: tio.IOStreams, Config: blankConfigProvider()}
 
 	cmd := NewCmdCheck(f, nil)
 	cmd.SetArgs([]string{"--file", dir})
@@ -225,63 +266,66 @@ func TestCheckRun_directoryFlag(t *testing.T) {
 }
 
 func TestResolveConfigTarget_empty(t *testing.T) {
-	target, err := resolveConfigTarget("")
+	cfgFile := projectConfigFileName()
+	target, err := resolveConfigTarget(cfgFile, "")
 	require.NoError(t, err)
-	defer target.close()
 
 	cwd, _ := os.Getwd()
-	assert.Equal(t, cwd, target.loaderDir)
-	assert.True(t, strings.HasSuffix(target.displayPath, "clawker.yaml"))
+	assert.Equal(t, filepath.Join(cwd, cfgFile), target.filePath)
+	assert.True(t, strings.HasSuffix(target.displayPath, cfgFile))
 }
 
 func TestResolveConfigTarget_clawkerYaml(t *testing.T) {
+	cfgFile := projectConfigFileName()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clawker.yaml")
+	// Resolve symlinks so assertions match on macOS where /var → /private/var.
+	dir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	path := filepath.Join(dir, cfgFile)
 	require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
 
-	target, err := resolveConfigTarget(path)
+	target, err := resolveConfigTarget(cfgFile, path)
 	require.NoError(t, err)
-	defer target.close()
 
-	assert.Equal(t, dir, target.loaderDir)
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
 }
 
 func TestResolveConfigTarget_customFilename(t *testing.T) {
+	cfgFile := projectConfigFileName()
 	dir := t.TempDir()
+	// Resolve symlinks so assertions match on macOS where /var → /private/var.
+	dir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
 	path := filepath.Join(dir, "go.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("version: '1'"), 0o644))
 
-	target, err := resolveConfigTarget(path)
+	target, err := resolveConfigTarget(cfgFile, path)
 	require.NoError(t, err)
-	defer target.close()
 
-	// Should create a temp dir with symlink
-	assert.NotEqual(t, dir, target.loaderDir)
+	// File is read directly — no temp dir needed
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
-
-	// The symlinked clawker.yaml should exist in the loader dir
-	_, statErr := os.Stat(filepath.Join(target.loaderDir, "clawker.yaml"))
-	assert.NoError(t, statErr)
 }
 
 func TestResolveConfigTarget_directory(t *testing.T) {
+	cfgFile := projectConfigFileName()
 	dir := t.TempDir()
 
-	_, err := resolveConfigTarget(dir)
+	_, err := resolveConfigTarget(cfgFile, dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be a file, not a directory")
 }
 
 func TestResolveConfigTarget_nonexistent(t *testing.T) {
+	cfgFile := projectConfigFileName()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nonexistent.yaml")
 
-	target, err := resolveConfigTarget(path)
+	target, err := resolveConfigTarget(cfgFile, path)
 	require.NoError(t, err)
-	defer target.close()
 
-	assert.Equal(t, dir, target.loaderDir)
+	assert.Equal(t, path, target.filePath)
 	assert.Equal(t, path, target.displayPath)
 }
 
@@ -294,6 +338,7 @@ func TestCheckRun_customFilename(t *testing.T) {
 	tio := iostreamstest.New()
 	opts := &CheckOptions{
 		IOStreams: tio.IOStreams,
+		Config:    blankConfigProvider(),
 		File:      path,
 	}
 

@@ -76,7 +76,7 @@ Initialize clawker user settings.
 clawker init [flags]
 ```
 
-Creates or updates the user settings file at `~/.local/clawker/settings.yaml`.
+Creates or updates the user settings file (`cfg.SettingsFileName()` in `config.ConfigDir()`).
 This sets up user-level defaults that apply across all clawker projects.
 
 In interactive mode (default), you will be prompted to:
@@ -126,7 +126,7 @@ Initialize a new clawker project in the current directory.
 clawker project init [project-name] [flags]
 ```
 
-Creates `clawker.yaml` and `.clawkerignore` in the current directory.
+Creates `cfg.ProjectConfigFileName()` and `cfg.ClawkerIgnoreName()` in the current directory.
 If no project name is provided, you will be prompted to enter one.
 
 In interactive mode (default), you will be prompted to configure:
@@ -159,7 +159,7 @@ clawker project init --force
 **Note:** When using `--yes`, a default image must be configured via `clawker init`.
 If no default image exists, the command will fail with a helpful error message.
 
-**Registry:** `project init` also registers the project in `~/.local/clawker/projects.yaml`.
+**Registry:** `project init` also registers the project in `cfg.ProjectRegistryFileName()`.
 
 ---
 
@@ -172,7 +172,7 @@ Register an existing clawker project in the local registry without modifying the
 clawker project register [project-name] [flags]
 ```
 
-Useful when a `clawker.yaml` was manually created, copied from another machine, or already exists and you want to register it locally.
+Useful when a project config (`cfg.ProjectConfigFileName()`) was manually created, copied from another machine, or already exists and you want to register it locally.
 
 **Flags:**
 
@@ -579,8 +579,8 @@ When you pass `@` as the IMAGE argument:
 | Priority | Source | Example |
 |----------|--------|---------|
 | 1 | Project-built image | `clawker-myproject:latest` |
-| 2 | Settings default_image | From `~/.local/clawker/settings.yaml` |
-| 3 | Config default_image | From `clawker.yaml` |
+| 2 | Settings default_image | From `cfg.SettingsFileName()` |
+| 3 | Config default_image | From `cfg.ProjectConfigFileName()` |
 
 **Examples:**
 
@@ -627,7 +627,7 @@ Most container commands support the `--agent` flag as a convenient shortcut for 
 
 **How it works:**
 
-When `--agent` is provided, the container name is resolved as `clawker.<project>.<agent>` using the project name from your `clawker.yaml` configuration.
+When `--agent` is provided, the container name is resolved as `clawker.<project>.<agent>` using the project name from the project config (`cfg.ProjectConfigFileName()`).
 
 **Supported commands:**
 
@@ -700,7 +700,7 @@ The `container run` and `container create` commands support the `--mode` flag to
 
 **Behavior:**
 
-- If `--mode` is not specified, the default from `workspace.default_mode` in `clawker.yaml` is used
+- If `--mode` is not specified, the default from `workspace.default_mode` in the project config (`cfg.ProjectConfigFileName()`) is used
 - If no config default is set, `bind` mode is used
 - The mode determines which workspace strategy is used for mounting files
 
@@ -830,7 +830,7 @@ clawker run -it --privileged @
 clawker run -it --security-opt seccomp=unconfined @
 ```
 
-**Note:** Capabilities specified via CLI flags take precedence over those in `security.cap_add` in `clawker.yaml`.
+**Note:** Capabilities specified via CLI flags take precedence over those in `security.cap_add` in the project config (`cfg.ProjectConfigFileName()`).
 
 ### Health Checks
 
@@ -995,13 +995,13 @@ clawker run -it --rm clawker-myapp:latest -- -p "Fix bugs"
 
 ### `clawker config check`
 
-Validate a clawker.yaml configuration file. Checks for unknown/misspelled fields, required fields, valid values, file existence for referenced paths, and security configuration consistency.
+Validate a project configuration file (`cfg.ProjectConfigFileName()`). Checks for unknown/misspelled fields, required fields, valid values, file existence for referenced paths, and security configuration consistency.
 
 **Flags:**
 
 | Flag | Shorthand | Type | Default | Description |
 |------|-----------|------|---------|-------------|
-| `--file` | `-f` | string | | Path to clawker.yaml file to validate |
+| `--file` | `-f` | string | | Path to project config file to validate |
 
 **Examples:**
 ```bash

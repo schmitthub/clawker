@@ -1,105 +1,89 @@
 # internal/git
 
-Git repository operations including worktree management.
+Leaf git operations package for repository discovery, branch safety checks, and linked worktree lifecycle.
+
+## Recent Changes (Current State)
+
+- Clarified package boundary language: callers own directory/layout concerns; git package stays pure stdlib + go-git.
+- Worktree orchestration now explicitly relies on caller-provided `WorktreeDirProvider` and caller-provided `WorktreeDirEntry` metadata.
+- Worktree branch creation path is hardened:
+  - existing branch => `AddWithExistingBranch`
+  - missing branch => `AddWithNewBranch`
+- Slashed branch names are intentionally supported without creating incorrect slug-derived git branches.
+- `ListWorktrees` behavior clearly includes orphan detection in both directions:
+  - git metadata without caller entry
+  - caller entry without git metadata
 
 ## Architecture
 
-**Tier 1 (Leaf) Package** — imports ONLY stdlib + go-git, NO internal packages.
+This is a **Tier 1 leaf package**:
 
-This package follows the Facade pattern:
-- `GitManager` is the top-level facade owning the repository
-- `WorktreeManager` handles linked worktree operations (low-level go-git primitives)
+- Imports only stdlib + go-git ecosystem packages.
+- Does not import any `internal/*` package.
+- Uses dependency inversion for filesystem layout via `WorktreeDirProvider`.
 
-**Dependency Inversion:** The `WorktreeDirProvider` interface is defined here, not in config.
-Config.Project() implements this interface, allowing GitManager to orchestrate worktree
-setup without importing the config package.
+Facade shape:
 
-## Key Types
+- `GitManager`: top-level repository facade.
+- `WorktreeManager`: low-level linked worktree operations over go-git x/worktree.
 
-### GitManager
+## Exported API
 
-Top-level facade for git operations.
+### Constructors
 
 ```go
-// Create from any path within a git repo (walks up to find root)
-mgr, err := git.NewGitManager("/path/within/repo")
+// Discover repo from any path inside a repository.
+mgr, err := git.NewGitManager(path)
 
-// Create from existing go-git Repository (for testing with in-memory repos)
-mgr := git.NewGitManagerWithRepo(repo, "/logical/root/path")
-
-// Access sub-managers (returns error if storage doesn't support worktrees)
-wt, err := mgr.Worktrees()
-
-// Core accessors
-mgr.RepoRoot()      // repository root directory
-mgr.Repository()    // underlying go-git Repository
+// Testing/integration constructor when repo already exists.
+mgr := git.NewGitManagerWithRepo(repo, repoRoot)
 ```
 
-### High-level Orchestration (requires WorktreeDirProvider)
-
-These methods coordinate git operations with directory management:
+### Core Accessors
 
 ```go
-// Setup worktree (create dir + git worktree add)
-// Branch names with slashes (e.g., "feature/foo") are supported.
-path, err := mgr.SetupWorktree(provider, "feature-branch", "main")
+repo := mgr.Repository()
+root := mgr.RepoRoot()
+wt, err := mgr.Worktrees()
+```
 
-// Remove worktree (git metadata + directory)
-// Use the original branch name (with slashes if applicable).
-err := mgr.RemoveWorktree(provider, "feature-branch")
+### High-Level Orchestration (caller-integrated)
 
-// List all worktrees with info (takes entries from provider, not provider itself)
-// Caller converts config.WorktreeDirInfo to git.WorktreeDirEntry
-entries := []git.WorktreeDirEntry{{Name: "feature/foo", Slug: "feature-foo", Path: "/path"}}
+```go
+path, err := mgr.SetupWorktree(provider, branch, base)
+err = mgr.RemoveWorktree(provider, branch)
 infos, err := mgr.ListWorktrees(entries)
 ```
 
-### WorktreeManager (Low-level)
+Behavior details:
 
-Direct access to go-git worktree operations:
+- `SetupWorktree` validates/reuses existing directories when possible.
+- `SetupWorktree` removes orphaned git metadata for a target worktree before fresh creation.
+- `RemoveWorktree` removes both git metadata and caller-managed directory.
+- `ListWorktrees` returns `WorktreeInfo` for all known worktrees, including recoverable error states.
+
+### Branch/Ref Operations
 
 ```go
-wt, err := mgr.Worktrees()
-if err != nil {
-    // Handle error (storage doesn't support worktrees)
-}
-
-// Add worktree at commit (NOTE: this creates a branch named after the worktree!)
-// For most use cases, prefer AddDetached, AddWithNewBranch, or AddWithExistingBranch.
-err = wt.Add("/path/to/worktree", "name", commitHash)
-
-// Add worktree with new branch (uses detached HEAD internally to avoid slugified branch)
-// Creates worktree and a NEW branch pointing to baseCommit (or HEAD if zero)
-err := wt.AddWithNewBranch("/path", "name", branchRef, baseCommit)
-
-// Add worktree for an EXISTING branch (no new branch created)
-// Use when the branch already exists and you want a worktree for it
-err := wt.AddWithExistingBranch("/path", "name", branchRef)
-
-// Add detached HEAD worktree (no branch created or checked out)
-err := wt.AddDetached("/path", "name", commitHash)
-
-// List worktree names
-names, err := wt.List()
-
-// Check if worktree exists in git metadata
-exists, err := wt.Exists("name")
-
-// Open worktree as Repository
-repo, err := wt.Open("/path")
-
-// Remove worktree metadata (not directory)
-err := wt.Remove("name")
+branch, err := mgr.GetCurrentBranch()   // empty string when detached HEAD
+hash, err := mgr.ResolveRef(ref)
+exists, err := mgr.BranchExists(branch)
+err = mgr.DeleteBranch(branch)
 ```
 
-**Important**: `SetupWorktree` automatically chooses between `AddWithExistingBranch` and
-`AddWithNewBranch` based on whether the branch already exists. This prevents the bug
-where slashed branch names like "a/output-styling" would incorrectly create a slugified
-branch "a-output-styling".
+`DeleteBranch` is equivalent to safe `git branch -d` semantics:
 
-### WorktreeDirProvider Interface
+- refuses current branch (`ErrIsCurrentBranch`)
+- refuses unmerged branch (`ErrBranchNotMerged`)
+- returns `ErrBranchNotFound` when missing
 
-Implemented by Config.Project() to manage worktree directories:
+### Utility
+
+```go
+isLinkedWorktree, err := git.IsInsideWorktree(path)
+```
+
+## Worktree Types
 
 ```go
 type WorktreeDirProvider interface {
@@ -107,92 +91,62 @@ type WorktreeDirProvider interface {
     GetWorktreeDir(name string) (string, error)
     DeleteWorktreeDir(name string) error
 }
-```
 
-### WorktreeDirEntry
-
-Used by `ListWorktrees` to map between branch names, slugs, and paths:
-
-```go
 type WorktreeDirEntry struct {
-    Name string // Original name (e.g., "feature/foo" with slashes)
-    Slug string // Filesystem-safe slug (e.g., "feature-foo")
-    Path string // Absolute filesystem path
+    Name string
+    Slug string
+    Path string
 }
-```
 
-Callers convert from `config.WorktreeDirInfo` to `git.WorktreeDirEntry` when calling `ListWorktrees`.
-
-### WorktreeInfo
-
-Information about a worktree:
-
-```go
 type WorktreeInfo struct {
-    Name       string        // worktree name
-    Slug       string        // registry slug (preserved from WorktreeDirEntry)
-    Path       string        // filesystem path
-    Head       plumbing.Hash // current commit
-    Branch     string        // branch name (empty if detached)
-    IsDetached bool          // true if detached HEAD
-    Error      error         // error if info couldn't be read (other fields may be zero)
+    Name       string
+    Slug       string
+    Path       string
+    Head       plumbing.Hash
+    Branch     string
+    IsDetached bool
+    Error      error
 }
 ```
 
-Note: If `Error` is non-nil, the worktree may be corrupted, inaccessible, or orphaned. Check before using other fields.
+Notes:
 
-### Branch Operations
+- `Slug` is caller-provided metadata preserved through the pipeline.
+- `Name` is usually the canonical branch identity (can include slashes).
+- Non-nil `Error` indicates a partial info record; consumers should degrade gracefully.
 
-```go
-// Check if a branch ref exists
-exists, err := mgr.BranchExists("feature-branch")
+## WorktreeManager (Low-level)
 
-// Delete a branch (ref + config), like `git branch -d`
-// Safety: refuses to delete the current branch or branches with unmerged commits
-err := mgr.DeleteBranch("feature-branch")
-if errors.Is(err, git.ErrIsCurrentBranch) {
-    // Cannot delete the currently checked-out branch
-}
-if errors.Is(err, git.ErrBranchNotMerged) {
-    // Branch has commits not reachable from HEAD
-}
-if errors.Is(err, git.ErrBranchNotFound) {
-    // Branch ref doesn't exist
-}
-```
+`WorktreeManager` is intentionally low-level and go-git-centric:
 
-## Utility Functions
+- `Add`
+- `AddDetached`
+- `AddWithNewBranch`
+- `AddWithExistingBranch`
+- `List`
+- `Exists`
+- `Open`
+- `Remove`
 
-```go
-// Check if path is inside a linked worktree (not main repo)
-isWorktree, err := git.IsInsideWorktree("/some/path")
-```
+These are composed by `GitManager.SetupWorktree`/`RemoveWorktree` for domain workflows.
 
-## Errors
+## Sentinel Errors
 
-```go
-// Sentinel errors
-git.ErrNotRepository    // path is not inside a git repository
-git.ErrBranchNotFound   // branch ref does not exist
-git.ErrBranchNotMerged  // branch has commits not reachable from HEAD
-git.ErrIsCurrentBranch  // cannot delete the currently checked-out branch
+- `ErrNotRepository`
+- `ErrBranchNotFound`
+- `ErrBranchNotMerged`
+- `ErrIsCurrentBranch`
 
-// Usage
-if errors.Is(err, git.ErrNotRepository) {
-    // Handle not in git repo
-}
-if errors.Is(err, git.ErrBranchNotMerged) {
-    // Warn user, suggest `git branch -D`
-}
-if errors.Is(err, git.ErrIsCurrentBranch) {
-    // Refuse to delete the branch HEAD points to
-}
-```
+Prefer `errors.Is` checks at command/service boundaries.
 
-## Testing
+## Testing Guidance
 
-Worktrees require real filesystem operations (`.git` files and `.git/worktrees/` directories), so worktree tests use `newTestRepoOnDisk(t)` with `t.TempDir()`. For non-worktree tests, use `gittest.NewInMemoryGitManager(t, "/logical/root")` which provides a seeded in-memory repository. The `gittest` subpackage is the public entry point for test consumers.
+- For real linked worktree behavior, use filesystem-backed temp repos.
+- For fast branch/ref behavior, use `internal/git/gittest` (`NewInMemoryGitManager`).
+- Worktree tests should explicitly validate both git metadata and directory-side effects.
 
 ## Dependencies
 
-`go-git/go-git/v6`, `go-git/go-billy/v6`, `go-git/go-git/v6/x/plumbing/worktree`
+- `github.com/go-git/go-git/v6`
+- `github.com/go-git/go-git/v6/x/plumbing/worktree`
+- `github.com/go-git/go-billy/v6/osfs`

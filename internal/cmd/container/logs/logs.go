@@ -16,7 +16,7 @@ import (
 type LogsOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Agent      bool
 	Follow     bool
@@ -92,7 +92,15 @@ func logsRun(ctx context.Context, opts *LogsOptions) error {
 	// Resolve container name
 	containerName := opts.Containers[0]
 	if opts.Agent {
-		containers, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Name
+		}
+		containers, err := docker.ContainerNamesFromAgents(project, opts.Containers)
 		if err != nil {
 			return err
 		}

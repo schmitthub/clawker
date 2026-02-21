@@ -21,7 +21,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 
 - **3-segment** (with project): `clawker.project.agent` — **2-segment** (empty project): `clawker.agent`
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
-- **Global volumes**: `clawker-<purpose>` — **Network**: `NetworkName = "clawker-net"`
+- **Global volumes**: `clawker-<purpose>` — **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
 Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `GlobalVolumeName`, `ContainerNamePrefix`, `ImageTag`, `ImageTagWithHash`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
@@ -29,24 +29,25 @@ Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (s
 
 ## Labels
 
-`LabelPrefix` (`dev.clawker.`), `LabelManaged`, `LabelProject`, `LabelAgent`, `LabelVersion`, `LabelImage`, `LabelCreated`, `LabelWorkdir`, `LabelPurpose`, `LabelTestName` — re-exported from `internal/config/identity.go` (canonical source)
+All label keys come from `config.Config` interface methods (`LabelManaged()`, `LabelProject()`, etc.). No label constants are exported from this package — callers use `(*Client)` methods which read keys from `c.cfg`.
 
-**Constructors**: `ContainerLabels(project, agent, version, image, workdir)`, `GlobalVolumeLabels(purpose)`, `VolumeLabels(project, agent, purpose)`, `ImageLabels(project, version)`, `NetworkLabels()`
+**Client methods** (all on `*Client`): `ContainerLabels(project, agent, version, image, workdir)`, `GlobalVolumeLabels(purpose)`, `VolumeLabels(project, agent, purpose)`, `ImageLabels(project, version)`, `NetworkLabels()`
 
-**Filters**: `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` — all return `whail.Filters`.
+**Filters** (all on `*Client`): `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` — return `whail.Filters`.
 
 ## Client (`client.go`)
 
 ```go
-func NewClient(ctx, cfg, opts ...ClientOption) (*Client, error)
+func NewClient(ctx, cfg config.Config, opts ...ClientOption) (*Client, error)
+func NewClientFromEngine(engine *whail.Engine, cfg config.Config) *Client  // test constructor
 type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 ```
 
-`Client` embeds `*whail.Engine`. Fields: `cfg *config.Config`, `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
+`Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Methods**: `Close()`, `SetConfig(cfg)`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`
+**Methods**: `Close()`, `ResolveImage(ctx)`, `ResolveImageWithSource(ctx)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`, `IsMonitoringActive(ctx)`, `ListContainers(ctx, all)`, `ListContainersByProject(ctx, project, all)`, `FindContainerByAgent(ctx, project, agent)`, `RemoveContainerWithVolumes(ctx, id, force)`, `parseContainers(summaries)` (private).
 
-**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolveDefaultImage(cfg, settings) string`.
+**Image resolution**: `ImageSource` enum (`Explicit/Project/Default`). `ResolvedImage` struct (Reference + Source). `ResolveDefaultImage(cfg config.Config, settings config.Settings) string`.
 
 ## Builder (`builder.go`)
 
@@ -54,7 +55,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 ## Default Image (`defaults.go`)
 
-`DefaultImageTag = "clawker-default:latest"`. `(*Client).BuildDefaultImage(ctx, flavor, onProgress)`. `TestLabelConfig(testName...) whail.LabelConfig`.
+`DefaultImageTag = "clawker-default:latest"`. `(*Client).BuildDefaultImage(ctx, flavor, onProgress)`. `TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig`.
 
 ## BuildKit (`buildkit.go`)
 
@@ -70,9 +71,11 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
 
+`BindOverlayDirsFromPatterns(patterns) []string` — derives directory overlay targets from ignore patterns for bind mode. Only returns deterministic directory paths, skips file-glob patterns.
+
 ## Opts Types (`opts.go`)
 
-`MemBytes`, `MemSwapBytes`, `NanoCPUs` (pflag.Value). Container options: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`. `ParseCPUs(value) (int64, error)`.
+`MemBytes`, `MemSwapBytes`, `NanoCPUs` (pflag.Value). Container options: `UlimitOpt`, `WeightDeviceOpt`, `ThrottleDeviceOpt`, `GpuOpts`, `MountOpt`, `DeviceOpt`. Constructors: `NewUlimitOpt`, `NewWeightDeviceOpt`, `NewThrottleDeviceOpt`, `NewGpuOpts`, `NewMountOpt`, `NewDeviceOpt`. `ParseCPUs(value) (int64, error)`.
 
 ## Type Re-exports (`types.go`)
 
@@ -80,7 +83,9 @@ Re-exports ~37 Docker types from whail. Key groups: container/exec options, imag
 
 ## Testing (`dockertest/`)
 
-`NewFakeClient(opts ...FakeClientOption)` — function-field fake backed by `whailtest.FakeAPIClient`. `WithConfig(cfg)` injects `*config.Config`.
+`NewFakeClient(cfg config.Config, opts ...FakeClientOption)` — function-field fake backed by `whailtest.FakeAPIClient`. Config is required as first param (used for label keys and engine options). `FakeClient.Cfg` field stores the config for test assertions.
+
+Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use a package-level `defaultCfg = configmocks.NewBlankConfig()` to avoid cascading cfg params to every caller.
 
 **Fixtures**: `ContainerFixture()`, `RunningContainerFixture()`, `ImageSummaryFixture()`, `MinimalCreateOpts()`, `MinimalStartOpts()`, `BuildKitBuildOpts()`
 
@@ -94,3 +99,11 @@ Re-exports ~37 Docker types from whail. Key groups: container/exec options, imag
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
 - **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
 - **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/SetupContainerListError`
+
+## Gotchas
+
+- **`cfg` is unexported** — `Client.cfg` is a private field. Production code uses `NewClient(ctx, cfg, opts...)`. Test code in other packages uses `NewClientFromEngine(engine, cfg)` or `dockertest.NewFakeClient(cfg)`.
+- **No label constants exported** — all label keys come from `config.Config` methods. External packages that need label keys must hold a `config.Config` reference.
+- **`parseContainers` is a Client method** — it needs `c.cfg` for label keys when parsing container summaries.
+- **LSP false positives** — gopls reports false "no field or method" errors on `config.Config` interface and false "copylocks" warnings. These are stale LSP cache issues — the real compiler (`go build`) is authoritative.
+- **External caller cascade** — `NewFakeClient` signature changed from `NewFakeClient(opts...)` to `NewFakeClient(cfg, opts...)`. All ~150+ external callers need `configmocks.NewBlankConfig()` as first arg (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`). `WithConfig` option was deleted.

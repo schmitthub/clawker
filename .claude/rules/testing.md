@@ -28,10 +28,51 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder`, `InMemorySettingsLoader` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
+| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, `BuildKitCapture` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
+
+## Config Package Test Double How-To
+
+Test doubles live in `internal/config/mocks/`. Import as:
+
+```go
+configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+```
+
+Use the lightest helper that fits the assertion:
+
+- `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `configmocks.NewFromString(yaml)` — test double with specific YAML values merged over defaults. Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback.
+- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+
+`NewBlankConfig` and `NewFromString` return `*configmocks.ConfigMock` (moq-generated) with every read Func field pre-wired. Set/Write/Watch are intentionally NOT wired — calling them panics, signaling that `NewIsolatedTestConfig` should be used.
+
+Project test doubles live in `internal/project/mocks/`. Import as:
+
+```go
+projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+```
+
+Typical mapping:
+
+- Defaults and typed getter behavior → `NewBlankConfig()`
+- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
+- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML parsing and validation errors → `ReadFromString(...)` directly
+
+When working specifically on `internal/config`, keep validation package-local while migration is in progress:
+
+```bash
+go test ./internal/config -v
+go test ./internal/config -run TestWrite -v
+go test ./internal/config -run TestReadFromString -v
+```
+
+For tests asserting defaults or file values, clear `CLAWKER_*` environment overrides first.
 
 ## Test Categories
 
@@ -75,7 +116,7 @@ Update: `GOLDEN_UPDATE=1 go test ./... -run TestFoo`
 Use `NewCmd(f, nil)` with `dockertest.NewFakeClient` — exercises full pipeline without Docker daemon.
 
 ```go
-fake := dockertest.NewFakeClient()
+fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 fake.SetupContainerCreate()
 fake.SetupContainerStart()
 tio := iostreamstest.New()

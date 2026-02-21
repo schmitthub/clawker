@@ -46,7 +46,7 @@ go test ./test/agents/... -v -timeout 15m        # Agent E2E
 
 ### Core
 
-`NewHarness(t, opts ...HarnessOption)` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`
+`NewHarness(t, opts ...HarnessOption)` — Options: `WithProject(name)`, `WithConfig(cfg)`, `WithConfigBuilder(builder)`. Uses `text.Slugify` for project name normalization, `CLAWKER_CONFIG_DIR` env var for isolation, direct YAML string for registry construction.
 
 Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/NetworkName`, `ConfigPath`, `WriteFile/ReadFile/FileExists`, `UpdateConfig`
 
@@ -61,7 +61,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 | `NewTestClient(t)` | Label-injected `*docker.Client` |
 | `AddTestLabels(labels)` / `AddClawkerLabels(labels, project, agent, testName)` | Label injection |
 | `CleanupTestResources(ctx, cli)` / `CleanupProjectResources(ctx, cli, project)` | Label-filtered removal |
-| `ContainerExists/IsRunning(ctx, client, name)` | State checks |
+| `ContainerExists/ContainerIsRunning(ctx, client, name)` | State checks |
 | `WaitForContainerRunning(ctx, client, name)` | Fails fast on exit |
 | `VolumeExists/NetworkExists(ctx, client, name)` | Resource checks |
 | `GetContainerExitDiagnostics(ctx, client, id, logLines)` | Debug info |
@@ -73,7 +73,9 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 **Image options**: `BuildTestImageOptions`, `BuildSimpleTestImageOptions` — config structs for image build helpers.
 
-**Constants**: `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName`, `TestChownImage`
+**Package-level vars**: `TestLabel`, `TestLabelValue`, `ClawkerManagedLabel`, `LabelTestName` — initialized from `_blankCfg` (a `configmocks.NewBlankConfig()` instance). `TestChownImage` remains a `const`.
+
+**Internal**: `_blankCfg` — package-level blank config providing label constants and `ContainerUID()` for Dockerfile generation. Shared across `docker.go` and `client.go`.
 
 ### Readiness (ready.go)
 
@@ -100,7 +102,7 @@ Methods: `SetEnv/UnsetEnv`, `Chdir`, `ContainerName/ImageName/VolumeName/Network
 
 ### Factory Testing (factory.go)
 
-`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup.
+`NewTestFactory(t, h) (*cmdutil.Factory, *iostreamstest.TestIOStreams)` — fully-wired with cleanup. Uses `configFromProject()` to bridge `*config.Project` schema → `config.Config` interface via `configmocks.NewFromString`. Factory.Config closure returns `(config.Config, error)`.
 
 ### Content-Addressed Caching (hash.go)
 
@@ -116,7 +118,7 @@ Leaf subpackage — stdlib + testify only, no heavy transitive dependencies.
 
 ### Socket Bridge Helpers
 
-`SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) []string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
+`SocketBridgeConfig` — config for socket bridge test setup. `StartSocketBridge(t, cfg)` — starts bridge for tests. `BuildRemoteSocketsEnv(cfg) string` — env vars. `DefaultGPGSocketPath()`, `DefaultSSHSocketPath()` — default paths. `WithSocketForwarding(cfg)` — container opt.
 
 ## Debugging Resource Leaks
 
@@ -124,4 +126,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/docker`, `pkg/whail`
+Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/hostproxy`, `internal/socketbridge`, `internal/text`, `pkg/whail`

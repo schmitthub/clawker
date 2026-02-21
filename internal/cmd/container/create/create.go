@@ -26,7 +26,7 @@ type CreateOptions struct {
 	IOStreams  *iostreams.IOStreams
 	TUI        *tui.TUI
 	Client     func(context.Context) (*docker.Client, error)
-	Config     func() *config.Config
+	Config     func() (config.Config, error)
 	GitManager func() (*git.GitManager, error)
 	HostProxy  func() hostproxy.HostProxyService
 	Prompter   func() *prompter.Prompter
@@ -114,8 +114,11 @@ If IMAGE is "@", clawker will use (in order of precedence):
 func createRun(ctx context.Context, opts *CreateOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerOptions
-	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cfg := cfgGateway.Project()
 
 	// --- Phase A: Pre-progress (synchronous) ---
 
@@ -147,13 +150,13 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			}
 			if !exists {
 				if err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
-					ImageRef:       resolvedImage.Reference,
-					IOStreams:      ios,
-					TUI:            opts.TUI,
-					Prompter:       opts.Prompter,
-					SettingsLoader: func() config.SettingsLoader { return cfgGateway.SettingsLoader() },
-					BuildImage:     client.BuildDefaultImage,
-					CommandVerb:    "create",
+					ImageRef:    resolvedImage.Reference,
+					IOStreams:   ios,
+					TUI:         opts.TUI,
+					Prompter:    opts.Prompter,
+					Cfg:         cfgGateway,
+					BuildImage:  client.BuildDefaultImage,
+					CommandVerb: "create",
 				}); err != nil {
 					return err
 				}
@@ -181,6 +184,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
 			Client:      client,
+			Cfg:         cfgGateway,
 			Config:      cfg,
 			Options:     containerOpts,
 			Flags:       opts.flags,

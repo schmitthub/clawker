@@ -15,7 +15,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/config/configtest"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	whail "github.com/schmitthub/clawker/pkg/whail"
@@ -978,15 +977,15 @@ agent:
 	require.NoError(t, err)
 
 	// Wire the YAML-parsed value into a config test double
-	cfg := configtest.NewProjectBuilder().
-		WithProject("test").
-		WithAgent(config.AgentConfig{
+	cfg := &config.Project{
+		Name: "test",
+		Agent: config.AgentConfig{
 			PostInit: parsedCfg.Agent.PostInit,
-		}).
-		Build()
+		},
+	}
 
 	agent := harness.UniqueAgentName(t)
-	volumeName := createConfigVolume(t, ctx, client, cfg.Project, agent)
+	volumeName := createConfigVolume(t, ctx, client, cfg.Name, agent)
 
 	// Create container manually (not via RunContainer — we need to inject before start)
 	containerName := fmt.Sprintf("clawker-test-postinit-%s", agent)

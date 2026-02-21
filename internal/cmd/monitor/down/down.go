@@ -15,6 +15,7 @@ import (
 
 type DownOptions struct {
 	IOStreams *iostreams.IOStreams
+	Config    func() (config.Config, error)
 
 	Volumes bool
 }
@@ -22,6 +23,7 @@ type DownOptions struct {
 func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command {
 	opts := &DownOptions{
 		IOStreams: f.IOStreams,
+		Config:    f.Config,
 	}
 
 	cmd := &cobra.Command{
@@ -53,8 +55,13 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
 	// Resolve monitor directory
-	monitorDir, err := config.MonitorDir()
+	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
@@ -64,8 +71,8 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	// Check if compose.yaml exists
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		cmdutil.PrintErrorf(ios, "Monitoring stack not initialized")
-		cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
+		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack not initialized\n", cs.FailureIcon())
+		fmt.Fprintf(ios.ErrOut, "\nRun 'clawker monitor init' to scaffold configuration files\n")
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 

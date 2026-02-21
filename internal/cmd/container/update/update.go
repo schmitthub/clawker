@@ -17,7 +17,7 @@ import (
 type UpdateOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Agent              bool
 	blkioWeight        uint16
@@ -121,7 +121,15 @@ func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, opts.Containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Name
+		}
+		resolved, err := docker.ContainerNamesFromAgents(project, opts.Containers)
 		if err != nil {
 			return err
 		}

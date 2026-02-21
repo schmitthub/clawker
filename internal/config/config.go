@@ -1,248 +1,402 @@
+// Package config provides types for interacting with clawker configuration files.
+// It loads clawker.yaml (project) and settings.yaml (user) into one merged
+// in-memory Config backed by viper, with key-path traversal via Get/Set/Keys/Remove.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/viper"
 )
 
-// Config is a facade providing access to all configuration.
-// All fields are eagerly loaded from the current working directory.
-type Config struct {
-	// Project is the project configuration from clawker.yaml.
-	// Never nil - uses defaults if no config file exists.
-	// Contains runtime context (Key, RootDir, worktree methods) after loading.
-	Project *Project
-
-	// Settings is the user settings from settings.yaml.
-	// Never nil - uses defaults if no settings file exists.
-	Settings *Settings
-
-	// Resolution is the project resolution (project key, entry, workdir).
-	// Never nil - empty resolution if not in a registered project.
-	Resolution *Resolution
-
-	// Registry is the registry for write operations.
-	// May be nil if registry initialization failed. Check RegistryInitErr() for details.
-	Registry Registry
-
-	// Internal loaders for operations that need them
-	projectLoader   *ProjectLoader
-	settingsLoader  SettingsLoader
-	registryInitErr error // stored for later diagnostics
-}
-
-// NewConfig creates a Config facade by loading all configuration from the
-// current working directory. This function always succeeds - missing files
-// result in default values, and errors are logged but don't prevent creation.
-func NewConfig() *Config {
-	c := &Config{}
-	c.load()
-	return c
-}
-
-// NewConfigForTest creates a Config facade with pre-populated values.
-// This is intended for unit tests that don't need real config file loading.
+// Config is the public configuration contract.
+// Add methods here as the config contract grows.
 //
-// Limitations:
-//   - Project.RootDir() returns "" (no registry entry)
-//   - Worktree methods (GetOrCreateWorktreeDir, etc.) will fail without a registry
-//   - Tests needing full runtime context should use NewConfig() with os.Chdir()
-//     to a temp directory containing clawker.yaml and a registered project
-func NewConfigForTest(project *Project, settings *Settings) *Config {
-	if project == nil {
-		project = DefaultProject()
-	}
-	if settings == nil {
-		settings = DefaultSettings()
-	}
+//go:generate moq -rm -pkg mocks -out mocks/config_mock.go . Config
+type Config interface {
+	ClawkerIgnoreName() string
+	Logging() map[string]any
+	Project() *Project
+	Settings() Settings
+	LoggingConfig() LoggingConfig
+	MonitoringConfig() MonitoringConfig
+	Get(key string) (any, error)
+	Set(key string, value any) error
+	Write(opts WriteOptions) error
+	Watch(onChange func(fsnotify.Event)) error
+	Domain() string
+	LabelDomain() string
+	ConfigDirEnvVar() string
+	StateDirEnvVar() string
+	DataDirEnvVar() string
+	TestRepoDirEnvVar() string
+	MonitorSubdir() (string, error)
+	BuildSubdir() (string, error)
+	DockerfilesSubdir() (string, error)
+	ClawkerNetwork() string
+	LogsSubdir() (string, error)
+	BridgesSubdir() (string, error)
+	PidsSubdir() (string, error)
+	BridgePIDFilePath(containerID string) (string, error)
+	HostProxyConfig() HostProxyConfig
+	HostProxyLogFilePath() (string, error)
+	HostProxyPIDFilePath() (string, error)
+	ShareSubdir() (string, error)
+	WorktreesSubdir() (string, error)
+	LabelPrefix() string
+	LabelManaged() string
+	LabelMonitoringStack() string
+	LabelProject() string
+	LabelAgent() string
+	LabelVersion() string
+	LabelImage() string
+	LabelCreated() string
+	LabelWorkdir() string
+	LabelPurpose() string
+	LabelTestName() string
+	LabelBaseImage() string
+	LabelFlavor() string
+	LabelTest() string
+	LabelE2ETest() string
+	ManagedLabelValue() string
+	EngineLabelPrefix() string
+	EngineManagedLabel() string
+	ContainerUID() int
+	ContainerGID() int
+	GrafanaURL(host string, https bool) string
+	JaegerURL(host string, https bool) string
+	PrometheusURL(host string, https bool) string
+	RequiredFirewallDomains() []string
+	ProjectConfigFileName() string
+	SettingsFileName() string
+	ProjectRegistryFileName() string
+	GetProjectRoot() (string, error)
+	GetProjectIgnoreFile() (string, error)
+}
 
-	resolution := &Resolution{}
-	if project.Project != "" {
-		resolution.ProjectKey = project.Project
-	}
+var ErrNotInProject = errors.New("current directory is not within a configured project root")
 
-	// Inject minimal runtime context for tests
-	if resolution.Found() {
-		project.setRuntimeContext(&resolution.ProjectEntry, nil)
-	}
+type configImpl struct {
+	v *viper.Viper
 
-	return &Config{
-		Project:    project,
-		Settings:   settings,
-		Resolution: resolution,
+	settingsFile          string
+	userProjectConfigFile string
+	projectRegistryPath   string
+	projectConfigFile     string
+	dirty                 *dirtyNode
+
+	mu sync.RWMutex
+}
+
+type ConfigScope string
+
+const (
+	ScopeSettings ConfigScope = "settings"
+	ScopeProject  ConfigScope = "project"
+	ScopeRegistry ConfigScope = "registry"
+)
+
+var keyOwnership = map[string]ConfigScope{
+	"logging":       ScopeSettings,
+	"monitoring":    ScopeSettings,
+	"host_proxy":    ScopeSettings,
+	"default_image": ScopeSettings,
+
+	"projects": ScopeRegistry,
+
+	"version":   ScopeProject,
+	"name":      ScopeProject,
+	"build":     ScopeProject,
+	"agent":     ScopeProject,
+	"workspace": ScopeProject,
+	"security":  ScopeProject,
+	"loop":      ScopeProject,
+}
+
+// validScopes is the set of recognised namespace prefixes, derived from keyOwnership.
+var validScopes map[string]ConfigScope
+
+func init() {
+	validScopes = make(map[string]ConfigScope)
+	for _, scope := range keyOwnership {
+		validScopes[string(scope)] = scope
 	}
 }
 
-// NewConfigForTestWithEntry creates a Config facade with a full project entry.
-// This is intended for integration tests that need worktree methods to work.
-// The configDir is used for registry operations (worktree directory management).
-func NewConfigForTestWithEntry(project *Project, settings *Settings, entry *ProjectEntry, configDir string) *Config {
-	if project == nil {
-		project = DefaultProject()
-	}
-	if settings == nil {
-		settings = DefaultSettings()
-	}
-	if entry == nil {
-		entry = &ProjectEntry{}
-	}
-
-	resolution := &Resolution{}
-	if project.Project != "" {
-		resolution.ProjectKey = project.Project
-		resolution.ProjectEntry = *entry
-		resolution.WorkDir = entry.Root
-	}
-
-	// Create a registry loader pointing to the test config dir
-	var registry *RegistryLoader
-	if configDir != "" {
-		registry = NewRegistryLoaderWithPath(configDir)
-	}
-
-	// Inject full runtime context for tests
-	if resolution.Found() {
-		project.setRuntimeContext(&resolution.ProjectEntry, registry)
-	}
-
-	return &Config{
-		Project:    project,
-		Settings:   settings,
-		Resolution: resolution,
-		Registry:   registry,
+func newConfig(v *viper.Viper) *configImpl {
+	return &configImpl{
+		v:     v,
+		dirty: newDirtyNode(),
 	}
 }
 
-// load initializes all configuration from the current working directory.
-func (c *Config) load() {
-	wd, err := os.Getwd()
-	if err != nil {
-		// This is catastrophic - we can't do anything useful without knowing our location
-		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
-		os.Exit(1)
-	}
+// --- Schema accessors ---
 
-	// Load registry first (needed for resolution)
-	c.Registry, err = NewRegistryLoader()
-	if err != nil {
-		c.registryInitErr = err
-		logger.Warn().Err(err).Msg("failed to initialize registry loader")
-	}
-
-	// Resolve project from registry
-	c.Resolution = c.resolveProject(wd)
-
-	// Load project config
-	c.loadProject(wd)
-
-	// Inject runtime context into ProjectCfg
-	if c.Resolution.Found() {
-		c.Project.setRuntimeContext(&c.Resolution.ProjectEntry, c.Registry)
-	}
-
-	// Load settings
-	c.loadSettings()
+func (c *configImpl) RequiredFirewallDomains() []string {
+	return append([]string(nil), requiredFirewallDomains...)
 }
 
-// resolveProject resolves the working directory to a registered project.
-func (c *Config) resolveProject(wd string) *Resolution {
-	if c.Registry == nil {
-		return &Resolution{WorkDir: wd}
-	}
-
-	registry, err := c.Registry.Load()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load project registry; operating without project context")
-		return &Resolution{WorkDir: wd}
-	}
-	if registry == nil {
-		return &Resolution{WorkDir: wd}
-	}
-
-	resolver := NewResolver(registry)
-	return resolver.Resolve(wd)
+func (c *configImpl) Logging() map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.v.GetStringMap("settings.logging")
 }
 
-// loadProject loads the project configuration from clawker.yaml.
-func (c *Config) loadProject(wd string) {
-	var opts []ProjectLoaderOption
-
-	if c.Resolution.Found() {
-		opts = append(opts,
-			WithProjectRoot(c.Resolution.ProjectRoot()),
-			WithProjectKey(c.Resolution.ProjectKey),
-		)
+func (c *configImpl) Project() *Project {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	p := &Project{}
+	// Use AllSettings() to get a fully merged map across all layers
+	// (config, defaults, env). UnmarshalKey("project") returns only the
+	// config-layer subtree, which omits default values for nested keys
+	// that weren't explicitly set in config files.
+	all := c.v.AllSettings()
+	projectRaw, ok := all["project"]
+	if !ok {
+		return p
 	}
-
-	opts = append(opts, WithUserDefaults(""))
-	c.projectLoader = NewProjectLoader(wd, opts...)
-
-	project, err := c.projectLoader.Load()
-	if err != nil {
-		if IsConfigNotFound(err) {
-			// No config file is fine - use defaults
-			logger.Debug().Msg("no clawker.yaml found; using defaults")
-			c.Project = DefaultProject()
-			return
-		}
-		// Config exists but is invalid - this is a fatal error
-		// The user expects their config to be used, not silently replaced with defaults
-		fmt.Fprintf(os.Stderr, "\nError: clawker.yaml is invalid\n\n%v\n\nFix the configuration file and try again.\n", err)
-		os.Exit(1)
+	projectMap, ok := projectRaw.(map[string]any)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "config: Project() expected map[string]any, got %T\n", projectRaw)
+		return p
 	}
-	c.Project = project
+	sub := viper.New()
+	if err := sub.MergeConfigMap(projectMap); err != nil {
+		fmt.Fprintf(os.Stderr, "config: Project() MergeConfigMap: %v\n", err)
+		return p
+	}
+	if err := sub.Unmarshal(p); err != nil {
+		fmt.Fprintf(os.Stderr, "config: Project() Unmarshal: %v\n", err)
+		return p
+	}
+	restoreDottedLabelKeys(p)
+	return p
 }
 
-// loadSettings loads the user settings from settings.yaml.
-func (c *Config) loadSettings() {
-	var opts []SettingsLoaderOption
-
-	if c.Resolution.Found() {
-		opts = append(opts, WithProjectSettingsRoot(c.Resolution.ProjectRoot()))
-	}
-
-	loader, err := NewSettingsLoader(opts...)
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to initialize settings loader; using defaults")
-		c.Settings = DefaultSettings()
+func restoreDottedLabelKeys(project *Project) {
+	if project == nil || project.Build.Instructions == nil {
 		return
 	}
-	c.settingsLoader = loader
 
-	settings, err := loader.Load()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load settings; using defaults")
-		c.Settings = DefaultSettings()
+	labels := project.Build.Instructions.Labels
+	if len(labels) == 0 {
 		return
 	}
-	c.Settings = settings
-}
 
-// SettingsLoader returns the underlying settings loader for write operations
-// (e.g., saving updated default image). May return nil if settings failed to load.
-func (c *Config) SettingsLoader() SettingsLoader {
-	return c.settingsLoader
-}
-
-// ProjectLoader returns the underlying project loader.
-// May return nil if project loading was skipped.
-func (c *Config) ProjectLoader() *ProjectLoader {
-	return c.projectLoader
-}
-
-// RegistryInitErr returns the error that occurred during registry initialization,
-// if any. This can be used to provide better error messages when Registry is nil.
-func (c *Config) RegistryInitErr() error {
-	return c.registryInitErr
-}
-
-// SetSettingsLoader sets the settings loader for write operations.
-// Used by NewConfigForTest variants and fawker to inject a test-friendly loader.
-func (c *Config) SetSettingsLoader(sl SettingsLoader) {
-	if sl == nil {
-		panic("SetSettingsLoader: nil loader")
+	restored := make(map[string]string, len(labels))
+	for key, value := range labels {
+		restored[strings.ReplaceAll(key, dottedLabelKeySentinel, ".")] = value
 	}
-	c.settingsLoader = sl
+
+	project.Build.Instructions.Labels = restored
+}
+
+func (c *configImpl) Settings() Settings {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return Settings{
+		Logging: LoggingConfig{
+			FileEnabled: boolPtr(c.v.GetBool("settings.logging.file_enabled")),
+			MaxSizeMB:   c.v.GetInt("settings.logging.max_size_mb"),
+			MaxAgeDays:  c.v.GetInt("settings.logging.max_age_days"),
+			MaxBackups:  c.v.GetInt("settings.logging.max_backups"),
+			Compress:    boolPtr(c.v.GetBool("settings.logging.compress")),
+			Otel: OtelConfig{
+				Enabled:               boolPtr(c.v.GetBool("settings.logging.otel.enabled")),
+				TimeoutSeconds:        c.v.GetInt("settings.logging.otel.timeout_seconds"),
+				MaxQueueSize:          c.v.GetInt("settings.logging.otel.max_queue_size"),
+				ExportIntervalSeconds: c.v.GetInt("settings.logging.otel.export_interval_seconds"),
+			},
+		},
+		Monitoring: MonitoringConfig{
+			OtelCollectorEndpoint: c.v.GetString("settings.monitoring.otel_collector_endpoint"),
+			OtelCollectorPort:     c.v.GetInt("settings.monitoring.otel_collector_port"),
+			OtelCollectorHost:     c.v.GetString("settings.monitoring.otel_collector_host"),
+			OtelCollectorInternal: c.v.GetString("settings.monitoring.otel_collector_internal"),
+			OtelGRPCPort:          c.v.GetInt("settings.monitoring.otel_grpc_port"),
+			LokiPort:              c.v.GetInt("settings.monitoring.loki_port"),
+			PrometheusPort:        c.v.GetInt("settings.monitoring.prometheus_port"),
+			JaegerPort:            c.v.GetInt("settings.monitoring.jaeger_port"),
+			GrafanaPort:           c.v.GetInt("settings.monitoring.grafana_port"),
+			PrometheusMetricsPort: c.v.GetInt("settings.monitoring.prometheus_metrics_port"),
+			Telemetry: TelemetryConfig{
+				MetricsPath:            c.v.GetString("settings.monitoring.telemetry.metrics_path"),
+				LogsPath:               c.v.GetString("settings.monitoring.telemetry.logs_path"),
+				MetricExportIntervalMs: c.v.GetInt("settings.monitoring.telemetry.metric_export_interval_ms"),
+				LogsExportIntervalMs:   c.v.GetInt("settings.monitoring.telemetry.logs_export_interval_ms"),
+				LogToolDetails:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_tool_details")),
+				LogUserPrompts:         boolPtr(c.v.GetBool("settings.monitoring.telemetry.log_user_prompts")),
+				IncludeAccountUUID:     boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_account_uuid")),
+				IncludeSessionID:       boolPtr(c.v.GetBool("settings.monitoring.telemetry.include_session_id")),
+			},
+		},
+		HostProxy: HostProxyConfig{
+			Manager: HostProxyManagerConfig{
+				Port: c.v.GetInt("settings.host_proxy.manager.port"),
+			},
+			Daemon: HostProxyDaemonConfig{
+				Port:               c.v.GetInt("settings.host_proxy.daemon.port"),
+				PollInterval:       c.v.GetDuration("settings.host_proxy.daemon.poll_interval"),
+				GracePeriod:        c.v.GetDuration("settings.host_proxy.daemon.grace_period"),
+				MaxConsecutiveErrs: c.v.GetInt("settings.host_proxy.daemon.max_consecutive_errs"),
+			},
+		},
+		DefaultImage: c.v.GetString("settings.default_image"),
+	}
+}
+
+func (c *configImpl) LoggingConfig() LoggingConfig {
+	return c.Settings().Logging
+}
+
+func (c *configImpl) HostProxyConfig() HostProxyConfig {
+	return c.Settings().HostProxy
+}
+
+func (c *configImpl) MonitoringConfig() MonitoringConfig {
+	return c.Settings().Monitoring
+}
+
+// --- Get / Set / Watch ---
+
+// Get returns the value for a namespaced config key (e.g. "project.build.image",
+// "settings.logging.file_enabled").
+//
+// It returns KeyNotFoundError when the key is not set in the merged
+// configuration state (including defaults and environment overrides).
+// Access is protected by an RWMutex for safe concurrent reads.
+func (c *configImpl) Get(key string) (any, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if _, err := scopeFromNamespacedKey(key); err != nil {
+		return nil, err
+	}
+
+	if !c.v.IsSet(key) {
+		return nil, &KeyNotFoundError{Key: key}
+	}
+
+	return c.v.Get(key), nil
+}
+
+// Set updates a namespaced config key in-memory and marks it dirty.
+// Keys must be namespaced (e.g. "project.build.image", "settings.logging.file_enabled").
+// The scope is derived from the first key segment, and dirty tracking uses the
+// namespaced key so writes route to the correct file automatically.
+// Access is protected by an RWMutex for safe concurrent writes.
+func (c *configImpl) Set(key string, value any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, err := scopeFromNamespacedKey(key); err != nil {
+		return err
+	}
+
+	c.v.Set(key, value)
+	c.markDirtyPath(key)
+	return nil
+}
+
+// Watch enables file watching for the currently loaded config file.
+//
+// If onChange is non-nil, it is registered with Viper's OnConfigChange hook.
+// The caller must ensure config paths/files were configured before watching;
+// this method returns an error when no config file is currently in use.
+// Access is protected by an RWMutex for safe watcher setup.
+func (c *configImpl) Watch(onChange func(fsnotify.Event)) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.v.ConfigFileUsed() == "" {
+		return fmt.Errorf("watch config requires a loaded config file")
+	}
+
+	if onChange != nil {
+		c.v.OnConfigChange(onChange)
+	}
+	c.v.WatchConfig()
+	return nil
+}
+
+// --- Key / scope helpers ---
+
+func schemaForScope(scope ConfigScope) any {
+	switch scope {
+	case ScopeProject:
+		return &Project{}
+	case ScopeSettings:
+		return &Settings{}
+	case ScopeRegistry:
+		return &ProjectRegistry{}
+	default:
+		panic(fmt.Sprintf("config: no schema for scope %q", scope))
+	}
+}
+
+func scopeForKey(key string) (ConfigScope, error) {
+	root := keyRoot(key)
+	scope, ok := keyOwnership[root]
+	if !ok {
+		return "", fmt.Errorf("no ownership mapping for key: %s", key)
+	}
+	return scope, nil
+}
+
+func keyRoot(key string) string {
+	parts := strings.SplitN(key, ".", 2)
+	return parts[0]
+}
+
+// namespacedKey converts a flat (file-relative) config key to its namespaced
+// equivalent by prepending the owning scope. Used internally by setDefaults and
+// load to translate file keys into the namespaced Viper store.
+// E.g. "build.image" → "project.build.image".
+func namespacedKey(flat string) (string, error) {
+	scope, err := scopeForKey(flat)
+	if err != nil {
+		return "", err
+	}
+	return string(scope) + "." + flat, nil
+}
+
+// namespaceMap wraps a flat config map (as read from a single YAML file)
+// under a scope prefix key.
+// E.g. namespaceMap({"build": {...}}, ScopeProject) → {"project": {"build": {...}}}.
+func namespaceMap(flat map[string]any, scope ConfigScope) map[string]any {
+	return map[string]any{string(scope): flat}
+}
+
+// scopeFromNamespacedKey extracts the ConfigScope from the first segment of a
+// namespaced key. E.g. "project.build.image" → ScopeProject.
+func scopeFromNamespacedKey(key string) (ConfigScope, error) {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) < 2 {
+		return "", fmt.Errorf("namespaced key must have at least two segments: %s", key)
+	}
+	scope, ok := validScopes[parts[0]]
+	if !ok {
+		return "", fmt.Errorf("unknown scope prefix %q in key: %s", parts[0], key)
+	}
+	return scope, nil
+}
+
+// stripScopePrefix removes the first dotted segment from a namespaced key.
+// E.g. "project.build.image" → "build.image", "settings.logging" → "logging".
+func stripScopePrefix(key string) string {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) < 2 {
+		return key
+	}
+	return parts[1]
+}
+
+func boolPtr(v bool) *bool {
+	b := v
+	return &b
 }

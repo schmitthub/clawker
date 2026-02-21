@@ -29,6 +29,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1453,6 +1454,7 @@ type CreateContainerEvent struct {
 // CreateContainerConfig holds all inputs for CreateContainer.
 type CreateContainerConfig struct {
 	Client      *docker.Client
+	Cfg         config.Config
 	Config      *config.Project
 	Options     *ContainerOptions
 	Flags       *pflag.FlagSet
@@ -1494,19 +1496,19 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if agentName == "" {
 		agentName = docker.GenerateRandomName()
 	}
-	containerName, err := docker.ContainerName(projectCfg.Project, agentName)
+	containerName, err := docker.ContainerName(projectCfg.Name, agentName)
 	if err != nil {
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, projectCfg, agentName, cfg.GitManager, log)
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, cfg.Cfg, agentName, cfg.GitManager, log)
 	if err != nil {
 		return nil, err
 	}
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   containerOpts.Mode,
-		Config:         projectCfg,
+		Cfg:            cfg.Cfg,
 		AgentName:      agentName,
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
@@ -1520,7 +1522,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	// (with user session data) are never touched.
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "config"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(projectCfg.Name, agentName, "config"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
@@ -1528,7 +1530,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(projectCfg.Project, agentName, "history"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(projectCfg.Name, agentName, "history"); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
@@ -1562,7 +1564,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		sendInfo(ctx, events, "config", "Initializing config")
 		if err := InitContainerConfig(ctx, InitConfigOpts{
-			ProjectName:      projectCfg.Project,
+			ProjectName:      projectCfg.Name,
 			AgentName:        agentName,
 			ContainerWorkDir: projectCfg.Workspace.RemotePath,
 			ClaudeCode:       projectCfg.Agent.ClaudeCode,
@@ -1608,9 +1610,9 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 	}
 
 	extraLabels := map[string]string{
-		docker.LabelProject: projectCfg.Project,
-		docker.LabelAgent:   agentName,
-		docker.LabelWorkdir: wd,
+		cfg.Cfg.LabelProject(): projectCfg.Name,
+		cfg.Cfg.LabelAgent():   agentName,
+		cfg.Cfg.LabelWorkdir(): wd,
 	}
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
@@ -1620,7 +1622,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		Name:             containerName,
 		ExtraLabels:      docker.Labels{extraLabels},
 		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: docker.NetworkName,
+			Name: cfg.Cfg.ClawkerNetwork(),
 		},
 	})
 	if err != nil {
@@ -1638,6 +1640,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		sendInfo(ctx, events, "container", "Injecting onboarding config")
 		if err := InjectOnboardingFile(ctx, InjectOnboardingOpts{
 			ContainerID:     resp.ID,
+			Cfg:             cfg.Cfg,
 			CopyToContainer: copyFn,
 		}); err != nil {
 			cleanupCtx := context.Background()
@@ -1654,6 +1657,7 @@ func CreateContainer(ctx context.Context, cfg *CreateContainerConfig, events cha
 		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 			ContainerID:     resp.ID,
 			Script:          projectCfg.Agent.PostInit,
+			Cfg:             cfg.Cfg,
 			CopyToContainer: copyFn,
 		}); err != nil {
 			cleanupCtx := context.Background()
@@ -1707,7 +1711,7 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // --- Internal helpers (absorbed from init.go) ---
 
 // resolveWorkDir determines the working directory for the container.
-func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *config.Project, agentName string, gitMgr func() (*git.GitManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
+func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfgGateway config.Config, agentName string, gitMgr func() (*git.GitManager, error), log iostreams.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
@@ -1719,15 +1723,17 @@ func resolveWorkDir(_ context.Context, containerOpts *ContainerOptions, cfg *con
 			return "", "", fmt.Errorf("cannot use --worktree: %w", err)
 		}
 
-		wd, err = gm.SetupWorktree(cfg, wtSpec.Branch, wtSpec.Base)
+		projectRoot, _ := cfgGateway.GetProjectRoot()
+		dirs := project.NewWorktreeDirProvider(cfgGateway, projectRoot)
+		wd, err = gm.SetupWorktree(dirs, wtSpec.Branch, wtSpec.Base)
 		if err != nil {
 			return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 		}
 		log.Debug().Str("worktree", wd).Str("branch", wtSpec.Branch).Msg("using git worktree")
-		return wd, cfg.RootDir(), nil
+		return wd, projectRoot, nil
 	}
 
-	wd = cfg.RootDir()
+	wd, _ = cfgGateway.GetProjectRoot()
 	if wd == "" {
 		wd, err = os.Getwd()
 		if err != nil {
@@ -1777,7 +1783,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 		workspaceMode = projectCfg.Workspace.DefaultMode
 	}
 
-	agentEnv, warnings, err := config.ResolveAgentEnv(projectCfg.Agent, wd)
+	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}
@@ -1787,7 +1793,7 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 
 	envOpts := docker.RuntimeEnvOpts{
 		Version:          cfg.Version,
-		Project:          projectCfg.Project,
+		Project:          projectCfg.Name,
 		Agent:            agentName,
 		WorkspaceMode:    workspaceMode,
 		WorkspaceSource:  wd,
@@ -1800,8 +1806,8 @@ func buildRuntimeEnv(ctx context.Context, cfg *CreateContainerConfig, projectCfg
 	}
 	if projectCfg.Security.FirewallEnabled() && !containerOpts.DisableFirewall {
 		envOpts.FirewallEnabled = true
-		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(config.RequiredFirewallDomains)
-		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.GetIPRangeSources()
+		envOpts.FirewallDomains = projectCfg.Security.Firewall.GetFirewallDomains(cfg.Cfg.RequiredFirewallDomains())
+		envOpts.FirewallIPRangeSources = projectCfg.Security.Firewall.IPRangeSources
 	}
 	if projectCfg.Security.GitCredentials != nil {
 		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()

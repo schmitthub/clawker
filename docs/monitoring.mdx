@@ -1,0 +1,138 @@
+---
+title: "Monitoring"
+description: "Set up the Grafana, Prometheus, Loki, and Jaeger monitoring stack for agent observability"
+icon: "chart-mixed"
+---
+
+Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics, logs, and traces.
+
+## Architecture
+
+```
+Claude Code (in container)
+    |
+    | OTLP (HTTP/gRPC)
+    v
+OTEL Collector (port 4318/4317)
+    |
+    +---> Prometheus (port 9090) -- metrics
+    +---> Loki (port 3100) -- logs
+    +---> Jaeger (port 16686) -- traces
+    |
+    v
+Grafana (port 3000) -- unified dashboards
+```
+
+All services run on the `clawker-net` Docker network alongside your agent containers.
+
+## Setup
+
+### 1. Initialize Configuration
+
+```bash
+clawker monitor init
+```
+
+This scaffolds configuration files in your data directory (`~/.local/share/clawker/monitor/`):
+- `compose.yaml` -- Docker Compose definition for all services
+- `otel-config.yaml` -- OpenTelemetry Collector pipeline configuration
+- `prometheus.yaml` -- Prometheus scrape targets
+- `grafana-datasources.yaml` -- Auto-provisioned Grafana data sources
+- `grafana-dashboards.yaml` -- Dashboard provisioning config
+- `grafana-dashboard.json` -- Pre-built Claude Code dashboard
+
+Use `--force` to regenerate files if they already exist.
+
+### 2. Start the Stack
+
+```bash
+clawker monitor up
+```
+
+The stack runs in the background by default. Service URLs are printed on startup:
+
+```
+Grafana:    http://localhost:3000
+Jaeger:     http://localhost:16686
+Prometheus: http://localhost:9090
+```
+
+### 3. Run an Agent
+
+Run agents as usual. When the monitoring stack is running, telemetry is automatically enabled in agent containers:
+
+```bash
+clawker run -it --agent dev @
+```
+
+### 4. View Dashboards
+
+Open Grafana at `http://localhost:3000`. Anonymous login is enabled -- no credentials required. The pre-configured Claude Code dashboard shows metrics, logs, and traces with per-project and per-agent filtering.
+
+## What Is Collected
+
+| Signal | Destination | What |
+|--------|------------|------|
+| Metrics | Prometheus | Resource utilization, request counts, durations |
+| Traces | Jaeger | Full call stacks and timing |
+| Logs | Loki | Structured events with tool details, prompts |
+
+### Telemetry Controls
+
+Fine-tune what telemetry is collected via `settings.yaml`:
+
+```yaml
+monitoring:
+  telemetry:
+    log_tool_details: true       # Include tool invocation details
+    log_user_prompts: true       # Include user prompts
+    include_account_uuid: true   # Include account identifier
+    include_session_id: true     # Include session identifier
+```
+
+### Resource Attributes
+
+Each agent's telemetry is tagged with `project` and `agent` resource attributes, enabling per-project and per-agent filtering in Grafana.
+
+## Port Configuration
+
+Override default ports in `settings.yaml` if they conflict with other services:
+
+```yaml
+monitoring:
+  grafana_port: 3000
+  jaeger_port: 16686
+  prometheus_port: 9090
+  loki_port: 3100
+  otel_collector_port: 4318
+  otel_grpc_port: 4317
+  prometheus_metrics_port: 8889
+```
+
+After changing ports, regenerate config files and restart:
+
+```bash
+clawker monitor init --force
+clawker monitor down
+clawker monitor up
+```
+
+## Checking Status
+
+```bash
+clawker monitor status
+```
+
+Shows container status (running/stopped) and service URLs for running services.
+
+## Teardown
+
+```bash
+# Stop the stack (preserves data)
+clawker monitor down
+
+# Stop and remove all data volumes
+clawker monitor down --volumes
+```
+
+Without `--volumes`, monitoring data persists across restarts. The `clawker-net` network is preserved for other Clawker services.

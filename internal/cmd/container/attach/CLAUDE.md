@@ -58,8 +58,8 @@ Uses `stdcopy.StdCopy` to demultiplex Docker's multiplexed stdout/stderr stream.
 
 - `internal/docker` — PTYHandler, ContainerAttach, ContainerResize, ContainerInspect
 - `internal/signals` — ResizeHandler for SIGWINCH monitoring
-- `internal/logger` — Debug logging for resize failures
 - `internal/hostproxy` — Host proxy for container-to-host communication
+- Logging via `ios.Logger` (iostreams interface) — no direct `internal/logger` import
 
 ## Testing
 

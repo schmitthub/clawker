@@ -17,7 +17,7 @@ import (
 type WaitOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Agent      bool
 	Containers []string
@@ -72,7 +72,15 @@ func waitRun(ctx context.Context, opts *WaitOptions) error {
 	// When opts.Agent is true, all items in opts.Containers are agent names
 	containers := opts.Containers
 	if opts.Agent {
-		resolved, err := docker.ContainerNamesFromAgents(opts.Config().Resolution.ProjectKey, containers)
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Name
+		}
+		resolved, err := docker.ContainerNamesFromAgents(project, containers)
 		if err != nil {
 			return err
 		}

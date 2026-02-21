@@ -51,13 +51,15 @@ build:
       - cmd: /usr/local/go/bin/go install gotest.tools/gotestsum@latest
       - cmd: /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - cmd: /usr/local/go/bin/go install golang.org/x/vuln/cmd/govulncheck@latest
+      - cmd: /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest
       - cmd: uv tool install semgrep
 
   inject:
     # after_from: # docker instructions to run after the base image FROM instruction
     # after_packages: # docker instructions to run after installing system packages
     # after_user_setup: # docker instructions to run after creation of the non-root user but before switching to it
-    after_user_switch: ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin" # docker instructions to run after switching to the non-root user
+    after_user_switch: 
+      - ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin" # docker instructions to run after switching to the non-root user
     # after_claude_install: 
     # before_entrypoint: # docker instructions to run before the container entrypoint
 
@@ -135,6 +137,7 @@ security:
       - mcp.context7.com
       - pypi.org
       - semgrep.dev
+      - registry.npmjs.org
   # Git credential forwarding
   git_credentials:
     forward_https: true

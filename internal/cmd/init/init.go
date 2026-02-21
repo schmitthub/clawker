@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	prompterpkg "github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
+	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +20,7 @@ type InitOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
 	Prompter  func() *prompterpkg.Prompter
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 	Client    func(context.Context) (*docker.Client, error)
 
 	Yes bool // Non-interactive mode
@@ -159,29 +160,16 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	fmt.Fprintln(ios.ErrOut, "Setting up clawker user settings...")
 	fmt.Fprintln(ios.ErrOut)
 
-	// Get settings loader from Config gateway
-	cfg := opts.Config()
-	settingsLoader := cfg.SettingsLoader()
-	if settingsLoader == nil {
-		// Fallback: create a settings loader directly (e.g. first run, no config loaded yet)
-		ios.Logger.Warn().Msg("SettingsLoader not set on Config; creating filesystem loader as fallback")
-		var err error
-		settingsLoader, err = config.NewSettingsLoader()
-		if err != nil {
-			return fmt.Errorf("failed to create settings loader: %w", err)
-		}
-		cfg.SetSettingsLoader(settingsLoader)
-	}
-
-	// Load existing settings or create defaults
-	settings := cfg.Settings
-	if settings == nil {
-		settings = config.DefaultSettings()
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	if buildBaseImage {
 		// Clear default image when building (will be set after successful build)
-		settings.DefaultImage = ""
+		if err := cfg.Set("settings.default_image", ""); err != nil {
+			return fmt.Errorf("failed to clear default image: %w", err)
+		}
 	}
 
 	ios.Logger.Debug().
@@ -190,22 +178,18 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 		Msg("initializing user settings")
 
 	// Save initial settings
-	if err := settingsLoader.Save(settings); err != nil {
+	if err := cfg.Write(config.WriteOptions{}); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	ios.Logger.Debug().Str("file", settingsLoader.Path()).Msg("saved user settings")
-
 	// Success output
+	settingsPath, _ := config.SettingsFilePath()
 	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), settingsLoader.Path())
+	fmt.Fprintf(ios.ErrOut, "%s Settings: %s\n", cs.SuccessIcon(), settingsPath)
 
 	// Ensure shared directory exists on host for bind-mounting into containers
-	shareDir, err := config.ShareDir()
+	shareDir, err := cfg.ShareSubdir()
 	if err != nil {
-		return fmt.Errorf("failed to resolve share directory: %w", err)
-	}
-	if err := config.EnsureDir(shareDir); err != nil {
 		return fmt.Errorf("failed to create share directory: %w", err)
 	}
 	fmt.Fprintf(ios.ErrOut, "%s Created: %s\n", cs.SuccessIcon(), shareDir)
@@ -213,24 +197,6 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	// Build base image with TUI progress display
 	if buildBaseImage {
 		fmt.Fprintln(ios.ErrOut)
-
-		baseImage := intbuild.FlavorToImage(selectedFlavor)
-		project := &config.Project{
-			Version: "1",
-			Build: config.BuildConfig{
-				Image: baseImage,
-			},
-		}
-
-		initCfg := &config.Config{
-			Project:  project,
-			Settings: cfg.Settings, // effective settings from the gateway
-		}
-		gen := intbuild.NewProjectGenerator(initCfg, "")
-		buildContext, err := gen.GenerateBuildContext()
-		if err != nil {
-			return fmt.Errorf("failed to generate build context: %w", err)
-		}
 
 		client, err := opts.Client(ctx)
 		if err != nil {
@@ -249,22 +215,21 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 				Name:   "Building base image (" + selectedFlavor + ")",
 				Status: tui.StepRunning,
 			}
-			err := client.BuildImage(ctx, buildContext, docker.BuildImageOpts{
-				Tags:           []string{docker.DefaultImageTag},
-				SuppressOutput: true,
-				Labels: map[string]string{
-					docker.LabelManaged:   docker.ManagedLabelValue,
-					docker.LabelBaseImage: docker.ManagedLabelValue,
-					docker.LabelFlavor:    selectedFlavor,
-				},
+			buildErr := client.BuildDefaultImage(ctx, selectedFlavor, func(event whail.BuildProgressEvent) {
+				ch <- tui.ProgressStep{
+					ID:     event.StepID,
+					Name:   event.StepName,
+					Status: progressStatus(event.Status),
+					Cached: event.Cached,
+				}
 			})
-			if err != nil {
+			if buildErr != nil {
 				ch <- tui.ProgressStep{
 					ID:     "build",
 					Status: tui.StepError,
-					Error:  err.Error(),
+					Error:  buildErr.Error(),
 				}
-				buildErrCh <- err
+				buildErrCh <- buildErr
 				return
 			}
 			ch <- tui.ProgressStep{
@@ -292,14 +257,16 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 			fmt.Fprintf(ios.ErrOut, "  1. %s\n", "You can manually build later with 'clawker generate latest && docker build ...'")
 			fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Or specify images per-project in clawker.yaml")
 			return nil // early return to avoid duplicate next steps
-		} else {
-			// Update settings with the built image
-			settings.DefaultImage = docker.DefaultImageTag
-			if err := settingsLoader.Save(settings); err != nil {
-				ios.Logger.Warn().Err(err).Msg("failed to update settings with default image")
-				fmt.Fprintf(ios.ErrOut, "%s Warning: built image %s but failed to update settings: %v\n",
-					cs.WarningIcon(), docker.DefaultImageTag, err)
-			}
+		}
+
+		// Update settings with the built image
+		if err := cfg.Set("settings.default_image", docker.DefaultImageTag); err != nil {
+			ios.Logger.Warn().Err(err).Msg("failed to update settings with default image")
+		}
+		if err := cfg.Write(config.WriteOptions{}); err != nil {
+			ios.Logger.Warn().Err(err).Msg("failed to save settings with default image")
+			fmt.Fprintf(ios.ErrOut, "%s Warning: built image %s but failed to update settings: %v\n",
+				cs.WarningIcon(), docker.DefaultImageTag, err)
 		}
 	}
 
@@ -309,4 +276,20 @@ func performSetup(ctx context.Context, opts *InitOptions, buildBaseImage bool, s
 	fmt.Fprintf(ios.ErrOut, "  2. %s\n", "Run 'clawker project init' to set up the project")
 
 	return nil
+}
+
+// progressStatus converts a whail build step status to a TUI progress step status.
+func progressStatus(s whail.BuildStepStatus) tui.ProgressStepStatus {
+	switch s {
+	case whail.BuildStepRunning:
+		return tui.StepRunning
+	case whail.BuildStepComplete:
+		return tui.StepComplete
+	case whail.BuildStepCached:
+		return tui.StepCached
+	case whail.BuildStepError:
+		return tui.StepError
+	default:
+		return tui.StepPending
+	}
 }

@@ -86,8 +86,9 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | Package | Test Utils | Provides |
 |---------|------------|----------|
 | `internal/docker` | `dockertest/` | `FakeClient`, fixtures, assertions |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
+| `internal/project` | `mocks/` | `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient` |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
@@ -153,6 +154,28 @@ builders.MinimalValidConfig()         // Bare minimum
 builders.FullFeaturedConfig()         // All features enabled
 builders.DefaultBuild()               // buildpack-deps with git/curl
 builders.SecurityFirewallDisabled()   // For tests that don't need firewall
+```
+
+### Project Test Double Scenarios
+
+Use `internal/project/mocks/stubs.go` to pick the lightest project dependency double:
+
+| Need | Helper | What You Get |
+|------|--------|---------------|
+| Pure behavior mock, no config/git I/O | `projectmocks.NewProjectManagerMock()` | Panic-safe `ProjectManagerMock` with default funcs, easy per-method overrides |
+| Read-only config + in-memory git | `projectmocks.NewReadOnlyTestManager(t, yaml)` | `configmocks.NewFromString(yaml)` + `gittest.NewInMemoryGitManager`; `Register/Update/Remove` are blocked with `ErrReadOnlyTestManager` |
+| Isolated file-backed config + in-memory git | `projectmocks.NewIsolatedTestManager(t)` | `configmocks.NewIsolatedTestConfig(t)` + `gittest.NewInMemoryGitManager` + `ReadConfigFiles` callback for persisted-file assertions |
+
+Example:
+
+```go
+h := projectmocks.NewIsolatedTestManager(t)
+_, err := h.Manager.Register(context.Background(), "Demo", t.TempDir())
+require.NoError(t, err)
+
+var settingsBuf, projectBuf, registryBuf bytes.Buffer
+h.ReadConfigFiles(&settingsBuf, &projectBuf, &registryBuf)
+require.Contains(t, registryBuf.String(), "name: Demo")
 ```
 
 ## Key Conventions

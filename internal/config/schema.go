@@ -1,30 +1,23 @@
 package config
 
 import (
+	"fmt"
 	"sort"
-	"sync"
+	"time"
 )
 
 // Project represents the root configuration structure for clawker.yaml.
 //
-// In addition to YAML schema fields, it contains runtime context fields
-// (projectEntry, registry, worktreeMu) that are injected after loading via
-// setRuntimeContext(). These runtime fields enable worktree operations and
-// project identity lookup.
+// Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
 	Version      string          `yaml:"version" mapstructure:"version"`
-	Project      string          `yaml:"-" mapstructure:"project"` // mapstructure:"project" (not "-") so ErrorUnused won't reject "project:" key
+	Name         string          `yaml:"name,omitempty" mapstructure:"name"`
 	DefaultImage string          `yaml:"default_image,omitempty" mapstructure:"default_image"`
 	Build        BuildConfig     `yaml:"build" mapstructure:"build"`
 	Agent        AgentConfig     `yaml:"agent" mapstructure:"agent"`
 	Workspace    WorkspaceConfig `yaml:"workspace" mapstructure:"workspace"`
 	Security     SecurityConfig  `yaml:"security" mapstructure:"security"`
 	Loop         *LoopConfig     `yaml:"loop,omitempty" mapstructure:"loop"`
-
-	// Runtime context (not persisted, injected after loading)
-	projectEntry *ProjectEntry `yaml:"-" mapstructure:"-"` // registry entry (Name, Root, Worktrees)
-	registry     Registry      `yaml:"-" mapstructure:"-"` // for write operations
-	worktreeMu   sync.RWMutex  `yaml:"-" mapstructure:"-"` // protects projectEntry.Worktrees
 }
 
 // BuildConfig defines the container build configuration
@@ -244,8 +237,6 @@ func (s *SecurityConfig) FirewallEnabled() bool {
 	return s.Firewall.FirewallEnabled()
 }
 
-// Mode represents the workspace mode
-
 // GitCredentialsConfig defines git credential forwarding settings
 type GitCredentialsConfig struct {
 	ForwardHTTPS  *bool `yaml:"forward_https,omitempty" mapstructure:"forward_https"`     // Enable HTTPS credential forwarding (default: follows host_proxy)
@@ -348,15 +339,6 @@ func (r *LoopConfig) GetTimeoutMinutes() int {
 	return r.TimeoutMinutes
 }
 
-type Mode string
-
-const (
-	// ModeBind represents direct host mount (live sync)
-	ModeBind Mode = "bind"
-	// ModeSnapshot represents ephemeral volume copy (isolated)
-	ModeSnapshot Mode = "snapshot"
-)
-
 // ParseMode converts a string to a Mode, returning an error if invalid
 func ParseMode(s string) (Mode, error) {
 	switch s {
@@ -365,21 +347,103 @@ func ParseMode(s string) (Mode, error) {
 	case "snapshot":
 		return ModeSnapshot, nil
 	default:
-		return "", &ValidationError{
-			Field:   "mode",
-			Message: "must be 'bind' or 'snapshot'",
-			Value:   s,
-		}
+		return "", fmt.Errorf("invalid mode: %s", s)
 	}
 }
 
-// ValidationError represents a configuration validation error
-type ValidationError struct {
-	Field   string
-	Message string
-	Value   interface{}
+// KeyNotFoundError indicates a configuration key was not found.
+type KeyNotFoundError struct {
+	Key string
 }
 
-func (e *ValidationError) Error() string {
-	return "invalid " + e.Field + ": " + e.Message
+func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
+
+// Settings represents user-level configuration stored in ~/.local/clawker/settings.yaml.
+type Settings struct {
+	Logging      LoggingConfig    `yaml:"logging,omitempty" mapstructure:"logging"`
+	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty" mapstructure:"monitoring"`
+	DefaultImage string           `yaml:"default_image,omitempty" mapstructure:"default_image"`
+	HostProxy    HostProxyConfig  `yaml:"host_proxy,omitempty" mapstructure:"host_proxy"`
+}
+
+// HostProxyConfig configures the host proxy.
+type HostProxyConfig struct {
+	Manager HostProxyManagerConfig `yaml:"manager,omitempty" mapstructure:"manager"`
+	Daemon  HostProxyDaemonConfig  `yaml:"daemon,omitempty" mapstructure:"daemon"`
+}
+
+// HostProxyManagerConfig configures the host proxy manager.
+type HostProxyManagerConfig struct {
+	Port int `yaml:"port" mapstructure:"port"`
+}
+
+// HostProxyDaemonConfig defines configuration for the host proxy daemon.
+type HostProxyDaemonConfig struct {
+	Port               int           `yaml:"port" mapstructure:"port"`
+	PollInterval       time.Duration `yaml:"poll_interval,omitempty" mapstructure:"poll_interval"`
+	GracePeriod        time.Duration `yaml:"grace_period,omitempty" mapstructure:"grace_period"`
+	MaxConsecutiveErrs int           `yaml:"max_consecutive_errs,omitempty" mapstructure:"max_consecutive_errs"`
+}
+
+// LoggingConfig configures file-based logging.
+type LoggingConfig struct {
+	FileEnabled *bool      `yaml:"file_enabled,omitempty" mapstructure:"file_enabled"`
+	MaxSizeMB   int        `yaml:"max_size_mb,omitempty" mapstructure:"max_size_mb"`
+	MaxAgeDays  int        `yaml:"max_age_days,omitempty" mapstructure:"max_age_days"`
+	MaxBackups  int        `yaml:"max_backups,omitempty" mapstructure:"max_backups"`
+	Compress    *bool      `yaml:"compress,omitempty" mapstructure:"compress"`
+	Otel        OtelConfig `yaml:"otel,omitempty" mapstructure:"otel"`
+}
+
+// OtelConfig configures the OTEL zerolog bridge.
+type OtelConfig struct {
+	Enabled               *bool `yaml:"enabled,omitempty" mapstructure:"enabled"`
+	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" mapstructure:"timeout_seconds"`
+	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" mapstructure:"max_queue_size"`
+	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" mapstructure:"export_interval_seconds"`
+}
+
+// MonitoringConfig configures monitoring stack ports and OTEL endpoints.
+type MonitoringConfig struct {
+	OtelCollectorEndpoint string          `yaml:"otel_collector_endpoint,omitempty" mapstructure:"otel_collector_endpoint"`
+	OtelCollectorPort     int             `yaml:"otel_collector_port,omitempty" mapstructure:"otel_collector_port"`
+	OtelCollectorHost     string          `yaml:"otel_collector_host,omitempty" mapstructure:"otel_collector_host"`
+	OtelCollectorInternal string          `yaml:"otel_collector_internal,omitempty" mapstructure:"otel_collector_internal"`
+	OtelGRPCPort          int             `yaml:"otel_grpc_port,omitempty" mapstructure:"otel_grpc_port"`
+	LokiPort              int             `yaml:"loki_port,omitempty" mapstructure:"loki_port"`
+	PrometheusPort        int             `yaml:"prometheus_port,omitempty" mapstructure:"prometheus_port"`
+	JaegerPort            int             `yaml:"jaeger_port,omitempty" mapstructure:"jaeger_port"`
+	GrafanaPort           int             `yaml:"grafana_port,omitempty" mapstructure:"grafana_port"`
+	PrometheusMetricsPort int             `yaml:"prometheus_metrics_port,omitempty" mapstructure:"prometheus_metrics_port"`
+	Telemetry             TelemetryConfig `yaml:"telemetry,omitempty" mapstructure:"telemetry"`
+}
+
+// TelemetryConfig configures telemetry export paths and intervals.
+type TelemetryConfig struct {
+	MetricsPath            string `yaml:"metrics_path,omitempty" mapstructure:"metrics_path"`
+	LogsPath               string `yaml:"logs_path,omitempty" mapstructure:"logs_path"`
+	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" mapstructure:"metric_export_interval_ms"`
+	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" mapstructure:"logs_export_interval_ms"`
+	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" mapstructure:"log_tool_details"`
+	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" mapstructure:"log_user_prompts"`
+	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" mapstructure:"include_account_uuid"`
+	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" mapstructure:"include_session_id"`
+}
+
+// ProjectEntry represents a project in the registry.
+type ProjectEntry struct {
+	Name      string                   `yaml:"name" mapstructure:"name"`
+	Root      string                   `yaml:"root" mapstructure:"root"`
+	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty" mapstructure:"worktrees"`
+}
+
+// WorktreeEntry represents a worktree within a project.
+type WorktreeEntry struct {
+	Path   string `yaml:"path" mapstructure:"path"`
+	Branch string `yaml:"branch,omitempty" mapstructure:"branch"`
+}
+
+// ProjectRegistry is the on-disk structure for projects.yaml.
+type ProjectRegistry struct {
+	Projects []ProjectEntry `yaml:"projects" mapstructure:"projects"`
 }

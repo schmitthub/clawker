@@ -2,6 +2,11 @@
 
 Clawker is a Go CLI tool that wraps the Claude Code agent in secure, reproducible Docker containers.
 
+## Related Docs
+
+- `.claude/docs/ARCHITECTURE.md` — package layering and dependency boundaries.
+- `internal/config/CLAUDE.md` — config package contracts, persistence model, and test helpers.
+
 ## 1. Philosophy: "The Padded Cell"
 
 ### Core Principle
@@ -29,20 +34,25 @@ A clawker project is defined by configuration files. Every clawker command requi
 
 1. CLI flags
 2. Environment variables
-3. Project config (`./clawker.yaml`)
+3. Project config (`cfg.ProjectConfigFileName()`)
 4. User defaults (from settings)
 
 Higher precedence wins silently (no warnings on override).
 
-**Configuration Files**:
+**Configuration Files** (use `Config` interface accessors — never hardcode filenames or env vars):
 
-| Location | Purpose |
-|----------|---------|
-| `./clawker.yaml` | Project-specific config (schema: `Config`) |
-| `~/.local/clawker/settings.yaml` | User settings (`Settings`: default_image, logging) |
-| `~/.local/clawker/projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
+| Accessor | Default Value | Purpose |
+|----------|---------------|---------|
+| `cfg.ProjectConfigFileName()` | `clawker.yaml` | Project-specific config (schema: `Config`) |
+| `cfg.SettingsFileName()` | `settings.yaml` | User settings (`Settings`: default_image, logging) |
+| `cfg.ProjectRegistryFileName()` | `projects.yaml` | Project registry (`ProjectRegistry`: slug→path map) |
+| `cfg.ConfigDirEnvVar()` | `CLAWKER_CONFIG_DIR` | Config directory override env var |
+| `cfg.DataDirEnvVar()` | `CLAWKER_DATA_DIR` | Data directory override env var |
+| `cfg.StateDirEnvVar()` | `CLAWKER_STATE_DIR` | State directory override env var |
 
-**Project Resolution**: The `Resolver` uses the project registry to resolve the current working directory to a registered project via longest-prefix path matching. This replaces directory walking. The result is a `Resolution` containing `ProjectKey`, `ProjectEntry`, and `WorkDir`. `Config.Project` is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
+**Project Resolution**: `config.NewConfig()` loads all config files and resolves the current project from the registry via `GetProjectRoot()`. The `Config` interface exposes `Project()`, `Settings()`, and typed accessors — all file paths and constants are private to the package. The `Project` schema struct's `Project` field is `yaml:"-"` — injected by the loader from the registry, never persisted in YAML.
+
+**Config persistence model**: `Set(key, value)` updates only in-memory config and marks dirty nodes. Persistence is explicit through `Write(WriteOptions)`, which writes only dirty owned sections (`settings`, `registry`, `project`) by default. For project-owned keys, writes target local project `cfg.ProjectConfigFileName()` when the current directory resolves to a registered project, and fall back to user-level config-dir config file when outside project context.
 
 ### 2.2 Agent
 
@@ -85,8 +95,8 @@ dev.clawker.agent=<agent-name>
 
 ### Project Registry Lifecycle
 
-1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `projects.yaml`
-2. **Lookup**: `Factory.Resolution()` calls `Resolver.Resolve(workDir)` to find the matching project by longest-prefix path match
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `cfg.ProjectRegistryFileName()`
+2. **Lookup**: `Factory.Config()` returns a `config.Config` — the single interface all callers receive. Project resolution uses registry + `os.Getwd()` internally
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 
 ## 3. System Architecture
@@ -198,7 +208,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() *config.Config`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -559,7 +569,7 @@ New containers require one-time initialization to inherit the host user's Claude
 configuration (settings, plugins, credentials). This avoids manual re-authentication
 and plugin installation on every container creation.
 
-**Config schema** (`config.ClaudeCodeConfig` in `clawker.yaml`):
+**Config schema** (`config.ClaudeCodeConfig` in `cfg.ProjectConfigFileName()`):
 - `strategy`: `"copy"` (copy host config) or `"fresh"` (clean slate). Default: `"copy"`
 - `use_host_auth`: Forward host credentials to container. Default: `true`
 
@@ -656,6 +666,16 @@ func TestNewCmdStop(t *testing.T) {
     }
 }
 ```
+
+### 11.3 Config Package Testing
+
+Use test doubles in `internal/config/stubs.go` for package-local testing:
+
+- `NewMockConfig()` for default in-memory config behavior.
+- `NewFakeConfig(FakeConfigOptions{Viper: v})` for deterministic pre-seeded state.
+- `ReadFromString(...)` / `NewConfigFromString(...)` for YAML validation and fixture-style scenarios.
+
+During config refactor migration, prefer focused package runs (`go test ./internal/config -v`) before broader suites.
 
 ## 12. Dependencies
 

@@ -21,7 +21,7 @@ import (
 type BuildOptions struct {
 	IOStreams *iostreams.IOStreams
 	TUI       *tui.TUI
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 	Client    func(context.Context) (*docker.Client, error)
 
 	File      string   // -f, --file (Dockerfile path)
@@ -111,30 +111,22 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	suppressed := opts.Quiet || opts.Progress == "none"
 
 	// Get configuration
-	cfgGateway := opts.Config()
-	cfg := cfgGateway.Project
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cfg := cfgGateway.Project()
 
 	// Get working directory from project root, or fall back to current directory
-	wd := cfg.RootDir()
-	if wd == "" {
-		var wdErr error
+	wd, wdErr := cfgGateway.GetProjectRoot()
+	if wdErr != nil || wd == "" {
 		wd, wdErr = os.Getwd()
 		if wdErr != nil {
 			return fmt.Errorf("failed to get working directory: %w", wdErr)
 		}
 	}
 
-	// Validate configuration
-	validator := config.NewValidator(wd)
-	if err := validator.Validate(cfg); err != nil {
-		return fmt.Errorf("configuration validation failed: %w", err)
-	}
-
-	// Print any warnings
 	cs := ios.ColorScheme()
-	for _, warning := range validator.Warnings() {
-		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), warning)
-	}
 
 	// Handle Dockerfile path from -f/--file flag
 	if opts.File != "" {
@@ -142,7 +134,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	ios.Logger.Debug().
-		Str("project", cfg.Project).
+		Str("project", cfg.Name).
 		Bool("no-cache", opts.NoCache).
 		Bool("pull", opts.Pull).
 		Str("target", opts.Target).
@@ -165,18 +157,16 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Determine image tag(s)
-	imageTag := docker.ImageTag(cfg.Project)
+	imageTag := docker.ImageTag(cfg.Name)
 
 	// Parse build args
 	buildArgs := parseBuildArgs(opts.BuildArgs)
 
-	// Merge user labels with clawker labels (clawker labels take precedence)
+	// Parse user labels from --label flags (clawker labels are added by the builder)
 	userLabels, invalidLabels := parseKeyValuePairs(opts.Labels)
 	for _, label := range invalidLabels {
 		fmt.Fprintf(ios.ErrOut, "%s Ignoring malformed label %q — use format KEY=VALUE\n", cs.WarningIcon(), label)
 	}
-	clawkerLabels := docker.ImageLabels(cfg.Project, cfg.Version)
-	labels := mergeLabels(userLabels, clawkerLabels)
 
 	builder := docker.NewBuilder(client, cfg, wd)
 
@@ -185,13 +175,13 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// EnsureImage() is ever used. This ensures explicit no-cache requests
 	// always trigger a full rebuild.
 	ios.Logger.Debug().
-		Str("project", cfg.Project).
+		Str("project", cfg.Name).
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
 		ForceBuild:      opts.NoCache,
 		NoCache:         opts.NoCache,
-		Labels:          labels,
+		Labels:          userLabels,
 		Target:          opts.Target,
 		Pull:            opts.Pull,
 		SuppressOutput:  suppressed,
@@ -229,7 +219,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}()
 
 		result := opts.TUI.RunProgress(opts.Progress, tui.ProgressDisplayConfig{
-			Title:          "Building " + cfg.Project,
+			Title:          "Building " + cfg.Name,
 			Subtitle:       imageTag,
 			CompletionVerb: "Built",
 			MaxVisible:     5,
@@ -325,22 +315,4 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  2. Ensure the base image exists and is accessible")
 	fmt.Fprintln(ios.ErrOut, "  3. Run 'clawker build --no-cache' to rebuild from scratch")
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
-}
-
-// mergeLabels merges user labels with clawker labels.
-// Clawker labels take precedence over user labels.
-func mergeLabels(userLabels, clawkerLabels map[string]string) map[string]string {
-	result := make(map[string]string)
-
-	// Add user labels first
-	for k, v := range userLabels {
-		result[k] = v
-	}
-
-	// Clawker labels override user labels
-	for k, v := range clawkerLabels {
-		result[k] = v
-	}
-
-	return result
 }

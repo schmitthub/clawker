@@ -22,7 +22,7 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
        │                                       │                   │
        ▼                                       ▼                   ▼
    gittest/                               dockertest/         Factory DI
-   configtest/                            whailtest/          + runF seam
+   config/mocks/                          whailtest/          + runF seam
 ```
 
 **Each node in the DAG must provide test infrastructure for its dependents.**
@@ -41,8 +41,8 @@ f := &cmdutil.Factory{
     Client: func(ctx context.Context) (*docker.Client, error) {
         return fake.Client, nil  // Fake from dockertest
     },
-    Config: func() (*config.Config, error) {
-        return testConfig(), nil
+    Config: func() (config.Config, error) {
+        return configmocks.NewBlankConfig(), nil
     },
     // ... other fields
 }
@@ -71,8 +71,9 @@ Each package with complex dependencies provides test infrastructure:
 | Package | Test Location | What It Provides |
 |---------|---------------|------------------|
 | `internal/docker` | `dockertest/` | `FakeClient`, `SetupContainerList`, fixtures |
-| `internal/config` | `configtest/` | `InMemoryRegistryBuilder`, `InMemoryProjectBuilder` |
+| `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString()`, `NewIsolatedTestConfig()`, `ConfigMock` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
+| `internal/project` | `mocks/` | `TestManagerHarness`, `NewProjectManagerMock()`, `NewReadOnlyTestManager()`, `NewIsolatedTestManager()` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, function-field fake |
 | `internal/iostreams` | `iostreamstest/` | `iostreamstest.New()` |
 
@@ -115,6 +116,103 @@ The DAG fills in, and eventually **any tier can mock/fake/stub the entire chain 
 ❌ **Skipping DI**: Directly instantiating concrete types instead of using Factory seams
 
 ✅ **Pattern to follow**: Use existing `*test/` packages, or create them if missing
+
+---
+
+## Config Package Testing Guide (`internal/config`)
+
+The config package exposes lightweight test doubles in `internal/config/mocks/stubs.go`. `NewBlankConfig()` and `NewFromString()` return `*ConfigMock` (moq-generated) with every read Func field pre-wired to delegate to a real `configImpl`. This enables partial mocking and call assertions.
+
+Import as:
+```go
+configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+```
+
+### Which helper to use
+
+- `configmocks.NewBlankConfig()` — default test double for consumers that don't care about specific config values. Returns `*ConfigMock` with defaults.
+- `configmocks.NewFromString(yaml)` — empty config test double with specific YAML values Returns `*ConfigMock`.
+- `configmocks.NewIsolatedTestConfig(t)` — file-backed config for tests that need `Set`/`Write` or env var overrides. Returns `Config` + reader callback. Test repository directory is also set up and can be accessed via `cfg.TestRepoDirEnvVar()`.
+- `configmocks.StubWriteConfig(t)` — isolates config writes to a temp dir without creating a full config.
+
+### Typical test mapping
+
+- Defaults and typed getter behavior → `NewBlankConfig()`
+- Specific YAML values for schema/parsing tests → `NewFromString(yaml)`
+- Key mutation / selective persistence / env override tests → `NewIsolatedTestConfig(t)`
+- YAML parsing and validation errors → `ReadFromString(...)` directly
+
+### Focused commands
+
+```bash
+go test ./internal/config -v
+go test ./internal/config -run TestWrite -v
+go test ./internal/config -run TestReadFromString -v
+```
+
+### Practical notes
+
+- Keep config refactor validation package-local while transitive callers are still being migrated.
+- For tests asserting defaults/file values, clear `CLAWKER_*` environment overrides first.
+
+---
+
+## Project Package Test Doubles (`internal/project/mocks/`)
+
+The project package exposes scenario-oriented doubles so dependents can choose the minimum coupling needed.
+
+### 1) Pure mock manager (no config/git reads or writes)
+
+Use `projectmocks.NewProjectManagerMock()` when you only need interface-level behavior in unit tests.
+
+```go
+import projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+
+mgr := projectmocks.NewProjectManagerMock()
+mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
+    return projectmocks.NewProjectMockFromRecord(project.ProjectRecord{
+        Name: "demo",
+        Root: root,
+    }), nil
+}
+```
+
+### 2) Read-only config + in-memory git
+
+Use `projectmocks.NewReadOnlyTestManager(t, yaml)` when your test needs realistic project reads from YAML while preventing registry mutation.
+
+- Config double source: `configmocks.NewFromString(yaml)`
+- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
+- Mutation guard: `Register`, `Update`, and `Remove` return `project.ErrReadOnlyTestManager`
+
+```go
+h := projectmocks.NewReadOnlyTestManager(t, `
+projects:
+  - name: Demo
+    root: /tmp/demo
+`)
+projects, err := h.Manager.List(context.Background())
+require.NoError(t, err)
+require.Len(t, projects, 1)
+```
+
+### 3) Isolated writable config + in-memory git
+
+Use `projectmocks.NewIsolatedTestManager(t)` when tests must exercise config `Set`/`Write` behavior and assert persisted files.
+
+- Config double source: `configmocks.NewIsolatedTestConfig(t)`
+- Git double source: `gittest.NewInMemoryGitManager(t, repoRoot)`
+- Registry/settings assertions: `h.ReadConfigFiles(...)`
+
+```go
+h := projectmocks.NewIsolatedTestManager(t)
+_, err := h.Manager.Register(context.Background(), "Demo", t.TempDir())
+require.NoError(t, err)
+
+var settingsBuf, projectBuf, registryBuf bytes.Buffer
+h.ReadConfigFiles(&settingsBuf, &projectBuf, &registryBuf)
+require.Contains(t, registryBuf.String(), "name: Demo")
+```
 
 ---
 
@@ -169,8 +267,8 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
     tio := iostreamstest.New()
     f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
-        Resolution: func() *config.Resolution {
-            return &config.Resolution{ProjectKey: "testproject"}
+        Config: func() (config.Config, error) {
+            return configmocks.NewBlankConfig(), nil
         },
     }
 
@@ -192,7 +290,7 @@ func TestNewCmdStop_FlagParsing(t *testing.T) {
 
 **What this tests**: flag registration, defaults, enum validation, mutual exclusion, required args, positional arg mapping.
 **What this does NOT test**: Docker calls, output formatting, error handling in the run function.
-**Factory needs**: minimal — often just `IOStreams`. Add `Resolution` if the command uses `--agent` flag (it calls `opts.Resolution().ProjectKey` in RunE).
+**Factory needs**: minimal — often just `IOStreams`. Add `Config` if the command uses `--agent` flag or accesses project config in RunE.
 
 ### Hybrid Injection Test
 
@@ -225,11 +323,8 @@ func runCommand(mockClient *docker.Client, isTTY bool, cli string) (*testCmdOut,
         Client: func(_ context.Context) (*docker.Client, error) {
             return mockClient, nil
         },
-        Config: func() (*config.Config, error) {
-            return testConfig(), nil
-        },
-        Resolution: func() *config.Resolution {
-            return &config.Resolution{ProjectKey: "testproject"}
+        Config: func() (config.Config, error) {
+            return configmocks.NewBlankConfig(), nil
         },
     }
 
@@ -274,47 +369,27 @@ The canonical pattern for Tier 2 (integration) command tests. Exercises the full
 
 ```go
 // testFactory constructs a minimal *cmdutil.Factory for command-level testing.
-func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
+func testFactory(t *testing.T, fake *dockertest.FakeClient, mock *sockebridgemocks.MockManager) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
     t.Helper()
     tio := iostreamstest.New()
-    tmpDir := t.TempDir()
-    return &cmdutil.Factory{
+
+    f := &cmdutil.Factory{
         IOStreams: tio.IOStreams,
-        WorkDir:  tmpDir,
         Client: func(_ context.Context) (*docker.Client, error) {
             return fake.Client, nil
         },
-        Config: func() (*config.Config, error) {
-            return testConfig(tmpDir), nil
-        },
-        Settings: func() (*config.Settings, error) {
-            return config.DefaultSettings(), nil
-        },
-        EnsureHostProxy:         func() error { return nil },
-        HostProxyEnvVar:         func() string { return "" },
-        SettingsLoader:          func() (*config.SettingsLoader, error) { return nil, nil },
-        InvalidateSettingsCache: func() {},
-        Prompter:                func() *prompts.Prompter { return nil },
-    }, tio
-}
-
-// testConfig returns a minimal *config.Config for test use.
-func testConfig(workDir string) *config.Config {
-    hostProxyDisabled := false
-    return &config.Config{
-        Version: "1",
-        Project: "",
-        Workspace: config.WorkspaceConfig{
-            RemotePath:  "/workspace",
-            DefaultMode: "bind",
-        },
-        Security: config.SecurityConfig{
-            EnableHostProxy: &hostProxyDisabled,
-            Firewall: &config.FirewallConfig{
-                Enable: false,
-            },
+        Config: func() (config.Config, error) {
+            return configmocks.NewBlankConfig(), nil
         },
     }
+
+    if mock != nil {
+        f.SocketBridge = func() socketbridge.SocketBridgeManager {
+            return mock
+        }
+    }
+
+    return f, tio
 }
 ```
 
@@ -379,9 +454,9 @@ FakeCli would only add: (1) command routing tests (cobra's responsibility) and (
 
 ### Key Points
 
-- **`testFactory` and `testConfig` are per-package** — each command package creates its own suited to its dependencies
+- **`testFactory` is per-package** — each command package creates its own suited to its dependencies
 - **Reference implementation**: `internal/cmd/container/run/run_test.go` (`TestRunRun`)
-- Factory fields must include all closures the command's run function calls (Config, Client, Settings, etc.)
+- Factory fields must include all closures the command's run function calls (Config, Client, etc.)
 - Use `t.TempDir()` for `WorkDir` to avoid `os.Getwd()` issues in tests
 
 ---
@@ -827,50 +902,31 @@ fake.Reset()                                  // Clear call log
 
 The codebase provides in-memory implementations for testing without filesystem I/O.
 
-### configtest.InMemoryRegistryBuilder
+### config Test Stubs (mocks/stubs.go)
 
-Creates an in-memory registry for testing worktree and project commands. Use instead of file-based fakes when you need:
-- Controllable worktree status (healthy, stale, mixed)
-- No filesystem side effects
-- Fast parallel tests
+Config test helpers live in `internal/config/mocks/`:
 
 ```go
-registry := configtest.NewInMemoryRegistryBuilder().
-    WithProject("myproject", "/path/to/project").  // Returns InMemoryProjectBuilder
-    WithHealthyWorktree("feature-branch", "/path/to/worktree").
-    WithStaleWorktree("stale-branch", "/missing/path").
-    WithPartialWorktree("partial-branch", "/partial/path").
-    WithErrorWorktree("error-branch", "/error/path", errors.New("delete failed")).
-    Registry().  // Back to InMemoryRegistryBuilder
-    Build()
+import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 
-// Use the handle pattern
-proj := registry.Project("myproject")
-wt := proj.Worktree("feature-branch")
-status := wt.Status()
+// Default test double — in-memory *ConfigMock with defaults, Set/Write/Watch panic
+cfg := configmocks.NewBlankConfig()
+
+// Test double from YAML — in-memory *ConfigMock, Set/Write/Watch panic
+cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`)
+
+// File-backed config for mutation tests
+cfg, read := configmocks.NewIsolatedTestConfig(t)
 ```
 
-**InMemoryProjectBuilder methods:**
-
-| Method | Purpose |
-|--------|---------|
-| `WithWorktree(name, path string, state WorktreeState)` | Add worktree with explicit state |
-| `WithHealthyWorktree(name, path string)` | Add healthy worktree (dir+git exist) |
-| `WithStaleWorktree(name, path string)` | Add stale worktree (dir doesn't exist) |
-| `WithPartialWorktree(name, path string)` | Add partial worktree (dir exists, no .git) |
-| `WithErrorWorktree(name, path string, err error)` | Add worktree that errors on delete |
-| `Registry()` | Return to parent InMemoryRegistryBuilder |
-
-**InMemoryRegistry methods for state control:**
-
+**Factory wiring in tests:**
 ```go
-// Control filesystem-like state after build
-registry.SetWorktreeState("myproject", "feature-branch", configtest.WorktreeState{
-    DirExists: true,
-    GitExists: false,
-})
-registry.SetWorktreeDeleteError("myproject", "feature-branch", errors.New("permission denied"))
-registry.SetWorktreePathError("myproject", "feature-branch", errors.New("invalid path"))
+f := &cmdutil.Factory{
+    IOStreams: tio.IOStreams,
+    Config: func() (config.Config, error) {
+        return configmocks.NewBlankConfig(), nil
+    },
+}
 ```
 
 ### gittest.NewInMemoryGitManager
@@ -886,9 +942,10 @@ gitMgr := gittest.NewInMemoryGitManager()
 
 | Need | Use |
 |------|-----|
-| Test worktree list/prune commands | `InMemoryRegistryBuilder` |
-| Test worktree add/remove commands | `InMemoryGitManager` + `InMemoryRegistryBuilder` |
-| Test registry persistence | `configtest.FakeRegistryBuilder` (file-based) |
+| Default config for command tests | `configmocks.NewBlankConfig()` |
+| Config with specific YAML values | `configmocks.NewFromString(yaml)` |
+| Config needing Set/Write/Watch | `configmocks.NewIsolatedTestConfig(t)` |
+| Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
 | Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 
 ---

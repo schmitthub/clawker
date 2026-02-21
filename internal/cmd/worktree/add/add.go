@@ -3,20 +3,19 @@ package add
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
 )
 
 // AddOptions contains the options for the add command.
 type AddOptions struct {
-	IOStreams  *iostreams.IOStreams
-	GitManager func() (*git.GitManager, error)
-	Config     func() *config.Config
+	IOStreams      *iostreams.IOStreams
+	ProjectManager func() (project.ProjectManager, error)
 
 	Branch string
 	Base   string
@@ -25,9 +24,8 @@ type AddOptions struct {
 // NewCmdAdd creates the worktree add command.
 func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error) *cobra.Command {
 	opts := &AddOptions{
-		IOStreams:  f.IOStreams,
-		GitManager: f.GitManager,
-		Config:     f.Config,
+		IOStreams:      f.IOStreams,
+		ProjectManager: f.ProjectManager,
 	}
 
 	cmd := &cobra.Command{
@@ -35,7 +33,7 @@ func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error
 		Short: "Create a worktree for a branch",
 		Long: `Creates a git worktree for the specified branch.
 
-If the worktree already exists, the command succeeds (idempotent).
+If the worktree already exists, the command will fail.
 If the branch exists but isn't checked out elsewhere, it's checked out in the new worktree.
 If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
 		Example: `  # Create a worktree for a new branch
@@ -62,26 +60,25 @@ If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
 }
 
 func addRun(_ context.Context, opts *AddOptions) error {
-	cfg := opts.Config()
-
-	// Check if we're in a registered project
-	if !cfg.Project.Found() {
-		return fmt.Errorf("not in a registered project directory")
+	projectManager, err := opts.ProjectManager()
+	if err != nil {
+		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	// Get git manager
-	gitMgr, err := opts.GitManager()
+	proj, err := projectManager.CurrentProject(context.Background())
 	if err != nil {
-		return fmt.Errorf("initializing git: %w", err)
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
 	}
 
-	// SetupWorktree handles all the logic:
-	// - If worktree exists, returns the existing path
-	// - If branch exists, checks it out in new worktree
-	// - If branch doesn't exist, creates it from base
-	wtPath, err := gitMgr.SetupWorktree(cfg.Project, opts.Branch, opts.Base)
+	wtPath, err := proj.CreateWorktree(context.Background(), opts.Branch, opts.Base)
 	if err != nil {
-		return fmt.Errorf("creating worktree: %w", err)
+		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
+			return fmt.Errorf("not in a registered project directory")
+		}
+		return err
 	}
 
 	fmt.Fprintf(opts.IOStreams.ErrOut, "Worktree ready at %s\n", wtPath)

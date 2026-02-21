@@ -21,7 +21,7 @@ import (
 type CpOptions struct {
 	IOStreams *iostreams.IOStreams
 	Client    func(context.Context) (*docker.Client, error)
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Agent      bool
 	Archive    bool
@@ -116,19 +116,28 @@ func cpRun(ctx context.Context, opts *CpOptions) error {
 
 	// If --agent is provided, resolve container names as agent names
 	if opts.Agent {
+		cfg, err := opts.Config()
+		if err != nil {
+			return err
+		}
+		var project string
+		if p := cfg.Project(); p != nil {
+			project = p.Name
+		}
+
 		if srcIsContainer && srcContainer != "" {
-			var err error
-			srcContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, srcContainer)
-			if err != nil {
-				return err
+			var nameErr error
+			srcContainer, nameErr = docker.ContainerName(project, srcContainer)
+			if nameErr != nil {
+				return nameErr
 			}
 		}
 
 		if dstIsContainer && dstContainer != "" {
-			var err error
-			dstContainer, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, dstContainer)
-			if err != nil {
-				return err
+			var nameErr error
+			dstContainer, nameErr = docker.ContainerName(project, dstContainer)
+			if nameErr != nil {
+				return nameErr
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -86,8 +87,8 @@ func TestNewCmdStats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{}
 			if tt.needRes {
-				f.Config = func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				f.Config = func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				}
 			}
 
@@ -304,8 +305,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
@@ -333,7 +334,7 @@ const statsJSON = `{
 }`
 
 func TestStatsRun_NoStream_HappyPath(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	c := dockertest.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", c)
 	fake.SetupContainerStats(statsJSON)
@@ -368,8 +369,8 @@ func TestStatsRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -385,7 +386,7 @@ func TestStatsRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStatsRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list
 
 	f, tio := testFactory(t, fake)
@@ -402,7 +403,7 @@ func TestStatsRun_ContainerNotFound(t *testing.T) {
 }
 
 func TestStatsRun_NoRunningContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no running containers
 
 	f, tio := testFactory(t, fake)

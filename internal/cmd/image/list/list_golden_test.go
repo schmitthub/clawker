@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -58,7 +59,7 @@ func TestImageList_Golden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := dockertest.NewFakeClient()
+			fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 			fake.SetupImageList(tt.images...)
 
 			tio := iostreamstest.New()

@@ -65,8 +65,7 @@ It does not matter if the work has to be done in an out-of-scope dependency, it 
 │   ├── cmd/                   # Cobra commands (container/, volume/, network/, image/, version/, loop/, worktree/, root/)
 │   │   └── factory/           # Factory constructor — wires real dependencies
 │   ├── cmdutil/               # Factory struct, error types, arg validators (lightweight)
-│   ├── config/                # Config loading, validation, project registry + resolver
-│   │   └── configtest/        # InMemoryRegistry, InMemorySettingsLoader, ProjectBuilder
+│   ├── config/                # Viper-backed config: schema types, multi-file loading, constants (REFACTORING — see internal/config/CLAUDE.md)
 │   ├── containerfs/           # Host Claude config preparation for container init
 │   ├── docker/                # Clawker Docker middleware, image building (wraps pkg/whail + bundler)
 │   │   └── dockertest/        # FakeClient, test helpers
@@ -164,10 +163,9 @@ pre-commit run gitleaks --all-files    # Run a single hook
 
 | Abstraction | Purpose |
 |-------------|---------|
-| `Factory` | Slim DI struct (9 fields: 3 eager + 6 lazy nouns); constructor in cmd/factory |
-| `config.Config` | Gateway type — lazy-loads Project, Settings, Resolution, Registry via `sync.Once` |
+| `Factory` | Slim DI struct with eager IO/TUI/version fields and lazy noun closures (`Config`, `Project`, `Client`, `GitManager`, etc.); constructor in `internal/cmd/factory` |
 | `git.GitManager` | Git repository operations, worktree management (leaf package, no internal imports) |
-| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming |
+| `docker.Client` | Clawker middleware wrapping `whail.Engine` with labels/naming. `cfg config.Config` (interface) provides all label keys. `NewClient(ctx, cfg, opts...)` (production), `NewClientFromEngine(engine, cfg)` (tests) |
 | `whail.Engine` | Reusable Docker engine with label-based resource isolation |
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
@@ -175,7 +173,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
 | `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
 | `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
-| `clawker-share` | Optional read-only bind mount from `$CLAWKER_HOME/.clawker-share` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
+| `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
 | `InitConfigOpts` | Options for `shared.InitContainerConfig` — project/agent names, container work dir, ClaudeCodeConfig, CopyToVolumeFn (DI) |
@@ -183,7 +181,7 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `InjectPostInitOpts` | Options for `shared.InjectPostInitScript` — container ID, script content, CopyToContainerFn (DI) |
 | `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
 | `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
-| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `socketbridgetest.MockManager` |
+| `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.MockManager` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout. `Logger` field for diagnostic file logging |
 | `iostreams.Logger` | Interface matching `*zerolog.Logger` — `Debug/Info/Warn/Error() *zerolog.Event`. Decouples commands from `internal/logger` |
@@ -215,13 +213,11 @@ pre-commit run gitleaks --all-files    # Run a single hook
 | `update.CheckForUpdate` | Background GitHub release check — 24h cached, suppressed in CI/DEV; wired into `Main()` via goroutine + channel |
 | `update.CheckResult` | Returned when newer version available: `CurrentVersion`, `LatestVersion`, `ReleaseURL` |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
-| `ProjectRegistry` | Persistent slug→path map at `~/.local/clawker/projects.yaml` |
-| `config.Resolution` | Lookup result: ProjectKey, ProjectEntry, WorkDir (lives in config package) |
-| `config.Registry` | Interface for project registry operations; enables DI with InMemoryRegistry |
-| `config.SettingsLoader` | Interface for settings operations; `FileSettingsLoader` (filesystem), `configtest.InMemorySettingsLoader` (testing) |
-| `ProjectHandle` / `WorktreeHandle` | DDD-style aggregate handles for registry navigation (`registry.Project(key).Worktree(name)`) |
+| `ProjectRegistry` | Persistent slug→path map (`cfg.ProjectRegistryFileName()`); CRUD/orchestration is owned by `internal/project` |
+| `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(cfg, gitFactory)`. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project |
+| `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`GetProjectRoot`, `GetProjectIgnoreFile`, `ConfigDir`, `Write`). It does not own project CRUD/worktree lifecycle orchestration |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |
-| `WorktreeStatus` | Health status for worktree entries with `IsHealthy()`, `IsPrunable()`, `Issues()` methods |
+| `WorktreeStatus` | String enum for worktree health: `WorktreeHealthy`, `WorktreeRegistryOnly`, `WorktreeGitOnly`, `WorktreeBroken` |
 
 Package-specific CLAUDE.md files in `internal/*/CLAUDE.md` provide detailed API references.
 
@@ -237,13 +233,15 @@ Commands use positional arguments for resource names (e.g., `clawker container s
 
 ## Configuration
 
-### User Settings (~/.local/clawker/settings.yaml)
+> **For code**: Always use `Config` interface accessors (`cfg.ProjectConfigFileName()`, `cfg.SettingsFileName()`, `cfg.ProjectRegistryFileName()`, `cfg.ConfigDirEnvVar()`, `cfg.DataDirEnvVar()`, `cfg.StateDirEnvVar()`) — never hardcode filenames, paths, or env var names. See `internal/config/CLAUDE.md` for full accessor list.
+
+### User Settings (`cfg.SettingsFileName()` → settings.yaml)
 
 ```yaml
 default_image: "node:20-slim"
 ```
 
-### Project Registry (~/.local/clawker/projects.yaml)
+### Project Registry (`cfg.ProjectRegistryFileName()` → projects.yaml)
 
 ```yaml
 projects:
@@ -254,9 +252,7 @@ projects:
 
 Managed by `clawker project init` and `clawker project register`. The registry maps project slugs to filesystem paths.
 
-**Type distinction:** `config.Project` is the YAML schema struct (was `config.Config` pre-refactor). `config.Config` is now the gateway type that lazily provides `Project()`, `Settings()`, `Resolution()`, `Registry()`, and `SettingsLoader()`. Commands access config via `f.Config().Project()` rather than `f.Config()` directly.
-
-### Project Config (clawker.yaml)
+### Project Config (`cfg.ProjectConfigFileName()` → clawker.yaml)
 
 ```yaml
 version: "1"
@@ -267,39 +263,15 @@ build:
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
 agent: { includes: [], env_file: [], from_env: [], env: {}, post_init: "" }
-workspace: { remote_path: "/workspace", default_mode: "snapshot" }
+workspace: { remote_path: "/workspace", default_mode: "bind" }
 security: { firewall: { enable: true }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
-**Key types** (internal/config/schema.go): `Project` (YAML schema), `DockerInstructions`, `InjectConfig`, `RunInstruction`, `CopyInstruction`, `AgentConfig` (PostInit), `GitCredentialsConfig`, `FirewallConfig`, `IPRangeSource`, `LoopConfig`
-**Gateway type** (internal/config/config.go): `Config` — lazy accessor for Project, Settings, Resolution, Registry
-
 ### Firewall IP Range Sources
 
-IP range sources fetch CIDR blocks from cloud provider APIs (not DNS) to allow traffic to services like GitHub:
-
-```yaml
-security:
-  firewall:
-    enable: true
-    # Default: [{name: github}]
-    ip_range_sources:
-      - name: github          # Required by default
-      - name: google          # For Go proxy (proxy.golang.org uses GCS)
-      - name: custom
-        url: "https://example.com/ranges.json"
-        jq_filter: ".cidrs[]"
-        required: false
-```
-
-**Built-in sources**: `github`, `google-cloud`, `google`, `cloudflare`, `aws` — each has pre-configured URL and jq filter.
-
-**Default behavior**: `ip_range_sources` defaults to `[{name: github}]` only.
 
 **Security warning**: The `google` source allows traffic to all Google IPs, including Google Cloud Storage and Firebase Hosting which can serve user-generated content. This creates a prompt injection risk — an attacker could host malicious content on a public GCS bucket or Firebase site that the agent fetches. Only add `google` if your project requires it (e.g., Go modules via `proxy.golang.org`).
-
-**Override mode**: When `override_domains` is set, IP range sources are skipped entirely (user controls all network access).
 
 ## Design Decisions
 
@@ -311,11 +283,11 @@ security:
 6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands receive function references on Options structs, follow NewCmd(f, runF) pattern
 8. Factory noun principle: each Factory field returns a noun (thing), not a verb (action). Commands call methods on the returned noun (e.g., `f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
-9. `config.Config` gateway absorbs what were previously separate Factory fields (Settings, Registry, Resolution, SettingsLoader) into one lazy-loading object
-10. Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
-11. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
-12. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
-13. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
+9.  Presentation layer 4-scenario model: (1) static output = `iostreams` only, (2) static-interactive = `iostreams` + `prompter`, (3) live-display = `iostreams` + `tui`, (4) live-interactive = `iostreams` + `tui`. A command may import both `iostreams` and `tui`. Commands access TUI via `f.TUI` (Factory noun). Library boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`; only `term` imports `golang.org/x/term`
+10. `iostreams` owns the canonical color palette, styles, and design tokens. `tui` accesses them via qualified imports (`iostreams.PanelStyle`), `text` utilities via `text.Truncate`
+11. `SpinnerFrame()` is a pure function in `iostreams` used by the goroutine spinner. The tui `SpinnerModel` wraps `bubbles/spinner` directly but maintains visual consistency through shared `CyanStyle`
+12. `zerolog` is for file logging only — user-visible output uses `fmt.Fprintf` to IOStreams streams. Command-layer code accesses logger via `ios.Logger` (IOStreams interface), library-layer code uses global `logger.Debug()`. Logger init happens in factory's `ioStreams(f)`, not in root.go
+13. Package boundary rule: path resolution + config file I/O belongs to `internal/config`; project identity/CRUD/worktree lifecycle orchestration belongs to `internal/project`
 
 ## Important Gotchas
 
@@ -329,8 +301,6 @@ security:
 - CLI test assertions (test/cli/) are case-sensitive; tests need `mkdir $HOME/.local/clawker` and `security.firewall.enable: false`
 - Container flag types and domain logic consolidated in `internal/cmd/container/shared/` — `CreateContainer()` is the single creation entry point
 - After modifying a package's public API, update its `CLAUDE.md` and corresponding `.claude/rules/` file
-- `config.Project` (schema) has `Project` field with `yaml:"-"` — injected by loader from registry, never persisted
-- `config.Config` (gateway) is NOT the YAML schema — it is the lazy accessor. Use `cfg.Project()` to get the YAML-loaded `*config.Project`
 - Empty projects generate 2-segment names (`clawker.dev`), not 3 (`clawker..dev`)
 - Docker Desktop socket mounting: SDK `HostConfig.Mounts` (mount.Mount) behaves differently from `HostConfig.Binds` (CLI `-v`) for Unix sockets on macOS. The SDK may fail with `/socket_mnt` path errors while CLI works. Integration tests that mount sockets should skip on macOS or use Binds.
 
@@ -346,7 +316,6 @@ security:
 
 - `.claude/rules/` — Auto-loaded guidelines (code style, testing, path-scoped package rules)
 - `.claude/docs/` — On-demand reference docs (architecture, CLI verbs, design)
-- `.claude/prds/` — Product requirement documents
 - `internal/*/CLAUDE.md` — Package-specific API references (lazy-loaded)
 - `.serena/memories/` — Active work-in-progress tracking
 

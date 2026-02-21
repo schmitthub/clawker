@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -30,7 +31,8 @@ type Factory struct {
 
 	// Lazy nouns
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() (config.Config, error)
+	ProjectManager func() (project.ProjectManager, error)
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager

@@ -209,7 +209,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	// Load or create session (with expiration check)
-	session, expired, err := r.store.LoadSessionWithExpiration(opts.ProjectCfg.Project, opts.Agent, opts.SessionExpirationHours)
+	session, expired, err := r.store.LoadSessionWithExpiration(opts.ProjectCfg.Name, opts.Agent, opts.SessionExpirationHours)
 	if err != nil {
 		opts.Logger.Error().Err(err).Msg("failed to load session")
 		return &Result{
@@ -219,16 +219,16 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if expired {
 		opts.Logger.Debug().Msg("session expired, starting fresh")
-		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "expired", "", "", 0); histErr != nil {
+		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "expired", "", "", 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record session expiration in history")
 		}
 	}
 	sessionCreated := session == nil
 	if session == nil {
-		session = NewSession(opts.ProjectCfg.Project, opts.Agent, opts.Prompt, opts.WorkDir)
+		session = NewSession(opts.ProjectCfg.Name, opts.Agent, opts.Prompt, opts.WorkDir)
 	}
 	if sessionCreated {
-		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
+		if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "created", StatusPending, "", 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record session creation in history")
 		}
 		if saveErr := r.store.SaveSession(session); saveErr != nil {
@@ -261,7 +261,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// Reset circuit if requested
 	if opts.ResetCircuit {
-		if err := r.store.DeleteCircuitState(opts.ProjectCfg.Project, opts.Agent); err != nil {
+		if err := r.store.DeleteCircuitState(opts.ProjectCfg.Name, opts.Agent); err != nil {
 			opts.Logger.Warn().Err(err).Msg("failed to delete circuit state")
 			return &Result{
 				Session:    session,
@@ -269,11 +269,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Result, error) {
 				Error:      fmt.Errorf("failed to reset circuit breaker as requested: %w", err),
 			}, nil
 		}
-		if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
+		if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Name, opts.Agent, "tripped", "closed", "manual reset", 0, 0, 0, 0); histErr != nil {
 			opts.Logger.Warn().Err(histErr).Msg("failed to record circuit reset in history")
 		}
 	} else {
-		circuitState, err := r.store.LoadCircuitState(opts.ProjectCfg.Project, opts.Agent)
+		circuitState, err := r.store.LoadCircuitState(opts.ProjectCfg.Name, opts.Agent)
 		if err != nil {
 			opts.Logger.Error().Err(err).Msg("failed to load circuit state - refusing to run")
 			return &Result{
@@ -428,7 +428,7 @@ mainLoop:
 			if status != nil {
 				statusStr = status.Status
 			}
-			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
+			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "updated", statusStr, errStr, session.LoopsCompleted); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record session update in history")
 			}
 		}
@@ -452,7 +452,7 @@ mainLoop:
 
 		// Surface repeated errors in history before they trip the circuit.
 		if sameCount := circuit.SameErrorCount(); sameCount >= 3 && analysis != nil && analysis.ErrorSignature != "" {
-			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Project, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
+			if histErr := r.history.AddSessionEntry(opts.ProjectCfg.Name, opts.Agent, "repeated_error", "", analysis.ErrorSignature, session.LoopsCompleted); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record repeated error in history")
 			}
 		}
@@ -484,7 +484,7 @@ mainLoop:
 
 			now := time.Now()
 			circuitState := &CircuitState{
-				Project:         opts.ProjectCfg.Project,
+				Project:         opts.ProjectCfg.Name,
 				Agent:           opts.Agent,
 				NoProgressCount: circuit.NoProgressCount(),
 				Tripped:         true,
@@ -498,7 +498,7 @@ mainLoop:
 			}
 
 			state := circuit.State()
-			if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Project, opts.Agent, "closed", "tripped", updateResult.Reason,
+			if histErr := r.history.AddCircuitEntry(opts.ProjectCfg.Name, opts.Agent, "closed", "tripped", updateResult.Reason,
 				state.NoProgressCount, state.SameErrorCount, state.ConsecutiveTestLoops, state.ConsecutiveCompletionCount); histErr != nil {
 				opts.Logger.Warn().Err(histErr).Msg("failed to record circuit trip in history")
 			}
@@ -584,10 +584,13 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	log.Debug().Msg("setting up container wait")
 	statusCh := waitForContainerExit(ctx, log, r.client, containerConfig.ContainerID, false)
 
-	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream into the pipe
+	// Start I/O streaming: stdcopy demuxes Docker's multiplexed stream.
+	// Capture stderr (capped at 4KB) for diagnostics when Claude Code fails silently.
+	var stderrBuf limitedBuffer
+	stderrBuf.limit = 4096
 	streamDone := make(chan error, 1)
 	go func() {
-		_, err := stdcopy.StdCopy(pw, io.Discard, hijacked.Reader)
+		_, err := stdcopy.StdCopy(pw, &stderrBuf, hijacked.Reader)
 		pw.CloseWithError(err) // Signal EOF to ParseStream
 		streamDone <- err
 	}()
@@ -636,6 +639,24 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	parsed := <-parseDone
 	text := textAcc.Text()
 
+	// Diagnostic logging: what did ParseStream return?
+	if parsed.result != nil {
+		log.Debug().
+			Str("subtype", parsed.result.Subtype).
+			Bool("is_error", parsed.result.IsError).
+			Int("num_turns", parsed.result.NumTurns).
+			Float64("cost_usd", parsed.result.TotalCostUSD).
+			Str("result_text", truncateForLog(parsed.result.Result, 200)).
+			Int("num_errors", len(parsed.result.Errors)).
+			Msg("ParseStream returned result event")
+	} else if parsed.err == nil {
+		log.Warn().Msg("ParseStream returned nil result AND nil error")
+	}
+	if stderr := stderrBuf.String(); stderr != "" {
+		log.Debug().Str("stderr", truncateForLog(stderr, 500)).Msg("container stderr output")
+	}
+	log.Debug().Int("text_len", len(text)).Int("tool_calls", textAcc.ToolCallCount()).Msg("text accumulator state")
+
 	// Determine exit code
 	var exitCode int
 	select {
@@ -648,10 +669,15 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 
 	// Handle errors
 	if parsed.err != nil && streamErr == nil {
-		// ParseStream error but stream was clean — container may have crashed
-		// before emitting a result event. Return text we have.
-		log.Warn().Err(parsed.err).Msg("stream parse error (container may have crashed)")
-		return text, nil, exitCode, nil
+		// ParseStream error but stream was clean — container exited without
+		// producing a result event. Include captured stderr for diagnostics.
+		stderr := stderrBuf.String()
+		if stderr != "" {
+			log.Warn().Err(parsed.err).Str("stderr", stderr).Msg("stream parse error with stderr output")
+			return text, nil, exitCode, fmt.Errorf("%w (stderr: %s)", parsed.err, stderr)
+		}
+		log.Warn().Err(parsed.err).Msg("stream parse error (no stderr captured)")
+		return text, nil, exitCode, parsed.err
 	}
 	if streamErr != nil {
 		return text, parsed.result, -1, streamErr
@@ -661,6 +687,37 @@ func (r *Runner) StartContainer(ctx context.Context, log iostreams.Logger, proje
 	}
 
 	return text, parsed.result, exitCode, nil
+}
+
+// limitedBuffer is a bytes.Buffer that stops accepting writes after limit bytes.
+// Used to capture stderr without unbounded memory growth.
+type limitedBuffer struct {
+	buf   []byte
+	limit int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - len(b.buf)
+	if remaining <= 0 {
+		return len(p), nil // discard but report success
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string {
+	return string(b.buf)
+}
+
+// truncateForLog trims a string for safe inclusion in log fields.
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // ResetCircuit resets the circuit breaker for a project/agent.

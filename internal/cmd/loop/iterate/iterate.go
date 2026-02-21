@@ -29,7 +29,7 @@ type IterateOptions struct {
 	IOStreams    *iostreams.IOStreams
 	TUI          *tui.TUI
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() (config.Config, error)
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -142,10 +142,14 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	opts.Agent = shared.GenerateAgentName()
 
 	// 3. Get config and Docker client
-	cfgGateway := opts.Config()
+	cfgGateway, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	projectCfg := cfgGateway.Project()
 
 	// 3a. Apply config file defaults for pre-runner fields (hooks_file, append_system_prompt)
-	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, cfgGateway.Project.Loop)
+	shared.ApplyLoopConfigDefaults(opts.LoopOptions, opts.flags, projectCfg.Loop)
 
 	client, err := opts.Client(ctx)
 	if err != nil {
@@ -156,8 +160,8 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 	// Use the project root (same as resolveWorkDir in CreateContainer) so that
 	// the concurrency check matches the LabelWorkdir stored on containers.
 	// TODO: Does this rely on the assumption that the command is being ran from within a project dir? ProjectCfg worktrees are not in the original root dir so this is a poor assumption. What if a user runs a loop in the same worktree?
-	workDir := cfgGateway.Project.RootDir()
-	if workDir == "" {
+	workDir, err := cfgGateway.GetProjectRoot()
+	if err != nil || workDir == "" {
 		workDir, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("resolving working directory: %w", err)
@@ -166,7 +170,7 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	action, err := shared.CheckConcurrency(ctx, &shared.ConcurrencyCheckConfig{
 		Client:    client,
-		Project:   cfgGateway.Project.Project,
+		Project:   projectCfg.Name,
 		WorkDir:   workDir,
 		IOStreams: ios,
 		Prompter:  opts.Prompter,
@@ -230,14 +234,14 @@ func iterateRun(ctx context.Context, opts *IterateOptions) error {
 
 	// 7. Build runner options
 	runnerOpts := shared.BuildRunnerOptions(
-		opts.LoopOptions, cfgGateway.Project, opts.Agent, prompt, workDir,
-		createContainer, opts.flags, cfgGateway.Project.Loop, ios.Logger,
+		opts.LoopOptions, projectCfg, opts.Agent, prompt, workDir,
+		createContainer, opts.flags, projectCfg.Loop, ios.Logger,
 	)
 
 	// Setup info for dashboard/monitor display (no container ID — per-iteration)
 	setup := &shared.LoopContainerResult{
 		AgentName:  opts.Agent,
-		ProjectCfg: cfgGateway.Project,
+		ProjectCfg: projectCfg,
 		WorkDir:    workDir,
 	}
 

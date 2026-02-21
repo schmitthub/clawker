@@ -23,7 +23,7 @@ import (
 type ExecOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Client       func(context.Context) (*docker.Client, error)
-	Config       func() *config.Config
+	Config       func() (config.Config, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager
 
@@ -88,8 +88,15 @@ Container name can be:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.containerName = args[0]
 			if opts.Agent {
-				var err error
-				opts.containerName, err = docker.ContainerName(opts.Config().Resolution.ProjectKey, args[0])
+				cfg, err := opts.Config()
+				if err != nil {
+					return fmt.Errorf("failed to load config: %w", err)
+				}
+				var project string
+				if p := cfg.Project(); p != nil {
+					project = p.Name
+				}
+				opts.containerName, err = docker.ContainerName(project, args[0])
 				if err != nil {
 					return err
 				}
@@ -145,9 +152,14 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 
 	// Setup git credential forwarding for exec sessions
 	// This enables GPG signing and git credential helpers in exec'd commands
-	cfg := opts.Config().Project
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	p := cfg.Project()
+
 	hostProxyRunning := false
-	if cfg.Security.HostProxyEnabled() && opts.HostProxy != nil {
+	if p != nil && p.Security.HostProxyEnabled() && opts.HostProxy != nil {
 		hp := opts.HostProxy()
 		if hp == nil {
 			ios.Logger.Debug().Msg("host proxy function returned nil")
@@ -161,13 +173,15 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	}
 
 	// Setup git credentials (includes GPG forwarding env vars)
-	gitSetup := workspace.SetupGitCredentials(cfg.Security.GitCredentials, hostProxyRunning)
-	opts.Env = append(opts.Env, gitSetup.Env...)
+	if p != nil {
+		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning)
+		opts.Env = append(opts.Env, gitSetup.Env...)
+	}
 
 	// Ensure socket bridge is running for GPG/SSH forwarding
 	// The bridge may already be running from a prior run/start command
-	if shared.NeedsSocketBridge(cfg) && opts.SocketBridge != nil {
-		gpgEnabled := cfg.Security.GitCredentials.GPGEnabled()
+	if shared.NeedsSocketBridge(p) && opts.SocketBridge != nil {
+		gpgEnabled := p.Security.GitCredentials.GPGEnabled()
 		if err := opts.SocketBridge().EnsureBridge(c.ID, gpgEnabled); err != nil {
 			ios.Logger.Warn().Err(err).Msg("failed to ensure socket bridge for exec")
 		}

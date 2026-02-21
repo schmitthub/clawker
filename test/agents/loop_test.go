@@ -16,7 +16,8 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	loopshared "github.com/schmitthub/clawker/internal/cmd/loop/shared"
-	"github.com/schmitthub/clawker/internal/config/configtest"
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/test/harness"
@@ -24,6 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// _testCfg provides label key methods for test container creation.
+var _testCfg = configmocks.NewBlankConfig()
 
 // ---------------------------------------------------------------------------
 // NDJSON stream-json helpers
@@ -86,7 +90,7 @@ func ndjsonOutput(text string) string {
 		"num_turns":       1,
 		"total_cost_usd":  0.01,
 	})
-	return string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
+	return loopshared.ReadyLogPrefix + "\n" + string(streamEvent) + "\n" + string(assistant) + "\n" + string(result) + "\n"
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +118,8 @@ func makeCreateContainer(t *testing.T, dockerClient *docker.Client, project, age
 				Image: "alpine:latest",
 				Cmd:   containerCmd(output),
 				Labels: map[string]string{
-					docker.LabelProject: project,
-					docker.LabelAgent:   agent,
+					_testCfg.LabelProject(): project,
+					_testCfg.LabelAgent():   agent,
 				},
 			},
 		})
@@ -151,8 +155,8 @@ func makeMultiCreateContainer(t *testing.T, dockerClient *docker.Client, project
 				Image: "alpine:latest",
 				Cmd:   containerCmd(outputs[idx]),
 				Labels: map[string]string{
-					docker.LabelProject: project,
-					docker.LabelAgent:   agent,
+					_testCfg.LabelProject(): project,
+					_testCfg.LabelAgent():   agent,
 				},
 			},
 		})
@@ -184,8 +188,8 @@ func makeSlowCreateContainer(t *testing.T, dockerClient *docker.Client, project,
 				Image: "alpine:latest",
 				Cmd:   []string{"sh", "-c", fmt.Sprintf("sleep %d", sleepSeconds)},
 				Labels: map[string]string{
-					docker.LabelProject: project,
-					docker.LabelAgent:   agent,
+					_testCfg.LabelProject(): project,
+					_testCfg.LabelAgent():   agent,
 				},
 			},
 		})
@@ -223,8 +227,12 @@ func projectCleanup(t *testing.T, dockerClient *docker.Client, project string) {
 }
 
 // testProject creates a *config.Project for tests.
-func testProject(name string) *configtest.ProjectBuilder {
-	return configtest.NewProjectBuilder().WithProject(name)
+func testProject(name string) *config.Project {
+	cfg := configmocks.NewFromString(`
+Project:
+  - Name: ` + name + `
+`)
+	return cfg.Project()
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +257,7 @@ func TestLoopIntegration_RunSingleIteration(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test prompt",
 		MaxLoops:            1,
@@ -289,7 +297,7 @@ func TestLoopIntegration_SessionPersistenceAcrossIterations(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test prompt",
 		MaxLoops:            3,
@@ -336,7 +344,7 @@ func TestLoopIntegration_CircuitBreakerTripsOnStagnation(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test prompt",
 		MaxLoops:            20,
@@ -389,7 +397,7 @@ func TestLoopIntegration_CircuitBreakerBlocksRerun(t *testing.T) {
 	output := ndjsonOutput(text)
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer: makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:      testProject(project).Build(),
+		ProjectCfg:      testProject(project),
 		Agent:           agent,
 		Prompt:          "test",
 		MaxLoops:        1,
@@ -432,7 +440,7 @@ func TestLoopIntegration_ResetCircuitAllowsRerun(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            1,
@@ -474,7 +482,7 @@ func TestLoopIntegration_CompletionDetection(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeMultiCreateContainer(t, dockerClient, project, agent, outputs),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "complete the task",
 		MaxLoops:            10,
@@ -523,7 +531,7 @@ EXIT_SIGNAL: false
 	var capturedStatus *loopshared.Status
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "fix tests",
 		MaxLoops:            1,
@@ -572,7 +580,7 @@ func TestLoopIntegration_NoLOOPSTATUS_CountsAsNoProgress(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            10,
@@ -617,7 +625,7 @@ func TestLoopIntegration_ContextCancellation(t *testing.T) {
 	result, err := runner.Run(ctx, loopshared.Options{
 		// Slow container: sleeps 300s so context cancellation is tested mid-exec
 		CreateContainer:     makeSlowCreateContainer(t, dockerClient, project, agent, 300),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            5,
@@ -654,7 +662,7 @@ func TestLoopIntegration_OnOutputCallback(t *testing.T) {
 	var outputReceived bool
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            1,
@@ -701,7 +709,7 @@ func TestLoopIntegration_SessionExpiration(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:        makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:             testProject(project).Build(),
+		ProjectCfg:             testProject(project),
 		Agent:                  agent,
 		Prompt:                 "test",
 		MaxLoops:               1,
@@ -740,7 +748,7 @@ func TestLoopIntegration_RateLimiter(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            2,
@@ -778,7 +786,7 @@ func TestLoopIntegration_HistoryTracking(t *testing.T) {
 
 	_, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            2,
@@ -827,7 +835,7 @@ func TestLoopIntegration_WorkDirPersisted(t *testing.T) {
 	testWorkDir := "/test/work/dir"
 	_, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            1,
@@ -863,7 +871,7 @@ func TestLoopIntegration_SameErrorTrip(t *testing.T) {
 
 	result, err := runner.Run(ctx, loopshared.Options{
 		CreateContainer:     makeCreateContainer(t, dockerClient, project, agent, output),
-		ProjectCfg:          testProject(project).Build(),
+		ProjectCfg:          testProject(project),
 		Agent:               agent,
 		Prompt:              "test",
 		MaxLoops:            20,
@@ -913,8 +921,8 @@ func TestLoopIntegration_HookInjection(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: project,
-				docker.LabelAgent:   agentName,
+				_testCfg.LabelProject(): project,
+				_testCfg.LabelAgent():   agentName,
 			},
 		},
 	})
@@ -1005,8 +1013,8 @@ func TestLoopIntegration_CustomHooksFile(t *testing.T) {
 			Image: "alpine:latest",
 			Cmd:   []string{"sleep", "300"},
 			Labels: map[string]string{
-				docker.LabelProject: project,
-				docker.LabelAgent:   agentName,
+				_testCfg.LabelProject(): project,
+				_testCfg.LabelAgent():   agentName,
 			},
 		},
 	})

@@ -16,7 +16,7 @@ import (
 
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 }
 
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
@@ -48,8 +48,14 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	networkName := cfg.ClawkerNetwork()
+
 	// Resolve monitor directory
-	monitorDir, err := config.MonitorDir()
+	monitorDir, err := cfg.MonitorSubdir()
 	if err != nil {
 		return fmt.Errorf("failed to determine monitor directory: %w", err)
 	}
@@ -87,28 +93,25 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	fmt.Fprintln(ios.ErrOut, outputStr)
 	fmt.Fprintln(ios.ErrOut)
 
-	// Resolve monitoring URLs from settings
-	mon := &opts.Config().Settings.Monitoring
-
 	// Check which services are actually running and print relevant URLs
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, "grafana") {
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(mon.GrafanaURL()))
+		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(cfg.GrafanaURL("localhost", false)))
 	}
 	if strings.Contains(outputStr, "jaeger") {
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(mon.JaegerURL()))
+		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(cfg.JaegerURL("localhost", false)))
 	}
 	if strings.Contains(outputStr, "prometheus") {
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(mon.PrometheusURL()))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
 	}
 
 	// Check network status
 	fmt.Fprintln(ios.ErrOut)
-	networkCmd := exec.Command("docker", "network", "inspect", config.ClawkerNetwork, "--format", "{{.Name}}")
+	networkCmd := exec.Command("docker", "network", "inspect", networkName, "--format", "{{.Name}}")
 	if networkOutput, err := networkCmd.Output(); err == nil {
 		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", strings.TrimSpace(string(networkOutput)), cs.Green("(active)"))
 	} else {
-		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", config.ClawkerNetwork, cs.Red("(not found)"))
+		fmt.Fprintf(ios.ErrOut, "Network: %s %s\n", networkName, cs.Red("(not found)"))
 	}
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/keyring"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -242,6 +243,7 @@ func TestInjectOnboardingFile(t *testing.T) {
 	tracker := &containerCopyTracker{}
 	opts := InjectOnboardingOpts{
 		ContainerID:     "abc123",
+		Cfg:             configmocks.NewBlankConfig(),
 		CopyToContainer: tracker.copyFn(),
 	}
 
@@ -258,6 +260,7 @@ func TestInjectOnboardingFile(t *testing.T) {
 func TestInjectOnboardingFile_CopyError(t *testing.T) {
 	opts := InjectOnboardingOpts{
 		ContainerID: "abc123",
+		Cfg:         configmocks.NewBlankConfig(),
 		CopyToContainer: func(_ context.Context, _, _ string, _ io.Reader) error {
 			return assert.AnError
 		},
@@ -277,6 +280,7 @@ func TestInjectPostInitScript(t *testing.T) {
 	opts := InjectPostInitOpts{
 		ContainerID:     "abc123",
 		Script:          "npm install -g typescript\n",
+		Cfg:             configmocks.NewBlankConfig(),
 		CopyToContainer: tracker.copyFn(),
 	}
 
@@ -294,6 +298,7 @@ func TestInjectPostInitScript_CopyError(t *testing.T) {
 	opts := InjectPostInitOpts{
 		ContainerID: "abc123",
 		Script:      "echo hello\n",
+		Cfg:         configmocks.NewBlankConfig(),
 		CopyToContainer: func(_ context.Context, _, _ string, _ io.Reader) error {
 			return assert.AnError
 		},

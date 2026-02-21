@@ -9,6 +9,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -100,8 +101,8 @@ func TestNewCmdExec(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -240,13 +241,21 @@ func TestCmdExec_ArgsParsing(t *testing.T) {
 
 // testConfig returns a config with host proxy disabled and no git credentials
 // to avoid nil pointer issues when HostProxy/SocketBridge functions aren't set.
-func testConfig() *config.Config {
-	hostProxyDisabled := false
-	project := config.DefaultProject()
-	project.Security.EnableHostProxy = &hostProxyDisabled
-	project.Security.GitCredentials = nil
-	return config.NewConfigForTest(project, nil)
+func testConfig() config.Config {
+	cfg := configmocks.NewFromString(`
+security:
+  enable_host_proxy: false
+`)
+	cfg.ProjectFunc = func() *config.Project {
+		p := &config.Project{}
+		p.Security.EnableHostProxy = ptrBool(false)
+		p.Security.GitCredentials = nil
+		return p
+	}
+	return cfg
 }
+
+func ptrBool(b bool) *bool { return &b }
 
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
@@ -256,8 +265,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return testConfig()
+		Config: func() (config.Config, error) {
+			return testConfig(), nil
 		},
 	}, tio
 }
@@ -269,8 +278,8 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return testConfig()
+		Config: func() (config.Config, error) {
+			return testConfig(), nil
 		},
 	}
 
@@ -286,7 +295,7 @@ func TestExecRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestExecRun_ContainerNotFound(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList() // empty list — no containers
 	f, tio := testFactory(t, fake)
 
@@ -306,7 +315,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 	fixture := dockertest.ContainerFixture("myapp", "dev", "node:20-slim")
 	// fixture.State is "exited" by default
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	f, tio := testFactory(t, fake)
 
@@ -324,7 +333,7 @@ func TestExecRun_ContainerNotRunning(t *testing.T) {
 func TestExecRun_DetachMode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-abc123")
 	fake.SetupExecStart()
@@ -346,7 +355,7 @@ func TestExecRun_DetachMode(t *testing.T) {
 func TestExecRun_NonTTYHappyPath(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-xyz789")
 	fake.SetupExecAttach()
@@ -369,7 +378,7 @@ func TestExecRun_NonTTYHappyPath(t *testing.T) {
 func TestExecRun_NonZeroExitCode(t *testing.T) {
 	fixture := dockertest.RunningContainerFixture("myapp", "dev")
 
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(fixture)
 	fake.SetupExecCreate("exec-fail")
 	fake.SetupExecAttach()

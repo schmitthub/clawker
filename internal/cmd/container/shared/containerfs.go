@@ -23,6 +23,10 @@ type CopyToVolumeFn func(ctx context.Context, volumeName, srcDir, destPath strin
 // Wraps the lower-level Docker CopyToContainer API into a simpler interface.
 type CopyToContainerFn func(ctx context.Context, containerID, destPath string, content io.Reader) error
 
+// CopyFromContainerFn is the signature for reading a tar archive from a container.
+// Returns a ReadCloser for the tar stream; caller must close it.
+type CopyFromContainerFn func(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error)
+
 // InitConfigOpts holds options for container init orchestration.
 type InitConfigOpts struct {
 	// ProjectName is the project name for volume naming.
@@ -111,6 +115,8 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 type InjectOnboardingOpts struct {
 	// ContainerID is the Docker container ID to inject the file into.
 	ContainerID string
+	// Cfg provides config constants (e.g. domain, label prefix) for containerfs.
+	Cfg config.Config
 	// CopyToContainer copies a tar archive to the container at the given destination path.
 	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
 	CopyToContainer CopyToContainerFn
@@ -124,7 +130,7 @@ func InjectOnboardingFile(ctx context.Context, opts InjectOnboardingOpts) error 
 		return fmt.Errorf("InjectOnboardingFile: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PrepareOnboardingTar(containerHomeDir)
+	tar, err := containerfs.PrepareOnboardingTar(opts.Cfg, containerHomeDir)
 	if err != nil {
 		return fmt.Errorf("failed to prepare onboarding file: %w", err)
 	}
@@ -143,6 +149,8 @@ type InjectPostInitOpts struct {
 	ContainerID string
 	// Script is the user's post_init content from clawker.yaml.
 	Script string
+	// Cfg provides config constants for containerfs.
+	Cfg config.Config
 	// CopyToContainer copies a tar archive to the container at the given destination path.
 	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
 	CopyToContainer CopyToContainerFn
@@ -157,7 +165,7 @@ func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 		return fmt.Errorf("InjectPostInitScript: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PreparePostInitTar(opts.Script)
+	tar, err := containerfs.PreparePostInitTar(opts.Cfg, opts.Script)
 	if err != nil {
 		return fmt.Errorf("failed to prepare post-init script: %w", err)
 	}
@@ -180,5 +188,18 @@ func NewCopyToContainerFn(client *docker.Client) CopyToContainerFn {
 			Content:         content,
 		})
 		return err
+	}
+}
+
+// NewCopyFromContainerFn creates a CopyFromContainerFn that delegates to the docker client.
+func NewCopyFromContainerFn(client *docker.Client) CopyFromContainerFn {
+	return func(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error) {
+		result, err := client.CopyFromContainer(ctx, containerID, docker.CopyFromContainerOptions{
+			SourcePath: srcPath,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result.Content, nil
 	}
 }

@@ -18,19 +18,24 @@ import (
 
 	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 )
 
-const (
+// _blankCfg provides label constants for the harness package.
+// These are fixed values that don't vary by config, so a blank config is sufficient.
+var _blankCfg = configmocks.NewBlankConfig()
+
+var (
 	// TestLabel is the label used to identify test resources.
-	TestLabel = docker.LabelTest
+	TestLabel = _blankCfg.LabelTest()
 	// TestLabelValue is the value for the test label.
-	TestLabelValue = docker.ManagedLabelValue
+	TestLabelValue = _blankCfg.ManagedLabelValue()
 	// ClawkerManagedLabel is the standard clawker managed label.
-	ClawkerManagedLabel = docker.LabelManaged
+	ClawkerManagedLabel = _blankCfg.LabelManaged()
 	// LabelTestName is the label key for the originating test function name.
-	LabelTestName = docker.LabelTestName
+	LabelTestName = _blankCfg.LabelTestName()
 )
 
 // RunTestMain wraps testing.M.Run with cleanup of test-labeled Docker resources
@@ -90,10 +95,7 @@ func RunTestMain(m *testing.M) int {
 // acquireTestLock acquires an exclusive file lock to prevent concurrent
 // integration test runs from piling up containers and processes.
 func acquireTestLock() (*os.File, error) {
-	lockDir, err := config.ClawkerHome()
-	if err != nil {
-		return nil, fmt.Errorf("cannot determine lock directory: %w", err)
-	}
+	lockDir := config.ConfigDir()
 	if err := os.MkdirAll(lockDir, 0o755); err != nil {
 		return nil, fmt.Errorf("cannot create lock directory: %w", err)
 	}
@@ -120,7 +122,10 @@ func releaseTestLock(f *os.File) {
 
 // cleanupHostProxy stops any running host-proxy daemon.
 func cleanupHostProxy() {
-	m := hostproxy.NewManager()
+	m, err := hostproxy.NewManager(_blankCfg)
+	if err != nil {
+		return
+	}
 	if m.IsRunning() {
 		_ = m.StopDaemon()
 	}
@@ -160,7 +165,7 @@ func NewTestClient(t *testing.T) *docker.Client {
 	RequireDocker(t)
 
 	ctx := context.Background()
-	c, err := docker.NewClient(ctx, nil, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+	c, err := docker.NewClient(ctx, _blankCfg, docker.WithLabels(docker.TestLabelConfig(_blankCfg, t.Name())))
 	if err != nil {
 		t.Fatalf("failed to create Docker client: %v", err)
 	}
@@ -211,9 +216,9 @@ func AddTestLabels(labels map[string]string) map[string]string {
 // The testName parameter sets the test name label for leak tracing.
 func AddClawkerLabels(labels map[string]string, project, agent, testName string) map[string]string {
 	result := AddTestLabels(labels)
-	result[ClawkerManagedLabel] = docker.ManagedLabelValue
-	result[docker.LabelProject] = project
-	result[docker.LabelAgent] = agent
+	result[ClawkerManagedLabel] = _blankCfg.ManagedLabelValue()
+	result[_blankCfg.LabelProject()] = project
+	result[_blankCfg.LabelAgent()] = agent
 	if testName != "" {
 		result[LabelTestName] = testName
 	}
@@ -226,7 +231,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	var errs []error
 
 	// Stop and remove containers
-	f := client.Filters{}.Add("label", docker.LabelProject+"="+project)
+	f := client.Filters{}.Add("label", _blankCfg.LabelProject()+"="+project)
 	containers, err := c.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
@@ -249,7 +254,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	}
 
 	// Remove volumes - VolumeList in whail takes map[string]string not Filters
-	volumes, err := c.VolumeList(ctx, map[string]string{docker.LabelProject: project})
+	volumes, err := c.VolumeList(ctx, map[string]string{_blankCfg.LabelProject(): project})
 	if err != nil {
 		return err
 	}
@@ -261,7 +266,7 @@ func CleanupProjectResources(ctx context.Context, c *docker.Client, project stri
 	}
 
 	// Remove networks
-	networks, err := c.NetworkList(ctx, map[string]string{docker.LabelProject: project})
+	networks, err := c.NetworkList(ctx, map[string]string{_blankCfg.LabelProject(): project})
 	if err != nil {
 		return err
 	}
@@ -554,10 +559,10 @@ func BuildTestImage(t *testing.T, h *Harness, opts BuildTestImageOptions) string
 
 	// Build labels that mark this as a test image
 	labels := map[string]string{
-		TestLabel:           TestLabelValue,
-		ClawkerManagedLabel: docker.ManagedLabelValue,
-		docker.LabelProject: h.Project,
-		docker.LabelE2ETest: docker.ManagedLabelValue,
+		TestLabel:                TestLabelValue,
+		ClawkerManagedLabel:      _blankCfg.ManagedLabelValue(),
+		_blankCfg.LabelProject(): h.Project,
+		_blankCfg.LabelE2ETest(): _blankCfg.ManagedLabelValue(),
 	}
 
 	// Build the image
@@ -629,7 +634,7 @@ func BuildSimpleTestImage(t *testing.T, dockerfile string, opts BuildSimpleTestI
 		TestLabel: TestLabelValue,
 	}
 	if opts.Project != "" {
-		labels[docker.LabelProject] = opts.Project
+		labels[_blankCfg.LabelProject()] = opts.Project
 	}
 
 	t.Logf("Building simple test image: %s", imageTag)

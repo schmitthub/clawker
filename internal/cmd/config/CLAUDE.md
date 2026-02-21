@@ -10,7 +10,7 @@ Configuration management commands.
 
 ## Subcommands
 
-- `config check` — validate `clawker.yaml` configuration (in `check/` subpackage). Supports `--file`/`-f` flag for validating a specific file. Runs `ProjectLoader` (catches unknown fields via `ErrorUnused`) + `Validator` (semantic checks). Prints warnings/errors to stderr with `ColorScheme` icons.
+- `config check` — validate `clawker.yaml` configuration (in `check/` subpackage). Supports `--file`/`-f` flag for validating a specific file. Reads file content and passes to `config.ReadFromString()` for YAML parsing validation. Prints errors to stderr with `ColorScheme` icons.
 
 ## Key Symbols
 

@@ -6,7 +6,7 @@ description: Code style guidelines for the clawker codebase
 
 ## Logging
 - `zerolog` is for **file logging only** — never for user-visible output
-- File logging to `~/.local/clawker/logs/clawker.log` with rotation (50MB, 7 days, 3 backups)
+- File logging to `cfg.LogsSubdir()/clawker.log` with rotation (50MB, 7 days, 3 backups)
 - User-visible output uses `fmt.Fprintf` to IOStreams (`ios.ErrOut` for status/warnings, `ios.Out` for data; see per-scenario rules in style guide)
 - `logger.Debug()` / `logger.Warn()` are fine for diagnostic file logs
 - Project/agent context: `logger.SetContext(project, agent)` adds structured fields
@@ -84,3 +84,16 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 
 ## CLI Guidelines Reference
 - Follow conventions from https://clig.dev/ for CLI design patterns
+
+## Config Package How-To
+
+- Use only the `config.Config` interface in consumers; never reach into `internal/config` internals.
+- Do not hardcode config file paths or constants in callers (`clawker.yaml`, subdirs, label domains) when an interface method exists.
+- Read paths/constants through methods (`ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.).
+- `Set(key, value)` is in-memory + dirty tracking; persistence happens via `Write(WriteOptions)`.
+- Use scoped/key writes intentionally:
+  - `Write(WriteOptions{Key: ...})` for one key
+  - `Write(WriteOptions{Scope: ...})` for owned dirty roots in a scope
+  - `Write(WriteOptions{Path: ...})` for explicit full-config writes
+- Project-scope writes resolve to local project `clawker.yaml` when in a registered project; otherwise they fall back to user-level config-dir `clawker.yaml`.
+- In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(yaml)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

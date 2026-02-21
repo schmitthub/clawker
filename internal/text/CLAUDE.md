@@ -27,6 +27,7 @@ All ANSI-aware functions count visible characters only, excluding escape sequenc
 | `Repeat(s, n)` | Repeat string n times |
 | `FirstLine(s)` | First line of multi-line string |
 | `LineCount(s)` | Count lines in string |
+| `Slugify(s)` | Normalize text to lowercase dash-separated slug |
 
 ## Limitations
 

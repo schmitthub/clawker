@@ -20,7 +20,7 @@ func TestNewHarness_Defaults(t *testing.T) {
 
 	// Check config is set with minimal valid defaults
 	require.NotNil(t, h.Config)
-	assert.Equal(t, "test-project", h.Config.Project)
+	assert.Equal(t, "test-project", h.Config.Name)
 	assert.Equal(t, "test-project", h.Project)
 
 	// Check clawker.yaml was written
@@ -31,13 +31,13 @@ func TestNewHarness_WithProject(t *testing.T) {
 	h := NewHarness(t, WithProject("my-project"))
 
 	assert.Equal(t, "my-project", h.Project)
-	assert.Equal(t, "my-project", h.Config.Project)
+	assert.Equal(t, "my-project", h.Config.Name)
 }
 
 func TestNewHarness_WithConfig(t *testing.T) {
 	cfg := &config.Project{
 		Version: "1",
-		Project: "custom-project",
+		Name: "custom-project",
 		Build: config.BuildConfig{
 			Image: "custom:image",
 		},
@@ -152,7 +152,7 @@ func TestHarness_ImageName(t *testing.T) {
 		{
 			name: "with default image",
 			config: &config.Project{
-				Project:      "myapp",
+				Name:         "myapp",
 				DefaultImage: "custom:v1",
 			},
 			expectedName: "custom:v1",
@@ -160,7 +160,7 @@ func TestHarness_ImageName(t *testing.T) {
 		{
 			name: "without default image",
 			config: &config.Project{
-				Project: "myapp",
+				Name: "myapp",
 			},
 			expectedName: "clawker-myapp:latest",
 		},
@@ -184,7 +184,7 @@ func TestHarness_VolumeName(t *testing.T) {
 
 func TestHarness_NetworkName(t *testing.T) {
 	h := NewHarness(t)
-	assert.Equal(t, "clawker-net", h.NetworkName())
+	assert.Equal(t, _blankCfg.ClawkerNetwork(), h.NetworkName())
 }
 
 func TestHarness_WriteFile(t *testing.T) {
@@ -247,16 +247,17 @@ func TestHarness_UpdateConfig(t *testing.T) {
 	assert.Equal(t, "new:image", h.Config.Build.Image)
 
 	// Verify file was rewritten - reload and check
-	loader := config.NewProjectLoader(h.ProjectDir)
-	reloaded, err := loader.Load()
+	data, err := os.ReadFile(h.ConfigPath())
 	require.NoError(t, err)
-	assert.Equal(t, "new:image", reloaded.Build.Image)
+	reloaded, err := config.ReadFromString(string(data))
+	require.NoError(t, err)
+	assert.Equal(t, "new:image", reloaded.Project().Build.Image)
 }
 
 func TestHarness_ConfigPath(t *testing.T) {
 	h := NewHarness(t)
 
-	expected := filepath.Join(h.ProjectDir, "clawker.yaml")
+	expected := filepath.Join(h.ProjectDir, _blankCfg.ProjectConfigFileName())
 	assert.Equal(t, expected, h.ConfigPath())
 }
 

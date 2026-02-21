@@ -1,76 +1,82 @@
-// Package testutil provides shared test utilities for clawker tests.
+// Package builders provides shared test utilities for clawker tests.
 package builders
 
 import (
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/config/configtest"
 )
 
 // ConfigBuilder provides a fluent API for constructing config.Project objects in tests.
-// It delegates to configtest.ProjectBuilder which stores a pointer internally,
-// avoiding value copies of config.Project (which contains sync.RWMutex).
+// It constructs config.Project directly — no external test helpers needed.
 type ConfigBuilder struct {
-	inner *configtest.ProjectBuilder
+	project *config.Project
 }
 
 // NewConfigBuilder creates a new ConfigBuilder with sensible defaults.
 func NewConfigBuilder() *ConfigBuilder {
 	return &ConfigBuilder{
-		inner: configtest.NewProjectBuilder(),
+		project: &config.Project{
+			Version: "1",
+			Workspace: config.WorkspaceConfig{
+				RemotePath:  "/workspace",
+				DefaultMode: "bind",
+			},
+		},
 	}
 }
 
 // WithVersion sets the config version.
 func (b *ConfigBuilder) WithVersion(version string) *ConfigBuilder {
-	b.inner.WithVersion(version)
+	b.project.Version = version
 	return b
 }
 
 // WithProject sets the project name.
 func (b *ConfigBuilder) WithProject(name string) *ConfigBuilder {
-	b.inner.WithProject(name)
+	b.project.Name = name
 	return b
 }
 
 // WithDefaultImage sets the default image.
 func (b *ConfigBuilder) WithDefaultImage(image string) *ConfigBuilder {
-	b.inner.WithDefaultImage(image)
+	b.project.DefaultImage = image
 	return b
 }
 
 // WithBuild sets the build configuration.
 func (b *ConfigBuilder) WithBuild(build config.BuildConfig) *ConfigBuilder {
-	b.inner.WithBuild(build)
+	b.project.Build = build
 	return b
 }
 
 // WithAgent sets the agent configuration.
 func (b *ConfigBuilder) WithAgent(agent config.AgentConfig) *ConfigBuilder {
-	b.inner.WithAgent(agent)
+	b.project.Agent = agent
 	return b
 }
 
 // WithWorkspace sets the workspace configuration.
 func (b *ConfigBuilder) WithWorkspace(workspace config.WorkspaceConfig) *ConfigBuilder {
-	b.inner.WithWorkspace(workspace)
+	b.project.Workspace = workspace
 	return b
 }
 
 // WithSecurity sets the security configuration.
 func (b *ConfigBuilder) WithSecurity(security config.SecurityConfig) *ConfigBuilder {
-	b.inner.WithSecurity(security)
+	b.project.Security = security
 	return b
 }
 
-// Build returns the constructed Config.
+// Build returns the constructed Config as a shallow copy for immutability.
 func (b *ConfigBuilder) Build() *config.Project {
-	return b.inner.Build()
+	copy := *b.project
+	return &copy
 }
 
 // ForTestBaseImage modifies the build config to use a fast test base image.
 // This swaps the image to alpine:latest and clears packages for fast builds.
 func (b *ConfigBuilder) ForTestBaseImage() *ConfigBuilder {
-	b.inner.ForTestBaseImage()
+	b.project.Build.Image = "alpine:latest"
+	b.project.Build.Packages = nil
 	return b
 }
 

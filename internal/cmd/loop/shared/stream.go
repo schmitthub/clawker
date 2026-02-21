@@ -312,9 +312,39 @@ type StreamHandler struct {
 	OnStreamEvent func(*StreamDeltaEvent)
 }
 
+// waitForReady scans lines until the ready signal is found, returning nil.
+// Returns an error if the error signal is found, the stream ends, or the
+// context is cancelled. Non-signal lines are debug-logged and skipped.
+func waitForReady(ctx context.Context, scanner *bufio.Scanner) error {
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, ErrorLogPrefix):
+			return fmt.Errorf("container init failed: %s", line)
+		case strings.HasPrefix(line, ReadyLogPrefix):
+			logger.Debug().Str("line", line).Msg("ready signal received")
+			return nil
+		default:
+			logger.Debug().Str("line", line).Msg("pre-ready output (waiting for init)")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("stream read error during init: %w", err)
+	}
+	return fmt.Errorf("stream ended before ready signal")
+}
+
 // ParseStream reads NDJSON lines from r, dispatches events to handler,
 // and returns the final ResultEvent. Returns an error if the stream ends
 // without a result event, on context cancellation, or on scan failure.
+//
+// Before parsing NDJSON, ParseStream waits for a ready signal line
+// (ReadyLogPrefix). Lines before the signal are debug-logged and skipped.
+// An error signal (ErrorLogPrefix) during init returns an error immediately.
+// If the stream ends before the ready signal, an error is returned.
 //
 // Malformed lines are debug-logged and skipped. Unrecognized event types
 // are silently skipped for forward compatibility. Known event types that
@@ -323,6 +353,11 @@ type StreamHandler struct {
 func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*ResultEvent, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBuffer)
+
+	// Wait for the container init ready signal before parsing NDJSON.
+	if err := waitForReady(ctx, scanner); err != nil {
+		return nil, err
+	}
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -334,12 +369,18 @@ func ParseStream(ctx context.Context, r io.Reader, handler *StreamHandler) (*Res
 			continue
 		}
 
+		// Skip non-JSON lines (init script output that leaked past ready signal).
+		if line[0] != '{' {
+			logger.Debug().Str("line", string(line)).Msg("skipping non-JSON line in stream")
+			continue
+		}
+
 		// Peek at the type field to determine which struct to unmarshal into.
 		var envelope struct {
 			Type EventType `json:"type"`
 		}
 		if err := json.Unmarshal(line, &envelope); err != nil {
-			logger.Debug().Err(err).Int("line_len", len(line)).Msg("skipping malformed stream line")
+			logger.Debug().Err(err).Int("line_len", len(line)).Msg("skipping malformed JSON line")
 			continue
 		}
 

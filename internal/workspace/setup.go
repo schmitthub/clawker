@@ -16,8 +16,8 @@ import (
 type SetupMountsConfig struct {
 	// ModeOverride is the CLI flag value (empty means use config default)
 	ModeOverride string
-	// Config is the loaded clawker configuration
-	Config *config.Project
+	// Cfg is the config.Config interface for reading paths and constants.
+	Cfg config.Config
 	// AgentName is the agent name for volume naming
 	AgentName string
 	// WorkDir is the host working directory for workspace mounts.
@@ -41,19 +41,6 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 }
 
-// resolveIgnoreFile returns the path to the .clawkerignore file.
-// Prefers project root (where clawker.yaml lives); falls back to host workdir.
-func resolveIgnoreFile(projectRootDir, hostPath string) string {
-	root := projectRootDir
-	if root == "" {
-		root = hostPath
-		logger.Debug().Str("path", root).Msg("no project root dir; resolving .clawkerignore from host workdir")
-	} else {
-		logger.Debug().Str("path", root).Msg("resolving .clawkerignore from project root")
-	}
-	return filepath.Join(root, config.IgnoreFileName)
-}
-
 // SetupMounts prepares workspace mounts for container creation.
 // It handles workspace mode resolution, strategy creation/preparation,
 // .clawkerignore pattern loading, config volumes, and docker socket mounting.
@@ -73,9 +60,10 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Determine workspace mode (CLI flag overrides config default)
+	project := cfg.Cfg.Project()
 	modeStr := cfg.ModeOverride
 	if modeStr == "" {
-		modeStr = cfg.Config.Workspace.DefaultMode
+		modeStr = project.Workspace.DefaultMode
 	}
 
 	mode, err := config.ParseMode(modeStr)
@@ -84,7 +72,10 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Load .clawkerignore patterns
-	ignoreFile := resolveIgnoreFile(cfg.ProjectRootDir, hostPath)
+	ignoreFile, err := cfg.Cfg.GetProjectIgnoreFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
+	}
 	ignorePatterns, err := docker.LoadIgnorePatterns(ignoreFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
@@ -93,8 +84,8 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// Create workspace strategy
 	wsCfg := Config{
 		HostPath:       hostPath,
-		RemotePath:     cfg.Config.Workspace.RemotePath,
-		ProjectName:    cfg.Config.Project,
+		RemotePath:     project.Workspace.RemotePath,
+		ProjectName:    project.Name,
 		AgentName:      cfg.AgentName,
 		IgnorePatterns: ignorePatterns,
 	}
@@ -140,19 +131,19 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Ensure config volumes (returns creation state for init orchestration)
-	configResult, err := EnsureConfigVolumes(ctx, client, cfg.Config.Project, cfg.AgentName)
+	configResult, err := EnsureConfigVolumes(ctx, client, project.Name, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config volumes: %w", err)
 	}
-	configMounts, err := GetConfigVolumeMounts(cfg.Config.Project, cfg.AgentName)
+	configMounts, err := GetConfigVolumeMounts(project.Name, cfg.AgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config volume names: %w", err)
 	}
 	mounts = append(mounts, configMounts...)
 
 	// Ensure and mount shared directory (if enabled)
-	if cfg.Config.Agent.SharedDirEnabled() {
-		sharePath, err := EnsureShareDir()
+	if project.Agent.SharedDirEnabled() {
+		sharePath, err := cfg.Cfg.ShareSubdir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to ensure share directory: %w", err)
 		}
@@ -160,7 +151,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}
 
 	// Add docker socket mount if enabled
-	if cfg.Config.Security.DockerSocket {
+	if project.Security.DockerSocket {
 		mounts = append(mounts, GetDockerSocketMount())
 	}
 

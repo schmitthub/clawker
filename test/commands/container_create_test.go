@@ -6,11 +6,15 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/cmd/container/create"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/schmitthub/clawker/test/harness/builders"
 	"github.com/stretchr/testify/require"
 )
+
+// _blankCfg provides label constants via the config interface, shared across the package.
+var _blankCfg = configmocks.NewBlankConfig()
 
 // TestContainerCreate_AgentNameApplied tests that the --agent flag value is
 // properly applied to the container name and labels.
@@ -83,9 +87,9 @@ func TestContainerCreate_AgentNameApplied(t *testing.T) {
 	require.NoError(t, err, "failed to inspect container")
 
 	labels := info.Container.Config.Labels
-	require.Equal(t, "true", labels[docker.LabelManaged], "managed label missing")
-	require.Equal(t, "create-agent-test", labels[docker.LabelProject], "project label in inspect mismatch")
-	require.Equal(t, agentName, labels[docker.LabelAgent], "agent label in inspect mismatch")
+	require.Equal(t, "true", labels[_blankCfg.LabelManaged()], "managed label missing")
+	require.Equal(t, "create-agent-test", labels[_blankCfg.LabelProject()], "project label in inspect mismatch")
+	require.Equal(t, agentName, labels[_blankCfg.LabelAgent()], "agent label in inspect mismatch")
 }
 
 // TestContainerCreate_NameFlagApplied tests that the --name flag (alias for --agent)

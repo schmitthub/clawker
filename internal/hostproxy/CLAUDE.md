@@ -22,11 +22,12 @@ The host proxy runs as a **daemon subprocess** that persists beyond CLI command 
 ## Constants
 
 ```go
-const DefaultPort = 18374
 const SessionIDLength = 16
 const DefaultCallbackTTL = 5 * time.Minute
 var ErrCallbackAlreadyReceived error
 ```
+
+Port comes from config (`host_proxy.daemon.port`, default 18374) — no more `DefaultPort` constant.
 
 ## Types
 
@@ -45,17 +46,16 @@ type Session struct {
 }
 // Methods: GetMetadata, SetMetadata, CaptureOnce, IsExpired
 
-type DaemonOptions struct {
-    Port, MaxConsecutiveErrs int
-    PIDFile string
-    PollInterval, GracePeriod time.Duration
-    DockerClient ContainerLister  // Inject mock for testing
-}
-
 type ContainerLister interface {
     ContainerList(ctx, options) (ContainerListResult, error)
     io.Closer
 }
+
+// Functional options for Daemon (CLI flag overrides without mutating config)
+type DaemonOption func(*Daemon)
+func WithDaemonPort(port int) DaemonOption
+func WithPollInterval(d time.Duration) DaemonOption
+func WithGracePeriod(d time.Duration) DaemonOption
 ```
 
 ## Interface
@@ -73,15 +73,16 @@ type HostProxyService interface {
 ## Constructors
 
 ```go
-func NewManager() *Manager
-func NewManagerWithPort(port int) *Manager
-func NewManagerWithOptions(port int, pidFile string) *Manager
-func NewDaemon(opts DaemonOptions) (*Daemon, error)
-func DefaultDaemonOptions() DaemonOptions
+func NewManager(cfg config.Config) (*Manager, error)       // validates port; returns error for invalid config
+func NewDaemon(cfg config.Config, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
 func NewServer(port int) *Server
 func NewSessionStore() *SessionStore  // Starts cleanup goroutine; must call Stop()
 func NewCallbackChannel(store *SessionStore) *CallbackChannel
 ```
+
+**Config pattern**: `Manager` and `Daemon` store `cfg config.Config` on the struct. All settings read from `cfg.HostProxyConfig()` (port, poll interval, grace period, max consecutive errors). PID file from `cfg.HostProxyPIDFilePath()`, log file from `cfg.HostProxyLogFilePath()`, labels from `cfg.LabelManaged()`, etc. CLI flags override via functional options (`WithDaemonPort`, `WithPollInterval`, `WithGracePeriod`) — config object is never mutated.
+
+**Validation**: Both `NewManager` and `NewDaemon` validate port at construction via shared `validatePort()` helper. `NewDaemon` also validates poll interval (>0), grace period (>=0), and max consecutive errors (>0).
 
 ## Manager Methods
 

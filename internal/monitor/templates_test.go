@@ -5,22 +5,33 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
-func TestNewMonitorTemplateData(t *testing.T) {
-	cfg := &config.MonitoringConfig{
-		OtelCollectorPort:     4318,
-		OtelCollectorHost:     "localhost",
-		OtelCollectorInternal: "otel-collector",
-		OtelGRPCPort:          4317,
-		LokiPort:              3100,
-		PrometheusPort:        9090,
-		JaegerPort:            16686,
-		GrafanaPort:           3000,
-		PrometheusMetricsPort: 8889,
-	}
+// testMonitoringConfig parses a YAML string into a config.Config and returns
+// a pointer to its MonitoringConfig. Follows the bundler testConfig pattern.
+func testMonitoringConfig(t *testing.T, yaml string) *config.MonitoringConfig {
+	t.Helper()
+	cfg := configmocks.NewFromString(yaml)
+	mon := cfg.MonitoringConfig()
+	return &mon
+}
 
-	data := NewMonitorTemplateData(cfg)
+func TestNewMonitorTemplateData(t *testing.T) {
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 4318
+  otel_collector_host: "localhost"
+  otel_collector_internal: "otel-collector"
+  otel_grpc_port: 4317
+  loki_port: 3100
+  prometheus_port: 9090
+  jaeger_port: 16686
+  grafana_port: 3000
+  prometheus_metrics_port: 8889
+`)
+
+	data := NewMonitorTemplateData(mon)
 
 	if data.OtelCollectorPort != 4318 {
 		t.Errorf("OtelCollectorPort = %d, want 4318", data.OtelCollectorPort)
@@ -35,41 +46,45 @@ func TestNewMonitorTemplateData(t *testing.T) {
 
 func TestNewMonitorTemplateData_CustomGRPCPort(t *testing.T) {
 	// gRPC port is independent — not derived from HTTP port
-	cfg := &config.MonitoringConfig{
-		OtelCollectorPort: 5318,
-		OtelGRPCPort:      5317,
-	}
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 5318
+  otel_grpc_port: 5317
+`)
 
-	data := NewMonitorTemplateData(cfg)
+	data := NewMonitorTemplateData(mon)
 	if data.OtelGRPCPort != 5317 {
 		t.Errorf("OtelGRPCPort = %d, want 5317", data.OtelGRPCPort)
 	}
 }
 
 func TestNewMonitorTemplateData_DefaultGRPCPort(t *testing.T) {
-	// Zero OtelGRPCPort should use default 4317 via getter
-	cfg := &config.MonitoringConfig{
-		OtelCollectorPort: 4318,
-	}
+	// Unset OtelGRPCPort should use default 4317 from viper defaults
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 4318
+`)
 
-	data := NewMonitorTemplateData(cfg)
+	data := NewMonitorTemplateData(mon)
 	if data.OtelGRPCPort != 4317 {
-		t.Errorf("OtelGRPCPort = %d, want 4317 (default from getter)", data.OtelGRPCPort)
+		t.Errorf("OtelGRPCPort = %d, want 4317 (default from config)", data.OtelGRPCPort)
 	}
 }
 
 func TestRenderTemplate_Compose(t *testing.T) {
-	data := MonitorTemplateData{
-		OtelCollectorPort:     5318,
-		OtelGRPCPort:          5317,
-		LokiPort:              4100,
-		PrometheusPort:        10090,
-		JaegerPort:            17686,
-		GrafanaPort:           4000,
-		PrometheusMetricsPort: 9889,
-		OtelCollectorInternal: "my-collector",
-	}
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 5318
+  otel_grpc_port: 5317
+  loki_port: 4100
+  prometheus_port: 10090
+  jaeger_port: 17686
+  grafana_port: 4000
+  prometheus_metrics_port: 9889
+  otel_collector_internal: "my-collector"
+`)
 
+	data := NewMonitorTemplateData(mon)
 	result, err := RenderTemplate("compose.yaml", ComposeTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -101,13 +116,15 @@ func TestRenderTemplate_Compose(t *testing.T) {
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
-	data := MonitorTemplateData{
-		OtelCollectorPort:     5318,
-		OtelGRPCPort:          5317,
-		LokiPort:              4100,
-		PrometheusMetricsPort: 9889,
-	}
+	mon := testMonitoringConfig(t, `
+monitoring:
+  otel_collector_port: 5318
+  otel_grpc_port: 5317
+  loki_port: 4100
+  prometheus_metrics_port: 9889
+`)
 
+	data := NewMonitorTemplateData(mon)
 	result, err := RenderTemplate("otel-config.yaml", OtelConfigTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -129,11 +146,13 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {
-	data := MonitorTemplateData{
-		PrometheusMetricsPort: 9889,
-		OtelCollectorInternal: "my-otel",
-	}
+	mon := testMonitoringConfig(t, `
+monitoring:
+  prometheus_metrics_port: 9889
+  otel_collector_internal: "my-otel"
+`)
 
+	data := NewMonitorTemplateData(mon)
 	result, err := RenderTemplate("prometheus.yaml", PrometheusTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)
@@ -145,12 +164,14 @@ func TestRenderTemplate_Prometheus(t *testing.T) {
 }
 
 func TestRenderTemplate_GrafanaDatasources(t *testing.T) {
-	data := MonitorTemplateData{
-		PrometheusPort: 10090,
-		JaegerPort:     17686,
-		LokiPort:       4100,
-	}
+	mon := testMonitoringConfig(t, `
+monitoring:
+  prometheus_port: 10090
+  jaeger_port: 17686
+  loki_port: 4100
+`)
 
+	data := NewMonitorTemplateData(mon)
 	result, err := RenderTemplate("grafana-datasources.yaml", GrafanaDatasourcesTemplate, data)
 	if err != nil {
 		t.Fatalf("RenderTemplate failed: %v", err)

@@ -14,7 +14,7 @@ import (
 // StatusOptions holds options for the loop status command.
 type StatusOptions struct {
 	IOStreams *iostreams.IOStreams
-	Config    func() *config.Config
+	Config    func() (config.Config, error)
 
 	Agent string
 	JSON  bool
@@ -63,7 +63,15 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	cs := ios.ColorScheme()
 
 	// Get config
-	cfg := opts.Config().Project
+	cfg, err := opts.Config()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var project string
+	if p := cfg.Project(); p != nil {
+		project = p.Name
+	}
 
 	// Get session store
 	store, err := shared.DefaultSessionStore()
@@ -72,13 +80,13 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	}
 
 	// Load session
-	session, err := store.LoadSession(cfg.Project, opts.Agent)
+	session, err := store.LoadSession(project, opts.Agent)
 	if err != nil {
 		return fmt.Errorf("loading session: %w", err)
 	}
 
 	// Load circuit state
-	circuitState, err := store.LoadCircuitState(cfg.Project, opts.Agent)
+	circuitState, err := store.LoadCircuitState(project, opts.Agent)
 	if err != nil {
 		return fmt.Errorf("loading circuit state: %w", err)
 	}
@@ -123,7 +131,7 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	}
 
 	// Human-readable output — primary data goes to stdout
-	fmt.Fprintf(ios.Out, "Loop status for %s.%s\n\n", cfg.Project, opts.Agent)
+	fmt.Fprintf(ios.Out, "Loop status for %s.%s\n\n", project, opts.Agent)
 
 	if session != nil {
 		fmt.Fprintf(ios.Out, "Session:\n")

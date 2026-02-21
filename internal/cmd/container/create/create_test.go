@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/git"
@@ -367,7 +370,7 @@ func TestBuildConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, config.DefaultProject())
+			cfg, hostCfg, _, err := tt.opts.BuildConfigs(nil, nil, &config.Project{})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -414,25 +417,6 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // Tier 2 — Cobra+Factory integration tests
 // ---------------------------------------------------------------------------
 
-// testConfig returns a minimal *config.Project for Tier 2 tests.
-func testConfig() *config.Project {
-	hostProxyDisabled := false
-	return &config.Project{
-		Version: "1",
-		Project: "",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{
-			EnableHostProxy: &hostProxyDisabled,
-			Firewall: &config.FirewallConfig{
-				Enable: false,
-			},
-		},
-	}
-}
-
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
 func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
@@ -443,8 +427,19 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(testConfig(), config.DefaultSettings())
+		Config: func() (config.Config, error) {
+			mock := configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+`)
+			mock.GetProjectIgnoreFileFunc = func() (string, error) {
+				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
+			}
+			mock.GetProjectRootFunc = func() (string, error) {
+				return os.TempDir(), nil
+			}
+			return mock, nil
 		},
 		GitManager: func() (*git.GitManager, error) {
 			return nil, fmt.Errorf("GitManager not available in test")
@@ -458,7 +453,7 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 
 func TestCreateRun(t *testing.T) {
 	t.Run("basic create prints container ID", func(t *testing.T) {
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -483,7 +478,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init runs when config volume freshly created", func(t *testing.T) {
 		// Make all volumes report as not existing → EnsureVolume creates them → ConfigCreated=true
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupVolumeExists("", false)
 		fake.FakeAPI.VolumeCreateFn = func(_ context.Context, _ moby.VolumeCreateOptions) (moby.VolumeCreateResult, error) {
 			return moby.VolumeCreateResult{}, nil
@@ -516,7 +511,7 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("config init skipped when config volume exists", func(t *testing.T) {
 		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 
@@ -540,7 +535,7 @@ func TestCreateRun(t *testing.T) {
 	t.Run("onboarding injected when use_host_auth enabled", func(t *testing.T) {
 		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
 		// Default fake: volumes exist → ConfigCreated=false → no init
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 
 		copyToContainerCalled := false
@@ -566,7 +561,7 @@ func TestCreateRun(t *testing.T) {
 	t.Run("onboarding failure returns error", func(t *testing.T) {
 		// Default config: UseHostAuth=nil → UseHostAuthEnabled()=true
 		// CopyToContainer fails → onboarding error propagates
-		fake := dockertest.NewFakeClient()
+		fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 		fake.SetupContainerCreate()
 		fake.SetupContainerRemove() // CreateContainer cleans up on injection failure
 
@@ -589,16 +584,19 @@ func TestCreateRun(t *testing.T) {
 
 	t.Run("onboarding skipped when use_host_auth disabled", func(t *testing.T) {
 		// Explicitly disable use_host_auth → no onboarding injection
-		cfg := testConfig()
-		useHostAuth := false
-		cfg.Agent.ClaudeCode = &config.ClaudeCodeConfig{
-			UseHostAuth: &useHostAuth,
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
+		useHostAuthCfg := configmocks.NewFromString(`
+version: "1"
+workspace: { remote_path: "/workspace", default_mode: "bind" }
+security: { enable_host_proxy: false, firewall: { enable: false } }
+agent: { claude_code: { use_host_auth: false, config: { strategy: "fresh" } } }
+`)
+		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
+			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
 		}
-
-		fake := dockertest.NewFakeClient(
-			dockertest.WithConfig(config.NewConfigForTest(cfg, config.DefaultSettings())),
-		)
+		useHostAuthCfg.GetProjectRootFunc = func() (string, error) {
+			return os.TempDir(), nil
+		}
+		fake := dockertest.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		// No CopyToContainer setup — if called, it would panic
 
@@ -609,8 +607,8 @@ func TestCreateRun(t *testing.T) {
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},
-			Config: func() *config.Config {
-				return config.NewConfigForTest(cfg, config.DefaultSettings())
+			Config: func() (config.Config, error) {
+				return useHostAuthCfg, nil
 			},
 			GitManager: func() (*git.GitManager, error) {
 				return nil, fmt.Errorf("GitManager not available in test")

@@ -7,7 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/config/configtest"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -62,16 +62,16 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 		return nil
 	}
 
-	sl := configtest.NewInMemorySettingsLoader(config.DefaultSettings())
+	cfg, _ := configmocks.NewIsolatedTestConfig(t)
 
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
-		ImageRef:       "test-image:latest",
-		IOStreams:      tio.IOStreams,
-		TUI:            nil, // spinner fallback
-		Prompter:       func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		SettingsLoader: func() config.SettingsLoader { return sl },
-		BuildImage:     buildFn,
-		CommandVerb:    "run",
+		ImageRef:    "test-image:latest",
+		IOStreams:   tio.IOStreams,
+		TUI:         nil, // spinner fallback
+		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Cfg:         cfg,
+		BuildImage:  buildFn,
+		CommandVerb: "run",
 	})
 
 	require.NoError(t, err)
@@ -79,9 +79,8 @@ func TestRebuildMissingImage_BuildSuccess(t *testing.T) {
 	assert.Contains(t, tio.ErrBuf.String(), docker.DefaultImageTag)
 
 	// Verify settings were persisted
-	saved, loadErr := sl.Load()
-	require.NoError(t, loadErr)
-	assert.Equal(t, docker.DefaultImageTag, saved.DefaultImage)
+	settings := cfg.Settings()
+	assert.Equal(t, docker.DefaultImageTag, settings.DefaultImage)
 }
 
 func TestRebuildMissingImage_BuildFailure(t *testing.T) {
@@ -116,14 +115,18 @@ func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
 		return nil
 	}
 
+	mock := configmocks.NewBlankConfig()
+	mock.SetFunc = func(key string, value any) error { return nil }
+	mock.WriteFunc = func(opts config.WriteOptions) error { return fmt.Errorf("save failed") }
+
 	err := RebuildMissingDefaultImage(context.Background(), RebuildMissingImageOpts{
-		ImageRef:       "test-image:latest",
-		IOStreams:      tio.IOStreams,
-		TUI:            nil,
-		Prompter:       func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
-		SettingsLoader: func() config.SettingsLoader { return &failSaveSettingsLoader{} },
-		BuildImage:     buildFn,
-		CommandVerb:    "run",
+		ImageRef:    "test-image:latest",
+		IOStreams:   tio.IOStreams,
+		TUI:         nil,
+		Prompter:    func() *prompter.Prompter { return prompter.NewPrompter(tio.IOStreams) },
+		Cfg:         mock,
+		BuildImage:  buildFn,
+		CommandVerb: "run",
 	})
 
 	require.NoError(t, err)
@@ -132,38 +135,27 @@ func TestRebuildMissingImage_PersistSettingsWarning(t *testing.T) {
 
 // --- persistDefaultImageSetting tests ---
 
-func TestPersistDefaultImageSetting_NilLoaderFn(t *testing.T) {
+func TestPersistDefaultImageSetting_NilConfig(t *testing.T) {
 	warning := persistDefaultImageSetting(nil)
 	assert.Empty(t, warning)
 }
 
-func TestPersistDefaultImageSetting_NilLoader(t *testing.T) {
-	warning := persistDefaultImageSetting(func() config.SettingsLoader { return nil })
-	assert.Empty(t, warning)
-}
+func TestPersistDefaultImageSetting_WriteError(t *testing.T) {
+	mock := configmocks.NewBlankConfig()
+	mock.SetFunc = func(key string, value any) error { return nil }
+	mock.WriteFunc = func(opts config.WriteOptions) error { return fmt.Errorf("save failed") }
 
-func TestPersistDefaultImageSetting_LoadError(t *testing.T) {
-	warning := persistDefaultImageSetting(func() config.SettingsLoader {
-		return &failLoadSettingsLoader{}
-	})
-	assert.Contains(t, warning, "Could not save")
-}
-
-func TestPersistDefaultImageSetting_SaveError(t *testing.T) {
-	warning := persistDefaultImageSetting(func() config.SettingsLoader {
-		return &failSaveSettingsLoader{}
-	})
+	warning := persistDefaultImageSetting(mock)
 	assert.Contains(t, warning, "Could not save")
 }
 
 func TestPersistDefaultImageSetting_Success(t *testing.T) {
-	sl := configtest.NewInMemorySettingsLoader(config.DefaultSettings())
-	warning := persistDefaultImageSetting(func() config.SettingsLoader { return sl })
+	cfg, _ := configmocks.NewIsolatedTestConfig(t)
+	warning := persistDefaultImageSetting(cfg)
 	assert.Empty(t, warning)
 
-	saved, err := sl.Load()
-	require.NoError(t, err)
-	assert.Equal(t, docker.DefaultImageTag, saved.DefaultImage)
+	settings := cfg.Settings()
+	assert.Equal(t, docker.DefaultImageTag, settings.DefaultImage)
 }
 
 // --- progressStatus tests ---
@@ -184,29 +176,3 @@ func TestProgressStatus(t *testing.T) {
 		assert.Equal(t, tt.want, progressStatus(tt.input))
 	}
 }
-
-// --- Test doubles ---
-
-// failLoadSettingsLoader is a SettingsLoader that fails on Load.
-type failLoadSettingsLoader struct{}
-
-func (f *failLoadSettingsLoader) Path() string                { return "" }
-func (f *failLoadSettingsLoader) ProjectSettingsPath() string { return "" }
-func (f *failLoadSettingsLoader) Exists() bool                { return false }
-func (f *failLoadSettingsLoader) Load() (*config.Settings, error) {
-	return nil, fmt.Errorf("load failed")
-}
-func (f *failLoadSettingsLoader) Save(*config.Settings) error { return nil }
-func (f *failLoadSettingsLoader) EnsureExists() (bool, error) { return false, nil }
-
-// failSaveSettingsLoader is a SettingsLoader that loads OK but fails on Save.
-type failSaveSettingsLoader struct{}
-
-func (f *failSaveSettingsLoader) Path() string                { return "" }
-func (f *failSaveSettingsLoader) ProjectSettingsPath() string { return "" }
-func (f *failSaveSettingsLoader) Exists() bool                { return false }
-func (f *failSaveSettingsLoader) Load() (*config.Settings, error) {
-	return config.DefaultSettings(), nil
-}
-func (f *failSaveSettingsLoader) Save(*config.Settings) error { return fmt.Errorf("save failed") }
-func (f *failSaveSettingsLoader) EnsureExists() (bool, error) { return false, nil }

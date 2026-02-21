@@ -10,13 +10,17 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/hostproxy"
+	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var _blankCfg = configmocks.NewBlankConfig()
 
 func TestNewCmdStart(t *testing.T) {
 	tests := []struct {
@@ -126,8 +130,8 @@ func TestNewCmdStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &cmdutil.Factory{
-				Config: func() *config.Config {
-					return config.NewConfigForTest(nil, nil)
+				Config: func() (config.Config, error) {
+					return configmocks.NewBlankConfig(), nil
 				},
 			}
 
@@ -191,17 +195,17 @@ func TestCmdStart_Properties(t *testing.T) {
 func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *iostreamstest.TestIOStreams) {
 	t.Helper()
 	tio := iostreamstest.New()
-	disableHP := false
-	project := config.DefaultProject()
-	project.Security.EnableHostProxy = &disableHP
 
 	return &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(project, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewFromString(`security: { enable_host_proxy: false }`), nil
+		},
+		HostProxy: func() hostproxy.HostProxyService {
+			return hostproxytest.NewMockManager()
 		},
 	}, tio
 }
@@ -209,7 +213,7 @@ func testStartFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Facto
 // setupContainerStart configures the fake for the non-attach container start path.
 // The default FakeClient ContainerInspectFn handles IsContainerManaged checks.
 func setupContainerStart(fake *dockertest.FakeClient) {
-	fake.SetupNetworkExists(docker.NetworkName, true)
+	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
 	}
@@ -223,8 +227,8 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -240,7 +244,7 @@ func TestStartRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestStartRun_Success(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -257,7 +261,7 @@ func TestStartRun_Success(t *testing.T) {
 }
 
 func TestStartRun_MultipleContainers(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	f, tio := testStartFactory(t, fake)
@@ -277,8 +281,8 @@ func TestStartRun_MultipleContainers(t *testing.T) {
 }
 
 func TestStartRun_PartialFailure(t *testing.T) {
-	fake := dockertest.NewFakeClient()
-	fake.SetupNetworkExists(docker.NetworkName, true)
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupNetworkExists(_blankCfg.ClawkerNetwork(), true)
 	fake.FakeAPI.NetworkConnectFn = func(_ context.Context, _ string, _ mobyclient.NetworkConnectOptions) (mobyclient.NetworkConnectResult, error) {
 		return mobyclient.NetworkConnectResult{}, nil
 	}
@@ -306,7 +310,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 }
 
 func TestStartRun_NilHostProxy(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	setupContainerStart(fake)
 
 	tio := iostreamstest.New()
@@ -316,8 +320,8 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 		HostProxy: func() hostproxy.HostProxyService { return nil },
 	}

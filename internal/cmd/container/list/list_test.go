@@ -10,6 +10,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/dockertest"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
@@ -27,8 +28,8 @@ func testFactory(t *testing.T, fake *dockertest.FakeClient) (*cmdutil.Factory, *
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}, tio
 }
@@ -192,7 +193,7 @@ func TestCmdList_Properties(t *testing.T) {
 // --- Tier 2: Integration tests ---
 
 func TestListRun_DefaultTable(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -216,7 +217,7 @@ func TestListRun_DefaultTable(t *testing.T) {
 }
 
 func TestListRun_JSONOutput(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -239,7 +240,7 @@ func TestListRun_JSONOutput(t *testing.T) {
 }
 
 func TestListRun_QuietMode(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.RunningContainerFixture("myapp", "worker"),
@@ -264,7 +265,7 @@ func TestListRun_QuietMode(t *testing.T) {
 }
 
 func TestListRun_TemplateOutput(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)
@@ -284,7 +285,7 @@ func TestListRun_TemplateOutput(t *testing.T) {
 }
 
 func TestListRun_FilterByStatus(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.ContainerFixture("myapp", "worker", "alpine:latest"),
@@ -306,7 +307,7 @@ func TestListRun_FilterByStatus(t *testing.T) {
 }
 
 func TestListRun_FilterByAgent(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 		dockertest.RunningContainerFixture("myapp", "worker"),
@@ -328,7 +329,7 @@ func TestListRun_FilterByAgent(t *testing.T) {
 }
 
 func TestListRun_FilterInvalidKey(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -344,7 +345,7 @@ func TestListRun_FilterInvalidKey(t *testing.T) {
 }
 
 func TestListRun_EmptyResults(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -362,7 +363,7 @@ func TestListRun_EmptyResults(t *testing.T) {
 }
 
 func TestListRun_EmptyResultsRunningOnly(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList()
 
 	f, tio := testFactory(t, fake)
@@ -386,8 +387,8 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return nil, fmt.Errorf("cannot connect to Docker daemon")
 		},
-		Config: func() *config.Config {
-			return config.NewConfigForTest(nil, nil)
+		Config: func() (config.Config, error) {
+			return configmocks.NewBlankConfig(), nil
 		},
 	}
 
@@ -403,7 +404,7 @@ func TestListRun_DockerConnectionError(t *testing.T) {
 }
 
 func TestListRun_ProjectFilter(t *testing.T) {
-	fake := dockertest.NewFakeClient()
+	fake := dockertest.NewFakeClient(configmocks.NewBlankConfig())
 	fake.SetupContainerList(
 		dockertest.RunningContainerFixture("myapp", "dev"),
 	)

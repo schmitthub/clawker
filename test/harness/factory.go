@@ -2,15 +2,18 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams/iostreamstest"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
+	"gopkg.in/yaml.v3"
 )
 
 // NewTestFactory returns a fully-wired Factory suitable for integration tests
@@ -37,24 +40,27 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreamstest.
 
 	// Use the harness config with test-safe defaults applied
 	applyTestDefaults(h.Config)
-	cfg := config.NewConfigForTest(h.Config, nil)
+	cfg := configFromProject(h.Config)
 
 	f := &cmdutil.Factory{
 		IOStreams: tio.IOStreams,
 		TUI:       tui.NewTUI(tio.IOStreams),
 		Client: func(ctx context.Context) (*docker.Client, error) {
-			c, err := docker.NewClient(ctx, cfg, docker.WithLabels(docker.TestLabelConfig(t.Name())))
+			c, err := docker.NewClient(ctx, cfg, docker.WithLabels(docker.TestLabelConfig(cfg, t.Name())))
 			if err != nil {
 				return nil, err
 			}
 			c.ChownImage = TestChownImage
 			return c, nil
 		},
-		Config: func() *config.Config {
-			return cfg
+		Config: func() (config.Config, error) {
+			return cfg, nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
-			mgr := hostproxy.NewManager()
+			mgr, err := hostproxy.NewManager(cfg)
+			if err != nil {
+				t.Fatalf("failed to create host proxy manager: %v", err)
+			}
 			t.Cleanup(func() {
 				_ = mgr.StopDaemon()
 			})
@@ -63,6 +69,19 @@ func NewTestFactory(t *testing.T, h *Harness) (*cmdutil.Factory, *iostreamstest.
 		Prompter: func() *prompter.Prompter { return nil },
 	}
 	return f, tio
+}
+
+// configFromProject constructs a config.Config mock from a *config.Project schema.
+// It marshals the project to YAML, prepends the project name (yaml:"-" field is
+// not marshaled), and uses configmocks.NewFromString for a fully-wired mock.
+func configFromProject(project *config.Project) config.Config {
+	yamlData, err := yaml.Marshal(project)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal project config: %v", err))
+	}
+	// Name has yaml:"name,omitempty" so yaml.Marshal includes it.
+	cfgYAML := string(yamlData)
+	return configmocks.NewFromString(cfgYAML)
 }
 
 // applyTestDefaults sets test-safe defaults on a project config without

@@ -159,7 +159,7 @@ func PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func()
 // the container home directory as the extraction destination.
 //
 // TODO: containerHomeDir is currently unused — evaluate if needed for custom home paths.
-func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
+func PrepareOnboardingTar(cfg config.Config, containerHomeDir string) (io.Reader, error) {
 	content := []byte(`{"hasCompletedOnboarding":true}` + "\n")
 
 	var buf bytes.Buffer
@@ -169,8 +169,8 @@ func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 		Name:    ".claude.json",
 		Mode:    0o600,
 		Size:    int64(len(content)),
-		Uid:     config.ContainerUID,
-		Gid:     config.ContainerGID,
+		Uid:     cfg.ContainerUID(),
+		Gid:     cfg.ContainerGID(),
 		ModTime: time.Now(),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -190,7 +190,7 @@ func PrepareOnboardingTar(containerHomeDir string) (io.Reader, error) {
 // The script is prefixed with a bash shebang and set -e, then the user's commands verbatim.
 // The tar is designed for extraction at /home/claude, producing /home/claude/.clawker/post-init.sh.
 // Returns an error if the script is empty or whitespace-only.
-func PreparePostInitTar(script string) (io.Reader, error) {
+func PreparePostInitTar(cfg config.Config, script string) (io.Reader, error) {
 	if strings.TrimSpace(script) == "" {
 		return nil, fmt.Errorf("post-init script content is empty")
 	}
@@ -205,8 +205,8 @@ func PreparePostInitTar(script string) (io.Reader, error) {
 		Typeflag: tar.TypeDir,
 		Name:     ".clawker/",
 		Mode:     0o755,
-		Uid:      config.ContainerUID,
-		Gid:      config.ContainerGID,
+		Uid:      cfg.ContainerUID(),
+		Gid:      cfg.ContainerGID(),
 		ModTime:  now,
 	}
 	if err := tw.WriteHeader(dirHdr); err != nil {
@@ -218,8 +218,8 @@ func PreparePostInitTar(script string) (io.Reader, error) {
 		Name:    ".clawker/post-init.sh",
 		Mode:    0o755,
 		Size:    int64(len(content)),
-		Uid:     config.ContainerUID,
-		Gid:     config.ContainerGID,
+		Uid:     cfg.ContainerUID(),
+		Gid:     cfg.ContainerGID(),
 		ModTime: now,
 	}
 	if err := tw.WriteHeader(fileHdr); err != nil {

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -22,6 +23,14 @@ import (
 // containerHomeDir is the home directory for the claude user inside containers.
 const containerHomeDir = "/home/claude"
 
+const (
+	// ReadyLogPrefix is the prefix for the ready signal log line.
+	ReadyLogPrefix = "[clawker] ready"
+
+	// ErrorLogPrefix is the prefix for error signal log lines.
+	ErrorLogPrefix = "[clawker] error"
+)
+
 // LoopContainerConfig holds all inputs needed to set up a container for loop execution.
 type LoopContainerConfig struct {
 	// Client is the Docker client.
@@ -29,8 +38,8 @@ type LoopContainerConfig struct {
 
 	Command []string
 
-	// Config is the gateway config providing ProjectCfg(), Settings(), etc.
-	Config *config.Config
+	// Config is the config.Config interface providing Project(), Settings(), etc.
+	Config config.Config
 
 	// LoopOpts holds the shared loop flags (agent, image, worktree, etc.).
 	LoopOpts *LoopOptions
@@ -133,7 +142,8 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 			defer close(events)
 			r, err := containershared.CreateContainer(ctx, &containershared.CreateContainerConfig{
 				Client:      cfg.Client,
-				Config:      cfg.Config.Project,
+				Cfg:         cfg.Config,
+				Config:      cfg.Config.Project(),
 				Options:     containerOpts,
 				Flags:       cfg.Flags,
 				Version:     cfg.Version,
@@ -158,7 +168,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 		containerID := o.result.ContainerID
 
 		// Inject hooks into the container
-		if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
+		if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), cfg.IOStreams.Logger); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = cfg.Client.RemoveContainerWithVolumes(cleanupCtx, containerID, true)
@@ -191,7 +201,7 @@ func MakeCreateContainerFunc(cfg *LoopContainerConfig) func(context.Context) (*C
 // The cleanup function uses context.Background() so it runs even after cancellation.
 func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopContainerResult, func(), error) {
 	ios := cfg.IOStreams
-	projectCfg := cfg.Config.Project
+	projectCfg := cfg.Config.Project()
 
 	// --- Phase A: Image resolution ---
 	image := cfg.LoopOpts.Image
@@ -299,10 +309,19 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 
 	// --- Phase C: Inject hooks ---
 	ios.StartSpinner("Injecting loop hooks")
-	if err := InjectLoopHooks(ctx, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), ios.Logger); err != nil {
+	if err := InjectLoopHooks(ctx, cfg.Config, containerID, cfg.LoopOpts.HooksFile, containershared.NewCopyToContainerFn(cfg.Client), containershared.NewCopyFromContainerFn(cfg.Client), ios.Logger); err != nil {
 		ios.StopSpinner()
 		cleanup()
 		return nil, nil, fmt.Errorf("injecting hooks: %w", err)
+	}
+	ios.StopSpinner()
+
+	// --- Phase D: Start container ---
+	ios.StartSpinner("Starting loop container")
+	if _, err := cfg.Client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
+		ios.StopSpinner()
+		cleanup()
+		return nil, nil, fmt.Errorf("starting loop container: %w", err)
 	}
 	ios.StopSpinner()
 
@@ -318,19 +337,29 @@ func SetupLoopContainer(ctx context.Context, cfg *LoopContainerConfig) (*LoopCon
 // InjectLoopHooks injects hook configuration and scripts into a created (not started) container.
 // If hooksFile is empty, default hooks are used. If provided, the file is read as a
 // complete replacement. Hook scripts referenced by default hooks are also injected.
-func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, log iostreams.Logger) error {
+//
+// Hooks are merged into the existing settings.json to preserve any pre-existing
+// configuration (MCP servers, skills, extensions) set up by containerfs or post-init.
+func InjectLoopHooks(ctx context.Context, cfgGateway config.Config, containerID string, hooksFile string, copyFn containershared.CopyToContainerFn, readFn containershared.CopyFromContainerFn, log iostreams.Logger) error {
 	hooks, hookFiles, err := ResolveHooks(hooksFile)
 	if err != nil {
 		return err
 	}
 
-	// Write settings.json with hooks config to the container's .claude/ directory.
-	settingsJSON, err := hooks.MarshalSettingsJSON()
+	// Read existing settings.json from the container so we can merge hooks
+	// into it rather than replacing it entirely. This preserves MCP servers,
+	// skills, and extensions set up by containerfs or the init process.
+	existing := readExistingSettings(ctx, containerID, readFn, log)
+
+	// Add hooks to the existing settings.
+	existing["hooks"] = hooks
+
+	settingsJSON, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling hook settings: %w", err)
+		return fmt.Errorf("marshaling merged settings: %w", err)
 	}
 
-	settingsTar, err := buildSettingsTar(settingsJSON)
+	settingsTar, err := buildSettingsTar(cfgGateway, settingsJSON)
 	if err != nil {
 		return fmt.Errorf("building settings tar: %w", err)
 	}
@@ -359,9 +388,50 @@ func InjectLoopHooks(ctx context.Context, containerID string, hooksFile string, 
 	return nil
 }
 
+// readExistingSettings reads and parses the existing settings.json from the container.
+// Returns an empty map if the file doesn't exist or can't be read (non-fatal).
+func readExistingSettings(ctx context.Context, containerID string, readFn containershared.CopyFromContainerFn, log iostreams.Logger) map[string]any {
+	if readFn == nil {
+		return make(map[string]any)
+	}
+
+	settingsPath := containerHomeDir + "/.claude/settings.json"
+	rc, err := readFn(ctx, containerID, settingsPath)
+	if err != nil {
+		log.Debug().Err(err).Msg("no existing settings.json to merge (will create fresh)")
+		return make(map[string]any)
+	}
+	defer rc.Close()
+
+	// CopyFromContainer returns a tar stream — extract settings.json from it.
+	tr := tar.NewReader(rc)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if filepath.Base(hdr.Name) == "settings.json" {
+			data, err := io.ReadAll(tr)
+			if err != nil {
+				log.Debug().Err(err).Msg("failed to read settings.json from tar")
+				return make(map[string]any)
+			}
+			var settings map[string]any
+			if err := json.Unmarshal(data, &settings); err != nil {
+				log.Debug().Err(err).Msg("failed to parse existing settings.json")
+				return make(map[string]any)
+			}
+			log.Debug().Int("keys", len(settings)).Msg("loaded existing settings.json for hook merge")
+			return settings
+		}
+	}
+
+	return make(map[string]any)
+}
+
 // buildSettingsTar creates a tar archive containing settings.json with the given content.
 // The file is owned by the container user (UID/GID 1001).
-func buildSettingsTar(content []byte) (io.Reader, error) {
+func buildSettingsTar(cfg config.Config, content []byte) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
@@ -369,8 +439,8 @@ func buildSettingsTar(content []byte) (io.Reader, error) {
 		Name:    "settings.json",
 		Mode:    0o644,
 		Size:    int64(len(content)),
-		Uid:     config.ContainerUID,
-		Gid:     config.ContainerGID,
+		Uid:     cfg.ContainerUID(),
+		Gid:     cfg.ContainerGID(),
 		ModTime: time.Now(),
 	}
 	if err := tw.WriteHeader(hdr); err != nil {

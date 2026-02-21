@@ -2,6 +2,7 @@ package internals
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/mount"
-	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/schmitthub/clawker/test/harness"
 	"github.com/stretchr/testify/assert"
@@ -79,18 +80,16 @@ func TestWorktreeGitMountsInContainer(t *testing.T) {
 	// 2. Call workspace.SetupMounts with ProjectRootDir set
 	client := harness.NewTestClient(t)
 
-	cfg := &config.Project{
-		Project: "test-project",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{},
-	}
+	mockCfg := configmocks.NewFromString(`
+name: "test-project"
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+`)
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
-		Config:         cfg,
+		Cfg:            mockCfg,
 		AgentName:      "test-agent",
 		WorkDir:        worktreeDir,
 		ProjectRootDir: mainRepoDir,
@@ -178,18 +177,16 @@ func TestWorktreeGitMounts_WithoutProjectRootDir(t *testing.T) {
 	// Create a simple temp directory (not a worktree)
 	tmpDir := t.TempDir()
 
-	cfg := &config.Project{
-		Project: "test-project",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Security: config.SecurityConfig{},
-	}
+	mockCfg := configmocks.NewFromString(`
+name: "test-project"
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+`)
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride:   "bind",
-		Config:         cfg,
+		Cfg:            mockCfg,
 		AgentName:      "test-agent",
 		WorkDir:        tmpDir,
 		ProjectRootDir: "", // Empty - not a worktree
@@ -225,23 +222,27 @@ func TestSharedDir_MountedWhenEnabled(t *testing.T) {
 
 	// Use a temp dir for clawker home so EnsureShareDir creates the host directory there
 	clawkerHome := t.TempDir()
-	t.Setenv(config.ClawkerHomeEnv, clawkerHome)
+	shareDir := filepath.Join(clawkerHome, "clawker-share")
 
-	cfg := &config.Project{
-		Project: "test-project",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Agent: config.AgentConfig{
-			EnableSharedDir: boolPtr(true),
-		},
-		Security: config.SecurityConfig{},
+	mockCfg := configmocks.NewFromString(`
+name: "test-project"
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+agent:
+  enable_shared_dir: true
+`)
+	// Override ShareSubdir to return our temp share dir
+	mockCfg.ShareSubdirFunc = func() (string, error) {
+		if err := os.MkdirAll(shareDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create share dir: %w", err)
+		}
+		return shareDir, nil
 	}
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride: "bind",
-		Config:       cfg,
+		Cfg:          mockCfg,
 		AgentName:    harness.UniqueAgentName(t),
 		WorkDir:      tmpDir,
 	})
@@ -260,7 +261,7 @@ func TestSharedDir_MountedWhenEnabled(t *testing.T) {
 	assert.True(t, shareMount.ReadOnly, "share mount should be read-only")
 
 	// Source should be the host share directory
-	expectedSource := filepath.Join(clawkerHome, config.ShareSubdir)
+	expectedSource := shareDir
 	assert.Equal(t, expectedSource, shareMount.Source, "bind mount source should be host share dir")
 
 	// Verify the host directory was created
@@ -294,21 +295,18 @@ func TestSharedDir_NotMountedWhenDisabled(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	cfg := &config.Project{
-		Project: "test-project",
-		Workspace: config.WorkspaceConfig{
-			RemotePath:  "/workspace",
-			DefaultMode: "bind",
-		},
-		Agent: config.AgentConfig{
-			EnableSharedDir: boolPtr(false),
-		},
-		Security: config.SecurityConfig{},
-	}
+	mockCfg := configmocks.NewFromString(`
+name: "test-project"
+workspace:
+  remote_path: "/workspace"
+  default_mode: "bind"
+agent:
+  enable_shared_dir: false
+`)
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
 		ModeOverride: "bind",
-		Config:       cfg,
+		Cfg:          mockCfg,
 		AgentName:    harness.UniqueAgentName(t),
 		WorkDir:      tmpDir,
 	})
